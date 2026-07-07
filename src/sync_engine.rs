@@ -1574,12 +1574,33 @@ fn ingest_message_events_from_projection(
     ingest_message_events(store, realm_id, &sync_realm_timeline_events(body))
 }
 
+fn discussion_state_control_event_kind(event: &Value) -> Option<&str> {
+    event
+        .get("kind")
+        .or_else(|| event.get("event_kind"))
+        .or_else(|| event.get("type"))
+        .or_else(|| event.get("op_type"))
+        .or_else(|| event.get("event_type"))
+        .and_then(Value::as_str)
+}
+
+fn discussion_state_control_event_is_ingestable(event: &Value) -> bool {
+    matches!(
+        discussion_state_control_event_kind(event),
+        Some("ck.pin.add" | "ck.pin.remove" | "ck.pin.reorder")
+    )
+}
+
 fn ingest_discussion_state_events_from_projection(
     store: &mut LocalStateStore,
     realm_id: &str,
     body: &Value,
 ) -> usize {
-    ingest_message_events(store, realm_id, &sync_realm_state_events(body))
+    let events = sync_realm_state_events(body)
+        .into_iter()
+        .filter(discussion_state_control_event_is_ingestable)
+        .collect::<Vec<_>>();
+    ingest_message_events(store, realm_id, &events)
 }
 
 /// Fold a batch of discussion message events into `raw_operations`. Shared by
@@ -2316,6 +2337,55 @@ mod tests {
         assert_eq!(
             state.raw_operations[0].payload["payload"]["pin_scope"]["id"],
             strand_id
+        );
+    }
+
+    #[test]
+    fn sync_state_events_skip_message_lifecycle_rows_for_discussion_raw_operations() {
+        let realm_id = "ck:realm:01904100-0000-7000-8000-000000000001";
+        let strand_id = "ck:strand:01904100-0000-7000-8000-000000000002";
+        let mut store = temp_store("discussion-message-state-events");
+        let body = json!({
+            "state": {
+                "events": [
+                    {
+                        "event_id": "ck:event:01904100-0000-7000-8000-0000000000c1",
+                        "event_kind": "ck.message.revise",
+                        "actor_id": "did:web:bob.example",
+                        "created_at": "2026-06-24T10:00:00Z",
+                        "realm_id": realm_id,
+                        "payload": {
+                            "event_id": "ck:event:01904100-0000-7000-8000-0000000000c1",
+                            "target_ref": "ck:message:01904100-0000-7000-8000-000000000101",
+                            "strand_id": strand_id,
+                            "content": {
+                                "kind": "ck.content.text",
+                                "body": "edited state projection"
+                            }
+                        }
+                    },
+                    {
+                        "event_id": "ck:event:01904100-0000-7000-8000-0000000000c2",
+                        "event_kind": "ck.message.redact",
+                        "actor_id": "did:web:bob.example",
+                        "created_at": "2026-06-24T10:01:00Z",
+                        "realm_id": realm_id,
+                        "payload": {
+                            "event_id": "ck:event:01904100-0000-7000-8000-0000000000c2",
+                            "message_id": "ck:message:01904100-0000-7000-8000-000000000101",
+                            "reason": "user requested tombstone"
+                        }
+                    }
+                ]
+            }
+        });
+
+        let changed = ingest_discussion_state_events_from_projection(&mut store, realm_id, &body);
+
+        assert_eq!(changed, 0);
+        assert!(
+            store.load().raw_operations.is_empty(),
+            "message lifecycle rows belong to timeline.events/backfill, not state.events"
         );
     }
 

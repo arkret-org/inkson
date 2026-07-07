@@ -882,6 +882,147 @@ fn chat_messages_fold_revision_chain_into_latest_message() {
 }
 
 #[test]
+fn chat_messages_fold_redacted_revision_tombstone_into_root_tombstone() {
+    let events = vec![
+        json!({
+            "event_id": "ck:event:msg-4-rev-1",
+            "kind": "ck.message.revise",
+            "actor_id": "did:web:bob.example",
+            "realm_id": "ck:realm:r1",
+            "created_at": "2026-05-22T10:01:00Z",
+            "strand_id": "ck:strand:topic",
+            "target_ref": "ck:message:m4",
+            "redacted": true,
+            "state": "redacted",
+            "content": {"kind": "ck.content.text", "body": "[redacted]"}
+        }),
+        json!({
+            "event_id": "ck:event:msg-4",
+            "kind": "ck.message.create",
+            "actor_id": "did:web:bob.example",
+            "realm_id": "ck:realm:r1",
+            "created_at": "2026-05-22T10:00:00Z",
+            "strand_id": "ck:strand:topic",
+            "message_id": "ck:message:m4",
+            "redacted": true,
+            "state": "redacted",
+            "content": {"kind": "ck.content.text", "body": "[redacted]"}
+        }),
+    ];
+
+    let messages = chat_messages_from_events_with_sidecar("ck:realm:r1", &events, None, None);
+
+    assert_eq!(messages.len(), 1);
+    assert!(messages[0].redacted);
+}
+
+#[test]
+fn chat_messages_fold_nested_server_redacted_revision_tombstone_into_root_tombstone() {
+    let events = vec![
+        json!({
+            "event_id": "ck:event:msg-5",
+            "kind": "ck.message.create",
+            "realm_id": "ck:realm:r1",
+            "actor_id": "did:web:bob.example",
+            "created_at": "2026-05-22T10:00:00Z",
+            "payload": {
+                "content": {"kind": "ck.content.text", "body": "[redacted]"},
+                "event_id": "ck:event:msg-5",
+                "message_id": "ck:message:m5",
+                "redacted": true,
+                "redacted_at": "2026-05-22T10:05:00Z",
+                "redaction_ref": "ck:event:redact-5",
+                "sender": "did:web:bob.example",
+                "state": "redacted",
+                "strand_id": "ck:strand:topic"
+            },
+            "proofs": []
+        }),
+        json!({
+            "event_id": "ck:event:msg-5-rev-1",
+            "kind": "ck.message.revise",
+            "realm_id": "ck:realm:r1",
+            "actor_id": "did:web:bob.example",
+            "created_at": "2026-05-22T10:01:00Z",
+            "payload": {
+                "content": {"kind": "ck.content.text", "body": "[redacted]"},
+                "event_id": "ck:event:msg-5-rev-1",
+                "redacted": true,
+                "redacted_at": "2026-05-22T10:05:00Z",
+                "redaction_ref": "ck:event:redact-5",
+                "sender": "did:web:bob.example",
+                "state": "redacted",
+                "target_ref": "ck:message:m5"
+            },
+            "proofs": []
+        }),
+    ];
+
+    let messages = chat_messages_from_events_with_sidecar("ck:realm:r1", &events, None, None);
+
+    assert_eq!(messages.len(), 1);
+    assert_eq!(messages[0].id, "ck:event:msg-5");
+    assert!(messages[0].redacted);
+}
+
+#[test]
+fn merge_chat_messages_dedupes_tombstones_by_protocol_message_id() {
+    fn redacted_message(id: &str, protocol_message_id: &str) -> ChatMessage {
+        ChatMessage {
+            realm_id: "ck:realm:r1".to_owned(),
+            id: id.to_owned(),
+            protocol_message_id: Some(protocol_message_id.to_owned()),
+            sender: "did:web:bob.example".to_owned(),
+            executed_by: None,
+            body: String::new(),
+            timestamp: "10:05".to_owned(),
+            strand_id: "ck:strand:topic".to_owned(),
+            reply_to: None,
+            reactions: Vec::new(),
+            redacted: true,
+            edited: false,
+            revisions: Vec::new(),
+            pending: false,
+            failed: false,
+            error: None,
+            mentions: Vec::new(),
+            crypto_state: MessageCryptoState::Plaintext,
+        }
+    }
+
+    let protocol_message_id = "ck:message:m6";
+    let mut target = vec![
+        redacted_message("ck:event:msg-6", protocol_message_id),
+        redacted_message("ck:event:msg-6-rev-1", protocol_message_id),
+        ChatMessage {
+            body: "unrelated".to_owned(),
+            redacted: false,
+            protocol_message_id: Some("ck:message:other".to_owned()),
+            id: "ck:event:other".to_owned(),
+            ..redacted_message("ck:event:other", "ck:message:other")
+        },
+    ];
+    target[0].edited = true;
+    target[0].revisions.push("v1".to_owned());
+
+    merge_chat_messages(
+        &mut target,
+        vec![redacted_message("ck:event:msg-6", protocol_message_id)],
+    );
+
+    let matching = target
+        .iter()
+        .filter(|message| message.protocol_message_id.as_deref() == Some(protocol_message_id))
+        .collect::<Vec<_>>();
+    assert_eq!(matching.len(), 1);
+    assert_eq!(matching[0].id, "ck:event:msg-6");
+    assert!(matching[0].redacted);
+    assert!(matching[0].edited);
+    assert_eq!(matching[0].revisions, vec!["v1".to_owned()]);
+    assert!(target.iter().any(|message| message.id == "ck:event:other"));
+}
+
+#[test]
 fn message_operations_redaction_tombstone_dedupes_over_create_by_event_id() {
     // The server folds a redaction into a tombstone form reusing the same
     // `ck.message.create` kind + `event_id`. Both fold to the SAME

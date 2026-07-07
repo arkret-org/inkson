@@ -62,7 +62,11 @@ fn handle_resolution_exposes_delivery_binding_without_requiring_it_for_invites()
 
     assert_eq!(resolved.subject_did(), Some("did:web:bob.example"));
     assert_eq!(
-        resolved.member_delivery_binding_value().unwrap()["recipient_service_did"],
+        resolved
+            .member_delivery_binding_ref()
+            .unwrap()
+            .recipient_service_did
+            .as_str(),
         "did:web:local.host"
     );
 
@@ -73,5 +77,5 @@ fn handle_resolution_exposes_delivery_binding_without_requiring_it_for_invites()
     }))
     .unwrap();
     assert_eq!(missing_binding.subject_did(), Some("did:web:bob.example"));
-    assert!(missing_binding.member_delivery_binding_value().is_none());
+    assert!(missing_binding.member_delivery_binding_ref().is_none());
 }

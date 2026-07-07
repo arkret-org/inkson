@@ -380,24 +380,73 @@ pub(crate) fn merge_channels(target: &mut Vec<ChannelEntity>, incoming: Vec<Chan
     }
 }
 
+fn chat_message_protocol_id(message: &ChatMessage) -> Option<&str> {
+    message
+        .protocol_message_id
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+}
+
+fn chat_message_has_protocol_id(message: &ChatMessage, protocol_id: &str) -> bool {
+    chat_message_protocol_id(message).is_some_and(|candidate| candidate == protocol_id)
+}
+
+fn replace_chat_message_preserving_local_metadata(
+    existing: &mut ChatMessage,
+    mut message: ChatMessage,
+) {
+    if message.protocol_message_id.is_none() {
+        message.protocol_message_id = existing.protocol_message_id.clone();
+    }
+    // Carry forward locally-tracked edit metadata. The sync projection
+    // rebuilds a message from its events but does not surface the
+    // per-message revision count, so a re-projection would otherwise wipe
+    // the write-status counter the moment a sync tick lands between two
+    // edits. Preserve the existing `edited` flag and revision history (the
+    // body still updates to the incoming/revised content) so the numeric
+    // counter is stable across re-projections.
+    if !message.edited && existing.edited {
+        message.edited = true;
+    }
+    if message.revisions.is_empty() && !existing.revisions.is_empty() {
+        message.revisions = std::mem::take(&mut existing.revisions);
+    }
+    *existing = message;
+}
+
+fn prune_duplicate_chat_message_entries(
+    target: &mut Vec<ChatMessage>,
+    keep_id: &str,
+    protocol_id: Option<&str>,
+) {
+    let mut kept_primary = false;
+    target.retain(|message| {
+        if message.id == keep_id {
+            if kept_primary {
+                return false;
+            }
+            kept_primary = true;
+            return true;
+        }
+        !protocol_id.is_some_and(|protocol_id| chat_message_has_protocol_id(message, protocol_id))
+    });
+}
+
 pub(crate) fn merge_chat_messages(target: &mut Vec<ChatMessage>, incoming: Vec<ChatMessage>) {
-    for mut message in incoming {
-        if let Some(existing) = target.iter_mut().find(|existing| existing.id == message.id) {
-            // Carry forward locally-tracked edit metadata. The sync
-            // projection rebuilds a message from its events but does not
-            // surface the per-message revision count, so a re-projection
-            // would otherwise wipe the write-status counter the moment a
-            // sync tick lands between two edits. Preserve the existing
-            // `edited` flag and revision history (the body still updates to
-            // the incoming/revised content) so the numeric counter is
-            // stable across re-projections.
-            if !message.edited && existing.edited {
-                message.edited = true;
-            }
-            if message.revisions.is_empty() && !existing.revisions.is_empty() {
-                message.revisions = std::mem::take(&mut existing.revisions);
-            }
-            *existing = message;
+    for message in incoming {
+        let protocol_id = chat_message_protocol_id(&message).map(ToOwned::to_owned);
+        if let Some(existing_index) = target.iter().position(|existing| {
+            existing.id == message.id
+                || protocol_id
+                    .as_deref()
+                    .is_some_and(|protocol_id| chat_message_has_protocol_id(existing, protocol_id))
+        }) {
+            replace_chat_message_preserving_local_metadata(&mut target[existing_index], message);
+            let keep_id = target[existing_index].id.clone();
+            let protocol_id =
+                chat_message_protocol_id(&target[existing_index]).map(ToOwned::to_owned);
+            prune_duplicate_chat_message_entries(target, &keep_id, protocol_id.as_deref());
         } else {
             target.push(message);
         }

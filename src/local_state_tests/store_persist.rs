@@ -145,6 +145,62 @@ fn raw_operation_upsert_keeps_redaction_tombstone_over_plaintext_create() {
 }
 
 #[test]
+fn raw_operation_upsert_replaces_message_timeline_projection_by_message_id() {
+    let path = temp_state_path("raw-op-upsert-message-id");
+    let mut store = LocalStateStore::with_path(path);
+    let realm_id = Some("ck:realm:upsert".to_owned());
+    let message_id = "ck:message:upsert-message-id";
+    let original = serde_json::json!({
+        "kind": "ck.message.create",
+        "event_id": "ck:event:upsert-message-original",
+        "message_id": message_id,
+        "content": {"kind": "ck.content.text", "body": "original"}
+    });
+    let revised_projection = serde_json::json!({
+        "kind": "ck.message.create",
+        "event_id": "ck:event:upsert-message-revision",
+        "message_id": message_id,
+        "content": {"kind": "ck.content.text", "body": "edited"}
+    });
+    let redacted_projection = serde_json::json!({
+        "kind": "ck.message.create",
+        "event_id": "ck:event:upsert-message-revision",
+        "message_id": message_id,
+        "redacted": true,
+        "state": "redacted",
+        "content": {"kind": "ck.content.text", "body": "[redacted]"}
+    });
+
+    assert!(store.upsert_raw_operation(
+        "ck:event:upsert-message-original",
+        realm_id.clone(),
+        original,
+    ));
+    assert!(store.upsert_raw_operation(
+        "ck:event:upsert-message-revision",
+        realm_id.clone(),
+        revised_projection,
+    ));
+    assert!(store.upsert_raw_operation(
+        "ck:event:upsert-message-revision",
+        realm_id,
+        redacted_projection,
+    ));
+
+    let state = store.load();
+    assert_eq!(state.raw_operations.len(), 1);
+    assert_eq!(
+        state.raw_operations[0].payload["event_id"],
+        "ck:event:upsert-message-revision"
+    );
+    assert_eq!(
+        state.raw_operations[0].payload["content"]["body"],
+        "[redacted]"
+    );
+    assert_eq!(state.raw_operations[0].payload["redacted"], true);
+}
+
+#[test]
 fn realm_lifecycle_state_tracks_destroy_without_raw_operation_scan() {
     let path = temp_state_path("realm-lifecycle");
     let mut store = LocalStateStore::with_path(path.clone());

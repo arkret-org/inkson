@@ -322,6 +322,7 @@ fn chat_messages_from_event_list_with_sidecar(
     decrypt_identity: Option<(&str, &str)>,
 ) -> Vec<ChatMessage> {
     let mut messages = Vec::new();
+    let mut pending_revisions = Vec::<(String, ChatMessage)>::new();
     for event in events {
         let candidates = message_candidates(event);
         let revision_target_ref = message_revision_target_ref_from_candidates(&candidates);
@@ -330,12 +331,23 @@ fn chat_messages_from_event_list_with_sidecar(
         else {
             continue;
         };
-        if let Some(target_ref) = revision_target_ref
-            && fold_revision_message(&mut messages, &target_ref, message.clone())
-        {
+        if let Some(target_ref) = revision_target_ref {
+            if fold_revision_message(&mut messages, &target_ref, message.clone()) {
+                continue;
+            }
+            pending_revisions.push((target_ref, message));
             continue;
         }
         messages.push(message);
+        let mut index = 0;
+        while index < pending_revisions.len() {
+            let (target_ref, revision) = &pending_revisions[index];
+            if fold_revision_message(&mut messages, target_ref, revision.clone()) {
+                pending_revisions.remove(index);
+            } else {
+                index += 1;
+            }
+        }
     }
     apply_message_redactions(&mut messages, events);
     messages
@@ -472,7 +484,10 @@ pub(crate) fn verify_chat_envelope_proof(event: &Value) -> ChatProofVerdict {
     // / `raw`; scan the same candidate layers used elsewhere.
     let candidates = message_candidates(event);
     let envelope = candidates.iter().copied().find(|candidate| {
-        candidate.get("proofs").and_then(Value::as_array).is_some()
+        candidate
+            .get("proofs")
+            .and_then(Value::as_array)
+            .is_some_and(|proofs| !proofs.is_empty())
             && candidate.get("actor_id").and_then(Value::as_str).is_some()
     });
     let Some(envelope) = envelope else {

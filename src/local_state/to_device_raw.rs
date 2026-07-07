@@ -224,10 +224,17 @@ impl LocalStateStore {
         let operation_id = operation_id.into();
         let incoming_event_id = raw_payload_string(&payload, "event_id");
         let incoming_payload_operation_id = raw_payload_string(&payload, "operation_id");
+        let incoming_message_id = raw_payload_string(&payload, "message_id")
+            .filter(|_| raw_payload_is_message_create(&payload));
         let existing_index = self.cached.raw_operations.iter().position(|record| {
             record.operation_id == operation_id
                 || incoming_event_id.as_deref().is_some_and(|event_id| {
                     raw_payload_string(&record.payload, "event_id").as_deref() == Some(event_id)
+                })
+                || incoming_message_id.as_deref().is_some_and(|message_id| {
+                    raw_payload_is_message_create(&record.payload)
+                        && raw_payload_string(&record.payload, "message_id").as_deref()
+                            == Some(message_id)
                 })
                 || incoming_payload_operation_id
                     .as_deref()
@@ -377,6 +384,13 @@ fn raw_payload_string(payload: &Value, key: &str) -> Option<String> {
         .map(str::trim)
         .filter(|value| !value.is_empty())
         .map(ToOwned::to_owned)
+}
+
+fn raw_payload_is_message_create(payload: &Value) -> bool {
+    raw_operation_kind(payload) == Some("ck.message.create")
+        && raw_payload_string(payload, "message_id")
+            .as_deref()
+            .is_some_and(|message_id| message_id.starts_with("ck:message:"))
 }
 
 fn merge_synced_raw_operation_payload(existing: &Value, mut incoming: Value) -> Value {
