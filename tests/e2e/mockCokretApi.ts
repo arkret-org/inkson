@@ -1,5 +1,7 @@
 import { expect, type Page, type Route } from "@playwright/test";
-import { createHash } from "node:crypto";
+import { spawnSync } from "node:child_process";
+import { dirname, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 import { mockCokretContract } from "./mockCokretContract";
 
 const DEMO_REALM = "ck:realm:0196419b-0000-7000-8000-000000000000";
@@ -75,36 +77,94 @@ type MockAccountDevice = {
 };
 
 type MockCircleState = "active" | "archived" | "tombstoned";
+type YougenWireCommand = "canonical-json" | "sha256-canonical-json";
+type YougenWireCanonicalJson = { canonical: string };
+type YougenWireDigest = { digest: string };
+
+const yougenRepoRoot = resolve(
+  dirname(fileURLToPath(import.meta.url)),
+  "..",
+  "..",
+);
 
 function canonicalJson(value: unknown): string {
-  if (value === null) {
-    return "null";
-  }
-  if (typeof value === "boolean") {
-    return value ? "true" : "false";
-  }
-  if (typeof value === "number") {
-    if (!Number.isSafeInteger(value)) {
-      throw new Error(`non-canonical JSON number: ${value}`);
-    }
-    return String(value);
-  }
-  if (typeof value === "string") {
-    return JSON.stringify(value);
-  }
-  if (Array.isArray(value)) {
-    return `[${value.map(canonicalJson).join(",")}]`;
-  }
-  if (typeof value === "object" && value !== null) {
-    const object = value as Record<string, unknown>;
-    const keys = Object.keys(object).sort();
-    return `{${keys.map((key) => `${JSON.stringify(key)}:${canonicalJson(object[key])}`).join(",")}}`;
-  }
-  throw new Error(`unsupported canonical JSON value: ${String(value)}`);
+  assertJsonTransportable(value, "$");
+  return yougenWire<YougenWireCanonicalJson>("canonical-json", { value })
+    .canonical;
 }
 
 function canonicalSha256(value: unknown) {
-  return `sha256:${createHash("sha256").update(canonicalJson(value), "utf8").digest("hex")}`;
+  assertJsonTransportable(value, "$");
+  return yougenWire<YougenWireDigest>("sha256-canonical-json", { value })
+    .digest;
+}
+
+function yougenWire<T>(command: YougenWireCommand, input: unknown): T {
+  const binary = process.env.YOUGEN_WIRE_BIN;
+  const result = spawnSync(
+    binary ?? "cargo",
+    binary
+      ? [command]
+      : ["run", "--quiet", "--bin", "yougen-wire", "--", command],
+    {
+      cwd: yougenRepoRoot,
+      encoding: "utf8",
+      input: JSON.stringify(input),
+      maxBuffer: 10 * 1024 * 1024,
+    },
+  );
+  if (result.error) {
+    throw result.error;
+  }
+  if (result.status !== 0) {
+    throw new Error(
+      `yougen-wire ${command} failed with exit ${result.status}:\n${result.stderr}`,
+    );
+  }
+  return JSON.parse(result.stdout.trim()) as T;
+}
+
+function assertJsonTransportable(value: unknown, path: string): void {
+  if (value === null) {
+    return;
+  }
+
+  switch (typeof value) {
+    case "string":
+    case "boolean":
+      return;
+    case "number":
+      if (!Number.isFinite(value) || Object.is(value, -0)) {
+        throw new TypeError(`non-JSON number at ${path}: ${value}`);
+      }
+      return;
+    case "object":
+      break;
+    default:
+      throw new TypeError(`non-JSON value at ${path}: ${typeof value}`);
+  }
+
+  if (Array.isArray(value)) {
+    value.forEach((item, index) => {
+      if (item === undefined) {
+        throw new TypeError(`non-JSON undefined item at ${path}[${index}]`);
+      }
+      assertJsonTransportable(item, `${path}[${index}]`);
+    });
+    return;
+  }
+
+  const proto = Object.getPrototypeOf(value);
+  if (proto !== Object.prototype && proto !== null) {
+    throw new TypeError(`non-JSON object at ${path}`);
+  }
+
+  for (const [key, item] of Object.entries(value as Record<string, unknown>)) {
+    if (item === undefined) {
+      throw new TypeError(`non-JSON undefined member at ${path}.${key}`);
+    }
+    assertJsonTransportable(item, `${path}.${key}`);
+  }
 }
 
 function isDid(value: unknown): value is string {

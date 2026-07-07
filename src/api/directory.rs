@@ -218,10 +218,9 @@ fn parse_explicit_invite_target(target: &str) -> anyhow::Result<Option<InviteeRe
 fn resolved_handle_claim(
     resolved: &ResolveHandleView,
 ) -> anyhow::Result<Option<cokret_sdk::models::HandleClaim>> {
-    let Some(value) = resolved.handle_claim.as_ref() else {
+    let Some(claim) = resolved.handle_claim.clone() else {
         return Ok(None);
     };
-    let claim: cokret_sdk::models::HandleClaim = serde_json::from_value(value.clone())?;
     claim
         .validate()
         .map_err(|err| anyhow::anyhow!("directory returned invalid handle_claim: {err}"))?;
@@ -231,11 +230,7 @@ fn resolved_handle_claim(
 fn resolved_member_delivery_binding(
     resolved: &ResolveHandleView,
 ) -> anyhow::Result<Option<cokret_sdk::models::DeliveryBindingHint>> {
-    resolved
-        .member_delivery_binding_value()
-        .map(serde_json::from_value)
-        .transpose()
-        .map_err(Into::into)
+    Ok(resolved.member_delivery_binding_ref().cloned())
 }
 
 fn resolved_by_did(resolved: &ResolveHandleView) -> Option<cokret_sdk::Did> {

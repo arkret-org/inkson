@@ -778,15 +778,21 @@ mod tests {
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(transparent)]
+pub struct SnapshotBootstrapJson(pub Value);
+
+impl From<Value> for SnapshotBootstrapJson {
+    fn from(value: Value) -> Self {
+        Self(value)
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct BackfillView {
-    // `events` stays untyped: yougen's chat/kanban/poll parsers walk each event
-    // tree tolerantly (recursive `collect_message_candidates` over
-    // `payload`/`content`/… with multi-key field lookup) while the server
-    // returns canonical `EventsQueryOutcome` full Event envelopes.
     #[serde(default)]
-    pub events: Vec<Value>,
+    pub events: Vec<cokret_sdk::Event>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub snapshot_bootstrap: Option<Value>,
+    pub snapshot_bootstrap: Option<SnapshotBootstrapJson>,
     pub prev_cursor: Option<String>,
     pub next_cursor: Option<String>,
     // Spec `EventsQueryOutcome.has_more` (was the soland-local `limited`).
@@ -794,15 +800,23 @@ pub struct BackfillView {
     pub has_more: bool,
 }
 
+impl BackfillView {
+    /// UI projection code still has tolerant event walkers for historical
+    /// server shapes. Keep that leniency behind an explicit adapter so the
+    /// standard backfill response itself remains SDK typed.
+    pub fn event_values(&self) -> Vec<Value> {
+        self.events
+            .iter()
+            .filter_map(|event| serde_json::to_value(event).ok())
+            .collect()
+    }
+}
+
 impl From<cokret_sdk::EventsQueryOutcome> for BackfillView {
     fn from(outcome: cokret_sdk::EventsQueryOutcome) -> Self {
         Self {
-            events: outcome
-                .events
-                .into_iter()
-                .filter_map(|event| serde_json::to_value(event).ok())
-                .collect(),
-            snapshot_bootstrap: outcome.snapshot_bootstrap,
+            events: outcome.events,
+            snapshot_bootstrap: outcome.snapshot_bootstrap.map(Into::into),
             prev_cursor: outcome.prev_cursor,
             next_cursor: outcome.next_cursor,
             has_more: outcome.has_more,
@@ -849,16 +863,36 @@ pub use cokret_sdk::models::{
 pub type SearchOrganizationsView = cokret_sdk::models::DirectoryOrganizationSearchOutcome;
 pub type SearchActorsView = cokret_sdk::models::DirectoryActorSearchOutcome;
 
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[serde(transparent)]
+pub struct DirectoryClaimsJson(pub Value);
+
+impl From<Value> for DirectoryClaimsJson {
+    fn from(value: Value) -> Self {
+        Self(value)
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(transparent)]
+pub struct DirectoryDidDocumentJson(pub Value);
+
+impl std::fmt::Display for DirectoryDidDocumentJson {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.0)
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct ResolveHandleView {
     #[serde(default, alias = "subject")]
     pub did: String,
     pub handle: String,
-    pub did_document: Option<Value>,
+    pub did_document: Option<DirectoryDidDocumentJson>,
     #[serde(default)]
     pub verified: bool,
     #[serde(default)]
-    pub claims: Value,
+    pub claims: DirectoryClaimsJson,
     /// Audience the directory bound the response claim to. Spec 0a5ab85:
     /// the client MUST reject claims whose audience doesn't match the
     /// invocation context (e.g. the Space the user is about to join).
@@ -868,12 +902,10 @@ pub struct ResolveHandleView {
     /// Some directory implementations expose this top-level; others carry
     /// the same object inside `handle_claim.member_delivery_binding`.
     #[serde(default)]
-    pub member_delivery_binding: Option<Value>,
-    /// Raw handle claim envelope when the directory issued one. Shape
-    /// conforms to `handle-claim.schema.json` — typed deserialization is
-    /// TODO(spec-sync 0a5ab85) once we depend on the SDK `HandleClaim`.
+    pub member_delivery_binding: Option<cokret_sdk::models::DeliveryBindingHint>,
+    /// Typed handle claim envelope when the directory issued one.
     #[serde(default)]
-    pub handle_claim: Option<Value>,
+    pub handle_claim: Option<cokret_sdk::models::HandleClaim>,
     /// §9.1 common resolve metadata.
     #[serde(default)]
     pub as_of: Option<String>,
@@ -896,8 +928,8 @@ impl ResolveHandleView {
             .or_else(|| {
                 self.handle_claim
                     .as_ref()
-                    .and_then(|claim| claim.get("subject"))
-                    .and_then(Value::as_str)
+                    .and_then(|claim| claim.subject.as_ref())
+                    .map(|subject| subject.as_str())
             })
     }
 
@@ -905,50 +937,37 @@ impl ResolveHandleView {
         self.audience.as_deref().or_else(|| {
             self.handle_claim
                 .as_ref()
-                .and_then(|claim| claim.get("audience"))
-                .and_then(Value::as_str)
+                .and_then(|claim| claim.audience.as_deref())
         })
     }
 
     pub fn has_member_delivery_binding(&self) -> bool {
-        self.member_delivery_binding.is_some()
-            || self
-                .handle_claim
-                .as_ref()
-                .and_then(|claim| claim.get("member_delivery_binding"))
-                .is_some()
+        self.member_delivery_binding_ref().is_some()
     }
 
-    pub fn member_delivery_binding_value(&self) -> Option<Value> {
-        self.member_delivery_binding.clone().or_else(|| {
+    pub fn member_delivery_binding_ref(&self) -> Option<&cokret_sdk::models::DeliveryBindingHint> {
+        self.member_delivery_binding.as_ref().or_else(|| {
             self.handle_claim
                 .as_ref()
-                .and_then(|claim| claim.get("member_delivery_binding"))
-                .cloned()
+                .and_then(|claim| claim.member_delivery_binding.as_ref())
         })
     }
 }
 
 impl From<cokret_sdk::models::DirectoryHandleResolutionOutcome> for ResolveHandleView {
     fn from(outcome: cokret_sdk::models::DirectoryHandleResolutionOutcome) -> Self {
-        // The typed `handle_claim` / `member_delivery_binding` are folded back
-        // into `Value` so the existing lenient UI accessors keep working. The
-        // server-side `DirectoryHandleResolutionOutcome` has no `did_document`
-        // field (this resolve endpoint never emits one), so it is always `None`
-        // here — behavior-equivalent to the prior wire decode.
+        // The server-side `DirectoryHandleResolutionOutcome` has no
+        // `did_document` field (this resolve endpoint never emits one), so it
+        // is always `None` here — behavior-equivalent to the prior wire decode.
         Self {
             did: outcome.did.as_str().to_owned(),
             handle: outcome.handle,
             did_document: None,
             verified: outcome.verified,
-            claims: outcome.claims,
+            claims: outcome.claims.into(),
             audience: outcome.audience,
-            member_delivery_binding: outcome
-                .member_delivery_binding
-                .and_then(|binding| serde_json::to_value(binding).ok()),
-            handle_claim: outcome
-                .handle_claim
-                .and_then(|claim| serde_json::to_value(claim).ok()),
+            member_delivery_binding: outcome.member_delivery_binding,
+            handle_claim: outcome.handle_claim,
             as_of: outcome
                 .as_of
                 .map(|as_of| as_of.to_rfc3339_opts(chrono::SecondsFormat::Secs, true)),

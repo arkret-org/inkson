@@ -121,7 +121,8 @@ pub fn AgentsPanel(
                     // Phase C — every interop-session event in causal
                     // order so the live transcript can be folded.
                     let mut session_events: Vec<Value> = Vec::new();
-                    for event in resp.events.iter() {
+                    let event_values = resp.event_values();
+                    for event in event_values.iter() {
                         let kind = event
                             .get("event_kind")
                             .and_then(Value::as_str)

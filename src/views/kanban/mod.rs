@@ -1048,11 +1048,12 @@ pub fn KanbanPanel(
             // switcher. `ingest_kanban_events` handles the backfill event shape
             // (`event_kind`/`kind`, `operation_id`/`event_id`) and dedups by id.
             if let Some(resp) = events_res.as_ref() {
+                let event_values = resp.event_values();
                 let mut guard = state_store.write();
                 crate::sync_engine::ingest_kanban_events(
                     &mut guard,
                     &lifecycle_realm_id,
-                    &resp.events,
+                    &event_values,
                 );
             }
 
@@ -1066,7 +1067,7 @@ pub fn KanbanPanel(
             }
             let remote_update_operations = events_res
                 .as_ref()
-                .map(|resp| strand_update_operations_from_events(&resp.events))
+                .map(|resp| strand_update_operations_from_events(&resp.event_values()))
                 .unwrap_or_default();
             match with_authed_api(&base, api_token, |api| async move {
                 api.collection_projection(&view).await
@@ -1259,11 +1260,12 @@ pub fn KanbanPanel(
                     return;
                 }
                 if let Ok(backfill) = events_res {
+                    let event_values = backfill.event_values();
                     let mut store = state_store.write();
                     crate::sync_engine::ingest_kanban_events(
                         &mut store,
                         &lifecycle_local_realm_id,
-                        &backfill.events,
+                        &event_values,
                     );
                 }
             }
@@ -1355,7 +1357,7 @@ pub fn KanbanPanel(
                             let events = api
                                 .backfill(&realm_for_fetch)
                                 .await
-                                .map(|response| response.events)
+                                .map(|response| response.event_values())
                                 .unwrap_or_default();
                             Ok((payload, events))
                         })
@@ -1462,6 +1464,7 @@ pub fn KanbanPanel(
                 return;
             }
             if let Ok(backfill) = events_res {
+                let event_values = backfill.event_values();
                 // Event-sourced cold start (spec
                 // `cotask/specs/active/2026-06-29-kanban-event-sourced-projection.md`):
                 // fold the durable event log into `raw_operations`. The `columns`
@@ -1473,7 +1476,7 @@ pub fn KanbanPanel(
                 crate::sync_engine::ingest_kanban_events(
                     &mut store,
                     &lifecycle_local_realm_id,
-                    &backfill.events,
+                    &event_values,
                 );
             }
         });
@@ -2056,7 +2059,7 @@ pub fn KanbanPanel(
                                                     };
                                                     let remote_update_operations = events_res
                                                         .as_ref()
-                                                        .map(|resp| strand_update_operations_from_events(&resp.events))
+                                                        .map(|resp| strand_update_operations_from_events(&resp.event_values()))
                                                         .unwrap_or_default();
                                                     match with_authed_api(&base, api_token, |api| async move {
                                                         api.collection_projection(&view).await

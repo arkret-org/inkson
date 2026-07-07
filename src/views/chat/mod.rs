@@ -938,26 +938,27 @@ pub fn ChatPanel(
             if !selected_realm_for_load.trim().is_empty()
                 && let Ok(backfill) = api.backfill(&selected_realm_for_load).await
             {
+                let backfill_events = backfill.event_values();
                 crate::sync_engine::prefetch_persistent_event_sender_keys_from_values(
                     &api,
-                    &backfill.events,
+                    &backfill_events,
                     did_cache,
                 )
                 .await;
                 merge_channels(
                     &mut channels.write(),
-                    channels_from_events(&selected_realm_for_load, &backfill.events),
+                    channels_from_events(&selected_realm_for_load, &backfill_events),
                 );
                 loaded_messages.extend(chat_messages_from_events_with_sidecar(
                     &selected_realm_for_load,
-                    &backfill.events,
+                    &backfill_events,
                     Some(&state_store.read()),
                     decrypt_identity,
                 ));
-                loaded_poll_cards.extend(poll_cards_from_events(&backfill.events));
+                loaded_poll_cards.extend(poll_cards_from_events(&backfill_events));
                 loaded_moderation_appeal_prompts.extend(moderation_appeal_prompts_from_events(
                     &selected_realm_for_load,
-                    &backfill.events,
+                    &backfill_events,
                     &account_did_for_load,
                 ));
             }
