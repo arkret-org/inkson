@@ -4,7 +4,9 @@ mod personal_agent_tests {
 
     use super::super::*;
     use crate::views::agents::model::{
-        build_agent_key_authorize_event_for_pairing, parse_savfox_runtime_key_approval_request,
+        build_agent_key_authorize_event_for_pairing, build_savfox_pairing_deep_link,
+        parse_savfox_runtime_key_approval_request, render_savfox_pairing_qr_svg,
+        runtime_key_pairing_error_message, summarize_savfox_runtime_key_approval_request,
     };
 
     #[test]
@@ -294,6 +296,105 @@ mod personal_agent_tests {
         );
         assert!(!raw.contains("private_key"));
         assert!(!raw.contains("/auth/account/agent-pair"));
+    }
+
+    #[test]
+    fn savfox_deep_link_wraps_the_same_bootstrap_json() {
+        const REALM: &str = "ck:realm:01904100-0000-7000-8000-000000000001";
+        let scope = requested_scope_for_presets(
+            &[AgentGrantPreset::Read],
+            &[AgentServiceScopePreset::SubscribeEvents],
+            Some(REALM),
+        )
+        .unwrap();
+        let outcome = cokret_sdk::AgentProvisionOutcome {
+            agent_principal_id: cokret_sdk::Did::new("did:web:agents.example:summary").unwrap(),
+            pairing_request_id: "0197-req".to_owned(),
+            pairing_code: Some("123456".to_owned()),
+            expires_at: chrono::DateTime::parse_from_rfc3339("2026-06-26T00:00:00Z")
+                .unwrap()
+                .with_timezone(&chrono::Utc),
+        };
+        let raw = build_savfox_pairing_bootstrap_json(
+            "https://cokret.example/",
+            "did:web:cokret.example",
+            &outcome,
+            &scope,
+            &[AgentGrantPreset::Read],
+        )
+        .unwrap();
+
+        let deep_link = build_savfox_pairing_deep_link(&raw);
+        let encoded = deep_link
+            .strip_prefix("savfox://cokret/pair?request=")
+            .expect("deep link carries request parameter");
+        let decoded = cokret_sdk::base64url_decode(encoded).unwrap();
+
+        assert_eq!(String::from_utf8(decoded).unwrap(), raw);
+        assert!(!deep_link.contains("private_key"));
+    }
+
+    #[test]
+    fn savfox_pairing_qr_renders_deep_link_svg() {
+        let svg = render_savfox_pairing_qr_svg("savfox://cokret/pair?request=abc");
+
+        assert!(svg.contains("<svg"));
+        assert!(svg.contains("</svg>"));
+    }
+
+    #[test]
+    fn runtime_key_request_summary_exposes_sdk_fingerprint() {
+        let verification_method = "did:web:agents.example:summary#runtime-key-1";
+        let raw = serde_json::json!({
+            "pairing_request_id": "agent_pairing_request:01999999-0000-7000-8000-00000000feed",
+            "agent_principal_id": "did:web:agents.example:summary",
+            "verification_method": verification_method,
+            "public_key": {
+                "kty": "OKP",
+                "kid": verification_method,
+                "alg": "Ed25519",
+                "key": cokret_sdk::base64url_encode([9u8; 32]),
+            },
+            "proof_of_possession": {
+                "challenge": "agent_pairing_request:01999999-0000-7000-8000-00000000feed",
+                "audience": "did:web:cokret.example",
+                "request_canonical_digest": format!("sha256:{}", "0".repeat(64)),
+                "expires_at": "2026-07-06T00:15:00.000Z",
+                "signature": cokret_sdk::base64url_encode([1u8; 64]),
+            },
+        })
+        .to_string();
+        let summary = summarize_savfox_runtime_key_approval_request(&raw).unwrap();
+        let request = parse_savfox_runtime_key_approval_request(&raw).unwrap();
+        let expected =
+            cokret_sdk::agent::agent_runtime_public_key_digest(&request.public_key).unwrap();
+
+        assert_eq!(summary.public_key_fingerprint, expected.as_str());
+        assert_eq!(summary.verification_method, verification_method);
+        assert_eq!(summary.proof_expires_at, "2026-07-06T00:15:00.000Z");
+    }
+
+    #[test]
+    fn runtime_key_pairing_error_message_classifies_known_failures() {
+        assert!(
+            runtime_key_pairing_error_message("pairing_request_expired")
+                .contains("Pairing expired")
+        );
+        assert!(
+            runtime_key_pairing_error_message("runtime request pairing_request_id mismatch")
+                .contains("Wrong pairing request or code")
+        );
+        assert!(
+            runtime_key_pairing_error_message("public_key.kid does not match verification_method")
+                .contains("Runtime key mismatch")
+        );
+        assert!(
+            runtime_key_pairing_error_message("wrong controller principal")
+                .contains("Controller mismatch")
+        );
+        assert!(
+            runtime_key_pairing_error_message("database unavailable").contains("Server rejected")
+        );
     }
 
     #[test]

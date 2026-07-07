@@ -2,13 +2,12 @@
 //!
 //! Renders the agent endpoint list / register form, the active protocol
 //! sessions, the audit-bound results, the soland-fetched verified
-//! results poll, and the G3.Y4 protocol-handoff surface. The
-//! personal-agent admin lives in [`super::admin::PersonalAgentAdminPanel`].
+//! results poll, and the G3.Y4 protocol-handoff surface. Personal-agent
+//! administration is mounted only from Settings -> My Agents.
 
 use dioxus::prelude::*;
 use serde_json::Value;
 
-use super::admin::PersonalAgentAdminPanel;
 use super::model::{
     AuditChainVerifyOutcome, HandoffState, InteropApprovalState, LiveSessionRow, PublishModalState,
     live_session_rows, verify_agent_audit_binding, verify_audit_chain,
@@ -1118,15 +1117,6 @@ pub fn AgentsPanel(
                         }
                     }
                 }
-            }
-
-            // CKP-0008 / CKP-0009 — Personal Agent admin (B-A / P3-A).
-            // The 11 soland HTTP operations + actor_kind badges + sidecar
-            // exposure disclosure live in their own panel below.
-            PersonalAgentAdminPanel {
-                base_url: base_url.clone(),
-                token,
-                controller_did: account_did.clone(),
             }
         }
     }

@@ -305,6 +305,11 @@ export function registerStrandsBeforeEach() {
       )
         ? null
         : undefined,
+      personalAgentPairingExpiresAt: testInfo.title.startsWith(
+        "expired personal agent pairing",
+      )
+        ? "2000-01-01T00:00:00Z"
+        : undefined,
     });
     if (testInfo.title.startsWith("login page")) {
       return;

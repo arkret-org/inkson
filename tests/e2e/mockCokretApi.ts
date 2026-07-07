@@ -65,6 +65,7 @@ type MockCokretApiOptions = {
   enableDeviceEnrollment?: boolean;
   includeDemoRealms?: boolean;
   includeLowFloorRealm?: boolean;
+  personalAgentPairingExpiresAt?: string;
 };
 
 type MockAccountDevice = {
@@ -228,6 +229,8 @@ export async function mockCokretApi(
     options.currentDeviceId ?? "ck:device:01964137-0000-7000-8000-0000000000a1";
   const includeDemoRealms = options.includeDemoRealms ?? true;
   const includeLowFloorRealm = options.includeLowFloorRealm ?? false;
+  const personalAgentPairingExpiresAt =
+    options.personalAgentPairingExpiresAt ?? "2099-07-06T00:10:00Z";
   const accountDevices = new Map<string, MockAccountDevice>();
   for (const device of options.accountDevices ?? [
     {
@@ -273,6 +276,7 @@ export async function mockCokretApi(
   let recoveryPolicy: Record<string, unknown> | null = null;
   const keyBackups = new Map<string, Record<string, unknown>>();
   const personalAgents = new Map<string, Record<string, unknown>>();
+  const personalAgentKeyStates = new Map<string, Record<string, unknown>>();
   const personalAgentGrants = new Map<string, Array<Record<string, unknown>>>();
   let personalAgentCounter = 0;
   const eventRealmId = (event: Record<string, unknown>) =>
@@ -1946,13 +1950,21 @@ export async function mockCokretApi(
         requested_scope: body.requested_scope ?? null,
         controller_principal_id: accountPrincipalId,
       };
+      const keyState = {
+        status: "pending_runtime_key",
+        pairing_request_id: `pair-${personalAgentCounter}`,
+        pairing_code: "246810",
+        pairing_expires_at: personalAgentPairingExpiresAt,
+        requested_scope: body.requested_scope ?? null,
+      };
       personalAgents.set(agentPrincipalId, agent);
+      personalAgentKeyStates.set(agentPrincipalId, keyState);
       personalAgentGrants.set(agentPrincipalId, []);
       return json(route, {
         agent_principal_id: agentPrincipalId,
-        pairing_request_id: `pair-${personalAgentCounter}`,
-        pairing_code: "246810",
-        expires_at: "2099-07-06T00:10:00Z",
+        pairing_request_id: keyState.pairing_request_id,
+        pairing_code: keyState.pairing_code,
+        expires_at: keyState.pairing_expires_at,
       });
     }
 
@@ -1998,7 +2010,47 @@ export async function mockCokretApi(
         agent,
         status: agent.status ?? "pending_runtime_key",
         grants: personalAgentGrants.get(agentPrincipalId) ?? [],
-        key_state: null,
+        key_state: personalAgentKeyStates.get(agentPrincipalId) ?? null,
+      });
+    }
+
+    if (
+      url.pathname === "/_cokret/gate/account/agent-key-pair" &&
+      route.request().method() === "POST"
+    ) {
+      const body = ((await contractRequestBody(route)) ?? {}) as Record<
+        string,
+        unknown
+      >;
+      const agentPrincipalId = String(body.agent_principal_id ?? "");
+      const agent = personalAgents.get(agentPrincipalId);
+      if (!agent) {
+        return json(
+          route,
+          {
+            ok: false,
+            error: { code: "not_found", message: "agent not found" },
+          },
+          404,
+        );
+      }
+      const authorizedEventRef =
+        "ck:event:01964137-0000-7000-8000-00000000a601";
+      agent.status = "active";
+      agent.updated_at = "2026-07-06T00:05:00Z";
+      const previousKeyState = personalAgentKeyStates.get(agentPrincipalId) ?? {};
+      personalAgentKeyStates.set(agentPrincipalId, {
+        ...previousKeyState,
+        status: "active",
+        verification_method: body.verification_method,
+        public_key: body.public_key,
+        authorized_event_ref: authorizedEventRef,
+      });
+      return json(route, {
+        agent_principal_id: agentPrincipalId,
+        status: "active",
+        authorized_event_ref: authorizedEventRef,
+        verification_method: body.verification_method,
       });
     }
 

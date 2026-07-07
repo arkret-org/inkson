@@ -283,21 +283,119 @@ test("account settings split account/server info and surface personal agents", a
   const bootstrap = JSON.parse(
     (await page.getByTestId("agent-admin-savfox-bootstrap-json").innerText()).trim(),
   );
-  expect(bootstrap.bootstrap_kind).toBe("cokret.savfox.agent_pairing_bootstrap.v1");
+  expect(bootstrap.schema).toBe("ck.schema.agent_pairing_bootstrap.v1");
   expect(bootstrap.agent_principal_id).toBe("did:web:agents.example:summary");
   expect(bootstrap.pairing_code).toBe("246810");
-  expect(bootstrap.requested_service_scope).toEqual([
+  expect(bootstrap.service_scope).toEqual([
     "ck.self.events.stream.subscribe",
     "ck.self.events.query.scan",
     "ck.self.events.command.submit",
   ]);
   expect(JSON.stringify(bootstrap)).not.toContain("private_key");
+  await expect(page.getByTestId("agent-state-badge")).toHaveAttribute(
+    "data-state",
+    "pending_runtime_key",
+  );
   await expect(page.getByTestId("agent-admin-pairing-url")).toHaveCount(0);
   await expect(page.getByTestId("agent-admin-pairing-open-button")).toHaveCount(0);
+  const runtimeVerificationMethod = `${bootstrap.agent_principal_id}#runtime-key-1`;
+  const runtimeKeyRequest = {
+    pairing_request_id: bootstrap.pairing_request_id,
+    agent_principal_id: bootstrap.agent_principal_id,
+    verification_method: runtimeVerificationMethod,
+    public_key: {
+      kty: "OKP",
+      kid: runtimeVerificationMethod,
+      alg: "Ed25519",
+      key: Buffer.from(new Uint8Array(32).fill(9)).toString("base64url"),
+    },
+    proof_of_possession: {
+      challenge: bootstrap.pairing_request_id,
+      audience: "did:web:server.local",
+      request_canonical_digest: `sha256:${"0".repeat(64)}`,
+      expires_at: "2099-07-06T00:15:00.000Z",
+      signature: Buffer.from(new Uint8Array(64).fill(1)).toString("base64url"),
+    },
+    runtime_attestation: {
+      kind: "self_asserted",
+    },
+  };
+  await page
+    .getByTestId("agent-admin-runtime-key-request-json")
+    .fill(
+      JSON.stringify({
+        ...runtimeKeyRequest,
+        agent_principal_id: "did:web:agents.example:wrong-agent",
+      }),
+    );
+  await page.getByTestId("agent-admin-approve-runtime-key-button").click();
+  await expect(page.getByTestId("agent-admin-last-op")).toContainText(
+    "Wrong pairing request or code",
+  );
+  await page
+    .getByTestId("agent-admin-runtime-key-request-json")
+    .fill(JSON.stringify(runtimeKeyRequest));
+  await expect(page.getByTestId("agent-admin-runtime-key-request-preview")).toBeVisible();
+  const pairRequest = page.waitForRequest(
+    (request) =>
+      request.method() === "POST" &&
+      new URL(request.url()).pathname === "/_cokret/gate/account/agent-key-pair",
+  );
+  await page.getByTestId("agent-admin-approve-runtime-key-button").click();
+  const pairBody = (await pairRequest).postDataJSON();
+  expect(pairBody.agent_principal_id).toBe(bootstrap.agent_principal_id);
+  expect(pairBody.pairing_request_id).toBe(bootstrap.pairing_request_id);
+  expect(pairBody.verification_method).toBe(runtimeVerificationMethod);
+  expect(JSON.stringify(pairBody)).not.toContain("private_key");
+  await expect(page.getByTestId("agent-state-badge")).toHaveAttribute("data-state", "active");
+  await expect(page.getByTestId("agent-admin-runtime-key-authorized")).toContainText(
+    "ck:event:01964137",
+  );
   await expect(page.getByTestId("agent-admin-participation")).toBeVisible();
   await expect(page.getByTestId("agent-admin-participation-realm-input")).toBeVisible();
   await expect(page.getByTestId("agent-admin-participation-reply")).toBeVisible();
   await expect(page.getByTestId("agent-admin-participation-mention")).toBeVisible();
+});
+
+test("expired personal agent pairing shows actionable runtime key error", async ({ page }) => {
+  await writeSessionGrantInjection(page);
+  await page.reload({ waitUntil: "domcontentloaded" });
+  await dismissBlockingRecoveryModal(page);
+
+  await gotoAndDismissRecovery(page, "/settings/agents");
+  await expect(page.getByTestId("personal-agent-admin")).toBeVisible();
+  await page.getByTestId("agent-admin-create-open-button").click();
+  await page.getByTestId("agent-admin-provision-realm-input").fill(DEMO_REALM);
+  await page.getByTestId("agent-admin-provision-button").click();
+  await expect(page.getByTestId("agent-admin-pairing-card")).toBeVisible();
+  await expect(page.getByTestId("agent-admin-pairing-card")).toContainText("Expired");
+
+  const bootstrap = JSON.parse(
+    (await page.getByTestId("agent-admin-savfox-bootstrap-json").innerText()).trim(),
+  );
+  const runtimeVerificationMethod = `${bootstrap.agent_principal_id}#runtime-key-1`;
+  await page.getByTestId("agent-admin-runtime-key-request-json").fill(
+    JSON.stringify({
+      pairing_request_id: bootstrap.pairing_request_id,
+      agent_principal_id: bootstrap.agent_principal_id,
+      verification_method: runtimeVerificationMethod,
+      public_key: {
+        kty: "OKP",
+        kid: runtimeVerificationMethod,
+        alg: "Ed25519",
+        key: Buffer.from(new Uint8Array(32).fill(9)).toString("base64url"),
+      },
+      proof_of_possession: {
+        challenge: bootstrap.pairing_request_id,
+        audience: "did:web:server.local",
+        request_canonical_digest: `sha256:${"0".repeat(64)}`,
+        expires_at: "2099-07-06T00:15:00.000Z",
+        signature: Buffer.from(new Uint8Array(64).fill(1)).toString("base64url"),
+      },
+    }),
+  );
+  await page.getByTestId("agent-admin-approve-runtime-key-button").click();
+  await expect(page.getByTestId("agent-admin-last-op")).toContainText("Pairing expired");
 });
 
 test("diagnostic and preview surfaces stay behind clear user-facing states", async ({ page }) => {

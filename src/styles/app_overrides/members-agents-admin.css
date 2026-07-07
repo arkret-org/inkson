@@ -554,6 +554,21 @@
   overflow-wrap: anywhere;
 }
 
+.agent-admin-qr {
+  width: 192px;
+  max-width: 100%;
+  padding: 8px;
+  border: 1px solid color-mix(in srgb, var(--border) 78%, transparent);
+  border-radius: 8px;
+  background: var(--surface);
+}
+
+.agent-admin-qr svg {
+  display: block;
+  width: 100%;
+  height: auto;
+}
+
 /* Inline member search. Full-width, sits between header and rows. */
 .member-search-input {
   width: 100%;

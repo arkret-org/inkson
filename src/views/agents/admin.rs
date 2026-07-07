@@ -19,9 +19,10 @@ use yoface::utils::dom::copy_text_to_clipboard;
 use super::model::{
     AgentGrantPreset, AgentServiceScopePreset, agent_state_badge_class, agent_state_label,
     agent_view_from_directory_row, build_agent_key_authorize_event_for_pairing,
-    build_savfox_pairing_bootstrap_json, expand_preset_grant, is_pairing_request_expired,
-    parse_savfox_runtime_key_approval_request, participation_ceiling_reason,
-    requested_scope_for_presets,
+    build_savfox_pairing_bootstrap_json, build_savfox_pairing_deep_link, expand_preset_grant,
+    is_pairing_request_expired, parse_savfox_runtime_key_approval_request,
+    participation_ceiling_reason, render_savfox_pairing_qr_svg, requested_scope_for_presets,
+    runtime_key_pairing_error_message, summarize_savfox_runtime_key_approval_request,
 };
 use crate::ui::button::{Button, ButtonVariant};
 use crate::ui::checkbox::Checkbox;
@@ -249,6 +250,16 @@ pub fn PersonalAgentAdminPanel(
         .and_then(Value::as_str)
         .unwrap_or_default()
         .to_owned();
+    let selected_pairing_expires_at = selected_key_state_value
+        .get("pairing_expires_at")
+        .and_then(Value::as_str)
+        .unwrap_or_default()
+        .to_owned();
+    let selected_requested_scope_value = selected_key_state_value
+        .get("requested_scope")
+        .cloned()
+        .unwrap_or(Value::Null);
+    let selected_requested_scope = json_inline(&selected_requested_scope_value);
     let selected_authorized_event_ref = selected_key_state_value
         .get("authorized_event_ref")
         .and_then(Value::as_str)
@@ -263,6 +274,17 @@ pub fn PersonalAgentAdminPanel(
         .map(|agent| agent_field(agent, "updated_at"))
         .unwrap_or_default();
     let owner_label = short_protocol_id(&controller_did);
+    let runtime_key_request_preview = {
+        let raw = runtime_key_request_json();
+        if raw.trim().is_empty() {
+            None
+        } else {
+            Some(
+                summarize_savfox_runtime_key_approval_request(&raw)
+                    .map_err(runtime_key_pairing_error_message),
+            )
+        }
+    };
 
     rsx! {
         div { class: "agent-admin-page", "data-testid": "personal-agent-admin",
@@ -755,6 +777,10 @@ pub fn PersonalAgentAdminPanel(
                                 let pairing_code = outcome.pairing_code.clone();
                                 let expires_at = outcome.expires_at.to_rfc3339();
                                 let bootstrap_json = pairing_bootstrap_json().unwrap_or_else(|| "{}".to_owned());
+                                let deep_link = build_savfox_pairing_deep_link(&bootstrap_json);
+                                let pairing_qr_svg = render_savfox_pairing_qr_svg(&deep_link);
+                                let requested_scope = selected_requested_scope.clone();
+                                let display_name = selected_title.clone();
                                 let pairing_expired =
                                     is_pairing_request_expired(&expires_at, &crate::clock::now_rfc3339_secs());
                                 let pairing_badge = if pairing_expired { "badge red" } else { "badge green" };
@@ -774,6 +800,10 @@ pub fn PersonalAgentAdminPanel(
                                         }
                                         div { class: "metric-grid",
                                             div { class: "metric",
+                                                strong { "Agent" }
+                                                span { "data-testid": "agent-admin-pairing-agent-display-name", "{display_name}" }
+                                            }
+                                            div { class: "metric",
                                                 strong { "Pairing code" }
                                                 if let Some(code) = pairing_code.clone() {
                                                     span { class: "mono", "data-testid": "agent-admin-pairing-code", "{code}" }
@@ -785,9 +815,33 @@ pub fn PersonalAgentAdminPanel(
                                                 strong { "Request" }
                                                 span { class: "mono", "data-testid": "agent-admin-pairing-request-id", "{request_id}" }
                                             }
+                                            div { class: "metric",
+                                                strong { "Expires" }
+                                                span { class: "mono", "data-testid": "agent-admin-pairing-expires-at", "{expires_at}" }
+                                            }
+                                        }
+                                        div { class: "metric",
+                                            strong { "Requested scope" }
+                                            span {
+                                                class: "mono agent-admin-json",
+                                                "data-testid": "agent-admin-pairing-requested-scope",
+                                                "{requested_scope}"
+                                            }
                                         }
                                         div { class: "muted",
                                             "After Savfox returns a runtime key request, paste it into the approval panel below. Yougen will sign ck.agent.key.authorize with this controller and complete the key-pair request."
+                                        }
+                                        pre {
+                                            class: "agent-admin-url",
+                                            "data-testid": "agent-admin-savfox-deep-link",
+                                            "{deep_link}"
+                                        }
+                                        if !pairing_qr_svg.is_empty() {
+                                            div {
+                                                class: "agent-admin-qr",
+                                                "data-testid": "agent-admin-savfox-bootstrap-qr",
+                                                dangerous_inner_html: "{pairing_qr_svg}",
+                                            }
                                         }
                                         pre {
                                             class: "agent-admin-url",
@@ -804,6 +858,16 @@ pub fn PersonalAgentAdminPanel(
                                                     move |_| copy_text_to_clipboard(&bootstrap_json)
                                                 },
                                                 "Copy bootstrap"
+                                            }
+                                            Button {
+                                                variant: ButtonVariant::Secondary,
+                                                "data-testid": "agent-admin-copy-savfox-deep-link-button",
+                                                disabled: pairing_expired,
+                                                onclick: {
+                                                    let deep_link = deep_link.clone();
+                                                    move |_| copy_text_to_clipboard(&deep_link)
+                                                },
+                                                "Copy deep link"
                                             }
                                         }
                                     }
@@ -832,6 +896,48 @@ pub fn PersonalAgentAdminPanel(
                                     value: "{runtime_key_request_json}",
                                     oninput: move |event: FormEvent| runtime_key_request_json.set(event.value()),
                                 }
+                                if let Some(Ok(summary)) = runtime_key_request_preview.as_ref() {
+                                    div { class: "metric-grid", "data-testid": "agent-admin-runtime-key-request-preview",
+                                        div { class: "metric",
+                                            strong { "Runtime key" }
+                                            span {
+                                                class: "mono",
+                                                "data-testid": "agent-admin-runtime-key-fingerprint",
+                                                "{summary.public_key_fingerprint}"
+                                            }
+                                        }
+                                        div { class: "metric",
+                                            strong { "Verification method" }
+                                            span { class: "mono", "{summary.verification_method}" }
+                                        }
+                                        div { class: "metric",
+                                            strong { "Pairing request" }
+                                            span { class: "mono", "{summary.pairing_request_id}" }
+                                        }
+                                        div { class: "metric",
+                                            strong { "Proof expires" }
+                                            if summary.proof_expires_at.is_empty() {
+                                                span { class: "muted", "Not reported" }
+                                            } else {
+                                                span { class: "mono", "{summary.proof_expires_at}" }
+                                            }
+                                        }
+                                    }
+                                    div { class: "metric",
+                                        strong { "Requested scope" }
+                                        span {
+                                            class: "mono agent-admin-json",
+                                            "data-testid": "agent-admin-runtime-requested-scope",
+                                            "{selected_requested_scope}"
+                                        }
+                                    }
+                                } else if let Some(Err(message)) = runtime_key_request_preview.as_ref() {
+                                    div {
+                                        class: "agent-admin-status error",
+                                        "data-testid": "agent-admin-runtime-key-request-error",
+                                        "{message}"
+                                    }
+                                }
                                 div { class: "actions",
                                     Button {
                                         variant: ButtonVariant::Primary,
@@ -844,19 +950,29 @@ pub fn PersonalAgentAdminPanel(
                                             let selected_id = selected_id_now.clone();
                                             move |_| {
                                                 let raw = runtime_key_request_json();
+                                                if is_pairing_request_expired(
+                                                    &selected_pairing_expires_at,
+                                                    &crate::clock::now_rfc3339_secs(),
+                                                ) {
+                                                    last_op_status.set(runtime_key_pairing_error_message(
+                                                        "pairing_request_expired",
+                                                    ));
+                                                    return;
+                                                }
                                                 let request = match parse_savfox_runtime_key_approval_request(&raw) {
                                                     Ok(request) => request,
                                                     Err(err) => {
                                                         last_op_status.set(format!(
-                                                            "Runtime key request JSON is invalid: {err}"
+                                                            "Runtime key request JSON is invalid. {}",
+                                                            runtime_key_pairing_error_message(err)
                                                         ));
                                                         return;
                                                     }
                                                 };
                                                 if request.agent_principal_id.as_str() != selected_id {
-                                                    last_op_status.set(
-                                                        "Runtime key request targets a different agent.".to_owned(),
-                                                    );
+                                                    last_op_status.set(runtime_key_pairing_error_message(
+                                                        "runtime key request targets a different agent",
+                                                    ));
                                                     return;
                                                 }
                                                 let base = base.clone();
@@ -915,8 +1031,8 @@ pub fn PersonalAgentAdminPanel(
                                                             ));
                                                         }
                                                         Err(err) => last_op_status.set(format!(
-                                                            "Runtime key approval failed: {}",
-                                                            err.display()
+                                                            "Runtime key approval failed. {}",
+                                                            runtime_key_pairing_error_message(err.display())
                                                         )),
                                                     }
                                                 });

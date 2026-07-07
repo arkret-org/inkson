@@ -119,7 +119,7 @@ pub(super) fn route_label(route: &Route) -> &'static str {
         Route::Onboarding => "Onboarding",
         Route::Quarantine => "Invite Quarantine",
         Route::Applets => "Applets",
-        Route::Agents => "Agents",
+        Route::Agents => "Agent protocol lab",
         Route::Search => "Search",
     }
 }

@@ -31,7 +31,7 @@
 //! `crate::views::agents::*` stays identical via the re-exports below):
 //!   * [`model`]      — pure data types, presets, state machines, and verification helpers.
 //!   * [`panel`]      — the `AgentsPanel` endpoint registry + interop monitor.
-//!   * [`admin`]      — the `PersonalAgentAdminPanel`.
+//!   * [`admin`]      — the Settings -> My Agents `PersonalAgentAdminPanel`.
 //!   * [`components`] — reusable agent components (badges, dialogs, disclosure panels).
 
 mod admin;

@@ -317,6 +317,25 @@ pub fn build_savfox_pairing_bootstrap_json(
     serde_json::to_string_pretty(&bootstrap)
 }
 
+pub fn build_savfox_pairing_deep_link(bootstrap_json: &str) -> String {
+    let encoded = cokret_sdk::base64url_encode(bootstrap_json.as_bytes());
+    format!("savfox://cokret/pair?request={encoded}")
+}
+
+pub fn render_savfox_pairing_qr_svg(deep_link: &str) -> String {
+    if deep_link.trim().is_empty() {
+        return String::new();
+    }
+    match qrcode::QrCode::with_error_correction_level(deep_link.as_bytes(), qrcode::EcLevel::M) {
+        Ok(code) => code
+            .render::<qrcode::render::svg::Color<'_>>()
+            .min_dimensions(192, 192)
+            .quiet_zone(true)
+            .build(),
+        Err(_) => String::new(),
+    }
+}
+
 fn json_invalid_input(error: impl std::fmt::Display) -> serde_json::Error {
     serde_json::Error::io(std::io::Error::new(
         std::io::ErrorKind::InvalidInput,
@@ -354,6 +373,65 @@ pub fn parse_savfox_runtime_key_approval_request(
 ) -> anyhow::Result<AgentKeyPairRequestBody> {
     let request: SavfoxRuntimeKeyApprovalRequest = serde_json::from_str(raw.trim())?;
     Ok(request.into_pair_request())
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SavfoxRuntimeKeyApprovalSummary {
+    pub pairing_request_id: String,
+    pub agent_principal_id: String,
+    pub verification_method: String,
+    pub public_key_fingerprint: String,
+    pub proof_expires_at: String,
+}
+
+pub fn summarize_savfox_runtime_key_approval_request(
+    raw: &str,
+) -> anyhow::Result<SavfoxRuntimeKeyApprovalSummary> {
+    let request = parse_savfox_runtime_key_approval_request(raw)?;
+    let public_key_fingerprint =
+        cokret_sdk::agent::agent_runtime_public_key_digest(&request.public_key)?
+            .as_str()
+            .to_owned();
+    let proof_expires_at = request
+        .proof_of_possession
+        .get("expires_at")
+        .and_then(Value::as_str)
+        .unwrap_or_default()
+        .to_owned();
+    Ok(SavfoxRuntimeKeyApprovalSummary {
+        pairing_request_id: request.pairing_request_id,
+        agent_principal_id: request.agent_principal_id.to_string(),
+        verification_method: request.verification_method,
+        public_key_fingerprint,
+        proof_expires_at,
+    })
+}
+
+pub fn runtime_key_pairing_error_message(error: impl std::fmt::Display) -> String {
+    let error = error.to_string();
+    let normalized = error.to_ascii_lowercase();
+    let message = if normalized.contains("expired")
+        || normalized.contains("pairing_request_expired")
+    {
+        "Pairing expired. Create a new pairing and paste the fresh Savfox request."
+    } else if normalized.contains("pairing_request_id")
+        || normalized.contains("pairing code")
+        || normalized.contains("different agent")
+        || normalized.contains("request_canonical_digest")
+    {
+        "Wrong pairing request or code. Use the bootstrap from this agent and paste the matching Savfox request."
+    } else if normalized.contains("public_key.kid")
+        || normalized.contains("verification_method")
+        || normalized.contains("runtime public_key")
+        || normalized.contains("proof")
+    {
+        "Runtime key mismatch. Regenerate the runtime key request from the same Savfox keyRef and bootstrap."
+    } else if normalized.contains("controller") || normalized.contains("accountable") {
+        "Controller mismatch. Sign in as this agent's controller and retry."
+    } else {
+        "Server rejected the runtime key approval. Refresh the agent, regenerate the Savfox request, and retry."
+    };
+    format!("{message} Detail: {error}")
 }
 
 fn key_state_str<'a>(key_state: &'a Value, key: &str) -> anyhow::Result<&'a str> {
