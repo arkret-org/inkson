@@ -563,6 +563,55 @@
   height: auto;
 }
 
+@media (min-width: 981px) {
+  .workspace-body > .settings-page .settings-content-column:has(> .agent-admin-page) {
+    grid-template-rows: auto minmax(0, 1fr);
+    align-content: stretch;
+    overflow: hidden;
+  }
+
+  .workspace-body > .settings-page .agent-admin-page {
+    display: flex;
+    flex-direction: column;
+    height: 100%;
+    min-height: 0;
+    overflow: hidden;
+  }
+
+  .workspace-body > .settings-page .agent-admin-layout {
+    flex: 1 1 auto;
+    min-height: 0;
+    align-items: stretch;
+    overflow: hidden;
+  }
+
+  .workspace-body > .settings-page .agent-admin-list-pane {
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+    overflow: hidden;
+  }
+
+  .workspace-body > .settings-page .agent-admin-list-rows {
+    flex: 1 1 auto;
+    min-height: 0;
+    max-height: none;
+    overflow-x: hidden;
+    overflow-y: auto;
+    padding-right: 4px;
+    scrollbar-gutter: stable;
+  }
+
+  .workspace-body > .settings-page .agent-admin-detail-pane {
+    height: 100%;
+    min-height: 0;
+    align-content: start;
+    overflow-x: hidden;
+    overflow-y: auto;
+    scrollbar-gutter: stable;
+  }
+}
+
 /* Inline member search. Full-width, sits between header and rows. */
 .member-search-input {
   width: 100%;

@@ -257,13 +257,26 @@ test("account settings split account/server info and surface personal agents", a
   const scrollLayout = await page.evaluate(() => {
     const root = document.documentElement;
     const workspace = document.querySelector(".workspace-body") as HTMLElement | null;
+    const settingsContent = document.querySelector(
+      ".settings-page .settings-content-column",
+    ) as HTMLElement | null;
+    const detailPane = document.querySelector(".agent-admin-detail-pane") as HTMLElement | null;
     if (workspace) {
       workspace.scrollTop = 200;
+    }
+    if (detailPane) {
+      detailPane.scrollTop = 200;
     }
     return {
       rootOverflowY: getComputedStyle(root).overflowY,
       bodyOverflowY: getComputedStyle(document.body).overflowY,
       viewportScrollbarGap: window.innerWidth - root.clientWidth,
+      detailOverflowY: detailPane ? getComputedStyle(detailPane).overflowY : null,
+      detailScrollTop: detailPane?.scrollTop ?? 0,
+      settingsContentOverflowY: settingsContent
+        ? getComputedStyle(settingsContent).overflowY
+        : null,
+      settingsContentScrollTop: settingsContent?.scrollTop ?? 0,
       workspaceOverflowY: workspace ? getComputedStyle(workspace).overflowY : null,
       workspaceScrollTop: workspace?.scrollTop ?? 0,
     };
@@ -272,7 +285,11 @@ test("account settings split account/server info and surface personal agents", a
   expect(scrollLayout.bodyOverflowY).toBe("hidden");
   expect(scrollLayout.viewportScrollbarGap).toBe(0);
   expect(scrollLayout.workspaceOverflowY).toBe("auto");
-  expect(scrollLayout.workspaceScrollTop).toBeGreaterThan(0);
+  expect(scrollLayout.workspaceScrollTop).toBe(0);
+  expect(scrollLayout.settingsContentOverflowY).toBe("hidden");
+  expect(scrollLayout.settingsContentScrollTop).toBe(0);
+  expect(scrollLayout.detailOverflowY).toBe("auto");
+  expect(scrollLayout.detailScrollTop).toBeGreaterThan(0);
   await expect(page.getByTestId("agent-admin-content-preset-row")).toHaveCount(5);
   await expect(page.getByTestId("agent-admin-service-scope-row")).toHaveCount(4);
   const provisionRequest = page.waitForRequest(
@@ -387,14 +404,18 @@ test("expired personal agent pairing shows actionable runtime key error", async 
   await expect(page.getByTestId("agent-admin-pairing-card")).toBeVisible();
   await expect(page.getByTestId("agent-admin-pairing-card")).toContainText("Expired");
 
-  const bootstrap = JSON.parse(
-    (await page.getByTestId("agent-admin-pairing-bootstrap-json").innerText()).trim(),
-  );
-  const runtimeVerificationMethod = `${bootstrap.agent_principal_id}#runtime-key-1`;
+  await expect(page.getByTestId("agent-admin-pairing-bootstrap-json")).toHaveCount(0);
+  const pairingRequestId = (
+    await page.getByTestId("agent-admin-pairing-request-id").innerText()
+  ).trim();
+  const agentPrincipalId =
+    (await page.getByTestId("agent-admin-row").first().getAttribute("data-agent-principal-id")) ??
+    "";
+  const runtimeVerificationMethod = `${agentPrincipalId}#runtime-key-1`;
   await page.getByTestId("agent-admin-runtime-key-request-json").fill(
     JSON.stringify({
-      pairing_request_id: bootstrap.pairing_request_id,
-      agent_principal_id: bootstrap.agent_principal_id,
+      pairing_request_id: pairingRequestId,
+      agent_principal_id: agentPrincipalId,
       verification_method: runtimeVerificationMethod,
       public_key: {
         kty: "OKP",
@@ -403,7 +424,7 @@ test("expired personal agent pairing shows actionable runtime key error", async 
         key: Buffer.from(new Uint8Array(32).fill(9)).toString("base64url"),
       },
       proof_of_possession: {
-        challenge: bootstrap.pairing_request_id,
+        challenge: pairingRequestId,
         audience: "did:web:server.local",
         request_canonical_digest: `sha256:${"0".repeat(64)}`,
         expires_at: "2099-07-06T00:15:00.000Z",

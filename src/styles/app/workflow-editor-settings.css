@@ -171,13 +171,15 @@
   min-width: 0;
 }
 @media (min-width: 901px) {
-  .workspace-body > .settings-page {
+  .workspace-body > .settings-page,
+  .workspace-body > .realm-settings {
     height: 100%;
     min-height: 0;
     overflow: hidden;
   }
 
-  .workspace-body > .settings-page > .settings-shell {
+  .workspace-body > .settings-page > .settings-shell,
+  .workspace-body > .realm-settings > .settings-shell {
     height: 100%;
     min-height: 0;
     align-items: stretch;
@@ -205,7 +207,18 @@
     scrollbar-gutter: stable;
   }
 
-  .workspace-body > .settings-page .settings-content-column {
+  .workspace-body > .realm-settings .settings-sidebar-column {
+    height: 100%;
+    min-height: 0;
+    align-content: start;
+    overflow-x: hidden;
+    overflow-y: auto;
+    padding-right: 4px;
+    scrollbar-gutter: stable;
+  }
+
+  .workspace-body > .settings-page .settings-content-column,
+  .workspace-body > .realm-settings .settings-content-column {
     height: 100%;
     min-height: 0;
     align-content: start;

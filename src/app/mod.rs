@@ -3339,6 +3339,11 @@ pub fn RouterView() -> Element {
                 device_id,
                 state_store,
             }
+            crate::components::AgentRuntimeApprovalPrompt {
+                base_url,
+                token,
+                account_did,
+            }
             if active_prompt == AccountHealthPrompt::RecommendedEncryptionFloor
                 && !recovery_key_setup_prompt()
                 && !encryption_floor_prompt_dismissed()

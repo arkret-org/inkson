@@ -4,6 +4,7 @@ use dioxus::prelude::*;
 /// Lists every profile in [`crate::config::MultiProfileConfig`] and
 /// fires typed `on_switch` plus `on_add_account` handlers.
 pub mod account_switcher;
+pub mod agent_runtime_approval_prompt;
 pub mod avatar_uploader;
 /// CKP-0007 P3B.2 — Circle error queue. Producers push
 /// [`crate::circle::CircleErrorKind`]; the unified `feedback::ToastHost`
@@ -76,6 +77,7 @@ pub mod visibility_pill;
 pub mod write_state;
 
 pub use account_switcher::AccountSwitcher;
+pub use agent_runtime_approval_prompt::AgentRuntimeApprovalPrompt;
 pub use avatar_uploader::{AvatarUploader, AvatarUploaderProps};
 pub use circle_error_toast::{maybe_dispatch_circle_error, push_circle_error, take_circle_error};
 pub use circle_scope_picker::{
