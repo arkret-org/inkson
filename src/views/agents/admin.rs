@@ -19,10 +19,10 @@ use yoface::utils::dom::copy_text_to_clipboard;
 use super::model::{
     AgentGrantPreset, AgentServiceScopePreset, agent_state_badge_class, agent_state_label,
     agent_view_from_directory_row, build_agent_key_authorize_event_for_pairing,
-    build_savfox_pairing_bootstrap_json, build_savfox_pairing_deep_link,
-    is_pairing_request_expired, parse_savfox_runtime_key_approval_request,
-    participation_ceiling_reason, render_savfox_pairing_qr_svg, requested_scope_for_presets,
-    runtime_key_pairing_error_message, summarize_savfox_runtime_key_approval_request,
+    build_agent_pairing_bootstrap_json, build_agent_pairing_deep_link, is_pairing_request_expired,
+    parse_runtime_key_approval_request, participation_ceiling_reason, render_agent_pairing_qr_svg,
+    requested_scope_for_presets, runtime_key_pairing_error_message,
+    summarize_runtime_key_approval_request,
 };
 use crate::ui::button::{Button, ButtonVariant};
 use crate::ui::checkbox::Checkbox;
@@ -105,9 +105,15 @@ fn spawn_refresh_agents(
     mut agents: Signal<Vec<AgentView>>,
     mut selected_agent_id: Signal<String>,
     mut list_status: Signal<String>,
+    mut refresh_epoch: Signal<u64>,
 ) {
+    let request_epoch = refresh_epoch().saturating_add(1);
+    refresh_epoch.set(request_epoch);
     spawn(async move {
         if api_token.trim().is_empty() {
+            if refresh_epoch() != request_epoch {
+                return;
+            }
             list_status.set("Sign in to load your agents.".to_owned());
             return;
         }
@@ -119,20 +125,38 @@ fn spawn_refresh_agents(
         .await
         {
             Ok(resp) => {
+                if refresh_epoch() != request_epoch {
+                    return;
+                }
+                let total = resp.agents.len();
                 let rows: Vec<AgentView> = resp
                     .agents
                     .into_iter()
                     .filter_map(agent_view_from_directory_row)
                     .collect();
+                let skipped = total.saturating_sub(rows.len());
                 let current = selected_agent_id();
                 if current.is_empty() || !rows.iter().any(|row| agent_principal_id(row) == current)
                 {
                     selected_agent_id.set(rows.first().map(agent_principal_id).unwrap_or_default());
                 }
-                list_status.set(format!("Loaded {} agent(s).", rows.len()));
+                if skipped > 0 {
+                    list_status.set(format!(
+                        "Loaded {} agent(s); skipped {} invalid row(s).",
+                        rows.len(),
+                        skipped
+                    ));
+                } else {
+                    list_status.set(format!("Loaded {} agent(s).", rows.len()));
+                }
                 agents.set(rows);
             }
-            Err(err) => list_status.set(format!("Failed to load agents: {}", err.display())),
+            Err(err) => {
+                if refresh_epoch() != request_epoch {
+                    return;
+                }
+                list_status.set(format!("Failed to load agents: {}", err.display()));
+            }
         }
     });
 }
@@ -192,6 +216,7 @@ pub fn PersonalAgentAdminPanel(
     let mut pairing_bootstrap_json = use_signal(|| Option::<String>::None);
     let mut runtime_key_request_json = use_signal(String::new);
     let mut selected_grants = use_signal(Vec::<Value>::new);
+    let mut agent_list_refresh_epoch = use_signal(|| 0_u64);
     let mut rotate_body_json = use_signal(String::new);
     let mut grant_json = use_signal(|| "{}".to_owned());
     let mut deactivate_confirm = use_signal(String::new);
@@ -212,6 +237,7 @@ pub fn PersonalAgentAdminPanel(
                 agents,
                 selected_agent_id,
                 list_status,
+                agent_list_refresh_epoch,
             );
         });
     }
@@ -279,7 +305,7 @@ pub fn PersonalAgentAdminPanel(
             None
         } else {
             Some(
-                summarize_savfox_runtime_key_approval_request(&raw)
+                summarize_runtime_key_approval_request(&raw)
                     .map_err(runtime_key_pairing_error_message),
             )
         }
@@ -329,6 +355,7 @@ pub fn PersonalAgentAdminPanel(
                                         agents,
                                         selected_agent_id,
                                         list_status,
+                                        agent_list_refresh_epoch,
                                     );
                                 }
                             },
@@ -514,7 +541,6 @@ pub fn PersonalAgentAdminPanel(
                                                 } else {
                                                     Some(slug_value.clone())
                                                 };
-                                                let presets = provision_presets.read().clone();
                                                 let service_scopes = provision_service_scopes.read().clone();
                                                 let requested_scope = match requested_scope_for_presets(
                                                     &service_scopes,
@@ -575,18 +601,16 @@ pub fn PersonalAgentAdminPanel(
                                                     let expires_at = outcome
                                                         .expires_at
                                                         .to_rfc3339_opts(chrono::SecondsFormat::Millis, true);
-                                                    match build_savfox_pairing_bootstrap_json(
+                                                    match build_agent_pairing_bootstrap_json(
                                                         &base,
                                                         &service_did,
                                                         &outcome,
-                                                        &requested_scope,
-                                                        &presets,
                                                     ) {
                                                         Ok(bootstrap) => pairing_bootstrap_json.set(Some(bootstrap)),
                                                         Err(err) => {
                                                             pairing_bootstrap_json.set(None);
                                                             last_op_status.set(format!(
-                                                                "Created pairing handle but Savfox bootstrap serialization failed: {err}"
+                                                                "Created pairing handle but bootstrap serialization failed: {err}"
                                                             ));
                                                         }
                                                     }
@@ -612,6 +636,10 @@ pub fn PersonalAgentAdminPanel(
                                                         key_state,
                                                     };
                                                     let created_id = agent_principal_id(&agent_view);
+                                                    agent_list_refresh_epoch.set(
+                                                        agent_list_refresh_epoch()
+                                                            .saturating_add(1),
+                                                    );
                                                     agents.with_mut(|rows| upsert_agent_view(rows, agent_view));
                                                     selected_agent_id.set(created_id.clone());
                                                     selected_grants.set(Vec::new());
@@ -715,8 +743,8 @@ pub fn PersonalAgentAdminPanel(
                                 let pairing_code = outcome.pairing_code.clone();
                                 let expires_at = outcome.expires_at.to_rfc3339();
                                 let bootstrap_json = pairing_bootstrap_json().unwrap_or_else(|| "{}".to_owned());
-                                let deep_link = build_savfox_pairing_deep_link(&bootstrap_json);
-                                let pairing_qr_svg = render_savfox_pairing_qr_svg(&deep_link);
+                                let deep_link = build_agent_pairing_deep_link(&base_url, &bootstrap_json);
+                                let pairing_qr_svg = render_agent_pairing_qr_svg(&deep_link);
                                 let requested_scope = selected_requested_scope.clone();
                                 let display_name = selected_title.clone();
                                 let pairing_expired =
@@ -730,11 +758,11 @@ pub fn PersonalAgentAdminPanel(
                                             "data-testid": "agent-admin-pairing-card",
                                             "data-pairing-request-id": "{request_id}",
                                         div { class: "agent-admin-section-head",
-                                            strong { "Connect with Savfox" }
+                                            strong { "Connect an agent runtime" }
                                             span { class: "{pairing_badge}", "{pairing_label}" }
                                         }
                                         div { class: "muted",
-                                            "Copy this bootstrap into Savfox. Savfox generates and keeps the runtime private key; this bootstrap only carries the short-lived pairing handle, requested service scope, and content grant summary. It expires at {expires_at}."
+                                            "Hand this bootstrap to any agent runtime (scan the QR, open the link, or copy the JSON). The runtime generates and keeps its own private key; this bootstrap only carries the short-lived pairing handle. It expires at {expires_at}."
                                         }
                                         div { class: "metric-grid",
                                             div { class: "metric",
@@ -767,29 +795,29 @@ pub fn PersonalAgentAdminPanel(
                                             }
                                         }
                                         div { class: "muted",
-                                            "After Savfox returns a runtime key request, paste it into the approval panel below. Yougen will sign ck.agent.key.authorize with this controller and complete the key-pair request."
+                                            "After the runtime returns a runtime key request, paste it into the approval panel below. Yougen will sign ck.agent.key.authorize with this controller and complete the key-pair request."
                                         }
                                         pre {
                                             class: "agent-admin-url",
-                                            "data-testid": "agent-admin-savfox-deep-link",
+                                            "data-testid": "agent-admin-pairing-link",
                                             "{deep_link}"
                                         }
                                         if !pairing_qr_svg.is_empty() {
                                             div {
                                                 class: "agent-admin-qr",
-                                                "data-testid": "agent-admin-savfox-bootstrap-qr",
+                                                "data-testid": "agent-admin-pairing-qr",
                                                 dangerous_inner_html: "{pairing_qr_svg}",
                                             }
                                         }
                                         pre {
                                             class: "agent-admin-url",
-                                            "data-testid": "agent-admin-savfox-bootstrap-json",
+                                            "data-testid": "agent-admin-pairing-bootstrap-json",
                                             "{bootstrap_json}"
                                         }
                                         div { class: "actions",
                                             Button {
                                                 variant: ButtonVariant::Primary,
-                                                "data-testid": "agent-admin-copy-savfox-bootstrap-button",
+                                                "data-testid": "agent-admin-copy-pairing-bootstrap-button",
                                                 disabled: pairing_expired,
                                                 onclick: {
                                                     let bootstrap_json = bootstrap_json.clone();
@@ -799,13 +827,13 @@ pub fn PersonalAgentAdminPanel(
                                             }
                                             Button {
                                                 variant: ButtonVariant::Secondary,
-                                                "data-testid": "agent-admin-copy-savfox-deep-link-button",
+                                                "data-testid": "agent-admin-copy-pairing-link-button",
                                                 disabled: pairing_expired,
                                                 onclick: {
                                                     let deep_link = deep_link.clone();
                                                     move |_| copy_text_to_clipboard(&deep_link)
                                                 },
-                                                "Copy deep link"
+                                                "Copy link"
                                             }
                                         }
                                     }
@@ -825,12 +853,12 @@ pub fn PersonalAgentAdminPanel(
                                     span { class: "badge amber", "Pending" }
                                 }
                                 div { class: "muted",
-                                    "Paste the runtime key request generated by Savfox. Yougen signs ck.agent.key.authorize with this controller and submits the key-pair request to the Principal Server."
+                                    "Paste the runtime key request generated by the agent runtime. Yougen signs ck.agent.key.authorize with this controller and submits the key-pair request to the Principal Server."
                                 }
                                 textarea {
                                     class: "agent-admin-url",
                                     "data-testid": "agent-admin-runtime-key-request-json",
-                                    placeholder: "Savfox runtime key request JSON",
+                                    placeholder: "Runtime key request JSON",
                                     value: "{runtime_key_request_json}",
                                     oninput: move |event: FormEvent| runtime_key_request_json.set(event.value()),
                                 }
@@ -897,7 +925,7 @@ pub fn PersonalAgentAdminPanel(
                                                     ));
                                                     return;
                                                 }
-                                                let request = match parse_savfox_runtime_key_approval_request(&raw) {
+                                                let request = match parse_runtime_key_approval_request(&raw) {
                                                     Ok(request) => request,
                                                     Err(err) => {
                                                         last_op_status.set(format!(

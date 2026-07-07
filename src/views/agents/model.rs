@@ -10,10 +10,9 @@ use cokret_sdk::models::{
     AgentKeyScope, AgentKeyScopeResource, AgentKeyScopeResourceKind, AgentParticipation, AgentView,
 };
 use cokret_sdk::{
-    AGENT_PAIRING_BOOTSTRAP_SCHEMA, AgentKeyApprovalEvidence, AgentKeyApprovalEvidenceKind,
-    AgentKeyAuthorizePayload, AgentKeyAuthorizePayloadRuntimeAttestation, AgentKeyPairRequestBody,
-    AgentKeyRuntimeAttestationKind, AgentPairingBootstrap, AgentPairingContentGrantSummary, Did,
-    Hash, PublicKey, RealmId,
+    AgentKeyApprovalEvidence, AgentKeyApprovalEvidenceKind, AgentKeyAuthorizePayload,
+    AgentKeyAuthorizePayloadRuntimeAttestation, AgentKeyPairRequestBody,
+    AgentKeyRuntimeAttestationKind, AgentPairingBootstrap, Did, Hash, PublicKey, RealmId,
 };
 use serde::Deserialize;
 use serde_json::{Value, json};
@@ -280,44 +279,39 @@ pub fn requested_scope_for_presets(
     })
 }
 
-pub fn build_savfox_pairing_bootstrap_json(
+/// Builds the runtime-agnostic pairing bootstrap (CKP-0008 §4.4): the six
+/// short-lived fields any agent runtime needs to start key pairing. It carries
+/// no scope payload — the authoritative ceiling lives in `ck.agent.key.authorize`
+/// and the effective-permission intersection, and the requested scope is shown
+/// separately in the admin card, not baked into the QR.
+pub fn build_agent_pairing_bootstrap_json(
     base_url: &str,
     service_did: &str,
     outcome: &cokret_sdk::AgentProvisionOutcome,
-    requested_scope: &AgentKeyScope,
-    content_presets: &[AgentGrantPreset],
 ) -> serde_json::Result<String> {
     let base_url = base_url.trim_end_matches('/');
-    let content_actions = content_actions_for_presets(content_presets);
     let bootstrap = AgentPairingBootstrap {
-        schema: AGENT_PAIRING_BOOTSTRAP_SCHEMA.to_owned(),
         cokret_base_url: base_url.to_owned(),
         service_did: Did::new(service_did.trim().to_owned()).map_err(json_invalid_input)?,
         agent_principal_id: outcome.agent_principal_id.clone(),
         pairing_request_id: outcome.pairing_request_id.clone(),
         pairing_code: outcome.pairing_code.clone().unwrap_or_default(),
         pairing_expires_at: outcome.expires_at,
-        requested_scope: requested_scope.clone(),
-        service_scope: requested_scope
-            .actions
-            .iter()
-            .filter(|action| action.starts_with("ck.self."))
-            .cloned()
-            .collect(),
-        content_grant_summary: AgentPairingContentGrantSummary {
-            actions: content_actions,
-            grant_refs: Vec::new(),
-        },
     };
     serde_json::to_string_pretty(&bootstrap)
 }
 
-pub fn build_savfox_pairing_deep_link(bootstrap_json: &str) -> String {
+/// Wraps the bootstrap into a standard HTTPS Universal/App Link whose host is the
+/// deployment's `cokret_base_url` (CKP-0008 forbids a custom URI scheme). The
+/// payload rides in the URL fragment so the one-time `pairing_code` never reaches
+/// the server; any installed runtime can claim the host to intercept the link.
+pub fn build_agent_pairing_deep_link(base_url: &str, bootstrap_json: &str) -> String {
+    let base = base_url.trim_end_matches('/');
     let encoded = cokret_sdk::base64url_encode(bootstrap_json.as_bytes());
-    format!("savfox://cokret/pair?request={encoded}")
+    format!("{base}/_cokret/open/agent-pairing#request={encoded}")
 }
 
-pub fn render_savfox_pairing_qr_svg(deep_link: &str) -> String {
+pub fn render_agent_pairing_qr_svg(deep_link: &str) -> String {
     if deep_link.trim().is_empty() {
         return String::new();
     }
@@ -339,7 +333,7 @@ fn json_invalid_input(error: impl std::fmt::Display) -> serde_json::Error {
 }
 
 #[derive(Clone, Debug, Deserialize)]
-pub struct SavfoxRuntimeKeyApprovalRequest {
+pub struct RuntimeKeyApprovalRequest {
     pub pairing_request_id: String,
     pub agent_principal_id: Did,
     pub verification_method: String,
@@ -349,7 +343,7 @@ pub struct SavfoxRuntimeKeyApprovalRequest {
     pub runtime_attestation: Option<Value>,
 }
 
-impl SavfoxRuntimeKeyApprovalRequest {
+impl RuntimeKeyApprovalRequest {
     pub fn into_pair_request(self) -> AgentKeyPairRequestBody {
         AgentKeyPairRequestBody {
             pairing_request_id: self.pairing_request_id,
@@ -363,15 +357,13 @@ impl SavfoxRuntimeKeyApprovalRequest {
     }
 }
 
-pub fn parse_savfox_runtime_key_approval_request(
-    raw: &str,
-) -> anyhow::Result<AgentKeyPairRequestBody> {
-    let request: SavfoxRuntimeKeyApprovalRequest = serde_json::from_str(raw.trim())?;
+pub fn parse_runtime_key_approval_request(raw: &str) -> anyhow::Result<AgentKeyPairRequestBody> {
+    let request: RuntimeKeyApprovalRequest = serde_json::from_str(raw.trim())?;
     Ok(request.into_pair_request())
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct SavfoxRuntimeKeyApprovalSummary {
+pub struct RuntimeKeyApprovalSummary {
     pub pairing_request_id: String,
     pub agent_principal_id: String,
     pub verification_method: String,
@@ -379,10 +371,10 @@ pub struct SavfoxRuntimeKeyApprovalSummary {
     pub proof_expires_at: String,
 }
 
-pub fn summarize_savfox_runtime_key_approval_request(
+pub fn summarize_runtime_key_approval_request(
     raw: &str,
-) -> anyhow::Result<SavfoxRuntimeKeyApprovalSummary> {
-    let request = parse_savfox_runtime_key_approval_request(raw)?;
+) -> anyhow::Result<RuntimeKeyApprovalSummary> {
+    let request = parse_runtime_key_approval_request(raw)?;
     let public_key_fingerprint =
         cokret_sdk::agent::agent_runtime_public_key_digest(&request.public_key)?
             .as_str()
@@ -393,7 +385,7 @@ pub fn summarize_savfox_runtime_key_approval_request(
         .and_then(Value::as_str)
         .unwrap_or_default()
         .to_owned();
-    Ok(SavfoxRuntimeKeyApprovalSummary {
+    Ok(RuntimeKeyApprovalSummary {
         pairing_request_id: request.pairing_request_id,
         agent_principal_id: request.agent_principal_id.to_string(),
         verification_method: request.verification_method,
@@ -408,23 +400,23 @@ pub fn runtime_key_pairing_error_message(error: impl std::fmt::Display) -> Strin
     let message = if normalized.contains("expired")
         || normalized.contains("pairing_request_expired")
     {
-        "Pairing expired. Create a new pairing and paste the fresh Savfox request."
+        "Pairing expired. Create a new pairing and paste the fresh runtime key request."
     } else if normalized.contains("pairing_request_id")
         || normalized.contains("pairing code")
         || normalized.contains("different agent")
         || normalized.contains("request_canonical_digest")
     {
-        "Wrong pairing request or code. Use the bootstrap from this agent and paste the matching Savfox request."
+        "Wrong pairing request or code. Use the bootstrap from this agent and paste the matching runtime key request."
     } else if normalized.contains("public_key.kid")
         || normalized.contains("verification_method")
         || normalized.contains("runtime public_key")
         || normalized.contains("proof")
     {
-        "Runtime key mismatch. Regenerate the runtime key request from the same Savfox keyRef and bootstrap."
+        "Runtime key mismatch. Regenerate the runtime key request from the same runtime key and bootstrap."
     } else if normalized.contains("controller") || normalized.contains("accountable") {
         "Controller mismatch. Sign in as this agent's controller and retry."
     } else {
-        "Server rejected the runtime key approval. Refresh the agent, regenerate the Savfox request, and retry."
+        "Server rejected the runtime key approval. Refresh the agent, regenerate the runtime key request, and retry."
     };
     format!("{message} Detail: {error}")
 }

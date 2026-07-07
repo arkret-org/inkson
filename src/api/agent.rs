@@ -49,7 +49,8 @@ impl CokretApi {
     /// `GET /_cokret/self/agents` — `ck.self.agent.query.list`. Returns the
     /// controller-self list of agent views (soland enforces caller binding).
     pub async fn agent_list(&self) -> anyhow::Result<cokret_sdk::AgentList> {
-        self.get_json("_cokret/self/agents").await
+        let value: serde_json::Value = self.get_json("_cokret/self/agents").await?;
+        decode_agent_list_response(value)
     }
 
     /// `GET /_cokret/self/agents/{id}` — `ck.self.agent.resource.get`.
@@ -207,5 +208,43 @@ impl CokretApi {
         }
         self.post_json("_cokret/self/agent-sidecar-threads:ensure", body)
             .await
+    }
+}
+
+fn decode_agent_list_response(
+    mut value: serde_json::Value,
+) -> anyhow::Result<cokret_sdk::AgentList> {
+    if let Some(object) = value.as_object_mut() {
+        if !object.contains_key("agents") {
+            if let Some(items) = object.get("items").cloned() {
+                object.insert("agents".to_owned(), items);
+            }
+        }
+        object
+            .entry("has_more".to_owned())
+            .or_insert(serde_json::Value::Bool(false));
+    }
+    serde_json::from_value(value).map_err(Into::into)
+}
+
+#[cfg(test)]
+mod tests {
+    use serde_json::json;
+
+    #[test]
+    fn agent_list_accepts_legacy_items_field() {
+        let list = super::decode_agent_list_response(json!({
+            "items": [{
+                "agent_principal_id": "did:web:agents.example:summary",
+                "display_name": "Summary",
+                "agent_slug": "summary",
+                "status": "active"
+            }]
+        }))
+        .unwrap();
+
+        assert_eq!(list.agents.len(), 1);
+        assert_eq!(list.agents[0]["agent_slug"], "summary");
+        assert!(!list.has_more);
     }
 }

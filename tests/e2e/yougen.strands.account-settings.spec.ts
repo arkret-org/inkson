@@ -278,23 +278,29 @@ test("account settings split account/server info and surface personal agents", a
   expect(JSON.stringify(provisionBody.requested_scope.resources)).not.toContain("realm_id");
   await expect(page.getByTestId("agent-admin-pairing-card")).toBeVisible();
   const bootstrap = JSON.parse(
-    (await page.getByTestId("agent-admin-savfox-bootstrap-json").innerText()).trim(),
+    (await page.getByTestId("agent-admin-pairing-bootstrap-json").innerText()).trim(),
   );
-  expect(bootstrap.schema).toBe("ck.schema.agent_pairing_bootstrap.v1");
+  // CKP-0008 §4.4: exactly the six pairing fields, no scope payload, no product coupling.
+  expect(Object.keys(bootstrap).sort()).toEqual([
+    "agent_principal_id",
+    "cokret_base_url",
+    "pairing_code",
+    "pairing_expires_at",
+    "pairing_request_id",
+    "service_did",
+  ]);
   expect(bootstrap.agent_principal_id).toBe("did:web:agents.example:summary");
   expect(bootstrap.pairing_code).toBe("246810");
-  expect(bootstrap.service_scope).toEqual([
-    "ck.self.events.stream.subscribe",
-    "ck.self.events.query.scan",
-    "ck.self.events.command.submit",
-  ]);
   expect(JSON.stringify(bootstrap)).not.toContain("private_key");
   await expect(page.getByTestId("agent-state-badge")).toHaveAttribute(
     "data-state",
     "pending_runtime_key",
   );
-  await expect(page.getByTestId("agent-admin-pairing-url")).toHaveCount(0);
-  await expect(page.getByTestId("agent-admin-pairing-open-button")).toHaveCount(0);
+  // Deep link is a standard HTTPS universal link (no custom scheme, no product name).
+  const pairingLink = (await page.getByTestId("agent-admin-pairing-link").innerText()).trim();
+  expect(pairingLink.startsWith("https://")).toBe(true);
+  expect(pairingLink).toContain("/_cokret/open/agent-pairing#request=");
+  expect(pairingLink.toLowerCase()).not.toContain("savfox");
   const runtimeVerificationMethod = `${bootstrap.agent_principal_id}#runtime-key-1`;
   const runtimeKeyRequest = {
     pairing_request_id: bootstrap.pairing_request_id,
@@ -367,7 +373,7 @@ test("expired personal agent pairing shows actionable runtime key error", async 
   await expect(page.getByTestId("agent-admin-pairing-card")).toContainText("Expired");
 
   const bootstrap = JSON.parse(
-    (await page.getByTestId("agent-admin-savfox-bootstrap-json").innerText()).trim(),
+    (await page.getByTestId("agent-admin-pairing-bootstrap-json").innerText()).trim(),
   );
   const runtimeVerificationMethod = `${bootstrap.agent_principal_id}#runtime-key-1`;
   await page.getByTestId("agent-admin-runtime-key-request-json").fill(

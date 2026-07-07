@@ -4,9 +4,9 @@ mod personal_agent_tests {
 
     use super::super::*;
     use crate::views::agents::model::{
-        build_agent_key_authorize_event_for_pairing, build_savfox_pairing_deep_link,
-        parse_savfox_runtime_key_approval_request, render_savfox_pairing_qr_svg,
-        runtime_key_pairing_error_message, summarize_savfox_runtime_key_approval_request,
+        build_agent_key_authorize_event_for_pairing, build_agent_pairing_deep_link,
+        parse_runtime_key_approval_request, render_agent_pairing_qr_svg,
+        runtime_key_pairing_error_message, summarize_runtime_key_approval_request,
     };
 
     #[test]
@@ -221,8 +221,7 @@ mod personal_agent_tests {
     }
 
     #[test]
-    fn savfox_bootstrap_serializes_pairing_handle_and_scope_without_private_key() {
-        let scope = requested_scope_for_presets(&AgentServiceScopePreset::DEFAULTS).unwrap();
+    fn bootstrap_serializes_spec_six_fields_without_scope_or_private_key() {
         let outcome = cokret_sdk::AgentProvisionOutcome {
             agent_principal_id: cokret_sdk::Did::new("did:web:agents.example:summary").unwrap(),
             pairing_request_id: "0197-req".to_owned(),
@@ -232,17 +231,15 @@ mod personal_agent_tests {
                 .with_timezone(&chrono::Utc),
         };
 
-        let raw = build_savfox_pairing_bootstrap_json(
+        let raw = build_agent_pairing_bootstrap_json(
             "https://cokret.example/",
             "did:web:cokret.example",
             &outcome,
-            &scope,
-            &[AgentGrantPreset::Read, AgentGrantPreset::ReplyAsAgent],
         )
         .unwrap();
         let value: serde_json::Value = serde_json::from_str(&raw).unwrap();
 
-        assert_eq!(value["schema"], cokret_sdk::AGENT_PAIRING_BOOTSTRAP_SCHEMA);
+        // CKP-0008 §4.4: exactly the six pairing fields, no scope payload.
         assert_eq!(value["cokret_base_url"], "https://cokret.example");
         assert_eq!(value["service_did"], "did:web:cokret.example");
         assert_eq!(
@@ -252,39 +249,16 @@ mod personal_agent_tests {
         assert_eq!(value["pairing_request_id"], "0197-req");
         assert_eq!(value["pairing_code"], "123456");
         assert_eq!(value["pairing_expires_at"], "2026-06-26T00:00:00Z");
-        assert_eq!(
-            value["requested_scope"]["actions"],
-            serde_json::json!([
-                "ck.self.events.stream.subscribe",
-                "ck.self.events.query.scan",
-                "ck.self.events.command.submit",
-            ])
-        );
-        assert!(
-            !value["requested_scope"]["resources"]
-                .to_string()
-                .contains("realm_id")
-        );
-        assert_eq!(
-            value["service_scope"],
-            serde_json::json!([
-                "ck.self.events.stream.subscribe",
-                "ck.self.events.query.scan",
-                "ck.self.events.command.submit"
-            ])
-        );
-        assert_eq!(
-            value["content_grant_summary"]["actions"],
-            serde_json::json!(["ck.event.read", "ck.message.create", "ck.reaction.add"])
-        );
+        assert!(value.get("schema").is_none());
+        assert!(value.get("requested_scope").is_none());
+        assert!(value.get("service_scope").is_none());
+        assert!(value.get("content_grant_summary").is_none());
+        assert_eq!(value.as_object().unwrap().len(), 6);
         assert!(!raw.contains("private_key"));
-        assert!(!raw.contains("/auth/account/agent-pair"));
     }
 
     #[test]
-    fn savfox_deep_link_wraps_the_same_bootstrap_json() {
-        let scope =
-            requested_scope_for_presets(&[AgentServiceScopePreset::SubscribeEvents]).unwrap();
+    fn deep_link_is_https_universal_link_wrapping_the_bootstrap_json() {
         let outcome = cokret_sdk::AgentProvisionOutcome {
             agent_principal_id: cokret_sdk::Did::new("did:web:agents.example:summary").unwrap(),
             pairing_request_id: "0197-req".to_owned(),
@@ -293,28 +267,29 @@ mod personal_agent_tests {
                 .unwrap()
                 .with_timezone(&chrono::Utc),
         };
-        let raw = build_savfox_pairing_bootstrap_json(
+        let raw = build_agent_pairing_bootstrap_json(
             "https://cokret.example/",
             "did:web:cokret.example",
             &outcome,
-            &scope,
-            &[AgentGrantPreset::Read],
         )
         .unwrap();
 
-        let deep_link = build_savfox_pairing_deep_link(&raw);
+        let deep_link = build_agent_pairing_deep_link("https://cokret.example/", &raw);
         let encoded = deep_link
-            .strip_prefix("savfox://cokret/pair?request=")
-            .expect("deep link carries request parameter");
+            .strip_prefix("https://cokret.example/_cokret/open/agent-pairing#request=")
+            .expect("deep link is an https universal link with the request in the fragment");
         let decoded = cokret_sdk::base64url_decode(encoded).unwrap();
 
         assert_eq!(String::from_utf8(decoded).unwrap(), raw);
+        assert!(!deep_link.contains("savfox"));
         assert!(!deep_link.contains("private_key"));
     }
 
     #[test]
-    fn savfox_pairing_qr_renders_deep_link_svg() {
-        let svg = render_savfox_pairing_qr_svg("savfox://cokret/pair?request=abc");
+    fn pairing_qr_renders_deep_link_svg() {
+        let svg = render_agent_pairing_qr_svg(
+            "https://cokret.example/_cokret/open/agent-pairing#request=abc",
+        );
 
         assert!(svg.contains("<svg"));
         assert!(svg.contains("</svg>"));
@@ -342,8 +317,8 @@ mod personal_agent_tests {
             },
         })
         .to_string();
-        let summary = summarize_savfox_runtime_key_approval_request(&raw).unwrap();
-        let request = parse_savfox_runtime_key_approval_request(&raw).unwrap();
+        let summary = summarize_runtime_key_approval_request(&raw).unwrap();
+        let request = parse_runtime_key_approval_request(&raw).unwrap();
         let expected =
             cokret_sdk::agent::agent_runtime_public_key_digest(&request.public_key).unwrap();
 
@@ -376,7 +351,7 @@ mod personal_agent_tests {
     }
 
     #[test]
-    fn runtime_key_authorize_event_binds_savfox_request_and_scope() {
+    fn runtime_key_authorize_event_binds_request_and_scope() {
         let controller = "did:web:controller.example";
         let service_did = "did:web:cokret.example";
         let agent = "did:web:agents.example:summary";
@@ -407,7 +382,7 @@ mod personal_agent_tests {
             },
         })
         .to_string();
-        let request = parse_savfox_runtime_key_approval_request(&raw).unwrap();
+        let request = parse_runtime_key_approval_request(&raw).unwrap();
 
         let event = build_agent_key_authorize_event_for_pairing(
             controller,
