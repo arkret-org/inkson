@@ -416,9 +416,24 @@ fn parse_optional_u64(field: &str, value: &str) -> Result<Option<u64>, String> {
     Ok(Some(parsed))
 }
 
-fn location_value_from_text(value: &str) -> Option<Value> {
+fn location_value_from_text(value: &str) -> Option<cokret_sdk::CalendarEventLocation> {
     let trimmed = value.trim();
-    (!trimmed.is_empty()).then(|| json!({ "title": trimmed }))
+    (!trimmed.is_empty()).then(|| {
+        cokret_sdk::CalendarEventLocation::Plaintext(cokret_sdk::CalendarLocation {
+            title: Some(trimmed.to_owned()),
+            address: None,
+            geo_uri: None,
+            url: None,
+        })
+    })
+}
+
+fn location_json_from_text(value: &str) -> Option<Value> {
+    location_value_from_text(value)
+        .map(serde_json::to_value)
+        .transpose()
+        .ok()
+        .flatten()
 }
 
 fn calendar_location_display_value(
@@ -513,7 +528,7 @@ fn set_location_if_changed(
     if current.location_locked && draft_location.is_empty() {
         return;
     }
-    let current_value = location_value_from_text(&current.location);
+    let current_value = location_json_from_text(&current.location);
     set_if_changed(patch, CALENDAR_LOCATION_PRIVATE_PATH, current_value, next);
 }
 

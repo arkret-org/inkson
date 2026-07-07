@@ -10,8 +10,7 @@ use cokret_sdk::RealmId;
 use cokret_sdk::models::{
     AgentDeactivateRequestBody, AgentGrantAttachRequestBody, AgentParticipation,
     AgentParticipationEntry, AgentParticipationScope, AgentParticipationSetRequestBody,
-    AgentPauseRequestBody, AgentProvisionRequestBody, AgentResumeRequestBody,
-    AgentRotateKeyRequestBody, AgentView,
+    AgentPauseRequestBody, AgentProvisionRequestBody, AgentResumeRequestBody, AgentView,
 };
 use dioxus::prelude::*;
 use dioxus_primitives::checkbox::CheckboxState;
@@ -20,12 +19,9 @@ use yoface::utils::dom::copy_text_to_clipboard;
 
 use super::model::{
     AgentGrantPreset, AgentServiceScopePreset, agent_state_badge_class, agent_state_label,
-    agent_view_from_directory_row, build_agent_key_authorize_event_for_pairing,
-    build_agent_pairing_bootstrap_json, build_agent_pairing_deep_link,
-    build_agent_pairing_handoff_token, is_pairing_request_expired,
-    parse_runtime_key_approval_request, participation_ceiling_reason, render_agent_pairing_qr_svg,
-    requested_scope_for_presets, runtime_key_pairing_error_message,
-    summarize_runtime_key_approval_request,
+    agent_view_from_directory_row, build_agent_pairing_deep_link,
+    build_agent_pairing_handoff_token, is_pairing_request_expired, participation_ceiling_reason,
+    render_agent_pairing_qr_svg, requested_scope_for_presets,
 };
 use crate::components::UiIcon;
 use crate::ui::button::{Button, ButtonSize, ButtonVariant};
@@ -70,14 +66,6 @@ fn grant_identifier(grant: &Value) -> String {
         .and_then(Value::as_str)
         .unwrap_or_default()
         .to_owned()
-}
-
-fn json_inline(value: &Value) -> String {
-    if value.is_null() {
-        "not reported".to_owned()
-    } else {
-        serde_json::to_string(value).unwrap_or_else(|_| "unavailable".to_owned())
-    }
 }
 
 fn upsert_agent_view(rows: &mut Vec<AgentView>, view: AgentView) {
@@ -251,13 +239,9 @@ pub fn PersonalAgentAdminPanel(
     let mut provision_presets =
         use_signal(|| vec![AgentGrantPreset::Read, AgentGrantPreset::ReplyAsAgent]);
     let mut provision_service_scopes = use_signal(|| AgentServiceScopePreset::DEFAULTS.to_vec());
-    let mut pairing_outcome = use_signal(|| Option::<cokret_sdk::AgentProvisionOutcome>::None);
-    let mut pairing_bootstrap_json = use_signal(|| Option::<String>::None);
-    let mut runtime_key_request_json = use_signal(String::new);
     let mut selected_grants = use_signal(Vec::<Value>::new);
     let mut agent_list_filter = use_signal(|| "all".to_owned());
     let mut agent_list_refresh_epoch = use_signal(|| 0_u64);
-    let mut rotate_body_json = use_signal(String::new);
     let mut grant_json = use_signal(|| "{}".to_owned());
     let mut deactivate_confirm = use_signal(String::new);
     let mut last_op_status = use_signal(String::new);
@@ -312,10 +296,6 @@ pub fn PersonalAgentAdminPanel(
         .as_ref()
         .map(|agent| agent.status.clone())
         .unwrap_or_default();
-    let selected_key_state = selected_agent
-        .as_ref()
-        .map(|agent| json_inline(&agent.key_state))
-        .unwrap_or_else(|| "not loaded".to_owned());
     let selected_key_state_value = selected_agent
         .as_ref()
         .map(|agent| agent.key_state.clone())
@@ -332,11 +312,6 @@ pub fn PersonalAgentAdminPanel(
         .to_owned();
     let selected_pairing_expires_at = selected_key_state_value
         .get("pairing_expires_at")
-        .and_then(Value::as_str)
-        .unwrap_or_default()
-        .to_owned();
-    let selected_authorized_event_ref = selected_key_state_value
-        .get("authorized_event_ref")
         .and_then(Value::as_str)
         .unwrap_or_default()
         .to_owned();
@@ -359,18 +334,6 @@ pub fn PersonalAgentAdminPanel(
         .map(|agent| agent_field(agent, "updated_at"))
         .unwrap_or_default();
     let owner_label = short_protocol_id(&controller_did);
-    let runtime_key_request_text = runtime_key_request_json();
-    let runtime_key_request_preview = {
-        let raw = runtime_key_request_text.clone();
-        if raw.trim().is_empty() {
-            None
-        } else {
-            Some(
-                summarize_runtime_key_approval_request(&raw)
-                    .map_err(runtime_key_pairing_error_message),
-            )
-        }
-    };
     let selected_grants_snapshot = selected_grants();
     let participation_entries_snapshot = participation_entries();
 
@@ -646,22 +609,6 @@ pub fn PersonalAgentAdminPanel(
                                                 let base = base.clone();
                                                 let api_token = token();
                                                 spawn(async move {
-                                                    let service_did = match with_authed_api(
-                                                        &base,
-                                                        api_token.clone(),
-                                                        |api| async move { api.describe().await },
-                                                    )
-                                                    .await
-                                                    {
-                                                        Ok(describe) => describe.service_did.to_string(),
-                                                        Err(err) => {
-                                                            last_op_status.set(format!(
-                                                                "Create failed: could not load service DID: {}",
-                                                                err.display()
-                                                            ));
-                                                            return;
-                                                        }
-                                                    };
                                                     let outcome = match with_authed_api(
                                                         &base,
                                                         api_token.clone(),
@@ -686,21 +633,6 @@ pub fn PersonalAgentAdminPanel(
                                                     let expires_at = outcome
                                                         .expires_at
                                                         .to_rfc3339_opts(chrono::SecondsFormat::Millis, true);
-                                                    match build_agent_pairing_bootstrap_json(
-                                                        &base,
-                                                        &service_did,
-                                                        &outcome,
-                                                    ) {
-                                                        Ok(bootstrap) => pairing_bootstrap_json.set(Some(bootstrap)),
-                                                        Err(err) => {
-                                                            pairing_bootstrap_json.set(None);
-                                                            last_op_status.set(format!(
-                                                                "Created pairing handle but bootstrap serialization failed: {err}"
-                                                            ));
-                                                        }
-                                                    }
-                                                    pairing_outcome.set(Some(outcome.clone()));
-
                                                     let agent_object = json!({
                                                         "agent_principal_id": created_agent_id,
                                                         "display_name": display,
@@ -825,7 +757,6 @@ pub fn PersonalAgentAdminPanel(
                             {
                                 let request_id = selected_pairing_request_id.clone();
                                 let pairing_code = selected_pairing_code.clone();
-                                let expires_at = selected_pairing_expires_at.clone();
                                 let pairing_token = if selected_has_pairing_handle {
                                     build_agent_pairing_handoff_token(&request_id, &pairing_code)
                                 } else {
@@ -837,23 +768,14 @@ pub fn PersonalAgentAdminPanel(
                                     build_agent_pairing_deep_link(&base_url, &pairing_token)
                                 };
                                 let pairing_qr_svg = render_agent_pairing_qr_svg(&deep_link);
-                                let display_name = selected_title.clone();
-                                let bootstrap_json = pairing_outcome()
-                                    .and_then(|outcome| {
-                                        (outcome.agent_principal_id.as_str() == selected_id_now.as_str()
-                                            && outcome.pairing_request_id == request_id)
-                                            .then(|| pairing_bootstrap_json())
-                                            .flatten()
-                                    });
                                 let pairing_badge = if selected_pairing_is_expired { "badge red" } else { "badge green" };
-                                let pairing_label = if selected_pairing_is_expired { "Expired" } else { "Bootstrap ready" };
+                                let pairing_label = if selected_pairing_is_expired { "Expired" } else { "Ready" };
                                 let replacement_display_name = selected_title.clone();
                                 let replacement_agent_slug = selected_slug.clone();
                                 rsx! {
                                     div {
                                         class: "agent-admin-section",
                                         "data-testid": "agent-admin-pairing-card",
-                                        "data-pairing-request-id": "{request_id}",
                                         div { class: "agent-admin-section-head",
                                             strong { "Connect an agent runtime" }
                                             span { class: "{pairing_badge}", "{pairing_label}" }
@@ -864,52 +786,8 @@ pub fn PersonalAgentAdminPanel(
                                                 "data-testid": "agent-admin-pairing-expired-message",
                                                 "This pairing request expired. The expired handle cannot be used again; pair again to get a fresh pairing request. Expired agents do not reserve the slug."
                                             }
-                                        } else {
-                                            div { class: "muted",
-                                                "Hand this link to any agent runtime (scan the QR or open the link). The runtime resolves the short token through the Cokret service, generates its own private key, and returns a runtime key request. It expires at {expires_at}."
-                                            }
-                                        }
-                                        div { class: "metric-grid",
-                                            div { class: "metric",
-                                                strong { "Agent" }
-                                                span { "data-testid": "agent-admin-pairing-agent-display-name", "{display_name}" }
-                                            }
-                                            div { class: "metric",
-                                                strong { "Pairing code" }
-                                                if pairing_code.is_empty() {
-                                                    span { class: "muted", "data-testid": "agent-admin-pairing-code", "Not loaded" }
-                                                } else {
-                                                    span { class: "mono", "data-testid": "agent-admin-pairing-code", "{pairing_code}" }
-                                                }
-                                            }
-                                            div { class: "metric",
-                                                strong { "Request" }
-                                                if request_id.is_empty() {
-                                                    span { class: "muted", "data-testid": "agent-admin-pairing-request-id", "Not loaded" }
-                                                } else {
-                                                    span { class: "mono", "data-testid": "agent-admin-pairing-request-id", "{request_id}" }
-                                                }
-                                            }
-                                            div { class: "metric",
-                                                strong { "Expires" }
-                                                if expires_at.is_empty() {
-                                                    span { class: "muted", "data-testid": "agent-admin-pairing-expires-at", "Not loaded" }
-                                                } else {
-                                                    span { class: "mono", "data-testid": "agent-admin-pairing-expires-at", "{expires_at}" }
-                                                }
-                                            }
                                         }
                                         if !selected_pairing_is_expired {
-                                            div { class: "muted",
-                                                "After the runtime returns a runtime key request, paste it into the approval panel below. Yougen will sign ck.agent.key.authorize with this controller and complete the key-pair request."
-                                            }
-                                            if !deep_link.is_empty() {
-                                                pre {
-                                                    class: "agent-admin-url",
-                                                    "data-testid": "agent-admin-pairing-link",
-                                                    "{deep_link}"
-                                                }
-                                            }
                                             if !pairing_qr_svg.is_empty() {
                                                 div {
                                                     class: "agent-admin-qr",
@@ -917,33 +795,8 @@ pub fn PersonalAgentAdminPanel(
                                                     dangerous_inner_html: "{pairing_qr_svg}",
                                                 }
                                             }
-                                            if let Some(bootstrap_json) = bootstrap_json.clone() {
-                                                pre {
-                                                    class: "agent-admin-url",
-                                                    "data-testid": "agent-admin-pairing-bootstrap-json",
-                                                    "{bootstrap_json}"
-                                                }
-                                            } else {
-                                                div {
-                                                    class: "muted",
-                                                    "data-testid": "agent-admin-pairing-bootstrap-unavailable",
-                                                    "Bootstrap JSON is only shown immediately after creation. Use the short link for runtime handoff."
-                                                }
-                                            }
                                         }
                                         div { class: "actions",
-                                            if let Some(bootstrap_json) = bootstrap_json.clone() {
-                                                Button {
-                                                    variant: ButtonVariant::Primary,
-                                                    "data-testid": "agent-admin-copy-pairing-bootstrap-button",
-                                                    disabled: selected_pairing_is_expired,
-                                                    onclick: {
-                                                        let bootstrap_json = bootstrap_json.clone();
-                                                        move |_| copy_text_to_clipboard(&bootstrap_json)
-                                                    },
-                                                    "Copy bootstrap"
-                                                }
-                                            }
                                             if !selected_pairing_is_expired {
                                                 Button {
                                                     variant: ButtonVariant::Secondary,
@@ -969,9 +822,6 @@ pub fn PersonalAgentAdminPanel(
                                                             } else {
                                                                 replacement_agent_slug.clone()
                                                             });
-                                                            runtime_key_request_json.set(String::new());
-                                                            pairing_outcome.set(None);
-                                                            pairing_bootstrap_json.set(None);
                                                             create_mode.set(true);
                                                         }
                                                     },
@@ -980,179 +830,6 @@ pub fn PersonalAgentAdminPanel(
                                             }
                                         }
                                     }
-                                }
-                            }
-                        }
-
-                        if selected_status == "pending_runtime_key"
-                            && !selected_pairing_request_id.is_empty()
-                            && !selected_pairing_is_expired {
-                            div {
-                                class: "agent-admin-section",
-                                "data-testid": "agent-admin-runtime-key-approval",
-                                div { class: "agent-admin-section-head",
-                                    strong { "Approve runtime key" }
-                                    span { class: "badge amber", "Pending" }
-                                }
-                                div { class: "muted",
-                                    "Paste the runtime key request generated by the agent runtime. Yougen signs ck.agent.key.authorize with this controller and submits the key-pair request to the Principal Server."
-                                }
-                                textarea {
-                                    class: "agent-admin-url",
-                                    "data-testid": "agent-admin-runtime-key-request-json",
-                                    placeholder: "Runtime key request JSON",
-                                    value: "{runtime_key_request_text}",
-                                    oninput: move |event: FormEvent| runtime_key_request_json.set(event.value()),
-                                }
-                                if let Some(Ok(summary)) = runtime_key_request_preview.as_ref() {
-                                    div { class: "metric-grid", "data-testid": "agent-admin-runtime-key-request-preview",
-                                        div { class: "metric",
-                                            strong { "Runtime key" }
-                                            span {
-                                                class: "mono",
-                                                "data-testid": "agent-admin-runtime-key-fingerprint",
-                                                "{summary.public_key_fingerprint}"
-                                            }
-                                        }
-                                        div { class: "metric",
-                                            strong { "Verification method" }
-                                            span { class: "mono", "{summary.verification_method}" }
-                                        }
-                                        div { class: "metric",
-                                            strong { "Pairing request" }
-                                            span { class: "mono", "{summary.pairing_request_id}" }
-                                        }
-                                        div { class: "metric",
-                                            strong { "Proof expires" }
-                                            if summary.proof_expires_at.is_empty() {
-                                                span { class: "muted", "Not reported" }
-                                            } else {
-                                                span { class: "mono", "{summary.proof_expires_at}" }
-                                            }
-                                        }
-                                    }
-                                } else if let Some(Err(message)) = runtime_key_request_preview.as_ref() {
-                                    div {
-                                        class: "agent-admin-status error",
-                                        "data-testid": "agent-admin-runtime-key-request-error",
-                                        "{message}"
-                                    }
-                                }
-                                div { class: "actions",
-                                    Button {
-                                        variant: ButtonVariant::Primary,
-                                        "data-testid": "agent-admin-approve-runtime-key-button",
-                                        disabled: runtime_key_request_text.trim().is_empty(),
-                                        onclick: {
-                                            let base = base_url.clone();
-                                            let key_state = selected_key_state_value.clone();
-                                            let controller = controller_did.clone();
-                                            let selected_id = selected_id_now.clone();
-                                            move |_| {
-                                                let raw = runtime_key_request_json();
-                                                if is_pairing_request_expired(
-                                                    &selected_pairing_expires_at,
-                                                    &crate::clock::now_rfc3339_secs(),
-                                                ) {
-                                                    last_op_status.set(runtime_key_pairing_error_message(
-                                                        "pairing_request_expired",
-                                                    ));
-                                                    return;
-                                                }
-                                                let request = match parse_runtime_key_approval_request(&raw) {
-                                                    Ok(request) => request,
-                                                    Err(err) => {
-                                                        last_op_status.set(format!(
-                                                            "Runtime key request JSON is invalid. {}",
-                                                            runtime_key_pairing_error_message(err)
-                                                        ));
-                                                        return;
-                                                    }
-                                                };
-                                                if request.agent_principal_id.as_str() != selected_id {
-                                                    last_op_status.set(runtime_key_pairing_error_message(
-                                                        "runtime key request targets a different agent",
-                                                    ));
-                                                    return;
-                                                }
-                                                let base = base.clone();
-                                                let api_token = token();
-                                                let key_state = key_state.clone();
-                                                let controller = controller.clone();
-                                                let selected_id = selected_id.clone();
-                                                spawn(async move {
-                                                    let outcome = with_authed_api(&base, api_token.clone(), move |api| {
-                                                        let request = request.clone();
-                                                        let key_state = key_state.clone();
-                                                        let controller = controller.clone();
-                                                        async move {
-                                                            let service_did = api.describe_cached().await?.service_did.to_string();
-                                                            let authorize_event = build_agent_key_authorize_event_for_pairing(
-                                                                &controller,
-                                                                &service_did,
-                                                                &key_state,
-                                                                &request,
-                                                            )?;
-                                                            api.agent_key_pair_with_authorize_event(
-                                                                request,
-                                                                &authorize_event,
-                                                            )
-                                                            .await
-                                                        }
-                                                    })
-                                                    .await;
-                                                    match outcome {
-                                                        Ok(result) => {
-                                                            agents.with_mut(|rows| {
-                                                                update_agent_status(rows, &selected_id, "active")
-                                                            });
-                                                            match with_authed_api(&base, api_token, move |api| {
-                                                                let id = selected_id.clone();
-                                                                async move { api.agent_get(&id).await }
-                                                            })
-                                                            .await
-                                                            {
-                                                                Ok(view) => {
-                                                                    agents.with_mut(|rows| upsert_agent_view(rows, view));
-                                                                }
-                                                                Err(err) => {
-                                                                    last_op_status.set(format!(
-                                                                        "Runtime key approved: {}; refresh failed: {}",
-                                                                        short_protocol_id(result.authorized_event_ref.as_str()),
-                                                                        err.display()
-                                                                    ));
-                                                                    return;
-                                                                }
-                                                            }
-                                                            runtime_key_request_json.set(String::new());
-                                                            last_op_status.set(format!(
-                                                                "Runtime key approved: {}.",
-                                                                short_protocol_id(result.authorized_event_ref.as_str())
-                                                            ));
-                                                        }
-                                                        Err(err) => last_op_status.set(format!(
-                                                            "Runtime key approval failed. {}",
-                                                            runtime_key_pairing_error_message(err.display())
-                                                        )),
-                                                    }
-                                                });
-                                            }
-                                        },
-                                        "Approve"
-                                    }
-                                }
-                            }
-                        } else if !selected_authorized_event_ref.is_empty() {
-                            div {
-                                class: "agent-admin-section",
-                                "data-testid": "agent-admin-runtime-key-authorized",
-                                div { class: "agent-admin-section-head",
-                                    strong { "Runtime key" }
-                                    span { class: "badge green", "Authorized" }
-                                }
-                                div { class: "metric",
-                                    strong { "Authorization event" }
-                                    span { class: "mono", "{selected_authorized_event_ref}" }
                                 }
                             }
                         }
@@ -1590,66 +1267,6 @@ pub fn PersonalAgentAdminPanel(
                                             }
                                         }
                                     }
-                                }
-                            }
-                        }
-
-                        details { class: "agent-admin-section agent-admin-advanced", "data-testid": "agent-admin-rotate-key",
-                            summary { "Runtime key rotation" }
-                            div { class: "metric",
-                                strong { "Current key state" }
-                                span { class: "mono agent-admin-json", "{selected_key_state}" }
-                            }
-                            div { class: "workflow-form",
-                                Input {
-                                    "data-testid": "agent-admin-rotate-vm-input",
-                                    placeholder: "Replacement key and proof JSON",
-                                    value: "{rotate_body_json}",
-                                    oninput: move |event: FormEvent| rotate_body_json.set(event.value()),
-                                }
-                                Button {
-                                    variant: ButtonVariant::Primary,
-                                    "data-testid": "agent-admin-rotate-key-button",
-                                    disabled: rotate_body_json().trim().is_empty(),
-                                    onclick: {
-                                        let base = base_url.clone();
-                                        move |_| {
-                                            let id = selected_agent_id();
-                                            let raw = rotate_body_json();
-                                            if id.is_empty() || raw.trim().is_empty() { return; }
-                                            let body: AgentRotateKeyRequestBody =
-                                                match serde_json::from_str(&raw) {
-                                                    Ok(body) => body,
-                                                    Err(err) => {
-                                                        last_op_status.set(format!(
-                                                            "Runtime key JSON is invalid: {err}"
-                                                        ));
-                                                        return;
-                                                    }
-                                                };
-                                            let base = base.clone();
-                                            let api_token = token();
-                                            spawn(async move {
-                                                match with_authed_api(&base, api_token, move |api| {
-                                                    let id = id.clone();
-                                                    let body = body.clone();
-                                                    async move { api.agent_rotate_key(&id, &body).await }
-                                                })
-                                                .await
-                                                {
-                                                    Ok(r) => last_op_status.set(format!(
-                                                        "Runtime key rotated: {}.",
-                                                        short_protocol_id(r.authorized_event_ref.as_str())
-                                                    )),
-                                                    Err(err) => last_op_status.set(format!(
-                                                        "Runtime key rotation failed: {}",
-                                                        err.display()
-                                                    )),
-                                                }
-                                            });
-                                        }
-                                    },
-                                    "Rotate key"
                                 }
                             }
                         }
