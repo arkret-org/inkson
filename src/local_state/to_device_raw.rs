@@ -380,6 +380,11 @@ fn raw_payload_string(payload: &Value, key: &str) -> Option<String> {
 }
 
 fn merge_synced_raw_operation_payload(existing: &Value, mut incoming: Value) -> Value {
+    if raw_payload_is_redaction_tombstone(existing)
+        && !raw_payload_is_redaction_tombstone(&incoming)
+    {
+        return existing.clone();
+    }
     let Some(incoming_object) = incoming.as_object_mut() else {
         return incoming;
     };
@@ -398,4 +403,12 @@ fn merge_synced_raw_operation_payload(existing: &Value, mut incoming: Value) -> 
         }
     }
     incoming
+}
+
+fn raw_payload_is_redaction_tombstone(payload: &Value) -> bool {
+    payload.get("redacted").and_then(Value::as_bool) == Some(true)
+        || payload.get("state").and_then(Value::as_str) == Some("redacted")
+        || payload
+            .get("payload")
+            .is_some_and(raw_payload_is_redaction_tombstone)
 }

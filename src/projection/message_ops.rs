@@ -69,10 +69,19 @@ pub(crate) fn message_kind_is_create(value: &Value) -> bool {
     discussion_event_kind(value) == Some("ck.message.create")
 }
 
+pub(crate) fn message_kind_is_revise(value: &Value) -> bool {
+    discussion_event_kind(value) == Some("ck.message.revise")
+}
+
 fn discussion_kind_is_raw_operation(kind: &str) -> bool {
     matches!(
         kind,
-        "ck.message.create" | "ck.pin.add" | "ck.pin.remove" | "ck.pin.reorder"
+        "ck.message.create"
+            | "ck.message.revise"
+            | "ck.message.redact"
+            | "ck.pin.add"
+            | "ck.pin.remove"
+            | "ck.pin.reorder"
     )
 }
 
@@ -101,9 +110,10 @@ fn message_raw_operation_from_event(
         return None;
     }
     let candidates = message_candidates(event);
-    // Dedup key: the canonical event id. A later redaction/expiry tombstone
-    // carrying the same `event_id` upserts over the create, so the local-first
-    // render folds the tombstone (not the original body).
+    // Dedup key: the canonical event id. Server-folded redaction/expiry
+    // tombstones that carry the same `event_id` upsert over the create, while
+    // independent `ck.message.redact` events keep their own record and are
+    // folded by the chat projector.
     let operation_id = value_string_at(event, &["event_id", "id"])
         .or_else(|| first_string_in_candidates(&candidates, &["event_id", "message_id", "id"]))?
         .trim()

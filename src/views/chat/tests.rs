@@ -820,6 +820,68 @@ fn message_operations_from_events_folds_create_and_renders_local_first() {
 }
 
 #[test]
+fn chat_messages_fold_revision_chain_into_latest_message() {
+    let events = vec![
+        json!({
+            "event_id": "ck:event:msg-3",
+            "kind": "ck.message.create",
+            "actor_id": "did:web:bob.example",
+            "realm_id": "ck:realm:r1",
+            "created_at": "2026-05-22T10:00:00Z",
+            "strand_id": "ck:strand:topic",
+            "message_id": "ck:message:m3",
+            "content": {"kind": "ck.content.text", "body": "v1"}
+        }),
+        json!({
+            "event_id": "ck:event:msg-3-rev-1",
+            "kind": "ck.message.revise",
+            "actor_id": "did:web:bob.example",
+            "realm_id": "ck:realm:r1",
+            "created_at": "2026-05-22T10:01:00Z",
+            "strand_id": "ck:strand:topic",
+            "target_ref": "ck:message:m3",
+            "content": {"kind": "ck.content.text", "body": "v2"}
+        }),
+        json!({
+            "event_id": "ck:event:msg-3-rev-2",
+            "kind": "ck.message.revise",
+            "actor_id": "did:web:bob.example",
+            "realm_id": "ck:realm:r1",
+            "created_at": "2026-05-22T10:02:00Z",
+            "strand_id": "ck:strand:topic",
+            "target_ref": "ck:message:m3",
+            "content": {"kind": "ck.content.text", "body": "v3"}
+        }),
+    ];
+
+    let messages = chat_messages_from_events_with_sidecar("ck:realm:r1", &events, None, None);
+
+    assert_eq!(messages.len(), 1);
+    assert_eq!(messages[0].id, "ck:event:msg-3");
+    assert_eq!(messages[0].body, "v3");
+    assert!(messages[0].edited);
+    assert_eq!(
+        messages[0].revisions,
+        vec!["v1".to_owned(), "v2".to_owned()]
+    );
+
+    let records = message_operations_from_events("ck:realm:r1", &events);
+    assert_eq!(
+        records.len(),
+        3,
+        "create and both revisions must survive raw ingest"
+    );
+    let state = ClientLocalState {
+        raw_operations: records,
+        ..ClientLocalState::default()
+    };
+    let restored = chat_messages_from_local_state_with_sidecar(&state, None, None);
+    assert_eq!(restored.len(), 1);
+    assert_eq!(restored[0].body, "v3");
+    assert_eq!(restored[0].revisions.len(), 2);
+}
+
+#[test]
 fn message_operations_redaction_tombstone_dedupes_over_create_by_event_id() {
     // The server folds a redaction into a tombstone form reusing the same
     // `ck.message.create` kind + `event_id`. Both fold to the SAME
@@ -852,6 +914,48 @@ fn message_operations_redaction_tombstone_dedupes_over_create_by_event_id() {
         create_record[0].operation_id,
         tombstone_record[0].operation_id
     );
+}
+
+#[test]
+fn message_operations_fold_independent_redaction_event_by_message_id() {
+    let create = json!({
+        "event_id": "ck:event:msg-3",
+        "kind": "ck.message.create",
+        "actor_id": "did:web:bob.example",
+        "realm_id": "ck:realm:r1",
+        "created_at": "2026-05-22T10:00:00Z",
+        "strand_id": "ck:strand:topic",
+        "message_id": "ck:message:m3",
+        "body": "secret"
+    });
+    let redaction = json!({
+        "event_id": "ck:event:redact-3",
+        "event_kind": "ck.message.redact",
+        "actor_id": "did:web:bob.example",
+        "realm_id": "ck:realm:r1",
+        "created_at": "2026-05-22T10:05:00Z",
+        "payload": {
+            "event_id": "ck:event:redact-3",
+            "message_id": "ck:message:m3",
+            "reason": "user requested tombstone"
+        }
+    });
+
+    for events in [
+        vec![create.clone(), redaction.clone()],
+        vec![redaction, create],
+    ] {
+        let records = message_operations_from_events("ck:realm:r1", &events);
+        assert_eq!(records.len(), 2);
+        let state = ClientLocalState {
+            raw_operations: records,
+            ..ClientLocalState::default()
+        };
+        let messages = chat_messages_from_local_state_with_sidecar(&state, None, None);
+        assert_eq!(messages.len(), 1);
+        assert!(messages[0].redacted);
+        assert_eq!(messages[0].body, "");
+    }
 }
 
 #[test]

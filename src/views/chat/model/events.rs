@@ -7,7 +7,7 @@ pub(crate) use crate::projection::message_ops::message_operations_from_events;
 // chat-model consumer keeps resolving through this module.
 pub(crate) use crate::projection::message_ops::{
     first_string_in_candidates, message_actor_from_candidates, message_candidates,
-    message_kind_is_create, value_string_at,
+    message_kind_is_create, message_kind_is_revise, value_string_at,
 };
 
 pub(crate) fn chat_reply_quote_preview(
@@ -128,6 +128,217 @@ pub(crate) fn local_redaction_tombstone_for_message(
     }
     cokret_sdk::events::redaction_tombstone_message_value(&mut event, redacted_at, redaction_ref);
     event
+}
+
+#[derive(Clone, Debug)]
+struct MessageRedactionMarker {
+    target_ref: String,
+    redacted_at: chrono::DateTime<chrono::Utc>,
+    redaction_ref: Option<String>,
+}
+
+fn redaction_payload_candidate(event: &Value) -> &Value {
+    event
+        .get("payload")
+        .or_else(|| event.get("content"))
+        .or_else(|| event.get("body"))
+        .unwrap_or(event)
+}
+
+fn message_redaction_marker_from_event(event: &Value) -> Option<MessageRedactionMarker> {
+    let candidates = message_candidates(event);
+    let kind = candidates.iter().find_map(|candidate| {
+        value_string_at(
+            candidate,
+            &["kind", "event_kind", "type", "op_type", "event_type"],
+        )
+    })?;
+    if kind != "ck.message.redact" && kind != "ck.redaction" {
+        return None;
+    }
+    let payload = redaction_payload_candidate(event);
+    let target_ref = [
+        "target_event_id",
+        "message_id",
+        "target_ref",
+        "target",
+        "redacts",
+    ]
+    .into_iter()
+    .find_map(|key| payload.get(key).and_then(Value::as_str))
+    .or_else(|| {
+        ["target_event_id", "target_ref", "target", "redacts"]
+            .into_iter()
+            .find_map(|key| event.get(key).and_then(Value::as_str))
+    })
+    .map(str::trim)
+    .filter(|value| {
+        !value.is_empty() && (value.starts_with("ck:event:") || value.starts_with("ck:message:"))
+    })?
+    .to_owned();
+    let redaction_ref = value_string_at(event, &["event_id", "id"])
+        .or_else(|| value_string_at(payload, &["event_id", "id"]))
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToOwned::to_owned);
+    let redacted_at = first_string_in_candidates(&candidates, &["created_at"])
+        .and_then(|created_at| chrono::DateTime::parse_from_rfc3339(created_at).ok())
+        .map(|timestamp| timestamp.with_timezone(&chrono::Utc))
+        .unwrap_or_else(chrono::Utc::now);
+    Some(MessageRedactionMarker {
+        target_ref,
+        redacted_at,
+        redaction_ref,
+    })
+}
+
+fn redaction_targets_message(marker: &MessageRedactionMarker, message: &ChatMessage) -> bool {
+    marker.target_ref == message.id
+        || message
+            .protocol_message_id
+            .as_deref()
+            .is_some_and(|message_id| marker.target_ref == message_id)
+}
+
+fn apply_redaction_marker_to_message(message: &mut ChatMessage, marker: &MessageRedactionMarker) {
+    let tombstone = local_redaction_tombstone_for_message(
+        message,
+        marker.redacted_at,
+        marker.redaction_ref.as_deref(),
+    );
+    if let Some(redacted) = chat_message_from_event(&message.realm_id, &tombstone) {
+        *message = redacted;
+    } else {
+        message.body.clear();
+        message.redacted = true;
+        message.reactions.clear();
+        message.mentions.clear();
+        message.crypto_state = MessageCryptoState::Plaintext;
+    }
+}
+
+fn apply_message_redactions(messages: &mut [ChatMessage], events: &[Value]) {
+    let redactions = events
+        .iter()
+        .filter_map(message_redaction_marker_from_event)
+        .collect::<Vec<_>>();
+    if redactions.is_empty() {
+        return;
+    }
+    for message in messages {
+        if let Some(marker) = redactions
+            .iter()
+            .find(|marker| redaction_targets_message(marker, message))
+        {
+            apply_redaction_marker_to_message(message, marker);
+        }
+    }
+}
+
+fn message_revision_target_ref_from_candidates(candidates: &[&Value]) -> Option<String> {
+    candidates
+        .iter()
+        .find(|candidate| message_kind_is_revise(candidate))
+        .and_then(|_| {
+            candidates.iter().find_map(|candidate| {
+                value_string_at(
+                    candidate,
+                    &["target_ref", "target_event_id", "message_id", "revision_of"],
+                )
+            })
+        })
+        .map(str::trim)
+        .filter(|value| {
+            !value.is_empty()
+                && (value.starts_with("ck:event:") || value.starts_with("ck:message:"))
+        })
+        .map(ToOwned::to_owned)
+}
+
+fn message_ref_equivalents(value: &str) -> [String; 2] {
+    let trimmed = value.trim();
+    let alternate = if let Some(suffix) = trimmed.strip_prefix("ck:event:") {
+        format!("ck:message:{suffix}")
+    } else if let Some(suffix) = trimmed.strip_prefix("ck:message:") {
+        format!("ck:event:{suffix}")
+    } else {
+        trimmed.to_owned()
+    };
+    [trimmed.to_owned(), alternate]
+}
+
+fn message_matches_target_ref(message: &ChatMessage, target_ref: &str) -> bool {
+    let refs = message_ref_equivalents(target_ref);
+    refs.iter().any(|candidate| {
+        candidate == &message.id
+            || message
+                .protocol_message_id
+                .as_deref()
+                .is_some_and(|message_id| candidate == message_id)
+    })
+}
+
+fn fold_revision_message(
+    messages: &mut [ChatMessage],
+    target_ref: &str,
+    revision: ChatMessage,
+) -> bool {
+    let Some(message) = messages
+        .iter_mut()
+        .find(|message| message_matches_target_ref(message, target_ref))
+    else {
+        return false;
+    };
+    if revision.redacted {
+        message.redacted = true;
+        message.body.clear();
+        message.reactions.clear();
+        message.mentions.clear();
+        message.crypto_state = MessageCryptoState::Plaintext;
+    } else {
+        let previous = std::mem::replace(&mut message.body, revision.body);
+        if !previous.is_empty()
+            && message
+                .revisions
+                .last()
+                .is_none_or(|last| last != &previous)
+        {
+            message.revisions.push(previous);
+        }
+    }
+    message.edited = true;
+    message.timestamp = revision.timestamp;
+    message.pending = revision.pending;
+    message.failed = revision.failed;
+    message.error = revision.error;
+    message.crypto_state = revision.crypto_state;
+    true
+}
+
+fn chat_messages_from_event_list_with_sidecar(
+    realm_id: &str,
+    events: &[Value],
+    state_store: Option<&LocalStateStore>,
+    decrypt_identity: Option<(&str, &str)>,
+) -> Vec<ChatMessage> {
+    let mut messages = Vec::new();
+    for event in events {
+        let candidates = message_candidates(event);
+        let revision_target_ref = message_revision_target_ref_from_candidates(&candidates);
+        let Some(message) =
+            chat_message_from_event_with_sidecar(realm_id, event, state_store, decrypt_identity)
+        else {
+            continue;
+        };
+        if let Some(target_ref) = revision_target_ref
+            && fold_revision_message(&mut messages, &target_ref, message.clone())
+        {
+            continue;
+        }
+        messages.push(message);
+    }
+    apply_message_redactions(&mut messages, events);
+    messages
 }
 
 pub(crate) fn text_from_blocks(value: &Value) -> Option<&str> {
@@ -466,7 +677,7 @@ pub(crate) fn chat_message_from_event_with_sidecar(
     };
     let explicit_message_kind = candidates
         .iter()
-        .any(|candidate| message_kind_is_create(candidate));
+        .any(|candidate| message_kind_is_create(candidate) || message_kind_is_revise(candidate));
     let message_payload_shape =
         first_string_in_candidates(&candidates, &["message_id", "strand_id", "thread_id"])
             .is_some();
@@ -598,12 +809,7 @@ pub(crate) fn chat_messages_from_events_with_sidecar(
     state_store: Option<&LocalStateStore>,
     decrypt_identity: Option<(&str, &str)>,
 ) -> Vec<ChatMessage> {
-    events
-        .iter()
-        .filter_map(|event| {
-            chat_message_from_event_with_sidecar(realm_id, event, state_store, decrypt_identity)
-        })
-        .collect()
+    chat_messages_from_event_list_with_sidecar(realm_id, events, state_store, decrypt_identity)
 }
 
 /// Normalize a batch of realm timeline events (from `account.subscribe`
@@ -1120,18 +1326,21 @@ pub(crate) fn chat_messages_from_local_state_with_sidecar(
     state_store: Option<&LocalStateStore>,
     decrypt_identity: Option<(&str, &str)>,
 ) -> Vec<ChatMessage> {
-    state
+    let events = state
         .raw_operations
         .iter()
-        .filter_map(|record| {
-            chat_message_from_event_with_sidecar(
-                record.realm_id.as_deref().unwrap_or_default(),
-                &record.payload,
-                state_store,
-                decrypt_identity,
-            )
+        .map(|record| {
+            let mut payload = record.payload.clone();
+            if payload.get("realm_id").is_none()
+                && let Some(realm_id) = record.realm_id.as_deref()
+                && let Some(object) = payload.as_object_mut()
+            {
+                object.insert("realm_id".to_owned(), Value::String(realm_id.to_owned()));
+            }
+            payload
         })
-        .collect()
+        .collect::<Vec<_>>();
+    chat_messages_from_event_list_with_sidecar("", &events, state_store, decrypt_identity)
 }
 
 pub(crate) fn poll_cards_from_local_state(

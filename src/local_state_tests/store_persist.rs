@@ -107,6 +107,44 @@ fn raw_operation_upsert_reports_real_payload_changes() {
 }
 
 #[test]
+fn raw_operation_upsert_keeps_redaction_tombstone_over_plaintext_create() {
+    let path = temp_state_path("raw-op-upsert-redacted");
+    let mut store = LocalStateStore::with_path(path);
+    let tombstone = serde_json::json!({
+        "kind": "ck.message.create",
+        "event_id": "ck:event:upsert-redacted",
+        "message_id": "ck:message:upsert-redacted",
+        "redacted": true,
+        "state": "redacted",
+        "content": {"kind": "ck.content.text", "body": "[redacted]"}
+    });
+    let plaintext = serde_json::json!({
+        "kind": "ck.message.create",
+        "event_id": "ck:event:upsert-redacted",
+        "message_id": "ck:message:upsert-redacted",
+        "content": {"kind": "ck.content.text", "body": "secret"}
+    });
+
+    assert!(store.upsert_raw_operation(
+        "ck:event:upsert-redacted",
+        Some("ck:realm:upsert".to_owned()),
+        tombstone
+    ));
+    assert!(!store.upsert_raw_operation(
+        "ck:event:upsert-redacted",
+        Some("ck:realm:upsert".to_owned()),
+        plaintext
+    ));
+    let state = store.load();
+    assert_eq!(state.raw_operations.len(), 1);
+    assert_eq!(state.raw_operations[0].payload["redacted"], true);
+    assert_eq!(
+        state.raw_operations[0].payload["content"]["body"],
+        "[redacted]"
+    );
+}
+
+#[test]
 fn realm_lifecycle_state_tracks_destroy_without_raw_operation_scan() {
     let path = temp_state_path("realm-lifecycle");
     let mut store = LocalStateStore::with_path(path.clone());
