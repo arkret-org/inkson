@@ -96,6 +96,12 @@ const OP_LIST_HANDLES_FOR_SUBJECT: &str = "ck.find.directory.query.list_handles_
 const MIN_SIDEBAR_WIDTH: f64 = 280.0;
 const MAX_SIDEBAR_WIDTH: f64 = 420.0;
 
+fn try_set_signal<T: 'static>(mut signal: Signal<T>, value: T) {
+    if let Ok(mut slot) = signal.try_write() {
+        *slot = value;
+    }
+}
+
 // Each stylesheet below is assembled from semantic section files via `concat!`.
 // Injection order is explicit here rather than encoded in file-name prefixes.
 const STYLE: &str = concat!(
@@ -323,6 +329,7 @@ pub fn RouterView() -> Element {
         let mut secure_store_ready_for_upgrade = secure_store_bootstrap_ready;
         let mut token_for_secure_upgrade = token;
         use_future(move || async move {
+            crate::api::sleep_for(std::time::Duration::from_millis(1)).await;
             tracing::warn!(target: "secure_store", "secure store upgrade: invoking upgrade_wasm_secure_key_store_async");
             match crate::secure_key_store::upgrade_wasm_secure_key_store_async("yougen").await {
                 Ok(Some(secure_store)) => {
@@ -885,6 +892,7 @@ pub fn RouterView() -> Element {
         let token = token;
         let mut session_boot_state = session_boot_state;
         move || async move {
+            crate::api::sleep_for(std::time::Duration::from_millis(1)).await;
             loop {
                 // Freshness gate — only refresh when the persisted grant is
                 // near its own expiry. The read borrow is dropped before any
@@ -953,6 +961,7 @@ pub fn RouterView() -> Element {
     // finish it on the next boot so the rotation chain can never outlive a
     // "Log out" click. One-shot: reads no signals, so it runs once on mount.
     use_future(move || async move {
+        crate::api::sleep_for(std::time::Duration::from_millis(1)).await;
         crate::pending_logout::run_pending_logout_if_any(chrono::Utc::now()).await;
     });
 
@@ -1760,6 +1769,7 @@ pub fn RouterView() -> Element {
             let base = lookup_base_url.clone();
             let actor = lookup_actor.clone();
             let api_token = lookup_token.clone();
+            let existing_personal_handles = personal_handles();
             spawn(async move {
                 match CokretApi::new(&base) {
                     Ok(api) => match api
@@ -1774,14 +1784,22 @@ pub fn RouterView() -> Element {
                                 // account viewer primary handle claim already
                                 // loaded instead of clobbering it with an empty
                                 // directory page.
-                                if personal_handles().is_empty() {
-                                    personal_handles_status.set("No handles published".to_owned());
+                                if existing_personal_handles.is_empty() {
+                                    try_set_signal(
+                                        personal_handles_status,
+                                        "No handles published".to_owned(),
+                                    );
                                 }
                             } else {
-                                let handles =
-                                    merge_personal_handles(&personal_handles(), directory_handles);
-                                personal_handles_status.set(personal_handles_status_for(&handles));
-                                personal_handles.set(handles);
+                                let handles = merge_personal_handles(
+                                    &existing_personal_handles,
+                                    directory_handles,
+                                );
+                                try_set_signal(
+                                    personal_handles_status,
+                                    personal_handles_status_for(&handles),
+                                );
+                                try_set_signal(personal_handles, handles);
                             }
                         }
                         Err(err) => {
@@ -1789,8 +1807,8 @@ pub fn RouterView() -> Element {
                                 ?err,
                                 "directory list_handles_for_subject failed; keeping account primary handle claim"
                             );
-                            if personal_handles().is_empty() {
-                                personal_handles_status.set("Not published".to_owned());
+                            if existing_personal_handles.is_empty() {
+                                try_set_signal(personal_handles_status, "Not published".to_owned());
                             }
                         }
                     },
@@ -1799,8 +1817,8 @@ pub fn RouterView() -> Element {
                             ?err,
                             "directory list_handles_for_subject skipped for invalid server URL"
                         );
-                        if personal_handles().is_empty() {
-                            personal_handles_status.set("Not published".to_owned());
+                        if existing_personal_handles.is_empty() {
+                            try_set_signal(personal_handles_status, "Not published".to_owned());
                         }
                     }
                 }
@@ -4645,42 +4663,6 @@ pub fn RouterView() -> Element {
                         }
                     }
                     div { class: "actions",
-                        Button {
-                            variant: ButtonVariant::Ghost,
-                            size: ButtonSize::Sm,
-                            class: "btn icon theme-toggle-button",
-                            "data-testid": "theme-toggle",
-                            title: "{theme_toggle_title}",
-                            "aria-label": "{theme_toggle_title}",
-                            onclick: move |_| {
-                                let current_theme = theme();
-                                let next = next_manual_theme(&current_theme);
-                                theme.set(next.clone());
-                                state_store.write().save_private_data(&account_did(), "theme", next.clone());
-                                // A4a — best-effort cross-device sync
-                                // via `ck.account_data.set(client.ui)`.
-                                crate::views::settings::push_client_ui_account_data(
-                                    base_url(),
-                                    token(),
-                                    next,
-                                );
-                            },
-                            UiIcon { name: theme_toggle_icon }
-                        }
-                        Button {
-                            variant: ButtonVariant::Ghost,
-                            size: ButtonSize::Sm,
-                            r#type: "button",
-                            class: "btn icon",
-                            "data-testid": "topbar-shortcuts-button",
-                            title: crate::i18n::tr("shortcuts.title"),
-                            "aria-label": crate::i18n::tr("shortcuts.title"),
-                            onclick: move |event: dioxus::events::MouseEvent| {
-                                event.stop_propagation();
-                                shortcut_help_open.set(true);
-                            },
-                            UiIcon { name: "keyboard" }
-                        }
                         button {
                             class: "sr-only",
                             r#type: "button",
@@ -4758,20 +4740,6 @@ pub fn RouterView() -> Element {
                                         },
                                     }
                                     kbd { "⌘K" }
-                                    Button {
-                                        variant: ButtonVariant::Ghost,
-                                        size: ButtonSize::Sm,
-                                        r#type: "button",
-                                        class: "btn icon topbar-command-search-close",
-                                        title: crate::i18n::tr("common.close"),
-                                        "aria-label": crate::i18n::tr("common.close"),
-                                        onclick: move |_| {
-                                            palette_open.set(false);
-                                            topbar_search_expanded.set(false);
-                                            global_query.set(String::new());
-                                        },
-                                        UiIcon { name: "x" }
-                                    }
                                 }
                                 if palette_open() {
                                     CommandPalette {
@@ -4800,6 +4768,42 @@ pub fn RouterView() -> Element {
                                     }
                                 }
                             }
+                        }
+                        Button {
+                            variant: ButtonVariant::Ghost,
+                            size: ButtonSize::Sm,
+                            class: "btn icon theme-toggle-button",
+                            "data-testid": "theme-toggle",
+                            title: "{theme_toggle_title}",
+                            "aria-label": "{theme_toggle_title}",
+                            onclick: move |_| {
+                                let current_theme = theme();
+                                let next = next_manual_theme(&current_theme);
+                                theme.set(next.clone());
+                                state_store.write().save_private_data(&account_did(), "theme", next.clone());
+                                // A4a — best-effort cross-device sync
+                                // via `ck.account_data.set(client.ui)`.
+                                crate::views::settings::push_client_ui_account_data(
+                                    base_url(),
+                                    token(),
+                                    next,
+                                );
+                            },
+                            UiIcon { name: theme_toggle_icon }
+                        }
+                        Button {
+                            variant: ButtonVariant::Ghost,
+                            size: ButtonSize::Sm,
+                            r#type: "button",
+                            class: "btn icon",
+                            "data-testid": "topbar-shortcuts-button",
+                            title: crate::i18n::tr("shortcuts.title"),
+                            "aria-label": crate::i18n::tr("shortcuts.title"),
+                            onclick: move |event: dioxus::events::MouseEvent| {
+                                event.stop_propagation();
+                                shortcut_help_open.set(true);
+                            },
+                            UiIcon { name: "keyboard" }
                         }
                         div { class: "sr-only", "data-testid": "connection-status", role: "status", "aria-live": "polite",
                             span { "data-testid": "status-label", "{connection_status}" }
