@@ -19,7 +19,7 @@ use yoface::utils::dom::copy_text_to_clipboard;
 use super::model::{
     AgentGrantPreset, AgentServiceScopePreset, agent_state_badge_class, agent_state_label,
     agent_view_from_directory_row, build_agent_key_authorize_event_for_pairing,
-    build_savfox_pairing_bootstrap_json, build_savfox_pairing_deep_link, expand_preset_grant,
+    build_savfox_pairing_bootstrap_json, build_savfox_pairing_deep_link,
     is_pairing_request_expired, parse_savfox_runtime_key_approval_request,
     participation_ceiling_reason, render_savfox_pairing_qr_svg, requested_scope_for_presets,
     runtime_key_pairing_error_message, summarize_savfox_runtime_key_approval_request,
@@ -188,7 +188,6 @@ pub fn PersonalAgentAdminPanel(
     let mut provision_presets =
         use_signal(|| vec![AgentGrantPreset::Read, AgentGrantPreset::ReplyAsAgent]);
     let mut provision_service_scopes = use_signal(|| AgentServiceScopePreset::DEFAULTS.to_vec());
-    let mut provision_realm = use_signal(String::new);
     let mut pairing_outcome = use_signal(|| Option::<cokret_sdk::AgentProvisionOutcome>::None);
     let mut pairing_bootstrap_json = use_signal(|| Option::<String>::None);
     let mut runtime_key_request_json = use_signal(String::new);
@@ -408,7 +407,7 @@ pub fn PersonalAgentAdminPanel(
                             div { class: "agent-admin-detail-head",
                                 div {
                                     div { class: "entity-title", "Create agent" }
-                                    div { class: "muted", "Create a personal AI agent with explicit runtime endpoint scope and separate Realm-scoped content grants." }
+                                    div { class: "muted", "Create an account-global personal AI agent. Realm data access starts when you add it to a Realm." }
                                 }
                             }
                             div { class: "workflow-form",
@@ -424,16 +423,10 @@ pub fn PersonalAgentAdminPanel(
                                     value: "{new_agent_slug}",
                                     oninput: move |event: FormEvent| new_agent_slug.set(event.value()),
                                 }
-                                Input {
-                                    "data-testid": "agent-admin-provision-realm-input",
-                                    placeholder: "Realm ID for runtime scope and starter grants",
-                                    value: "{provision_realm}",
-                                    oninput: move |event: FormEvent| provision_realm.set(event.value()),
-                                }
-                                div { class: "muted", "Service scope lets the runtime call subscribe, scan, submit, and resource endpoints. Content grants decide whether payloads can be read or messages can be created." }
+                                div { class: "muted", "Service scope lets the runtime call subscribe, scan, submit, and resource endpoints. Realm membership and participation controls decide whether payloads can be read or messages can be created." }
                                 div { class: "agent-admin-section-head",
-                                    strong { "Content capability grants" }
-                                    span { class: "muted", "Payload and write authority" }
+                                    strong { "Content capabilities" }
+                                    span { class: "muted", "Available after Realm membership allows them" }
                                 }
                                 div { class: "agent-admin-preset-list",
                                     for preset in AgentGrantPreset::ALL {
@@ -523,24 +516,12 @@ pub fn PersonalAgentAdminPanel(
                                                 };
                                                 let presets = provision_presets.read().clone();
                                                 let service_scopes = provision_service_scopes.read().clone();
-                                                let realm = provision_realm();
-                                                let realm_for_grant = if realm.trim().is_empty() {
-                                                    None
-                                                } else {
-                                                    Some(realm.trim().to_owned())
-                                                };
-                                                if realm_for_grant.is_none() {
-                                                    last_op_status.set("Realm ID is required to build an explicit agent key scope.".to_owned());
-                                                    return;
-                                                }
                                                 let requested_scope = match requested_scope_for_presets(
-                                                    &presets,
                                                     &service_scopes,
-                                                    realm_for_grant.as_deref(),
                                                 ) {
                                                     Some(scope) => scope,
                                                     None => {
-                                                        last_op_status.set("Select at least one content grant or runtime service surface.".to_owned());
+                                                        last_op_status.set("Select at least one runtime service surface.".to_owned());
                                                         return;
                                                     }
                                                 };
@@ -611,39 +592,6 @@ pub fn PersonalAgentAdminPanel(
                                                     }
                                                     pairing_outcome.set(Some(outcome.clone()));
 
-                                                    let mut attached = 0usize;
-                                                    let mut grant_errs: Vec<String> = Vec::new();
-                                                    for preset in presets.iter() {
-                                                        let grant = expand_preset_grant(
-                                                            *preset,
-                                                            &created_agent_id,
-                                                            realm_for_grant.as_deref(),
-                                                            &expires_at,
-                                                        );
-                                                        let attach_body = AgentGrantAttachRequestBody { grant };
-                                                        let agent_id_for_call = created_agent_id.clone();
-                                                        match with_authed_api(
-                                                            &base,
-                                                            api_token.clone(),
-                                                            move |api| {
-                                                                let body = attach_body.clone();
-                                                                let id = agent_id_for_call.clone();
-                                                                async move {
-                                                                    api.agent_grant_attach(&id, &body).await
-                                                                }
-                                                            },
-                                                        )
-                                                        .await
-                                                        {
-                                                            Ok(_) => attached += 1,
-                                                            Err(err) => grant_errs.push(format!(
-                                                                "{}: {}",
-                                                                preset.label(),
-                                                                err.display()
-                                                            )),
-                                                        }
-                                                    }
-
                                                     let agent_object = json!({
                                                         "agent_principal_id": created_agent_id,
                                                         "display_name": display,
@@ -669,20 +617,10 @@ pub fn PersonalAgentAdminPanel(
                                                     selected_grants.set(Vec::new());
                                                     create_mode.set(false);
 
-                                                    if grant_errs.is_empty() {
-                                                        last_op_status.set(format!(
-                                                            "Created {}. {} starter grant(s) attached.",
-                                                            short_protocol_id(&created_id),
-                                                            attached
-                                                        ));
-                                                    } else {
-                                                        last_op_status.set(format!(
-                                                            "Created {}; {} starter grant(s) attached, errors: {}",
-                                                            short_protocol_id(&created_id),
-                                                            attached,
-                                                            grant_errs.join("; ")
-                                                        ));
-                                                    }
+                                                    last_op_status.set(format!(
+                                                        "Created {}. Add it to a Realm to enable data access.",
+                                                        short_protocol_id(&created_id)
+                                                    ));
                                                 });
                                             }
                                         },

@@ -66,10 +66,10 @@ pub fn agents_enabled() -> bool {
 // UI/SDK affordances only; the canonical content authorization is the
 // expanded `ck.capability.grant` object for each preset (actions +
 // resource selector + registered constraints + TTL). Runtime endpoint
-// access is selected separately through `AgentServiceScopePreset`; both
-// layers are included in `requested_scope` so the agent key has an
-// explicit operation ceiling, while content payload access remains gated
-// by capability grants.
+// access is selected separately through `AgentServiceScopePreset`; only
+// the runtime service surface is included in `requested_scope`, while
+// content payload access remains gated by Realm membership and
+// participation grants.
 // ─────────────────────────────────────────────────────────────────────
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -246,41 +246,36 @@ pub fn service_actions_for_presets(presets: &[AgentServiceScopePreset]) -> Vec<S
     actions
 }
 
-/// Combine the `requested_scope` (`AgentKeyScope`, the spec object
+/// Build the `requested_scope` (`AgentKeyScope`, the spec object
 /// `{actions, resources, constraints}`) for the provision call from the
-/// selected service surface and content presets. The returned
-/// `AgentKeyScope.actions` intentionally contains both endpoint
-/// operation tokens (for runtime reachability) and content action tokens
-/// (as the key's maximum content ceiling). Capability grants still decide
-/// whether payloads can be read or messages can be created. The schema
-/// requires `resources` to be non-empty, so `None` is returned when no
-/// action is selected or no Realm is chosen.
+/// selected runtime service surface. Personal agents are account-global:
+/// this key scope is not Realm-bound, and data authority is derived later
+/// from Realm membership plus participation/capability gates. The schema
+/// requires `resources` to be non-empty, so each selected service action
+/// is mirrored as an explicit `operation` resource selector.
 pub fn requested_scope_for_presets(
-    content_presets: &[AgentGrantPreset],
     service_presets: &[AgentServiceScopePreset],
-    realm_id: Option<&str>,
 ) -> Option<AgentKeyScope> {
-    let realm = realm_id.map(str::trim).filter(|value| !value.is_empty())?;
-    let realm_id = cokret_sdk::RealmId::new(realm.to_owned()).ok()?;
     let mut actions: Vec<String> = Vec::new();
     for action in service_actions_for_presets(service_presets) {
-        push_unique_action(&mut actions, &action);
-    }
-    for action in content_actions_for_presets(content_presets) {
         push_unique_action(&mut actions, &action);
     }
     if actions.is_empty() {
         return None;
     }
+    let resources = actions
+        .iter()
+        .map(|action| AgentKeyScopeResource {
+            kind: AgentKeyScopeResourceKind::Operation,
+            realm_id: None,
+            r#ref: None,
+            operation: Some(action.clone()),
+            service_did: None,
+        })
+        .collect();
     Some(AgentKeyScope {
         actions,
-        resources: vec![AgentKeyScopeResource {
-            kind: AgentKeyScopeResourceKind::Realm,
-            realm_id: Some(realm_id),
-            r#ref: None,
-            operation: None,
-            service_did: None,
-        }],
+        resources,
         constraints: Vec::new(),
     })
 }

@@ -263,7 +263,6 @@ test("account settings split account/server info and surface personal agents", a
   expect(scrollLayout.workspaceScrollTop).toBeGreaterThan(0);
   await expect(page.getByTestId("agent-admin-content-preset-row")).toHaveCount(5);
   await expect(page.getByTestId("agent-admin-service-scope-row")).toHaveCount(4);
-  await page.getByTestId("agent-admin-provision-realm-input").fill(DEMO_REALM);
   const provisionRequest = page.waitForRequest(
     (request) =>
       request.method() === "POST" &&
@@ -275,10 +274,8 @@ test("account settings split account/server info and surface personal agents", a
     "ck.self.events.stream.subscribe",
     "ck.self.events.query.scan",
     "ck.self.events.command.submit",
-    "ck.event.read",
-    "ck.message.create",
-    "ck.reaction.add",
   ]);
+  expect(JSON.stringify(provisionBody.requested_scope.resources)).not.toContain("realm_id");
   await expect(page.getByTestId("agent-admin-pairing-card")).toBeVisible();
   const bootstrap = JSON.parse(
     (await page.getByTestId("agent-admin-savfox-bootstrap-json").innerText()).trim(),
@@ -365,7 +362,6 @@ test("expired personal agent pairing shows actionable runtime key error", async 
   await gotoAndDismissRecovery(page, "/settings/agents");
   await expect(page.getByTestId("personal-agent-admin")).toBeVisible();
   await page.getByTestId("agent-admin-create-open-button").click();
-  await page.getByTestId("agent-admin-provision-realm-input").fill(DEMO_REALM);
   await page.getByTestId("agent-admin-provision-button").click();
   await expect(page.getByTestId("agent-admin-pairing-card")).toBeVisible();
   await expect(page.getByTestId("agent-admin-pairing-card")).toContainText("Expired");

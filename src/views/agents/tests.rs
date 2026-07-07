@@ -103,75 +103,62 @@ mod personal_agent_tests {
     }
 
     #[test]
-    fn requested_scope_unions_service_and_content_actions_and_requires_realm() {
-        const REALM: &str = "ck:realm:01904100-0000-7000-8000-000000000001";
-        // No preset / no realm → omit requested_scope entirely (schema
-        // requires non-empty resources, so there is nothing valid to send).
-        assert!(requested_scope_for_presets(&[], &[], Some(REALM)).is_none());
-        assert!(
-            requested_scope_for_presets(
-                &[AgentGrantPreset::Read],
-                &[AgentServiceScopePreset::SubscribeEvents],
-                None
-            )
-            .is_none()
-        );
+    fn requested_scope_uses_service_actions_without_realm() {
+        assert!(requested_scope_for_presets(&[]).is_none());
 
-        let scope = requested_scope_for_presets(
-            &[AgentGrantPreset::Read, AgentGrantPreset::ReplyAsAgent],
-            &AgentServiceScopePreset::DEFAULTS,
-            Some(REALM),
-        )
-        .expect("realm-scoped presets produce a scope");
+        let scope = requested_scope_for_presets(&AgentServiceScopePreset::DEFAULTS)
+            .expect("service presets produce a runtime scope");
         assert_eq!(
             scope.actions,
             vec![
                 "ck.self.events.stream.subscribe",
                 "ck.self.events.query.scan",
                 "ck.self.events.command.submit",
-                "ck.event.read",
-                "ck.message.create",
-                "ck.reaction.add"
             ]
         );
         let wire = serde_json::to_value(&scope).unwrap();
-        assert_eq!(wire["resources"][0]["kind"], "realm");
-        assert_eq!(wire["resources"][0]["realm_id"], REALM);
+        assert_eq!(
+            wire["resources"],
+            serde_json::json!([
+                {
+                    "kind": "operation",
+                    "operation": "ck.self.events.stream.subscribe"
+                },
+                {
+                    "kind": "operation",
+                    "operation": "ck.self.events.query.scan"
+                },
+                {
+                    "kind": "operation",
+                    "operation": "ck.self.events.command.submit"
+                }
+            ])
+        );
         assert!(scope.constraints.is_empty());
     }
 
     #[test]
-    fn requested_scope_combines_read_and_draft_without_exclusion() {
-        const REALM: &str = "ck:realm:01904100-0000-7000-8000-000000000001";
-        let scope = requested_scope_for_presets(
-            &[AgentGrantPreset::Read, AgentGrantPreset::Draft],
-            &[AgentServiceScopePreset::SubscribeEvents],
-            Some(REALM),
-        )
-        .expect("read plus draft is a valid additive scope");
+    fn content_presets_do_not_expand_runtime_scope() {
+        let scope = requested_scope_for_presets(&[AgentServiceScopePreset::SubscribeEvents])
+            .expect("service scope is required for runtime reachability");
 
+        assert_eq!(scope.actions, vec!["ck.self.events.stream.subscribe"]);
         assert_eq!(
-            scope.actions,
+            content_actions_for_presets(&[AgentGrantPreset::Read, AgentGrantPreset::Draft]),
             vec![
-                "ck.self.events.stream.subscribe",
-                "ck.event.read",
-                "ck.agent.draft.propose",
-                "ck.agent.action_request"
+                "ck.event.read".to_owned(),
+                "ck.agent.draft.propose".to_owned(),
+                "ck.agent.action_request".to_owned()
             ]
         );
     }
 
     #[test]
     fn requested_scope_can_include_service_surface_without_content_grant() {
-        const REALM: &str = "ck:realm:01904100-0000-7000-8000-000000000001";
-        let scope = requested_scope_for_presets(
-            &[],
-            &[
-                AgentServiceScopePreset::ScanCatchUp,
-                AgentServiceScopePreset::ResolveResources,
-            ],
-            Some(REALM),
-        )
+        let scope = requested_scope_for_presets(&[
+            AgentServiceScopePreset::ScanCatchUp,
+            AgentServiceScopePreset::ResolveResources,
+        ])
         .expect("service-only scope is still a valid agent key ceiling");
 
         assert_eq!(
@@ -235,13 +222,7 @@ mod personal_agent_tests {
 
     #[test]
     fn savfox_bootstrap_serializes_pairing_handle_and_scope_without_private_key() {
-        const REALM: &str = "ck:realm:01904100-0000-7000-8000-000000000001";
-        let scope = requested_scope_for_presets(
-            &[AgentGrantPreset::Read, AgentGrantPreset::ReplyAsAgent],
-            &AgentServiceScopePreset::DEFAULTS,
-            Some(REALM),
-        )
-        .unwrap();
+        let scope = requested_scope_for_presets(&AgentServiceScopePreset::DEFAULTS).unwrap();
         let outcome = cokret_sdk::AgentProvisionOutcome {
             agent_principal_id: cokret_sdk::Did::new("did:web:agents.example:summary").unwrap(),
             pairing_request_id: "0197-req".to_owned(),
@@ -277,10 +258,12 @@ mod personal_agent_tests {
                 "ck.self.events.stream.subscribe",
                 "ck.self.events.query.scan",
                 "ck.self.events.command.submit",
-                "ck.event.read",
-                "ck.message.create",
-                "ck.reaction.add"
             ])
+        );
+        assert!(
+            !value["requested_scope"]["resources"]
+                .to_string()
+                .contains("realm_id")
         );
         assert_eq!(
             value["service_scope"],
@@ -300,13 +283,8 @@ mod personal_agent_tests {
 
     #[test]
     fn savfox_deep_link_wraps_the_same_bootstrap_json() {
-        const REALM: &str = "ck:realm:01904100-0000-7000-8000-000000000001";
-        let scope = requested_scope_for_presets(
-            &[AgentGrantPreset::Read],
-            &[AgentServiceScopePreset::SubscribeEvents],
-            Some(REALM),
-        )
-        .unwrap();
+        let scope =
+            requested_scope_for_presets(&[AgentServiceScopePreset::SubscribeEvents]).unwrap();
         let outcome = cokret_sdk::AgentProvisionOutcome {
             agent_principal_id: cokret_sdk::Did::new("did:web:agents.example:summary").unwrap(),
             pairing_request_id: "0197-req".to_owned(),
@@ -399,17 +377,11 @@ mod personal_agent_tests {
 
     #[test]
     fn runtime_key_authorize_event_binds_savfox_request_and_scope() {
-        const REALM: &str = "ck:realm:01904100-0000-7000-8000-000000000001";
         let controller = "did:web:controller.example";
         let service_did = "did:web:cokret.example";
         let agent = "did:web:agents.example:summary";
         let verification_method = "did:web:agents.example:summary#runtime-key-1";
-        let scope = requested_scope_for_presets(
-            &[AgentGrantPreset::Read, AgentGrantPreset::ReplyAsAgent],
-            &AgentServiceScopePreset::DEFAULTS,
-            Some(REALM),
-        )
-        .unwrap();
+        let scope = requested_scope_for_presets(&AgentServiceScopePreset::DEFAULTS).unwrap();
         let key_state = serde_json::json!({
             "pairing_request_id": "agent_pairing_request:01999999-0000-7000-8000-00000000feed",
             "pairing_code": "12345678",

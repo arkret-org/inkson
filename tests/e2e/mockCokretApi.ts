@@ -2047,6 +2047,7 @@ export async function mockCokretApi(
         authorized_event_ref: authorizedEventRef,
       });
       return json(route, {
+        ok: true,
         agent_principal_id: agentPrincipalId,
         status: "active",
         authorized_event_ref: authorizedEventRef,
