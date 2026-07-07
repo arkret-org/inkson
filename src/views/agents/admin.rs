@@ -107,11 +107,11 @@ fn spawn_refresh_agents(
     mut list_status: Signal<String>,
     mut refresh_epoch: Signal<u64>,
 ) {
-    let request_epoch = refresh_epoch().saturating_add(1);
+    let request_epoch = (*refresh_epoch.peek()).saturating_add(1);
     refresh_epoch.set(request_epoch);
     spawn(async move {
         if api_token.trim().is_empty() {
-            if refresh_epoch() != request_epoch {
+            if *refresh_epoch.peek() != request_epoch {
                 return;
             }
             list_status.set("Sign in to load your agents.".to_owned());
@@ -125,7 +125,7 @@ fn spawn_refresh_agents(
         .await
         {
             Ok(resp) => {
-                if refresh_epoch() != request_epoch {
+                if *refresh_epoch.peek() != request_epoch {
                     return;
                 }
                 let total = resp.agents.len();
@@ -152,7 +152,7 @@ fn spawn_refresh_agents(
                 agents.set(rows);
             }
             Err(err) => {
-                if refresh_epoch() != request_epoch {
+                if *refresh_epoch.peek() != request_epoch {
                     return;
                 }
                 list_status.set(format!("Failed to load agents: {}", err.display()));

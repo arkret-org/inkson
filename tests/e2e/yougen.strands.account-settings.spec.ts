@@ -237,9 +237,21 @@ test("account settings split account/server info and surface personal agents", a
 
   // My Agents lives inside account settings — no feature flag — and
   // exposes the CKP-0010 participation policy editor.
+  let agentListRequests = 0;
+  page.on("request", (request) => {
+    if (
+      request.method() === "GET" &&
+      new URL(request.url()).pathname === "/_cokret/self/agents"
+    ) {
+      agentListRequests += 1;
+    }
+  });
   await page.getByTestId("settings-nav-item-agents").click();
   await expect(page).toHaveURL(/\/settings\/agents$/);
   await expect(page.getByTestId("personal-agent-admin")).toBeVisible();
+  await expect.poll(() => agentListRequests, { timeout: 5_000 }).toBe(1);
+  await page.waitForTimeout(750);
+  expect(agentListRequests).toBe(1);
   await page.getByTestId("agent-admin-create-open-button").click();
   await expect(page.getByTestId("agent-admin-provision")).toBeVisible();
   const scrollLayout = await page.evaluate(() => {
