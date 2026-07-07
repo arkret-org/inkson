@@ -1037,11 +1037,7 @@ fn build_member_state_transition_event_with_binding(
         membership_payload = membership_payload.with_delivery_binding(delivery_binding);
     }
     let payload = membership_payload.to_value()?;
-    let cell = format!(
-        "{}:{}",
-        space_cell("ck.component.member.state.v1", &realm_id_wire),
-        member_actor_id
-    );
+    let cell = format!("ck:cell:ck.component.member.state.v1:{member_actor_id}");
     let preconditions = if let Some(prior) = from_state {
         vec![head_eq_precondition(
             &cell,

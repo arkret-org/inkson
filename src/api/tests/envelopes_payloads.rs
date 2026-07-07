@@ -579,12 +579,54 @@ fn member_state_invite_accept_event_carries_invite_ref() {
     assert_eq!(event.content["delivery_status"], "unroutable");
     assert_eq!(event.preconditions.len(), 1);
     assert_eq!(
+        event.preconditions[0].cell.as_str(),
+        "ck:cell:ck.component.member.state.v1:did:web:bob.example"
+    );
+    assert_eq!(
         event.preconditions[0].predicate.value,
         Some(json!("invite"))
     );
     assert_eq!(event.effects.len(), 1);
+    assert_eq!(
+        event.effects[0].cell.as_str(),
+        "ck:cell:ck.component.member.state.v1:did:web:bob.example"
+    );
     assert_eq!(event.effects[0].op.from, Some(json!("invite")));
     assert_eq!(event.effects[0].op.to, Some(json!("join")));
+}
+
+#[test]
+fn member_state_ban_event_uses_realm_scoped_member_cell() {
+    let event = build_member_state_transition_event(
+        "ck:realm:0196419b-0000-7000-8000-000000000010",
+        "did:web:alice.example",
+        "did:web:bob.example",
+        Some("join"),
+        "ban",
+        "admin_ban",
+    )
+    .expect("ban event");
+
+    assert_eq!(event.kind.as_str(), "ck.member.state");
+    assert_eq!(
+        event.content["realm_id"],
+        "ck:realm:0196419b-0000-7000-8000-000000000010"
+    );
+    assert_eq!(event.content["actor_id"], "did:web:bob.example");
+    assert_eq!(event.content["membership"], "ban");
+    assert_eq!(event.preconditions.len(), 1);
+    assert_eq!(
+        event.preconditions[0].cell.as_str(),
+        "ck:cell:ck.component.member.state.v1:did:web:bob.example"
+    );
+    assert_eq!(event.preconditions[0].predicate.value, Some(json!("join")));
+    assert_eq!(event.effects.len(), 1);
+    assert_eq!(
+        event.effects[0].cell.as_str(),
+        "ck:cell:ck.component.member.state.v1:did:web:bob.example"
+    );
+    assert_eq!(event.effects[0].op.from, Some(json!("join")));
+    assert_eq!(event.effects[0].op.to, Some(json!("ban")));
 }
 
 #[test]
