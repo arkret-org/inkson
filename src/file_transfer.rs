@@ -167,7 +167,9 @@ pub async fn upload_actor_private_file(
         anyhow::bail!("file-transfer account_data key derivation drift");
     }
     let envelope = seal_record_envelope(&record, crypto, &account_data_key, actor_id)?;
-    let outcome = api.set_account_data(&account_data_key, envelope).await?;
+    let outcome =
+        crate::account_api::set_account_data(&api.event_submitter()?, &account_data_key, envelope)
+            .await?;
     let server_response = match outcome {
         AccountDataSetResult::Stored { response } => response,
         AccountDataSetResult::Unsupported { status } => {
@@ -217,7 +219,9 @@ pub async fn upload_device_bound_file(
         anyhow::bail!("file-transfer account_data key derivation drift");
     }
     let envelope = seal_record_envelope(&record, crypto, &account_data_key, actor_id)?;
-    let outcome = api.set_account_data(&account_data_key, envelope).await?;
+    let outcome =
+        crate::account_api::set_account_data(&api.event_submitter()?, &account_data_key, envelope)
+            .await?;
     let server_response = match outcome {
         AccountDataSetResult::Stored { response } => response,
         AccountDataSetResult::Unsupported { status } => {

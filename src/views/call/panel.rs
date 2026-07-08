@@ -23,7 +23,7 @@ use crate::media::rtc::{DesiredMedia, MediaJoinRequest};
 use crate::ui::button::{Button, ButtonVariant};
 use crate::ui::checkbox::Checkbox;
 use crate::views::call_signals::CallSignalHub;
-use crate::views::helpers::{display_name_for_did, short_protocol_id, with_authed_api};
+use crate::views::helpers::{display_name_for_did, short_protocol_id, with_event_submitter};
 
 #[component]
 #[allow(clippy::too_many_arguments)]
@@ -405,8 +405,9 @@ pub fn CallPanel(
                     status.set("starting recording".to_owned());
                     spawn(async move {
                         let recording_id = format!("rtc-recording-{}", crate::operation::uuid_v7());
-                        match with_authed_api(&base, api_token, |api| async move {
-                            api.submit_call_recording_start(
+                        match with_event_submitter(&base, api_token, |sub| async move {
+                            crate::media_api::submit_call_recording_start(
+                                &sub,
                                 &realm,
                                 &actor,
                                 &call,
@@ -430,8 +431,9 @@ pub fn CallPanel(
                     spawn(async move {
                         let transcript_id =
                             format!("rtc-transcript-{}", crate::operation::uuid_v7());
-                        match with_authed_api(&base, api_token, |api| async move {
-                            api.submit_call_transcription_start(
+                        match with_event_submitter(&base, api_token, |sub| async move {
+                            crate::media_api::submit_call_transcription_start(
+                                &sub,
                                 &realm,
                                 &actor,
                                 &call,

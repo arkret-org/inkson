@@ -41,6 +41,14 @@ impl EventSubmitter {
         }
     }
 
+    /// The shared SDK http-client backing this submitter. Event-authoring free
+    /// functions that also need a plain transport call (for example the
+    /// account-data actor-scope lookup preceding a `ck.account_data.set`) reach
+    /// it through here instead of holding a second `Client`.
+    pub(crate) fn http(&self) -> &cokret_sdk::http_client::Client {
+        &self.http
+    }
+
     async fn describe(&self) -> anyhow::Result<ServerDescription> {
         self.http
             .describe()

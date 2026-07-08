@@ -46,7 +46,7 @@ use crate::ui::select::{Select, SelectOption};
 use crate::ui::slider::Slider;
 use crate::ui::textarea::Textarea;
 use crate::views::helpers::{
-    display_name_for_did, short_protocol_id, with_authed_api, with_authed_sdk_client,
+    display_name_for_did, short_protocol_id, with_authed_sdk_client, with_event_submitter,
 };
 use crate::workflows::blocked_release_workflows;
 
@@ -146,8 +146,8 @@ pub(crate) fn push_client_ui_account_data_with_avatar(
         avatar_blob_ref.as_deref(),
     );
     spawn(async move {
-        match with_authed_api(&base_url, api_token, |api| async move {
-            api.set_account_data(CLIENT_UI_ACCOUNT_DATA_KEY, body).await
+        match with_event_submitter(&base_url, api_token, |sub| async move {
+            crate::account_api::set_account_data(&sub, CLIENT_UI_ACCOUNT_DATA_KEY, body).await
         })
         .await
         {
@@ -225,8 +225,8 @@ pub(crate) fn push_blocklist_account_data(
     }
     if entries.is_empty() {
         spawn(async move {
-            if let Err(err) = with_authed_api(&base_url, api_token, |api| async move {
-                api.delete_account_data(CLIENT_BLOCKLIST_ACCOUNT_DATA_KEY)
+            if let Err(err) = with_event_submitter(&base_url, api_token, |sub| async move {
+                crate::account_api::delete_account_data(&sub, CLIENT_BLOCKLIST_ACCOUNT_DATA_KEY)
                     .await
             })
             .await
@@ -252,8 +252,8 @@ pub(crate) fn push_blocklist_account_data(
             }
         };
     spawn(async move {
-        match with_authed_api(&base_url, api_token, |api| async move {
-            api.set_account_data(CLIENT_BLOCKLIST_ACCOUNT_DATA_KEY, body)
+        match with_event_submitter(&base_url, api_token, |sub| async move {
+            crate::account_api::set_account_data(&sub, CLIENT_BLOCKLIST_ACCOUNT_DATA_KEY, body)
                 .await
         })
         .await
@@ -378,9 +378,9 @@ pub(crate) fn push_contact_remark_account_data(
     spawn(async move {
         if remark.is_empty() {
             let key_for_log = key.clone();
-            if let Err(err) = with_authed_api(&base_url, api_token, |api| {
+            if let Err(err) = with_event_submitter(&base_url, api_token, |sub| {
                 let key = key.clone();
-                async move { api.delete_account_data(&key).await }
+                async move { crate::account_api::delete_account_data(&sub, &key).await }
             })
             .await
             {

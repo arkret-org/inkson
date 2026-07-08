@@ -11,13 +11,13 @@ use url::Url;
 
 use crate::config::validate_server_url;
 use crate::models::{
-    AccountDataSetResult, BlobUploadOutcome, DeviceMessagesAckOutcome,
+    BlobUploadOutcome, DeviceMessagesAckOutcome,
     DeviceMessagesAckRequestBody, DeviceMessagesGetOutcome, DeviceMessagesSendOutcome,
     OP_SNAPSHOT_HEAD, RealmCreateResult, RealmJoinCandidate, RealmPolicyResult, ResolveHandleView,
     ServerDescription, SpaceCreateResult, SubmitEventResult,
 };
 use crate::operation::{EventKind, uuid_v7};
-use crate::wire_helpers::{canonical_blob_ref, path_component, safe_blob_filename_header};
+use crate::wire_helpers::{canonical_blob_ref, safe_blob_filename_header};
 
 #[derive(Clone)]
 pub struct CokretApi {
@@ -78,7 +78,6 @@ mod blob_resumable;
 mod circle;
 mod directory;
 mod keys;
-mod media;
 mod mls;
 mod realm;
 // YOU-07-001: sync / account-subscribe parsers now live at crate root so E2 can

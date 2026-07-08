@@ -14,7 +14,7 @@ use super::{
 use crate::local_state::{LocalStateStore, PresencePreferenceState, PresenceVisibility};
 use crate::models::AccountDataSetResult;
 use crate::notification_rules::{WatchLevel, parse_dnd_settings};
-use crate::views::helpers::{short_protocol_id, with_authed_api};
+use crate::views::helpers::{short_protocol_id, with_event_submitter};
 
 pub(super) fn format_settings_handle_list(handles: &[String], fallback: &str) -> String {
     if handles.is_empty() {
@@ -70,8 +70,8 @@ pub(super) fn push_read_receipt_account_data(
         &state_store.read().read_receipt_strand_display_overrides(),
     );
     spawn(async move {
-        match with_authed_api(&base_url, api_token, |api| async move {
-            api.set_account_data(READ_RECEIPT_ACCOUNT_DATA_KEY, body)
+        match with_event_submitter(&base_url, api_token, |sub| async move {
+            crate::account_api::set_account_data(&sub, READ_RECEIPT_ACCOUNT_DATA_KEY, body)
                 .await
         })
         .await
@@ -124,8 +124,8 @@ pub(super) fn push_presence_preference_account_data(
     let preference = state_store.read().presence_preference();
     if preference.is_empty() {
         spawn(async move {
-            if let Err(err) = with_authed_api(&base_url, api_token, |api| async move {
-                api.delete_account_data(PRESENCE_PREFERENCE_ACCOUNT_DATA_KEY)
+            if let Err(err) = with_event_submitter(&base_url, api_token, |sub| async move {
+                crate::account_api::delete_account_data(&sub, PRESENCE_PREFERENCE_ACCOUNT_DATA_KEY)
                     .await
             })
             .await
@@ -148,8 +148,8 @@ pub(super) fn push_presence_preference_account_data(
         }
     };
     spawn(async move {
-        match with_authed_api(&base_url, api_token, |api| async move {
-            api.set_account_data(PRESENCE_PREFERENCE_ACCOUNT_DATA_KEY, body)
+        match with_event_submitter(&base_url, api_token, |sub| async move {
+            crate::account_api::set_account_data(&sub, PRESENCE_PREFERENCE_ACCOUNT_DATA_KEY, body)
                 .await
         })
         .await
@@ -183,8 +183,8 @@ pub(super) fn push_presence_visibility_account_data(
 ) {
     let body = build_presence_visibility_body(state_store.read().presence_visibility());
     spawn(async move {
-        match with_authed_api(&base_url, api_token, |api| async move {
-            api.set_account_data(PRESENCE_VISIBILITY_ACCOUNT_DATA_KEY, body)
+        match with_event_submitter(&base_url, api_token, |sub| async move {
+            crate::account_api::set_account_data(&sub, PRESENCE_VISIBILITY_ACCOUNT_DATA_KEY, body)
                 .await
         })
         .await
@@ -316,8 +316,8 @@ pub(super) fn push_notification_rules_account_data(
         }
     };
     spawn(async move {
-        match with_authed_api(&base_url, api_token, |api| async move {
-            api.set_account_data(PUSH_RULES_ACCOUNT_DATA_KEY, body)
+        match with_event_submitter(&base_url, api_token, |sub| async move {
+            crate::account_api::set_account_data(&sub, PUSH_RULES_ACCOUNT_DATA_KEY, body)
                 .await
         })
         .await
@@ -380,8 +380,8 @@ pub(super) fn push_dnd_account_data(
         }
     };
     spawn(async move {
-        match with_authed_api(&base_url, api_token, |api| async move {
-            api.set_account_data(DND_ACCOUNT_DATA_KEY, body).await
+        match with_event_submitter(&base_url, api_token, |sub| async move {
+            crate::account_api::set_account_data(&sub, DND_ACCOUNT_DATA_KEY, body).await
         })
         .await
         {
@@ -411,9 +411,9 @@ pub(super) fn push_realm_remark_account_data_impl(
     spawn(async move {
         if remark.is_empty() {
             let key_for_log = key.clone();
-            if let Err(err) = with_authed_api(&base_url, api_token, |api| {
+            if let Err(err) = with_event_submitter(&base_url, api_token, |sub| {
                 let key = key.clone();
-                async move { api.delete_account_data(&key).await }
+                async move { crate::account_api::delete_account_data(&sub, &key).await }
             })
             .await
             {

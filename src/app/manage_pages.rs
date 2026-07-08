@@ -429,11 +429,11 @@ pub(super) fn ContactsManagePage(
                                             let mut failed = Vec::<String>::new();
                                             for peer in selected {
                                                 let peer_for_api = peer.clone();
-                                                match crate::views::helpers::with_authed_api(
+                                                match crate::views::helpers::with_authed_sdk_client(
                                                     &base,
                                                     api_token.clone(),
-                                                    |api| async move {
-                                                        api.tombstone_contact(&peer_for_api, false).await
+                                                    |http| async move {
+                                                        crate::account_api::tombstone_contact(&http, &peer_for_api, false).await
                                                     },
                                                 )
                                                 .await

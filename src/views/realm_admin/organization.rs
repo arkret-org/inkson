@@ -550,12 +550,12 @@ fn OrganizationCreatePanel(
                                 }
 
                                 let submit_body = prepared.submit_body.clone();
-                                match crate::views::helpers::with_authed_api(
+                                match crate::views::helpers::with_authed_sdk_client(
                                     &base,
                                     api_token,
-                                    move |api| {
+                                    move |http| {
                                         let submit_body = submit_body.clone();
-                                        async move { api.submit_did_operation(&submit_body).await }
+                                        async move { crate::account_api::submit_did_operation(&http, &submit_body).await }
                                     },
                                 )
                                 .await

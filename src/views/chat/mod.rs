@@ -1960,10 +1960,13 @@ pub fn ChatPanel(
                                     let wait_for = active_sync_token(sync_cursor());
                                     let key_for_submit = item.account_data_key.clone();
                                     spawn(async move {
-                                        match authed_api_with_sync(&base, api_token, wait_for) {
-                                            Ok(api) => {
-                                                if let Err(error) = api
-                                                    .set_private_account_data_with_cas(
+                                        match authed_api_with_sync(&base, api_token, wait_for)
+                                            .and_then(|api| api.event_submitter())
+                                        {
+                                            Ok(submitter) => {
+                                                if let Err(error) =
+                                                    crate::account_api::set_private_account_data_with_cas(
+                                                        &submitter,
                                                         &key_for_submit,
                                                         account_data_value,
                                                         None,

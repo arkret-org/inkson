@@ -9,17 +9,25 @@
 //! session-refresh + terminal-session classification identical to the old
 //! facade path while dropping the per-domain facade method.
 //!
-//! Methods that go through the durable event submitter, the DPoP-signed write
-//! path, or the cached `describe` (`set_account_data`, the consent grant /
-//! revoke / request commands, `submit_did_operation`,
-//! `submit_read_cursor_advance`, `tombstone_contact`, and the `request_contact`
-//! family — which resolves contact addressing via `describe_cached`) remain
-//! inherent `CokretApi` methods and are intentionally NOT migrated here.
+//! The durable-event-authoring account writes (`set_account_data`,
+//! `set_private_account_data_with_cas`, `delete_account_data`,
+//! `submit_read_cursor_advance`) are free functions taking an
+//! [`crate::event_submit::EventSubmitter`], reached through
+//! [`crate::authed_api::with_event_submitter`]; the account-data actor-scope
+//! lookup they need runs through `submitter.http()`.
+//!
+//! Only the `request_contact` family remains an inherent `CokretApi` method,
+//! because it resolves contact addressing via the struct-cached
+//! `describe_cached` (see `contact_request_addressing`).
 
+use reqwest::StatusCode;
 use serde_json::Value;
 
+use crate::api_error::CokretApiError;
+use crate::event_submit::EventSubmitter;
 use crate::models::{
-    ContactListView, CurrentAccount, IdentityDescribeOutcome, IdentityResolveOutcome,
+    AccountDataSetResult, ContactListView, CurrentAccount, IdentityDescribeOutcome,
+    IdentityResolveOutcome, SubmitEventResult,
 };
 
 pub(crate) fn did_for_request_field(field: &str, value: &str) -> anyhow::Result<cokret_sdk::Did> {
@@ -358,6 +366,262 @@ fn primary_handle_from_viewer(viewer: &cokret_sdk::models::AccountView) -> Strin
         .filter(|handle| !handle.is_empty())
         .unwrap_or_default()
         .to_owned()
+}
+
+/// Tombstone a contact relationship via `contacts/tombstone`. When
+/// `block_peer` is true the protocol additionally records a block so the
+/// peer can no longer re-request; this is the block path (U5).
+///
+/// Protocol contract: `contacts/tombstone` body carries `contact` and an
+/// optional `block_peer: true`.
+pub async fn tombstone_contact(
+    http: &cokret_sdk::http_client::Client,
+    peer: &str,
+    block_peer: bool,
+) -> anyhow::Result<cokret_sdk::ContactTombstone> {
+    let body = cokret_sdk::ContactTombstoneRequestBody {
+        contact: did_for_request_field("contact", peer)?,
+        revoke_scopes: Vec::new(),
+        full_peer_revoke: false,
+        block_peer,
+        peer_service_did: None,
+    };
+    http.contacts_tombstone(&body)
+        .await
+        .map_err(anyhow::Error::from)
+}
+
+/// Grant scoped consent to `peer` from the holder cell. `expires_at` is an
+/// optional RFC 3339 time window upper bound. Spec OpenAPI
+/// `ck.self.consent.command.grant`.
+pub async fn grant_consent(
+    http: &cokret_sdk::http_client::Client,
+    holder: &str,
+    peer: &str,
+    scope: &str,
+    expires_at: Option<chrono::DateTime<chrono::Utc>>,
+) -> anyhow::Result<cokret_sdk::ConsentCellView> {
+    let body = cokret_sdk::ConsentUpdateRequestBody {
+        peer_did: did_for_request_field("peer", peer)?,
+        consent_scope: Some(scope.trim().to_owned()),
+        expires_at,
+    };
+    let path = format!(
+        "{}/{}/grant",
+        cokret_sdk::http::PATH_SELF_CONSENT_CELLS,
+        crate::wire_helpers::path_component(holder.trim()),
+    );
+    http.post(&path, &body).await.map_err(anyhow::Error::from)
+}
+
+/// Revoke scoped consent from `peer`. Spec OpenAPI
+/// `ck.self.consent.command.revoke`.
+pub async fn revoke_consent(
+    http: &cokret_sdk::http_client::Client,
+    holder: &str,
+    peer: &str,
+    scope: &str,
+) -> anyhow::Result<cokret_sdk::ConsentCellView> {
+    let body = cokret_sdk::ConsentUpdateRequestBody {
+        peer_did: did_for_request_field("peer", peer)?,
+        consent_scope: Some(scope.trim().to_owned()),
+        expires_at: None,
+    };
+    let path = format!(
+        "{}/{}/revoke",
+        cokret_sdk::http::PATH_SELF_CONSENT_CELLS,
+        crate::wire_helpers::path_component(holder.trim()),
+    );
+    http.post(&path, &body).await.map_err(anyhow::Error::from)
+}
+
+/// Open an outbound consent request: ask `holder` to grant the
+/// authenticated actor (`peer`) the given scope. Produces a holder-side
+/// pending cell. Spec OpenAPI `ck.self.consent.command.request`.
+pub async fn request_consent(
+    http: &cokret_sdk::http_client::Client,
+    holder: &str,
+    peer: &str,
+    scope: &str,
+) -> anyhow::Result<cokret_sdk::ConsentCellView> {
+    let body = cokret_sdk::ConsentRequestRequestBody {
+        holder_did: did_for_request_field("holder", holder)?,
+        peer_did: Some(did_for_request_field("peer", peer)?),
+        consent_scope: Some(scope.trim().to_owned()),
+    };
+    http.post(cokret_sdk::http::PATH_SELF_CONSENT_REQUEST, &body)
+        .await
+        .map_err(anyhow::Error::from)
+}
+
+/// Submit a `did:webvh` DID operation (inception / rotation) to soland's
+/// embedded identity provider. Spec op
+/// `ck.root.identity.command.submit_did_operation`
+/// (`POST /_cokret/root/identity/submit-did-operation`). The body is the
+/// SDK-built `submit_body` from `cokret_sdk::webvh::prepare_inception`.
+pub async fn submit_did_operation(
+    http: &cokret_sdk::http_client::Client,
+    body: &cokret_sdk::models::DidOperationSubmitRequestBody,
+) -> anyhow::Result<cokret_sdk::models::DidOperationSubmitOutcome> {
+    http.identity_submit_did_operation(body)
+        .await
+        .map_err(anyhow::Error::from)
+}
+
+fn unsupported_status(error: &anyhow::Error) -> Option<StatusCode> {
+    error
+        .downcast_ref::<CokretApiError>()
+        .map(|api_error| api_error.status)
+        .filter(|status| {
+            matches!(
+                *status,
+                StatusCode::NOT_FOUND
+                    | StatusCode::NOT_IMPLEMENTED
+                    | StatusCode::METHOD_NOT_ALLOWED
+            )
+        })
+}
+
+async fn account_data_actor_scope(
+    http: &cokret_sdk::http_client::Client,
+) -> anyhow::Result<(String, String)> {
+    let account = account_me(http).await?;
+    let principal = cokret_sdk::Did::new(account.did.clone())
+        .map_err(|err| anyhow::anyhow!("invalid account DID `{}`: {err}", account.did))?;
+    let realm_id = cokret_sdk::auth::principal_control_realm_id(&principal);
+    Ok((account.did, realm_id.to_string()))
+}
+
+/// Submit a per-account `ck.account_data.set` event so settings UIs can
+/// push preferences (for example `ck.read_receipt.preferences`) to soland
+/// for cross-device sync. If the current server cannot resolve the
+/// principal control Realm yet, 404 / 501 / 405 still degrade to
+/// `Unsupported` and local state remains authoritative.
+pub async fn set_account_data(
+    submitter: &EventSubmitter,
+    type_key: &str,
+    content: Value,
+) -> anyhow::Result<AccountDataSetResult> {
+    let (actor, principal_realm_id) = match account_data_actor_scope(submitter.http()).await {
+        Ok(scope) => scope,
+        Err(error) => {
+            if let Some(status) = unsupported_status(&error) {
+                tracing::warn!(
+                    "principal-realm lookup for account_data returned {status}; \
+                     keeping local state authoritative"
+                );
+                return Ok(AccountDataSetResult::Unsupported { status });
+            }
+            return Err(error);
+        }
+    };
+    let key = crate::account_data::AccountDataKey::from_wire(type_key);
+    let event =
+        crate::account_data::build_account_data_set(&principal_realm_id, &actor, &key, content)
+            .build_sdk_event("inkson-account-data")?;
+    let result = submitter.submit_sdk_event(&event).await;
+    match result {
+        Ok(value) => Ok(AccountDataSetResult::Stored {
+            response: serde_json::to_value(value)?,
+        }),
+        Err(error) => {
+            if let Some(status) = unsupported_status(&error) {
+                tracing::warn!(
+                    "ck.account_data.set submit for {type_key} returned {status}; \
+                     keeping local state authoritative"
+                );
+                return Ok(AccountDataSetResult::Unsupported { status });
+            }
+            Err(error)
+        }
+    }
+}
+
+/// Submit a private account-data value with an optional CAS guard. Callers
+/// pass already-encrypted account-data material; plaintext draft/saved
+/// content must not cross this API boundary.
+pub async fn set_private_account_data_with_cas(
+    submitter: &EventSubmitter,
+    type_key: &str,
+    encrypted_payload: Value,
+    expected_state_digest: Option<&str>,
+) -> anyhow::Result<AccountDataSetResult> {
+    let (actor, principal_realm_id) = match account_data_actor_scope(submitter.http()).await {
+        Ok(scope) => scope,
+        Err(error) => {
+            if let Some(status) = unsupported_status(&error) {
+                tracing::warn!(
+                    "principal-realm lookup for private account_data returned {status}; \
+                     keeping local state authoritative"
+                );
+                return Ok(AccountDataSetResult::Unsupported { status });
+            }
+            return Err(error);
+        }
+    };
+    let event = crate::account_data::build_private_account_data_set_with_cas(
+        &principal_realm_id,
+        &actor,
+        type_key,
+        encrypted_payload,
+        expected_state_digest,
+    )?
+    .build_sdk_event("inkson-private-account-data")?;
+    let result = submitter.submit_sdk_event(&event).await;
+    match result {
+        Ok(value) => Ok(AccountDataSetResult::Stored {
+            response: serde_json::to_value(value)?,
+        }),
+        Err(error) => {
+            if let Some(status) = unsupported_status(&error) {
+                tracing::warn!(
+                    "ck.account_data.set submit for private {type_key} returned {status}; \
+                     keeping local state authoritative"
+                );
+                return Ok(AccountDataSetResult::Unsupported { status });
+            }
+            Err(error)
+        }
+    }
+}
+
+/// Tombstone an account_data entry by submitting `ck.account_data.set` with
+/// `tombstone: true`. Same graceful-degradation contract as
+/// [`set_account_data`].
+pub async fn delete_account_data(
+    submitter: &EventSubmitter,
+    type_key: &str,
+) -> anyhow::Result<()> {
+    let (actor, principal_realm_id) = match account_data_actor_scope(submitter.http()).await {
+        Ok(scope) => scope,
+        Err(error) => {
+            if unsupported_status(&error).is_some() {
+                return Ok(());
+            }
+            return Err(error);
+        }
+    };
+    let key = crate::account_data::AccountDataKey::from_wire(type_key);
+    let event =
+        crate::account_data::build_account_data_tombstone(&principal_realm_id, &actor, &key)
+            .build_sdk_event("inkson-account-data")?;
+    match submitter.submit_sdk_event(&event).await {
+        Ok(_) => Ok(()),
+        Err(error) => {
+            if unsupported_status(&error).is_some() {
+                return Ok(());
+            }
+            Err(error)
+        }
+    }
+}
+
+pub async fn submit_read_cursor_advance(
+    submitter: &EventSubmitter,
+    marker: &crate::local_state::ReadMarkerRecord,
+) -> anyhow::Result<SubmitEventResult> {
+    let event = crate::ephemeral::build_read_cursor_advance_event(marker)?;
+    submitter.submit_sdk_event(&event).await
 }
 
 #[cfg(test)]

@@ -27,7 +27,7 @@ use crate::ui::button::{Button, ButtonVariant};
 use crate::ui::input::Input;
 use crate::ui::label::Label;
 use crate::ui::select::{Select, SelectOption};
-use crate::views::helpers::{with_authed_api, with_authed_sdk_client};
+use crate::views::helpers::with_authed_sdk_client;
 
 /// One consent cell row distilled from the holder-private projection.
 #[derive(Clone, Debug, PartialEq)]
@@ -338,8 +338,8 @@ pub fn ConsentSettingsPanel(
                                             busy.set(true);
                                             write_status.set("granting…".to_owned());
                                             spawn(async move {
-                                                match with_authed_api(&base, api_token, |api| async move {
-                                                    api.grant_consent(&holder, &peer, &scope, expires_at).await
+                                                match with_authed_sdk_client(&base, api_token, |http| async move {
+                                                    crate::account_api::grant_consent(&http, &holder, &peer, &scope, expires_at).await
                                                 })
                                                 .await
                                                 {
@@ -413,8 +413,8 @@ pub fn ConsentSettingsPanel(
                                             busy.set(true);
                                             write_status.set("requesting…".to_owned());
                                             spawn(async move {
-                                                match with_authed_api(&base, api_token, |api| async move {
-                                                    api.request_consent(&holder, &me_did, &scope).await
+                                                match with_authed_sdk_client(&base, api_token, |http| async move {
+                                                    crate::account_api::request_consent(&http, &holder, &me_did, &scope).await
                                                 })
                                                 .await
                                                 {
@@ -548,8 +548,8 @@ pub fn ConsentSettingsPanel(
                                                                         busy.set(true);
                                                                         write_status.set("granting…".to_owned());
                                                                         spawn(async move {
-                                                                            match with_authed_api(&base, api_token, |api| async move {
-                                                                                api.grant_consent(&holder, &peer, &scope, expires_at).await
+                                                                            match with_authed_sdk_client(&base, api_token, |http| async move {
+                                                                                crate::account_api::grant_consent(&http, &holder, &peer, &scope, expires_at).await
                                                                             })
                                                                             .await
                                                                             {
@@ -621,8 +621,8 @@ pub fn ConsentSettingsPanel(
                                                                 busy.set(true);
                                                                 write_status.set("revoking…".to_owned());
                                                                 spawn(async move {
-                                                                    match with_authed_api(&base, api_token, |api| async move {
-                                                                        api.revoke_consent(&holder, &peer, &scope).await
+                                                                    match with_authed_sdk_client(&base, api_token, |http| async move {
+                                                                        crate::account_api::revoke_consent(&http, &holder, &peer, &scope).await
                                                                     })
                                                                     .await
                                                                     {

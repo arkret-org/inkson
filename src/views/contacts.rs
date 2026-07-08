@@ -571,8 +571,8 @@ fn run_contact_action(
             .await
             .map(|_| ()),
             ContactRowAction::Tombstone { peer, block } => {
-                with_authed_api(&base, api_token, |api| async move {
-                    api.tombstone_contact(&peer, block).await
+                with_authed_sdk_client(&base, api_token, |http| async move {
+                    crate::account_api::tombstone_contact(&http, &peer, block).await
                 })
                 .await
                 .map(|_| ())

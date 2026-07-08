@@ -18,7 +18,7 @@ use crate::api::CokretApi;
 use crate::api_error::is_auth_expired_error;
 use crate::local_state::LocalStateStore;
 use crate::notification_rules::{dnd_settings_from_account_data, push_rules_from_account_data};
-use crate::views::helpers::{short_protocol_id, with_authed_api};
+use crate::views::helpers::{short_protocol_id, with_authed_api, with_event_submitter};
 
 /// Project the SDK `AuthzInviteList.invites` (typed `Invite` rows) into the
 /// `Vec<Value>` shape the local notification pipeline folds through lenient
@@ -177,9 +177,9 @@ pub(crate) fn mark_all_notifications_read(
     ));
     spawn(async move {
         let marker_count = markers.len();
-        match with_authed_api(&base_url, session_credential, |api| async move {
+        match with_event_submitter(&base_url, session_credential, |sub| async move {
             for marker in markers {
-                api.submit_read_cursor_advance(&marker).await?;
+                crate::account_api::submit_read_cursor_advance(&sub, &marker).await?;
             }
             Ok::<_, anyhow::Error>(())
         })
@@ -250,8 +250,8 @@ pub(crate) fn mark_notification_read_state(
 
     status_msg.set("Notification marked read; syncing read cursor...".to_owned());
     spawn(async move {
-        match with_authed_api(&base_url, session_credential, |api| async move {
-            api.submit_read_cursor_advance(&marker).await?;
+        match with_event_submitter(&base_url, session_credential, |sub| async move {
+            crate::account_api::submit_read_cursor_advance(&sub, &marker).await?;
             Ok::<_, anyhow::Error>(())
         })
         .await

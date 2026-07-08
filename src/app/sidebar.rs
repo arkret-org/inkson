@@ -319,8 +319,8 @@ pub(super) fn delete_sidebar_contact(
     );
     spawn(async move {
         let peer_for_api = peer.clone();
-        match crate::views::helpers::with_authed_api(&base_url, api_token, |api| async move {
-            api.tombstone_contact(&peer_for_api, false).await
+        match crate::views::helpers::with_authed_sdk_client(&base_url, api_token, |http| async move {
+            crate::account_api::tombstone_contact(&http, &peer_for_api, false).await
         })
         .await
         {
