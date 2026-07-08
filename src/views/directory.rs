@@ -317,8 +317,8 @@ pub fn DirectoryPanel(
                                 let base = base.clone();
                                 let requester = contact_requester_did();
                                 spawn(async move {
-                                    match with_authed_api(&base, api_token, |api| async move {
-                                        api.respond_contact(&requester, "accept").await
+                                    match with_authed_sdk_client(&base, api_token, |http| async move {
+                                        crate::account_api::respond_contact(&http, &requester, "accept").await
                                     })
                                     .await
                                     {
@@ -344,8 +344,8 @@ pub fn DirectoryPanel(
                                 let base = base.clone();
                                 let requester = contact_requester_did();
                                 spawn(async move {
-                                    match with_authed_api(&base, api_token, |api| async move {
-                                        api.respond_contact(&requester, "reject").await
+                                    match with_authed_sdk_client(&base, api_token, |http| async move {
+                                        crate::account_api::respond_contact(&http, &requester, "reject").await
                                     })
                                     .await
                                     {
@@ -370,8 +370,8 @@ pub fn DirectoryPanel(
                                 let api_token = token();
                                 let base = base.clone();
                                 spawn(async move {
-                                    match with_authed_api(&base, api_token, |api| async move {
-                                        api.contacts().await
+                                    match with_authed_sdk_client(&base, api_token, |http| async move {
+                                        crate::account_api::contacts(&http).await
                                     })
                                     .await
                                     {

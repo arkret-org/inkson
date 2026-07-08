@@ -877,7 +877,9 @@ async fn run_iteration(
                 } else {
                     api.clone()
                 };
-                match invite_api.invites().await {
+                match async { crate::account_api::invites(&invite_api.sdk_http_client()?).await }
+                    .await
+                {
                     Ok(response) => {
                         *deltas_since_invites = 0;
                         // The notification pipeline folds invites through lenient
@@ -1030,7 +1032,9 @@ async fn run_iteration(
             // (step 2 of the recovery strand) before retrying with the
             // SAME cursor; failures here are best-effort — the retry
             // itself is the recovery.
-            if let Err(describe_error) = api.sync_describe().await {
+            if let Err(describe_error) =
+                async { crate::account_api::sync_describe(&api.sdk_http_client()?).await }.await
+            {
                 tracing::debug!(
                     ?describe_error,
                     "stale_frontier recovery: account/describe failed"

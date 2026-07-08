@@ -499,10 +499,10 @@ fn OrganizationCreatePanel(
                                 // the organization itself authorizes no end-user
                                 // devices, and the relationship-binding verifier
                                 // does not depend on this field.
-                                let enrollment_authority = match crate::views::helpers::with_authed_api(
+                                let enrollment_authority = match crate::views::helpers::with_authed_sdk_client(
                                     &base,
                                     api_token.clone(),
-                                    |api| async move { api.identity_describe().await },
+                                    |http| async move { crate::account_api::identity_describe(&http).await },
                                 )
                                 .await
                                 {

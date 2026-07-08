@@ -27,7 +27,7 @@ use crate::ui::button::{Button, ButtonVariant};
 use crate::ui::input::Input;
 use crate::ui::label::Label;
 use crate::ui::select::{Select, SelectOption};
-use crate::views::helpers::with_authed_api;
+use crate::views::helpers::{with_authed_api, with_authed_sdk_client};
 
 /// One consent cell row distilled from the holder-private projection.
 #[derive(Clone, Debug, PartialEq)]
@@ -173,11 +173,9 @@ pub fn ConsentSettingsPanel(
             let base = base.clone();
             load_error.set(None);
             spawn(async move {
-                match with_authed_api(
-                    &base,
-                    api_token,
-                    |api| async move { api.consent_cells().await },
-                )
+                match with_authed_sdk_client(&base, api_token, |http| async move {
+                    crate::account_api::consent_cells(&http).await
+                })
                 .await
                 {
                     Ok(list) => {

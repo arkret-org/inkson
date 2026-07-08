@@ -653,22 +653,23 @@ pub(super) fn connect(base: String, actor: String, device: String, ctx: ConnectC
                     }
                 };
 
-                let identity_health =
-                    match bootstrap_request("identity describe", api.identity_describe()).await {
-                        Ok(identity) => {
-                            crate::components::DidResolutionHealth::from_identity_description(
-                                &identity,
-                            )
-                        }
-                        Err(error) => {
-                            tracing::warn!(?error, "identity describe probe failed");
-                            let cache = ctx.did_cache.read();
-                            crate::components::DidResolutionHealth::from_identity_probe_failure(
-                                &cache,
-                                chrono::Utc::now(),
-                            )
-                        }
-                    };
+                let identity_health = match bootstrap_request("identity describe", async {
+                    crate::account_api::identity_describe(&api.sdk_http_client()?).await
+                })
+                .await
+                {
+                    Ok(identity) => {
+                        crate::components::DidResolutionHealth::from_identity_description(&identity)
+                    }
+                    Err(error) => {
+                        tracing::warn!(?error, "identity describe probe failed");
+                        let cache = ctx.did_cache.read();
+                        crate::components::DidResolutionHealth::from_identity_probe_failure(
+                            &cache,
+                            chrono::Utc::now(),
+                        )
+                    }
+                };
                 did_resolution_health.set(identity_health);
 
                 let mut session_credential = token();
@@ -729,8 +730,10 @@ pub(super) fn connect(base: String, actor: String, device: String, ctx: ConnectC
                 //      last_error so the sidebar/status surface can show it, and keep going so sync
                 //      still has a chance to populate realm_tree_nodes.
                 let mut account_personal_handle = None::<String>;
-                let canonical_actor = match bootstrap_request("account viewer", authed.account_me())
-                    .await
+                let canonical_actor = match bootstrap_request("account viewer", async {
+                    crate::account_api::account_me(&authed.sdk_http_client()?).await
+                })
+                .await
                 {
                     Ok(account) if !account.did.trim().is_empty() => {
                         account_personal_handle =
@@ -756,8 +759,10 @@ pub(super) fn connect(base: String, actor: String, device: String, ctx: ConnectC
                                         .unwrap_or_else(|_| {
                                             api.clone().with_bearer(session_credential.clone())
                                         });
-                                match bootstrap_request("account viewer retry", authed.account_me())
-                                    .await
+                                match bootstrap_request("account viewer retry", async {
+                                    crate::account_api::account_me(&authed.sdk_http_client()?).await
+                                })
+                                .await
                                 {
                                     Ok(account) if !account.did.trim().is_empty() => {
                                         account_personal_handle =
@@ -1113,7 +1118,10 @@ pub(super) fn connect(base: String, actor: String, device: String, ctx: ConnectC
                             &mut authed,
                         );
                         let invite_notifications =
-                            match bootstrap_request("invite notifications", authed.invites()).await
+                            match bootstrap_request("invite notifications", async {
+                                crate::account_api::invites(&authed.sdk_http_client()?).await
+                            })
+                            .await
                             {
                                 Ok(response) => Some(invite_rows_to_values(response.invites)),
                                 Err(error) if is_auth_expired_error(&error) => {
@@ -1135,10 +1143,12 @@ pub(super) fn connect(base: String, actor: String, device: String, ctx: ConnectC
                                             .unwrap_or_else(|_| {
                                                 api.clone().with_bearer(session_credential.clone())
                                             });
-                                            bootstrap_request(
-                                                "invite notifications retry",
-                                                authed.invites(),
-                                            )
+                                            bootstrap_request("invite notifications retry", async {
+                                                crate::account_api::invites(
+                                                    &authed.sdk_http_client()?,
+                                                )
+                                                .await
+                                            })
                                             .await
                                             .ok()
                                             .map(|response| invite_rows_to_values(response.invites))

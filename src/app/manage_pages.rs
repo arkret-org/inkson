@@ -458,10 +458,12 @@ pub(super) fn ContactsManagePage(
                                                     next_selection.remove(peer);
                                                 }
                                                 selection.set(next_selection);
-                                                match crate::views::helpers::with_authed_api(
+                                                match crate::views::helpers::with_authed_sdk_client(
                                                     &base,
                                                     api_token.clone(),
-                                                    |api| async move { api.contacts().await },
+                                                    |http| async move {
+                                                        crate::account_api::contacts(&http).await
+                                                    },
                                                 )
                                                 .await
                                                 {

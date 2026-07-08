@@ -572,8 +572,8 @@ pub fn RouterView() -> Element {
                 if session.trim().is_empty() {
                     return false;
                 }
-                crate::views::helpers::with_authed_api(&base, session, |api| async move {
-                    api.account_viewer().await
+                crate::views::helpers::with_authed_sdk_client(&base, session, |http| async move {
+                    crate::account_api::account_viewer(&http).await
                 })
                 .await
                 .map(|viewer| viewer.is_server_admin)
@@ -4054,11 +4054,11 @@ pub fn RouterView() -> Element {
                                                         let base = base.clone();
                                                         let peer_for_task = peer.clone();
                                                         spawn(async move {
-                                                            let result = crate::views::helpers::with_authed_api(
+                                                            let result = crate::views::helpers::with_authed_sdk_client(
                                                                 &base,
                                                                 api_token,
-                                                                |api| async move {
-                                                                    api.direct_conversation_resolve(&peer_for_task, true).await
+                                                                |http| async move {
+                                                                    crate::account_api::direct_conversation_resolve(&http, &peer_for_task, true).await
                                                                 },
                                                             ).await;
                                                             match result {
@@ -5067,7 +5067,11 @@ pub fn RouterView() -> Element {
                                                     account_session_state.set("Refreshing session".to_owned());
                                                     spawn(async move {
                                                         match self_authed_api(&base, api_token.clone()) {
-                                                            Ok(api) => match api.account_me().await {
+                                                            Ok(api) => match async {
+                                                                crate::account_api::account_me(&api.sdk_http_client()?).await
+                                                            }
+                                                            .await
+                                                            {
                                                                 Ok(account) => {
                                                                     let canonical_actor = account.did;
                                                                     if let Some(personal_handle) =
@@ -5112,8 +5116,9 @@ pub fn RouterView() -> Element {
                                                                         match crate::session::refresh_current_session().await {
                                                                             crate::session::CurrentSessionRefresh::Credential(fresh) => {
                                                                                 let canonical_actor = match self_authed_api(&base, fresh) {
-                                                                                    Ok(api) => api
-                                                                                        .account_me()
+                                                                                    Ok(api) => async {
+                                                                                        crate::account_api::account_me(&api.sdk_http_client()?).await
+                                                                                    }
                                                                                         .await
                                                                                         .ok()
                                                                                         .and_then(|account| {

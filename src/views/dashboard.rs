@@ -7,7 +7,7 @@ use crate::local_state::{ClientLocalState, LocalStateStore};
 use crate::models::{RealmTreeNode, RealmTreeNodeKind, projection_realm_id_for_known_node};
 use crate::routes::Route;
 use crate::ui::button::{Button, ButtonSize, ButtonVariant};
-use crate::views::helpers::{short_protocol_id, with_authed_api};
+use crate::views::helpers::{short_protocol_id, with_authed_api, with_authed_sdk_client};
 
 #[derive(Clone, Debug, PartialEq)]
 struct DashboardNotificationSummary {
@@ -132,8 +132,10 @@ pub fn DashboardPanel(
             contacts_status.set("Loading contacts".to_owned());
             let base = base_url.clone();
             spawn(async move {
-                match with_authed_api(&base, api_token, |api| async move { api.contacts().await })
-                    .await
+                match with_authed_sdk_client(&base, api_token, |http| async move {
+                    crate::account_api::contacts(&http).await
+                })
+                .await
                 {
                     Ok(response) => {
                         contacts_summary.set(Some(dashboard_contacts_summary(&response.contacts)));
@@ -567,11 +569,11 @@ pub fn DashboardPanel(
                                                         Ok(d) => rows.push(("Describe".to_owned(), format!("{} v{}", d.service_type, d.protocol_version))),
                                                         Err(e) => rows.push(("Describe".to_owned(), format!("Error: {e}"))),
                                                     }
-                                                    match api.sync_describe().await {
+                                                    match async { crate::account_api::sync_describe(&api.sdk_http_client()?).await }.await {
                                                         Ok(s) => rows.push(("Sync".to_owned(), format!("{} profiles", s.supported_sync_profiles.len()))),
                                                         Err(e) => rows.push(("Sync".to_owned(), format!("Error: {e}"))),
                                                     }
-                                                    match api.identity_describe().await {
+                                                    match async { crate::account_api::identity_describe(&api.sdk_http_client()?).await }.await {
                                                         Ok(i) => rows.push(("Identity".to_owned(), format!("mode={}", i.registry_mode))),
                                                         Err(e) => rows.push(("Identity".to_owned(), format!("Error: {e}"))),
                                                     }

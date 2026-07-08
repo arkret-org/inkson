@@ -10,12 +10,11 @@ use url::Url;
 
 use crate::config::validate_server_url;
 use crate::models::{
-    AccountDataSetResult, AuthzCheckOutcome, BlobUploadOutcome, ContactListView, CurrentAccount,
-    DeviceMessagesAckOutcome, DeviceMessagesAckRequestBody, DeviceMessagesGetOutcome,
-    DeviceMessagesSendOutcome, GrantList, IdentityDescribeOutcome, IdentityResolveOutcome,
+    AccountDataSetResult, AuthzCheckOutcome, BlobUploadOutcome, DeviceMessagesAckOutcome,
+    DeviceMessagesAckRequestBody, DeviceMessagesGetOutcome, DeviceMessagesSendOutcome, GrantList,
     KeysQueryOutcome, MediaIceConfigOutcome, MediaIceConfigRequestBody, OP_SNAPSHOT_HEAD,
-    RealmCreateResult, RealmJoinCandidate, RealmPolicyResult, ResolveHandleView,
-    ServerDescription, SpaceCreateResult, SubmitEventResult,
+    RealmCreateResult, RealmJoinCandidate, RealmPolicyResult, ResolveHandleView, ServerDescription,
+    SpaceCreateResult, SubmitEventResult,
 };
 use crate::operation::{EventKind, trim_realm_id, uuid_v7};
 use crate::wire_helpers::{canonical_blob_ref, path_component, safe_blob_filename_header};

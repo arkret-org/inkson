@@ -475,10 +475,10 @@ async fn register_media_service_keys(
     anchors: &mut MediaServiceAnchors,
     service_did: &str,
 ) -> Result<(), RtcClientError> {
-    let outcome = api
-        .identity_resolve(service_did)
-        .await
-        .map_err(|_| RtcClientError::TokenIssuerUnauthorised)?;
+    let outcome =
+        async { crate::account_api::identity_resolve(&api.sdk_http_client()?, service_did).await }
+            .await
+            .map_err(|_| RtcClientError::TokenIssuerUnauthorised)?;
     if outcome.did_document.did.as_str() != service_did {
         return Err(RtcClientError::TokenIssuerUnauthorised);
     }

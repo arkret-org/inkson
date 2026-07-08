@@ -3034,9 +3034,11 @@ pub fn RealmMembersPanel(
             let base = base.clone();
             invite_contacts_status.set(crate::i18n::tr("realm_admin.invite_loading_contacts"));
             spawn(async move {
-                match crate::views::helpers::with_authed_api(&base, api_token, |api| async move {
-                    api.contacts().await
-                })
+                match crate::views::helpers::with_authed_sdk_client(
+                    &base,
+                    api_token,
+                    |http| async move { crate::account_api::contacts(&http).await },
+                )
                 .await
                 {
                     Ok(response) => {

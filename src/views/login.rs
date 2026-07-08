@@ -801,9 +801,12 @@ async fn finish_oidc_callback(
         .clone()
         .with_bearer(session_grant.grant_jwt.clone())
         .with_dpop_device(dpop_handle.clone());
-    let account = authed_principal.account_me().await.map_err(|error| {
-        format!("Principal server did not accept the session grant + DPoP: {error}")
-    })?;
+    let account =
+        async { crate::account_api::account_me(&authed_principal.sdk_http_client()?).await }
+            .await
+            .map_err(|error| {
+                format!("Principal server did not accept the session grant + DPoP: {error}")
+            })?;
     let canonical_actor = if account.did.trim().is_empty() {
         actor
     } else {

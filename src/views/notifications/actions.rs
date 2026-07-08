@@ -31,13 +31,17 @@ fn invites_to_values(invites: Vec<cokret_sdk::models::Invite>) -> Vec<Value> {
 }
 
 pub(crate) async fn optional_invite_notifications(api: &CokretApi) -> anyhow::Result<Vec<Value>> {
-    match api.invites().await {
+    match async { crate::account_api::invites(&api.sdk_http_client()?).await }.await {
         Ok(response) => Ok(invites_to_values(response.invites)),
         Err(error) if is_auth_expired_error(&error) => {
             match crate::session::refresh_current_session().await {
                 crate::session::CurrentSessionRefresh::Credential(refreshed) => {
                     let refreshed_api = api.clone().with_bearer(refreshed);
-                    Ok(invites_to_values(refreshed_api.invites().await?.invites))
+                    Ok(invites_to_values(
+                        crate::account_api::invites(&refreshed_api.sdk_http_client()?)
+                            .await?
+                            .invites,
+                    ))
                 }
                 crate::session::CurrentSessionRefresh::SignInRequired { reason } => {
                     Err(anyhow::anyhow!(
@@ -310,7 +314,7 @@ fn accept_invite_notification(
         let accepted_realm_for_api = accepted_realm.clone();
         let session_credential = session_credential();
         match with_authed_api(&base_url, session_credential, |api| async move {
-            let account = api.account_me().await?;
+            let account = crate::account_api::account_me(&api.sdk_http_client()?).await?;
             let submit = api
                 .accept_realm_invite(&accepted_realm_for_api, &account.did, &invite_id)
                 .await?;

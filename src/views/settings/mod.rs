@@ -998,9 +998,16 @@ pub fn SettingsPanel(
                                                                                 // Publish publicly first; only then refresh the
                                                                                 // local mirror so a failed profile update does not
                                                                                 // display an avatar that never became active.
-                                                                                match api
-                                                                                    .update_profile(None, None, Some(&blob_ref))
+                                                                                match async {
+                                                                                    crate::account_api::update_profile(
+                                                                                        &api.sdk_http_client()?,
+                                                                                        None,
+                                                                                        None,
+                                                                                        Some(&blob_ref),
+                                                                                    )
                                                                                     .await
+                                                                                }
+                                                                                .await
                                                                                 {
                                                                                     Ok(_) => {
                                                                                         state_store.write().save_private_data(
@@ -1114,9 +1121,16 @@ pub fn SettingsPanel(
                                                         spawn(async move {
                                                             if let Ok(api) =
                                                                 crate::views::helpers::authed_api(&base, api_token)
-                                                                && let Err(err) = api
-                                                                    .update_profile(None, None, Some(""))
+                                                                && let Err(err) = async {
+                                                                    crate::account_api::update_profile(
+                                                                        &api.sdk_http_client()?,
+                                                                        None,
+                                                                        None,
+                                                                        Some(""),
+                                                                    )
                                                                     .await
+                                                                }
+                                                                .await
                                                             {
                                                                 tracing::warn!("avatar profile clear failed: {err}");
                                                             }

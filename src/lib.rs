@@ -9,6 +9,7 @@
     warn(clippy::unwrap_used, clippy::expect_used, clippy::panic)
 )]
 
+pub mod account_api;
 pub mod account_auth;
 pub mod account_data;
 /// Single-source-of-truth resolver for the post-boot "account health" prompt

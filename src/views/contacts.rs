@@ -21,7 +21,9 @@ use crate::ui::checkbox::Checkbox;
 use crate::ui::input::Input;
 use crate::ui::label::Label;
 use crate::ui::textarea::Textarea;
-use crate::views::helpers::{display_name_for_did, short_protocol_id, with_authed_api};
+use crate::views::helpers::{
+    display_name_for_did, short_protocol_id, with_authed_api, with_authed_sdk_client,
+};
 
 /// Maximum length of the optional contact-request greeting (protocol contract:
 /// `message` is `1..2000`).
@@ -378,8 +380,8 @@ fn ContactRow(
                                 busy.set(true);
                                 row_status.set(tr("contacts.dm.opening"));
                                 spawn(async move {
-                                    match with_authed_api(&base, api_token, |api| async move {
-                                        api.direct_conversation_resolve(&peer, true).await
+                                    match with_authed_sdk_client(&base, api_token, |http| async move {
+                                        crate::account_api::direct_conversation_resolve(&http, &peer, true).await
                                     })
                                     .await
                                     {
@@ -543,10 +545,11 @@ fn run_contact_action(
                 request_event_ref,
                 verb,
                 requester_service_did,
-            } => with_authed_api(&base, api_token, |api| async move {
+            } => with_authed_sdk_client(&base, api_token, |http| async move {
                 match request_event_ref {
                     Some(request_event_ref) => {
-                        api.respond_contact_with_request_id_and_service(
+                        crate::account_api::respond_contact_with_request_id_and_service(
+                            &http,
                             &requester,
                             &request_event_ref,
                             &verb,
@@ -555,7 +558,8 @@ fn run_contact_action(
                         .await
                     }
                     None => {
-                        api.respond_contact_with_service(
+                        crate::account_api::respond_contact_with_service(
+                            &http,
                             &requester,
                             &verb,
                             requester_service_did.as_deref(),
@@ -614,8 +618,10 @@ pub fn ContactsPanel(
             error.set(None);
             status.set("loading".to_owned());
             spawn(async move {
-                match with_authed_api(&base, api_token, |api| async move { api.contacts().await })
-                    .await
+                match with_authed_sdk_client(&base, api_token, |http| async move {
+                    crate::account_api::contacts(&http).await
+                })
+                .await
                 {
                     Ok(response) => {
                         let count = response.contacts.len();

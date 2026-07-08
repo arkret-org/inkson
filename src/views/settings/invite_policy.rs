@@ -41,7 +41,7 @@ use crate::ui::checkbox::Checkbox;
 use crate::ui::label::Label;
 use crate::ui::select::{Select, SelectOption};
 use crate::ui::switch::Switch;
-use crate::views::helpers::{short_protocol_id, with_authed_api};
+use crate::views::helpers::{short_protocol_id, with_authed_api, with_authed_sdk_client};
 
 /// Introduction-evidence kinds offered in the UI, paired with the i18n key for
 /// their natural-language label (looked up via the active locale).
@@ -182,7 +182,9 @@ pub fn InvitePolicySettingsCard(
                         .await
                         .ok()
                         .and_then(|description| description.receive_policy_constraints);
-                    let policy = api.get_invite_receive_policy().await?;
+                    let policy =
+                        crate::account_api::get_invite_receive_policy(&api.sdk_http_client()?)
+                            .await?;
                     Ok((policy, constraints))
                 })
                 .await
@@ -461,8 +463,8 @@ pub fn InvitePolicySettingsCard(
                         saving.set(true);
                         status.set(tr("invite_policy.saving"));
                         spawn(async move {
-                            match with_authed_api(&base, api_token, |api| async move {
-                                api.set_invite_receive_policy(&to_save).await
+                            match with_authed_sdk_client(&base, api_token, |http| async move {
+                                crate::account_api::set_invite_receive_policy(&http, &to_save).await
                             })
                             .await
                             {

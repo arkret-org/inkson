@@ -32,7 +32,9 @@ use crate::routes::Route;
 use crate::ui::button::{Button, ButtonVariant};
 use crate::ui::input::Input;
 use crate::ui::label::Label;
-use crate::views::helpers::{handle_from_did, short_protocol_id, with_authed_api};
+use crate::views::helpers::{
+    handle_from_did, short_protocol_id, with_authed_api, with_authed_sdk_client,
+};
 
 /// Storage key for the onboarding-step-4 recovery choice (`vault` / `social` / `key`).
 const ONBOARDING_RECOVERY_CHOICE_KEY: &str = "onboarding.recovery_choice";
@@ -238,12 +240,18 @@ pub fn OnboardingPanel(
                                 let device = register_device_id();
                                 spawn(async move {
                                     match CokretApi::new(&base) {
-                                        Ok(api) => match api.register_account(
-                                            &actor,
-                                            &handle,
-                                            Some(&display),
-                                            Some(&device),
-                                        ).await {
+                                        Ok(api) => match async {
+                                            crate::account_api::register_account(
+                                                &api.sdk_http_client()?,
+                                                &actor,
+                                                &handle,
+                                                Some(&display),
+                                                Some(&device),
+                                            )
+                                            .await
+                                        }
+                                        .await
+                                        {
                                             Ok(account) => account_state.set(format!(
                                                 "registered {}",
                                                 account.principal_id
@@ -266,8 +274,8 @@ pub fn OnboardingPanel(
                                 let api_token = token();
                                 let base = base.clone();
                                 spawn(async move {
-                                    match with_authed_api(&base, api_token, |api| async move {
-                                        api.account_me().await
+                                    match with_authed_sdk_client(&base, api_token, |http| async move {
+                                        crate::account_api::account_me(&http).await
                                     })
                                     .await
                                     {

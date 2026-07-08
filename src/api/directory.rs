@@ -389,7 +389,9 @@ impl CokretApi {
             anyhow::bail!("contact target is required");
         }
         if let Ok(handle) = canonical_invitee_handle(target) {
-            let requester = self.account_me().await?.did;
+            let requester = crate::account_api::account_me(&self.sdk_http_client()?)
+                .await?
+                .did;
             let resolved = self
                 .resolve_handle_with_context(
                     &handle,

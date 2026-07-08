@@ -902,7 +902,8 @@ pub fn ChatPanel(
             let mut loaded_messages = Vec::new();
             let mut loaded_poll_cards = Vec::new();
             let mut loaded_moderation_appeal_prompts = Vec::new();
-            if let Ok(account) = api.account_me().await
+            if let Ok(account) =
+                async { crate::account_api::account_me(&api.sdk_http_client()?).await }.await
                 && account.did == account_did_for_load
                 && let Some(display_name) =
                     account_handle_display_from_server(&account.handle, &base).or_else(|| {

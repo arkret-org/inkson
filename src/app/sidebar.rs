@@ -73,8 +73,8 @@ pub(super) fn load_direct_contacts_for_sidebar(
 
     direct_contacts_loaded.set(true);
     spawn(async move {
-        match crate::views::helpers::with_authed_api(&base, api_token, |api| async move {
-            api.contacts().await
+        match crate::views::helpers::with_authed_sdk_client(&base, api_token, |http| async move {
+            crate::account_api::contacts(&http).await
         })
         .await
         {
