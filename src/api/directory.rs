@@ -1,5 +1,8 @@
 use super::*;
 use crate::api_error::is_snapshot_unavailable_error;
+use crate::directory_helpers::{
+    ResolveHandleContext, canonical_invitee_handle, resolve_handle_request_body,
+};
 use crate::models::ServerDescriptionExt;
 
 #[derive(Clone, Debug, PartialEq)]
@@ -443,7 +446,7 @@ impl CokretApi {
         .await
     }
 
-    pub async fn resolve_handle_with_context(
+    async fn resolve_handle_with_context(
         &self,
         handle: &str,
         context: ResolveHandleContext<'_>,

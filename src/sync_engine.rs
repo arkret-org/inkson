@@ -520,7 +520,7 @@ async fn run_circle_scope_rotate_pass(
         if generation() != start_generation {
             return;
         }
-        let circles = match crate::api::with_authed_api(&base, token.clone(), {
+        let circles = match crate::authed_api::with_authed_api(&base, token.clone(), {
             let realm_id = realm_id.clone();
             move |api| async move { api.list_circles(&realm_id).await }
         })
@@ -620,7 +620,7 @@ async fn run_circle_scope_rotate_pass(
                 let post_commit_snapshot = draft.post_commit_snapshot;
                 let removed_leaves = draft.removed_leaves;
                 let removed_principals = draft.removed_principals;
-                let outcome = match crate::api::with_authed_api(&base, token.clone(), {
+                let outcome = match crate::authed_api::with_authed_api(&base, token.clone(), {
                     let circle_id = circle_id.clone();
                     move |api| async move {
                         api.submit_circle_scope_rotate_events(&circle_id, &events, None)
@@ -763,7 +763,7 @@ async fn run_idle_self_update_pass(
         // way the epoch advances, so a rejection is fine — we simply do NOT
         // persist the local snapshot (persist-on-accept).
         let submit_token = token.clone();
-        match crate::api::with_authed_api(&base, submit_token, |api| async move {
+        match crate::authed_api::with_authed_api(&base, submit_token, |api| async move {
             api.submit_sdk_event(&commit_event).await
         })
         .await
@@ -823,7 +823,7 @@ async fn run_iteration(
     // ②(A+②): `token` is the `ck.session.grant`; every self-path sync request
     // must include the grant-binding (DPoP) key instead of falling back to a bare
     // bearer request that the server will reject.
-    let api = match crate::api::authed_api(&base, token.clone()) {
+    let api = match crate::authed_api::authed_api(&base, token.clone()) {
         Ok(api) => api,
         Err(error) => {
             return IterationOutcome::Transient(format!(

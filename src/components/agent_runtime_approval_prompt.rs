@@ -273,7 +273,7 @@ async fn fetch_pending_agent_runtime_approval(
     base_url: &str,
     token: String,
     handled: HashSet<String>,
-) -> Result<Option<PendingAgentRuntimeApproval>, crate::api::ApiCallError> {
+) -> Result<Option<PendingAgentRuntimeApproval>, crate::authed_api::ApiCallError> {
     with_authed_api(base_url, token, move |api| async move {
         let list = api.agent_list().await?;
         for row in list.agents {

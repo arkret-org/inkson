@@ -1,16 +1,16 @@
 pub use cokret_sdk::MentionNode;
 use dioxus::prelude::*;
 
+use crate::api_error::normalize_wait_for_sync_token;
 // YGN-ARCH-01 step 1: the authenticated-client builders (`authed_api*`,
 // `with_authed_api*`, `ApiCallError`, DPoP attach) moved to
 // `crate::api::authed` so the core layers (sync_engine / bootstrap / mls)
 // no longer import a views module for their HTTP exit. Re-exported here so
 // every existing `crate::views::helpers::…` call site keeps resolving.
-pub use crate::api::{
+pub use crate::authed_api::{
     ApiCallError, attach_device_dpop, authed_api, authed_api_with_sync, with_authed_api,
     with_authed_api_with_sync,
 };
-use crate::api_error::normalize_wait_for_sync_token;
 use crate::config::{ClientConfig, LocalConfigStore};
 use crate::ui::button::{Button, ButtonVariant};
 

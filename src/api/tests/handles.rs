@@ -1,4 +1,7 @@
 use super::super::*;
+use crate::directory_helpers::{
+    ResolveHandleContext, canonical_invitee_handle, resolve_handle_request_body,
+};
 
 #[test]
 fn resolve_handle_request_body_carries_lookup_context() {

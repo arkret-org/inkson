@@ -1,12 +1,10 @@
 //! Authenticated `CokretApi` construction + the view/engine-facing call
 //! wrapper (`with_authed_api*` / [`ApiCallError`]).
 //!
-//! YGN-ARCH-01 step 1 (pure move from `views/helpers.rs`, zero behavior
-//! change): this is the whole crate's HTTP exit for authenticated self-path
-//! calls — consumed by `sync_engine`, `bootstrap`, `mls` admission and every
-//! view — so it lives in the `api` layer, not under `views/`.
+//! This is the crate-level HTTP exit for authenticated self-path calls:
+//! consumed by sync engines, bootstrap, MLS admission, and UI views.
 
-use super::CokretApi;
+use crate::api::CokretApi;
 use crate::api_error::{is_auth_expired_error, is_terminal_session_grant_error};
 
 /// Create an authenticated API client from a base URL and optional session credential.

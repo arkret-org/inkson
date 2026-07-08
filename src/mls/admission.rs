@@ -34,7 +34,7 @@ pub(crate) fn build_realm_mls_admission_events_from_claim(
     claim: &cokret_sdk::KeyPackageClaimRecord,
     claim_nonce: &str,
 ) -> Result<RealmMlsAdmissionEvents, String> {
-    let member_key_package = crate::api::keypackage_claim_record_to_mls_record(claim)
+    let member_key_package = crate::mls_api_helpers::keypackage_claim_record_to_mls_record(claim)
         .map_err(|err| format!("MLS KeyPackage claim decode failed: {err}"))?;
     let (add, snapshot) = crate::mls::runtime::build_add_member_commit_for_effective_scope(
         state_store,
@@ -102,7 +102,7 @@ pub(crate) fn build_realm_mls_admission_events_from_claims(
     let member_key_packages = claims
         .iter()
         .map(|(claim, _)| {
-            crate::api::keypackage_claim_record_to_mls_record(claim)
+            crate::mls_api_helpers::keypackage_claim_record_to_mls_record(claim)
                 .map_err(|err| format!("MLS KeyPackage claim decode failed: {err}"))
         })
         .collect::<Result<Vec<_>, _>>()?;

@@ -1,6 +1,6 @@
 use serde_json::json;
 
-use super::super::mls;
+use crate::mls_api_helpers;
 
 #[test]
 fn keypackage_upload_device_signature_is_raw_signature_tuple() {
@@ -9,7 +9,7 @@ fn keypackage_upload_device_signature_is_raw_signature_tuple() {
         "did:web:alice.example",
         "did:web:alice.example#device",
     );
-    let signature = mls::sign_keypackage_upload_batch_with_signer(
+    let signature = mls_api_helpers::sign_keypackage_upload_batch_with_signer(
         &signer,
         "ck:device:0196419b-0000-7000-8000-000000000001",
         &[json!({
@@ -28,7 +28,7 @@ fn keypackage_upload_device_signature_is_raw_signature_tuple() {
 
 #[test]
 fn keypackage_claim_request_carries_required_capabilities() {
-    let body = mls::build_mls_keypackage_claim_request(
+    let body = mls_api_helpers::build_mls_keypackage_claim_request(
         "did:web:alice.example",
         "ck:realm:0196419b-0000-7000-8000-000000000000",
         "did:web:bob.example",
@@ -38,7 +38,7 @@ fn keypackage_claim_request_carries_required_capabilities() {
     )
     .expect("claim request builds");
 
-    let expected = mls::mls_keypackage_claim_required_capabilities();
+    let expected = mls_api_helpers::mls_keypackage_claim_required_capabilities();
     assert_eq!(body.required_capabilities, expected);
 
     let wire = serde_json::to_value(&body).expect("claim request serializes");

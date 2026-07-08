@@ -1720,7 +1720,7 @@ pub(crate) async fn submit_mls_admission_for_invitee(
         &device_id,
     )
     .await?;
-    let claim_nonce = crate::api::generate_mls_claim_nonce()?;
+    let claim_nonce = crate::mls_api_helpers::generate_mls_claim_nonce()?;
     let claim_outcome = api
         .claim_mls_key_package(
             &invitee_did,
@@ -2814,7 +2814,7 @@ pub(crate) async fn submit_mls_admission_for_invitees(
 
     let mut claims = Vec::<(cokret_sdk::KeyPackageClaimRecord, String)>::new();
     for invitee_did in invitees {
-        let claim_nonce = crate::api::generate_mls_claim_nonce()?;
+        let claim_nonce = crate::mls_api_helpers::generate_mls_claim_nonce()?;
         let claim_outcome = api
             .claim_mls_key_package(
                 &invitee_did,

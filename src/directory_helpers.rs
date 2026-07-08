@@ -1,9 +1,23 @@
-//! Request-body builders for the directory resolve-handle surface. Structural
-//! move out of `api/mod.rs` with no logic change; the functions stay
-//! `pub(crate)` so the `directory` sibling module and the test module reach
-//! them through `super::*`.
+//! Request-body helpers for directory resolve-handle flows.
 
-use super::*;
+use crate::identity_handle::parse_user_handle;
+
+/// Context for `ck.find.directory.query.resolve_handle`.
+///
+/// Protocol distinction: `lookup` / `mention` are display-safe resolves;
+/// `member_add` / `invite` request Realm/audience-bound membership-builder
+/// material. Callers that are about to invite or add a member MUST provide
+/// `intent`, `requester`, `realm_id`, and `audience`.
+#[derive(Clone, Copy, Debug, Default)]
+pub(crate) struct ResolveHandleContext<'a> {
+    pub(crate) intent: Option<&'a str>,
+    pub(crate) requester: Option<&'a str>,
+    pub(crate) audience: Option<&'a str>,
+    pub(crate) realm_id: Option<&'a str>,
+    pub(crate) expected_did: Option<&'a str>,
+    pub(crate) proof_challenge: Option<&'a str>,
+    pub(crate) proofs: &'a [&'a str],
+}
 
 pub(crate) fn resolve_handle_request_body(
     handle: &str,

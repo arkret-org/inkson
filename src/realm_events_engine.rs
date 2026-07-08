@@ -252,15 +252,15 @@ async fn run_realm_iteration(
         };
     }
 
-    let sdk_http = match crate::api::authed_api(&base, token).and_then(|api| api.sdk_http_client())
-    {
-        Ok(sdk_http) => sdk_http,
-        Err(_) => {
-            return RealmIterationOutcome::Backoff {
-                delay_ms: MIN_BACKOFF_MS,
-            };
-        }
-    };
+    let sdk_http =
+        match crate::authed_api::authed_api(&base, token).and_then(|api| api.sdk_http_client()) {
+            Ok(sdk_http) => sdk_http,
+            Err(_) => {
+                return RealmIterationOutcome::Backoff {
+                    delay_ms: MIN_BACKOFF_MS,
+                };
+            }
+        };
 
     // Resume from this realm's OWN cursor — never the account cursor.
     let after = ctx

@@ -81,7 +81,6 @@ impl Default for CancellationToken {
 }
 
 use crate::config::validate_server_url;
-use crate::identity_handle::parse_user_handle;
 use crate::models::{
     AccountDataSetResult, AuthzCheckOutcome, BackfillView, BlobUploadOutcome, ContactListView,
     CurrentAccount, DeviceMessagesAckOutcome, DeviceMessagesAckRequestBody,
@@ -192,30 +191,9 @@ impl Default for CokretApiOptions {
     }
 }
 
-/// Context for `ck.find.directory.query.resolve_handle`.
-///
-/// Protocol distinction: `lookup` / `mention` are display-safe resolves;
-/// `member_add` / `invite` request Realm/audience-bound membership-builder
-/// material. Callers that are about to invite or add a member MUST provide
-/// `intent`, `requester`, `realm_id`, and `audience`.
-#[derive(Clone, Copy, Debug, Default)]
-pub struct ResolveHandleContext<'a> {
-    pub intent: Option<&'a str>,
-    pub requester: Option<&'a str>,
-    pub audience: Option<&'a str>,
-    pub realm_id: Option<&'a str>,
-    pub expected_did: Option<&'a str>,
-    pub proof_challenge: Option<&'a str>,
-    pub proofs: &'a [&'a str],
-}
-
 mod account;
 mod agent;
 mod applet;
-// YGN-ARCH-01 step 1: authenticated-client builders + `with_authed_api*`
-// wrapper moved here from `views/helpers.rs` (pure move; the helpers module
-// re-exports them for existing view call sites).
-mod authed;
 mod blob;
 mod blob_resumable;
 mod circle;
@@ -227,10 +205,6 @@ mod mls;
 mod moderation;
 mod push;
 mod realm;
-// Structural split: directory resolve-handle request-body builders moved out of
-// this file into `request_helpers` (move only). Kept `pub(crate)` so `directory`
-// and tests reach them through `super::*`.
-mod request_helpers;
 // YOU-07-001: sync / account-subscribe parsers now live at crate root so E2 can
 // delete `src/api/**` without carrying parser code in the old API module.
 // Structural split: core `impl CokretApi` HTTP transport (constructor, builder
@@ -242,10 +216,6 @@ mod transport;
 // `tests.rs` (move only); `use super::*` resolves against this module unchanged.
 #[cfg(test)]
 mod tests;
-
-pub use authed::*;
-pub(crate) use mls::{generate_mls_claim_nonce, keypackage_claim_record_to_mls_record};
-pub(crate) use request_helpers::*;
 
 /// PoP signature validity window (seconds). Kept well under the 300s protocol
 /// maximum (api-conventions.md §3.2) while tolerating modest clock skew.

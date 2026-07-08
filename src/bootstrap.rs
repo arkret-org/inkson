@@ -541,13 +541,16 @@ pub(crate) async fn ensure_local_mls_key_package_published(
     let publish_device_id = device_id.clone();
     let publish_key_package_id = key_package_id.clone();
     let publish_key_package_ref = key_package_ref.clone();
-    let outcome =
-        crate::api::with_authed_api(&base_url, session_credential.clone(), |api| async move {
+    let outcome = crate::authed_api::with_authed_api(
+        &base_url,
+        session_credential.clone(),
+        |api| async move {
             api.publish_mls_key_package(&publish_device_id, &record)
                 .await
-        })
-        .await
-        .map_err(|error| error.display())?;
+        },
+    )
+    .await
+    .map_err(|error| error.display())?;
     if outcome.accepted == 0 {
         let _ = crate::mls::runtime::delete_mls_key_package_identity_state(
             secure_store.as_ref(),
@@ -611,12 +614,13 @@ pub(crate) async fn bootstrap_mls_welcome_for_realm(
         return Ok(MlsWelcomeBootstrapOutcome::default());
     }
 
-    let messages =
-        crate::api::with_authed_api(&base_url, session_credential.clone(), |api| async move {
-            api.receive_device_messages().await
-        })
-        .await
-        .map_err(|error| error.display())?;
+    let messages = crate::authed_api::with_authed_api(
+        &base_url,
+        session_credential.clone(),
+        |api| async move { api.receive_device_messages().await },
+    )
+    .await
+    .map_err(|error| error.display())?;
     let ack_token = messages.ack_token.clone();
     let can_ack_welcome_batch = !messages.messages.is_empty()
         && messages
@@ -713,8 +717,10 @@ pub(crate) async fn bootstrap_mls_welcome_for_realm(
     let actor_for_backup = actor_id.clone();
     let device_for_backup = device_id.clone();
     let realm_for_backup = realm_id.clone();
-    let backup_id =
-        crate::api::with_authed_api(&base_url, session_credential.clone(), |api| async move {
+    let backup_id = crate::authed_api::with_authed_api(
+        &base_url,
+        session_credential.clone(),
+        |api| async move {
             // §7.10: applying a Welcome lands a fresh epoch — chain the upload
             // onto the Realm's existing mls_history series (successor
             // envelope) instead of minting a new genesis series per Welcome.
@@ -727,9 +733,10 @@ pub(crate) async fn bootstrap_mls_welcome_for_realm(
                 &snapshot,
             )
             .await
-        })
-        .await
-        .map_err(|error| error.display())?;
+        },
+    )
+    .await
+    .map_err(|error| error.display())?;
 
     let persist_error = state_store.read().persist_error();
     if should_ack_mls_welcome_batch(
@@ -738,11 +745,12 @@ pub(crate) async fn bootstrap_mls_welcome_for_realm(
         true,
         persist_error.as_deref(),
     ) && let Some(ack_token) = ack_token
-        && let Err(error) =
-            crate::api::with_authed_api(&base_url, session_credential.clone(), |api| async move {
-                api.ack_device_messages(&ack_token).await
-            })
-            .await
+        && let Err(error) = crate::authed_api::with_authed_api(
+            &base_url,
+            session_credential.clone(),
+            |api| async move { api.ack_device_messages(&ack_token).await },
+        )
+        .await
     {
         tracing::debug!(?error, "failed to ack durable MLS welcome device messages");
     }
