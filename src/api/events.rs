@@ -1,4 +1,11 @@
+#[cfg(test)]
+use cokret_sdk::ErrorEnvelope;
+use reqwest::StatusCode;
+
 use super::*;
+use crate::api_error::CokretApiError;
+#[cfg(test)]
+use crate::service_parse::parse_server_description;
 
 impl CokretApi {
     /// Query durable events through the current `/_cokret/self/events` surface,

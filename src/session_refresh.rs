@@ -596,7 +596,7 @@ fn is_grant_dead_error(error: &anyhow::Error) -> bool {
     if crate::api::is_terminal_session_grant_error(error) {
         return true;
     }
-    if let Some(api_error) = error.downcast_ref::<crate::api::CokretApiError>() {
+    if let Some(api_error) = error.downcast_ref::<crate::api_error::CokretApiError>() {
         let code = api_error.error.code();
         let message = api_error.error.message().to_ascii_lowercase();
         if matches!(
@@ -738,9 +738,9 @@ mod tests {
     fn commit_clears_grant_and_requires_login_when_principal_reports_revoked_session_grant() {
         let mut store = isolated_store("revoked-grant");
         store.set_session_grant(Some(grant_with_expiry(86400)));
-        let error: anyhow::Error = crate::api::CokretApiError {
+        let error: anyhow::Error = crate::api_error::CokretApiError {
             status: reqwest::StatusCode::FORBIDDEN,
-            error: crate::api::decode_cokret_error(
+            error: crate::api_error::decode_cokret_error(
                 reqwest::StatusCode::FORBIDDEN,
                 br#"{"ok":false,"error":{"code":"capability_denied","message":"session grant is not active: revoked"},"request_id":"ck:request:01964137-0000-7000-8000-000000000012"}"#,
             ),
@@ -757,9 +757,9 @@ mod tests {
     fn commit_clears_grant_when_refresh_reports_already_consumed() {
         let mut store = isolated_store("consumed-grant");
         store.set_session_grant(Some(grant_with_expiry(86400)));
-        let error: anyhow::Error = crate::api::CokretApiError {
+        let error: anyhow::Error = crate::api_error::CokretApiError {
             status: reqwest::StatusCode::BAD_REQUEST,
-            error: crate::api::decode_cokret_error(
+            error: crate::api_error::decode_cokret_error(
                 reqwest::StatusCode::BAD_REQUEST,
                 br#"{"ok":false,"error":{"code":"grant_already_consumed","message":"session grant already consumed; its rotation chain cannot continue"}}"#,
             ),
@@ -776,9 +776,9 @@ mod tests {
     fn commit_clears_grant_when_refresh_rejects_grant_binding_proof() {
         let mut store = isolated_store("invalid-proof-grant");
         store.set_session_grant(Some(grant_with_expiry(86400)));
-        let error: anyhow::Error = crate::api::CokretApiError {
+        let error: anyhow::Error = crate::api_error::CokretApiError {
             status: reqwest::StatusCode::UNAUTHORIZED,
-            error: crate::api::decode_cokret_error(
+            error: crate::api_error::decode_cokret_error(
                 reqwest::StatusCode::UNAUTHORIZED,
                 br#"{"ok":false,"error":{"code":"invalid_signature","message":"DPoP proof key does not match grant cnf.jkt"}}"#,
             ),
@@ -795,9 +795,9 @@ mod tests {
     fn commit_keeps_grant_for_unrelated_capability_denial() {
         let mut store = isolated_store("unrelated-capability-denied");
         store.set_session_grant(Some(grant_with_expiry(86400)));
-        let error: anyhow::Error = crate::api::CokretApiError {
+        let error: anyhow::Error = crate::api_error::CokretApiError {
             status: reqwest::StatusCode::FORBIDDEN,
-            error: crate::api::decode_cokret_error(
+            error: crate::api_error::decode_cokret_error(
                 reqwest::StatusCode::FORBIDDEN,
                 br#"{"ok":false,"error":{"code":"capability_denied","message":"actor is not a member of the event Space"},"request_id":"ck:request:01964137-0000-7000-8000-000000000012"}"#,
             ),
@@ -814,9 +814,9 @@ mod tests {
     fn commit_keeps_grant_for_generic_auth_expired_refresh_failure() {
         let mut store = isolated_store("generic-auth-expired-refresh");
         store.set_session_grant(Some(grant_with_expiry(86400)));
-        let error: anyhow::Error = crate::api::CokretApiError {
+        let error: anyhow::Error = crate::api_error::CokretApiError {
             status: reqwest::StatusCode::UNAUTHORIZED,
-            error: crate::api::decode_cokret_error(
+            error: crate::api_error::decode_cokret_error(
                 reqwest::StatusCode::UNAUTHORIZED,
                 br#"{"ok":false,"error":{"code":"auth_expired","message":"temporary auth gateway denial"}}"#,
             ),

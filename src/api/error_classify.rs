@@ -5,19 +5,10 @@
 //! change; re-exported from the parent module so existing `crate::api::*` /
 //! sibling `super::*` paths resolve unchanged.
 
-use super::*;
+use cokret_sdk::ErrorEnvelope;
+use reqwest::StatusCode;
 
-fn api_error_status_and_envelope(error: &anyhow::Error) -> Option<(StatusCode, &ErrorEnvelope)> {
-    if let Some(api_error) = error.downcast_ref::<CokretApiError>() {
-        return Some((api_error.status, &api_error.error));
-    }
-    if let Some(cokret_sdk::Error::Api { status, error }) =
-        error.downcast_ref::<cokret_sdk::Error>()
-    {
-        return Some((StatusCode::from_u16(*status).ok()?, error.as_ref()));
-    }
-    None
-}
+use crate::api_error::api_error_status_and_envelope;
 
 /// True when a discovery probe failed because the endpoint does not exist on
 /// this server — i.e. the routing layer returned `404 unrecognized_endpoint`
@@ -263,11 +254,6 @@ pub enum AuditPostError {
     /// entry — telemetry is best-effort.
     #[error("audit post failed: {0}")]
     Other(String),
-}
-
-#[derive(Debug, Deserialize)]
-pub(crate) struct ApiErrorBody {
-    pub(crate) error: ErrorEnvelope,
 }
 
 /// Round R2/R3 (T11) — classify a server error envelope into the four

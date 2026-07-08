@@ -1,4 +1,10 @@
 use super::super::*;
+use crate::service_parse::{parse_directory_describe, parse_server_description};
+use crate::sync_parse::{
+    AccountSubscribeSnapshotResult, drain_events_subscribe_ndjson_lines,
+    parse_account_subscribe_snapshot, parse_account_subscribe_snapshot_outcome,
+    parse_events_subscribe_ndjson_text, parse_sync,
+};
 
 #[test]
 fn parses_server_and_sync_payloads() {

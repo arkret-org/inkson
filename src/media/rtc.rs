@@ -168,7 +168,7 @@ impl RtcClientError {
     /// to [`Self::ParticipantBindingInvalid`] so the renderer still fails
     /// closed instead of silently joining.
     fn from_api_error(error: &anyhow::Error) -> Self {
-        if let Some(api_error) = error.downcast_ref::<crate::api::CokretApiError>()
+        if let Some(api_error) = error.downcast_ref::<crate::api_error::CokretApiError>()
             && let Some(typed) = Self::from_wire(api_error.error.code())
         {
             return typed;

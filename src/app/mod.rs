@@ -3337,7 +3337,7 @@ pub fn RouterView() -> Element {
             }
             // ToastHost: stacked transient toasts. Drains the generic
             // toast queue plus the policy-deny queue (fed by
-            // `api::decode_cokret_error`'s `maybe_dispatch_policy_deny`,
+            // `api_error::decode_cokret_error`'s policy-deny dispatch,
             // G3.Y3) and the CKP-0007 circle-error queue (fed by
             // `maybe_dispatch_circle_error`), so any 403 / Circle error
             // is surfaced without each call site wiring its own UI.

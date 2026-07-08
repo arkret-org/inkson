@@ -5,8 +5,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
 use chime::{ChimePushRegisterDeviceRequest, ChimePushUnregisterDeviceRequest, CokretPushClient};
-use cokret_sdk::ErrorEnvelope;
-use reqwest::{Client, StatusCode};
+use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use tokio::sync::{OnceCell, RwLock};
@@ -95,6 +94,10 @@ use crate::models::{
     SpaceCreateResult, SubmitEventResult, TypingResult, VerifyDeviceResult,
 };
 use crate::operation::{EventKind, OperationBuilder, trim_realm_id, uuid_v7};
+use crate::wire_helpers::{
+    blob_download_url_for, canonical_blob_ref, path_component, query_component,
+    safe_blob_filename_header, validate_cursor,
+};
 
 #[derive(Clone)]
 pub struct CokretApi {
@@ -206,13 +209,6 @@ pub struct ResolveHandleContext<'a> {
     pub proofs: &'a [&'a str],
 }
 
-#[derive(Clone, Debug, thiserror::Error)]
-#[error("Cokret API returned {status}: {error}")]
-pub struct CokretApiError {
-    pub status: StatusCode,
-    pub error: ErrorEnvelope,
-}
-
 mod account;
 mod agent;
 mod applet;
@@ -238,11 +234,9 @@ mod error_classify;
 // helpers moved out of this file into `ephemeral` (move only).
 mod ephemeral;
 mod events;
-// YOU-07-001: HTTP plumbing helpers (error decode, URL/query encoding, NDJSON
-// subscribe parsing, small response parsers) moved out of this file into
-// `http_helpers` and crate-root helpers. The glob re-export keeps the
-// `crate::api::*` public paths and sibling/tests `use super::*` resolution
-// unchanged.
+// YOU-07-001: remaining HTTP plumbing helpers that are still tied to the
+// legacy API facade. Parser, wire URL, and error helpers have moved to their
+// crate-root modules and must be imported from their real owners.
 mod http_helpers;
 mod keys;
 mod media;
@@ -255,9 +249,7 @@ mod realm;
 // and tests reach them through `super::*`.
 mod request_helpers;
 // YOU-07-001: sync / account-subscribe parsers now live at crate root so E2 can
-// delete `src/api/**` without carrying parser code in the old API module. The
-// re-export keeps `crate::api::parse_sync` and sibling/tests `use super::*`
-// resolution paths unchanged during the strangler migration.
+// delete `src/api/**` without carrying parser code in the old API module.
 // Structural split: core `impl CokretApi` HTTP transport (constructor, builder
 // methods, SDK client construction, network state, and legacy URL helper)
 // moved out of this file into `transport` (move only). All `impl CokretApi`
@@ -276,14 +268,10 @@ pub use authed::*;
 pub use builders::*;
 pub use ephemeral::*;
 pub use error_classify::*;
-pub use http_helpers::*;
+pub(crate) use http_helpers::*;
 pub(crate) use mls::{generate_mls_claim_nonce, keypackage_claim_record_to_mls_record};
 pub(crate) use request_helpers::*;
 pub use views::*;
-
-pub use crate::service_parse::*;
-pub use crate::sync_parse::*;
-pub use crate::wire_helpers::*;
 
 /// PoP signature validity window (seconds). Kept well under the 300s protocol
 /// maximum (api-conventions.md §3.2) while tolerating modest clock skew.

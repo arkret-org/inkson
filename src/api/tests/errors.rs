@@ -1,4 +1,7 @@
+use reqwest::StatusCode;
+
 use super::super::*;
+use crate::api_error::{CokretApiError, decode_cokret_error};
 
 fn sdk_api_error(status: StatusCode, body: &'static [u8]) -> anyhow::Error {
     cokret_sdk::Error::Api {

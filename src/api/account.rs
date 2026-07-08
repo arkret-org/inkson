@@ -1,4 +1,7 @@
+use reqwest::StatusCode;
+
 use super::*;
+use crate::api_error::CokretApiError;
 
 fn did_for_request_field(field: &str, value: &str) -> anyhow::Result<cokret_sdk::Did> {
     let value = value.trim();

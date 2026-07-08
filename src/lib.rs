@@ -18,6 +18,7 @@ pub mod account_data;
 /// See `docs/user-strands-key-lifecycle.md` §3.
 pub mod account_health;
 pub mod api;
+pub mod api_error;
 pub mod app;
 pub mod audit;
 pub mod avatar_crop;
