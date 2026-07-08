@@ -1,6 +1,3 @@
-#[cfg(not(target_arch = "wasm32"))]
-use serde_json::json;
-
 use super::*;
 
 impl LocalStateStore {
@@ -222,72 +219,6 @@ impl LocalStateStore {
         let drained = std::mem::take(&mut self.cached.telemetry_log);
         let _ = self.flush();
         drained
-    }
-
-    /// Drain the buffered telemetry log and POST each entry to soland's
-    /// audit feed. The endpoint is 404-tolerant: until soland wires
-    /// `ck.audit.user_action.ingest`, the server returns 404 and we
-    /// simply restore the buffer (so the entries survive for the next
-    /// flush attempt). Any other error class drops the affected entry
-    /// — they're best-effort telemetry, not durable audit.
-    ///
-    /// The endpoint shape mirrors sodmin's audit feed: `actor`,
-    /// `action`, `outcome`, optional `note`, `recorded_at`. soland's
-    /// telemetry sink can ingest yougen + sodmin streams without a
-    /// translation layer because both lines share the same wire
-    /// shape.
-    ///
-    /// Returns the number of successfully POSTed entries; the buffer
-    /// is fully drained on success and partially restored on 404.
-    #[cfg(not(target_arch = "wasm32"))]
-    pub async fn flush_telemetry_to_server(&mut self, api: &crate::api::CokretApi) -> usize {
-        let entries = self.drain_telemetry();
-        if entries.is_empty() {
-            return 0;
-        }
-        let mut sent = 0usize;
-        let mut deferred: Vec<UserActionLogEntry> = Vec::new();
-        for entry in entries {
-            let payload = json!({
-                "actor": entry.actor,
-                "action": entry.action,
-                "outcome": entry.outcome,
-                "note": entry.note,
-                "recorded_at": entry.recorded_at,
-            });
-            match api.post_audit_user_action(payload).await {
-                Ok(()) => sent += 1,
-                Err(crate::api_error::AuditPostError::NotWired) => {
-                    deferred.push(entry);
-                }
-                Err(crate::api_error::AuditPostError::Other(_)) => {
-                    // Best-effort — drop the entry rather than
-                    // ballooning the buffer when the server is
-                    // misbehaving.
-                }
-            }
-        }
-        // 404-tolerant: re-insert the deferred entries so a later
-        // flush attempt picks them up once the endpoint is wired.
-        if !deferred.is_empty() {
-            self.ensure_cached_loaded();
-            for entry in deferred.into_iter().rev() {
-                self.cached.telemetry_log.insert(0, entry);
-            }
-            // Respect the bounded cap — if the server has been 404
-            // for a long time the cap kicks in and the oldest
-            // entries get dropped.
-            let overflow = self
-                .cached
-                .telemetry_log
-                .len()
-                .saturating_sub(TELEMETRY_BUFFER_CAP);
-            if overflow > 0 {
-                self.cached.telemetry_log.drain(0..overflow);
-            }
-            let _ = self.flush();
-        }
-        sent
     }
 
     pub fn push_registration(&self) -> Option<PushRegistrationState> {

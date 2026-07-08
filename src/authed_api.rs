@@ -214,6 +214,29 @@ where
     }
 }
 
+/// Same three-way auth/refresh/classification contract as [`with_authed_api`],
+/// but hands the closure the shared SDK `http-client::Client` instead of the
+/// yougen [`CokretApi`] facade. This is the CokretApi-free transport exit that
+/// migrated call sites use: they call the SDK endpoint method directly on the
+/// client (`|http| async move { http.some_endpoint(&body).await.map_err(...) }`),
+/// keeping the session-refresh + terminal-session-death handling identical to
+/// the facade path while dropping the per-domain facade method.
+pub async fn with_authed_sdk_client<F, Fut, T>(
+    base_url: &str,
+    session_credential: String,
+    f: F,
+) -> Result<T, ApiCallError>
+where
+    F: FnOnce(cokret_sdk::http_client::Client) -> Fut,
+    Fut: std::future::Future<Output = anyhow::Result<T>>,
+{
+    with_authed_api(base_url, session_credential, |api| async move {
+        let http = api.sdk_http_client()?;
+        f(http).await
+    })
+    .await
+}
+
 async fn classify_api_call_error(err: anyhow::Error) -> ApiCallError {
     if is_terminal_session_grant_error(&err) {
         crate::session::invalidate_current_session("session grant is no longer active");

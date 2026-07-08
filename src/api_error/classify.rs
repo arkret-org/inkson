@@ -237,23 +237,6 @@ pub fn normalize_wait_for_sync_token(sync_token: &str) -> Option<String> {
         .then(|| tokens.join(","))
 }
 
-/// Typed error class for the `post_audit_user_action` path.
-/// Distinguishes "endpoint isn't wired yet" (404 - caller should
-/// re-buffer the entry) from "server said no" (every other error -
-/// drop and move on). Pulled out so callers can branch without
-/// parsing `anyhow::Error` strings.
-#[derive(Debug, thiserror::Error)]
-pub enum AuditPostError {
-    /// Server responded 404 — the audit ingest endpoint is not yet
-    /// wired. Callers re-buffer the entry for a later flush attempt.
-    #[error("audit endpoint not wired (404)")]
-    NotWired,
-    /// Any other failure (network drop, 5xx, 4xx). Caller drops the
-    /// entry — telemetry is best-effort.
-    #[error("audit post failed: {0}")]
-    Other(String),
-}
-
 /// Round R2/R3 (T11) — classify a server error envelope into the four
 /// fail-closed presign blob error classes. The UI MUST surface a friendly
 /// (translated) message and MUST NOT retry / cache / log the presign URL.

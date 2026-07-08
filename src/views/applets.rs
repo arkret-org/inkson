@@ -43,7 +43,7 @@ use crate::ui::checkbox::Checkbox;
 use crate::ui::dialog::Dialog;
 use crate::ui::input::Input;
 use crate::ui::textarea::Textarea;
-use crate::views::helpers::{short_protocol_id, with_authed_api};
+use crate::views::helpers::{short_protocol_id, with_authed_api, with_authed_sdk_client};
 
 /// Build the canonical `applet_package` Value the install preview/commit
 /// surface expects from a manifest input. For inline JSON the parsed object is
@@ -640,8 +640,8 @@ pub fn AppletsPanel(
                                                     allow_ghost_actors,
                                                 ),
                                             };
-                                            let result = with_authed_api(&base, api_token, |api| async move {
-                                                api.applet_install_preview(&body).await
+                                            let result = with_authed_sdk_client(&base, api_token, |http| async move {
+                                                http.applet_install_preview(&body).await.map_err(anyhow::Error::from)
                                             })
                                             .await;
                                             match result {
@@ -743,8 +743,8 @@ pub fn AppletsPanel(
                                                 widget_policy: None,
                                             };
                                             let idem = crate::operation::uuid_v7();
-                                            let result = with_authed_api(&base, api_token, |api| async move {
-                                                api.applet_install(&idem, &body).await
+                                            let result = with_authed_sdk_client(&base, api_token, |http| async move {
+                                                http.applet_install(&idem, &body).await.map_err(anyhow::Error::from)
                                             })
                                             .await;
                                             match result {
@@ -860,8 +860,8 @@ pub fn AppletsPanel(
                                                             revoke_mode: AppletRevokeMode::RevokeAll,
                                                             proof: None,
                                                         };
-                                                        let result = with_authed_api(&base, api_token, |api| async move {
-                                                            api.applet_revoke(&aid, &body).await
+                                                        let result = with_authed_sdk_client(&base, api_token, |http| async move {
+                                                            http.applet_revoke(&aid, &body).await.map_err(anyhow::Error::from)
                                                         })
                                                         .await;
                                                         match result {

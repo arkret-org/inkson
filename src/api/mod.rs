@@ -78,7 +78,6 @@ impl Default for CokretApiOptions {
 
 mod account;
 mod agent;
-mod applet;
 mod blob;
 mod blob_resumable;
 mod circle;
@@ -87,7 +86,6 @@ mod events;
 mod keys;
 mod media;
 mod mls;
-mod moderation;
 mod realm;
 // YOU-07-001: sync / account-subscribe parsers now live at crate root so E2 can
 // delete `src/api/**` without carrying parser code in the old API module.

@@ -26,7 +26,6 @@ mod remark;
 mod seal_view;
 mod store_persist;
 mod sync_states;
-mod telemetry;
 
 // ── Shared test helpers (used by multiple topic submodules) ─
 
