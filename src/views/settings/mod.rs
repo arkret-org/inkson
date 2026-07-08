@@ -45,7 +45,9 @@ use crate::ui::label::Label;
 use crate::ui::select::{Select, SelectOption};
 use crate::ui::slider::Slider;
 use crate::ui::textarea::Textarea;
-use crate::views::helpers::{display_name_for_did, short_protocol_id, with_authed_api};
+use crate::views::helpers::{
+    display_name_for_did, short_protocol_id, with_authed_api, with_authed_sdk_client,
+};
 use crate::workflows::blocked_release_workflows;
 
 /// `ck.account_data` key used by the read-receipt preferences entry. Spec:
@@ -1491,8 +1493,8 @@ pub fn SettingsPanel(
                                     let base = base_url();
                                     let api_token = token();
                                     spawn(async move {
-                                        match with_authed_api(&base, api_token, |api| async move {
-                                            api.mimi_provider_directory().await
+                                        match with_authed_sdk_client(&base, api_token, |http| async move {
+                                            http.mimi_provider_directory(None, &[]).await.map_err(anyhow::Error::from)
                                         })
                                         .await
                                         {
@@ -1529,8 +1531,12 @@ pub fn SettingsPanel(
                                     let base = base_url();
                                     let api_token = token();
                                     spawn(async move {
-                                        match with_authed_api(&base, api_token, |api| async move {
-                                            api.mimi_group_info("01JSMIMI").await
+                                        match with_authed_sdk_client(&base, api_token, |http| async move {
+                                            http.get::<cokret_sdk::MimiGroupInfoOutcome>(
+                                                "/_cokret/open/mimi/strands/01JSMIMI/group-info",
+                                            )
+                                            .await
+                                            .map_err(anyhow::Error::from)
                                         })
                                         .await
                                         {
@@ -1573,14 +1579,19 @@ pub fn SettingsPanel(
                                     let base = base_url();
                                     let api_token = token();
                                     spawn(async move {
-                                        match with_authed_api(&base, api_token, |api| async move {
+                                        match with_authed_sdk_client(&base, api_token, |http| async move {
                                             let request = cokret_sdk::MimiIdentifierQueryRequestBody {
                                                 identifiers: vec![json!({"mimi_uri": "mimi://remote.example/alice"})],
                                                 requester: None,
                                                 privacy_profile: Some("private_identifier_query".to_owned()),
                                                 proofs: Vec::new(),
                                             };
-                                            api.mimi_identifier_query(&request).await
+                                            http.post::<_, cokret_sdk::MimiIdentifierQueryOutcome>(
+                                                "/_cokret/open/mimi/identifiers/query",
+                                                &request,
+                                            )
+                                            .await
+                                            .map_err(anyhow::Error::from)
                                         })
                                         .await
                                         {
@@ -1624,7 +1635,7 @@ pub fn SettingsPanel(
                                     let actor = account_did();
                                     let device = device_id();
                                     spawn(async move {
-                                        match with_authed_api(&base, api_token, |api| async move {
+                                        match with_authed_sdk_client(&base, api_token, |http| async move {
                                             let request = cokret_sdk::MimiSubmitMessageRequestBody {
                                                 sender_actor_id: cokret_sdk::Did::new(actor.trim().to_owned())?,
                                                 device_id: cokret_sdk::DeviceId::new(device.trim().to_owned())?,
@@ -1637,7 +1648,12 @@ pub fn SettingsPanel(
                                                 epoch: None,
                                                 associated_data: serde_json::Value::Null,
                                             };
-                                            api.mimi_submit_message("01JSMIMI", &request).await
+                                            http.post::<_, cokret_sdk::MimiSubmitMessageOutcome>(
+                                                "/_cokret/open/mimi/strands/01JSMIMI/messages",
+                                                &request,
+                                            )
+                                            .await
+                                            .map_err(anyhow::Error::from)
                                         })
                                         .await
                                         {
@@ -1676,7 +1692,7 @@ pub fn SettingsPanel(
                                     let api_token = token();
                                     let actor = account_did();
                                     spawn(async move {
-                                        match with_authed_api(&base, api_token, |api| async move {
+                                        match with_authed_sdk_client(&base, api_token, |http| async move {
                                             let request = cokret_sdk::MimiProxyDownloadRequestBody {
                                                 asset_ref: "ck:blob:sha256:01015dc8af66d01f557ea63f13538f1964848840a350c5311d1efc8ad138bb91".to_owned(),
                                                 requester: cokret_sdk::Did::new(actor.trim().to_owned())?,
@@ -1684,7 +1700,12 @@ pub fn SettingsPanel(
                                                 ohttp_context: serde_json::Value::Null,
                                                 range: None,
                                             };
-                                            api.mimi_proxy_download(&request).await
+                                            http.post::<_, cokret_sdk::MimiProxyDownloadOutcome>(
+                                                "/_cokret/open/mimi/proxy-download",
+                                                &request,
+                                            )
+                                            .await
+                                            .map_err(anyhow::Error::from)
                                         })
                                         .await
                                         {
