@@ -14,7 +14,7 @@
 //!
 //! Both are timer-driven with a monotonically increasing generation token, so
 //! stale spawned tasks observe the bumped generation and exit instead of firing
-//! — no timer handles to track, wasm- and desktop-safe via [`crate::api::sleep_for`].
+//! — no timer handles to track, wasm- and desktop-safe via [`crate::runtime_helpers::sleep_for`].
 
 use std::time::Duration;
 
@@ -47,7 +47,7 @@ impl Debouncer {
         generation.set(my_gen);
         let delay = u64::from(self.delay_ms);
         spawn(async move {
-            crate::api::sleep_for(Duration::from_millis(delay)).await;
+            crate::runtime_helpers::sleep_for(Duration::from_millis(delay)).await;
             // A newer keystroke bumped the generation — this run is stale.
             if generation() == my_gen {
                 action();
@@ -95,7 +95,7 @@ impl TypingThrottle {
             emit(true);
             let active = u64::from(self.active_ms);
             spawn(async move {
-                crate::api::sleep_for(Duration::from_millis(active)).await;
+                crate::runtime_helpers::sleep_for(Duration::from_millis(active)).await;
                 cooldown.set(false);
             });
         }
@@ -107,7 +107,7 @@ impl TypingThrottle {
         let stop = u64::from(self.stop_ms);
         let emit_stop = emit.clone();
         spawn(async move {
-            crate::api::sleep_for(Duration::from_millis(stop)).await;
+            crate::runtime_helpers::sleep_for(Duration::from_millis(stop)).await;
             if stop_generation() == my_gen {
                 emit_stop(false);
             }

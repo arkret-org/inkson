@@ -343,8 +343,10 @@ pub fn ChatPanel(
                         .await
                     })
                     .await;
-                crate::api::sleep_for(std::time::Duration::from_secs(PRESENCE_HEARTBEAT_SECS))
-                    .await;
+                crate::runtime_helpers::sleep_for(std::time::Duration::from_secs(
+                    PRESENCE_HEARTBEAT_SECS,
+                ))
+                .await;
                 let next_tick = (*presence_heartbeat_tick.peek()).wrapping_add(1);
                 presence_heartbeat_tick.set(next_tick);
             });
@@ -396,7 +398,7 @@ pub fn ChatPanel(
                 // Perf: connectivity is a low-frequency state; 750ms polling was
                 // too tight. Relaxed to 2500ms, still reflecting navigator.onLine
                 // flips promptly (including Playwright setOffline).
-                crate::api::sleep_for(std::time::Duration::from_millis(2_500)).await;
+                crate::runtime_helpers::sleep_for(std::time::Duration::from_millis(2_500)).await;
             }
         });
     }
@@ -823,7 +825,7 @@ pub fn ChatPanel(
             let delay_ms =
                 (expires_at_ms - chrono::Utc::now().timestamp_millis()).max(0) as u64 + 50;
             spawn(async move {
-                crate::api::sleep_for(std::time::Duration::from_millis(delay_ms)).await;
+                crate::runtime_helpers::sleep_for(std::time::Duration::from_millis(delay_ms)).await;
                 if *typing_next_expires_at_ms_for_expiry.peek() == Some(expires_at_ms) {
                     typing_actors_for_expiry.set(Vec::new());
                     typing_next_expires_at_ms_for_expiry.set(None);

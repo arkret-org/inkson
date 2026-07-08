@@ -244,7 +244,7 @@ pub fn VerifyDevicePanel(
                     if ticks > 120 {
                         break;
                     }
-                    crate::api::sleep_for(std::time::Duration::from_millis(3000)).await;
+                    crate::runtime_helpers::sleep_for(std::time::Duration::from_millis(3000)).await;
                     if verify_method() != VerifyMethod::Sas {
                         continue;
                     }

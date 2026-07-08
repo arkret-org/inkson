@@ -330,7 +330,7 @@ pub fn RouterView() -> Element {
         let mut secure_store_ready_for_upgrade = secure_store_bootstrap_ready;
         let mut token_for_secure_upgrade = token;
         use_future(move || async move {
-            crate::api::sleep_for(std::time::Duration::from_millis(1)).await;
+            crate::runtime_helpers::sleep_for(std::time::Duration::from_millis(1)).await;
             tracing::warn!(target: "secure_store", "secure store upgrade: invoking upgrade_wasm_secure_key_store_async");
             match crate::secure_key_store::upgrade_wasm_secure_key_store_async("yougen").await {
                 Ok(Some(secure_store)) => {
@@ -893,7 +893,7 @@ pub fn RouterView() -> Element {
         let token = token;
         let mut session_boot_state = session_boot_state;
         move || async move {
-            crate::api::sleep_for(std::time::Duration::from_millis(1)).await;
+            crate::runtime_helpers::sleep_for(std::time::Duration::from_millis(1)).await;
             loop {
                 // Freshness gate — only refresh when the persisted grant is
                 // near its own expiry. The read borrow is dropped before any
@@ -948,7 +948,7 @@ pub fn RouterView() -> Element {
                         }
                     }
                 }
-                crate::api::sleep_for(std::time::Duration::from_secs(
+                crate::runtime_helpers::sleep_for(std::time::Duration::from_secs(
                     crate::session_refresh::POLL_INTERVAL_SECS,
                 ))
                 .await;
@@ -962,7 +962,7 @@ pub fn RouterView() -> Element {
     // finish it on the next boot so the rotation chain can never outlive a
     // "Log out" click. One-shot: reads no signals, so it runs once on mount.
     use_future(move || async move {
-        crate::api::sleep_for(std::time::Duration::from_millis(1)).await;
+        crate::runtime_helpers::sleep_for(std::time::Duration::from_millis(1)).await;
         crate::pending_logout::run_pending_logout_if_any(chrono::Utc::now()).await;
     });
 

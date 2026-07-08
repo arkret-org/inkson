@@ -130,7 +130,7 @@ fn spawn_refresh_agents(
     let request_epoch = (*refresh_epoch.peek()).saturating_add(1);
     refresh_epoch.set(request_epoch);
     spawn(async move {
-        crate::api::sleep_for(Duration::from_millis(1)).await;
+        crate::runtime_helpers::sleep_for(Duration::from_millis(1)).await;
         if api_token.trim().is_empty() {
             if *refresh_epoch.peek() != request_epoch {
                 return;

@@ -24,7 +24,7 @@ where
     {
         tokio::select! {
             result = future => result,
-            _ = crate::api::sleep_for(BOOTSTRAP_NETWORK_TIMEOUT) => {
+            _ = crate::runtime_helpers::sleep_for(BOOTSTRAP_NETWORK_TIMEOUT) => {
                 Err(anyhow::anyhow!(
                     "{label} timed out after {}s",
                     BOOTSTRAP_NETWORK_TIMEOUT.as_secs()
@@ -44,7 +44,7 @@ async fn bootstrap_session_refresh() -> crate::session::CurrentSessionRefresh {
     {
         tokio::select! {
             result = crate::session::refresh_current_session() => result,
-            _ = crate::api::sleep_for(BOOTSTRAP_NETWORK_TIMEOUT) => {
+            _ = crate::runtime_helpers::sleep_for(BOOTSTRAP_NETWORK_TIMEOUT) => {
                 crate::session::CurrentSessionRefresh::retry_later(format!(
                     "session refresh timed out after {}s",
                     BOOTSTRAP_NETWORK_TIMEOUT.as_secs()

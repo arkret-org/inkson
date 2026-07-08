@@ -1338,7 +1338,7 @@ pub fn KanbanPanel(
             spawn(async move {
                 for attempt in 0..5u32 {
                     if attempt > 0 {
-                        crate::api::sleep_for(std::time::Duration::from_millis(
+                        crate::runtime_helpers::sleep_for(std::time::Duration::from_millis(
                             500 * (1 << (attempt - 1)),
                         ))
                         .await;

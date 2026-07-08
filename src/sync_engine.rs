@@ -38,7 +38,7 @@ use cokret_client::{ClientEvent, ClientEventSink, DecodedInbound, InboundDecoder
 use dioxus::prelude::*;
 use serde_json::{Value, json};
 
-use crate::api::{CokretApi, MAX_RETRY_DELAY, sleep_for};
+use crate::api::CokretApi;
 use crate::api_error::{
     is_auth_expired_error, is_invalid_cursor_error, is_stale_frontier_error,
     is_terminal_session_grant_error, rate_limited_retry_after,
@@ -48,6 +48,7 @@ use crate::local_state::{LocalSealView, LocalStateStore, RawOperationRecord};
 use crate::models::{
     ClientSyncOutcome, DeviceMessagesGetOutcome, RealmTreeNode, RealmTreeNodeKind,
 };
+use crate::runtime_helpers::{MAX_RETRY_DELAY, sleep_for};
 use crate::sync_parse::AccountSubscribeSnapshotResult;
 
 /// Connection-status label surfaced to the app shell's status signal.

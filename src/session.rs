@@ -221,7 +221,7 @@ pub async fn wait_for_current_session_refresh() -> CurrentSessionRefresh {
 
 async fn wait_for_in_flight_refresh_result() -> CurrentSessionRefresh {
     for _ in 0..COALESCE_MAX_POLLS {
-        crate::api::sleep_for(Duration::from_millis(COALESCE_POLL_INTERVAL_MS)).await;
+        crate::runtime_helpers::sleep_for(Duration::from_millis(COALESCE_POLL_INTERVAL_MS)).await;
         if !IN_FLIGHT.with(Cell::get) {
             break;
         }
@@ -273,7 +273,7 @@ mod tests {
                 CALLS.with(|c| c.set(c.get() + 1));
                 // Hold the in-flight slot open long enough that the second
                 // caller is forced onto the coalescing wait path.
-                crate::api::sleep_for(Duration::from_millis(120)).await;
+                crate::runtime_helpers::sleep_for(Duration::from_millis(120)).await;
                 CurrentSessionRefresh::Credential("tok".to_owned())
             })
         }));

@@ -95,7 +95,8 @@ pub fn AgentsPanel(
                     }
                     ticks += 1;
                     if token_for_fetch().trim().is_empty() || realm.trim().is_empty() {
-                        crate::api::sleep_for(std::time::Duration::from_millis(4_000)).await;
+                        crate::runtime_helpers::sleep_for(std::time::Duration::from_millis(4_000))
+                            .await;
                         continue;
                     }
                     let api_token = token_for_fetch();
@@ -112,7 +113,10 @@ pub fn AgentsPanel(
                                 "Agent result polling is unavailable. Check the agent bridge configuration, then retry. ({})",
                                 err.display()
                             ));
-                            crate::api::sleep_for(std::time::Duration::from_millis(4_000)).await;
+                            crate::runtime_helpers::sleep_for(std::time::Duration::from_millis(
+                                4_000,
+                            ))
+                            .await;
                             continue;
                         }
                     };
@@ -160,7 +164,10 @@ pub fn AgentsPanel(
                     } else {
                         poll_interval_ms = (poll_interval_ms * 2).min(BACKFILL_MAX_MS);
                     }
-                    crate::api::sleep_for(std::time::Duration::from_millis(poll_interval_ms)).await;
+                    crate::runtime_helpers::sleep_for(std::time::Duration::from_millis(
+                        poll_interval_ms,
+                    ))
+                    .await;
                 }
             }
         });

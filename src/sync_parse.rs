@@ -132,7 +132,7 @@ pub(crate) fn trim_ascii(mut bytes: &[u8]) -> &[u8] {
 }
 
 /// COR-09: upper bound on a server-supplied control-frame `reconnect_after_ms`.
-/// Mirrors the HTTP `Retry-After` ceiling (`MAX_RETRY_DELAY` = 60s) so the
+/// Mirrors the runtime `Retry-After` ceiling (`MAX_RETRY_DELAY` = 60s) so the
 /// clamp lives at the SDK→outcome boundary and does NOT depend on every
 /// downstream consumer remembering to `.min(..)` the raw value. A malicious
 /// server can therefore never "park" a reconnect for an arbitrarily long delay.

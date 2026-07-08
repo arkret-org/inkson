@@ -217,7 +217,7 @@ async fn run_mls_private_plaintext_backup_job(key: String) {
         let Some(delay) = next_mls_private_plaintext_backup_delay(&key) else {
             return;
         };
-        crate::api::sleep_for(delay).await;
+        crate::runtime_helpers::sleep_for(delay).await;
         let Some(job_snapshot) = take_mls_private_plaintext_backup_job_snapshot(&key) else {
             return;
         };
@@ -663,7 +663,7 @@ fn upload_mls_backup_with_recovery_key(
                 try_set_status(status, crate::i18n::tr("mls_backup.status.created"));
                 if !generated_in_this_strand {
                     try_set_signal(recovery_key_input, String::new());
-                    crate::api::sleep_for(std::time::Duration::from_millis(750)).await;
+                    crate::runtime_helpers::sleep_for(std::time::Duration::from_millis(750)).await;
                     try_set_signal(needs_mls_backup, false);
                 }
             }

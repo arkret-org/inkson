@@ -34,7 +34,7 @@ where
 {
     tokio::select! {
         result = future => result,
-        _ = crate::api::sleep_for(MLS_UNLOCK_FETCH_TIMEOUT) => Err(ApiCallError::Failed(anyhow::anyhow!(
+        _ = crate::runtime_helpers::sleep_for(MLS_UNLOCK_FETCH_TIMEOUT) => Err(ApiCallError::Failed(anyhow::anyhow!(
             "MLS unlock timed out while fetching recovery material"
         ))),
     }
@@ -163,7 +163,7 @@ pub fn MlsUnlockPrompt(
                             crate::i18n::tr("mls_unlock.status.restoring_suffix")
                         ),
                     );
-                    crate::api::sleep_for(std::time::Duration::from_millis(16)).await;
+                    crate::runtime_helpers::sleep_for(std::time::Duration::from_millis(16)).await;
                     let secure_store = crate::secure_key_store::default_secure_key_store("yougen");
                     match state_store.try_write() {
                         Ok(mut store) => {
@@ -229,7 +229,8 @@ pub fn MlsUnlockPrompt(
                         );
                         try_set_signal(passphrase, String::new());
                         try_set_status(status, restored_status);
-                        crate::api::sleep_for(std::time::Duration::from_millis(750)).await;
+                        crate::runtime_helpers::sleep_for(std::time::Duration::from_millis(750))
+                            .await;
                         try_set_signal(needs_mls_unlock, false);
                     }
                 }

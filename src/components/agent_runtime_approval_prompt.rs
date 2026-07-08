@@ -47,13 +47,13 @@ pub fn AgentRuntimeApprovalPrompt(
             loop {
                 let has_prompt = pending.read().is_some();
                 if has_prompt {
-                    crate::api::sleep_for(APPROVAL_POLL_INTERVAL).await;
+                    crate::runtime_helpers::sleep_for(APPROVAL_POLL_INTERVAL).await;
                     continue;
                 }
 
                 let api_token = token();
                 if api_token.trim().is_empty() {
-                    crate::api::sleep_for(APPROVAL_POLL_INTERVAL).await;
+                    crate::runtime_helpers::sleep_for(APPROVAL_POLL_INTERVAL).await;
                     continue;
                 }
 
@@ -75,7 +75,7 @@ pub fn AgentRuntimeApprovalPrompt(
                     }
                 }
 
-                crate::api::sleep_for(APPROVAL_POLL_INTERVAL).await;
+                crate::runtime_helpers::sleep_for(APPROVAL_POLL_INTERVAL).await;
             }
         });
     }

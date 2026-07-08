@@ -127,6 +127,7 @@ pub mod recovery_proof;
 pub mod recovery_strand;
 pub mod routes;
 pub mod rtc_transport;
+pub(crate) mod runtime_helpers;
 pub mod secure_key_store;
 pub mod security_state;
 pub mod service_parse;

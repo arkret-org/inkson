@@ -40,10 +40,10 @@ use cokret_sdk::EventsSubscribeFrameKind;
 use dioxus::prelude::*;
 use serde_json::Value;
 
-use crate::api::sleep_for;
 use crate::api_error::{is_auth_expired_error, is_invalid_cursor_error, rate_limited_retry_after};
 use crate::config::MultiProfileConfig;
 use crate::local_state::LocalStateStore;
+use crate::runtime_helpers::sleep_for;
 
 /// How long the server holds each realm `events/subscribe` long-poll open. The
 /// buffered (wasm) reader only surfaces frames at close, so this is also the

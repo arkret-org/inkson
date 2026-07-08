@@ -319,7 +319,7 @@ async fn run_mls_history_backup_job(key: String) {
         let Some(delay) = next_mls_history_backup_delay(&key) else {
             return;
         };
-        crate::api::sleep_for(delay).await;
+        crate::runtime_helpers::sleep_for(delay).await;
         let Some(job) = take_mls_history_backup_job_snapshot(&key) else {
             return;
         };

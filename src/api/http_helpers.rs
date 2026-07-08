@@ -3,8 +3,6 @@
 
 use super::*;
 
-pub(crate) const MAX_RETRY_DELAY: Duration = Duration::from_secs(60);
-
 pub(crate) fn canonical_space_join_rule_v1(join_rule: &str) -> &str {
     match join_rule {
         "open" => "public",
@@ -12,21 +10,6 @@ pub(crate) fn canonical_space_join_rule_v1(join_rule: &str) -> &str {
         "invite_only" => "invite",
         value => value,
     }
-}
-
-// `tokio::time::sleep` reads `std::time::Instant::now()` and panics on
-// wasm32-unknown-unknown ("time not implemented on this platform"). Route the
-// wasm build through `gloo_timers::future::TimeoutFuture`, which is backed by
-// `setTimeout`.
-#[cfg(not(target_arch = "wasm32"))]
-pub(crate) async fn sleep_for(delay: Duration) {
-    tokio::time::sleep(delay).await;
-}
-
-#[cfg(target_arch = "wasm32")]
-pub(crate) async fn sleep_for(delay: Duration) {
-    let ms = u32::try_from(delay.as_millis()).unwrap_or(u32::MAX);
-    gloo_timers::future::TimeoutFuture::new(ms).await;
 }
 
 pub(crate) fn select_join_candidate(
