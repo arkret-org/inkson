@@ -1,20 +1,17 @@
-//! Realm event / envelope builders (`build_*_event` / `build_*_envelope`).
+//! Realm event and device envelope builders.
 //!
-//! YOU-07-001: mechanically moved from `api/mod.rs` as one contiguous block:
-//! realm / space / member / device event builders plus their private parse,
-//! notary, and derived helpers. This is move-only: logic, signatures, and
-//! canonical bytes are unchanged. `mod.rs` re-exports via `pub use builders::*;`,
-//! preserving existing `crate::api::build_*` call sites and sibling submodule
-//! `use super::*` resolution paths.
+//! These helpers are transport-neutral and live outside the legacy API facade.
 
 use std::collections::BTreeMap;
 
 use serde_json::{Value, json};
 
-use super::{RECOMMENDED_REALM_ENCRYPTION_FLOOR, RECOMMENDED_REALM_ENCRYPTION_PROFILE};
 use crate::operation::{
     Effect, EventKind, EventRequirements, LatticeOp, LatticeOpType, OperationBuilder, Precondition,
     Predicate, PredicateOp, trim_realm_id,
+};
+use crate::realm_defaults::{
+    RECOMMENDED_REALM_ENCRYPTION_FLOOR, RECOMMENDED_REALM_ENCRYPTION_PROFILE,
 };
 
 /// RFC3339 timestamp in the canonical wire form soland's

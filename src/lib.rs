@@ -54,6 +54,7 @@ pub mod did_resolver;
 pub mod disappearing;
 pub mod discovery;
 pub(crate) mod ephemeral;
+pub mod event_builders;
 pub mod event_signer;
 pub mod federation;
 pub mod file_transfer;
@@ -118,6 +119,7 @@ pub mod perf;
 pub mod projection;
 pub mod push;
 pub mod rank;
+pub mod realm_defaults;
 pub mod realm_events_engine;
 /// R28-B — pure realm-tree / projection / field-extraction helpers
 /// extracted out of the (formerly 12k-line) `app` module so the

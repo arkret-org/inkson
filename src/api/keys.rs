@@ -4,6 +4,9 @@ use base64::Engine as _;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 
 use super::*;
+use crate::event_builders::{
+    build_device_message_envelope, ensure_device_verification_proof_is_signed,
+};
 
 /// Canonical signing-input prefix for the `keys/upload` `device_signature`
 /// (spec `device-lifecycle.md` §8.1).

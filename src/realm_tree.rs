@@ -41,7 +41,7 @@ pub(crate) struct RealmProjectionInput {
     pub plaintext_visible_services: Vec<String>,
     /// Recommended content/metadata floor (e.g. `e2ee_required`), or `None`
     /// to omit the floor keys entirely. The caller decides this via
-    /// [`crate::api::encryption_profile_uses_recommended_floor`] so the
+    /// [`crate::event_builders::encryption_profile_uses_recommended_floor`] so the
     /// "which profile recommends which floor" rule stays single-sourced in
     /// `crate::api` instead of being duplicated here.
     pub encryption_floor: Option<String>,

@@ -685,7 +685,7 @@ pub(super) fn RealmsSection(
                                             &realm_content_scheme(),
                                         );
                                         if let Err(error) =
-                                            crate::api::validate_realm_history_content_scheme_for_profile(
+                                            crate::event_builders::validate_realm_history_content_scheme_for_profile(
                                                 &encryption_profile,
                                                 &history_visibility,
                                                 Some(content_scheme.as_str()),
@@ -844,15 +844,13 @@ pub(super) fn RealmsSection(
                                                             vec![actor.clone()]
                                                         };
                                                         // Single-source the "which profile
-                                                        // recommends which floor" rule in
-                                                        // crate::api; `None` omits the floor
-                                                        // keys for non-E2EE profiles.
+                                                        // recommends which floor" rule.
                                                         let projection_floor =
-                                                            crate::api::encryption_profile_uses_recommended_floor(
+                                                            crate::event_builders::encryption_profile_uses_recommended_floor(
                                                                 &encryption_profile,
                                                             )
                                                             .then(|| {
-                                                                crate::api::RECOMMENDED_REALM_ENCRYPTION_FLOOR
+                                                                crate::realm_defaults::RECOMMENDED_REALM_ENCRYPTION_FLOOR
                                                                     .to_owned()
                                                             });
                                                         let projection_body =
@@ -1051,7 +1049,7 @@ pub(super) fn RealmsSection(
                                                                 "MLS Welcome queued for {seeded_mls_ok}"
                                                             ));
                                                         }
-                                                        if crate::api::encryption_profile_uses_recommended_floor(
+                                                        if crate::event_builders::encryption_profile_uses_recommended_floor(
                                                             &encryption_profile,
                                                         ) {
                                                             steps.push("metadata/content floor e2ee_required".to_owned());

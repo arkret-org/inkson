@@ -218,10 +218,6 @@ mod applet;
 mod authed;
 mod blob;
 mod blob_resumable;
-// YOU-07-001: realm event / envelope builders moved out to `builders`.
-// Re-exports preserve `crate::api::build_*` and sibling submodule `use super::*`
-// resolution paths.
-mod builders;
 mod circle;
 mod directory;
 mod events;
@@ -252,7 +248,6 @@ mod views;
 mod tests;
 
 pub use authed::*;
-pub use builders::*;
 pub(crate) use mls::{generate_mls_claim_nonce, keypackage_claim_record_to_mls_record};
 pub(crate) use request_helpers::*;
 pub use views::*;

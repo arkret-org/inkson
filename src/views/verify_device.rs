@@ -451,7 +451,7 @@ pub fn VerifyDevicePanel(
                                                     return;
                                                 }
                                             };
-                                            let proof = match crate::api::build_signed_device_verification_proof(
+                                            let proof = match crate::event_builders::build_signed_device_verification_proof(
                                                 &actor,
                                                 &from_device,
                                                 &target,
@@ -560,7 +560,7 @@ pub fn VerifyDevicePanel(
                                                         return;
                                                     }
                                                 };
-                                                let signed_content = match crate::api::build_signed_device_verification_proof(
+                                                let signed_content = match crate::event_builders::build_signed_device_verification_proof(
                                                     &account,
                                                     &from_device,
                                                     &target,
@@ -761,7 +761,7 @@ pub fn VerifyDevicePanel(
                                                             return;
                                                         }
                                                     };
-                                                    let proof = match crate::api::build_signed_device_verification_proof(
+                                                    let proof = match crate::event_builders::build_signed_device_verification_proof(
                                                         &actor,
                                                         &from_device,
                                                         &target,
@@ -919,7 +919,7 @@ pub fn VerifyDevicePanel(
                                                             return;
                                                         }
                                                     };
-                                                    let proof = match crate::api::build_signed_device_verification_proof(
+                                                    let proof = match crate::event_builders::build_signed_device_verification_proof(
                                                         &actor,
                                                         &from_device,
                                                         &dev_id,

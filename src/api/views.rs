@@ -1,12 +1,6 @@
-//! Projection view models and recommended-encryption constants for the
-//! self-API client. UI-facing decode/projection shapes split out of
-//! `api/mod.rs` (structural move only). Re-exported from the parent module so
-//! existing `crate::api::*` / sibling `super::*` paths resolve unchanged.
+//! Projection view models for the self-API client.
 
 use super::*;
-
-pub const RECOMMENDED_REALM_ENCRYPTION_PROFILE: &str = "mls_rfc9420";
-pub const RECOMMENDED_REALM_ENCRYPTION_FLOOR: &str = "e2ee_required";
 
 /// Generic wrapper for soland's
 /// `/_cokret/self/realms/{realm_id}/{spaces|strands}` lifecycle endpoints. Keeps

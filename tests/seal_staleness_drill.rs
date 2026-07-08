@@ -33,8 +33,8 @@
 use ed25519_dalek::SigningKey;
 use regex::Regex;
 use sha2::{Digest, Sha256};
-use yougen::api;
 use yougen::canonical::hex_encode;
+use yougen::event_builders;
 use yougen::operation::{EventEnvelope, EventEnvelopeExt};
 
 const TEST_REALM_ID: &str = "ck:realm:0196419b-0000-7000-8000-000000000001";
@@ -78,7 +78,7 @@ fn stamp_real_proof_and_anchor(envelope: &mut EventEnvelope) {
 
 #[test]
 fn realm_create_envelope_carries_real_proof_and_real_anchor() {
-    let mut envelope = api::build_realm_create_event(
+    let mut envelope = event_builders::build_realm_create_event(
         TEST_REALM_ID,
         TEST_ACTOR_ID,
         "Engineering",
@@ -107,7 +107,7 @@ fn realm_create_envelope_carries_real_proof_and_real_anchor() {
 
 #[test]
 fn full_bootstrap_chain_carries_real_proofs_and_anchors() {
-    let events = api::build_realm_bootstrap_events(
+    let events = event_builders::build_realm_bootstrap_events(
         TEST_REALM_ID,
         TEST_ACTOR_ID,
         "Engineering",

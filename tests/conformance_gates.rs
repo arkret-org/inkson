@@ -1,7 +1,8 @@
 //! Conformance gate: every typed builder in yougen MUST produce an
 //! EventEnvelope that validates against cokret-spec event-envelope.schema.json.
 //!
-//! Stream J of `_claude_todos.md`: for each typed builder in `yougen::api`,
+//! Stream J of `_claude_todos.md`: for each typed builder in
+//! `yougen::event_builders`,
 //! run build, stamp the wire-only fields a real submitter would attach
 //! (`seal_basis` when the kind is a Control Move, `proofs[0]` from a real
 //! Ed25519 signer), serialise, and validate
@@ -17,7 +18,7 @@ use std::sync::OnceLock;
 use ed25519_dalek::SigningKey;
 use jsonschema::{Registry, Resource};
 use serde_json::Value;
-use yougen::api;
+use yougen::event_builders;
 use yougen::operation::{EventEnvelope, EventEnvelopeExt, EventKind};
 
 // ----------------------------------------------------------------------
@@ -258,7 +259,7 @@ fn assert_envelope_matches_schema(label: &str, envelope: &EventEnvelope) {
 
 #[test]
 fn build_realm_create_event_matches_event_schema() {
-    let mut envelope = api::build_realm_create_event(
+    let mut envelope = event_builders::build_realm_create_event(
         TEST_REALM_ID,
         TEST_ACTOR_ID,
         "Engineering",
@@ -283,7 +284,7 @@ fn build_realm_create_event_matches_event_schema() {
 
 #[test]
 fn build_space_create_event_matches_event_schema() {
-    let mut envelope = api::build_space_create_event(
+    let mut envelope = event_builders::build_space_create_event(
         TEST_SPACE_ID,
         TEST_REALM_ID,
         TEST_ACTOR_ID,
@@ -300,7 +301,7 @@ fn build_space_create_event_matches_event_schema() {
 
 #[test]
 fn build_space_lifecycle_event_archive_matches_event_schema() {
-    let mut envelope = api::build_space_lifecycle_event(
+    let mut envelope = event_builders::build_space_lifecycle_event(
         TEST_SPACE_ID,
         TEST_REALM_ID,
         TEST_ACTOR_ID,
@@ -313,7 +314,7 @@ fn build_space_lifecycle_event_archive_matches_event_schema() {
 
 #[test]
 fn build_space_lifecycle_event_restore_matches_event_schema() {
-    let mut envelope = api::build_space_lifecycle_event(
+    let mut envelope = event_builders::build_space_lifecycle_event(
         TEST_SPACE_ID,
         TEST_REALM_ID,
         TEST_ACTOR_ID,
@@ -326,7 +327,7 @@ fn build_space_lifecycle_event_restore_matches_event_schema() {
 
 #[test]
 fn build_space_lifecycle_event_tombstone_matches_event_schema() {
-    let mut envelope = api::build_space_lifecycle_event(
+    let mut envelope = event_builders::build_space_lifecycle_event(
         TEST_SPACE_ID,
         TEST_REALM_ID,
         TEST_ACTOR_ID,
@@ -339,7 +340,7 @@ fn build_space_lifecycle_event_tombstone_matches_event_schema() {
 
 #[test]
 fn build_realm_state_event_join_rule_matches_event_schema() {
-    let mut envelope = api::build_realm_state_event(
+    let mut envelope = event_builders::build_realm_state_event(
         TEST_REALM_ID,
         TEST_ACTOR_ID,
         EventKind::RealmJoinRule,
@@ -352,7 +353,7 @@ fn build_realm_state_event_join_rule_matches_event_schema() {
 
 #[test]
 fn build_realm_state_event_history_visibility_matches_event_schema() {
-    let mut envelope = api::build_realm_state_event(
+    let mut envelope = event_builders::build_realm_state_event(
         TEST_REALM_ID,
         TEST_ACTOR_ID,
         EventKind::RealmHistoryVisibility,
@@ -365,7 +366,7 @@ fn build_realm_state_event_history_visibility_matches_event_schema() {
 
 #[test]
 fn build_realm_history_sharing_policy_event_matches_event_schema() {
-    let mut envelope = api::build_realm_history_sharing_policy_event(
+    let mut envelope = event_builders::build_realm_history_sharing_policy_event(
         TEST_REALM_ID,
         TEST_ACTOR_ID,
         serde_json::json!({
@@ -386,7 +387,7 @@ fn build_realm_history_sharing_policy_event_matches_event_schema() {
 
 #[test]
 fn build_realm_preview_policy_event_matches_event_schema() {
-    let mut envelope = api::build_realm_preview_policy_event(
+    let mut envelope = event_builders::build_realm_preview_policy_event(
         TEST_REALM_ID,
         TEST_ACTOR_ID,
         serde_json::json!({
@@ -412,7 +413,7 @@ fn build_member_state_event_matches_event_schema() {
     // reason="space_create" — same canonical shape. We exercise the
     // wrapper path indirectly via `build_realm_bootstrap_events` (which
     // calls it for each invitee) and pick out the member-state envelope.
-    let events = api::build_realm_bootstrap_events(
+    let events = event_builders::build_realm_bootstrap_events(
         TEST_REALM_ID,
         TEST_ACTOR_ID,
         "Engineering",
@@ -442,7 +443,7 @@ fn build_member_state_event_matches_event_schema() {
 
 #[test]
 fn build_member_state_transition_event_matches_event_schema() {
-    let mut envelope = api::build_member_state_transition_event(
+    let mut envelope = event_builders::build_member_state_transition_event(
         TEST_REALM_ID,
         TEST_ACTOR_ID,
         TEST_INVITEE_DID,
@@ -457,7 +458,7 @@ fn build_member_state_transition_event_matches_event_schema() {
 
 #[test]
 fn build_plaintext_visible_services_event_matches_event_schema() {
-    let mut envelope = api::build_plaintext_visible_services_event(
+    let mut envelope = event_builders::build_plaintext_visible_services_event(
         TEST_REALM_ID,
         TEST_ACTOR_ID,
         &["did:web:server.example".to_owned()],

@@ -144,9 +144,11 @@ pub(crate) fn projection_has_recommended_encryption_floor(value: &Value) -> bool
 
     profile
         .as_deref()
-        .is_some_and(crate::api::encryption_profile_uses_recommended_floor)
-        && content_floor.as_deref() == Some(crate::api::RECOMMENDED_REALM_ENCRYPTION_FLOOR)
-        && metadata_floor.as_deref() == Some(crate::api::RECOMMENDED_REALM_ENCRYPTION_FLOOR)
+        .is_some_and(crate::event_builders::encryption_profile_uses_recommended_floor)
+        && content_floor.as_deref()
+            == Some(crate::realm_defaults::RECOMMENDED_REALM_ENCRYPTION_FLOOR)
+        && metadata_floor.as_deref()
+            == Some(crate::realm_defaults::RECOMMENDED_REALM_ENCRYPTION_FLOOR)
 }
 
 fn projection_has_explicit_low_encryption_floor(value: &Value) -> bool {
@@ -162,7 +164,7 @@ fn projection_has_explicit_low_encryption_floor(value: &Value) -> bool {
     [content_floor.as_deref(), metadata_floor.as_deref()]
         .into_iter()
         .flatten()
-        .any(|floor| floor.trim() != crate::api::RECOMMENDED_REALM_ENCRYPTION_FLOOR)
+        .any(|floor| floor.trim() != crate::realm_defaults::RECOMMENDED_REALM_ENCRYPTION_FLOOR)
 }
 
 fn projection_is_realm(id: &str, body: &Value) -> bool {
