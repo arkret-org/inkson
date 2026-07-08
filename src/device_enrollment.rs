@@ -153,7 +153,10 @@ pub async fn enroll_current_device(
         );
     }
     let event = validate_signed_device_authorize(outcome.authorized_event, expected_device_id)?;
-    principal_api.submit_signed_sdk_event(&event).await?;
+    principal_api
+        .event_submitter()?
+        .submit_signed_sdk_event(&event)
+        .await?;
     Ok(())
 }
 

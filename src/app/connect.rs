@@ -434,7 +434,11 @@ async fn enroll_current_session_device(
     // `actor_seq` is 1-indexed on the Principal Server (soland rejects 0 with
     // `actor_seq must be greater than zero`), so an empty stream (no frontier
     // yet) enrolls at seq 1, not 0.
-    let actor_seq = match principal_api.events_frontier_actor(actor).await {
+    let actor_seq = match principal_api
+        .event_submitter()?
+        .events_frontier_actor(actor)
+        .await
+    {
         Ok(view) => view.actor_seq.saturating_add(1),
         Err(error) => {
             tracing::debug!(?error, "no actor frontier yet; enrolling at seq 1");

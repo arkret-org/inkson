@@ -330,9 +330,11 @@ pub fn ChatPanel(
             presence_announce_key_seen.set(announce_key);
             let base = base.clone();
             spawn(async move {
-                let _ =
-                    crate::views::helpers::with_authed_api(&base, api_token, |api| async move {
-                        api.send_presence(
+                let _ = crate::views::helpers::with_event_submitter(
+                    &base,
+                    api_token,
+                    |sub| async move {
+                        sub.send_presence(
                             &realm,
                             &actor,
                             &device,
@@ -341,8 +343,9 @@ pub fn ChatPanel(
                             None,
                         )
                         .await
-                    })
-                    .await;
+                    },
+                )
+                .await;
                 crate::runtime_helpers::sleep_for(std::time::Duration::from_secs(
                     PRESENCE_HEARTBEAT_SECS,
                 ))
@@ -650,9 +653,11 @@ pub fn ChatPanel(
             };
             let api_token = token();
             spawn(async move {
-                let _ =
-                    crate::views::helpers::with_authed_api(&base, api_token, |api| async move {
-                        api.send_receipt(
+                let _ = crate::views::helpers::with_event_submitter(
+                    &base,
+                    api_token,
+                    |sub| async move {
+                        sub.send_receipt(
                             &realm,
                             &actor,
                             &device,
@@ -661,8 +666,9 @@ pub fn ChatPanel(
                             "ck.receipt.read",
                         )
                         .await
-                    })
-                    .await;
+                    },
+                )
+                .await;
             });
         }
     }
@@ -4114,11 +4120,11 @@ pub fn ChatPanel(
                                     let strand_id = strand_id.clone();
                                     let api_token = token();
                                     spawn(async move {
-                                        let _ = crate::views::helpers::with_authed_api(
+                                        let _ = crate::views::helpers::with_event_submitter(
                                             &base,
                                             api_token,
-                                            |api| async move {
-                                                api.send_typing(
+                                            |sub| async move {
+                                                sub.send_typing(
                                                     &realm,
                                                     &actor,
                                                     &device,

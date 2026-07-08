@@ -14,9 +14,9 @@ use crate::models::{
     CurrentAccount, DeviceMessagesAckOutcome, DeviceMessagesAckRequestBody,
     DeviceMessagesGetOutcome, DeviceMessagesSendOutcome, GrantList, IdentityDescribeOutcome,
     IdentityResolveOutcome, KeysQueryOutcome, MediaIceConfigOutcome, MediaIceConfigRequestBody,
-    OP_SNAPSHOT_HEAD, PresenceResult, RealmCreateResult, RealmJoinCandidate, RealmPolicyResult,
-    ReceiptResult, ResolveHandleView, ResolveRealmOutcome, SearchActorsView,
-    SearchOrganizationsView, ServerDescription, SpaceCreateResult, SubmitEventResult, TypingResult,
+    OP_SNAPSHOT_HEAD, RealmCreateResult, RealmJoinCandidate, RealmPolicyResult, ResolveHandleView,
+    ResolveRealmOutcome, SearchActorsView, SearchOrganizationsView, ServerDescription,
+    SpaceCreateResult, SubmitEventResult,
 };
 use crate::operation::{EventKind, trim_realm_id, uuid_v7};
 use crate::wire_helpers::{

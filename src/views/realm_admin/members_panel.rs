@@ -2898,7 +2898,11 @@ async fn ensure_mls_genesis_frontier_for_invite(
             return Ok(());
         }
     }
-    if let Some(event_id) = api.find_mls_genesis_event_id(realm_id).await? {
+    if let Some(event_id) = api
+        .event_submitter()?
+        .find_mls_genesis_event_id(realm_id)
+        .await?
+    {
         state_store
             .write()
             .mark_mls_genesis_emitted_with_event(realm_id.to_owned(), &event_id);
@@ -2954,7 +2958,11 @@ async fn ensure_mls_genesis_frontier_for_invite(
         Err(err) => {
             let text = err.to_string();
             if text.contains("mls_genesis_already_exists") {
-                if let Some(event_id) = api.find_mls_genesis_event_id(realm_id).await? {
+                if let Some(event_id) = api
+                    .event_submitter()?
+                    .find_mls_genesis_event_id(realm_id)
+                    .await?
+                {
                     state_store
                         .write()
                         .mark_mls_genesis_emitted_with_event(realm_id.to_owned(), &event_id);
