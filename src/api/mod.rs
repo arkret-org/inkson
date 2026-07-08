@@ -1,12 +1,10 @@
 use std::collections::BTreeMap;
-use std::fmt::{self, Write};
+use std::fmt;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
-use chime::{
-    ChimePushRegisterDeviceRequest, ChimePushUnregisterDeviceRequest, CokretPushClient,
-};
+use chime::{ChimePushRegisterDeviceRequest, ChimePushUnregisterDeviceRequest, CokretPushClient};
 use cokret_sdk::ErrorEnvelope;
 use reqwest::{Client, StatusCode};
 use serde::{Deserialize, Serialize};
@@ -242,8 +240,9 @@ mod ephemeral;
 mod events;
 // YOU-07-001: HTTP plumbing helpers (error decode, URL/query encoding, NDJSON
 // subscribe parsing, small response parsers) moved out of this file into
-// `http_helpers` (move only). The glob re-export keeps the `crate::api::*`
-// public paths and sibling/tests `use super::*` resolution unchanged.
+// `http_helpers` and crate-root helpers. The glob re-export keeps the
+// `crate::api::*` public paths and sibling/tests `use super::*` resolution
+// unchanged.
 mod http_helpers;
 mod keys;
 mod media;
@@ -283,6 +282,7 @@ pub(crate) use request_helpers::*;
 pub use views::*;
 
 pub use crate::sync_parse::*;
+pub use crate::wire_helpers::*;
 
 /// PoP signature validity window (seconds). Kept well under the 300s protocol
 /// maximum (api-conventions.md §3.2) while tolerating modest clock skew.

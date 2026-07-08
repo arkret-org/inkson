@@ -134,6 +134,7 @@ pub mod snapshot;
 pub mod sync_engine;
 pub mod sync_parse;
 pub mod telemetry;
+pub mod wire_helpers;
 /// C3: shared UI component layer. The former local `src/ui/` moved unchanged
 /// into the `yoface` crate (13 `#[css_module]` wrappers plus background utility
 /// controls); this re-export keeps existing `crate::ui::button::Button`-style

@@ -404,7 +404,7 @@ pub async fn account_subscribe_snapshot_outcome_with_options(
     options: &cokret_sdk::http_client::ClientRequestOptions,
 ) -> anyhow::Result<AccountSubscribeSnapshotResult> {
     if let Some(cursor) = after {
-        crate::api::validate_cursor(cursor)?;
+        crate::wire_helpers::validate_cursor(cursor)?;
     }
 
     let _subscribe_gate = crate::sync_parse::ACCOUNT_SUBSCRIBE_NETWORK_GATE
