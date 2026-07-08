@@ -1772,11 +1772,16 @@ pub fn RouterView() -> Element {
             let api_token = lookup_token.clone();
             let existing_personal_handles = personal_handles();
             spawn(async move {
-                match CokretApi::new(&base) {
-                    Ok(api) => match api
-                        .with_bearer(api_token)
-                        .list_handles_for_subject(&actor, None, Some("display"))
-                        .await
+                match CokretApi::new(&base)
+                    .and_then(|api| api.with_bearer(api_token).sdk_http_client())
+                {
+                    Ok(http) => match crate::directory_api::list_handles_for_subject(
+                        &http,
+                        &actor,
+                        None,
+                        Some("display"),
+                    )
+                    .await
                     {
                         Ok(res) => {
                             let directory_handles = display_handles_from_directory_response(&res);
@@ -1881,11 +1886,16 @@ pub fn RouterView() -> Element {
             spawn(async move {
                 for subject_id in peers {
                     let result =
-                        crate::views::helpers::with_authed_api(&base, api_token.clone(), {
+                        crate::views::helpers::with_authed_sdk_client(&base, api_token.clone(), {
                             let subject_id = subject_id.clone();
-                            move |api| async move {
-                                api.list_handles_for_subject(&subject_id, None, Some("display"))
-                                    .await
+                            move |http| async move {
+                                crate::directory_api::list_handles_for_subject(
+                                    &http,
+                                    &subject_id,
+                                    None,
+                                    Some("display"),
+                                )
+                                .await
                             }
                         })
                         .await;

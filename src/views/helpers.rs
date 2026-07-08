@@ -557,9 +557,14 @@ pub fn WhyThisHandlePanel(
             let realm_id = realm_id.clone();
             spawn(async move {
                 status.set("Resolving visible handle claims…".to_owned());
-                match with_authed_api(&base_url, token, move |api| async move {
-                    api.list_handles_for_subject(&subject_id, realm_id.as_deref(), Some("display"))
-                        .await
+                match with_authed_sdk_client(&base_url, token, move |http| async move {
+                    crate::directory_api::list_handles_for_subject(
+                        &http,
+                        &subject_id,
+                        realm_id.as_deref(),
+                        Some("display"),
+                    )
+                    .await
                 })
                 .await
                 {

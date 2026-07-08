@@ -15,13 +15,10 @@ use crate::models::{
     DeviceMessagesSendOutcome, GrantList, IdentityDescribeOutcome, IdentityResolveOutcome,
     KeysQueryOutcome, MediaIceConfigOutcome, MediaIceConfigRequestBody, OP_SNAPSHOT_HEAD,
     RealmCreateResult, RealmJoinCandidate, RealmPolicyResult, ResolveHandleView,
-    ResolveRealmOutcome, SearchActorsView, SearchOrganizationsView, ServerDescription,
-    SpaceCreateResult, SubmitEventResult,
+    ServerDescription, SpaceCreateResult, SubmitEventResult,
 };
 use crate::operation::{EventKind, trim_realm_id, uuid_v7};
-use crate::wire_helpers::{
-    canonical_blob_ref, path_component, safe_blob_filename_header, validate_cursor,
-};
+use crate::wire_helpers::{canonical_blob_ref, path_component, safe_blob_filename_header};
 
 #[derive(Clone)]
 pub struct CokretApi {

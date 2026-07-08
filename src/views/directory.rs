@@ -10,7 +10,9 @@ use crate::object_address::OpenedLink;
 use crate::routes::Route;
 use crate::ui::button::{Button, ButtonVariant};
 use crate::ui::input::Input;
-use crate::views::helpers::{display_name_for_did, short_protocol_id, with_authed_api};
+use crate::views::helpers::{
+    display_name_for_did, short_protocol_id, with_authed_api, with_authed_sdk_client,
+};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum DirectoryTab {
@@ -432,13 +434,13 @@ pub fn DirectoryPanel(
                                 pagination.write().orgs_cursor = None;
                                 pagination.write().actors_cursor = None;
                                 spawn(async move {
-                                    let _ = with_authed_api(&base, api_token, |api| async move {
+                                    let _ = with_authed_sdk_client(&base, api_token, |http| async move {
                                         match tab {
                                             DirectoryTab::ProtocolObjects => {
                                                 object_results.set(protocol_object_results(&q));
                                             }
                                                     DirectoryTab::Realms => {
-                                                        match api.search_realms(&q, None).await {
+                                                        match crate::directory_api::search_realms(&http, &q, None).await {
                                                     Ok(search) => {
                                                         pagination.write().realms_cursor = search.next_cursor.clone();
                                                         let results = search
@@ -456,7 +458,7 @@ pub fn DirectoryPanel(
                                                 }
                                             }
                                             DirectoryTab::Organizations => {
-                                                match api.search_organizations(&q, None).await {
+                                                match crate::directory_api::search_organizations(&http, &q, None).await {
                                                     Ok(search) => {
                                                         pagination.write().orgs_cursor = search.next_cursor.clone();
                                                         org_results.set(
@@ -475,7 +477,7 @@ pub fn DirectoryPanel(
                                                 }
                                             }
                                             DirectoryTab::Actors => {
-                                                match api.search_actors(&q, None).await {
+                                                match crate::directory_api::search_actors(&http, &q, None).await {
                                                     Ok(search) => {
                                                         pagination.write().actors_cursor = search.next_cursor.clone();
                                                         actor_results.set(
@@ -494,7 +496,7 @@ pub fn DirectoryPanel(
                                                 }
                                             }
                                             DirectoryTab::Handles => {
-                                                match api.resolve_handle(&q).await {
+                                                match crate::directory_api::resolve_handle(&http, &q).await {
                                                     Ok(resolved) => handle_result.set(Some(resolved)),
                                                     Err(error) => crate::components::feedback::toast_error(
                                                         "feedback.directory_resolve_failed",
@@ -526,13 +528,13 @@ pub fn DirectoryPanel(
                                     pagination.write().orgs_cursor = None;
                                     pagination.write().actors_cursor = None;
                                     spawn(async move {
-                                        let _ = with_authed_api(&base, api_token, |api| async move {
+                                        let _ = with_authed_sdk_client(&base, api_token, |http| async move {
                                             match tab {
                                                 DirectoryTab::ProtocolObjects => {
                                                     object_results.set(protocol_object_results(&q));
                                                 }
                                                 DirectoryTab::Realms => {
-                                                    match api.search_realms(&q, None).await {
+                                                    match crate::directory_api::search_realms(&http, &q, None).await {
                                                         Ok(search) => {
                                                             pagination.write().realms_cursor = search.next_cursor.clone();
                                                             let results = search
@@ -550,7 +552,7 @@ pub fn DirectoryPanel(
                                                     }
                                                 }
                                                 DirectoryTab::Organizations => {
-                                                    match api.search_organizations(&q, None).await {
+                                                    match crate::directory_api::search_organizations(&http, &q, None).await {
                                                         Ok(search) => {
                                                             pagination.write().orgs_cursor = search.next_cursor.clone();
                                                             org_results.set(
@@ -569,7 +571,7 @@ pub fn DirectoryPanel(
                                                     }
                                                 }
                                                 DirectoryTab::Actors => {
-                                                    match api.search_actors(&q, None).await {
+                                                    match crate::directory_api::search_actors(&http, &q, None).await {
                                                         Ok(search) => {
                                                             pagination.write().actors_cursor = search.next_cursor.clone();
                                                             actor_results.set(
@@ -588,7 +590,7 @@ pub fn DirectoryPanel(
                                                     }
                                                 }
                                                 DirectoryTab::Handles => {
-                                                    match api.resolve_handle(&q).await {
+                                                    match crate::directory_api::resolve_handle(&http, &q).await {
                                                         Ok(resolved) => handle_result.set(Some(resolved)),
                                                         Err(error) => crate::components::feedback::toast_error(
                                                             "feedback.directory_resolve_failed",
@@ -617,8 +619,8 @@ pub fn DirectoryPanel(
                                         let id = selected_realm_id();
                                         let api_token = token();
                                         spawn(async move {
-                                            match with_authed_api(&base, api_token, |api| async move {
-                                                api.resolve_realm(&id).await
+                                            match with_authed_sdk_client(&base, api_token, |http| async move {
+                                                crate::directory_api::resolve_realm(&http, &id).await
                                             })
                                             .await
                                             {
@@ -701,8 +703,8 @@ pub fn DirectoryPanel(
                                 spawn(async move {
                                     let address = opened.resolve_address();
                                     let token_arg = opened.token.clone();
-                                    let resolved = with_authed_api(&base, api_token, |api| async move {
-                                        api.directory_resolve_target(&address, token_arg.as_deref())
+                                    let resolved = with_authed_sdk_client(&base, api_token, |http| async move {
+                                        crate::directory_api::directory_resolve_target(&http, &address, token_arg.as_deref())
                                             .await
                                     })
                                     .await;
@@ -821,8 +823,8 @@ pub fn DirectoryPanel(
                                             let cursor = pagination.read().realms_cursor.clone();
                                             pagination.write().loading_more = true;
                                             spawn(async move {
-                                                match with_authed_api(&base, api_token, |api| async move {
-                                                    api.search_realms(&q, cursor.as_deref()).await
+                                                match with_authed_sdk_client(&base, api_token, |http| async move {
+                                                    crate::directory_api::search_realms(&http, &q, cursor.as_deref()).await
                                                 })
                                                 .await
                                                 {
@@ -1000,8 +1002,8 @@ pub fn DirectoryPanel(
                                         let cursor = pagination.read().orgs_cursor.clone();
                                         pagination.write().loading_more = true;
                                         spawn(async move {
-                                            match with_authed_api(&base, api_token, |api| async move {
-                                                api.search_organizations(&q, cursor.as_deref()).await
+                                            match with_authed_sdk_client(&base, api_token, |http| async move {
+                                                crate::directory_api::search_organizations(&http, &q, cursor.as_deref()).await
                                             })
                                             .await
                                             {
@@ -1185,8 +1187,8 @@ pub fn DirectoryPanel(
                                         let cursor = pagination.read().actors_cursor.clone();
                                         pagination.write().loading_more = true;
                                         spawn(async move {
-                                            match with_authed_api(&base, api_token, |api| async move {
-                                                api.search_actors(&q, cursor.as_deref()).await
+                                            match with_authed_sdk_client(&base, api_token, |http| async move {
+                                                crate::directory_api::search_actors(&http, &q, cursor.as_deref()).await
                                             })
                                             .await
                                             {

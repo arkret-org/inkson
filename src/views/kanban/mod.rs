@@ -18,7 +18,7 @@ use crate::ui::input::Input;
 use crate::ui::label::Label;
 use crate::ui::select::{Select, SelectOption};
 use crate::ui::textarea::Textarea;
-use crate::views::helpers::{short_protocol_id, with_authed_api};
+use crate::views::helpers::{short_protocol_id, with_authed_api, with_authed_sdk_client};
 
 mod dnd;
 // YOU-07-001: card due-calendar pure calculation helpers moved to `due_calendar`
@@ -1552,11 +1552,12 @@ pub fn KanbanPanel(
                 let mut fetching = member_handle_fetching;
                 let mut store = state_store;
                 spawn(async move {
-                    let result = with_authed_api(&base, api_token, {
+                    let result = with_authed_sdk_client(&base, api_token, {
                         let subject_id = subject_id.clone();
                         let realm_id = realm_id.clone();
-                        move |api| async move {
-                            api.list_handles_for_subject(
+                        move |http| async move {
+                            crate::directory_api::list_handles_for_subject(
+                                &http,
                                 &subject_id,
                                 Some(&realm_id),
                                 Some("display"),

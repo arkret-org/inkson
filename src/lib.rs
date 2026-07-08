@@ -52,6 +52,7 @@ pub mod device_pairing;
 pub mod device_revoke;
 pub mod did_key;
 pub mod did_resolver;
+pub mod directory_api;
 pub(crate) mod directory_helpers;
 pub mod disappearing;
 pub mod discovery;

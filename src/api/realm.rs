@@ -474,7 +474,8 @@ impl CokretApi {
     ) -> anyhow::Result<SubmitEventResult> {
         let mut event = crate::operation::ck_ops::invite_accept(realm_id, actor_id, invite_id)?
             .build_sdk_event("inkson")?;
-        let resolved = self.resolve_realm(realm_id).await?;
+        let resolved =
+            crate::directory_api::resolve_realm(&self.sdk_http_client()?, realm_id).await?;
         let candidate =
             select_join_candidate(&resolved, cokret_sdk::models::RealmJoinMethod::InviteAccept)?;
         stamp_invite_join_seal_basis(&mut event, candidate)?;
