@@ -2,21 +2,89 @@ use serde_json::Value;
 
 #[cfg(test)]
 use crate::api::AccountSubscribeReconnectAfter;
-#[cfg(not(target_arch = "wasm32"))]
-use crate::api::MAX_NDJSON_STREAM_FRAME_BYTES;
-use crate::api::{
-    AccountSubscribeSnapshotResult, DEFAULT_ACCOUNT_SUBSCRIBE_RECONNECT_AFTER_MS, trim_ascii,
-};
+use crate::api::{AccountSubscribeSnapshotResult, DEFAULT_ACCOUNT_SUBSCRIBE_RECONNECT_AFTER_MS};
 use crate::models::ClientSyncOutcome;
 
 pub fn parse_sync(value: Value) -> anyhow::Result<ClientSyncOutcome> {
     Ok(serde_json::from_value(value)?)
 }
 
-// The native NDJSON streaming OOM bound is the single shared
-// `MAX_NDJSON_STREAM_FRAME_BYTES` (defined in `http_helpers`, re-exported into
-// `api`), so both NDJSON stream paths (account.subscribe + events.subscribe)
-// share one cap. It is in scope here via `use super::*`.
+/// Round 4 (spec a77b995) — parse the round-4 typed
+/// `/events/subscribe` NDJSON stream. The frame body is
+/// [`cokret_sdk::EventsSubscribeFrame`] (tag = "kind",
+/// snake_case-discriminated). Wire-breaking: the pre-round-4 untyped
+/// string-line parser is deleted.
+pub fn parse_events_subscribe_ndjson_text(
+    input: &str,
+) -> anyhow::Result<Vec<cokret_sdk::EventsSubscribeFrame>> {
+    let mut frames = Vec::new();
+    for line in input.lines() {
+        if let Some(frame) = parse_events_subscribe_ndjson_line(line.as_bytes())? {
+            frames.push(frame);
+        }
+    }
+    Ok(frames)
+}
+
+/// Maximum bytes any native NDJSON streaming reader will buffer between two
+/// newline delimiters. A spec-compliant server delimits every frame with `\n`;
+/// a faulty / malicious server that keeps pushing bytes without a delimiter (or
+/// a single oversized frame) would otherwise grow the `pending` buffer without
+/// bound until the client OOMs. Frames are small control / delta envelopes;
+/// 16 MiB is far above any legitimate single frame yet caps the OOM vector.
+/// Shared by BOTH NDJSON stream paths (`account.subscribe` and
+/// `events.subscribe`) so the resource bound lives in exactly one place.
+#[cfg(not(target_arch = "wasm32"))]
+pub(crate) const MAX_NDJSON_STREAM_FRAME_BYTES: usize = 16 * 1024 * 1024;
+
+// COR-01: the caller MUST enforce [`MAX_NDJSON_STREAM_FRAME_BYTES`] on
+// `pending` before invoking this drainer, so an undelimited / oversized frame
+// cannot grow the buffer without bound (parity with the account.subscribe
+// path in `drain_account_subscribe_response`).
+#[cfg(all(test, not(target_arch = "wasm32")))]
+pub(crate) fn drain_events_subscribe_ndjson_lines<F>(
+    pending: &mut Vec<u8>,
+    on_frame: &mut F,
+) -> anyhow::Result<()>
+where
+    F: FnMut(cokret_sdk::EventsSubscribeFrame) -> anyhow::Result<()>,
+{
+    while let Some(newline) = pending.iter().position(|byte| *byte == b'\n') {
+        let mut line: Vec<u8> = pending.drain(..=newline).collect();
+        if line.last() == Some(&b'\n') {
+            line.pop();
+        }
+        if line.last() == Some(&b'\r') {
+            line.pop();
+        }
+        if let Some(frame) = parse_events_subscribe_ndjson_line(&line)? {
+            on_frame(frame)?;
+        }
+    }
+    Ok(())
+}
+
+pub(crate) fn parse_events_subscribe_ndjson_line(
+    line: &[u8],
+) -> anyhow::Result<Option<cokret_sdk::EventsSubscribeFrame>> {
+    let trimmed = trim_ascii(line);
+    if trimmed.is_empty() {
+        return Ok(None);
+    }
+    serde_json::from_slice(trimmed)
+        .map(Some)
+        .map_err(|err| anyhow::anyhow!("failed to parse subscribe NDJSON frame: {err}"))
+}
+
+pub(crate) fn trim_ascii(mut bytes: &[u8]) -> &[u8] {
+    while bytes.first().is_some_and(u8::is_ascii_whitespace) {
+        bytes = &bytes[1..];
+    }
+    while bytes.last().is_some_and(u8::is_ascii_whitespace) {
+        bytes = &bytes[..bytes.len() - 1];
+    }
+    bytes
+}
 
 /// COR-09: upper bound on a server-supplied control-frame `reconnect_after_ms`.
 /// Mirrors the HTTP `Retry-After` ceiling (`MAX_RETRY_DELAY` = 60s) so the

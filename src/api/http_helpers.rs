@@ -1,9 +1,8 @@
 //! HTTP plumbing helpers for the self-API client: error-envelope
-//! decoding/policy-deny dispatch, URL/query component encoding, NDJSON
-//! subscribe-frame parsing, and small response-projection parsers. Pure free functions split out of
-//! `api/mod.rs` (YOU-07-001) with no logic change; re-exported from the
-//! parent module so existing `crate::api::*` / sibling `super::*` paths
-//! resolve unchanged.
+//! decoding/policy-deny dispatch, URL/query component encoding, and small
+//! response-projection parsers. Pure free functions split out of `api/mod.rs`
+//! (YOU-07-001) with no logic change; re-exported from the parent module so
+//! existing `crate::api::*` / sibling `super::*` paths resolve unchanged.
 
 use super::*;
 
@@ -311,83 +310,6 @@ pub(crate) fn events_subscribe_path(
         url.push_str(&max_duration_ms.to_string());
     }
     url
-}
-
-/// Round 4 (spec a77b995) — parse the round-4 typed
-/// `/events/subscribe` NDJSON stream. The frame body is
-/// [`cokret_sdk::EventsSubscribeFrame`] (tag = "kind",
-/// snake_case-discriminated). Wire-breaking: the pre-round-4 untyped
-/// string-line parser is deleted.
-pub fn parse_events_subscribe_ndjson_text(
-    input: &str,
-) -> anyhow::Result<Vec<cokret_sdk::EventsSubscribeFrame>> {
-    let mut frames = Vec::new();
-    for line in input.lines() {
-        if let Some(frame) = parse_events_subscribe_ndjson_line(line.as_bytes())? {
-            frames.push(frame);
-        }
-    }
-    Ok(frames)
-}
-
-/// Maximum bytes any native NDJSON streaming reader will buffer between two
-/// newline delimiters. A spec-compliant server delimits every frame with `\n`;
-/// a faulty / malicious server that keeps pushing bytes without a delimiter (or
-/// a single oversized frame) would otherwise grow the `pending` buffer without
-/// bound until the client OOMs. Frames are small control / delta envelopes;
-/// 16 MiB is far above any legitimate single frame yet caps the OOM vector.
-/// Shared by BOTH NDJSON stream paths (`account.subscribe` in `sync_parse` and
-/// `events.subscribe` here) so the resource bound lives in exactly one place.
-#[cfg(not(target_arch = "wasm32"))]
-pub(crate) const MAX_NDJSON_STREAM_FRAME_BYTES: usize = 16 * 1024 * 1024;
-
-// COR-01: the caller MUST enforce [`MAX_NDJSON_STREAM_FRAME_BYTES`] on
-// `pending` before invoking this drainer, so an undelimited / oversized frame
-// cannot grow the buffer without bound (parity with the account.subscribe
-// path in `sync_parse::drain_account_subscribe_response`).
-#[cfg(all(test, not(target_arch = "wasm32")))]
-pub(crate) fn drain_events_subscribe_ndjson_lines<F>(
-    pending: &mut Vec<u8>,
-    on_frame: &mut F,
-) -> anyhow::Result<()>
-where
-    F: FnMut(cokret_sdk::EventsSubscribeFrame) -> anyhow::Result<()>,
-{
-    while let Some(newline) = pending.iter().position(|byte| *byte == b'\n') {
-        let mut line: Vec<u8> = pending.drain(..=newline).collect();
-        if line.last() == Some(&b'\n') {
-            line.pop();
-        }
-        if line.last() == Some(&b'\r') {
-            line.pop();
-        }
-        if let Some(frame) = parse_events_subscribe_ndjson_line(&line)? {
-            on_frame(frame)?;
-        }
-    }
-    Ok(())
-}
-
-pub(crate) fn parse_events_subscribe_ndjson_line(
-    line: &[u8],
-) -> anyhow::Result<Option<cokret_sdk::EventsSubscribeFrame>> {
-    let trimmed = trim_ascii(line);
-    if trimmed.is_empty() {
-        return Ok(None);
-    }
-    serde_json::from_slice(trimmed)
-        .map(Some)
-        .map_err(|err| anyhow::anyhow!("failed to parse subscribe NDJSON frame: {err}"))
-}
-
-pub(crate) fn trim_ascii(mut bytes: &[u8]) -> &[u8] {
-    while bytes.first().is_some_and(u8::is_ascii_whitespace) {
-        bytes = &bytes[1..];
-    }
-    while bytes.last().is_some_and(u8::is_ascii_whitespace) {
-        bytes = &bytes[..bytes.len() - 1];
-    }
-    bytes
 }
 
 pub fn parse_sync_describe(value: Value) -> anyhow::Result<cokret_sdk::models::SyncDescription> {
