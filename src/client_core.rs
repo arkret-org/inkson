@@ -15,6 +15,8 @@ use cokret_client::{RealmEventsFrameSource, RealmEventsTransport};
 #[cfg(not(target_arch = "wasm32"))]
 use reqwest::header::CONTENT_TYPE;
 
+use crate::sync_parse::{AccountSubscribeReconnectAfter, AccountSubscribeSnapshotResult};
+
 #[derive(Clone, Debug)]
 pub struct YougenLocalStateStoreAdapter {
     inner: Arc<Mutex<crate::local_state::LocalStateStore>>,
@@ -338,9 +340,9 @@ impl RealmEventsTransport for YougenRealmEventsTransport {
                 .map_err(|error| cokret_sdk::Error::Http(error.to_string()))?;
             let text = std::str::from_utf8(&bytes)
                 .map_err(|error| cokret_sdk::Error::Protocol(error.to_string()))?;
-            Ok(BufferedRealmEventsFrameSource::new(
-                parse_events_subscribe_frames(text)?,
-            ))
+            let frames = crate::sync_parse::parse_events_subscribe_ndjson_text(text)
+                .map_err(|error| cokret_sdk::Error::Protocol(error.to_string()))?;
+            Ok(BufferedRealmEventsFrameSource::new(frames))
         })
     }
 }
@@ -350,12 +352,12 @@ pub async fn account_subscribe_snapshot(
     after: Option<&str>,
 ) -> anyhow::Result<crate::models::ClientSyncOutcome> {
     match account_subscribe_snapshot_outcome(http, after).await? {
-        crate::api::AccountSubscribeSnapshotResult::Delta(response) => Ok(*response),
-        crate::api::AccountSubscribeSnapshotResult::ReconnectAfter {
+        AccountSubscribeSnapshotResult::Delta(response) => Ok(*response),
+        AccountSubscribeSnapshotResult::ReconnectAfter {
             reconnect_after_ms,
             reason,
             reset_cursor,
-        } => Err(crate::api::AccountSubscribeReconnectAfter {
+        } => Err(AccountSubscribeReconnectAfter {
             reconnect_after_ms,
             reason,
             reset_cursor,
@@ -367,7 +369,7 @@ pub async fn account_subscribe_snapshot(
 pub async fn account_subscribe_snapshot_outcome(
     http: &cokret_sdk::http_client::Client,
     after: Option<&str>,
-) -> anyhow::Result<crate::api::AccountSubscribeSnapshotResult> {
+) -> anyhow::Result<AccountSubscribeSnapshotResult> {
     account_subscribe_snapshot_outcome_with_options(
         http,
         after,
@@ -382,12 +384,12 @@ pub async fn account_subscribe_snapshot_with_options(
     options: &cokret_sdk::http_client::ClientRequestOptions,
 ) -> anyhow::Result<crate::models::ClientSyncOutcome> {
     match account_subscribe_snapshot_outcome_with_options(http, after, options).await? {
-        crate::api::AccountSubscribeSnapshotResult::Delta(response) => Ok(*response),
-        crate::api::AccountSubscribeSnapshotResult::ReconnectAfter {
+        AccountSubscribeSnapshotResult::Delta(response) => Ok(*response),
+        AccountSubscribeSnapshotResult::ReconnectAfter {
             reconnect_after_ms,
             reason,
             reset_cursor,
-        } => Err(crate::api::AccountSubscribeReconnectAfter {
+        } => Err(AccountSubscribeReconnectAfter {
             reconnect_after_ms,
             reason,
             reset_cursor,
@@ -400,12 +402,14 @@ pub async fn account_subscribe_snapshot_outcome_with_options(
     http: &cokret_sdk::http_client::Client,
     after: Option<&str>,
     options: &cokret_sdk::http_client::ClientRequestOptions,
-) -> anyhow::Result<crate::api::AccountSubscribeSnapshotResult> {
+) -> anyhow::Result<AccountSubscribeSnapshotResult> {
     if let Some(cursor) = after {
         crate::api::validate_cursor(cursor)?;
     }
 
-    let _subscribe_gate = crate::api::ACCOUNT_SUBSCRIBE_NETWORK_GATE.lock().await;
+    let _subscribe_gate = crate::sync_parse::ACCOUNT_SUBSCRIBE_NETWORK_GATE
+        .lock()
+        .await;
     let request = cokret_sdk::SyncRequestBody {
         after: after.map(str::to_owned),
         catchup: Some(true),
@@ -428,29 +432,17 @@ pub async fn account_subscribe_snapshot_outcome_with_options(
     #[cfg(not(target_arch = "wasm32"))]
     {
         if is_ndjson {
-            crate::api::drain_account_subscribe_response(response).await
+            crate::sync_parse::drain_account_subscribe_response(response).await
         } else {
             let bytes = response.bytes().await?;
-            crate::api::parse_account_subscribe_snapshot_outcome(&bytes)
+            crate::sync_parse::parse_account_subscribe_snapshot_outcome(&bytes)
         }
     }
     #[cfg(target_arch = "wasm32")]
     {
         let bytes = response.bytes().await?;
-        crate::api::parse_account_subscribe_snapshot_outcome(&bytes)
+        crate::sync_parse::parse_account_subscribe_snapshot_outcome(&bytes)
     }
-}
-
-fn parse_events_subscribe_frames(
-    input: &str,
-) -> cokret_sdk::Result<Vec<cokret_sdk::EventsSubscribeFrame>> {
-    let mut frames = Vec::new();
-    for line in input.lines() {
-        if let Some(frame) = cokret_sdk::EventsSubscribeFrame::from_ndjson_line(line)? {
-            frames.push(frame);
-        }
-    }
-    Ok(frames)
 }
 
 #[cfg(not(target_arch = "wasm32"))]

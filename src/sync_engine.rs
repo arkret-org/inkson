@@ -39,15 +39,15 @@ use dioxus::prelude::*;
 use serde_json::{Value, json};
 
 use crate::api::{
-    AccountSubscribeSnapshotResult, CokretApi, MAX_RETRY_DELAY, is_auth_expired_error,
-    is_invalid_cursor_error, is_stale_frontier_error, is_terminal_session_grant_error,
-    rate_limited_retry_after, sleep_for,
+    CokretApi, MAX_RETRY_DELAY, is_auth_expired_error, is_invalid_cursor_error,
+    is_stale_frontier_error, is_terminal_session_grant_error, rate_limited_retry_after, sleep_for,
 };
 use crate::config::MultiProfileConfig;
 use crate::local_state::{LocalSealView, LocalStateStore, RawOperationRecord};
 use crate::models::{
     ClientSyncOutcome, DeviceMessagesGetOutcome, RealmTreeNode, RealmTreeNodeKind,
 };
+use crate::sync_parse::AccountSubscribeSnapshotResult;
 
 /// Connection-status label surfaced to the app shell's status signal.
 /// A pure sync-layer concept (no Dioxus state, no rendering); the app views
@@ -2368,7 +2368,7 @@ mod tests {
             json!({ "kind": "heartbeat", "ts": "2026-06-29T00:00:01Z" }),
         );
 
-        let frames = crate::api::parse_events_subscribe_ndjson_text(&ndjson)
+        let frames = crate::sync_parse::parse_events_subscribe_ndjson_text(&ndjson)
             .expect("events/subscribe NDJSON parses");
         // event + catchup_complete + heartbeat.
         assert_eq!(frames.len(), 3);
