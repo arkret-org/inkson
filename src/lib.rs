@@ -128,6 +128,7 @@ pub mod routes;
 pub mod rtc_transport;
 pub mod secure_key_store;
 pub mod security_state;
+pub mod service_parse;
 pub mod session;
 pub mod session_refresh;
 pub mod snapshot;

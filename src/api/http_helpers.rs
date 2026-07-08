@@ -188,22 +188,6 @@ pub(crate) async fn sleep_for(delay: Duration) {
     gloo_timers::future::TimeoutFuture::new(ms).await;
 }
 
-pub fn parse_server_description(value: Value) -> anyhow::Result<ServerDescription> {
-    Ok(serde_json::from_value(value)?)
-}
-
-pub fn parse_sync_describe(value: Value) -> anyhow::Result<cokret_sdk::models::SyncDescription> {
-    Ok(serde_json::from_value(value)?)
-}
-
-pub fn parse_directory_describe(value: Value) -> anyhow::Result<DirectoryDescription> {
-    Ok(serde_json::from_value(value)?)
-}
-
-pub fn parse_resolve_realm(value: Value) -> anyhow::Result<ResolveRealmOutcome> {
-    Ok(serde_json::from_value(value)?)
-}
-
 pub(crate) fn select_join_candidate(
     resolved: &ResolveRealmOutcome,
     join_method: cokret_sdk::models::RealmJoinMethod,

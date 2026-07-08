@@ -5,15 +5,15 @@ use yougen::account_data::{
     AccountDataKey, ContactRemark, RealmRemark, contact_remark_account_data_key,
     realm_remark_account_data_key,
 };
-use yougen::api::{
-    CokretApiError, decode_cokret_error, is_auth_expired_error, parse_directory_describe,
-    parse_events_subscribe_ndjson_text, parse_resolve_realm, parse_server_description, parse_sync,
-    parse_sync_describe,
-};
+use yougen::api::{CokretApiError, decode_cokret_error, is_auth_expired_error};
 use yougen::config::{ClientConfig, LocalConfigStore};
 use yougen::models::ServerDescriptionExt;
 use yougen::operation::OperationBuilder;
 use yougen::push::validate_blind_wakeup_payload;
+use yougen::service_parse::{
+    parse_directory_describe, parse_resolve_realm, parse_server_description, parse_sync_describe,
+};
+use yougen::sync_parse::{parse_events_subscribe_ndjson_text, parse_sync};
 use yougen::telemetry::{UserActionOutcome, build_user_action_entry, format_user_action_line};
 
 fn snapshot_contract_event_id(suffix: &str) -> cokret_sdk::EventId {
