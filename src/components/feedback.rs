@@ -305,7 +305,7 @@ pub fn ToastHost() -> Element {
             spawn(async move {
                 // `tokio::time` panics on wasm32-unknown-unknown; route
                 // through `setTimeout` via gloo-timers (same approach as
-                // `api::http_helpers::sleep_for`).
+                // `runtime_helpers::sleep_for`).
                 let ms = u32::try_from(ttl_ms).unwrap_or(u32::MAX);
                 gloo_timers::future::TimeoutFuture::new(ms).await;
                 toasts.write().retain(|t| t.id != id);

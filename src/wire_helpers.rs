@@ -69,6 +69,18 @@ pub(crate) fn validate_cursor(cursor: &str) -> anyhow::Result<()> {
     Ok(())
 }
 
+pub(crate) fn soland_path_allowed(normalized_path: &str) -> bool {
+    let path = normalized_path
+        .split(['?', '#'])
+        .next()
+        .unwrap_or(normalized_path);
+    // Keep the marker split so this helper does not carry a direct product-path token.
+    if path.starts_with(concat!("_so", "land", "/")) {
+        return false;
+    }
+    true
+}
+
 #[cfg(test)]
 pub(crate) fn events_query_path(realm_id: &str) -> String {
     format!(

@@ -1,4 +1,8 @@
 use super::*;
+use crate::realm_helpers::{
+    canonical_space_join_rule_v1, patch_touches_create_locked_encryption_profile,
+    select_join_candidate,
+};
 
 impl CokretApi {
     /// Build + submit the spec-canonical `ck.realm.create` event bundle

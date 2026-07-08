@@ -121,6 +121,7 @@ pub mod realm_events_engine;
 /// R28-B — pure realm-tree / projection / field-extraction helpers
 /// extracted out of the (formerly 12k-line) `app` module so the
 /// hierarchy + projection-parsing logic is unit-testable in isolation.
+pub(crate) mod realm_helpers;
 pub(crate) mod realm_tree;
 pub mod recovery_crypto;
 pub mod recovery_proof;

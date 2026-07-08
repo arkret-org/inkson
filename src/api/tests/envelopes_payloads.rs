@@ -1,4 +1,7 @@
 use super::super::*;
+use crate::realm_helpers::{
+    canonical_space_join_rule_v1, patch_touches_create_locked_encryption_profile,
+};
 
 #[test]
 fn realm_metadata_patch_rejects_create_locked_encryption_profile() {

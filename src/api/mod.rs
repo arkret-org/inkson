@@ -228,10 +228,6 @@ mod directory;
 // helpers moved out of this file into `ephemeral` (move only).
 mod ephemeral;
 mod events;
-// YOU-07-001: remaining HTTP plumbing helpers that are still tied to the
-// legacy API facade. Parser, wire URL, and error helpers have moved to their
-// crate-root modules and must be imported from their real owners.
-mod http_helpers;
 mod keys;
 mod media;
 mod mls;
@@ -261,7 +257,6 @@ mod tests;
 pub use authed::*;
 pub use builders::*;
 pub use ephemeral::*;
-pub(crate) use http_helpers::*;
 pub(crate) use mls::{generate_mls_claim_nonce, keypackage_claim_record_to_mls_record};
 pub(crate) use request_helpers::*;
 pub use views::*;

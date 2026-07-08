@@ -1,7 +1,7 @@
-//! HTTP plumbing helpers for the self-API client. Pure free functions split out
-//! of `api/mod.rs` (YOU-07-001) with no logic change.
+use serde_json::Value;
 
-use super::*;
+use crate::models::{RealmJoinCandidate, ResolveRealmOutcome};
+use crate::operation::trim_realm_id;
 
 pub(crate) fn canonical_space_join_rule_v1(join_rule: &str) -> &str {
     match join_rule {
@@ -55,7 +55,7 @@ pub(crate) fn patch_touches_create_locked_encryption_profile(patch: &Value) -> b
     })
 }
 
-pub(crate) fn patch_key_touches_encryption_profile(key: &str) -> bool {
+fn patch_key_touches_encryption_profile(key: &str) -> bool {
     key == "encryption_profile"
         || key.starts_with("encryption_profile.")
         || key == "/encryption_profile"
@@ -66,22 +66,10 @@ pub(crate) fn patch_key_touches_encryption_profile(key: &str) -> bool {
         || key.starts_with("/object/encryption_profile/")
 }
 
-pub(crate) fn patch_value_has_direct_encryption_profile(value: &Value) -> bool {
+fn patch_value_has_direct_encryption_profile(value: &Value) -> bool {
     value
         .get("value")
         .unwrap_or(value)
         .as_object()
         .is_some_and(|fields| fields.contains_key("encryption_profile"))
-}
-
-pub(crate) fn soland_path_allowed(normalized_path: &str) -> bool {
-    let path = normalized_path
-        .split(['?', '#'])
-        .next()
-        .unwrap_or(normalized_path);
-    // Keep the marker split so this helper does not carry a direct product-path token.
-    if path.starts_with(concat!("_so", "land", "/")) {
-        return false;
-    }
-    true
 }

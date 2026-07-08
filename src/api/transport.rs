@@ -5,6 +5,7 @@
 
 use super::*;
 use crate::api_error::normalize_wait_for_sync_token;
+use crate::wire_helpers::soland_path_allowed;
 
 impl CokretApi {
     pub fn new(base_url: &str) -> anyhow::Result<Self> {
