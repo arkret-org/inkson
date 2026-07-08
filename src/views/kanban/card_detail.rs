@@ -453,7 +453,7 @@ pub(super) fn dispatch_calendar_rsvp(
     let event = op;
     spawn(async move {
         match with_authed_api(&base_url, api_token, |api| async move {
-            api.submit_sdk_event(&event).await
+            api.event_submitter()?.submit_sdk_event(&event).await
         })
         .await
         {

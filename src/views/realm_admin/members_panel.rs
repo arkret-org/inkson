@@ -1782,6 +1782,7 @@ pub(crate) async fn submit_mls_admission_for_invitee(
     // on one epoch chain.
     let commit_event_id = admission.commit.event_id.clone();
     let commit_outcome = api
+        .event_submitter()?
         .submit_sdk_events_batch(&realm_id, vec![admission.commit], None)
         .await?;
     let commit_accepted = commit_outcome
@@ -1796,7 +1797,8 @@ pub(crate) async fn submit_mls_admission_for_invitee(
             commit_outcome.rejected
         ));
     }
-    api.submit_sdk_events_batch(&realm_id, vec![admission.welcome], None)
+    api.event_submitter()?
+        .submit_sdk_events_batch(&realm_id, vec![admission.welcome], None)
         .await?;
     {
         let mut store = state_store.write();
@@ -2084,7 +2086,8 @@ pub(crate) async fn share_history_to_requester(
         sealed,
     )
     .map_err(|err| anyhow::anyhow!(err))?;
-    api.submit_sdk_events_batch(&realm_id, vec![share], None)
+    api.event_submitter()?
+        .submit_sdk_events_batch(&realm_id, vec![share], None)
         .await?;
     Ok(true)
 }
@@ -2194,7 +2197,9 @@ pub(crate) async fn seal_history_to_recovery_recipients(
     }
     let sealed = events.len();
     if !events.is_empty() {
-        api.submit_sdk_events_batch(&realm_id, events, None).await?;
+        api.event_submitter()?
+            .submit_sdk_events_batch(&realm_id, events, None)
+            .await?;
         tracing::info!(
             sealed,
             unverified,
@@ -2853,6 +2858,7 @@ pub(crate) async fn submit_mls_admission_for_invitees(
     // epoch this admin and the server never reach.
     let commit_event_id = admission.commit.event_id.clone();
     let commit_outcome = api
+        .event_submitter()?
         .submit_sdk_events_batch(&realm_id, vec![admission.commit], None)
         .await?;
     let commit_accepted = commit_outcome
@@ -2867,7 +2873,8 @@ pub(crate) async fn submit_mls_admission_for_invitees(
             commit_outcome.rejected
         ));
     }
-    api.submit_sdk_events_batch(&realm_id, admission.welcomes, None)
+    api.event_submitter()?
+        .submit_sdk_events_batch(&realm_id, admission.welcomes, None)
         .await?;
     state_store
         .write()
@@ -2948,7 +2955,11 @@ async fn ensure_mls_genesis_frontier_for_invite(
             "local MLS genesis event is already marked emitted but no group-state event id is available; sync this Realm before inviting"
         )
     })?;
-    match api.submit_sdk_event(&genesis_event).await {
+    match api
+        .event_submitter()?
+        .submit_sdk_event(&genesis_event)
+        .await
+    {
         Ok(_) => {
             state_store
                 .write()
@@ -3606,7 +3617,10 @@ pub fn RealmMembersPanel(
                                                             "submitting invite for {}",
                                                             invitee_label
                                                         ));
-                                                        match api.submit_sdk_event(&submit_event).await {
+                                                        match match api.event_submitter() {
+                                                            Ok(es) => es.submit_sdk_event(&submit_event).await,
+                                                            Err(err) => Err(err),
+                                                        } {
                                                             Ok(submitted) => {
                                                                 frontier_state.set(submitted.event_id.clone());
                                                                 {

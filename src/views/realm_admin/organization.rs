@@ -890,7 +890,7 @@ fn OrganizationBindPanel(
                                         api_token,
                                         move |api| {
                                             let event = event.clone();
-                                            async move { api.submit_sdk_event(&event).await }
+                                            async move { api.event_submitter()?.submit_sdk_event(&event).await }
                                         },
                                     )
                                     .await

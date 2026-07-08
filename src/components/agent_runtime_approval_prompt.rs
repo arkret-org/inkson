@@ -228,7 +228,7 @@ pub fn AgentRuntimeApprovalPrompt(
                                                 &key_state,
                                                 &body,
                                             )?;
-                                        api.agent_key_pair_with_authorize_event(
+                                        api.event_submitter()?.agent_key_pair_with_authorize_event(
                                             body,
                                             &authorize_event,
                                         )

@@ -295,7 +295,7 @@ pub(super) fn dispatch_card_assignees_update(
             let operation_id = sdk_event_local_operation_id(&operation).to_owned();
             let kind = operation.kind.as_str().to_owned();
             match with_authed_api(&base_url, api_token.clone(), |api| async move {
-                api.submit_sdk_event(&operation).await
+                api.event_submitter()?.submit_sdk_event(&operation).await
             })
             .await
             {

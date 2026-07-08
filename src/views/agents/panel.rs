@@ -103,7 +103,7 @@ pub fn AgentsPanel(
                     let base_for_call = base.clone();
                     let realm_for_call = realm.clone();
                     let resp = match with_authed_api(&base_for_call, api_token, |api| async move {
-                        api.backfill(&realm_for_call).await
+                        api.event_submitter()?.backfill(&realm_for_call).await
                     })
                     .await
                     {
@@ -340,7 +340,7 @@ pub fn AgentsPanel(
                                             }
                                         };
                                         match with_authed_api(&base, api_token, |api| async move {
-                                            api.submit_sdk_event(&op).await
+                                            api.event_submitter()?.submit_sdk_event(&op).await
                                         })
                                         .await
                                         {
@@ -650,7 +650,7 @@ pub fn AgentsPanel(
                                                 }
                                             };
                                             match with_authed_api(&base, api_token, |api| async move {
-                                                api.submit_sdk_event(&op).await
+                                                api.event_submitter()?.submit_sdk_event(&op).await
                                             })
                                             .await
                                             {
@@ -891,7 +891,7 @@ pub fn AgentsPanel(
                                                     }
                                                 };
                                                 match with_authed_api(&base, api_token, |api| async move {
-                                                    api.submit_sdk_event(&op).await
+                                                    api.event_submitter()?.submit_sdk_event(&op).await
                                                 })
                                                 .await
                                                 {
@@ -1076,7 +1076,7 @@ pub fn AgentsPanel(
                                                 }
                                             };
                                             match with_authed_api(&base, api_token, |api| async move {
-                                                api.submit_sdk_event(&op).await
+                                                api.event_submitter()?.submit_sdk_event(&op).await
                                             })
                                             .await
                                             {

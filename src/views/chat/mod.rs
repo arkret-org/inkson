@@ -951,7 +951,8 @@ pub fn ChatPanel(
             }
 
             if !selected_realm_for_load.trim().is_empty()
-                && let Ok(backfill) = api.backfill(&selected_realm_for_load).await
+                && let Ok(sub) = api.event_submitter()
+                && let Ok(backfill) = sub.backfill(&selected_realm_for_load).await
             {
                 let backfill_events = backfill.event_values();
                 crate::sync_engine::prefetch_persistent_event_sender_keys_from_values(
@@ -1352,7 +1353,10 @@ pub fn ChatPanel(
                                         let sdk_op = op;
                                         spawn(async move {
                                             match authed_api_with_sync(&base, api_token.clone(), wait_for) {
-                                                Ok(api) => match api.submit_sdk_event(&sdk_op).await
+                                                Ok(api) => match match api.event_submitter() {
+                                                        Ok(sub) => sub.submit_sdk_event(&sdk_op).await,
+                                                        Err(err) => Err(err),
+                                                    }
                                                     {
                                                         Ok(submitted) => {
                                                             channels.write().push(ChannelEntity {
@@ -1559,7 +1563,10 @@ pub fn ChatPanel(
                                                                         let base = base_for_click.clone();
                                                                         spawn(async move {
                                                                             match authed_api_with_sync(&base, api_token, wait_for) {
-                                                                                Ok(api) => match api.submit_sdk_event(&watch_op).await {
+                                                                                Ok(api) => match match api.event_submitter() {
+                                                                                        Ok(sub) => sub.submit_sdk_event(&watch_op).await,
+                                                                                        Err(err) => Err(err),
+                                                                                    } {
                                                                                     Ok(_) => {
                                                                                         status_msg.set(crate::i18n::tr("chat.watch_level.saved"));
                                                                                     }
@@ -2205,7 +2212,7 @@ pub fn ChatPanel(
                                                     let existing_for_rollback = existing_pin.clone();
                                                     spawn(async move {
                                                         match authed_api_with_sync(&base, api_token, wait_for) {
-                                                            Ok(api) => match api.submit_sdk_event(&op).await {
+                                                            Ok(api) => match match api.event_submitter() { Ok(sub) => sub.submit_sdk_event(&op).await, Err(err) => Err(err) } {
                                                                 Ok(submitted) => {
                                                                     {
                                                                         let mut store = state_store.write();
@@ -2828,7 +2835,7 @@ pub fn ChatPanel(
                                                         let existing_for_rollback = existing_pin.clone();
                                                         spawn(async move {
                                                             match authed_api_with_sync(&base, api_token, wait_for) {
-                                                                Ok(api) => match api.submit_sdk_event(&op).await {
+                                                                Ok(api) => match match api.event_submitter() { Ok(sub) => sub.submit_sdk_event(&op).await, Err(err) => Err(err) } {
                                                                     Ok(submitted) => {
                                                                         {
                                                                             let mut store = state_store.write();
@@ -3054,7 +3061,7 @@ pub fn ChatPanel(
                                                                                                     &poll_ref,
                                                                                                     &[option_id],
                                                                                                 )?;
-                                                                                                api.submit_sdk_event(&op).await
+                                                                                                api.event_submitter()?.submit_sdk_event(&op).await
                                                                                             },
                                                                                         )
                                                                                         .await
@@ -3241,7 +3248,7 @@ pub fn ChatPanel(
                                                                 api_token,
                                                                 wait_for,
                                                                 |api| async move {
-                                                                    api.submit_sdk_event(&op).await
+                                                                    api.event_submitter()?.submit_sdk_event(&op).await
                                                                 },
                                                             )
                                                             .await;
@@ -3308,7 +3315,7 @@ pub fn ChatPanel(
                                                                             return;
                                                                         }
                                                                     };
-                                                                    match api.submit_sdk_event(&op).await {
+                                                                    match match api.event_submitter() { Ok(sub) => sub.submit_sdk_event(&op).await, Err(err) => Err(err) } {
                                                                         Ok(_resp) => {
                                                                             if let Some(found) = messages.write().iter_mut().find(|candidate| candidate.id == msg_id) {
                                                                                 found.pending = false;
@@ -3388,7 +3395,7 @@ pub fn ChatPanel(
                                                                             return;
                                                                         }
                                                                     };
-                                                                    match api.submit_sdk_event(&op).await {
+                                                                    match match api.event_submitter() { Ok(sub) => sub.submit_sdk_event(&op).await, Err(err) => Err(err) } {
                                                                         Ok(resp) => {
                                                                             let tombstone = local_redaction_tombstone_for_message(
                                                                                 &message_for_tombstone,
@@ -3825,7 +3832,7 @@ pub fn ChatPanel(
                                                         &title,
                                                     )?;
                                                     for op in ops {
-                                                        api.submit_sdk_event(&op).await?;
+                                                        api.event_submitter()?.submit_sdk_event(&op).await?;
                                                     }
                                                     Ok(())
                                                 },
@@ -4468,7 +4475,7 @@ pub fn ChatPanel(
                                             match crate::views::helpers::with_authed_api(
                                                 &base,
                                                 api_token,
-                                                |api| async move { api.submit_sdk_event(&op).await },
+                                                |api| async move { api.event_submitter()?.submit_sdk_event(&op).await },
                                             )
                                             .await
                                             {
@@ -4568,7 +4575,7 @@ pub fn ChatPanel(
                                             match crate::views::helpers::with_authed_api(
                                                 &base,
                                                 api_token,
-                                                |api| async move { api.submit_sdk_event(&op).await },
+                                                |api| async move { api.event_submitter()?.submit_sdk_event(&op).await },
                                             )
                                             .await
                                             {
@@ -5276,7 +5283,10 @@ pub fn ChatPanel(
                                     // message itself sent).
                                     match audit_op {
                                         Ok(audit_op) => {
-                                            if let Err(err) = api.submit_sdk_event(&audit_op).await
+                                            if let Err(err) = match api.event_submitter() {
+                                                Ok(sub) => sub.submit_sdk_event(&audit_op).await,
+                                                Err(err) => Err(err),
+                                            }
                                             {
                                                 tracing::warn!(
                                                     "audit RYW receipt for {} failed: {err:#}",

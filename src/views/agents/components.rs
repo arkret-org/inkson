@@ -296,7 +296,7 @@ pub fn ActionApproveDialog(
                                 match with_authed_api(&base, api_token, move |api| {
                                     let op = op.clone();
                                     async move {
-                                        api.submit_sdk_event(&op).await
+                                        api.event_submitter()?.submit_sdk_event(&op).await
                                     }
                                 })
                                 .await
@@ -527,7 +527,7 @@ pub fn DraftApprovalPanel(
                                                         match with_authed_api(&base, api_token, move |api| {
                                                             let op = op.clone();
                                                             async move {
-                                                                api.submit_sdk_event(&op).await
+                                                                api.event_submitter()?.submit_sdk_event(&op).await
                                                             }
                                                         })
                                                         .await
@@ -590,7 +590,7 @@ pub fn DraftApprovalPanel(
                                                         match with_authed_api(&base, api_token, move |api| {
                                                             let op = op.clone();
                                                             async move {
-                                                                api.submit_sdk_event(&op).await
+                                                                api.event_submitter()?.submit_sdk_event(&op).await
                                                             }
                                                         })
                                                         .await

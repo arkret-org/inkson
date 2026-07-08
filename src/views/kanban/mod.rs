@@ -1030,7 +1030,7 @@ pub fn KanbanPanel(
             } else {
                 let realm_id = lifecycle_realm_id.clone();
                 match with_authed_api(&base, api_token.clone(), |api| async move {
-                    api.backfill(&realm_id).await
+                    api.event_submitter()?.backfill(&realm_id).await
                 })
                 .await
                 {
@@ -1249,7 +1249,7 @@ pub fn KanbanPanel(
                 let events_res = {
                     let realm_id = lifecycle_realm_id.clone();
                     with_authed_api(&base, api_token, |api| async move {
-                        api.backfill(&realm_id).await
+                        api.event_submitter()?.backfill(&realm_id).await
                     })
                     .await
                 };
@@ -1356,6 +1356,7 @@ pub fn KanbanPanel(
                             )
                             .await?;
                             let events = api
+                                .event_submitter()?
                                 .backfill(&realm_for_fetch)
                                 .await
                                 .map(|response| response.event_values())
@@ -1453,7 +1454,7 @@ pub fn KanbanPanel(
             let events_res = {
                 let realm_id = realm_id.clone();
                 with_authed_api(&base, api_token, |api| async move {
-                    api.backfill(&realm_id).await
+                    api.event_submitter()?.backfill(&realm_id).await
                 })
                 .await
             };
@@ -2053,7 +2054,7 @@ pub fn KanbanPanel(
                                                     } else {
                                                         let realm_id = lifecycle_realm_id.clone();
                                                         with_authed_api(&base, api_token.clone(), |api| async move {
-                                                            api.backfill(&realm_id).await
+                                                            api.event_submitter()?.backfill(&realm_id).await
                                                         })
                                                         .await
                                                         .ok()

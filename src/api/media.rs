@@ -44,7 +44,9 @@ impl CokretApi {
         // ck:device id) over the canonical envelope bytes without `proof`.
         attach_broadcast_ephemeral_proof(&mut envelope)?;
 
-        self.submit_ephemeral_envelope(&envelope).await
+        self.event_submitter()?
+            .submit_ephemeral_envelope(&envelope)
+            .await
     }
 
     /// Submit a durable `ck.call.recording.start` event marking opt-in
@@ -111,7 +113,7 @@ impl CokretApi {
             true,
         )
         .build_sdk_event("yougen")?;
-        self.submit_sdk_event(&event).await
+        self.event_submitter()?.submit_sdk_event(&event).await
     }
 
     // ── Media ───────────────────────────────────────────────────────

@@ -526,7 +526,10 @@ impl CokretApi {
         let principal = cokret_sdk::Did::new(actor_id.to_owned())
             .map_err(|err| anyhow::anyhow!("invalid principal DID for device revoke: {err}"))?;
         let control_realm = cokret_sdk::auth::principal_control_realm_id(&principal);
-        let seal_view = self.events_frontier_realm_seal_view(&control_realm).await?;
+        let seal_view = self
+            .event_submitter()?
+            .events_frontier_realm_seal_view(&control_realm)
+            .await?;
         let basis = seal_view.seal_basis();
         let event = crate::operation::ck_ops::device_revoke(
             &control_realm,
@@ -537,7 +540,7 @@ impl CokretApi {
         )?
         .seal_basis(basis)
         .build_sdk_event(revoked_by_device_id)?;
-        self.submit_sdk_event(&event).await
+        self.event_submitter()?.submit_sdk_event(&event).await
     }
 
     /// List the principal's active devices from the spec account viewer

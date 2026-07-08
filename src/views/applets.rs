@@ -414,7 +414,7 @@ pub fn AppletsPanel(
                                             }
                                         };
                                         match with_authed_api(&base, api_token, |api| async move {
-                                            api.submit_sdk_event(&op).await
+                                            api.event_submitter()?.submit_sdk_event(&op).await
                                         })
                                         .await
                                         {

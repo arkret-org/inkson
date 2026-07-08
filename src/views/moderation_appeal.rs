@@ -238,7 +238,7 @@ pub fn AppealEntrypoint(
                                 }
                             };
                             let result = with_authed_api(&base, token, |api| async move {
-                                api.submit_sdk_event(&envelope).await
+                                api.event_submitter()?.submit_sdk_event(&envelope).await
                             })
                             .await;
                             match result {

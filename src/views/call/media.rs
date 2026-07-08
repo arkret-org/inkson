@@ -158,7 +158,7 @@ pub(super) async fn submit_call_state_participant(
     .build_sdk_event("yougen")
     .map_err(|err| err.to_string())?;
     with_authed_api(base, api_token.to_owned(), move |api| async move {
-        api.submit_sdk_event(&op).await?;
+        api.event_submitter()?.submit_sdk_event(&op).await?;
         Ok(())
     })
     .await

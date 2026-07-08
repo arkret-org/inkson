@@ -91,7 +91,7 @@ impl CokretApi {
         // materialises the creator membership from the create event.
         // Sign every SDK Event before it reaches the wire; the batch
         // submitter takes pre-signed typed Events.
-        let proof_context = self.event_proof_context().await?;
+        let proof_context = self.event_submitter()?.event_proof_context().await?;
         for event in events.iter_mut() {
             crate::event_signer::sign_sdk_event_with_active_context(event, proof_context.clone())
                 .map_err(|err| {
@@ -101,7 +101,8 @@ impl CokretApi {
                 })?;
         }
         let idempotency_key = format!("ck:operation:{}", uuid_v7());
-        self.submit_signed_sdk_events_batch(&events, Some(&idempotency_key))
+        self.event_submitter()?
+            .submit_signed_sdk_events_batch(&events, Some(&idempotency_key))
             .await?;
 
         let resolved_invitees = parse_realm_bootstrap_members(&invitees)?;
@@ -319,7 +320,10 @@ impl CokretApi {
         else {
             anyhow::bail!("plaintext_visible_services update requires at least one service DID");
         };
-        let seal_view = self.events_frontier_realm_seal_view(realm_id).await?;
+        let seal_view = self
+            .event_submitter()?
+            .events_frontier_realm_seal_view(realm_id)
+            .await?;
         event.seal_basis = Some(seal_view.seal_basis());
         event.seal_ref = None;
         event.auth_context = None;
@@ -482,7 +486,7 @@ impl CokretApi {
         &self,
         event: &cokret_sdk::Event,
     ) -> anyhow::Result<SubmitEventResult> {
-        self.submit_sdk_event(event).await
+        self.event_submitter()?.submit_sdk_event(event).await
     }
 
     async fn submit_built_event_via_join_candidate(
@@ -496,11 +500,11 @@ impl CokretApi {
             .map(str::trim)
             .filter(|s| !s.is_empty())
         else {
-            return self.submit_sdk_event(event).await;
+            return self.event_submitter()?.submit_sdk_event(event).await;
         };
         let endpoint_url = validate_server_url(endpoint)?;
         if endpoint_url == self.base_url {
-            return self.submit_sdk_event(event).await;
+            return self.event_submitter()?.submit_sdk_event(event).await;
         }
 
         let mut routed = CokretApi::new(endpoint)?;
@@ -510,7 +514,7 @@ impl CokretApi {
         if let Some(sync_token) = self.wait_for_sync_token.as_deref() {
             routed = routed.with_wait_for(sync_token.to_owned());
         }
-        routed.submit_sdk_event(event).await
+        routed.event_submitter()?.submit_sdk_event(event).await
     }
 
     /// Reject an invite via `ck.invite.cancel` event (spec-canonical).
@@ -814,9 +818,11 @@ impl CokretApi {
         mut events: Vec<cokret_sdk::Event>,
     ) -> anyhow::Result<cokret_sdk::EventsSubmitOutcome> {
         for event in &mut events {
-            self.stamp_cba_basis_for_sdk_event(event).await?;
+            self.event_submitter()?
+                .stamp_cba_basis_for_sdk_event(event)
+                .await?;
         }
-        let proof_context = self.event_proof_context().await?;
+        let proof_context = self.event_submitter()?.event_proof_context().await?;
         for event in events.iter_mut() {
             if event.proofs.is_empty() {
                 crate::event_signer::sign_sdk_event_with_active_context(
@@ -830,7 +836,9 @@ impl CokretApi {
                 })?;
             }
         }
-        self.submit_signed_sdk_events_batch(&events, None).await
+        self.event_submitter()?
+            .submit_signed_sdk_events_batch(&events, None)
+            .await
     }
 
     /// Close an appeal (`ck.moderation.appeal.close`). Reviewer close or

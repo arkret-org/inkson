@@ -1053,7 +1053,7 @@ pub fn RealmAdminPanel(
                                         &base,
                                         api_token,
                                         |api| async move {
-                                            api.submit_sdk_event(&commit_event).await
+                                            api.event_submitter()?.submit_sdk_event(&commit_event).await
                                         },
                                     )
                                     .await
@@ -1362,7 +1362,7 @@ pub fn RealmAdminPanel(
                                         &base,
                                         api_token,
                                         |api| async move {
-                                            api.submit_sdk_event(&envelope).await
+                                            api.event_submitter()?.submit_sdk_event(&envelope).await
                                         },
                                     )
                                     .await
@@ -1444,7 +1444,7 @@ pub fn RealmAdminPanel(
                                         &base,
                                         api_token,
                                         |api| async move {
-                                            api.submit_sdk_event(&envelope).await
+                                            api.event_submitter()?.submit_sdk_event(&envelope).await
                                         },
                                     )
                                     .await

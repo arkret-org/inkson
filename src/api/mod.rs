@@ -10,11 +10,11 @@ use url::Url;
 
 use crate::config::validate_server_url;
 use crate::models::{
-    AccountDataSetResult, AuthzCheckOutcome, BackfillView, BlobUploadOutcome, ContactListView,
-    CurrentAccount, DeviceMessagesAckOutcome, DeviceMessagesAckRequestBody,
-    DeviceMessagesGetOutcome, DeviceMessagesSendOutcome, GrantList, IdentityDescribeOutcome,
-    IdentityResolveOutcome, KeysQueryOutcome, MediaIceConfigOutcome, MediaIceConfigRequestBody,
-    OP_SNAPSHOT_HEAD, RealmCreateResult, RealmJoinCandidate, RealmPolicyResult, ResolveHandleView,
+    AccountDataSetResult, AuthzCheckOutcome, BlobUploadOutcome, ContactListView, CurrentAccount,
+    DeviceMessagesAckOutcome, DeviceMessagesAckRequestBody, DeviceMessagesGetOutcome,
+    DeviceMessagesSendOutcome, GrantList, IdentityDescribeOutcome, IdentityResolveOutcome,
+    KeysQueryOutcome, MediaIceConfigOutcome, MediaIceConfigRequestBody, OP_SNAPSHOT_HEAD,
+    RealmCreateResult, RealmJoinCandidate, RealmPolicyResult, ResolveHandleView,
     ResolveRealmOutcome, SearchActorsView, SearchOrganizationsView, ServerDescription,
     SpaceCreateResult, SubmitEventResult,
 };
@@ -77,12 +77,10 @@ impl Default for CokretApiOptions {
 }
 
 mod account;
-mod agent;
 mod blob;
 mod blob_resumable;
 mod circle;
 mod directory;
-mod events;
 mod keys;
 mod media;
 mod mls;

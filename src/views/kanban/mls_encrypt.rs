@@ -322,7 +322,7 @@ pub(super) fn dispatch_card_detail_update(
         if let Some(genesis_op) = mls_genesis_op {
             let genesis_event_id = genesis_op.event_id.clone();
             let genesis_result = with_authed_api(&base_url, api_token.clone(), |api| async move {
-                api.submit_sdk_event(&genesis_op).await
+                api.event_submitter()?.submit_sdk_event(&genesis_op).await
             })
             .await;
             match genesis_result {
@@ -360,7 +360,7 @@ pub(super) fn dispatch_card_detail_update(
         }
         if let Some(commit_op) = mls_commit_op {
             let commit_result = with_authed_api(&base_url, api_token.clone(), |api| async move {
-                api.submit_sdk_event(&commit_op).await
+                api.event_submitter()?.submit_sdk_event(&commit_op).await
             })
             .await;
             match commit_result {
@@ -422,7 +422,7 @@ pub(super) fn dispatch_card_detail_update(
             }
         }
         match with_authed_api(&base_url, api_token.clone(), |api| async move {
-            api.submit_sdk_event(&submit_event).await
+            api.event_submitter()?.submit_sdk_event(&submit_event).await
         })
         .await
         {

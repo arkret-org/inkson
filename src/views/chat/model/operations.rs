@@ -466,7 +466,7 @@ pub(crate) async fn submit_chat_operation_with_plaintext_retry(
     plaintext_visible_services: &[String],
     operation: &cokret_sdk::Event,
 ) -> anyhow::Result<SubmitEventResult> {
-    match api.submit_sdk_event(operation).await {
+    match api.event_submitter()?.submit_sdk_event(operation).await {
         Ok(response) => Ok(response),
         Err(error) if is_plaintext_visibility_policy_error(&error) => {
             let mut services = plaintext_visible_services.to_vec();
@@ -488,7 +488,7 @@ pub(crate) async fn submit_chat_operation_with_plaintext_retry(
                         "plaintext policy update failed: {update_error}; original send failed: {error}"
                     )
             })?;
-            api.submit_sdk_event(operation).await
+            api.event_submitter()?.submit_sdk_event(operation).await
         }
         Err(error) => Err(error),
     }

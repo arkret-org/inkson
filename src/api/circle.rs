@@ -22,10 +22,12 @@ impl CokretApi {
             anyhow::bail!("circle_id is required for scope rotate");
         }
         let mut signed_events = Vec::with_capacity(events.len());
-        let proof_context = self.event_proof_context().await?;
+        let proof_context = self.event_submitter()?.event_proof_context().await?;
         for event in events {
             let mut signed = event.clone();
-            self.stamp_cba_basis_for_sdk_event(&mut signed).await?;
+            self.event_submitter()?
+                .stamp_cba_basis_for_sdk_event(&mut signed)
+                .await?;
             if signed.proofs.is_empty() {
                 crate::event_signer::sign_sdk_event_with_active_context(
                     &mut signed,

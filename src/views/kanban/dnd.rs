@@ -67,7 +67,7 @@ pub(super) fn submit_kanban_operation_event(
     // reach it via the re-exported core crate.
     dioxus::core::spawn_forever(async move {
         let result = with_authed_api(&base_url, api_token, |api| async move {
-            api.submit_sdk_event(&operation).await
+            api.event_submitter()?.submit_sdk_event(&operation).await
         })
         .await;
         match result {
@@ -337,7 +337,7 @@ pub(super) fn submit_kanban_move(
     let submit_event = event;
     spawn(async move {
         match with_authed_api(&base_url, api_token, |api| async move {
-            api.submit_sdk_event(&submit_event).await
+            api.event_submitter()?.submit_sdk_event(&submit_event).await
         })
         .await
         {
@@ -643,7 +643,7 @@ pub(super) fn dispatch_space_container_lifecycle(
     let operation_id_for_track = operation_id.clone();
     spawn(async move {
         let result = with_authed_api(&base, api_token, |api| async move {
-            api.submit_sdk_event(&event).await
+            api.event_submitter()?.submit_sdk_event(&event).await
         })
         .await;
         match result {
@@ -733,7 +733,7 @@ pub(super) fn dispatch_strand_lifecycle(
     let operation_id_for_track = operation_id.clone();
     spawn(async move {
         let result = with_authed_api(&base, api_token, |api| async move {
-            api.submit_sdk_event(&event).await
+            api.event_submitter()?.submit_sdk_event(&event).await
         })
         .await;
         match result {
@@ -870,7 +870,7 @@ pub(super) fn dispatch_board_archive_cascade(
         let events_for_submit = events;
         let outcome = with_authed_api(&base, api_token, |api| async move {
             for event in &events_for_submit {
-                api.submit_sdk_event(event).await?;
+                api.event_submitter()?.submit_sdk_event(event).await?;
             }
             Ok::<(), anyhow::Error>(())
         })
@@ -1096,7 +1096,7 @@ pub(super) fn submit_strand_position_cas_move_with_attempt(
     let submit_event = event;
     spawn(async move {
         let submit_result = with_authed_api(&base_url, api_token, |api| async move {
-            api.submit_sdk_event(&submit_event).await
+            api.event_submitter()?.submit_sdk_event(&submit_event).await
         })
         .await;
         match submit_result {

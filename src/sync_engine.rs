@@ -764,7 +764,7 @@ async fn run_idle_self_update_pass(
         // persist the local snapshot (persist-on-accept).
         let submit_token = token.clone();
         match crate::authed_api::with_authed_api(&base, submit_token, |api| async move {
-            api.submit_sdk_event(&commit_event).await
+            api.event_submitter()?.submit_sdk_event(&commit_event).await
         })
         .await
         {

@@ -480,7 +480,7 @@ impl CokretApi {
         let event =
             crate::account_data::build_account_data_set(&principal_realm_id, &actor, &key, content)
                 .build_sdk_event("yougen-account-data")?;
-        let result = self.submit_sdk_event(&event).await;
+        let result = self.event_submitter()?.submit_sdk_event(&event).await;
         match result {
             Ok(value) => Ok(AccountDataSetResult::Stored {
                 response: serde_json::to_value(value)?,
@@ -528,7 +528,7 @@ impl CokretApi {
             expected_state_digest,
         )?
         .build_sdk_event("yougen-private-account-data")?;
-        let result = self.submit_sdk_event(&event).await;
+        let result = self.event_submitter()?.submit_sdk_event(&event).await;
         match result {
             Ok(value) => Ok(AccountDataSetResult::Stored {
                 response: serde_json::to_value(value)?,
@@ -563,7 +563,7 @@ impl CokretApi {
         let event =
             crate::account_data::build_account_data_tombstone(&principal_realm_id, &actor, &key)
                 .build_sdk_event("yougen-account-data")?;
-        match self.submit_sdk_event(&event).await {
+        match self.event_submitter()?.submit_sdk_event(&event).await {
             Ok(_) => Ok(()),
             Err(error) => {
                 if unsupported_status(&error).is_some() {
@@ -629,7 +629,7 @@ impl CokretApi {
         marker: &crate::local_state::ReadMarkerRecord,
     ) -> anyhow::Result<SubmitEventResult> {
         let event = build_read_cursor_advance_event(marker)?;
-        self.submit_sdk_event(&event).await
+        self.event_submitter()?.submit_sdk_event(&event).await
     }
 
     pub async fn invites(&self) -> anyhow::Result<cokret_sdk::AuthzInviteList> {

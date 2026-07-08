@@ -395,7 +395,10 @@ pub(crate) async fn submit_secure_send(
     if let Some(commit_event) = commit_event {
         // Submit the forced MLS commit first; if it fails, abort the message
         // send (covered_seals won't bind).
-        match api.submit_sdk_event(&commit_event).await {
+        match match api.event_submitter() {
+            Ok(sub) => sub.submit_sdk_event(&commit_event).await,
+            Err(err) => Err(err),
+        } {
             Ok(resp) => {
                 // X14 — persist-on-accept: the server accepted the commit, so
                 // NOW advance the local snapshot to the post-commit epoch. On a
@@ -438,7 +441,10 @@ pub(crate) async fn submit_secure_send(
         }
     }
 
-    match api.submit_sdk_event(&message_event).await {
+    match match api.event_submitter() {
+        Ok(sub) => sub.submit_sdk_event(&message_event).await,
+        Err(err) => Err(err),
+    } {
         Ok(resp) => SecureSendOutcome::Sent {
             event_id: resp.event_id,
             status: resp.status,

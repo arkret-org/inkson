@@ -83,6 +83,17 @@ impl CokretApi {
             .map_err(|error| anyhow::anyhow!("build SDK Cokret HTTP client: {error}"))
     }
 
+    /// Build a [`crate::event_submit::EventSubmitter`] from this client's
+    /// authenticated SDK transport. Bridge for the sibling `src/api` submodules
+    /// whose durable/ephemeral event logic now lives in the extracted engine;
+    /// each call gets a fresh submitter (fresh lazy describe cache), matching
+    /// the former per-`CokretApi` describe-cache lifetime.
+    pub(crate) fn event_submitter(&self) -> anyhow::Result<crate::event_submit::EventSubmitter> {
+        Ok(crate::event_submit::EventSubmitter::new(
+            self.sdk_http_client()?,
+        ))
+    }
+
     pub fn with_wait_for(mut self, sync_token: impl Into<String>) -> Self {
         let sync_token = sync_token.into();
         self.wait_for_sync_token = normalize_wait_for_sync_token(&sync_token);
