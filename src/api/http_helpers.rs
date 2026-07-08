@@ -1,7 +1,6 @@
 //! HTTP plumbing helpers for the self-API client: error-envelope
-//! decoding/policy-deny dispatch, retry/backoff classification, URL/query
-//! component encoding, NDJSON subscribe-frame parsing, and small
-//! response-projection parsers. Pure free functions split out of
+//! decoding/policy-deny dispatch, URL/query component encoding, NDJSON
+//! subscribe-frame parsing, and small response-projection parsers. Pure free functions split out of
 //! `api/mod.rs` (YOU-07-001) with no logic change; re-exported from the
 //! parent module so existing `crate::api::*` / sibling `super::*` paths
 //! resolve unchanged.

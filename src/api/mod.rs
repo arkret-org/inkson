@@ -182,29 +182,12 @@ pub enum NetworkState {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct CokretApiOptions {
     pub timeout: Duration,
-    pub retry: RetryPolicy,
 }
 
 impl Default for CokretApiOptions {
     fn default() -> Self {
         Self {
             timeout: Duration::from_secs(10),
-            retry: RetryPolicy::default(),
-        }
-    }
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct RetryPolicy {
-    pub max_retries: usize,
-    pub initial_backoff: Duration,
-}
-
-impl Default for RetryPolicy {
-    fn default() -> Self {
-        Self {
-            max_retries: 2,
-            initial_backoff: Duration::from_millis(100),
         }
     }
 }
@@ -258,10 +241,10 @@ mod error_classify;
 // helpers moved out of this file into `ephemeral` (move only).
 mod ephemeral;
 mod events;
-// YOU-07-001: HTTP plumbing helpers (error decode, retry/backoff classification,
-// URL/query encoding, NDJSON subscribe parsing, small response parsers) moved out
-// of this file into `http_helpers` (move only). The glob re-export keeps the
-// `crate::api::*` public paths and sibling/tests `use super::*` resolution unchanged.
+// YOU-07-001: HTTP plumbing helpers (error decode, URL/query encoding, NDJSON
+// subscribe parsing, small response parsers) moved out of this file into
+// `http_helpers` (move only). The glob re-export keeps the `crate::api::*`
+// public paths and sibling/tests `use super::*` resolution unchanged.
 mod http_helpers;
 mod keys;
 mod media;
@@ -278,9 +261,9 @@ mod request_helpers;
 // and the sibling/tests `use super::*` resolution paths unchanged.
 mod sync_parse;
 // Structural split: core `impl CokretApi` HTTP transport (constructor, builder
-// methods, request pipeline, retry loop, JSON/bytes send helpers) moved out of
-// this file into `transport` (move only). All `impl CokretApi` inherent methods,
-// so no free-item re-export is needed.
+// methods, SDK client construction, network state, and legacy URL helper)
+// moved out of this file into `transport` (move only). All `impl CokretApi`
+// inherent methods, so no free-item re-export is needed.
 mod transport;
 // Structural split: projection view models + recommended-encryption constants
 // moved out of this file into `views` (move only). The glob re-export keeps the

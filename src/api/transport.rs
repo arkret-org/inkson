@@ -1,10 +1,7 @@
-//! Core HTTP transport for [`CokretApi`]: constructor + builder methods, the
-//! request pipeline (authorize / wait-for / PoP signing / per-request DPoP),
-//! retry/backoff loop, and the typed JSON/bytes send helpers. Structural move
-//! out of `api/mod.rs` with no logic change. Methods invoked by sibling
-//! submodules (e.g. `account`, `events`, `keys`) are `pub(crate)` so they
-//! remain reachable now that they no longer live in the parent module; the
-//! rest stay private to this transport core.
+//! Core transport shell for [`CokretApi`]: constructor + builder methods,
+//! SDK http-client construction, network state, and the legacy URL guard.
+//! Endpoint traffic is being strangled through `cokret-http-client`; this
+//! module now only holds the host-facing state needed to build that client.
 
 use super::*;
 
