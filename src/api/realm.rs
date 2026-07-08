@@ -906,22 +906,6 @@ impl CokretApi {
             .await
             .map_err(anyhow::Error::from)
     }
-
-    /// Resolve the current seal head for `realm_id` to be stamped onto
-    /// outgoing reducer-input events as `seal_ref`.
-    ///
-    /// Spec resolution (2026-06-12, SPEC-SOL-003): the registered
-    /// account-client sourcing is `ck.self.events.query.frontier?realm_id=`,
-    /// whose Realm Seal view carries `{seal_id, control_event_set_root,
-    /// state_root, hlc?}`. `seal_id` is the DataEvent `seal_ref`; the
-    /// full view mints a single-leaf Control Move `seal_basis` (use
-    /// [`Self::events_frontier_realm_seal_view`] directly for that).
-    /// When the sourcing is unavailable this still fails closed — no
-    /// fabricated seal heads.
-    pub async fn current_seal_for(&self, realm_id: &str) -> anyhow::Result<String> {
-        let view = self.events_frontier_realm_seal_view(realm_id).await?;
-        Ok(view.seal_id.to_string())
-    }
 }
 
 /// Stamp an invite→join Control Move's `seal_basis` from the resolve-realm

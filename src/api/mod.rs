@@ -20,7 +20,7 @@ use crate::models::{
 };
 use crate::operation::{EventKind, trim_realm_id, uuid_v7};
 use crate::wire_helpers::{
-    canonical_blob_ref, path_component, query_component, safe_blob_filename_header, validate_cursor,
+    canonical_blob_ref, path_component, safe_blob_filename_header, validate_cursor,
 };
 
 #[derive(Clone)]

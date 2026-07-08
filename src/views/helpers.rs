@@ -9,7 +9,7 @@ use crate::api_error::normalize_wait_for_sync_token;
 // every existing `crate::views::helpers::…` call site keeps resolving.
 pub use crate::authed_api::{
     ApiCallError, attach_device_dpop, authed_api, authed_api_with_sync, with_authed_api,
-    with_authed_api_with_sync, with_authed_sdk_client,
+    with_authed_api_with_sync, with_authed_sdk_client, with_event_submitter,
 };
 use crate::config::{ClientConfig, LocalConfigStore};
 use crate::ui::button::{Button, ButtonVariant};

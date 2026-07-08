@@ -237,6 +237,27 @@ where
     .await
 }
 
+/// Same auth/refresh/classification contract as [`with_authed_api`], but hands
+/// the closure a [`crate::event_submit::EventSubmitter`] built from the shared
+/// SDK http-client. This is the CokretApi-free durable/ephemeral event
+/// submission exit; migrated call sites call `sub.submit_sdk_event(&event)`
+/// etc. directly.
+pub async fn with_event_submitter<F, Fut, T>(
+    base_url: &str,
+    session_credential: String,
+    f: F,
+) -> Result<T, ApiCallError>
+where
+    F: FnOnce(crate::event_submit::EventSubmitter) -> Fut,
+    Fut: std::future::Future<Output = anyhow::Result<T>>,
+{
+    with_authed_api(base_url, session_credential, |api| async move {
+        let submitter = crate::event_submit::EventSubmitter::new(api.sdk_http_client()?);
+        f(submitter).await
+    })
+    .await
+}
+
 async fn classify_api_call_error(err: anyhow::Error) -> ApiCallError {
     if is_terminal_session_grant_error(&err) {
         crate::session::invalidate_current_session("session grant is no longer active");
