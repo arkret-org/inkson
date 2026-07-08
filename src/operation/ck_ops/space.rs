@@ -1,10 +1,8 @@
 //! Container Space (Board / List) builders.
 
-use serde_json::json;
-
 use super::{
     OperationBuilder, did_id, object_create_payload_value, patch_from_value, realm_id_value,
-    space_id_value, trim_realm_id,
+    space_id_value, space_patch_payload_value, space_state_transition_payload_value, trim_realm_id,
 };
 
 /// Build a `ck.space.create` operation for Board/List container Spaces.
@@ -49,14 +47,18 @@ pub fn space_create(
 /// (`archived -> active`). The SDK reducer enforces `state == archived`
 /// at apply time; tombstoned container Spaces MUST NOT be restored. Spec:
 /// `models/realm-and-space.md` §4.4, `common-fields.md §5`.
-pub fn space_restore(realm_id: &str, actor: &str, container_space_id: &str) -> OperationBuilder {
-    OperationBuilder::new(
+pub fn space_restore(
+    realm_id: &str,
+    actor: &str,
+    container_space_id: &str,
+) -> anyhow::Result<OperationBuilder> {
+    Ok(OperationBuilder::new(
         realm_id,
         actor,
         cokret_sdk::events::kinds::EventKind::SpaceRestore,
     )
     .target_ref(container_space_id)
-    .body(json!({ "space_id": container_space_id }))
+    .body(space_state_transition_payload_value(container_space_id)?))
 }
 
 /// Build a `ck.space.update` patch operation for structural Space
@@ -75,8 +77,5 @@ pub fn space_update_patch(
         cokret_sdk::events::kinds::EventKind::SpaceUpdate,
     )
     .target_ref(space_id)
-    .body(json!({
-        "space_id": space_id,
-        "patch": patch,
-    })))
+    .body(space_patch_payload_value(space_id, patch)?))
 }

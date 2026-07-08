@@ -1,6 +1,6 @@
 //! Device revoke Control Move and MLS epoch builders.
 
-use serde_json::{Value, json};
+use serde_json::Value;
 
 use super::OperationBuilder;
 
@@ -21,20 +21,28 @@ pub fn device_revoke(
     target_device_id: &str,
     revoked_by_device_id: &str,
     reason: &str,
-) -> OperationBuilder {
-    OperationBuilder::new(
+) -> anyhow::Result<OperationBuilder> {
+    let payload = cokret_sdk::DeviceRevokePayload {
+        principal_id: cokret_sdk::Did::new(actor.to_owned())
+            .map_err(|err| anyhow::anyhow!("invalid principal DID {actor:?}: {err}"))?,
+        device_id: target_device_id.to_owned(),
+        revoked_by: cokret_sdk::DeviceOrPrincipalRef::DeviceId(
+            cokret_sdk::DeviceId::new(revoked_by_device_id.to_owned())
+                .map_err(|err| anyhow::anyhow!("invalid revoking device id: {err}"))?,
+        ),
+        revoked_at: crate::clock::now_utc_secs(),
+        reason: reason.to_owned(),
+        proof: None,
+    };
+    let body = serde_json::to_value(payload)
+        .map_err(|err| anyhow::anyhow!("device_revoke_payload serialize: {err}"))?;
+    Ok(OperationBuilder::new(
         realm_id,
         actor,
         cokret_sdk::events::kinds::EventKind::DeviceRevoke,
     )
     .target_ref(target_device_id)
-    .body(json!({
-        "principal_id": actor,
-        "device_id": target_device_id,
-        "revoked_by": revoked_by_device_id,
-        "revoked_at": crate::clock::now_rfc3339_secs(),
-        "reason": reason,
-    }))
+    .body(body))
 }
 
 /// `ck.mls.commit` event carrying the current wire-schema MLS

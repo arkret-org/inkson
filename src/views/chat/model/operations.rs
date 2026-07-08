@@ -1,5 +1,6 @@
 use super::*;
 use crate::api::is_auth_expired_error;
+use crate::payload::{sdk_payload_value, strand_id_value};
 
 pub(crate) const CHAT_PRIVATE_SAVED_COLLECTION_TITLE: &str = "Saved";
 
@@ -327,21 +328,6 @@ pub(crate) fn schema_message_id_or_new(value: &str) -> String {
     } else {
         new_chat_message_id()
     }
-}
-
-// YOU-02-001: these helpers return `Result` instead of panicking — the
-// realm/strand ids they parse come from server-synced UI state, and a
-// non-canonical id must not abort the client (wasm panic = blank page).
-pub(crate) fn sdk_payload_value(
-    result: cokret_sdk::Result<Value>,
-    context: &str,
-) -> anyhow::Result<Value> {
-    result.map_err(|err| anyhow::anyhow!("{context}: {err}"))
-}
-
-pub(crate) fn strand_id_value(value: &str) -> anyhow::Result<cokret_sdk::StrandId> {
-    cokret_sdk::StrandId::new(value.to_owned())
-        .map_err(|err| anyhow::anyhow!("invalid strand id {value:?}: {err:?}"))
 }
 
 pub(crate) fn chat_message_create_operation(

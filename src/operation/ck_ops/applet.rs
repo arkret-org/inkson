@@ -9,9 +9,19 @@
 //! `service_did` for registration / discovery) as `target_ref` so
 //! soland's `target-ref-required` envelope-shape check passes.
 
-use serde_json::json;
+use std::collections::BTreeMap;
+
+use serde_json::{Value, json};
 
 use super::OperationBuilder;
+
+fn optional_object(value: Value, context: &str) -> anyhow::Result<Option<BTreeMap<String, Value>>> {
+    match value {
+        Value::Null => Ok(None),
+        Value::Object(map) => Ok(Some(map.into_iter().collect())),
+        _ => anyhow::bail!("{context} must be a JSON object"),
+    }
+}
 
 /// `ck.applet.registration` — declare an applet service_did + the
 /// event-kind subset / namespaces / capabilities it can write.
@@ -87,18 +97,23 @@ pub fn applet_interop_session_start(
     applet_id: &str,
     session_id: &str,
     params: serde_json::Value,
-) -> OperationBuilder {
-    OperationBuilder::new(
+) -> anyhow::Result<OperationBuilder> {
+    let payload = cokret_sdk::AppletInteropSessionStartPayload {
+        applet_id: json!(applet_id),
+        session_id: json!(session_id),
+        service_did: None,
+        params: optional_object(params, "applet session params")?,
+        created_at: None,
+    };
+    let body = serde_json::to_value(payload)
+        .map_err(|err| anyhow::anyhow!("applet_interop_session_start_payload serialize: {err}"))?;
+    Ok(OperationBuilder::new(
         realm_id,
         actor,
         cokret_sdk::events::kinds::EventKind::AppletInteropSessionStart,
     )
     .target_ref(session_id)
-    .body(json!({
-        "applet_id": applet_id,
-        "session_id": session_id,
-        "params": params,
-    }))
+    .body(body))
 }
 
 /// `ck.applet.interop_session.status` — applet → caller status push
@@ -110,19 +125,23 @@ pub fn applet_interop_session_status(
     session_id: &str,
     runtime_status: &str,
     detail: serde_json::Value,
-) -> OperationBuilder {
-    OperationBuilder::new(
+) -> anyhow::Result<OperationBuilder> {
+    let payload = cokret_sdk::AppletInteropSessionStatusPayload {
+        applet_id: json!(applet_id),
+        session_id: session_id.to_owned(),
+        runtime_status: runtime_status.to_owned(),
+        detail: optional_object(detail, "applet session status detail")?,
+        updated_at: None,
+    };
+    let body = serde_json::to_value(payload)
+        .map_err(|err| anyhow::anyhow!("applet_interop_session_status_payload serialize: {err}"))?;
+    Ok(OperationBuilder::new(
         realm_id,
         actor,
         cokret_sdk::events::kinds::EventKind::AppletInteropSessionStatus,
     )
     .target_ref(session_id)
-    .body(json!({
-        "applet_id": applet_id,
-        "session_id": session_id,
-        "runtime_status": runtime_status,
-        "detail": detail,
-    }))
+    .body(body))
 }
 
 /// `ck.applet.bridge_error` — emitted by the applet bridge when a
@@ -137,21 +156,27 @@ pub fn applet_bridge_error(
     retriable: bool,
     visibility_scope: &str,
     message: &str,
-) -> OperationBuilder {
-    OperationBuilder::new(
+) -> anyhow::Result<OperationBuilder> {
+    let payload = cokret_sdk::AppletBridgeErrorPayload {
+        applet_id: json!(applet_id),
+        realm_id: cokret_sdk::RealmId::new(realm_id.to_owned())
+            .map_err(|err| anyhow::anyhow!("invalid realm id {realm_id:?}: {err}"))?,
+        failed_transaction_ref: json!(failed_transaction_ref),
+        error_class: error_class.to_owned(),
+        error_code: json!(error_code),
+        retriable,
+        visibility_scope: json!(visibility_scope),
+        external_ref: None,
+        message: Some(message.to_owned()),
+        retry_after_ms: None,
+    };
+    let body = serde_json::to_value(payload)
+        .map_err(|err| anyhow::anyhow!("applet_bridge_error_payload serialize: {err}"))?;
+    Ok(OperationBuilder::new(
         realm_id,
         actor,
         cokret_sdk::events::kinds::EventKind::AppletBridgeError,
     )
     .target_ref(failed_transaction_ref)
-    .body(json!({
-        "applet_id": applet_id,
-        "realm_id": realm_id,
-        "failed_transaction_ref": failed_transaction_ref,
-        "error_class": error_class,
-        "error_code": error_code,
-        "retriable": retriable,
-        "visibility_scope": visibility_scope,
-        "message": message,
-    }))
+    .body(body))
 }

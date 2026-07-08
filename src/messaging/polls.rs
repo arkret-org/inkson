@@ -19,6 +19,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
 use crate::operation::{OperationBuilder, uuid_v7};
+use crate::payload::{sdk_payload_value, strand_id_value};
 
 /// Whether the local UI should expose poll composer / vote controls.
 pub fn polls_enabled() -> bool {
@@ -296,18 +297,6 @@ pub fn poll_response_from_content(content: &Value) -> Option<(String, Vec<String
 
 fn content_kind(content: &Value) -> Option<&str> {
     content.get("kind").and_then(Value::as_str)
-}
-
-// YOU-02-001: these helpers return `Result` instead of panicking — the
-// realm/strand ids they parse come from server-synced UI state, and a
-// non-canonical id must not abort the client (wasm panic = blank page).
-fn sdk_payload_value(result: cokret_sdk::Result<Value>, context: &str) -> anyhow::Result<Value> {
-    result.map_err(|err| anyhow::anyhow!("{context}: {err}"))
-}
-
-fn strand_id_value(value: &str) -> anyhow::Result<cokret_sdk::StrandId> {
-    cokret_sdk::StrandId::new(value.to_owned())
-        .map_err(|err| anyhow::anyhow!("invalid strand id {value:?}: {err:?}"))
 }
 
 /// Build the canonical `poll_block` message

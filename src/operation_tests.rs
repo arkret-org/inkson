@@ -823,6 +823,7 @@ fn space_lifecycle_helpers_emit_canonical_kinds() {
         "did:web:alice.example",
         container_space_id,
     )
+    .expect("builds")
     .build("node");
     assert_eq!(archive.kind.as_str(), "ck.space.archive");
     assert_eq!(archive.content["space_id"], container_space_id);
@@ -833,6 +834,7 @@ fn space_lifecycle_helpers_emit_canonical_kinds() {
         "did:web:alice.example",
         container_space_id,
     )
+    .expect("builds")
     .build("node");
     assert_eq!(restore.kind.as_str(), "ck.space.restore");
     assert_eq!(restore.content["space_id"], container_space_id);
@@ -901,6 +903,7 @@ fn applet_helpers_emit_canonical_kinds_and_target_refs() {
         session_id,
         json!({"op": "ping"}),
     )
+    .expect("builds")
     .build("node");
     assert_eq!(start.kind.as_str(), "ck.applet.interop_session.start");
     assert_eq!(start.content["applet_id"], applet_id);
@@ -916,6 +919,7 @@ fn applet_helpers_emit_canonical_kinds_and_target_refs() {
         "running",
         json!({"progress_basis_points": 5000}),
     )
+    .expect("builds")
     .build("node");
     assert_eq!(status.kind.as_str(), "ck.applet.interop_session.status");
     assert_eq!(status.content["applet_id"], applet_id);
@@ -934,6 +938,7 @@ fn applet_helpers_emit_canonical_kinds_and_target_refs() {
         "realm_admins",
         "service did not respond",
     )
+    .expect("builds")
     .build("node");
     assert_eq!(err.kind.as_str(), "ck.applet.bridge_error");
     assert_eq!(err.content["applet_id"], applet_id);
@@ -955,8 +960,9 @@ fn agent_helpers_emit_canonical_kinds_and_target_refs() {
     let realm = "ck:realm:0196419b-0000-7000-8000-0000000000aa";
     let actor = "did:web:alice.example";
 
-    let endpoint =
-        ck_ops::agent_endpoint(realm, actor, agent, "ck.agent.v1", &["strand.read"]).build("node");
+    let endpoint = ck_ops::agent_endpoint(realm, actor, agent, "ck.agent.v1", &["strand.read"])
+        .expect("builds")
+        .build("node");
     assert_eq!(endpoint.kind.as_str(), "ck.agent.endpoint");
     assert_eq!(endpoint.content["endpoints"][0]["protocol"], "ck.agent.v1");
     assert_eq!(endpoint.local_target_ref(), Some(agent));
@@ -970,6 +976,7 @@ fn agent_helpers_emit_canonical_kinds_and_target_refs() {
         json!({"query": "summarize"}),
         "ck:grant:01904100-0000-7000-8000-000000000099",
     )
+    .expect("builds")
     .build("node");
     assert_eq!(start.kind.as_str(), "ck.agent.interop_session.start");
     assert_eq!(start.content["counterparty_agent"], agent);
@@ -982,6 +989,7 @@ fn agent_helpers_emit_canonical_kinds_and_target_refs() {
 
     let status =
         ck_ops::agent_interop_session_status(realm, actor, session_id, "working", json!({}))
+            .expect("builds")
             .build("node");
     assert_eq!(status.kind.as_str(), "ck.agent.interop_session.status");
     assert_eq!(status.content["status"], "working");
@@ -995,6 +1003,7 @@ fn agent_helpers_emit_canonical_kinds_and_target_refs() {
         json!({"summary": "TL;DR"}),
         json!({"merkle_root": "sha256:abc"}),
     )
+    .expect("builds")
     .build("node");
     assert_eq!(result.kind.as_str(), "ck.agent.interop_session.result");
     assert_eq!(result.content["status"], "completed");

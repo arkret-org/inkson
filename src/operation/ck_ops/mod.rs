@@ -13,6 +13,7 @@ use serde_json::Value;
 // Re-export them from the parent `operation` module so those `use
 // super::OperationBuilder` / `super::trim_realm_id` paths resolve unchanged.
 pub(super) use super::{OperationBuilder, trim_realm_id};
+pub(super) use crate::payload::{payload_value, sdk_payload_value, strand_id_value};
 
 // YOU-02-001: every fallible helper below returns `anyhow::Result`
 // instead of panicking. The ids these helpers parse ultimately come from
@@ -87,16 +88,9 @@ pub(super) fn circle_id_value(value: &str) -> anyhow::Result<cokret_sdk::CircleI
         .map_err(|err| anyhow::anyhow!("invalid circle id {value:?}: {err:?}"))
 }
 
-pub(super) fn strand_id_value(value: &str) -> anyhow::Result<cokret_sdk::StrandId> {
-    cokret_sdk::StrandId::new(value.to_owned())
-        .map_err(|err| anyhow::anyhow!("invalid strand id {value:?}: {err:?}"))
-}
-
-pub(super) fn sdk_payload_value(
-    result: cokret_sdk::Result<Value>,
-    context: &str,
-) -> anyhow::Result<Value> {
-    result.map_err(|err| anyhow::anyhow!("{context}: {err}"))
+pub(super) fn morph_id_value(value: &str) -> anyhow::Result<cokret_sdk::MorphId> {
+    cokret_sdk::MorphId::new(value.to_owned())
+        .map_err(|err| anyhow::anyhow!("invalid morph id {value:?}: {err:?}"))
 }
 
 pub(super) fn object_create_payload_value<T: serde::Serialize>(
@@ -116,6 +110,42 @@ pub(super) fn object_patch_payload_value(
     cokret_sdk::ObjectPatchPayload::for_target(object_ref, patch)
         .and_then(|payload| payload.to_value())
         .map_err(|err| anyhow::anyhow!("invalid object_patch_payload for {object_ref}: {err}"))
+}
+
+pub(super) fn morph_update_payload_value(
+    morph_id: &str,
+    patch: cokret_sdk::Patch,
+) -> anyhow::Result<Value> {
+    cokret_sdk::MorphUpdatePayload::for_morph(morph_id_value(morph_id)?, patch)
+        .and_then(|payload| payload.to_value())
+        .map_err(|err| anyhow::anyhow!("invalid morph_update_payload for {morph_id}: {err}"))
+}
+
+pub(super) fn space_patch_payload_value(
+    space_id: &str,
+    patch: cokret_sdk::Patch,
+) -> anyhow::Result<Value> {
+    let payload = cokret_sdk::SpacePatchPayload {
+        space_id: space_id_value(space_id)?,
+        patch,
+        expected_state_digest: None,
+    };
+    payload_value(
+        &payload,
+        &format!("invalid space_patch_payload for {space_id}"),
+    )
+}
+
+pub(super) fn space_state_transition_payload_value(space_id: &str) -> anyhow::Result<Value> {
+    let payload = cokret_sdk::SpaceStateTransitionPayload {
+        space_id: space_id_value(space_id)?,
+        reason: None,
+        effective_at: None,
+    };
+    payload_value(
+        &payload,
+        &format!("invalid space_state_transition_payload for {space_id}"),
+    )
 }
 
 pub(super) fn strand_object_patch_payload_value(
