@@ -136,6 +136,11 @@ pub fn ChatPanel(
     token: Signal<String>,
     selected_realm_id: String,
     sync_cursor: Signal<String>,
+    /// Monotonic counter bumped by the per-realm `events/subscribe` engine
+    /// when it folds fresh realm events into `raw_operations`. Chat must
+    /// observe it because cross-member discussion events can arrive through the
+    /// realm stream without advancing the account aggregate cursor.
+    realm_live_epoch: Signal<u64>,
     frontier_state: Signal<String>,
     state_store: Signal<LocalStateStore>,
     initial_strand_id: String,
@@ -995,14 +1000,15 @@ pub fn ChatPanel(
         use_effect(move || {
             let cursor = sync_cursor();
             let cursor = cursor.trim();
-            if cursor.is_empty() || cursor == "-" {
+            let live_epoch = realm_live_epoch();
+            if (cursor.is_empty() || cursor == "-") && live_epoch == 0 {
                 return;
             }
             let realm = selected_realm_for_local_timeline.trim().to_owned();
             if realm.is_empty() {
                 return;
             }
-            let sync_key = format!("{realm}|{cursor}");
+            let sync_key = format!("{realm}|{cursor}|{live_epoch}");
             if local_timeline_sync_key_seen.peek().as_str() == sync_key {
                 return;
             }

@@ -822,6 +822,178 @@ fn message_operations_from_events_folds_create_and_renders_local_first() {
 }
 
 #[test]
+fn chat_messages_read_projected_reaction_summary() {
+    let events = vec![json!({
+        "event_id": "ck:event:msg-1",
+        "kind": "ck.message.create",
+        "actor_id": "did:web:alice.example",
+        "realm_id": "ck:realm:r1",
+        "created_at": "2026-05-22T10:00:00Z",
+        "strand_id": "ck:strand:topic",
+        "message_id": "ck:message:m1",
+        "body": "hello from alice",
+        "reaction_summary": {
+            "+1": ["did:web:bob.example", "did:web:carol.example"]
+        }
+    })];
+
+    let messages = chat_messages_from_events_with_sidecar("ck:realm:r1", &events, None, None);
+
+    assert_eq!(messages.len(), 1);
+    assert_eq!(
+        messages[0].reactions,
+        vec![(
+            "+1".to_owned(),
+            vec![
+                "did:web:bob.example".to_owned(),
+                "did:web:carol.example".to_owned()
+            ],
+        )]
+    );
+}
+
+#[test]
+fn chat_messages_fold_reaction_events_by_target_ref() {
+    let events = vec![
+        json!({
+            "event_id": "ck:event:msg-1",
+            "kind": "ck.message.create",
+            "actor_id": "did:web:alice.example",
+            "realm_id": "ck:realm:r1",
+            "created_at": "2026-05-22T10:00:00Z",
+            "strand_id": "ck:strand:topic",
+            "message_id": "ck:message:m1",
+            "body": "hello from alice"
+        }),
+        json!({
+            "event_id": "ck:event:react-bob",
+            "kind": "ck.reaction.add",
+            "actor_id": "did:web:bob.example",
+            "realm_id": "ck:realm:r1",
+            "target_ref": "ck:message:m1",
+            "key": "+1"
+        }),
+        json!({
+            "event_id": "ck:event:react-carol",
+            "kind": "ck.reaction.add",
+            "actor_id": "did:web:carol.example",
+            "realm_id": "ck:realm:r1",
+            "target_ref": "ck:event:msg-1",
+            "key": "+1"
+        }),
+        json!({
+            "event_id": "ck:event:remove-bob",
+            "kind": "ck.reaction.remove",
+            "actor_id": "did:web:bob.example",
+            "realm_id": "ck:realm:r1",
+            "target_ref": "ck:message:m1",
+            "key": "+1"
+        }),
+    ];
+
+    let messages = chat_messages_from_events_with_sidecar("ck:realm:r1", &events, None, None);
+
+    assert_eq!(messages.len(), 1);
+    assert_eq!(
+        messages[0].reactions,
+        vec![("+1".to_owned(), vec!["did:web:carol.example".to_owned()])]
+    );
+
+    let records = message_operations_from_events("ck:realm:r1", &events);
+    assert_eq!(
+        records.len(),
+        4,
+        "create plus reaction add/remove events must survive raw ingest"
+    );
+    let state = ClientLocalState {
+        raw_operations: records,
+        ..ClientLocalState::default()
+    };
+    let restored = chat_messages_from_local_state_with_sidecar(&state, None, None);
+    assert_eq!(restored.len(), 1);
+    assert_eq!(
+        restored[0].reactions,
+        vec![("+1".to_owned(), vec!["did:web:carol.example".to_owned()])]
+    );
+}
+
+#[test]
+fn chat_messages_fold_projection_reaction_target_ref_over_envelope_message_id() {
+    let events = vec![
+        json!({
+            "event_id": "ck:event:create-projection",
+            "event_kind": "ck.message.create",
+            "actor_id": "did:web:alice.example",
+            "sender_actor_id": "did:web:alice.example",
+            "realm_id": "ck:realm:r1",
+            "created_at": "2026-07-08T01:44:39Z",
+            "strand_id": "ck:strand:topic",
+            "track_name": "discussion",
+            "message_id": "ck:message:envelope-create",
+            "payload": {
+                "content": {"kind": "ck.content.text", "body": "projection hello"},
+                "event_id": "ck:event:create-projection",
+                "message_id": "ck:message:canonical-target",
+                "sender": "did:web:alice.example",
+                "strand_id": "ck:strand:topic",
+                "thread_id": "ck:strand:topic",
+                "track_name": "discussion"
+            }
+        }),
+        json!({
+            "event_id": "ck:event:reaction-projection",
+            "event_kind": "ck.reaction.add",
+            "actor_id": "did:web:bob.example",
+            "sender_actor_id": "did:web:bob.example",
+            "realm_id": "ck:realm:r1",
+            "created_at": "2026-07-08T01:44:43Z",
+            "strand_id": "ck:strand:topic",
+            "track_name": "discussion",
+            "message_id": "ck:message:envelope-reaction",
+            "payload": {
+                "event_id": "ck:event:reaction-projection",
+                "key": "+1",
+                "sender": "did:web:bob.example",
+                "target_ref": "ck:message:canonical-target"
+            }
+        }),
+    ];
+
+    let messages = chat_messages_from_events_with_sidecar("ck:realm:r1", &events, None, None);
+
+    assert_eq!(messages.len(), 1);
+    assert_eq!(
+        messages[0].protocol_message_id.as_deref(),
+        Some("ck:message:canonical-target")
+    );
+    assert_eq!(
+        messages[0].reactions,
+        vec![("+1".to_owned(), vec!["did:web:bob.example".to_owned()])]
+    );
+
+    let records = message_operations_from_events("ck:realm:r1", &events);
+    assert_eq!(
+        records.len(),
+        2,
+        "message create and reaction projection frames must both survive raw ingest"
+    );
+    let state = ClientLocalState {
+        raw_operations: records,
+        ..ClientLocalState::default()
+    };
+    let restored = chat_messages_from_local_state_with_sidecar(&state, None, None);
+    assert_eq!(restored.len(), 1);
+    assert_eq!(
+        restored[0].protocol_message_id.as_deref(),
+        Some("ck:message:canonical-target")
+    );
+    assert_eq!(
+        restored[0].reactions,
+        vec![("+1".to_owned(), vec!["did:web:bob.example".to_owned()])]
+    );
+}
+
+#[test]
 fn chat_messages_fold_revision_chain_into_latest_message() {
     let events = vec![
         json!({
@@ -1120,15 +1292,21 @@ fn merge_chat_messages_keeps_newer_revision_when_older_create_arrives_late() {
     )];
     target[0].edited = true;
 
-    merge_chat_messages(
-        &mut target,
-        vec![message(
-            "ck:event:msg-2",
-            protocol_message_id,
-            "original body",
-            "2026-07-07T06:19:20Z",
-        )],
+    let mut incoming = message(
+        "ck:event:msg-2",
+        protocol_message_id,
+        "original body",
+        "2026-07-07T06:19:20Z",
     );
+    incoming.reactions = vec![(
+        "+1".to_owned(),
+        vec![
+            "did:web:bob.example".to_owned(),
+            "did:web:carol.example".to_owned(),
+        ],
+    )];
+
+    merge_chat_messages(&mut target, vec![incoming]);
 
     assert_eq!(target.len(), 1);
     assert_eq!(target[0].id, "ck:event:msg-2-rev-1");
@@ -1136,6 +1314,16 @@ fn merge_chat_messages_keeps_newer_revision_when_older_create_arrives_late() {
     assert!(target[0].edited);
     assert_eq!(target[0].revisions, vec!["original body"]);
     assert_eq!(target[0].reply_to.as_deref(), Some("ck:message:m1"));
+    assert_eq!(
+        target[0].reactions,
+        vec![(
+            "+1".to_owned(),
+            vec![
+                "did:web:bob.example".to_owned(),
+                "did:web:carol.example".to_owned()
+            ],
+        )]
+    );
 }
 
 #[test]

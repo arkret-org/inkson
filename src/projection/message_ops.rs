@@ -79,6 +79,8 @@ fn discussion_kind_is_raw_operation(kind: &str) -> bool {
         "ck.message.create"
             | "ck.message.revise"
             | "ck.message.redact"
+            | "ck.reaction.add"
+            | "ck.reaction.remove"
             | "ck.pin.add"
             | "ck.pin.remove"
             | "ck.pin.reorder"

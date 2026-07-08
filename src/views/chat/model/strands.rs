@@ -412,6 +412,44 @@ fn carry_chat_message_identity_metadata(target: &mut ChatMessage, source: &ChatM
     }
 }
 
+fn push_chat_message_reaction_member(
+    reactions: &mut Vec<(String, Vec<String>)>,
+    key: &str,
+    actor: &str,
+) {
+    if key.trim().is_empty() || actor.trim().is_empty() {
+        return;
+    }
+    if let Some((_, senders)) = reactions.iter_mut().find(|(existing, _)| existing == key) {
+        if !senders.iter().any(|sender| sender == actor) {
+            senders.push(actor.to_owned());
+        }
+    } else {
+        reactions.push((key.to_owned(), vec![actor.to_owned()]));
+    }
+}
+
+fn sort_chat_message_reactions(reactions: &mut Vec<(String, Vec<String>)>) {
+    for (_, senders) in reactions.iter_mut() {
+        senders.sort();
+        senders.dedup();
+    }
+    reactions.retain(|(_, senders)| !senders.is_empty());
+    reactions.sort_by(|left, right| left.0.cmp(&right.0));
+}
+
+fn merge_chat_message_reactions_into(target: &mut ChatMessage, source: &ChatMessage) {
+    if target.redacted {
+        return;
+    }
+    for (key, senders) in &source.reactions {
+        for sender in senders {
+            push_chat_message_reaction_member(&mut target.reactions, key, sender);
+        }
+    }
+    sort_chat_message_reactions(&mut target.reactions);
+}
+
 fn replace_chat_message_preserving_local_metadata(
     existing: &mut ChatMessage,
     mut message: ChatMessage,
@@ -440,6 +478,7 @@ fn replace_chat_message_preserving_local_metadata(
         if message.created_at.is_none() {
             message.created_at = existing.created_at.clone();
         }
+        merge_chat_message_reactions_into(&mut message, existing);
         *existing = message;
     } else {
         carry_chat_message_identity_metadata(existing, &message);
@@ -449,6 +488,7 @@ fn replace_chat_message_preserving_local_metadata(
         if existing.created_at.is_none() {
             existing.created_at = message.created_at;
         }
+        merge_chat_message_reactions_into(existing, &message);
         for revision in message.revisions {
             append_chat_message_revision_body(existing, revision);
         }

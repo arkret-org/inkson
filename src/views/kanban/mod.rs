@@ -4485,6 +4485,7 @@ pub fn KanbanPanel(
                                                             token,
                                                             selected_realm_id: selected_realm_id.clone(),
                                                             sync_cursor,
+                                                            realm_live_epoch,
                                                             frontier_state,
                                                             state_store,
                                                             initial_strand_id: card.primary_strand_id.clone(),

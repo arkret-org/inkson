@@ -235,6 +235,195 @@ fn apply_message_redactions(messages: &mut [ChatMessage], events: &[Value]) {
     }
 }
 
+fn push_reaction_member(reactions: &mut Vec<(String, Vec<String>)>, key: &str, actor: &str) {
+    let key = key.trim();
+    let actor = actor.trim();
+    if key.is_empty() || actor.is_empty() {
+        return;
+    }
+    if let Some((_, senders)) = reactions.iter_mut().find(|(existing, _)| existing == key) {
+        if !senders.iter().any(|existing| existing == actor) {
+            senders.push(actor.to_owned());
+        }
+    } else {
+        reactions.push((key.to_owned(), vec![actor.to_owned()]));
+    }
+}
+
+fn remove_reaction_member(reactions: &mut Vec<(String, Vec<String>)>, key: &str, actor: &str) {
+    let key = key.trim();
+    let actor = actor.trim();
+    if key.is_empty() || actor.is_empty() {
+        return;
+    }
+    if let Some((_, senders)) = reactions.iter_mut().find(|(existing, _)| existing == key) {
+        senders.retain(|existing| existing != actor);
+    }
+    reactions.retain(|(_, senders)| !senders.is_empty());
+}
+
+fn sort_reactions(reactions: &mut Vec<(String, Vec<String>)>) {
+    for (_, senders) in reactions.iter_mut() {
+        senders.sort();
+        senders.dedup();
+    }
+    reactions.retain(|(_, senders)| !senders.is_empty());
+    reactions.sort_by(|left, right| left.0.cmp(&right.0));
+}
+
+fn reaction_actor_from_value(value: &Value) -> Option<&str> {
+    value
+        .as_str()
+        .or_else(|| value_string_at(value, &["actor", "actor_id", "sender", "sender_actor_id"]))
+}
+
+fn push_reaction_summary_value(reactions: &mut Vec<(String, Vec<String>)>, value: &Value) {
+    if let Some(object) = value.as_object() {
+        for (key, members_value) in object {
+            let members = members_value
+                .as_array()
+                .or_else(|| members_value.get("members").and_then(Value::as_array));
+            let Some(members) = members else {
+                continue;
+            };
+            for member in members {
+                if let Some(actor) = reaction_actor_from_value(member) {
+                    push_reaction_member(reactions, key, actor);
+                }
+            }
+        }
+        return;
+    }
+
+    if let Some(items) = value.as_array() {
+        for item in items {
+            let Some(key) = value_string_at(item, &["key", "reaction", "reaction_key"]) else {
+                continue;
+            };
+            let Some(members) = item.get("members").and_then(Value::as_array) else {
+                continue;
+            };
+            for member in members {
+                if let Some(actor) = reaction_actor_from_value(member) {
+                    push_reaction_member(reactions, key, actor);
+                }
+            }
+        }
+    }
+}
+
+fn push_reaction_list_value(reactions: &mut Vec<(String, Vec<String>)>, value: &Value) {
+    let Some(items) = value.as_array() else {
+        return;
+    };
+    for item in items {
+        if item.get("active").and_then(Value::as_bool) == Some(false) {
+            continue;
+        }
+        let Some(key) = value_string_at(item, &["key", "reaction", "reaction_key"]) else {
+            continue;
+        };
+        let Some(actor) =
+            value_string_at(item, &["actor", "actor_id", "sender", "sender_actor_id"])
+        else {
+            continue;
+        };
+        push_reaction_member(reactions, key, actor);
+    }
+}
+
+fn reactions_from_candidates(candidates: &[&Value]) -> Vec<(String, Vec<String>)> {
+    let mut reactions = Vec::new();
+    for candidate in candidates {
+        if let Some(summary) = candidate.get("reaction_summary") {
+            push_reaction_summary_value(&mut reactions, summary);
+        }
+        if let Some(items) = candidate.get("reactions") {
+            push_reaction_list_value(&mut reactions, items);
+        }
+    }
+    sort_reactions(&mut reactions);
+    reactions
+}
+
+#[derive(Clone, Debug)]
+struct ReactionMarker {
+    target_ref: String,
+    key: String,
+    actor: String,
+    active: bool,
+}
+
+fn reaction_marker_from_event(event: &Value) -> Option<ReactionMarker> {
+    let candidates = message_candidates(event);
+    let kind = candidates.iter().find_map(|candidate| {
+        value_string_at(
+            candidate,
+            &["kind", "event_kind", "type", "op_type", "event_type"],
+        )
+    })?;
+    let active = match kind {
+        "ck.reaction.add" => true,
+        "ck.reaction.remove" => false,
+        _ => return None,
+    };
+    let target_ref = first_string_in_candidates(
+        &candidates,
+        &[
+            "target_ref",
+            "target_event_id",
+            "target",
+            "target_message_id",
+        ],
+    )?
+    .trim();
+    if target_ref.is_empty() {
+        return None;
+    }
+    let key = first_string_in_candidates(&candidates, &["key", "reaction", "reaction_key"])?.trim();
+    if key.is_empty() {
+        return None;
+    }
+    let actor = first_string_in_candidates(
+        &candidates,
+        &["actor_id", "sender_actor_id", "actor", "sender"],
+    )?
+    .trim();
+    if actor.is_empty() {
+        return None;
+    }
+    Some(ReactionMarker {
+        target_ref: target_ref.to_owned(),
+        key: key.to_owned(),
+        actor: actor.to_owned(),
+        active,
+    })
+}
+
+fn apply_reaction_marker_to_messages(messages: &mut [ChatMessage], marker: &ReactionMarker) {
+    let Some(message) = messages
+        .iter_mut()
+        .find(|message| message_matches_target_ref(message, &marker.target_ref))
+    else {
+        return;
+    };
+    if message.redacted {
+        return;
+    }
+    if marker.active {
+        push_reaction_member(&mut message.reactions, &marker.key, &marker.actor);
+    } else {
+        remove_reaction_member(&mut message.reactions, &marker.key, &marker.actor);
+    }
+    sort_reactions(&mut message.reactions);
+}
+
+fn apply_reaction_markers(messages: &mut [ChatMessage], events: &[Value]) {
+    for marker in events.iter().filter_map(reaction_marker_from_event) {
+        apply_reaction_marker_to_messages(messages, &marker);
+    }
+}
+
 fn message_revision_target_ref_from_candidates(candidates: &[&Value]) -> Option<String> {
     candidates
         .iter()
@@ -332,6 +521,30 @@ fn message_created_at_from_candidates(
         .map(|timestamp| timestamp.with_timezone(&chrono::Utc))
 }
 
+fn message_protocol_message_id_from_candidates(candidates: &[&Value]) -> Option<String> {
+    if let Some(message_id) = candidates
+        .iter()
+        .filter(|candidate| message_kind_is_create(candidate) || message_kind_is_revise(candidate))
+        .find_map(|candidate| {
+            candidate
+                .get("payload")
+                .filter(|payload| payload.is_object())
+                .and_then(|payload| value_string_at(payload, &["message_id"]))
+        })
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    {
+        return Some(message_id.to_owned());
+    }
+    candidates
+        .iter()
+        .rev()
+        .find_map(|candidate| value_string_at(candidate, &["message_id"]))
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToOwned::to_owned)
+}
+
 fn message_protocol_ids_match(left: &ChatMessage, right: &ChatMessage) -> bool {
     let Some(left_id) = left
         .protocol_message_id
@@ -361,6 +574,18 @@ fn carry_create_metadata(target: &mut ChatMessage, source: &ChatMessage) {
     }
 }
 
+fn merge_reactions_into(target: &mut ChatMessage, source: &ChatMessage) {
+    if target.redacted {
+        return;
+    }
+    for (key, senders) in &source.reactions {
+        for sender in senders {
+            push_reaction_member(&mut target.reactions, key, sender);
+        }
+    }
+    sort_reactions(&mut target.reactions);
+}
+
 fn merge_duplicate_create_message(existing: &mut ChatMessage, mut incoming: ChatMessage) {
     if existing.redacted && !incoming.redacted {
         carry_create_metadata(existing, &incoming);
@@ -376,6 +601,7 @@ fn merge_duplicate_create_message(existing: &mut ChatMessage, mut incoming: Chat
             incoming.revisions = std::mem::take(&mut existing.revisions);
         }
         append_revision_body(&mut incoming, existing.body.clone());
+        merge_reactions_into(&mut incoming, existing);
         *existing = incoming;
     } else {
         carry_create_metadata(existing, &incoming);
@@ -385,6 +611,7 @@ fn merge_duplicate_create_message(existing: &mut ChatMessage, mut incoming: Chat
         if existing.created_at.is_none() {
             existing.created_at = incoming.created_at;
         }
+        merge_reactions_into(existing, &incoming);
         for revision in incoming.revisions {
             append_revision_body(existing, revision);
         }
@@ -438,6 +665,7 @@ fn chat_messages_from_event_list_with_sidecar(
         }
     }
     apply_message_redactions(&mut messages, events);
+    apply_reaction_markers(&mut messages, events);
     messages
 }
 
@@ -732,7 +960,7 @@ pub(crate) fn chat_message_from_event_with_sidecar(
         None
     } else {
         state_store.and_then(|store| {
-            let message_id = first_string_in_candidates(&candidates, &["message_id"])?;
+            let message_id = message_protocol_message_id_from_candidates(&candidates)?;
             let strand_id = first_string_in_candidates(&candidates, &["strand_id", "thread_id"])?;
             store.private_plaintext_for(message_realm, strand_id, &format!("message:{message_id}"))
         })
@@ -794,10 +1022,7 @@ pub(crate) fn chat_message_from_event_with_sidecar(
         .or_else(|| first_string_in_candidates(&candidates, &["event_id", "message_id", "id"]))
         .unwrap_or("event:unknown")
         .to_owned();
-    let protocol_message_id = first_string_in_candidates(&candidates, &["message_id"])
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .map(ToOwned::to_owned);
+    let protocol_message_id = message_protocol_message_id_from_candidates(&candidates);
     let strand_id = first_string_in_candidates(&candidates, &["strand_id", "thread_id"])
         .or_else(|| {
             event
@@ -873,6 +1098,11 @@ pub(crate) fn chat_message_from_event_with_sidecar(
     } else {
         MessageCryptoState::Plaintext
     };
+    let reactions = if is_redaction_tombstone {
+        Vec::new()
+    } else {
+        reactions_from_candidates(&candidates)
+    };
     Some(ChatMessage {
         realm_id: first_string_in_candidates(&candidates, &["realm_id"])
             .unwrap_or(realm_id)
@@ -895,7 +1125,7 @@ pub(crate) fn chat_message_from_event_with_sidecar(
         strand_id,
         reply_to: first_string_in_candidates(&candidates, &["reply_to", "thread_id"])
             .map(ToOwned::to_owned),
-        reactions: Vec::new(),
+        reactions,
         redacted: is_redaction_tombstone,
         edited: false,
         revisions: Vec::new(),
@@ -926,9 +1156,9 @@ pub(crate) fn chat_messages_from_events_with_sidecar(
 /// Canonical `ck.message.create` events (and their server-folded redaction /
 /// expiry tombstone forms, which reuse the same kind + `event_id`) are kept.
 /// Shared `ck.pin.*` control events are kept in the same discussion log so the
-/// pinned-message bar projects from the same local-first source. Poll responses
-/// / moderation / reactions have their own projections and are deliberately
-/// excluded. The FULL event is stored as the record
+/// pinned-message bar and reaction summary project from the same local-first
+/// source. Poll responses / moderation prompts have their own projections and
+/// are deliberately excluded. The FULL event is stored as the record
 /// payload so the receiver-proof gate, the `encrypted_content` ciphertext, and
 /// the tombstone markers all survive into the local-first render path — the
 /// decrypted plaintext is NEVER stored here (it stays in the author sidecar /
