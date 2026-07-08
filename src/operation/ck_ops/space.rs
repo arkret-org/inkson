@@ -58,7 +58,10 @@ pub fn space_restore(
         cokret_sdk::events::kinds::EventKind::SpaceRestore,
     )
     .target_ref(container_space_id)
-    .body(space_state_transition_payload_value(container_space_id)?))
+    .body(space_state_transition_payload_value(
+        container_space_id,
+        cokret_sdk::ObjectState::Active,
+    )?))
 }
 
 /// Build a `ck.space.update` patch operation for structural Space

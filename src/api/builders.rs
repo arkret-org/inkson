@@ -671,20 +671,23 @@ pub fn build_space_lifecycle_event(
         .map_err(|err| anyhow::anyhow!("invalid space id {space_id:?}: {err}"))?;
     let body = match &kind {
         EventKind::SpaceArchive | EventKind::SpaceRestore => {
+            let new_state = match &kind {
+                EventKind::SpaceArchive => cokret_sdk::ObjectState::Archived,
+                EventKind::SpaceRestore => cokret_sdk::ObjectState::Active,
+                _ => unreachable!("unsupported Space lifecycle kind was rejected above"),
+            };
             serde_json::to_value(cokret_sdk::SpaceStateTransitionPayload {
-                space_id: space_id_typed,
+                space_id: space_id_typed.clone(),
+                new_state,
                 reason: None,
-                effective_at: None,
             })
             .map_err(|err| anyhow::anyhow!("space state transition payload: {err}"))?
         }
         EventKind::SpaceTombstone => {
             serde_json::to_value(cokret_sdk::SpaceObjectTombstonePayload {
                 space_id: space_id_typed,
-                reason: None,
-                replacement_space: None,
-                replacement_event: None,
-                effective_at: None,
+                tombstone_reason: "user_requested".to_owned(),
+                successor_space_id: None,
             })
             .map_err(|err| anyhow::anyhow!("space object tombstone payload: {err}"))?
         }

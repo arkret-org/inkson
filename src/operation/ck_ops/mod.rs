@@ -116,7 +116,7 @@ pub(super) fn morph_update_payload_value(
     morph_id: &str,
     patch: cokret_sdk::Patch,
 ) -> anyhow::Result<Value> {
-    cokret_sdk::MorphUpdatePayload::for_morph(morph_id_value(morph_id)?, patch)
+    cokret_sdk::ObjectPatchPayload::for_target(morph_id_value(morph_id)?.as_str(), patch)
         .and_then(|payload| payload.to_value())
         .map_err(|err| anyhow::anyhow!("invalid morph_update_payload for {morph_id}: {err}"))
 }
@@ -136,11 +136,14 @@ pub(super) fn space_patch_payload_value(
     )
 }
 
-pub(super) fn space_state_transition_payload_value(space_id: &str) -> anyhow::Result<Value> {
+pub(super) fn space_state_transition_payload_value(
+    space_id: &str,
+    new_state: cokret_sdk::ObjectState,
+) -> anyhow::Result<Value> {
     let payload = cokret_sdk::SpaceStateTransitionPayload {
         space_id: space_id_value(space_id)?,
+        new_state,
         reason: None,
-        effective_at: None,
     };
     payload_value(
         &payload,

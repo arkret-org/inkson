@@ -37,10 +37,10 @@ pub fn build_morph_create(
 /// Build a `ck.morph.update` operation. `patch` is a JSON object of fields to
 /// set/replace; the reducer applies these against the existing Morph state.
 ///
-/// `ck.morph.update` uses `morph_update_payload`
+/// `ck.morph.update` uses the shared object patch payload shape
 /// (`required:["target_ref","patch"]`, `additionalProperties:false`): the
 /// target Morph is single-sourced by `target_ref`, and forbidden patch paths
-/// such as `morph_type` / `stage` are rejected by the SDK strong type.
+/// such as `morph_type` / `stage` are rejected by the SDK patch type.
 pub fn build_morph_update(
     realm_id: &str,
     actor: &str,
@@ -49,9 +49,7 @@ pub fn build_morph_update(
 ) -> anyhow::Result<OperationBuilder> {
     let patch: cokret_sdk::Patch = serde_json::from_value(patch)
         .map_err(|err| anyhow::anyhow!("ck.morph.update patch must match ck.patch.v1: {err}"))?;
-    let morph_id_typed = cokret_sdk::MorphId::new(morph_id.to_owned())
-        .map_err(|err| anyhow::anyhow!("invalid morph id {morph_id:?}: {err}"))?;
-    let body = cokret_sdk::MorphUpdatePayload::for_morph(morph_id_typed, patch)
+    let body = cokret_sdk::ObjectPatchPayload::for_target(morph_id, patch)
         .and_then(|payload| payload.to_value())
         .map_err(|err| anyhow::anyhow!("invalid morph_update_payload: {err}"))?;
     Ok(OperationBuilder::new(

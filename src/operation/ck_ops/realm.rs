@@ -26,7 +26,10 @@ pub fn realm_archive(
         cokret_sdk::events::kinds::EventKind::SpaceArchive,
     )
     .target_ref(container_space_id)
-    .body(space_state_transition_payload_value(container_space_id)?))
+    .body(space_state_transition_payload_value(
+        container_space_id,
+        cokret_sdk::ObjectState::Archived,
+    )?))
 }
 
 /// Build a `ck.message.revise` operation carrying the replacement content
