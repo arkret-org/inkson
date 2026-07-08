@@ -1,20 +1,11 @@
 //! Server error-envelope classification for the self-API client:
 //! session-loss / device-authorization / cursor / frontier / rate-limit /
-//! visibility-policy predicates, the account-subscribe network gate and
-//! reconnect/snapshot result types, the `wait_for` sync-token normalizer, and
-//! the blob-presign error class. Structural move out of `api/mod.rs` with no
-//! logic change; re-exported from the parent module so existing
-//! `crate::api::*` / sibling `super::*` paths resolve unchanged.
+//! visibility-policy predicates, the `wait_for` sync-token normalizer, and the
+//! blob-presign error class. Structural move out of `api/mod.rs` with no logic
+//! change; re-exported from the parent module so existing `crate::api::*` /
+//! sibling `super::*` paths resolve unchanged.
 
 use super::*;
-
-pub(crate) const DEFAULT_ACCOUNT_SUBSCRIBE_RECONNECT_AFTER_MS: u64 = 5_000;
-
-/// Browser `fetch` cannot reliably abort the long-poll once reqwest has handed
-/// it to the platform. Keep account-subscribe network calls globally serial so
-/// duplicate UI tasks cannot leave multiple pending long-polls in DevTools.
-pub(crate) static ACCOUNT_SUBSCRIBE_NETWORK_GATE: LazyLock<Mutex<()>> =
-    LazyLock::new(|| Mutex::new(()));
 
 fn api_error_status_and_envelope(error: &anyhow::Error) -> Option<(StatusCode, &ErrorEnvelope)> {
     if let Some(api_error) = error.downcast_ref::<CokretApiError>() {
@@ -36,42 +27,6 @@ fn api_error_status_and_envelope(error: &anyhow::Error) -> Option<(StatusCode, &
 pub(crate) fn is_endpoint_absent(error: &anyhow::Error) -> bool {
     api_error_status_and_envelope(error).is_some_and(|(status, _)| status == StatusCode::NOT_FOUND)
 }
-
-#[derive(Clone, Debug)]
-pub enum AccountSubscribeSnapshotResult {
-    Delta(Box<ClientSyncOutcome>),
-    ReconnectAfter {
-        reconnect_after_ms: u64,
-        reason: Option<String>,
-        reset_cursor: bool,
-    },
-}
-
-#[derive(Clone, Debug)]
-pub struct AccountSubscribeReconnectAfter {
-    pub reconnect_after_ms: u64,
-    pub reason: Option<String>,
-    pub reset_cursor: bool,
-}
-
-impl fmt::Display for AccountSubscribeReconnectAfter {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self.reason.as_deref() {
-            Some(reason) => write!(
-                f,
-                "account subscribe requested reconnect after {} ms: {}",
-                self.reconnect_after_ms, reason
-            ),
-            None => write!(
-                f,
-                "account subscribe requested reconnect after {} ms",
-                self.reconnect_after_ms
-            ),
-        }
-    }
-}
-
-impl std::error::Error for AccountSubscribeReconnectAfter {}
 
 /// True when the server has *definitively* told us the session is dead.
 ///

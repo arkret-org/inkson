@@ -1,7 +1,7 @@
 use std::collections::BTreeMap;
 use std::fmt::{self, Write};
+use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, LazyLock};
 use std::time::Duration;
 
 use chime::{
@@ -12,7 +12,7 @@ use cokret_sdk::ErrorEnvelope;
 use reqwest::{Client, StatusCode};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
-use tokio::sync::{Mutex, OnceCell, RwLock};
+use tokio::sync::{OnceCell, RwLock};
 use url::Url;
 
 /// A token that can be used to cancel in-flight API requests.
@@ -87,8 +87,8 @@ impl Default for CancellationToken {
 use crate::config::validate_server_url;
 use crate::identity_handle::parse_user_handle;
 use crate::models::{
-    AccountDataSetResult, AuthzCheckOutcome, BackfillView, BlobUploadOutcome, ClientSyncOutcome,
-    ContactListView, CurrentAccount, DeviceMessagesAckOutcome, DeviceMessagesAckRequestBody,
+    AccountDataSetResult, AuthzCheckOutcome, BackfillView, BlobUploadOutcome, ContactListView,
+    CurrentAccount, DeviceMessagesAckOutcome, DeviceMessagesAckRequestBody,
     DeviceMessagesGetOutcome, DeviceMessagesSendOutcome, DeviceTrustView, DirectoryDescription,
     GrantList, IdentityDescribeOutcome, IdentityResolveOutcome, IndexSearchView, KeysClaimOutcome,
     KeysQueryOutcome, KeysUploadOutcome, MediaIceConfigOutcome, MediaIceConfigRequestBody,

@@ -1,9 +1,54 @@
-use serde_json::Value;
+use std::fmt;
+use std::sync::LazyLock;
 
-#[cfg(test)]
-use crate::api::AccountSubscribeReconnectAfter;
-use crate::api::{AccountSubscribeSnapshotResult, DEFAULT_ACCOUNT_SUBSCRIBE_RECONNECT_AFTER_MS};
+use serde_json::Value;
+use tokio::sync::Mutex;
+
 use crate::models::ClientSyncOutcome;
+
+pub(crate) const DEFAULT_ACCOUNT_SUBSCRIBE_RECONNECT_AFTER_MS: u64 = 5_000;
+
+/// Browser `fetch` cannot reliably abort the long-poll once reqwest has handed
+/// it to the platform. Keep account-subscribe network calls globally serial so
+/// duplicate UI tasks cannot leave multiple pending long-polls in DevTools.
+pub(crate) static ACCOUNT_SUBSCRIBE_NETWORK_GATE: LazyLock<Mutex<()>> =
+    LazyLock::new(|| Mutex::new(()));
+
+#[derive(Clone, Debug)]
+pub enum AccountSubscribeSnapshotResult {
+    Delta(Box<ClientSyncOutcome>),
+    ReconnectAfter {
+        reconnect_after_ms: u64,
+        reason: Option<String>,
+        reset_cursor: bool,
+    },
+}
+
+#[derive(Clone, Debug)]
+pub struct AccountSubscribeReconnectAfter {
+    pub reconnect_after_ms: u64,
+    pub reason: Option<String>,
+    pub reset_cursor: bool,
+}
+
+impl fmt::Display for AccountSubscribeReconnectAfter {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self.reason.as_deref() {
+            Some(reason) => write!(
+                f,
+                "account subscribe requested reconnect after {} ms: {}",
+                self.reconnect_after_ms, reason
+            ),
+            None => write!(
+                f,
+                "account subscribe requested reconnect after {} ms",
+                self.reconnect_after_ms
+            ),
+        }
+    }
+}
+
+impl std::error::Error for AccountSubscribeReconnectAfter {}
 
 pub fn parse_sync(value: Value) -> anyhow::Result<ClientSyncOutcome> {
     Ok(serde_json::from_value(value)?)
