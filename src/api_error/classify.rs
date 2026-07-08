@@ -1,14 +1,12 @@
 //! Server error-envelope classification for the self-API client:
 //! session-loss / device-authorization / cursor / frontier / rate-limit /
 //! visibility-policy predicates, the `wait_for` sync-token normalizer, and the
-//! blob-presign error class. Structural move out of `api/mod.rs` with no logic
-//! change; re-exported from the parent module so existing `crate::api::*` /
-//! sibling `super::*` paths resolve unchanged.
+//! blob-presign error class.
 
 use cokret_sdk::ErrorEnvelope;
 use reqwest::StatusCode;
 
-use crate::api_error::api_error_status_and_envelope;
+use super::api_error_status_and_envelope;
 
 /// True when a discovery probe failed because the endpoint does not exist on
 /// this server — i.e. the routing layer returned `404 unrecognized_endpoint`

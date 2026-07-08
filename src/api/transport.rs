@@ -4,6 +4,7 @@
 //! module now only holds the host-facing state needed to build that client.
 
 use super::*;
+use crate::api_error::normalize_wait_for_sync_token;
 
 impl CokretApi {
     pub fn new(base_url: &str) -> anyhow::Result<Self> {

@@ -3,6 +3,10 @@ use reqwest::StatusCode;
 use serde::Deserialize;
 use serde_json::Value;
 
+mod classify;
+
+pub use classify::*;
+
 #[derive(Clone, Debug, thiserror::Error)]
 #[error("Cokret API returned {status}: {error}")]
 pub struct CokretApiError {

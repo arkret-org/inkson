@@ -224,12 +224,6 @@ mod blob_resumable;
 mod builders;
 mod circle;
 mod directory;
-// Structural split: server error-envelope classifiers, account-subscribe gate /
-// reconnect result types, the `wait_for` normalizer, and the blob-presign error
-// class moved out of this file into `error_classify` (move only). The glob
-// re-export keeps the `crate::api::*` public paths and sibling/tests `use
-// super::*` resolution unchanged.
-mod error_classify;
 // Structural split: ephemeral / durable envelope builders + submit-acceptance
 // helpers moved out of this file into `ephemeral` (move only).
 mod ephemeral;
@@ -267,7 +261,6 @@ mod tests;
 pub use authed::*;
 pub use builders::*;
 pub use ephemeral::*;
-pub use error_classify::*;
 pub(crate) use http_helpers::*;
 pub(crate) use mls::{generate_mls_claim_nonce, keypackage_claim_record_to_mls_record};
 pub(crate) use request_helpers::*;

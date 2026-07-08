@@ -6,7 +6,8 @@ use dioxus_router::hooks::*;
 use dioxus_router::{Link, Navigator, Outlet, Router};
 use serde_json::Value;
 
-use crate::api::{CokretApi, is_auth_expired_error};
+use crate::api::CokretApi;
+use crate::api_error::is_auth_expired_error;
 use crate::components::{SecurityStateBadge, UiIcon};
 use crate::config::{ClientConfig, LocalConfigStore, normalize_device_id, normalize_server_url};
 use crate::conformance::{

@@ -1,5 +1,8 @@
 use super::*;
-use crate::api::is_auth_expired_error;
+use crate::api_error::{
+    is_auth_expired_error, is_plaintext_visibility_policy_error, is_space_membership_denied_error,
+    is_terminal_session_grant_error,
+};
 use crate::payload::{sdk_payload_value, strand_id_value};
 
 pub(crate) const CHAT_PRIVATE_SAVED_COLLECTION_TITLE: &str = "Saved";
@@ -522,7 +525,7 @@ pub(crate) async fn submit_chat_operation_with_auth_refresh(
     match first {
         Ok(response) => Ok(response),
         Err(error) if is_auth_expired_error(&error) => {
-            if crate::api::is_terminal_session_grant_error(&error) {
+            if is_terminal_session_grant_error(&error) {
                 crate::session::invalidate_current_session("session grant is no longer active");
                 return Err(error);
             }

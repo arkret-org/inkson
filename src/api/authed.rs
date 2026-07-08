@@ -6,7 +6,8 @@
 //! calls — consumed by `sync_engine`, `bootstrap`, `mls` admission and every
 //! view — so it lives in the `api` layer, not under `views/`.
 
-use super::{CokretApi, is_auth_expired_error, is_terminal_session_grant_error};
+use super::CokretApi;
+use crate::api_error::{is_auth_expired_error, is_terminal_session_grant_error};
 
 /// Create an authenticated API client from a base URL and optional session credential.
 pub fn authed_api(base_url: &str, session_credential: String) -> anyhow::Result<CokretApi> {
@@ -119,7 +120,7 @@ impl ApiCallError {
     }
 
     /// The underlying error, regardless of classification, so callers can run
-    /// wire-code predicates (e.g. [`crate::api::is_device_not_authorized_error`])
+    /// wire-code predicates (e.g. [`crate::api_error::is_device_not_authorized_error`])
     /// against it.
     pub fn inner(&self) -> &anyhow::Error {
         match self {

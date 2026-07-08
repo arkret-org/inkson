@@ -1,4 +1,5 @@
 use super::*;
+use crate::api_error::AuditPostError;
 
 impl CokretApi {
     pub async fn report_moderation(

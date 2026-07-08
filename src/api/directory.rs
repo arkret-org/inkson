@@ -1,4 +1,5 @@
 use super::*;
+use crate::api_error::is_snapshot_unavailable_error;
 use crate::models::ServerDescriptionExt;
 
 #[derive(Clone, Debug, PartialEq)]

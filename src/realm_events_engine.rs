@@ -40,9 +40,8 @@ use cokret_sdk::EventsSubscribeFrameKind;
 use dioxus::prelude::*;
 use serde_json::Value;
 
-use crate::api::{
-    is_auth_expired_error, is_invalid_cursor_error, rate_limited_retry_after, sleep_for,
-};
+use crate::api::sleep_for;
+use crate::api_error::{is_auth_expired_error, is_invalid_cursor_error, rate_limited_retry_after};
 use crate::config::MultiProfileConfig;
 use crate::local_state::LocalStateStore;
 

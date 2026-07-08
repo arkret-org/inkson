@@ -1,7 +1,7 @@
 use reqwest::StatusCode;
 
 use super::super::*;
-use crate::api_error::{CokretApiError, decode_cokret_error};
+use crate::api_error::{CokretApiError, decode_cokret_error, is_endpoint_absent};
 use crate::wire_helpers::{
     blob_download_url_for, events_query_path, events_subscribe_path, path_component,
     query_component, safe_blob_filename_header,

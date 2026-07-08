@@ -1,7 +1,10 @@
 use reqwest::StatusCode;
 
-use super::super::*;
-use crate::api_error::{CokretApiError, decode_cokret_error};
+use crate::api_error::{
+    CokretApiError, decode_cokret_error, is_auth_expired_error, is_device_not_authorized_error,
+    is_invalid_cursor_error, is_plaintext_visibility_policy_error, is_snapshot_unavailable_error,
+    is_space_membership_denied_error, is_terminal_session_grant_error, rate_limited_retry_after,
+};
 
 fn sdk_api_error(status: StatusCode, body: &'static [u8]) -> anyhow::Error {
     cokret_sdk::Error::Api {

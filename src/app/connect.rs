@@ -1,7 +1,7 @@
 use std::future::Future;
 
 use super::*;
-use crate::api::is_terminal_session_grant_error;
+use crate::api_error::{is_auth_expired_error, is_terminal_session_grant_error};
 
 /// Project the SDK `AuthzInviteList.invites` (typed `Invite` rows) into the
 /// `Vec<serde_json::Value>` shape the bootstrap invite-notification pipeline

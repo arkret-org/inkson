@@ -38,9 +38,10 @@ use cokret_client::{ClientEvent, ClientEventSink, DecodedInbound, InboundDecoder
 use dioxus::prelude::*;
 use serde_json::{Value, json};
 
-use crate::api::{
-    CokretApi, MAX_RETRY_DELAY, is_auth_expired_error, is_invalid_cursor_error,
-    is_stale_frontier_error, is_terminal_session_grant_error, rate_limited_retry_after, sleep_for,
+use crate::api::{CokretApi, MAX_RETRY_DELAY, sleep_for};
+use crate::api_error::{
+    is_auth_expired_error, is_invalid_cursor_error, is_stale_frontier_error,
+    is_terminal_session_grant_error, rate_limited_retry_after,
 };
 use crate::config::MultiProfileConfig;
 use crate::local_state::{LocalSealView, LocalStateStore, RawOperationRecord};

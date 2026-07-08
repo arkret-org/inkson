@@ -257,10 +257,10 @@ impl LocalStateStore {
             });
             match api.post_audit_user_action(payload).await {
                 Ok(()) => sent += 1,
-                Err(crate::api::AuditPostError::NotWired) => {
+                Err(crate::api_error::AuditPostError::NotWired) => {
                     deferred.push(entry);
                 }
-                Err(crate::api::AuditPostError::Other(_)) => {
+                Err(crate::api_error::AuditPostError::Other(_)) => {
                     // Best-effort — drop the entry rather than
                     // ballooning the buffer when the server is
                     // misbehaving.

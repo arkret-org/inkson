@@ -63,8 +63,8 @@ fn audit_post_error_display_and_classification() {
     // The typed error variants are how callers branch between
     // "re-buffer" and "drop" - the strings here drive operator-facing
     // copy and are part of the contract.
-    let not_wired = crate::api::AuditPostError::NotWired;
+    let not_wired = crate::api_error::AuditPostError::NotWired;
     assert!(not_wired.to_string().contains("404"));
-    let other = crate::api::AuditPostError::Other("conn refused".to_owned());
+    let other = crate::api_error::AuditPostError::Other("conn refused".to_owned());
     assert!(other.to_string().contains("conn refused"));
 }

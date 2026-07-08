@@ -5,8 +5,7 @@ use yougen::account_data::{
     AccountDataKey, ContactRemark, RealmRemark, contact_remark_account_data_key,
     realm_remark_account_data_key,
 };
-use yougen::api::is_auth_expired_error;
-use yougen::api_error::{CokretApiError, decode_cokret_error};
+use yougen::api_error::{CokretApiError, decode_cokret_error, is_auth_expired_error};
 use yougen::config::{ClientConfig, LocalConfigStore};
 use yougen::models::ServerDescriptionExt;
 use yougen::operation::OperationBuilder;

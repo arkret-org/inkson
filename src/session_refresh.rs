@@ -593,7 +593,7 @@ fn is_grant_dead_error(error: &anyhow::Error) -> bool {
     // deployment, proxy route miss, clock skew, or temporary Account Authority
     // outage; treating it as logout causes the UI to throw away recoverable
     // session material.
-    if crate::api::is_terminal_session_grant_error(error) {
+    if crate::api_error::is_terminal_session_grant_error(error) {
         return true;
     }
     if let Some(api_error) = error.downcast_ref::<crate::api_error::CokretApiError>() {

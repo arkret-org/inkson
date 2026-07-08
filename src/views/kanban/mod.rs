@@ -1366,7 +1366,7 @@ pub fn KanbanPanel(
                         Ok(value) => value,
                         Err(error) => {
                             if let Some(retry_after_ms) =
-                                crate::api::rate_limited_retry_after(error.inner())
+                                crate::api_error::rate_limited_retry_after(error.inner())
                             {
                                 tracing::warn!(
                                     target: "mls_sidecar_restore",

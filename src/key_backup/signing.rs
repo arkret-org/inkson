@@ -352,7 +352,7 @@ pub async fn fetch_key_backup_with_active_unlock_proof(
     {
         Ok(backup) => backup,
         Err(error) => {
-            if let Some(retry_after_ms) = crate::api::rate_limited_retry_after(&error) {
+            if let Some(retry_after_ms) = crate::api_error::rate_limited_retry_after(&error) {
                 note_key_backup_unlock_backoff(&backoff_scope, retry_after_ms);
             }
             return Err(error);

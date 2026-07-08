@@ -5,9 +5,8 @@ use dioxus_primitives::checkbox::CheckboxState;
 use dioxus_router::hooks::use_navigator;
 use serde_json::{Value, json};
 
-use crate::api::{
-    CokretApi, is_plaintext_visibility_policy_error, is_space_membership_denied_error,
-};
+use crate::api::CokretApi;
+use crate::api_error::is_space_membership_denied_error;
 use crate::audit::build_audit_ryw_receipt;
 use crate::components::{HelpTip, SecurityStateBadge, SelfAttributionBadge, UiIcon};
 use crate::hlc::{Hlc, observe_seq};

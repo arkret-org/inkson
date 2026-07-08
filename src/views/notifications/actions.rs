@@ -14,7 +14,8 @@ use super::model::{
     joined_realm_ids, merge_invite_notifications, notification_id_for_dedupe,
     raw_notifications_from_sources, read_cursor_targets, realm_title_hints_from_values,
 };
-use crate::api::{CokretApi, is_auth_expired_error};
+use crate::api::CokretApi;
+use crate::api_error::is_auth_expired_error;
 use crate::local_state::LocalStateStore;
 use crate::notification_rules::{dnd_settings_from_account_data, push_rules_from_account_data};
 use crate::views::helpers::{short_protocol_id, with_authed_api};

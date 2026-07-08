@@ -13,7 +13,7 @@ use super::helpers::{
     parse_seed_members, plaintext_services_for_policy, policy_combination_hint,
 };
 use super::model::{NEW_REALM_STEPS, NewRealmStep};
-use crate::api::is_auth_expired_error;
+use crate::api_error::is_auth_expired_error;
 use crate::config::LocalConfigStore;
 use crate::local_state::LocalStateStore;
 use crate::routes::Route;

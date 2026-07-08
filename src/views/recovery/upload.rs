@@ -169,7 +169,8 @@ pub(crate) fn upload_recovery_key_account_backup(
                 // the failure so the prompt can route an unauthorized device to
                 // device-authorization / restore instead of pretending a fresh
                 // account recovery root was created.
-                let device_unauthorized = crate::api::is_device_not_authorized_error(err.inner());
+                let device_unauthorized =
+                    crate::api_error::is_device_not_authorized_error(err.inner());
                 if let Ok(mut slot) = status.try_write() {
                     *slot = if device_unauthorized {
                         "This device isn't authorized to set up the account Recovery Key. Authorize it from a device you already use, or restore with your existing 24-word Recovery Key.".to_owned()
