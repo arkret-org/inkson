@@ -36,6 +36,13 @@ jobs:
           path: cokret-rust-sdk
           token: ${{ secrets.CI_REPO_TOKEN || github.token }}
 
+      - name: Checkout garth
+        uses: actions/checkout@v6
+        with:
+          repository: ${{ github.repository_owner }}/garth
+          path: garth
+          token: ${{ secrets.CI_REPO_TOKEN || github.token }}
+
       - name: Checkout chime
         uses: actions/checkout@v6
         with:
