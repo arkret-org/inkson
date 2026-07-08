@@ -1,4 +1,13 @@
-use super::*;
+use serde_json::Value;
+
+#[cfg(test)]
+use crate::api::AccountSubscribeReconnectAfter;
+#[cfg(not(target_arch = "wasm32"))]
+use crate::api::MAX_NDJSON_STREAM_FRAME_BYTES;
+use crate::api::{
+    AccountSubscribeSnapshotResult, DEFAULT_ACCOUNT_SUBSCRIBE_RECONNECT_AFTER_MS, trim_ascii,
+};
+use crate::models::ClientSyncOutcome;
 
 pub fn parse_sync(value: Value) -> anyhow::Result<ClientSyncOutcome> {
     Ok(serde_json::from_value(value)?)

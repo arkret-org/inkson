@@ -256,10 +256,10 @@ mod realm;
 // this file into `request_helpers` (move only). Kept `pub(crate)` so `directory`
 // and tests reach them through `super::*`.
 mod request_helpers;
-// YOU-07-001: sync / account-subscribe parsers moved out of this file into
-// `sync_parse` (move only). The glob re-export keeps `crate::api::parse_sync`
-// and the sibling/tests `use super::*` resolution paths unchanged.
-mod sync_parse;
+// YOU-07-001: sync / account-subscribe parsers now live at crate root so E2 can
+// delete `src/api/**` without carrying parser code in the old API module. The
+// re-export keeps `crate::api::parse_sync` and sibling/tests `use super::*`
+// resolution paths unchanged during the strangler migration.
 // Structural split: core `impl CokretApi` HTTP transport (constructor, builder
 // methods, SDK client construction, network state, and legacy URL helper)
 // moved out of this file into `transport` (move only). All `impl CokretApi`
@@ -281,8 +281,9 @@ pub use error_classify::*;
 pub use http_helpers::*;
 pub(crate) use mls::{generate_mls_claim_nonce, keypackage_claim_record_to_mls_record};
 pub(crate) use request_helpers::*;
-pub use sync_parse::*;
 pub use views::*;
+
+pub use crate::sync_parse::*;
 
 /// PoP signature validity window (seconds). Kept well under the 300s protocol
 /// maximum (api-conventions.md §3.2) while tolerating modest clock skew.
