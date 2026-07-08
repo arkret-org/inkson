@@ -138,7 +138,10 @@ impl CokretApi {
             fallback_keys,
             device_signature,
         };
-        self.post_json("_cokret/self/keys/upload", &body).await
+        self.sdk_http_client()?
+            .keys_upload(&body)
+            .await
+            .map_err(anyhow::Error::from)
     }
 
     #[cfg(not(feature = "demo-crypto"))]
@@ -164,7 +167,10 @@ impl CokretApi {
         let mut one_time_keys = BTreeMap::new();
         one_time_keys.insert(actor, device_map);
         let body = cokret_sdk::models::KeysClaimRequestBody { one_time_keys };
-        self.post_json("_cokret/self/keys/claim", &body).await
+        self.sdk_http_client()?
+            .keys_claim(&body)
+            .await
+            .map_err(anyhow::Error::from)
     }
 
     pub async fn query_keys(
@@ -182,7 +188,10 @@ impl CokretApi {
             device_keys,
             timeout_ms: None,
         };
-        self.post_json("_cokret/self/keys/query", &body).await
+        self.sdk_http_client()?
+            .keys_query(&body)
+            .await
+            .map_err(anyhow::Error::from)
     }
 
     #[cfg(feature = "demo-crypto")]
@@ -235,7 +244,6 @@ impl CokretApi {
         expires_at: &str,
         content: serde_json::Value,
     ) -> anyhow::Result<DeviceMessagesSendOutcome> {
-        let path = "_cokret/self/device_messages";
         let payload = build_device_message_envelope(
             target_actor,
             target_device_id,
@@ -243,13 +251,10 @@ impl CokretApi {
             expires_at,
             content,
         )?;
-        let request = self
-            .http
-            .post(self.endpoint(path)?)
-            .header("Idempotency-Key", txn_id)
-            .json(&payload);
-        self.send_json(self.prepare_request(request), Method::POST)
+        self.sdk_http_client()?
+            .send_device_messages(txn_id, &payload)
             .await
+            .map_err(anyhow::Error::from)
     }
 
     /// Submit an ephemeral `ck.realm_key.request` (realm-and-space.md
@@ -315,7 +320,10 @@ impl CokretApi {
             payload: serde_json::to_value(&payload)?,
             proof: None,
         };
-        self.post_json("_cokret/self/ephemeral", &envelope).await
+        self.sdk_http_client()?
+            .post("/_cokret/self/ephemeral", &envelope)
+            .await
+            .map_err(anyhow::Error::from)
     }
 
     /// Generic typed to-device push of a `ck.realm_key.share` (or any directed
@@ -342,7 +350,10 @@ impl CokretApi {
     }
 
     pub async fn receive_device_messages(&self) -> anyhow::Result<DeviceMessagesGetOutcome> {
-        self.get_json("_cokret/self/device_messages").await
+        self.sdk_http_client()?
+            .receive_device_messages(None, None)
+            .await
+            .map_err(|error| anyhow::anyhow!("receive device messages: {error}"))
     }
 
     pub async fn receive_device_messages_page(
@@ -350,19 +361,11 @@ impl CokretApi {
         from: Option<&str>,
         limit: Option<u32>,
     ) -> anyhow::Result<DeviceMessagesGetOutcome> {
-        let mut url = self.endpoint("_cokret/self/device_messages")?;
-        {
-            let mut query = url.query_pairs_mut();
-            if let Some(from) = from.map(str::trim).filter(|value| !value.is_empty()) {
-                query.append_pair("from", from);
-            }
-            if let Some(limit) = limit {
-                query.append_pair("limit", &limit.to_string());
-            }
-        }
-        let request = self.http.get(url);
-        self.send_json(self.prepare_request(request), Method::GET)
+        let from = from.map(str::trim).filter(|value| !value.is_empty());
+        self.sdk_http_client()?
+            .receive_device_messages(from, limit)
             .await
+            .map_err(|error| anyhow::anyhow!("receive device messages page: {error}"))
     }
 
     pub async fn ack_device_messages(
@@ -372,8 +375,10 @@ impl CokretApi {
         let body = DeviceMessagesAckRequestBody {
             ack_token: ack_token.to_owned(),
         };
-        self.post_json("_cokret/self/device_messages/ack", &body)
+        self.sdk_http_client()?
+            .ack_device_messages(&body)
             .await
+            .map_err(|error| anyhow::anyhow!("ack device messages: {error}"))
     }
 
     pub async fn put_key_backup(
@@ -384,9 +389,12 @@ impl CokretApi {
         let (record, _) = self
             .prepare_key_backup_put_payload(backup_id, payload)
             .await?;
-        let body = cokret_sdk::KeysBackupsPutRequestBody(record);
-        self.put_json(&format!("_cokret/self/keys/backups/{backup_id}"), &body)
+        let backup_id = cokret_sdk::BackupId::new(backup_id.to_owned())
+            .map_err(|err| anyhow::anyhow!("invalid key backup id: {err}"))?;
+        self.sdk_http_client()?
+            .put_key_backup(&backup_id, &record)
             .await
+            .map_err(anyhow::Error::from)
     }
 
     pub async fn put_key_backup_returning_sent_body(
@@ -397,10 +405,13 @@ impl CokretApi {
         let (record, sent_body) = self
             .prepare_key_backup_put_payload(backup_id, payload)
             .await?;
-        let body = cokret_sdk::KeysBackupsPutRequestBody(record);
+        let backup_id = cokret_sdk::BackupId::new(backup_id.to_owned())
+            .map_err(|err| anyhow::anyhow!("invalid key backup id: {err}"))?;
         let response = self
-            .put_json(&format!("_cokret/self/keys/backups/{backup_id}"), &body)
-            .await?;
+            .sdk_http_client()?
+            .put_key_backup(&backup_id, &record)
+            .await
+            .map_err(anyhow::Error::from)?;
         Ok((response, sent_body))
     }
 
@@ -462,7 +473,16 @@ impl CokretApi {
     }
 
     pub async fn list_key_backups(&self) -> anyhow::Result<cokret_sdk::KeysBackupsList> {
-        self.get_json("_cokret/self/keys/backups").await
+        let query = cokret_sdk::KeyBackupsListQuery {
+            series_id: None,
+            backup_class: None,
+            cursor: None,
+            limit: None,
+        };
+        self.sdk_http_client()?
+            .list_key_backups(&query)
+            .await
+            .map_err(anyhow::Error::from)
     }
 
     // ── REC-1 recovery policy + session (6.1 / 6.3) ─────────────────────────
@@ -472,7 +492,10 @@ impl CokretApi {
     pub async fn get_recovery_policy(
         &self,
     ) -> anyhow::Result<cokret_sdk::RecoveryPolicyActiveOutcome> {
-        self.get_json("_cokret/root/identity/recovery-policy").await
+        self.sdk_http_client()?
+            .get("/_cokret/root/identity/recovery-policy")
+            .await
+            .map_err(anyhow::Error::from)
     }
 
     /// Publish or rotate the principal's signed recovery policy.
@@ -487,8 +510,10 @@ impl CokretApi {
         &self,
         body: serde_json::Value,
     ) -> anyhow::Result<cokret_sdk::RecoveryPolicyPublishOutcome> {
-        self.post_json("_cokret/root/identity/recovery-policy", &body)
+        self.sdk_http_client()?
+            .post("/_cokret/root/identity/recovery-policy", &body)
             .await
+            .map_err(anyhow::Error::from)
     }
 
     /// 6.3 — open a recovery session bound to the active policy. `body` is the
@@ -499,8 +524,10 @@ impl CokretApi {
         &self,
         body: &cokret_sdk::models::RecoverySessionCreateRequestBody,
     ) -> anyhow::Result<cokret_sdk::RecoverySessionState> {
-        self.post_json("_cokret/root/identity/recovery-sessions", body)
+        self.sdk_http_client()?
+            .post("/_cokret/root/identity/recovery-sessions", body)
             .await
+            .map_err(anyhow::Error::from)
     }
 
     /// 6.3 — submit a recovery proof (e.g. from
@@ -511,11 +538,13 @@ impl CokretApi {
         recovery_session_id: &str,
         body: &cokret_sdk::models::RecoverySessionProofSubmitRequestBody,
     ) -> anyhow::Result<cokret_sdk::RecoverySessionProofSubmitOutcome> {
-        self.post_json(
-            &format!("_cokret/root/identity/recovery-sessions/{recovery_session_id}/proofs"),
-            body,
-        )
-        .await
+        self.sdk_http_client()?
+            .post(
+                &format!("/_cokret/root/identity/recovery-sessions/{recovery_session_id}/proofs"),
+                body,
+            )
+            .await
+            .map_err(anyhow::Error::from)
     }
 
     /// 6.3 — finalize a verified recovery session. `body` carries the client-
@@ -525,11 +554,13 @@ impl CokretApi {
         recovery_session_id: &str,
         body: &cokret_sdk::models::RecoverySessionCompleteRequestBody,
     ) -> anyhow::Result<cokret_sdk::RecoverySessionCompleteOutcome> {
-        self.post_json(
-            &format!("_cokret/root/identity/recovery-sessions/{recovery_session_id}/complete"),
-            body,
-        )
-        .await
+        self.sdk_http_client()?
+            .post(
+                &format!("/_cokret/root/identity/recovery-sessions/{recovery_session_id}/complete"),
+                body,
+            )
+            .await
+            .map_err(anyhow::Error::from)
     }
 
     /// CKP B-C / spec head 37ce729 — `LIST?series_id=` query path the
@@ -550,27 +581,32 @@ impl CokretApi {
         series_id: Option<&str>,
         backup_class: Option<&str>,
     ) -> anyhow::Result<cokret_sdk::KeysBackupsList> {
-        let mut query: Vec<(String, String)> = Vec::new();
-        if let Some(series_id) = series_id
-            && !series_id.trim().is_empty()
-        {
-            query.push(("series_id".to_owned(), series_id.to_owned()));
-        }
-        if let Some(class) = backup_class
-            && !class.trim().is_empty()
-        {
-            query.push(("backup_class".to_owned(), class.to_owned()));
-        }
-        if query.is_empty() {
-            return self.get_json("_cokret/self/keys/backups").await;
-        }
-        let query_string = query
-            .into_iter()
-            .map(|(k, v)| format!("{k}={v}"))
-            .collect::<Vec<_>>()
-            .join("&");
-        self.get_json(&format!("_cokret/self/keys/backups?{query_string}"))
+        let series_id = series_id
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(|value| cokret_sdk::BackupSeriesId::new(value.to_owned()))
+            .transpose()
+            .map_err(|err| anyhow::anyhow!("invalid backup series id: {err}"))?;
+        let backup_class = backup_class
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(|value| match value {
+                "did_recovery" => Ok(cokret_sdk::BackupClass::DidRecovery),
+                "secret_storage" => Ok(cokret_sdk::BackupClass::SecretStorage),
+                "mls_history" => Ok(cokret_sdk::BackupClass::MlsHistory),
+                other => Err(anyhow::anyhow!("unknown backup_class `{other}`")),
+            })
+            .transpose()?;
+        let query = cokret_sdk::KeyBackupsListQuery {
+            series_id,
+            backup_class,
+            cursor: None,
+            limit: None,
+        };
+        self.sdk_http_client()?
+            .list_key_backups(&query)
             .await
+            .map_err(anyhow::Error::from)
     }
 
     pub async fn get_key_backup_with_unlock_proof(
@@ -578,13 +614,14 @@ impl CokretApi {
         backup_id: &str,
         unlock_proof: &serde_json::Value,
     ) -> anyhow::Result<cokret_sdk::KeyBackup> {
+        let backup_id = cokret_sdk::BackupId::new(backup_id.to_owned())
+            .map_err(|err| anyhow::anyhow!("invalid key backup id: {err}"))?;
         let proof: cokret_sdk::KeyBackupUnlockProof = serde_json::from_value(unlock_proof.clone())?;
         let body = cokret_sdk::KeysBackupsUnlockRequestBody { proof };
-        self.post_json(
-            &format!("_cokret/self/keys/backups/{backup_id}/unlock"),
-            &body,
-        )
-        .await
+        self.sdk_http_client()?
+            .unlock_key_backup(&backup_id, &body)
+            .await
+            .map_err(anyhow::Error::from)
     }
 
     pub async fn delete_key_backup(
@@ -592,19 +629,20 @@ impl CokretApi {
         backup_id: &str,
         actor_id: &str,
     ) -> anyhow::Result<cokret_sdk::KeysBackupsDeleteOutcome> {
-        let proof = crate::key_backup::key_backup_delete_ownership_proof(actor_id, backup_id);
+        let backup_id = cokret_sdk::BackupId::new(backup_id.to_owned())
+            .map_err(|err| anyhow::anyhow!("invalid key backup id: {err}"))?;
+        let proof =
+            crate::key_backup::key_backup_delete_ownership_proof(actor_id, backup_id.as_str());
         let body = cokret_sdk::KeysBackupsDeleteRequestBody {
             proof: cokret_sdk::KeyBackupDeleteProof::Development(
                 cokret_sdk::KeyBackupDeleteDevelopmentProof::new(proof),
             ),
             reason: Some("user_requested".to_owned()),
         };
-        let request = self
-            .http
-            .delete(self.endpoint(&format!("_cokret/self/keys/backups/{backup_id}"))?)
-            .json(&body);
-        self.send_json(self.prepare_request(request), Method::DELETE)
+        self.sdk_http_client()?
+            .delete_key_backup(&backup_id, &body)
             .await
+            .map_err(anyhow::Error::from)
     }
 
     // ── Device & Crypto ─────────────────────────────────────────────
@@ -655,7 +693,10 @@ impl CokretApi {
     /// the first device when the viewer projection has no explicit current
     /// marker.
     pub async fn list_devices(&self) -> anyhow::Result<cokret_sdk::AccountView> {
-        self.get_json("_cokret/self/account/viewer").await
+        self.sdk_http_client()?
+            .account_viewer()
+            .await
+            .map_err(|error| anyhow::anyhow!("list devices: {error}"))
     }
 
     /// Pair a new sibling device through the spec account-auth gate.
@@ -663,8 +704,10 @@ impl CokretApi {
         &self,
         body: &cokret_sdk::AccountDevicePairRequestBody,
     ) -> anyhow::Result<cokret_sdk::AccountDevicePairOutcome> {
-        self.post_json("_cokret/gate/account/device-pair", body)
+        self.sdk_http_client()?
+            .account_device_pair(body)
             .await
+            .map_err(anyhow::Error::from)
     }
 
     /// Device trust must be derived from the spec device-message strand.

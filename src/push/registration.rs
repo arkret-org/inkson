@@ -40,7 +40,7 @@ use chime::{
     build_register_device_request,
 };
 
-use crate::coauth::{
+use crate::account_auth::{
     build_session_grant_introspection_proof_bundle, session_grant_signing_key_from_pem,
 };
 use crate::local_state::LocalStateStore;

@@ -2546,6 +2546,7 @@ pub(crate) async fn request_history_keys_for_realm(
 /// Stable signature of a Realm's joined-member DIDs (sorted, joined-only).
 /// Used as a reactive dedup key so admin-side admission reconciliation re-runs
 /// when membership changes, but not on every unrelated sync tick.
+#[cfg(test)]
 pub(crate) fn joined_member_signature_for_realm(store: &LocalStateStore, realm_id: &str) -> String {
     let mut dids: Vec<String> = projected_member_profiles_for_realm(store, realm_id)
         .into_iter()

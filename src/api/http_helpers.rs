@@ -194,35 +194,6 @@ pub(crate) fn maybe_dispatch_policy_deny(status: StatusCode, envelope: &ErrorEnv
     ));
 }
 
-pub(crate) fn is_retryable_method(method: &Method) -> bool {
-    matches!(method, &Method::GET | &Method::PUT | &Method::PATCH)
-}
-
-pub(crate) fn is_retryable_status(status: StatusCode) -> bool {
-    status == StatusCode::REQUEST_TIMEOUT
-        || status == StatusCode::TOO_MANY_REQUESTS
-        || status.is_server_error()
-}
-
-pub(crate) fn is_retryable_reqwest_error(error: &reqwest::Error) -> bool {
-    error.is_timeout() || {
-        #[cfg(not(target_arch = "wasm32"))]
-        {
-            error.is_connect()
-        }
-        #[cfg(target_arch = "wasm32")]
-        {
-            // The wasm fetch backend exposes no `is_connect()`. A `Request`-
-            // kind error carrying no HTTP status is the browser's fetch
-            // rejecting before any response arrived (network unreachable /
-            // DNS failure / connection reset — the same class `is_connect()`
-            // covers natively), so treat it as retryable to keep the two
-            // targets' request-level retry semantics aligned.
-            error.is_request() && error.status().is_none()
-        }
-    }
-}
-
 pub(crate) fn canonical_space_join_rule_v1(join_rule: &str) -> &str {
     match join_rule {
         "open" => "public",
@@ -230,20 +201,6 @@ pub(crate) fn canonical_space_join_rule_v1(join_rule: &str) -> &str {
         "invite_only" => "invite",
         value => value,
     }
-}
-
-pub(crate) async fn sleep_backoff(initial: Duration, attempt: usize) {
-    sleep_for(backoff_duration(initial, attempt)).await;
-}
-
-pub(crate) fn backoff_duration(initial: Duration, attempt: usize) -> Duration {
-    let factor = 1u32.checked_shl(attempt as u32).unwrap_or(u32::MAX);
-    jitter_duration(initial.saturating_mul(factor).min(MAX_RETRY_DELAY))
-}
-
-pub(crate) async fn sleep_retry_delay(headers: &HeaderMap, initial: Duration, attempt: usize) {
-    let delay = parse_retry_after(headers).unwrap_or_else(|| backoff_duration(initial, attempt));
-    sleep_for(delay).await;
 }
 
 // `tokio::time::sleep` reads `std::time::Instant::now()` and panics on
@@ -259,37 +216,6 @@ pub(crate) async fn sleep_for(delay: Duration) {
 pub(crate) async fn sleep_for(delay: Duration) {
     let ms = u32::try_from(delay.as_millis()).unwrap_or(u32::MAX);
     gloo_timers::future::TimeoutFuture::new(ms).await;
-}
-
-pub(crate) fn parse_retry_after(headers: &HeaderMap) -> Option<Duration> {
-    let value = headers.get(RETRY_AFTER)?.to_str().ok()?.trim();
-
-    if let Ok(seconds) = value.parse::<u64>() {
-        return Some(Duration::from_secs(seconds).min(MAX_RETRY_DELAY));
-    }
-
-    chrono::DateTime::parse_from_rfc2822(value)
-        .ok()
-        .and_then(|deadline| {
-            deadline
-                .with_timezone(&chrono::Utc)
-                .signed_duration_since(chrono::Utc::now())
-                .to_std()
-                .ok()
-        })
-        .map(|delay| delay.min(MAX_RETRY_DELAY))
-}
-
-fn jitter_duration(max: Duration) -> Duration {
-    let max_ms = u64::try_from(max.as_millis()).unwrap_or(u64::MAX);
-    if max_ms == 0 {
-        return max;
-    }
-    let mut bytes = [0u8; 8];
-    if getrandom::fill(&mut bytes).is_err() {
-        return max;
-    }
-    Duration::from_millis(u64::from_le_bytes(bytes) % (max_ms + 1))
 }
 
 pub fn parse_server_description(value: Value) -> anyhow::Result<ServerDescription> {
@@ -351,6 +277,7 @@ pub(crate) fn validate_cursor(cursor: &str) -> anyhow::Result<()> {
     Ok(())
 }
 
+#[cfg(test)]
 pub(crate) fn events_query_path(realm_id: &str) -> String {
     format!(
         "_cokret/self/events?realms={}&limit=100",
@@ -358,22 +285,10 @@ pub(crate) fn events_query_path(realm_id: &str) -> String {
     )
 }
 
-/// COR-07: a single page of the events query, continuing from `after`
-/// (`next_cursor` of the previous page). Without the cursor parameter the
-/// caller only ever sees the first 100 events and silently truncates.
-pub(crate) fn events_query_path_after(realm_id: &str, after: &str) -> String {
-    format!(
-        "_cokret/self/events?realms={}&limit=100&after={}",
-        query_component(realm_id),
-        query_component(after)
-    )
-}
-
-// Builds the `ck.self.events.stream.subscribe` URL. Used by both the native
-// streaming reader (`events_subscribe_ndjson`) and the all-target buffered
-// long-poll (`events_subscribe_poll`); `max_duration_ms` bounds how long the
-// server holds the stream open (the buffered reader can only surface frames at
-// close, so it doubles as the wasm liveness window).
+// Builds the legacy `ck.self.events.stream.subscribe` URL. Kept only for URL
+// construction regression tests; production realm subscribe now goes through
+// SDK http-client + client-core.
+#[cfg(test)]
 pub(crate) fn events_subscribe_path(
     realm_id: &str,
     after: Option<&str>,
@@ -427,14 +342,11 @@ pub fn parse_events_subscribe_ndjson_text(
 #[cfg(not(target_arch = "wasm32"))]
 pub(crate) const MAX_NDJSON_STREAM_FRAME_BYTES: usize = 16 * 1024 * 1024;
 
-// Consumed only by the native (`not(wasm32)`) streaming reader
-// (`drain_events_subscribe_response` / `events_subscribe_stream`).
-//
 // COR-01: the caller MUST enforce [`MAX_NDJSON_STREAM_FRAME_BYTES`] on
 // `pending` before invoking this drainer, so an undelimited / oversized frame
 // cannot grow the buffer without bound (parity with the account.subscribe
 // path in `sync_parse::drain_account_subscribe_response`).
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(all(test, not(target_arch = "wasm32")))]
 pub(crate) fn drain_events_subscribe_ndjson_lines<F>(
     pending: &mut Vec<u8>,
     on_frame: &mut F,

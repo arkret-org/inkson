@@ -243,7 +243,10 @@ impl CokretApi {
             resource,
             context: None,
         };
-        self.post_json("_cokret/self/authz/check", &body).await
+        self.sdk_http_client()?
+            .authz_check(&body)
+            .await
+            .map_err(anyhow::Error::from)
     }
 
     pub async fn authz_check_resource_raw(
@@ -267,10 +270,10 @@ impl CokretApi {
     }
 
     pub async fn effective_grants(&self, subject: &str) -> anyhow::Result<GrantList> {
-        self.get_json(&format!(
-            "_cokret/self/authz/effective-grants?subject={subject}"
-        ))
-        .await
+        self.sdk_http_client()?
+            .authz_effective_grants_for_subject(subject, None)
+            .await
+            .map_err(anyhow::Error::from)
     }
 
     // ── Space / Realm Management (all writes go through ck.self.events.command.submit) ─
@@ -948,8 +951,10 @@ impl CokretApi {
     ) -> anyhow::Result<super::CollectionProjectionView> {
         let body = cokret_sdk::models::ViewProjectionRequestBody::default();
         let view: cokret_sdk::CollectionProjectionView = self
-            .post_json(&format!("_cokret/self/views/{view_id}/projection"), &body)
-            .await?;
+            .sdk_http_client()?
+            .collection_projection(view_id, &body)
+            .await
+            .map_err(anyhow::Error::from)?;
         Ok(view.into())
     }
 
@@ -963,8 +968,11 @@ impl CokretApi {
         // `ck:realm:<uuid>` is RFC-3986-safe in a path segment (colon, hyphen,
         // and alpha-digit are all pchar), so no percent-encoding needed.
         let realm_id = trim_realm_id(realm_id);
-        let path = format!("_cokret/self/realms/{realm_id}/spaces");
-        let list: cokret_sdk::ProjectionSpaceList = self.get_json(&path).await?;
+        let list: cokret_sdk::ProjectionSpaceList = self
+            .sdk_http_client()?
+            .realm_spaces(&realm_id)
+            .await
+            .map_err(anyhow::Error::from)?;
         Ok(list.into())
     }
 
@@ -973,8 +981,11 @@ impl CokretApi {
         realm_id: &str,
     ) -> anyhow::Result<LifecycleProjectionView<StrandProjectionView>> {
         let realm_id = trim_realm_id(realm_id);
-        let path = format!("_cokret/self/realms/{realm_id}/strands");
-        let list: cokret_sdk::ProjectionStrandList = self.get_json(&path).await?;
+        let list: cokret_sdk::ProjectionStrandList = self
+            .sdk_http_client()?
+            .realm_strands(&realm_id)
+            .await
+            .map_err(anyhow::Error::from)?;
         Ok(list.into())
     }
 
@@ -984,8 +995,10 @@ impl CokretApi {
         morph_id: &str,
     ) -> anyhow::Result<cokret_sdk::DocumentMorphProjectionOutcome> {
         let realm_id = trim_realm_id(realm_id);
-        self.get_json(&format!("_cokret/self/realms/{realm_id}/morphs/{morph_id}"))
+        self.sdk_http_client()?
+            .document_projection(&realm_id, morph_id)
             .await
+            .map_err(anyhow::Error::from)
     }
 
     /// Read the verified Realm ↔ organization relationships projection
@@ -1002,8 +1015,10 @@ impl CokretApi {
         realm_id: &str,
     ) -> anyhow::Result<cokret_sdk::models::RealmOrganizationRelationshipList> {
         let realm_id = trim_realm_id(realm_id);
-        let path = format!("_cokret/self/realms/{realm_id}/organizations");
-        self.get_json(&path).await
+        self.sdk_http_client()?
+            .realm_organizations(&realm_id)
+            .await
+            .map_err(anyhow::Error::from)
     }
 
     /// Resolve the current seal head for `realm_id` to be stamped onto

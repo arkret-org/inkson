@@ -124,7 +124,10 @@ impl CokretApi {
         &self,
         request: &MediaIceConfigRequestBody,
     ) -> anyhow::Result<MediaIceConfigOutcome> {
-        self.post_json("_cokret/self/rtc/ice-config", request).await
+        self.sdk_http_client()?
+            .media_ice_config(request)
+            .await
+            .map_err(anyhow::Error::from)
     }
 
     /// `POST /_cokret/self/rtc/token` — `ck.self.call.media.exchange.issue_token`.
@@ -136,6 +139,9 @@ impl CokretApi {
         &self,
         request: &cokret_sdk::CallMediaTokenExchangeRequestBody,
     ) -> anyhow::Result<cokret_sdk::CallMediaTokenExchangeOutcome> {
-        self.post_json("_cokret/self/rtc/token", request).await
+        self.sdk_http_client()?
+            .media_token_exchange(request)
+            .await
+            .map_err(anyhow::Error::from)
     }
 }

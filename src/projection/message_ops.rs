@@ -8,6 +8,8 @@
 
 use serde_json::Value;
 
+use crate::local_state::RawOperationRecord;
+
 pub(crate) fn value_string_at<'a>(value: &'a Value, keys: &[&str]) -> Option<&'a str> {
     keys.iter()
         .find_map(|key| value.get(*key).and_then(Value::as_str))
@@ -90,7 +92,7 @@ fn discussion_kind_is_raw_operation(kind: &str) -> bool {
 pub(crate) fn message_operations_from_events(
     realm_id: &str,
     events: &[Value],
-) -> Vec<crate::local_state::RawOperationRecord> {
+) -> Vec<RawOperationRecord> {
     events
         .iter()
         .filter_map(|event| message_raw_operation_from_event(realm_id, event))
@@ -104,10 +106,10 @@ fn message_event_is_ingestable(event: &Value) -> bool {
     })
 }
 
-fn message_raw_operation_from_event(
-    realm_id: &str,
-    event: &Value,
-) -> Option<crate::local_state::RawOperationRecord> {
+fn message_raw_operation_from_event(realm_id: &str, event: &Value) -> Option<RawOperationRecord> {
+    if let Some(record) = typed_message_raw_operation_from_event(event) {
+        return Some(record);
+    }
     if !message_event_is_ingestable(event) {
         return None;
     }
@@ -130,10 +132,86 @@ fn message_raw_operation_from_event(
         .and_then(|created_at| chrono::DateTime::parse_from_rfc3339(created_at).ok())
         .map(|timestamp| timestamp.with_timezone(&chrono::Utc))
         .unwrap_or_else(chrono::Utc::now);
-    Some(crate::local_state::RawOperationRecord {
+    Some(RawOperationRecord {
         operation_id,
         realm_id: Some(record_realm_id),
         received_at,
         payload: event.clone(),
     })
+}
+
+fn typed_message_raw_operation_from_event(event: &Value) -> Option<RawOperationRecord> {
+    let sdk_event: cokret_sdk::Event = serde_json::from_value(event.clone()).ok()?;
+    let decoded = cokret_client::InboundDecoder::new()
+        .try_decode_event(sdk_event)
+        .ok()?;
+    let cokret_client::DecodedInbound::Message(message) = decoded else {
+        return None;
+    };
+    Some(RawOperationRecord {
+        operation_id: message.event.event_id.as_str().to_owned(),
+        realm_id: Some(message.event.realm_id.as_str().to_owned()),
+        received_at: message.event.created_at,
+        payload: event.clone(),
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    use serde_json::json;
+
+    use super::*;
+
+    fn typed_event(kind: &str, payload: Value) -> cokret_sdk::Event {
+        let mut event = cokret_sdk::Event::new(
+            kind,
+            cokret_sdk::RealmId::new("ck:realm:01904100-0000-7000-8000-000000000001").unwrap(),
+            cokret_sdk::Did::new("did:webvh:z6mkfixture:alice.example").unwrap(),
+            1,
+            cokret_sdk::Hlc::new("01970e589d21-0004-a13f9c2e").unwrap(),
+            payload,
+        )
+        .unwrap();
+        event.event_id =
+            cokret_sdk::EventId::new("ck:event:01904100-0000-7000-8000-000000000101").unwrap();
+        event.created_at = "2026-07-08T00:00:00Z".parse().unwrap();
+        event
+    }
+
+    #[test]
+    fn typed_message_raw_operation_uses_client_core_decoder() {
+        let event = typed_event(
+            cokret_sdk::events::kinds::MESSAGE_CREATE,
+            json!({
+                "strand_id": "ck:strand:01904100-0000-7000-8000-000000000201",
+                "track_name": "discussion",
+                "content": {"kind": "ck.content.text", "body": "hello"}
+            }),
+        );
+        let value = serde_json::to_value(&event).unwrap();
+
+        let record = typed_message_raw_operation_from_event(&value).unwrap();
+
+        assert_eq!(
+            record.operation_id,
+            "ck:event:01904100-0000-7000-8000-000000000101"
+        );
+        assert_eq!(
+            record.realm_id.as_deref(),
+            Some("ck:realm:01904100-0000-7000-8000-000000000001")
+        );
+        assert_eq!(record.received_at, event.created_at);
+        assert_eq!(record.payload, value);
+    }
+
+    #[test]
+    fn typed_message_raw_operation_ignores_non_message_events() {
+        let event = typed_event(
+            cokret_sdk::events::kinds::PRESENCE,
+            json!({"state": "online"}),
+        );
+        let value = serde_json::to_value(&event).unwrap();
+
+        assert!(typed_message_raw_operation_from_event(&value).is_none());
+    }
 }

@@ -5193,7 +5193,7 @@ pub fn RouterView() -> Element {
                                                     state_store.read().session_grant();
                                                 let logout_device_handle = {
                                                     let mut store = state_store.write();
-                                                    crate::auth_dpop::ensure_device_key(&mut store).ok()
+                                                    crate::account_auth::grant_dpop::ensure_device_key(&mut store).ok()
                                                 };
                                                 // F7 — journal the logout intent durably BEFORE the
                                                 // local wipe. If the tab closes mid-flight or coauth is
@@ -5264,7 +5264,7 @@ pub fn RouterView() -> Element {
                                                 // "remove this device") is reserved for a separate
                                                 // explicit action; logout only terminates the
                                                 // browser session.
-                                                let _ = crate::coauth::clear_persisted_oidc_scaffold();
+                                                let _ = crate::account_auth::clear_persisted_oidc_scaffold();
                                                 // Wipe the in-memory UI signals too so the
                                                 // sidebar can't paint a frame of stale
                                                 // Realm tree updates between this click and the

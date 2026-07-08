@@ -1,6 +1,10 @@
 use super::*;
 
 impl LocalStateStore {
+    pub fn sync_cursor(&self) -> Option<String> {
+        self.load().sync_cursor
+    }
+
     pub fn save_sync_cursor(&mut self, cursor: impl Into<String>) {
         self.ensure_cached_loaded();
         let cursor = cursor.into();
@@ -9,6 +13,13 @@ impl LocalStateStore {
         }
         self.cached.sync_cursor = Some(cursor);
         let _ = self.flush();
+    }
+
+    pub fn clear_sync_cursor(&mut self) {
+        self.ensure_cached_loaded();
+        if self.cached.sync_cursor.take().is_some() {
+            let _ = self.flush();
+        }
     }
 
     /// Resume cursor for this realm's `ck.self.events.stream.subscribe`. Kept
@@ -42,6 +53,18 @@ impl LocalStateStore {
             }
         }
         let _ = self.flush();
+    }
+
+    pub fn client_core_event_seen(&self, event_id: &str) -> bool {
+        self.load().client_core_seen_event_ids.contains(event_id)
+    }
+
+    pub fn remember_client_core_event(&mut self, event_id: impl Into<String>) {
+        self.ensure_cached_loaded();
+        let event_id = event_id.into();
+        if self.cached.client_core_seen_event_ids.insert(event_id) {
+            let _ = self.flush();
+        }
     }
 
     pub fn save_presence_projection(&mut self, events: Vec<Value>) {

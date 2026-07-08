@@ -949,14 +949,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0c9ea0ac24bc397ab3c98583a3c9ba74fa56b09a4449bbe172b9b1ddb016027a"
 
 [[package]]
-name = "coauth-account-types"
-version = "0.3.0"
-dependencies = [
- "serde",
- "serde_json",
-]
-
-[[package]]
 name = "cocoa"
 version = "0.26.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1026,6 +1018,24 @@ dependencies = [
 ]
 
 [[package]]
+name = "cokret-client"
+version = "0.3.0"
+dependencies = [
+ "chrono",
+ "cokret",
+ "cokret-core",
+ "cokret-http-client",
+ "ed25519-dalek",
+ "gloo-timers 0.3.0",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.18",
+ "tokio",
+ "wasm-bindgen-futures",
+ "zeroize",
+]
+
+[[package]]
 name = "cokret-core"
 version = "0.3.0"
 dependencies = [
@@ -1084,6 +1094,7 @@ dependencies = [
 name = "cokret-http-client"
 version = "0.3.0"
 dependencies = [
+ "base64",
  "chrono",
  "cokret-core",
  "cokret-signatures",
@@ -7066,7 +7077,6 @@ version = "1.0.150"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e8014e44b4736ed0538adeecded0fce2a272f22dc9578a7eb6b2d9993c74cfb9"
 dependencies = [
- "indexmap",
  "itoa",
  "memchr",
  "serde",
@@ -9228,8 +9238,8 @@ dependencies = [
  "chacha20poly1305",
  "chime",
  "chrono",
- "coauth-account-types",
  "cokret",
+ "cokret-client",
  "dioxus",
  "dioxus-icons",
  "dioxus-primitives",

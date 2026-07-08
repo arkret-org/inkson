@@ -1,14 +1,14 @@
+#[cfg(not(target_arch = "wasm32"))]
 use anyhow::Context;
 use url::Url;
 
 /// Launch the authorize URL in the user's browser / webview. On wasm this
 /// navigates the current window - the matching `/auth/callback` handler on
-/// the same origin reads `?code=` and invokes
-/// [`CoauthApi::exchange_pkce_code_for_tokens`]. On native desktop builds
-/// this best-effort opens the system browser via the `cmd /c start`
-/// (Windows) / `xdg-open` (Linux) / `open` (macOS) shell out - production
-/// deploys SHOULD swap in a webview crate so the callback URL can be
-/// intercepted in-process.
+/// the same origin reads `?code=` and exchanges it through the SDK session
+/// engine. On native desktop builds this best-effort opens the system browser
+/// via the platform shell (`cmd /c start`, `xdg-open`, or `open`); production
+/// deploys SHOULD swap in a webview crate so the callback URL can be intercepted
+/// in-process.
 pub fn open_oidc_authorize_url(authorize_url: &str) -> anyhow::Result<()> {
     open_authorize_url_impl(authorize_url)
 }

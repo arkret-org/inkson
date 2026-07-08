@@ -105,11 +105,6 @@ bip39 = {workspace = true}
 chacha20poly1305 = {workspace = true,default-features = false,features = ["alloc"]}
 chime = {workspace = true,features = ["http"]}
 chrono = {workspace = true,features = ["serde"]}
-# Client-facing serde wire types for coauth's `/_coauth/account/auth/*`
-# surface (passkey ceremonies etc.). Default feature set only — the
-# server-only `schema` feature (which pulls in salvo) is NOT enabled so this
-# stays wasm-safe.
-coauth-account-types = {path = "../coauth/crates/account-types"}
 dioxus-icons = {workspace = true,default-features = false}
 dioxus-primitives = {workspace = true,default-features = false}
 dioxus-router = {workspace = true}
@@ -176,6 +171,7 @@ chrono = {workspace = true}
 # empty DSN logs a debug message and skips init silently per
 # `src/telemetry.rs::sentry_init`. Wasm builds skip the dep entirely.
 cokret-sdk = {workspace = true,features = ["full-surface", "signer"]}
+cokret-client = {path = "../cokret-rust-sdk/crates/client",default-features = false,features = ["native"]}
 dioxus = {workspace = true,features = ["desktop", "web"]}
 keyring = {workspace = true,features = ["apple-native", "windows-native", "linux-native"]}
 notify-rust = {workspace = true}
@@ -209,6 +205,7 @@ tracing-subscriber = {workspace = true,features = ["env-filter", "fmt"]}
 # platform". `gloo-timers` routes through `setTimeout` instead, which is what
 # `sleep_for` uses for HTTP retry backoff in the wasm build.
 cokret-sdk = {workspace = true,features = ["full-surface", "signer"]}
+cokret-client = {path = "../cokret-rust-sdk/crates/client",default-features = false,features = ["wasm"]}
 dioxus = {workspace = true,features = ["web"]}
 gloo-timers = {workspace = true,features = ["futures"]}
 js-sys = {workspace = true}

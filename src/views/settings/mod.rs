@@ -2886,7 +2886,7 @@ pub fn SettingsPanel(
                         "Your handle is managed by your organization. This client cannot set or change it directly — request changes through your organization's issuer."
                     }
                     div { class: "actions",
-                        if let Some(href) = crate::coauth::issuer_handle_management_url(&base_url()) {
+                        if let Some(href) = crate::account_auth::issuer_handle_management_url(&base_url()) {
                             a {
                                 class: "btn secondary",
                                 "data-testid": "handle-issuer-link",

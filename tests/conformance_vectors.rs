@@ -166,9 +166,15 @@ fn crypto_signature_fixture_canonical_binding_matches() {
             "{name}: canonical_binding_payload mismatch"
         );
 
-        let expected_hash = vector["binding_hash"].as_str().expect("binding_hash");
+        let expected_hash = vector["binding_digest"]
+            .as_str()
+            .or_else(|| vector["binding_hash"].as_str())
+            .expect("binding_digest");
         let actual_hash = canonical_sha256(binding_object).expect("hash binding_object");
-        assert_eq!(actual_hash, expected_hash, "{name}: binding_hash mismatch");
+        assert_eq!(
+            actual_hash, expected_hash,
+            "{name}: binding_digest mismatch"
+        );
 
         // Protected header canonical encoding is independent of the payload but
         // also part of the JWS signing input; verify yougen reproduces it.

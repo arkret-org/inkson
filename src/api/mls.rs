@@ -179,8 +179,10 @@ impl CokretApi {
             strand_id: None,
             mls_group_id: None,
         };
-        self.post_json("_cokret/self/keys/keypackages/upload", &body)
+        self.sdk_http_client()?
+            .keypackages_upload(&body)
             .await
+            .map_err(anyhow::Error::from)
     }
 
     /// Fetch a peer's MLS key package via
@@ -237,8 +239,10 @@ impl CokretApi {
             target_device_id,
             mls_group_id,
         )?;
-        self.post_json("_cokret/self/keys/keypackages/claim", &body)
+        self.sdk_http_client()?
+            .keypackages_claim(&body)
             .await
+            .map_err(anyhow::Error::from)
     }
 
     // YOU-01-009: the former `rotate_mls_epoch` helper (non-spec
@@ -252,15 +256,20 @@ impl CokretApi {
     pub async fn mimi_provider_directory(
         &self,
     ) -> anyhow::Result<cokret_sdk::MimiProviderDirectory> {
-        self.get_json("_cokret/open/mimi/provider-directory").await
+        self.sdk_http_client()?
+            .mimi_provider_directory(None, &[])
+            .await
+            .map_err(anyhow::Error::from)
     }
 
     pub async fn mimi_key_material(
         &self,
         request: &cokret_sdk::MimiKeyMaterialRequestBody,
     ) -> anyhow::Result<cokret_sdk::MimiKeyMaterialOutcome> {
-        self.post_json("_cokret/open/mimi/key-material", request)
+        self.sdk_http_client()?
+            .post("/_cokret/open/mimi/key-material", request)
             .await
+            .map_err(anyhow::Error::from)
     }
 
     pub async fn mimi_room_update(
@@ -268,11 +277,13 @@ impl CokretApi {
         room_id: &str,
         request: &cokret_sdk::MimiRoomUpdateRequestBody,
     ) -> anyhow::Result<cokret_sdk::MimiRoomUpdateOutcome> {
-        self.post_json(
-            &format!("_cokret/open/mimi/strands/{room_id}/update"),
-            request,
-        )
-        .await
+        self.sdk_http_client()?
+            .post(
+                &format!("/_cokret/open/mimi/strands/{room_id}/update"),
+                request,
+            )
+            .await
+            .map_err(anyhow::Error::from)
     }
 
     pub async fn mimi_notify(
@@ -280,11 +291,13 @@ impl CokretApi {
         room_id: &str,
         request: &cokret_sdk::MimiNotifyRequestBody,
     ) -> anyhow::Result<cokret_sdk::MimiNotifyOutcome> {
-        self.post_json(
-            &format!("_cokret/open/mimi/strands/{room_id}/notify"),
-            request,
-        )
-        .await
+        self.sdk_http_client()?
+            .post(
+                &format!("/_cokret/open/mimi/strands/{room_id}/notify"),
+                request,
+            )
+            .await
+            .map_err(anyhow::Error::from)
     }
 
     pub async fn mimi_submit_message(
@@ -292,58 +305,72 @@ impl CokretApi {
         room_id: &str,
         request: &cokret_sdk::MimiSubmitMessageRequestBody,
     ) -> anyhow::Result<cokret_sdk::MimiSubmitMessageOutcome> {
-        self.post_json(
-            &format!("_cokret/open/mimi/strands/{room_id}/messages"),
-            request,
-        )
-        .await
+        self.sdk_http_client()?
+            .post(
+                &format!("/_cokret/open/mimi/strands/{room_id}/messages"),
+                request,
+            )
+            .await
+            .map_err(anyhow::Error::from)
     }
 
     pub async fn mimi_group_info(
         &self,
         room_id: &str,
     ) -> anyhow::Result<cokret_sdk::MimiGroupInfoOutcome> {
-        self.get_json(&format!("_cokret/open/mimi/strands/{room_id}/group-info"))
+        self.sdk_http_client()?
+            .get(&format!("/_cokret/open/mimi/strands/{room_id}/group-info"))
             .await
+            .map_err(anyhow::Error::from)
     }
 
     pub async fn mimi_request_consent(
         &self,
         request: &cokret_sdk::MimiRequestConsentRequestBody,
     ) -> anyhow::Result<cokret_sdk::MimiRequestConsentOutcome> {
-        self.post_json("_cokret/open/mimi/consent/request", request)
+        self.sdk_http_client()?
+            .post("/_cokret/open/mimi/consent/request", request)
             .await
+            .map_err(anyhow::Error::from)
     }
 
     pub async fn mimi_update_consent(
         &self,
         request: &cokret_sdk::MimiUpdateConsentRequestBody,
     ) -> anyhow::Result<cokret_sdk::MimiUpdateConsentOutcome> {
-        self.post_json("_cokret/open/mimi/consent/update", request)
+        self.sdk_http_client()?
+            .post("/_cokret/open/mimi/consent/update", request)
             .await
+            .map_err(anyhow::Error::from)
     }
 
     pub async fn mimi_identifier_query(
         &self,
         request: &cokret_sdk::MimiIdentifierQueryRequestBody,
     ) -> anyhow::Result<cokret_sdk::MimiIdentifierQueryOutcome> {
-        self.post_json("_cokret/open/mimi/identifiers/query", request)
+        self.sdk_http_client()?
+            .post("/_cokret/open/mimi/identifiers/query", request)
             .await
+            .map_err(anyhow::Error::from)
     }
 
     pub async fn mimi_report_abuse(
         &self,
         request: &cokret_sdk::MimiReportAbuseRequestBody,
     ) -> anyhow::Result<cokret_sdk::MimiReportAbuseOutcome> {
-        self.post_json("_cokret/open/mimi/report-abuse", request)
+        self.sdk_http_client()?
+            .mimi_report_abuse(request)
             .await
+            .map_err(anyhow::Error::from)
     }
 
     pub async fn mimi_proxy_download(
         &self,
         request: &cokret_sdk::MimiProxyDownloadRequestBody,
     ) -> anyhow::Result<cokret_sdk::MimiProxyDownloadOutcome> {
-        self.post_json("_cokret/open/mimi/proxy-download", request)
+        self.sdk_http_client()?
+            .post("/_cokret/open/mimi/proxy-download", request)
             .await
+            .map_err(anyhow::Error::from)
     }
 }

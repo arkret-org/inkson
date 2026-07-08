@@ -15,19 +15,15 @@
 //! is not yet authorized, and a concurrent / already-applied authorization is
 //! reported by the server (the submit is a CAS on `actor_seq`).
 
+use anyhow::Context as _;
+
 use crate::api::CokretApi;
-use crate::coauth::CoauthApi;
 use crate::secure_key_store::SigningSeedMaterial;
 
 /// Inputs the caller resolves before invoking [`enroll_current_device`]. Kept as
 /// a struct so the wasm bootstrap site stays readable and the assembly is unit
 /// testable without a live session.
 pub struct DeviceEnrollmentRequest {
-    /// Active `ck.session.grant` JWT used for the enrollment endpoint.
-    pub grant_jwt: String,
-    /// Grant-binding DPoP proof bound to the grant `cnf.jkt`, minted for
-    /// `POST <gate_account_base>/device-enroll`.
-    pub dpop_proof: String,
     /// This session's `device_id` (`ck:device:<uuid>`). The enrollment authority
     /// signs the `ck.device.authorize` for exactly this device so the projected
     /// `device_public_key` lands under the same id the session (and recovery)
@@ -43,6 +39,32 @@ pub struct DeviceEnrollmentRequest {
     pub hpke_key: String,
     /// Canonical sorted unique algorithm ids the device supports (§5.2/§5.4).
     pub algorithms: Vec<String>,
+}
+
+impl DeviceEnrollmentRequest {
+    fn to_sdk_body(&self) -> anyhow::Result<cokret_sdk::AccountDeviceEnrollRequestBody> {
+        let not_before = match self
+            .not_before
+            .as_deref()
+            .filter(|value| !value.trim().is_empty())
+        {
+            Some(value) => Some(
+                chrono::DateTime::parse_from_rfc3339(value.trim())
+                    .context("parse device-enroll `not_before` as RFC 3339")?
+                    .with_timezone(&chrono::Utc),
+            ),
+            None => None,
+        };
+        Ok(cokret_sdk::AccountDeviceEnrollRequestBody {
+            device_id: cokret_sdk::DeviceId::new(self.device_id.trim().to_owned())
+                .context("device-enroll `device_id`")?,
+            device_public_key: self.device_public_key.clone(),
+            hpke_key: self.hpke_key.clone(),
+            algorithms: self.algorithms.clone(),
+            actor_seq: self.actor_seq,
+            not_before,
+        })
+    }
 }
 
 /// Canonical algorithm ids a yougen device advertises in its
@@ -78,6 +100,13 @@ pub fn parse_signed_device_authorize(
 ) -> anyhow::Result<cokret_sdk::Event> {
     let event: cokret_sdk::Event = serde_json::from_value(signed_event.clone())
         .map_err(|err| anyhow::anyhow!("decode signed device.authorize SDK Event: {err}"))?;
+    validate_signed_device_authorize(event, expected_device_id)
+}
+
+fn validate_signed_device_authorize(
+    event: cokret_sdk::Event,
+    expected_device_id: &str,
+) -> anyhow::Result<cokret_sdk::Event> {
     if event.kind.as_str() != "ck.device.authorize" {
         anyhow::bail!(
             "enrollment authority returned unexpected event kind {:?}",
@@ -100,30 +129,30 @@ pub fn parse_signed_device_authorize(
     Ok(event)
 }
 
-/// Enroll the current session device: ask `coauth` to sign a
+/// Enroll the current session device: ask the Account Authority to sign a
 /// `ck.device.authorize` for `request`, then submit it through `principal_api`
 /// (`POST /_cokret/self/events`). `expected_device_id` is this session's
 /// self-certifying id, used to fail closed if the returned event addresses a
 /// different device.
 pub async fn enroll_current_device(
-    coauth: &CoauthApi,
+    account_client: &cokret_sdk::http_client::Client,
     principal_api: &CokretApi,
     request: &DeviceEnrollmentRequest,
     expected_device_id: &str,
 ) -> anyhow::Result<()> {
-    let signed_event = coauth
-        .device_enroll_signed_event(
-            &request.grant_jwt,
-            &request.dpop_proof,
-            &request.device_id,
-            &request.device_public_key,
-            &request.hpke_key,
-            &request.algorithms,
-            request.actor_seq,
-            request.not_before.as_deref(),
-        )
-        .await?;
-    let event = parse_signed_device_authorize(&signed_event, expected_device_id)?;
+    let sdk_request = request.to_sdk_body()?;
+    let outcome = account_client
+        .auth_device_enroll(&sdk_request)
+        .await
+        .map_err(|error| anyhow::anyhow!("device-enroll: {error}"))?;
+    if outcome.device_id.as_str() != expected_device_id {
+        anyhow::bail!(
+            "device-enroll outcome device_id {:?} does not match this session device {:?}",
+            outcome.device_id.as_str(),
+            expected_device_id
+        );
+    }
+    let event = validate_signed_device_authorize(outcome.authorized_event, expected_device_id)?;
     principal_api.submit_signed_sdk_event(&event).await?;
     Ok(())
 }

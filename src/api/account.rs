@@ -32,7 +32,10 @@ fn optional_did_for_request_field(
 
 impl CokretApi {
     pub async fn describe(&self) -> anyhow::Result<ServerDescription> {
-        self.get_json("_cokret/describe").await
+        self.sdk_http_client()?
+            .describe()
+            .await
+            .map_err(|error| anyhow::anyhow!("server describe: {error}"))
     }
 
     pub async fn describe_cached(&self) -> anyhow::Result<&ServerDescription> {
@@ -79,11 +82,17 @@ impl CokretApi {
             policy_evidence: None,
             proof: None,
         };
-        self.post_json("_cokret/gate/account/register", &body).await
+        self.sdk_http_client()?
+            .account_register(&body)
+            .await
+            .map_err(anyhow::Error::from)
     }
 
     pub async fn account_viewer(&self) -> anyhow::Result<cokret_sdk::models::AccountView> {
-        self.get_json("_cokret/self/account/viewer").await
+        self.sdk_http_client()?
+            .account_viewer()
+            .await
+            .map_err(|error| anyhow::anyhow!("account viewer: {error}"))
     }
 
     pub async fn account_me(&self) -> anyhow::Result<CurrentAccount> {
@@ -140,7 +149,10 @@ impl CokretApi {
         let body = cokret_sdk::models::AccountUpdateProfileRequestBody {
             patch: serde_json::to_value(&patch)?,
         };
-        self.post_json("_cokret/self/account/profile", &body).await
+        self.sdk_http_client()?
+            .account_update_profile(&body)
+            .await
+            .map_err(anyhow::Error::from)
     }
 
     pub async fn request_contact(
@@ -197,8 +209,10 @@ impl CokretApi {
             recipient_service_did: addressing.recipient_service_did,
             introduction_evidence: Some(addressing.introduction_evidence),
         };
-        self.post_json(cokret_sdk::http::PATH_SELF_CONTACTS_REQUEST, &body)
+        self.sdk_http_client()?
+            .contacts_request(&body)
             .await
+            .map_err(anyhow::Error::from)
     }
 
     pub async fn respond_contact(
@@ -270,13 +284,18 @@ impl CokretApi {
                 requester_service_did,
             )?,
         };
-        self.post_json(cokret_sdk::http::PATH_SELF_CONTACTS_RESPOND, &body)
+        self.sdk_http_client()?
+            .contacts_respond(&body)
             .await
+            .map_err(anyhow::Error::from)
     }
 
     pub async fn contacts(&self) -> anyhow::Result<ContactListView> {
-        let response: cokret_sdk::ContactList =
-            self.get_json(cokret_sdk::http::PATH_SELF_CONTACTS).await?;
+        let response: cokret_sdk::ContactList = self
+            .sdk_http_client()?
+            .contacts_list()
+            .await
+            .map_err(anyhow::Error::from)?;
         ContactListView::from_sdk(response)
     }
 
@@ -298,8 +317,10 @@ impl CokretApi {
             block_peer,
             peer_service_did: None,
         };
-        self.post_json(cokret_sdk::http::PATH_SELF_CONTACTS_TOMBSTONE, &body)
+        self.sdk_http_client()?
+            .contacts_tombstone(&body)
             .await
+            .map_err(anyhow::Error::from)
     }
 
     /// Read the actor's `invite_receive_policy` ("who can invite me", U4).
@@ -314,7 +335,10 @@ impl CokretApi {
     pub async fn get_invite_receive_policy(
         &self,
     ) -> anyhow::Result<crate::models::InviteReceivePolicy> {
-        self.get_json("_cokret/self/invite-receive-policy").await
+        self.sdk_http_client()?
+            .get("/_cokret/self/invite-receive-policy")
+            .await
+            .map_err(anyhow::Error::from)
     }
 
     /// Persist the actor's `invite_receive_policy` (U4).
@@ -329,8 +353,10 @@ impl CokretApi {
         &self,
         policy: &crate::models::InviteReceivePolicy,
     ) -> anyhow::Result<crate::models::InviteReceivePolicy> {
-        self.put_json("_cokret/self/invite-receive-policy", policy)
+        self.sdk_http_client()?
+            .put("/_cokret/self/invite-receive-policy", policy)
             .await
+            .map_err(anyhow::Error::from)
     }
 
     pub async fn direct_conversation_resolve(
@@ -343,19 +369,20 @@ impl CokretApi {
             create,
             idempotency_key: None,
         };
-        self.post_json(
-            cokret_sdk::http::PATH_SELF_DIRECT_CONVERSATIONS_RESOLVE,
-            &body,
-        )
-        .await
+        self.sdk_http_client()?
+            .direct_conversation_resolve(&body)
+            .await
+            .map_err(anyhow::Error::from)
     }
 
     /// List the holder-private consent cells visible to the authenticated
     /// actor (cells where the actor is either holder or peer). Spec
     /// `identity/consent-model.md` §3 / OpenAPI `ck.self.consent.query.list`.
     pub async fn consent_cells(&self) -> anyhow::Result<cokret_sdk::ConsentCellList> {
-        self.get_json(cokret_sdk::http::PATH_SELF_CONSENT_CELLS)
+        self.sdk_http_client()?
+            .get(cokret_sdk::http::PATH_SELF_CONSENT_CELLS)
             .await
+            .map_err(anyhow::Error::from)
     }
 
     /// Read one holder-private consent cell for `(holder, peer, scope)`.
@@ -374,7 +401,12 @@ impl CokretApi {
             query_component(peer.trim()),
             query_component(scope.trim()),
         );
-        match self.get_json::<cokret_sdk::ConsentCellView>(&path).await {
+        match self
+            .sdk_http_client()?
+            .get::<cokret_sdk::ConsentCellView>(&path)
+            .await
+            .map_err(anyhow::Error::from)
+        {
             Ok(view) => Ok(Some(view)),
             Err(err) => {
                 if err.to_string().contains("404") {
@@ -406,7 +438,10 @@ impl CokretApi {
             cokret_sdk::http::PATH_SELF_CONSENT_CELLS,
             path_component(holder.trim()),
         );
-        self.post_json(&path, &body).await
+        self.sdk_http_client()?
+            .post(&path, &body)
+            .await
+            .map_err(anyhow::Error::from)
     }
 
     /// Revoke scoped consent from `peer`. Spec OpenAPI
@@ -427,7 +462,10 @@ impl CokretApi {
             cokret_sdk::http::PATH_SELF_CONSENT_CELLS,
             path_component(holder.trim()),
         );
-        self.post_json(&path, &body).await
+        self.sdk_http_client()?
+            .post(&path, &body)
+            .await
+            .map_err(anyhow::Error::from)
     }
 
     /// Open an outbound consent request: ask `holder` to grant the
@@ -444,8 +482,10 @@ impl CokretApi {
             peer_did: Some(did_for_request_field("peer", peer)?),
             consent_scope: Some(scope.trim().to_owned()),
         };
-        self.post_json(cokret_sdk::http::PATH_SELF_CONSENT_REQUEST, &body)
+        self.sdk_http_client()?
+            .post(cokret_sdk::http::PATH_SELF_CONSENT_REQUEST, &body)
             .await
+            .map_err(anyhow::Error::from)
     }
 
     /// Single hard logout (account-lifecycle §4.1): the client presents the
@@ -457,11 +497,10 @@ impl CokretApi {
         // Spec strong types for the POST body + response, so the wire shape
         // stays in lockstep with the OpenAPI/DTO contract.
         let outcome: cokret_sdk::AccountLogoutOutcome = self
-            .post_json(
-                "_cokret/gate/account/logout",
-                &cokret_sdk::AccountLogoutRequestBody::default(),
-            )
-            .await?;
+            .sdk_http_client()?
+            .auth_account_logout()
+            .await
+            .map_err(anyhow::Error::from)?;
         Ok(outcome.revoked)
     }
 
@@ -587,7 +626,10 @@ impl CokretApi {
     }
 
     pub async fn identity_describe(&self) -> anyhow::Result<IdentityDescribeOutcome> {
-        self.get_json("_cokret/root/identity/describe").await
+        self.sdk_http_client()?
+            .identity_describe()
+            .await
+            .map_err(|error| anyhow::anyhow!("identity describe: {error}"))
     }
 
     /// Submit a `did:webvh` DID operation (inception / rotation) to soland's
@@ -599,8 +641,10 @@ impl CokretApi {
         &self,
         body: &cokret_sdk::models::DidOperationSubmitRequestBody,
     ) -> anyhow::Result<cokret_sdk::models::DidOperationSubmitOutcome> {
-        self.post_json("_cokret/root/identity/submit-did-operation", body)
+        self.sdk_http_client()?
+            .identity_submit_did_operation(body)
             .await
+            .map_err(anyhow::Error::from)
     }
 
     pub async fn identity_resolve(&self, did: &str) -> anyhow::Result<IdentityResolveOutcome> {
@@ -610,11 +654,15 @@ impl CokretApi {
             did: subject,
             requested_evidence_kinds: Vec::new(),
         };
-        self.post_json("_cokret/root/identity/resolve", &body).await
+        self.sdk_http_client()?
+            .identity_resolve(&body)
+            .await
+            .map_err(anyhow::Error::from)
     }
 
     pub async fn profile_presence(&self, did: &str) -> anyhow::Result<Value> {
-        let sync = self.account_subscribe_snapshot(None).await?;
+        let http = self.sdk_http_client()?;
+        let sync = crate::client_core::account_subscribe_snapshot(&http, None).await?;
         let presence = sync
             .presence
             .iter()
@@ -650,101 +698,17 @@ impl CokretApi {
     }
 
     pub async fn sync_describe(&self) -> anyhow::Result<cokret_sdk::models::SyncDescription> {
-        self.get_json("_cokret/self/account/describe").await
-    }
-
-    /// `ck.self.account.stream.subscribe` snapshot fold. The server returns NDJSON frames;
-    /// this consumes EVERY frame of the response (merging catchup deltas and
-    /// advancing the cursor to the last cursor-bearing frame per
-    /// client-sync.md §2.2) and keeps the rest of the app on the existing
-    /// folded `ClientSyncOutcome` projection path.
-    pub async fn account_subscribe_snapshot(
-        &self,
-        after: Option<&str>,
-    ) -> anyhow::Result<ClientSyncOutcome> {
-        match self.account_subscribe_snapshot_outcome(after).await? {
-            AccountSubscribeSnapshotResult::Delta(response) => Ok(*response),
-            AccountSubscribeSnapshotResult::ReconnectAfter {
-                reconnect_after_ms,
-                reason,
-                reset_cursor,
-            } => Err(AccountSubscribeReconnectAfter {
-                reconnect_after_ms,
-                reason,
-                reset_cursor,
-            }
-            .into()),
-        }
-    }
-
-    pub async fn account_subscribe_snapshot_outcome(
-        &self,
-        after: Option<&str>,
-    ) -> anyhow::Result<AccountSubscribeSnapshotResult> {
-        // H3 — enforce `ck:cursor:*` prefix on non-nil values. nil
-        // (`None`) is the boot bootstrap case and stays untouched.
-        if let Some(token) = after {
-            validate_cursor(token)?;
-        }
-        let _subscribe_gate = ACCOUNT_SUBSCRIBE_NETWORK_GATE.lock().await;
-        let mut url = self.endpoint("_cokret/self/account/subscribe")?;
-        {
-            let mut query = url.query_pairs_mut();
-            query.append_pair("catchup", "true");
-            if let Some(cursor) = after {
-                query.append_pair("after", cursor);
-            }
-        }
-        let request = self
-            .http
-            .get(url)
-            .header(ACCEPT, "application/json, application/x-ndjson");
-        let response = self
-            .send_with_retry(self.prepare_request(request), Method::GET, true)
-            .await?;
-        let status = response.status();
-        if !status.is_success() {
-            let bytes = response.bytes().await?;
-            return Err(CokretApiError {
-                status,
-                error: decode_cokret_error(status, &bytes),
-            }
-            .into());
-        }
-        #[cfg(not(target_arch = "wasm32"))]
-        let is_ndjson = response
-            .headers()
-            .get(reqwest::header::CONTENT_TYPE)
-            .and_then(|value| value.to_str().ok())
-            .unwrap_or_default()
-            .to_ascii_lowercase()
-            .contains("application/x-ndjson");
-        // YOU-01-010 — native reads the NDJSON stream frame by frame and
-        // returns at `catchup_complete` / control frames, so a
-        // spec-compliant server that keeps the stream open for realtime
-        // push does not stall the client until timeout. wasm32 stays on
-        // the buffered read (reqwest's browser-fetch backend exposes no
-        // chunk reader; a web-sys ReadableStream frame reader is the
-        // remaining gap). JSON long-poll responses are bounded and can be
-        // buffered on every target.
-        #[cfg(not(target_arch = "wasm32"))]
-        {
-            if is_ndjson {
-                super::drain_account_subscribe_response(response).await
-            } else {
-                let bytes = response.bytes().await?;
-                parse_account_subscribe_snapshot_outcome(&bytes)
-            }
-        }
-        #[cfg(target_arch = "wasm32")]
-        {
-            let bytes = response.bytes().await?;
-            parse_account_subscribe_snapshot_outcome(&bytes)
-        }
+        self.sdk_http_client()?
+            .account_describe()
+            .await
+            .map_err(anyhow::Error::from)
     }
 
     pub async fn list_notifications(&self) -> anyhow::Result<Value> {
-        Ok(self.account_subscribe_snapshot(None).await?.notifications)
+        let http = self.sdk_http_client()?;
+        Ok(crate::client_core::account_subscribe_snapshot(&http, None)
+            .await?
+            .notifications)
     }
 
     pub async fn mark_all_notifications_read(&self) -> anyhow::Result<Value> {
@@ -763,7 +727,11 @@ impl CokretApi {
     }
 
     pub async fn invites(&self) -> anyhow::Result<cokret_sdk::AuthzInviteList> {
-        self.get_json("_cokret/self/authz/invites").await
+        let subject = self.account_me().await?.did;
+        self.sdk_http_client()?
+            .authz_invites(&subject, None, None)
+            .await
+            .map_err(anyhow::Error::from)
     }
 }
 

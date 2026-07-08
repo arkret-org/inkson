@@ -1,5 +1,7 @@
 use super::*;
 
+const DEFAULT_BLOB_DOWNLOAD_MAX_BYTES: usize = 64 * 1024 * 1024;
+
 impl CokretApi {
     /// A4b — resolve a `ck:blob:sha256:<hex>` reference to its
     /// authenticated download URL on this Principal Server. Returns the
@@ -42,79 +44,66 @@ impl CokretApi {
                 .filter(|value| !value.is_empty())
                 .map(ToOwned::to_owned),
         };
-        self.post_json("_cokret/self/blob/presign", &body).await
+        self.sdk_http_client()?
+            .blob_presign(&body)
+            .await
+            .map_err(anyhow::Error::from)
     }
 
-    /// YOU-01-007 — build the spec `blob_upload_request_body`
-    /// multipart/form-data form for `POST /_cokret/self/blob/upload`.
-    /// Spec form fields (additionalProperties: false): `content`
-    /// (binary, required), `size_bytes` (required), `realm_id`,
-    /// `content_digest`, `media_type`, `filename`, `purpose`. The
-    /// former raw-body + private `x-cokret-*` header wire shape is
-    /// gone; metadata that has no spec form field (e.g. the encrypted
-    /// attachment envelope) travels in the referencing event payload,
-    /// never on the upload.
-    fn blob_upload_form(
-        bytes: Vec<u8>,
+    fn blob_upload_metadata(
+        size_bytes: usize,
         media_type: &str,
         realm_id: Option<&str>,
         content_digest: Option<&str>,
         filename: Option<&str>,
         purpose: Option<&str>,
-    ) -> anyhow::Result<reqwest::multipart::Form> {
+    ) -> anyhow::Result<cokret_sdk::models::BlobUploadMetadata> {
+        let realm_id = realm_id
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(|value| {
+                cokret_sdk::RealmId::new(value.to_owned()).map_err(|err| {
+                    anyhow::anyhow!("invalid realm_id for /blob/upload `{value}`: {err}")
+                })
+            })
+            .transpose()?;
+        let content_digest = content_digest
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(|value| {
+                cokret_sdk::Hash::new(value.to_owned()).map_err(|err| {
+                    anyhow::anyhow!("invalid content_digest for /blob/upload `{value}`: {err}")
+                })
+            })
+            .transpose()?;
         let media_type = if media_type.trim().is_empty() {
-            "application/octet-stream"
+            None
         } else {
-            media_type.trim()
+            Some(media_type.trim().to_owned())
         };
-        let size_bytes = bytes.len();
-        let mut content = reqwest::multipart::Part::bytes(bytes)
-            .mime_str(media_type)
-            .map_err(|err| anyhow::anyhow!("invalid media_type for blob upload: {err}"))?;
-        if let Some(filename) = filename {
-            content = content.file_name(filename.to_owned());
-        }
-        let mut form = reqwest::multipart::Form::new()
-            .part("content", content)
-            .text("size_bytes", size_bytes.to_string())
-            .text("media_type", media_type.to_owned());
-        if let Some(realm_id) = realm_id.map(str::trim).filter(|value| !value.is_empty()) {
-            form = form.text("realm_id", realm_id.to_owned());
-        }
-        if let Some(content_digest) = content_digest {
-            form = form.text("content_digest", content_digest.to_owned());
-        }
-        if let Some(filename) = filename {
-            form = form.text("filename", filename.to_owned());
-        }
-        if let Some(purpose) = purpose {
-            form = form.text("purpose", purpose.to_owned());
-        }
-        Ok(form)
-    }
-
-    async fn post_blob_upload_form(
-        &self,
-        form: reqwest::multipart::Form,
-    ) -> anyhow::Result<BlobUploadOutcome> {
-        let request = self
-            .http
-            .post(self.endpoint("_cokret/self/blob/upload")?)
-            .multipart(form);
-        self.send_json(self.prepare_request(request), Method::POST)
-            .await
+        Ok(cokret_sdk::models::BlobUploadMetadata {
+            realm_id,
+            content_digest,
+            size_bytes: size_bytes as u64,
+            media_type,
+            filename: filename.map(ToOwned::to_owned),
+            purpose: purpose.map(ToOwned::to_owned),
+        })
     }
 
     pub async fn upload_blob(&self, bytes: &'static [u8]) -> anyhow::Result<BlobUploadOutcome> {
-        let form = Self::blob_upload_form(
-            bytes.to_vec(),
+        let metadata = Self::blob_upload_metadata(
+            bytes.len(),
             "application/octet-stream",
             None,
             None,
             None,
             None,
         )?;
-        self.post_blob_upload_form(form).await
+        self.sdk_http_client()?
+            .blob_upload_bytes(&metadata, bytes.to_vec())
+            .await
+            .map_err(anyhow::Error::from)
     }
 
     /// Owned-bytes variant of [`upload_blob`] used by the composer
@@ -145,15 +134,18 @@ impl CokretApi {
         filename: Option<&str>,
     ) -> anyhow::Result<BlobUploadOutcome> {
         let filename = filename.and_then(safe_blob_filename_header);
-        let form = Self::blob_upload_form(
-            bytes,
+        let metadata = Self::blob_upload_metadata(
+            bytes.len(),
             content_type,
             realm_id,
             None,
             filename.as_deref(),
             None,
         )?;
-        self.post_blob_upload_form(form).await
+        self.sdk_http_client()?
+            .blob_upload_bytes(&metadata, bytes)
+            .await
+            .map_err(anyhow::Error::from)
     }
 
     pub async fn upload_encrypted_mls_attachment_asset(
@@ -165,15 +157,18 @@ impl CokretApi {
         // The SDK's canonical `EncryptedAttachmentEnvelope` does NOT ride
         // on the upload (the spec form has no field for it); it travels
         // alongside the blob_ref in the referencing message payload.
-        let form = Self::blob_upload_form(
-            asset.ciphertext.clone(),
+        let metadata = Self::blob_upload_metadata(
+            asset.ciphertext.len(),
             crate::blob::CIPHERTEXT_MEDIA_TYPE,
             Some(realm_id),
             Some(asset.ciphertext_digest()),
             None,
             None,
         )?;
-        self.post_blob_upload_form(form).await
+        self.sdk_http_client()?
+            .blob_upload_bytes(&metadata, asset.ciphertext.clone())
+            .await
+            .map_err(anyhow::Error::from)
     }
 
     pub async fn upload_file_transfer_ciphertext(
@@ -181,36 +176,36 @@ impl CokretApi {
         ciphertext: Vec<u8>,
         content_digest: &str,
     ) -> anyhow::Result<BlobUploadOutcome> {
-        let form = Self::blob_upload_form(
-            ciphertext,
+        let metadata = Self::blob_upload_metadata(
+            ciphertext.len(),
             crate::blob::CIPHERTEXT_MEDIA_TYPE,
             None,
             Some(content_digest),
             None,
             Some("file_transfer"),
         )?;
-        self.post_blob_upload_form(form).await
+        self.sdk_http_client()?
+            .blob_upload_bytes(&metadata, ciphertext)
+            .await
+            .map_err(anyhow::Error::from)
     }
 
     pub async fn get_blob_bytes(&self, blob_ref: &str) -> anyhow::Result<Vec<u8>> {
-        let blob_ref = query_component(canonical_blob_ref(blob_ref));
-        let request = self.http.get(self.endpoint(&format!(
-            "_cokret/self/blob/get?blob_ref={blob_ref}&purpose=message_attachment"
-        ))?);
-        self.send_bytes(self.prepare_request(request), Method::GET)
-            .await
+        self.download_blob_bytes_sdk(
+            blob_ref,
+            "message_attachment",
+            DEFAULT_BLOB_DOWNLOAD_MAX_BYTES,
+        )
+        .await
     }
 
     pub async fn download_blob_verified(
         &self,
         descriptor: &cokret_sdk::SnapshotChunkDescriptor,
     ) -> anyhow::Result<Vec<u8>> {
-        let blob_ref = query_component(canonical_blob_ref(descriptor.chunk_ref.as_str()));
-        let request = self.http.get(self.endpoint(&format!(
-            "_cokret/self/blob/get?blob_ref={blob_ref}&purpose=download"
-        ))?);
+        let max_bytes = blob_download_max_bytes_for_declared_size(descriptor.size_bytes)?;
         let bytes = self
-            .send_bytes(self.prepare_request(request), Method::GET)
+            .download_blob_bytes_sdk(descriptor.chunk_ref.as_str(), "download", max_bytes)
             .await?;
         if bytes.len() as u64 > descriptor.size_bytes {
             anyhow::bail!(
@@ -233,11 +228,7 @@ impl CokretApi {
     }
 
     pub async fn get_file_transfer_blob_bytes(&self, blob_ref: &str) -> anyhow::Result<Vec<u8>> {
-        let blob_ref = query_component(canonical_blob_ref(blob_ref));
-        let request = self.http.get(self.endpoint(&format!(
-            "_cokret/self/blob/get?blob_ref={blob_ref}&purpose=file_transfer"
-        ))?);
-        self.send_bytes(self.prepare_request(request), Method::GET)
+        self.download_blob_bytes_sdk(blob_ref, "file_transfer", DEFAULT_BLOB_DOWNLOAD_MAX_BYTES)
             .await
     }
 
@@ -346,8 +337,66 @@ impl CokretApi {
             other => Err(anyhow::anyhow!("unsupported_attachment_scheme: {other}")),
         }
     }
+
+    async fn download_blob_bytes_sdk(
+        &self,
+        blob_ref: &str,
+        purpose: &str,
+        max_bytes: usize,
+    ) -> anyhow::Result<Vec<u8>> {
+        let blob_ref = cokret_sdk::BlobRef::new(canonical_blob_ref(blob_ref).to_owned())
+            .map_err(|err| anyhow::anyhow!("invalid blob_ref for /blob/get: {err}"))?;
+        let options = cokret_sdk::http_client::BlobDownloadOptions::new()
+            .purpose(purpose.to_owned())
+            .max_bytes(max_bytes);
+        let request_options = self.blob_download_request_options();
+        self.sdk_http_client()?
+            .blob_download_bytes_with_options(&blob_ref, &options, &request_options)
+            .await
+            .map_err(anyhow::Error::from)
+    }
+
+    fn blob_download_request_options(&self) -> cokret_sdk::http_client::ClientRequestOptions {
+        match self.wait_for_sync_token.as_deref() {
+            Some(sync_token) => {
+                cokret_sdk::http_client::ClientRequestOptions::new().wait_for(sync_token.to_owned())
+            }
+            None => cokret_sdk::http_client::ClientRequestOptions::new(),
+        }
+    }
 }
 
 fn snapshot_validation_error(error: cokret_sdk::SnapshotValidationError) -> anyhow::Error {
     anyhow::anyhow!("{}: {}", error.code.as_str(), error.message)
+}
+
+fn blob_download_max_bytes_for_declared_size(size_bytes: u64) -> anyhow::Result<usize> {
+    let size_bytes = usize::try_from(size_bytes)
+        .map_err(|_| anyhow::anyhow!("snapshot chunk size_bytes exceeds this platform"))?;
+    size_bytes
+        .checked_add(1)
+        .ok_or_else(|| anyhow::anyhow!("snapshot chunk size_bytes exceeds this platform"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn snapshot_chunk_download_limit_allows_one_extra_byte_for_mismatch_check() {
+        assert_eq!(blob_download_max_bytes_for_declared_size(5).unwrap(), 6);
+    }
+
+    #[test]
+    fn snapshot_chunk_download_limit_rejects_usize_overflow() {
+        let oversized = usize::MAX as u64;
+        if usize::try_from(oversized).is_ok() {
+            let error = blob_download_max_bytes_for_declared_size(oversized).unwrap_err();
+            assert!(
+                error
+                    .to_string()
+                    .contains("snapshot chunk size_bytes exceeds this platform")
+            );
+        }
+    }
 }

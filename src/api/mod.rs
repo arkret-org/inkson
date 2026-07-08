@@ -4,15 +4,12 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, LazyLock};
 use std::time::Duration;
 
-use base64::Engine;
 use chime::{
     ChimePushRegisterDeviceOutcome, ChimePushRegisterDeviceRequest,
     ChimePushUnregisterDeviceRequest, CokretPushClient,
 };
 use cokret_sdk::ErrorEnvelope;
-use reqwest::header::{ACCEPT, HeaderMap, RETRY_AFTER};
-use reqwest::{Client, Method, StatusCode};
-use serde::de::DeserializeOwned;
+use reqwest::{Client, StatusCode};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use tokio::sync::{Mutex, OnceCell, RwLock};
@@ -108,7 +105,6 @@ pub struct CokretApi {
     pub(crate) http: Client,
     authorization_credential: Option<String>,
     wait_for_sync_token: Option<String>,
-    retry: RetryPolicy,
     /// Coauth-issued session grant and optional introspection proof headers
     /// used by chime push register/unregister calls.
     chime_session_grant: Option<String>,
@@ -126,7 +122,7 @@ pub struct CokretApi {
     /// (api-conventions.md §3.3). This is the default `/_cokret/self/*` session
     /// presentation: the held credential is the
     /// grant in `authorization_credential`, sender-constrained by this DPoP key.
-    dpop_device: Option<crate::auth_dpop::DpopHandle>,
+    dpop_device: Option<crate::account_auth::grant_dpop::DpopHandle>,
     /// Cached `GET /_cokret/self/events/describe` response (spec
     /// `ServiceDescribe` shape) so repeat callers avoid re-hitting the
     /// network.
@@ -145,7 +141,6 @@ impl fmt::Debug for CokretApi {
                 &self.authorization_credential.as_ref().map(|_| "<redacted>"),
             )
             .field("wait_for_sync_token", &self.wait_for_sync_token)
-            .field("retry", &self.retry)
             .field(
                 "chime_session_grant",
                 &self.chime_session_grant.as_ref().map(|_| "<redacted>"),
@@ -311,6 +306,5 @@ pub use views::*;
 const POP_SIGNATURE_WINDOW_SECONDS: i64 = 120;
 
 // The RFC 7638 Ed25519 JWK thumbprint (the `keyid` soland accepts for the PoP
-// binding check) has a single canonical implementation in
-// `crate::dpop::jwk_thumbprint_ed25519`; callers use it directly so the PoP
-// `jkt` and the DPoP `jkt` can never diverge.
+// binding check) is derived through `cokret_sdk::dpop`, keeping the PoP `jkt`
+// and DPoP `jkt` on the same shared implementation.

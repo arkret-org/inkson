@@ -3,7 +3,6 @@ use std::collections::HashMap;
 
 use url::Url;
 
-use super::CoauthApi;
 use super::util::principal_audience;
 use crate::api::CokretApi;
 use crate::config::validate_server_url;
@@ -61,9 +60,9 @@ pub async fn resolve_principal_gate_account_base(
 /// T1.Y4 — Account Authority resolver. The Principal Server's root
 /// `/_cokret/describe` (service-surface §2.5.1) publishes a strongly-typed
 /// `auth_metadata.account_authority.gate_account_base`; every Cokret
-/// `/_cokret/gate/account/*` request MUST be derived from that single base
-/// (a [`CoauthApi`] rooted at it), and the available authentication methods
-/// come from `auth_metadata.methods[]`.
+/// `/_cokret/gate/account/*` request MUST be derived from that single base,
+/// and the available authentication methods come from
+/// `auth_metadata.methods[]`.
 ///
 /// The resolver fails closed: if the describe response does not carry a strong
 /// `account_authority`, it errors instead of guessing a per-operation route.
@@ -127,12 +126,6 @@ impl AuthorityResolver {
             principal_audience,
             methods: metadata.methods.clone(),
         })
-    }
-
-    /// A [`CoauthApi`] rooted at the resolved `gate_account_base`. Every
-    /// `gate/account` call (session-grants, refresh, logout) goes through it.
-    pub fn gate_account_client(&self) -> anyhow::Result<CoauthApi> {
-        CoauthApi::new(&self.gate_account_base)
     }
 
     /// Pick the first `oidc` method from `auth_metadata.methods[]`.

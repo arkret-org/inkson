@@ -1,68 +1,14 @@
 use super::*;
 
-/// COR-07: hard upper bound on event-query pages walked per backfill call, so a
-/// hostile / buggy server that keeps `has_more=true` (or never advances the
-/// cursor) cannot turn pagination into an unbounded loop. 100 pages × 100 events
-/// = 10k events is well past any realm a client backfills in one shot.
-const MAX_EVENTS_QUERY_PAGES: usize = 100;
-
 impl CokretApi {
-    /// COR-07: walk EVERY page of `/_cokret/self/events` for `realm_id` until
-    /// `has_more == false`, instead of returning only the first 100 events.
-    ///
-    /// Pagination follows `next_cursor` via `after=`. Two hardening guards keep a
-    /// malicious server from hanging the client: a page-count ceiling
-    /// ([`MAX_EVENTS_QUERY_PAGES`]) and a strict cursor-progress check (the
-    /// server MUST advance `next_cursor`; a repeated / empty cursor while
-    /// `has_more` is still true is rejected rather than looped on).
-    async fn events_query_all_pages(
-        &self,
-        realm_id: &str,
-    ) -> anyhow::Result<cokret_sdk::EventsQueryOutcome> {
-        let mut combined: cokret_sdk::EventsQueryOutcome =
-            self.get_json(&events_query_path(realm_id)).await?;
-        let mut pages = 1usize;
-        let mut last_cursor: Option<String> = None;
-        while combined.has_more {
-            let Some(next) = combined
-                .next_cursor
-                .as_deref()
-                .map(str::trim)
-                .filter(|c| !c.is_empty())
-                .map(ToOwned::to_owned)
-            else {
-                anyhow::bail!(
-                    "events query for realm {realm_id} reported has_more but no next_cursor"
-                );
-            };
-            // Strict forward progress: refuse to re-fetch the same cursor.
-            if last_cursor.as_deref() == Some(next.as_str()) {
-                anyhow::bail!(
-                    "events query for realm {realm_id} did not advance next_cursor ({next}); aborting to avoid a pagination loop"
-                );
-            }
-            if pages >= MAX_EVENTS_QUERY_PAGES {
-                anyhow::bail!(
-                    "events query for realm {realm_id} exceeded {MAX_EVENTS_QUERY_PAGES} pages; aborting"
-                );
-            }
-            let page: cokret_sdk::EventsQueryOutcome = self
-                .get_json(&events_query_path_after(realm_id, &next))
-                .await?;
-            combined.events.extend(page.events);
-            combined.has_more = page.has_more;
-            combined.next_cursor = page.next_cursor;
-            combined.range_completeness = page.range_completeness;
-            last_cursor = Some(next);
-            pages += 1;
-        }
-        Ok(combined)
-    }
-
     /// Query durable events through the current `/_cokret/self/events` surface,
     /// following pagination to completion (COR-07).
     pub async fn backfill(&self, realm_id: &str) -> anyhow::Result<BackfillView> {
-        let outcome = self.events_query_all_pages(realm_id).await?;
+        let outcome = self
+            .sdk_http_client()?
+            .events_query_all_pages(realm_id)
+            .await
+            .map_err(anyhow::Error::from)?;
         Ok(outcome.into())
     }
 
@@ -72,131 +18,17 @@ impl CokretApi {
     ) -> anyhow::Result<Option<cokret_sdk::EventId>> {
         // COR-07: the MLS genesis event may sit past the first page; paginate so
         // it is never silently judged "absent" because of front-page noise.
-        let outcome = self.events_query_all_pages(realm_id).await?;
+        let outcome = self
+            .sdk_http_client()?
+            .events_query_all_pages(realm_id)
+            .await
+            .map_err(anyhow::Error::from)?;
         Ok(mls_genesis_event_id_from_events(&outcome, realm_id))
     }
 
     /// Stream the canonical `/_cokret/self/events/subscribe` NDJSON response and
     /// invoke `on_frame` once per parsed frame.
     ///
-    /// Round 4 (spec a77b995) — the parser is now typed against
-    /// [`cokret_sdk::EventsSubscribeFrame`] (the `tag = "kind"`,
-    /// snake_case-discriminated frame body). Callers MUST route on the
-    /// canonical variants: `Dropped { cursor }` → resume from `cursor`,
-    /// `ResyncRequired` → full resync, `EpochRotation { epoch }` →
-    /// refresh session keys. The pre-round-4 untyped string-line
-    /// parser is wire-broken.
-    ///
-    /// Native-only: reqwest's wasm32 backend goes through the browser fetch
-    /// API and does not expose `Response::chunk()` / `bytes_stream()`. A wasm
-    /// subscription path needs a separate web-sys ReadableStream-based
-    /// implementation (not wired up yet — no callers).
-    #[cfg(not(target_arch = "wasm32"))]
-    pub async fn events_subscribe_ndjson<F>(
-        &self,
-        realm_id: &str,
-        after: Option<&str>,
-        include_history: Option<bool>,
-        mut on_frame: F,
-    ) -> anyhow::Result<()>
-    where
-        F: FnMut(cokret_sdk::EventsSubscribeFrame) -> anyhow::Result<()>,
-    {
-        if let Some(token) = after {
-            validate_cursor(token)?;
-        }
-        let request = self
-            .http
-            .get(self.endpoint(&events_subscribe_path(
-                realm_id,
-                after,
-                include_history,
-                None,
-            ))?)
-            .header(ACCEPT, "application/x-ndjson");
-        let mut response = self
-            .send_with_retry(self.prepare_request(request), Method::GET, true)
-            .await?;
-        let status = response.status();
-        if !status.is_success() {
-            let bytes = response.bytes().await?;
-            return Err(CokretApiError {
-                status,
-                error: decode_cokret_error(status, &bytes),
-            }
-            .into());
-        }
-
-        let mut pending = Vec::new();
-        while let Some(chunk) = response.chunk().await? {
-            pending.extend_from_slice(&chunk);
-            // COR-01: cap the inter-newline buffer before draining. A server
-            // that never delimits a frame (or sends an oversized single frame)
-            // MUST NOT be able to grow this buffer without bound — fail closed
-            // instead of risking OOM. Parity with the account.subscribe path.
-            if pending.len() > MAX_NDJSON_STREAM_FRAME_BYTES {
-                anyhow::bail!(
-                    "events subscribe frame exceeded {MAX_NDJSON_STREAM_FRAME_BYTES} bytes without a newline delimiter"
-                );
-            }
-            drain_events_subscribe_ndjson_lines(&mut pending, &mut on_frame)?;
-        }
-
-        if let Some(frame) = parse_events_subscribe_ndjson_line(&pending)? {
-            on_frame(frame)?;
-        }
-        Ok(())
-    }
-
-    /// All-target buffered long-poll of `ck.self.events.stream.subscribe`
-    /// (`GET /_cokret/self/events/subscribe`). Unlike [`Self::events_subscribe_ndjson`]
-    /// it does NOT read the NDJSON body frame-by-frame (reqwest's wasm32
-    /// browser-fetch backend exposes no `Response::chunk()` reader): it awaits
-    /// the whole response body and parses every NDJSON line at once. The server
-    /// closes the stream after `max_duration_ms`, so that window doubles as the
-    /// liveness latency for this realm stream — pick it small enough to keep the
-    /// board fresh and large enough to behave as a long-poll.
-    ///
-    /// This is the per-realm counterpart to `account_subscribe_snapshot_outcome`:
-    /// it carries the realm's OWN stream cursor in `after=` (never the account
-    /// cursor — they are bound to different `filter_digest`s per
-    /// `encoding.md` §8.3.1, and cross-binding reuse is `cursor_integrity_invalid`).
-    pub async fn events_subscribe_poll(
-        &self,
-        realm_id: &str,
-        after: Option<&str>,
-        include_history: bool,
-        max_duration_ms: u64,
-    ) -> anyhow::Result<Vec<cokret_sdk::EventsSubscribeFrame>> {
-        if let Some(token) = after {
-            validate_cursor(token)?;
-        }
-        let path = events_subscribe_path(
-            realm_id,
-            after,
-            Some(include_history),
-            Some(max_duration_ms),
-        );
-        let request = self
-            .http
-            .get(self.endpoint(&path)?)
-            .header(ACCEPT, "application/x-ndjson");
-        let response = self
-            .send_with_retry(self.prepare_request(request), Method::GET, true)
-            .await?;
-        let status = response.status();
-        let bytes = response.bytes().await?;
-        if !status.is_success() {
-            return Err(CokretApiError {
-                status,
-                error: decode_cokret_error(status, &bytes),
-            }
-            .into());
-        }
-        let text = String::from_utf8_lossy(&bytes);
-        parse_events_subscribe_ndjson_text(&text)
-    }
-
     /// Round R2/R3 (T02) — typing notifications are wire-scope-ephemeral
     /// (`ck.typing`). They MUST strand through the canonical
     /// `ck.self.ephemeral.command.send` operation (`POST /_cokret/self/ephemeral`), never
@@ -283,10 +115,12 @@ impl CokretApi {
     ) -> anyhow::Result<cokret_sdk::RealmSealFrontierView> {
         let realm_id_query = query_component(realm_id);
         let state: cokret_sdk::EventsFrontierAccountClientState = self
-            .get_json(&format!(
-                "_cokret/self/events/frontier?realm_id={realm_id_query}"
+            .sdk_http_client()?
+            .get(&format!(
+                "/_cokret/self/events/frontier?realm_id={realm_id_query}"
             ))
-            .await?;
+            .await
+            .map_err(anyhow::Error::from)?;
         let cokret_sdk::EventsFrontierView::RealmSealView(view) = state.frontier else {
             anyhow::bail!(
                 "events/frontier for realm_id={realm_id} did not return a Realm Seal view — \
@@ -311,10 +145,12 @@ impl CokretApi {
     ) -> anyhow::Result<cokret_sdk::ActorFrontierView> {
         let actor_id_query = query_component(actor_id);
         let state: cokret_sdk::EventsFrontierAccountClientState = self
-            .get_json(&format!(
-                "_cokret/self/events/frontier?actor_id={actor_id_query}"
+            .sdk_http_client()?
+            .get(&format!(
+                "/_cokret/self/events/frontier?actor_id={actor_id_query}"
             ))
-            .await?;
+            .await
+            .map_err(anyhow::Error::from)?;
         let cokret_sdk::EventsFrontierView::Actor(view) = state.frontier else {
             anyhow::bail!(
                 "events/frontier for actor_id={actor_id} did not return an actor frontier"
@@ -328,7 +164,10 @@ impl CokretApi {
     /// YOU-01-016: the former soland-private `SolandEventsDescribeResBody`
     /// mirror (with its non-spec `capabilities` blob) was removed.
     pub async fn events_describe(&self) -> anyhow::Result<cokret_sdk::ServiceDescribe> {
-        self.get_json("_cokret/self/events/describe").await
+        self.sdk_http_client()?
+            .events_describe()
+            .await
+            .map_err(|error| anyhow::anyhow!("events describe: {error}"))
     }
 
     /// Return a cached `events_describe` body. The first call performs
@@ -355,14 +194,16 @@ impl CokretApi {
         idempotency_key: String,
     ) -> anyhow::Result<SubmitEventResult> {
         validate_signed_sdk_event_for_submit(signed)?;
-        let request = self
-            .http
-            .post(self.endpoint("_cokret/self/events")?)
-            .json(signed);
-        let request = self.with_write_request_headers(request, &idempotency_key);
         let response: cokret_sdk::EventsSubmitOutcome = self
-            .send_json_retryable(self.prepare_request(request), Method::POST)
-            .await?;
+            .sdk_http_client()?
+            .events_submit_with_options(
+                signed,
+                &cokret_sdk::http_client::ClientRequestOptions::new()
+                    .request_id(idempotency_key.clone())
+                    .idempotency_key(idempotency_key),
+            )
+            .await
+            .map_err(anyhow::Error::from)?;
         ensure_events_submit_accepted(&response)?;
         Ok(SubmitEventResult::from(response))
     }
@@ -437,7 +278,12 @@ impl CokretApi {
         &self,
         event: &mut cokret_sdk::Event,
     ) -> anyhow::Result<()> {
-        if event.seal_ref.is_some() || event.seal_basis.is_some() || event.effects.is_empty() {
+        if event.seal_ref.is_some()
+            || event.auth_context.is_some()
+            || event.seal_basis.is_some()
+            || event.effects.is_empty()
+            || cba_exempt_reducer_kind(&event.kind)
+        {
             return Ok(());
         }
         match cba_effect_plane_for_event(event)? {
@@ -448,11 +294,18 @@ impl CokretApi {
                 event.seal_basis = Some(seal_view.seal_basis());
             }
             CbaEffectPlane::Data => {
+                if !event.preconditions.is_empty() {
+                    anyhow::bail!(
+                        "DataEvent {} carries preconditions; CBA DataEvents must use effects + seal_ref + auth_context only",
+                        event.event_id
+                    );
+                }
                 let seal = self.current_seal_for(event.realm_id.as_str()).await?;
                 event.seal_ref = Some(
                     cokret_sdk::SealId::new(seal)
                         .map_err(|err| anyhow::anyhow!("current seal id is invalid: {err}"))?,
                 );
+                event.auth_context = Some(data_event_auth_context(event)?);
             }
         }
         Ok(())
@@ -514,17 +367,20 @@ impl CokretApi {
             events: sdk_events.to_vec(),
             idempotency_key: idempotency_key.map(ToOwned::to_owned),
         };
-        let request = self
-            .http
-            .post(self.endpoint("_cokret/self/events")?)
-            .json(&body);
         let idem = idempotency_key
             .map(ToOwned::to_owned)
             .unwrap_or_else(uuid_v7);
-        let request = self.with_write_request_headers(request, &idem);
         let response: cokret_sdk::EventsSubmitOutcome = self
-            .send_json_retryable(self.prepare_request(request), Method::POST)
-            .await?;
+            .sdk_http_client()?
+            .post_with_options(
+                "/_cokret/self/events",
+                &body,
+                &cokret_sdk::http_client::ClientRequestOptions::new()
+                    .request_id(idem.clone())
+                    .idempotency_key(idem),
+            )
+            .await
+            .map_err(anyhow::Error::from)?;
         ensure_events_submit_accepted(&response)?;
         Ok(response)
     }
@@ -589,7 +445,10 @@ impl CokretApi {
                 "ephemeral submit: expires_at - sent_at = {window_ms} ms violates 5-minute ceiling"
             );
         }
-        self.post_json("_cokret/self/ephemeral", envelope).await
+        self.sdk_http_client()?
+            .post("/_cokret/self/ephemeral", envelope)
+            .await
+            .map_err(anyhow::Error::from)
     }
 
     /// Round R2/R3 (T02) — point-to-point to-device signals (the
@@ -722,6 +581,19 @@ const DATA_PLANE_CELL_FAMILIES: &[&str] = &[
     "ck.component.pin.v1",
 ];
 
+fn cba_exempt_reducer_kind(kind: &cokret_sdk::events::kinds::EventKind) -> bool {
+    matches!(
+        kind,
+        cokret_sdk::events::kinds::EventKind::RealmCreate
+            | cokret_sdk::events::kinds::EventKind::MemberState
+            | cokret_sdk::events::kinds::EventKind::RealmDiscovery
+            | cokret_sdk::events::kinds::EventKind::RealmHistoryVisibility
+            | cokret_sdk::events::kinds::EventKind::RealmJoinRule
+            | cokret_sdk::events::kinds::EventKind::RealmPlaintextVisibleServices
+            | cokret_sdk::events::kinds::EventKind::RealmPolicyComponents
+    )
+}
+
 fn cba_effect_plane_for_event(event: &cokret_sdk::Event) -> anyhow::Result<CbaEffectPlane> {
     let mut observed = None;
     for effect in &event.effects {
@@ -755,6 +627,60 @@ fn cba_cell_family(cell: &str) -> anyhow::Result<&str> {
         anyhow::bail!("effects[].cell must include non-empty family and subject");
     }
     Ok(family)
+}
+
+fn data_event_auth_context(event: &cokret_sdk::Event) -> anyhow::Result<cokret_sdk::AuthContext> {
+    let Some(authorization_ref) = event.authorization_ref.as_deref() else {
+        anyhow::bail!(
+            "DataEvent {} requires authorization_ref so auth_context.capability_refs can be pinned",
+            event.event_id
+        );
+    };
+    if !authorization_ref.starts_with("ck:grant:") {
+        anyhow::bail!(
+            "DataEvent {} authorization_ref must be a ck:grant:* capability ref for auth_context",
+            event.event_id
+        );
+    }
+    let did = event
+        .executed_by
+        .clone()
+        .unwrap_or_else(|| event.actor_id.clone());
+    let key_id = data_event_key_id_for(event);
+    Ok(cokret_sdk::AuthContext {
+        did,
+        key_id,
+        key_epoch: 0,
+        credential_epoch: None,
+        capability_refs: vec![authorization_ref.to_owned()],
+    })
+}
+
+fn data_event_key_id_for(event: &cokret_sdk::Event) -> String {
+    let controller = event
+        .executed_by
+        .as_ref()
+        .map(|did| did.as_str())
+        .unwrap_or_else(|| event.actor_id.as_str());
+    let Some(signer) = crate::event_signer::active_signer() else {
+        return "device".to_owned();
+    };
+    if let Some(device_id) = signer.device_id() {
+        return device_id.to_owned();
+    }
+    let method = signer.verification_method();
+    let method_without_query = method
+        .split_once('?')
+        .map(|(head, _)| head)
+        .unwrap_or(method);
+    let Some((method_controller, fragment)) = method_without_query.split_once('#') else {
+        return "device".to_owned();
+    };
+    if method_controller == controller && !fragment.is_empty() {
+        fragment.to_owned()
+    } else {
+        "device".to_owned()
+    }
 }
 
 fn event_proof_context_from_description(

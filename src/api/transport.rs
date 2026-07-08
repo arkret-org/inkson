@@ -18,13 +18,14 @@ impl CokretApi {
         let http = Client::builder();
         #[cfg(not(target_arch = "wasm32"))]
         let http = http.timeout(options.timeout);
+        #[cfg(target_arch = "wasm32")]
+        let _ = options;
 
         Ok(Self {
             base_url,
             http: http.build()?,
             authorization_credential: None,
             wait_for_sync_token: None,
-            retry: options.retry,
             chime_session_grant: None,
             chime_session_grant_proof: None,
             network_state: Arc::new(RwLock::new(NetworkState::Online)),
@@ -55,7 +56,7 @@ impl CokretApi {
     ///
     /// ②(A+②) model (api-conventions.md §3.3): the held credential is the
     /// `ck.session.grant` itself, so callers pass the grant JWT here. Combined
-    /// with [`Self::with_dpop_device`], each request then carries
+    /// with [`Self::with_dpop_device`], SDK-backed requests carry
     /// `Authorization: Bearer <grant>` plus a per-request `DPoP` proof bound to
     /// that grant (`ath=hash(grant)`).
     ///
@@ -66,15 +67,59 @@ impl CokretApi {
         self
     }
 
-    /// ②(A+②) — bind the grant-binding (DPoP) key so every `/_cokret/self/*`
-    /// request mints a fresh per-request `DPoP` proof (RFC 9449) bound to the
-    /// grant in `authorization_credential`. Centralized minting happens in the
-    /// request pipeline ([`Self::attach_session_grant_dpop`]); call sites only
-    /// attach the key once. The grant must already be set via
+    /// ②(A+②) — bind the grant-binding (DPoP) key used by
+    /// [`Self::sdk_http_client`] so SDK-backed requests mint a fresh
+    /// per-request `DPoP` proof (RFC 9449) bound to the grant in
+    /// `authorization_credential`. The grant must already be set via
     /// [`Self::with_bearer`] for the `ath` binding to be present.
-    pub fn with_dpop_device(mut self, handle: crate::auth_dpop::DpopHandle) -> Self {
+    pub fn with_dpop_device(mut self, handle: crate::account_auth::grant_dpop::DpopHandle) -> Self {
         self.dpop_device = Some(handle);
         self
+    }
+
+    pub(crate) fn sdk_http_client(&self) -> anyhow::Result<cokret_sdk::http_client::Client> {
+        let mut builder = cokret_sdk::http_client::ClientBuilder::new(self.base_url.clone())
+            .http_client(self.http.clone());
+        match (
+            self.authorization_credential.as_ref(),
+            self.dpop_device.as_ref(),
+        ) {
+            (Some(token), Some(handle)) => {
+                builder = builder.auth(cokret_sdk::http_client::Auth::Dpop(
+                    handle.sdk_dpop_auth_for_access_token(token.clone()),
+                ));
+            }
+            (Some(token), None) => {
+                builder = builder.auth(cokret_sdk::http_client::Auth::Bearer(token.clone()));
+            }
+            (None, Some(handle)) => {
+                builder = builder.auth(cokret_sdk::http_client::Auth::Dpop(
+                    handle.sdk_dpop_proof_only_auth(),
+                ));
+            }
+            (None, None) => {}
+        }
+        if let Some(signing_key) = self.session_signing_key.as_ref() {
+            let key_id = match self.session_key_id.clone() {
+                Some(key_id) => key_id,
+                None => {
+                    let jwk = cokret_sdk::dpop::DpopJwk::from_ed25519_verifying_key(
+                        &signing_key.verifying_key(),
+                    );
+                    cokret_sdk::dpop::dpop_jwk_thumbprint(&jwk)
+                        .map_err(|error| anyhow::anyhow!("session key thumbprint: {error}"))?
+                }
+            };
+            builder = builder.http_message_signer(
+                cokret_sdk::http_client::HttpMessageSigner::new(key_id, signing_key.clone())
+                    .with_validity(std::time::Duration::from_secs(
+                        POP_SIGNATURE_WINDOW_SECONDS as u64,
+                    )),
+            );
+        }
+        builder
+            .build()
+            .map_err(|error| anyhow::anyhow!("build SDK Cokret HTTP client: {error}"))
     }
 
     /// SPEC-CR-001 — bind the `ck.session.grant` session key so requests to
@@ -86,10 +131,13 @@ impl CokretApi {
         session_private_key_pem: &str,
     ) -> anyhow::Result<Self> {
         let signing_key =
-            crate::coauth::session_grant_signing_key_from_pem(session_private_key_pem)?;
-        self.session_key_id = Some(crate::dpop::jwk_thumbprint_ed25519(
-            &signing_key.verifying_key(),
-        ));
+            crate::account_auth::session_grant_signing_key_from_pem(session_private_key_pem)?;
+        let jwk =
+            cokret_sdk::dpop::DpopJwk::from_ed25519_verifying_key(&signing_key.verifying_key());
+        self.session_key_id = Some(
+            cokret_sdk::dpop::dpop_jwk_thumbprint(&jwk)
+                .map_err(|error| anyhow::anyhow!("session key thumbprint: {error}"))?,
+        );
         self.session_signing_key = Some(signing_key);
         Ok(self)
     }
@@ -205,428 +253,5 @@ impl CokretApi {
         anyhow::bail!(
             "{label} requires the `demo-crypto` build feature (compiled out of this binary)"
         )
-    }
-
-    pub(crate) async fn get_json<T: DeserializeOwned>(&self, path: &str) -> anyhow::Result<T> {
-        let request = self.http.get(self.endpoint(path)?);
-        self.send_json(self.prepare_request(request), Method::GET)
-            .await
-    }
-
-    pub(crate) async fn post_json<T, B>(&self, path: &str, body: &B) -> anyhow::Result<T>
-    where
-        T: DeserializeOwned,
-        B: Serialize + ?Sized,
-    {
-        // Explicit serialized bytes (not `.json()`) so PoP signing can read the
-        // exact body for the content-digest on every target (incl. wasm).
-        let bytes = serde_json::to_vec(body)?;
-        let request = self
-            .http
-            .post(self.endpoint(path)?)
-            .header(reqwest::header::CONTENT_TYPE, "application/json")
-            .body(bytes);
-        self.send_json(self.prepare_request(request), Method::POST)
-            .await
-    }
-
-    pub(crate) async fn put_json<T, B>(&self, path: &str, body: &B) -> anyhow::Result<T>
-    where
-        T: DeserializeOwned,
-        B: Serialize + ?Sized,
-    {
-        let bytes = serde_json::to_vec(body)?;
-        let request = self
-            .http
-            .put(self.endpoint(path)?)
-            .header(reqwest::header::CONTENT_TYPE, "application/json")
-            .body(bytes);
-        self.send_json(self.prepare_request(request), Method::PUT)
-            .await
-    }
-
-    pub(crate) async fn delete_json<T: DeserializeOwned>(&self, path: &str) -> anyhow::Result<T> {
-        let request = self.http.delete(self.endpoint(path)?);
-        self.send_json(self.prepare_request(request), Method::DELETE)
-            .await
-    }
-
-    pub(crate) async fn send_json<T: DeserializeOwned>(
-        &self,
-        request: reqwest::RequestBuilder,
-        method: Method,
-    ) -> anyhow::Result<T> {
-        self.send_json_internal(request, method.clone(), is_retryable_method(&method))
-            .await
-    }
-
-    pub(crate) async fn send_json_retryable<T: DeserializeOwned>(
-        &self,
-        request: reqwest::RequestBuilder,
-        method: Method,
-    ) -> anyhow::Result<T> {
-        self.send_json_internal(request, method, true).await
-    }
-
-    async fn send_json_internal<T: DeserializeOwned>(
-        &self,
-        request: reqwest::RequestBuilder,
-        method: Method,
-        retryable: bool,
-    ) -> anyhow::Result<T> {
-        let response = self.send_with_retry(request, method, retryable).await?;
-        let status = response.status();
-        if !status.is_success() {
-            let bytes = response.bytes().await?;
-            return Err(CokretApiError {
-                status,
-                error: decode_cokret_error(status, &bytes),
-            }
-            .into());
-        }
-        Ok(response.json().await?)
-    }
-
-    pub(crate) async fn send_bytes(
-        &self,
-        request: reqwest::RequestBuilder,
-        method: Method,
-    ) -> anyhow::Result<Vec<u8>> {
-        let response = self
-            .send_with_retry(request, method.clone(), is_retryable_method(&method))
-            .await?;
-        let status = response.status();
-        let bytes = response.bytes().await?;
-        if !status.is_success() {
-            return Err(CokretApiError {
-                status,
-                error: decode_cokret_error(status, &bytes),
-            }
-            .into());
-        }
-        Ok(bytes.to_vec())
-    }
-
-    pub(crate) async fn send_with_retry(
-        &self,
-        request: reqwest::RequestBuilder,
-        _method: Method,
-        retryable: bool,
-    ) -> anyhow::Result<reqwest::Response> {
-        let mut attempt = 0usize;
-        loop {
-            // Check if request was cancelled
-            if self.cancel_token.as_ref().is_some_and(|t| t.is_cancelled()) {
-                return Err(anyhow::anyhow!("request cancelled"));
-            }
-
-            let Some(candidate) = request.try_clone() else {
-                // SPEC-CR-001 — sign the fully-built request (PoP covers
-                // @method/@target-uri/@authority/content-digest); re-signed per
-                // attempt so created/expires stay fresh after a backoff. The
-                // ②(A+②) per-request DPoP is attached on the same built request
-                // so htu == the final absolute URL.
-                let built = self.attach_session_grant_dpop(self.sign_request(request.build()?)?)?;
-                return Ok(self.http.execute(built).await?);
-            };
-            // 401 handling lives at the app layer (`crate::session`): a
-            // refresh future capturing Dioxus signals + wasm `reqwest` is
-            // `!Send`, so the HTTP client can't own it. The client just
-            // surfaces the 401; the caller refreshes the session credential and retries.
-            let built = self.attach_session_grant_dpop(self.sign_request(candidate.build()?)?)?;
-            match self.http.execute(built).await {
-                Ok(response) => {
-                    if retryable
-                        && attempt < self.retry.max_retries
-                        && is_retryable_status(response.status())
-                    {
-                        self.set_network_state(NetworkState::Reconnecting).await;
-                        sleep_retry_delay(response.headers(), self.retry.initial_backoff, attempt)
-                            .await;
-                        attempt += 1;
-                        continue;
-                    }
-
-                    // Update network state based on response
-                    if response.status().is_server_error()
-                        || response.status() == StatusCode::SERVICE_UNAVAILABLE
-                    {
-                        self.set_network_state(NetworkState::Reconnecting).await;
-                    } else if response.status().is_success() {
-                        self.set_network_state(NetworkState::Online).await;
-                    }
-
-                    return Ok(response);
-                }
-                Err(error)
-                    if retryable
-                        && attempt < self.retry.max_retries
-                        && is_retryable_reqwest_error(&error) =>
-                {
-                    self.set_network_state(NetworkState::Reconnecting).await;
-                    sleep_backoff(self.retry.initial_backoff, attempt).await;
-                    attempt += 1;
-                }
-                Err(error) => {
-                    self.set_network_state(NetworkState::Offline).await;
-                    return Err(error.into());
-                }
-            }
-        }
-    }
-
-    /// SPEC-CR-001 — attach an RFC 9421 PoP signature to `/_cokret/self/*`
-    /// requests when a session signing key is bound. No-op for other surfaces
-    /// or unsigned clients. Covers `@method`/`@target-uri`/`@authority` plus
-    /// `content-digest` (over the body) for body-bearing requests; `created` /
-    /// `expires` bound the validity window (<=300s, well under the protocol cap).
-    pub(crate) fn sign_request(
-        &self,
-        mut request: reqwest::Request,
-    ) -> anyhow::Result<reqwest::Request> {
-        let Some(signing_key) = self.session_signing_key.as_ref() else {
-            return Ok(request);
-        };
-        let path = request.url().path().to_owned();
-        if !is_http_signature_surface(&path) {
-            return Ok(request);
-        }
-        use cokret_sdk::http_signature::{
-            Component, ContentDigest, ContentDigestAlgorithm, SignatureInput, SignedRequestParts,
-            canonical_message, sign_message,
-        };
-
-        let key_id = self.session_key_id.clone().unwrap_or_default();
-        let method = request.method().as_str().to_owned();
-        let url = request.url();
-        let target_uri = url.as_str().to_owned();
-        let authority = match url.port() {
-            Some(port) => format!("{}:{}", url.host_str().unwrap_or_default(), port),
-            None => url.host_str().unwrap_or_default().to_owned(),
-        };
-        let path_only = url.path().to_owned();
-        let body_bytes: Vec<u8> = request
-            .body()
-            .and_then(|body| body.as_bytes())
-            .map(<[u8]>::to_vec)
-            .unwrap_or_default();
-
-        let mut covered = vec![
-            Component::Method,
-            Component::TargetUri,
-            Component::Authority,
-        ];
-        let mut component_names = vec!["\"@method\"", "\"@target-uri\"", "\"@authority\""];
-        let digest = if body_bytes.is_empty() {
-            None
-        } else {
-            let digest = ContentDigest::compute(&body_bytes, ContentDigestAlgorithm::Sha256);
-            covered.push(Component::Header("content-digest".to_owned()));
-            component_names.push("\"content-digest\"");
-            Some(digest.wire_value)
-        };
-
-        let created = chrono::Utc::now().timestamp();
-        let expires = created + POP_SIGNATURE_WINDOW_SECONDS;
-        let params_value = format!(
-            "({});created={created};expires={expires};keyid=\"{key_id}\";alg=\"ed25519\"",
-            component_names.join(" ")
-        );
-        let signature_input = SignatureInput {
-            label: "sig1".to_owned(),
-            covered_components: covered,
-            created,
-            expires,
-            key_id,
-            algorithm: "ed25519".to_owned(),
-            params_value: params_value.clone(),
-        };
-        let parts = SignedRequestParts {
-            method,
-            target_uri,
-            authority,
-            path: path_only,
-            headers: Vec::new(),
-            body_digest: digest.clone(),
-        };
-        let canonical = canonical_message(&parts, &signature_input)
-            .map_err(|error| anyhow::anyhow!("build PoP signing string: {error}"))?;
-        let signature = sign_message(&canonical, signing_key);
-
-        let headers = request.headers_mut();
-        if let Some(ref wire) = digest {
-            headers.insert(
-                "content-digest",
-                reqwest::header::HeaderValue::from_str(wire)?,
-            );
-        }
-        headers.insert(
-            "signature-input",
-            reqwest::header::HeaderValue::from_str(&format!("sig1={params_value}"))?,
-        );
-        headers.insert(
-            "signature",
-            reqwest::header::HeaderValue::from_str(&format!("sig1=:{signature}:"))?,
-        );
-        Ok(request)
-    }
-
-    /// ②(A+②) — attach the per-request `DPoP` proof for protected Cokret
-    /// requests that present `ck.session.grant` (api-conventions.md §3.3 and
-    /// account-lifecycle.md §4.1). Centralized single mint point: every request
-    /// builder funnels through `send_with_retry`, so binding the device key once
-    /// via [`Self::with_dpop_device`] covers self/root requests, authenticated
-    /// directory queries, and the client-visible gate/account operations that
-    /// authenticate with the current session grant. No-op when no DPoP device
-    /// key is bound or for public gate surfaces such as register/session-grants
-    /// issue.
-    ///
-    /// Binding (RFC 9449): `htm` = request method, `htu` = the absolute request
-    /// URL, `ath` = base64url(sha256(grant)) where the grant is the HTTP Bearer
-    /// credential in `authorization_credential`. Minted on the fully-built
-    /// request so `htu` is the final URL and refreshed per attempt so the
-    /// proof's `iat`/`jti` stay fresh.
-    fn attach_session_grant_dpop(
-        &self,
-        mut request: reqwest::Request,
-    ) -> anyhow::Result<reqwest::Request> {
-        let Some(handle) = self.dpop_device.as_ref() else {
-            return Ok(request);
-        };
-        let path = request.url().path();
-        if !is_session_grant_dpop_surface(path) {
-            return Ok(request);
-        }
-        let htm = request.method().as_str().to_owned();
-        let htu = request.url().as_str().to_owned();
-        // `ath` binds the proof to the grant in the HTTP Bearer slot; the mint
-        // helper hashes it (base64url(sha256(grant))) per RFC 9449.
-        let ath = self.authorization_credential.as_deref();
-        let proof = handle
-            .mint_proof(&htm, &htu, ath)
-            .map_err(|error| anyhow::anyhow!("mint session-grant DPoP proof: {error}"))?;
-        request
-            .headers_mut()
-            .insert("dpop", reqwest::header::HeaderValue::from_str(&proof)?);
-        Ok(request)
-    }
-
-    fn authorize(&self, request: reqwest::RequestBuilder) -> reqwest::RequestBuilder {
-        match &self.authorization_credential {
-            Some(token) => request.bearer_auth(token),
-            None => request,
-        }
-    }
-
-    pub(crate) fn prepare_request(
-        &self,
-        request: reqwest::RequestBuilder,
-    ) -> reqwest::RequestBuilder {
-        self.attach_wait_for(self.authorize(request))
-    }
-
-    fn attach_wait_for(&self, request: reqwest::RequestBuilder) -> reqwest::RequestBuilder {
-        match self.wait_for_sync_token.as_deref() {
-            Some(sync_token) => request.header("x-cokret-wait-for", sync_token),
-            None => request,
-        }
-    }
-
-    pub(crate) fn with_write_request_headers(
-        &self,
-        request: reqwest::RequestBuilder,
-        request_id: &str,
-    ) -> reqwest::RequestBuilder {
-        request
-            .header("x-cokret-request-id", request_id)
-            .header("idempotency-key", request_id)
-    }
-}
-
-fn is_http_signature_surface(path: &str) -> bool {
-    path.starts_with("/_cokret/self/") || path.starts_with("/_cokret/root/")
-}
-
-fn is_session_grant_dpop_surface(path: &str) -> bool {
-    is_http_signature_surface(path)
-        || path.starts_with("/_cokret/find/directory/")
-        || matches!(
-            path,
-            "/_cokret/gate/account/device-pair"
-                | "/_cokret/gate/account/logout"
-                | "/_cokret/gate/account/session-grants/revoke"
-        )
-}
-
-#[cfg(test)]
-mod transport_tests {
-    use base64::Engine as _;
-    use base64::engine::general_purpose::URL_SAFE_NO_PAD;
-
-    use super::*;
-
-    fn test_dpop_handle() -> crate::auth_dpop::DpopHandle {
-        let seed_b64 = URL_SAFE_NO_PAD.encode([11u8; 32]);
-        let record = crate::auth_dpop::dpop_device_key_record_from_seed(&seed_b64)
-            .expect("test DPoP record");
-        crate::auth_dpop::device_handle_from_seed(&record.seed_b64, &record.jkt)
-            .expect("test DPoP handle")
-    }
-
-    #[test]
-    fn gate_account_device_pair_gets_session_grant_dpop_header() {
-        let api = CokretApi::new("https://soland.example.com")
-            .unwrap()
-            .with_bearer("grant.jwt")
-            .with_dpop_device(test_dpop_handle());
-        let request = api
-            .http
-            .post(api.endpoint("_cokret/gate/account/device-pair").unwrap())
-            .body("{}")
-            .build()
-            .unwrap();
-
-        let request = api.attach_session_grant_dpop(request).unwrap();
-
-        assert!(request.headers().get("dpop").is_some());
-    }
-
-    #[test]
-    fn directory_search_actors_gets_session_grant_dpop_header() {
-        let api = CokretApi::new("https://soland.example.com")
-            .unwrap()
-            .with_bearer("grant.jwt")
-            .with_dpop_device(test_dpop_handle());
-        let request = api
-            .http
-            .post(
-                api.endpoint("_cokret/find/directory/search-actors")
-                    .unwrap(),
-            )
-            .body("{}")
-            .build()
-            .unwrap();
-
-        let request = api.attach_session_grant_dpop(request).unwrap();
-
-        assert!(request.headers().get("dpop").is_some());
-    }
-
-    #[test]
-    fn public_gate_account_register_does_not_get_session_grant_dpop_header() {
-        let api = CokretApi::new("https://soland.example.com")
-            .unwrap()
-            .with_bearer("grant.jwt")
-            .with_dpop_device(test_dpop_handle());
-        let request = api
-            .http
-            .post(api.endpoint("_cokret/gate/account/register").unwrap())
-            .body("{}")
-            .build()
-            .unwrap();
-
-        let request = api.attach_session_grant_dpop(request).unwrap();
-
-        assert!(request.headers().get("dpop").is_none());
     }
 }

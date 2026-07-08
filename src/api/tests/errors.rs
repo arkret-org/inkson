@@ -1,5 +1,13 @@
 use super::super::*;
 
+fn sdk_api_error(status: StatusCode, body: &'static [u8]) -> anyhow::Error {
+    cokret_sdk::Error::Api {
+        status: status.as_u16(),
+        error: Box::new(decode_cokret_error(status, body)),
+    }
+    .into()
+}
+
 #[test]
 fn decodes_wrapped_cokret_error_envelope() {
     let decoded = decode_cokret_error(
@@ -59,6 +67,39 @@ fn decodes_wrapped_error_envelope_without_inner_request_id() {
         decoded.request_id,
         "ck:request:01964137-0000-7000-8000-000000000011"
     );
+}
+
+#[test]
+fn sdk_api_errors_use_same_classifiers() {
+    let rate_limited = sdk_api_error(
+        StatusCode::TOO_MANY_REQUESTS,
+        br#"{"ok":false,"error":{"code":"rate_limited","message":"slow down","retry_after_ms":250}}"#,
+    );
+    assert_eq!(rate_limited_retry_after(&rate_limited), Some(250));
+
+    let snapshot_missing = sdk_api_error(
+        StatusCode::NOT_FOUND,
+        br#"{"ok":false,"error":{"code":"unrecognized_endpoint","message":"snapshot head unavailable"}}"#,
+    );
+    assert!(is_snapshot_unavailable_error(&snapshot_missing));
+
+    let invalid_cursor = sdk_api_error(
+        StatusCode::BAD_REQUEST,
+        br#"{"ok":false,"error":{"code":"invalid_param","message":"invalid cursor"}}"#,
+    );
+    assert!(is_invalid_cursor_error(&invalid_cursor));
+
+    let auth_expired = sdk_api_error(
+        StatusCode::UNAUTHORIZED,
+        br#"{"ok":false,"error":{"code":"auth_expired","message":"session expired"}}"#,
+    );
+    assert!(is_auth_expired_error(&auth_expired));
+
+    let revoked_session_grant = sdk_api_error(
+        StatusCode::FORBIDDEN,
+        br#"{"ok":false,"error":{"code":"capability_denied","message":"session grant is not active: revoked"}}"#,
+    );
+    assert!(is_terminal_session_grant_error(&revoked_session_grant));
 }
 
 #[test]

@@ -11,7 +11,7 @@ use chime::PushRegistrationState;
 use chrono::{DateTime, Utc};
 use cokret_sdk::EncryptedPayload;
 use serde::{Deserialize, Serialize};
-use serde_json::{Value, json};
+use serde_json::Value;
 
 use crate::notification_rules::WatchLevel;
 

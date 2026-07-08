@@ -1006,6 +1006,9 @@ fn tier3_history_decrypt_works_without_local_snapshot() {
     let realm = "ck:realm:01904100-0000-7000-8000-0000000000f3";
     let bob_actor = "did:web:bob.example";
     let bob_device = "ck:device:01904100-0000-7000-8000-0000000000f4";
+    let history_store = crate::secure_key_store::default_secure_key_store("yougen");
+    let history_key = crate::secure_key_store::mls_history_secret_store_key(realm);
+    let _ = history_store.delete_secret(&history_key);
 
     // Build alice's group WITHOUT persisting any snapshot into `state`.
     let alice = cokret_sdk::CokretMlsIdentity::new_basic(
@@ -1055,6 +1058,8 @@ fn tier3_history_decrypt_works_without_local_snapshot() {
         decrypt_application_payload(&state, &secure, realm, bob_actor, bob_device, &payload)
             .expect("group-free tier-3 decrypt opens content with no local snapshot");
     assert_eq!(decrypted, plaintext);
+
+    let _ = history_store.delete_secret(&history_key);
 }
 
 #[cfg(not(target_arch = "wasm32"))]

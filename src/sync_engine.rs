@@ -30,9 +30,11 @@
 //! invalidation. This keeps refresh policy in one place without turning
 //! auth failures into a spawn/exit/render loop.
 
+use std::cell::RefCell;
 use std::collections::BTreeSet;
 use std::time::Duration;
 
+use cokret_client::{ClientEvent, ClientEventSink, DecodedInbound, InboundDecoder};
 use dioxus::prelude::*;
 use serde_json::{Value, json};
 
@@ -196,6 +198,121 @@ enum IterationOutcome {
     /// Configuration is incomplete (empty base URL or token). Engine
     /// exits — caller will respawn when the missing piece arrives.
     NotReady,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+struct AccountClientEventReport {
+    account_updates: usize,
+    realm_deltas: usize,
+    decoded_messages: usize,
+    decoded_events: usize,
+    to_device: usize,
+    notifications: usize,
+    malformed_realms: Vec<String>,
+}
+
+#[derive(Debug, Default)]
+struct AccountClientEventSink {
+    report: RefCell<AccountClientEventReport>,
+}
+
+impl AccountClientEventSink {
+    fn report(&self) -> AccountClientEventReport {
+        self.report.borrow().clone()
+    }
+}
+
+impl ClientEventSink for AccountClientEventSink {
+    fn emit(&self, event: ClientEvent) {
+        let mut report = self.report.borrow_mut();
+        match event {
+            ClientEvent::AccountUpdates(updates) => {
+                report.account_updates += 1;
+                report.malformed_realms.extend(updates.malformed_realms);
+            }
+            ClientEvent::RealmDelta { .. } => {
+                report.realm_deltas += 1;
+            }
+            ClientEvent::Message(_) => {
+                report.decoded_messages += 1;
+            }
+            ClientEvent::Event(_) => {
+                report.decoded_events += 1;
+            }
+            ClientEvent::Notification(_) => {
+                report.notifications += 1;
+            }
+            ClientEvent::ToDevice(_) => {
+                report.to_device += 1;
+            }
+            ClientEvent::Backfill { .. } | ClientEvent::Interrupt(_) => {}
+        }
+    }
+}
+
+fn emit_decoded_account_event<S>(decoder: &InboundDecoder, sink: &S, event: cokret_sdk::Event)
+where
+    S: ClientEventSink + ?Sized,
+{
+    match decoder.decode_event(event) {
+        DecodedInbound::Message(message) => sink.emit(ClientEvent::Message(message)),
+        DecodedInbound::Notification(notification) => {
+            sink.emit(ClientEvent::Event(notification.event));
+        }
+        DecodedInbound::Event(event) => sink.emit(ClientEvent::Event(event)),
+    }
+}
+
+fn emit_account_event_payload<S>(decoder: &InboundDecoder, sink: &S, payload: &Value)
+where
+    S: ClientEventSink + ?Sized,
+{
+    match serde_json::from_value::<cokret_sdk::Event>(payload.clone()) {
+        Ok(event) => emit_decoded_account_event(decoder, sink, event),
+        Err(error) => {
+            tracing::debug!(
+                error = %error,
+                "account sync event payload was not a typed Event; preserving legacy ingest path"
+            );
+        }
+    }
+}
+
+fn emit_account_realm_update_events<S>(
+    decoder: &InboundDecoder,
+    sink: &S,
+    update: &cokret_sdk::RealmUpdate,
+) where
+    S: ClientEventSink + ?Sized,
+{
+    for payload in &update.state {
+        emit_account_event_payload(decoder, sink, payload);
+    }
+    if let Some(timeline) = &update.timeline {
+        for payload in &timeline.events {
+            emit_account_event_payload(decoder, sink, payload);
+        }
+    }
+}
+
+fn emit_account_response_client_events<S>(
+    response: &ClientSyncOutcome,
+    decoder: &InboundDecoder,
+    sink: &S,
+) -> anyhow::Result<()>
+where
+    S: ClientEventSink + ?Sized,
+{
+    let mut processor = cokret_sdk::SyncResponseProcessor::new();
+    let updates = processor.process(response.clone())?;
+    let realm_updates = updates.realm_updates.clone();
+
+    cokret_client::emit_account_updates(sink, updates);
+    for update in &realm_updates {
+        emit_account_realm_update_events(decoder, sink, update);
+    }
+
+    Ok(())
 }
 
 /// Main entry point. Spawn this once per "session generation" — see the
@@ -724,9 +841,16 @@ async fn run_iteration(
         .filter(|c| !c.trim().is_empty() && c != "-");
     let is_full_sync = cursor.is_none();
 
-    match api
-        .account_subscribe_snapshot_outcome(cursor.as_deref())
-        .await
+    let sdk_http = match api.sdk_http_client() {
+        Ok(client) => client,
+        Err(error) => {
+            return IterationOutcome::Transient(format!(
+                "sync_engine: SDK account subscribe client unavailable: {error}"
+            ));
+        }
+    };
+
+    match crate::client_core::account_subscribe_snapshot_outcome(&sdk_http, cursor.as_deref()).await
     {
         Ok(AccountSubscribeSnapshotResult::Delta(response)) => {
             // Late-arriving response from a stale generation must not
@@ -792,6 +916,38 @@ async fn run_iteration(
                 return IterationOutcome::Ok {
                     realm_ids: Vec::new(),
                 };
+            }
+            let account_event_sink = AccountClientEventSink::default();
+            let account_event_decoder = InboundDecoder::new();
+            match emit_account_response_client_events(
+                &response,
+                &account_event_decoder,
+                &account_event_sink,
+            ) {
+                Ok(()) => {
+                    let report = account_event_sink.report();
+                    if !report.malformed_realms.is_empty() {
+                        tracing::warn!(
+                            malformed_realms = ?report.malformed_realms,
+                            "sync engine: account client-core adapter skipped malformed realm ids",
+                        );
+                    }
+                    tracing::trace!(
+                        account_updates = report.account_updates,
+                        realm_deltas = report.realm_deltas,
+                        decoded_messages = report.decoded_messages,
+                        decoded_events = report.decoded_events,
+                        to_device = report.to_device,
+                        notifications = report.notifications,
+                        "sync engine: account response emitted through client-core sink adapter",
+                    );
+                }
+                Err(error) => {
+                    tracing::debug!(
+                        error = %error,
+                        "sync engine: account client-core adapter skipped malformed typed projection",
+                    );
+                }
             }
             apply_response(&response, is_full_sync, ctx, invite_notifications);
             // Receiver side of `ck.call.signal` (async, needs the directory):
@@ -2087,6 +2243,87 @@ mod tests {
                 .as_nanos(),
         ));
         LocalStateStore::with_path(path)
+    }
+
+    fn sdk_realm_id() -> cokret_sdk::RealmId {
+        cokret_sdk::RealmId::new("ck:realm:0196419b-0000-7000-8000-000000000000").unwrap()
+    }
+
+    fn sdk_actor_id() -> cokret_sdk::Did {
+        cokret_sdk::Did::new("did:webvh:z6mkfixture:alice.example").unwrap()
+    }
+
+    fn sdk_event(kind: &str, payload: Value) -> cokret_sdk::Event {
+        cokret_sdk::Event::new(
+            kind,
+            sdk_realm_id(),
+            sdk_actor_id(),
+            1,
+            cokret_sdk::Hlc::new("01970e589d21-0004-a13f9c2e").unwrap(),
+            payload,
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn account_response_emits_client_events_and_decodes_realm_payloads() {
+        let message_event = sdk_event(
+            cokret_sdk::events::kinds::MESSAGE_CREATE,
+            json!({
+                "strand_id": "ck:strand:0196419b-0000-7000-8000-000000000011",
+                "track_name": "discussion",
+                "content": {"kind": "ck.content.text", "body": "hello"}
+            }),
+        );
+        let state_event = sdk_event(
+            "ck.space.create",
+            json!({
+                "object": {
+                    "id": "ck:space:0196419b-0000-7000-8000-000000000001",
+                    "schema": "ck.schema.space.v1",
+                    "realm_id": sdk_realm_id().as_str(),
+                    "kind": "board",
+                    "title": "Adapter Board"
+                }
+            }),
+        );
+        let mut response = empty_response("ck:cursor:account-adapter");
+        response.realms.insert(
+            sdk_realm_id().as_str().to_owned(),
+            json!({
+                "timeline": {
+                    "events": [serde_json::to_value(message_event).unwrap()],
+                    "limited": false
+                },
+                "state": [serde_json::to_value(state_event).unwrap()],
+                "summary": {}
+            }),
+        );
+
+        let sink = AccountClientEventSink::default();
+        emit_account_response_client_events(&response, &InboundDecoder::new(), &sink)
+            .expect("account response emits through client-core adapter");
+
+        let report = sink.report();
+        assert_eq!(report.account_updates, 1);
+        assert_eq!(report.realm_deltas, 1);
+        assert_eq!(report.decoded_messages, 1);
+        assert_eq!(report.decoded_events, 1);
+        assert!(report.malformed_realms.is_empty());
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn account_subscription_engine_accepts_yougen_local_state_adapter() {
+        let store = temp_store("subscription-engine-adapter");
+        let adapter = crate::client_core::YougenLocalStateStoreAdapter::new(store);
+        let engine = cokret_client::SubscriptionEngine::new(
+            cokret_client::NativeExecutor,
+            adapter.clone(),
+            adapter,
+        );
+
+        let _control = engine.control();
     }
 
     /// The per-realm `events/subscribe` engine ingest contract: a realistic

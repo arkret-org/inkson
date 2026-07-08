@@ -1,62 +1,9 @@
 use base64::Engine as _;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
-use serde_json::{Value, json};
+use serde_json::Value;
 use url::Url;
 
 use super::*;
-
-/// Regression: a `gate_account_base` like `…/_cokret/gate/account` has no
-/// trailing slash, so a naive `Url::join("session-grants")` would REPLACE the
-/// `account` segment and POST to `…/_cokret/gate/session-grants` (404). The
-/// `endpoint` helper must instead APPEND, preserving `account`.
-#[test]
-fn endpoint_appends_relative_path_to_bare_gate_account_base() {
-    let api = CoauthApi::new("https://local.host/_cokret/gate/account").unwrap();
-    assert_eq!(
-        api.endpoint("session-grants").unwrap().as_str(),
-        "https://local.host/_cokret/gate/account/session-grants"
-    );
-    assert_eq!(
-        api.endpoint("logout").unwrap().as_str(),
-        "https://local.host/_cokret/gate/account/logout"
-    );
-    assert_eq!(
-        api.endpoint("session-grants/refresh").unwrap().as_str(),
-        "https://local.host/_cokret/gate/account/session-grants/refresh"
-    );
-}
-
-/// An origin-rooted base already ends in `/`, so the slash-normalisation is a
-/// no-op and full paths resolve from the origin root unchanged.
-#[test]
-fn endpoint_preserves_full_path_on_origin_base() {
-    let api = CoauthApi::new("https://auth.local.host").unwrap();
-    assert_eq!(
-        api.endpoint("_cokret/gate/account/session-grants/refresh")
-            .unwrap()
-            .as_str(),
-        "https://auth.local.host/_cokret/gate/account/session-grants/refresh"
-    );
-}
-
-#[test]
-fn error_envelope_code_extracts_nested_code() {
-    let body = r#"{"ok":false,"error":{"code":"grant_already_consumed","message":"gone"},"request_id":"r1"}"#;
-    assert_eq!(
-        error_envelope_code(body).as_deref(),
-        Some("grant_already_consumed")
-    );
-}
-
-#[test]
-fn error_envelope_code_handles_missing_or_malformed() {
-    // Not JSON, empty, missing error.code — all yield None so the caller
-    // treats the failure as retryable rather than a known terminal code.
-    assert_eq!(error_envelope_code(""), None);
-    assert_eq!(error_envelope_code("not json"), None);
-    assert_eq!(error_envelope_code(r#"{"ok":false}"#), None);
-    assert_eq!(error_envelope_code(r#"{"error":{"message":"x"}}"#), None);
-}
 
 /// PKCE verifier MUST be 43 chars for our 32-byte seed (RFC 7636 §4.1
 /// allows 43-128). Any drift from 32-byte seeds breaks the S256 fixed
@@ -80,69 +27,6 @@ fn random_tokens_are_unguessable() {
     let a = random_url_safe_token(PKCE_VERIFIER_BYTES).unwrap();
     let b = random_url_safe_token(PKCE_VERIFIER_BYTES).unwrap();
     assert_ne!(a, b, "RNG must not return the same value twice in a row");
-}
-
-#[test]
-fn login_response_accepts_current_coauth_viewer_shape() {
-    let response: CoauthLoginOutcome = serde_json::from_value(json!({
-        "status": "success",
-        "viewer": {
-            "id": "user:01K",
-            "handle": "ca",
-            "did": "did:web:auth.local.host:u:ca",
-            "federated_handle": "ca@auth.local.host",
-            "principal_id": "@ca:auth.local.host",
-            "display_name": null
-        },
-        "session_grant": {
-            "kind": "principal_session",
-            "id": "grant-1",
-            "grant_jwt": "eyJ.mock.jwt",
-            "session_public_key": "mock-public",
-            "session_private_key_pem": "-----BEGIN PRIVATE KEY-----\\nmock\\n-----END PRIVATE KEY-----",
-            "expires_at": "2026-05-13T04:00:00Z",
-            "audience": "https://local.host/api",
-            "scopes": ["urn:cokret:principal-server:session.bind"],
-            "principal_server": {
-                "name": "local",
-                "endpoint": "https://local.host"
-            }
-        },
-        "warnings": []
-    }))
-    .unwrap();
-
-    let viewer = response.viewer.unwrap();
-    assert_eq!(viewer.principal_id.as_deref(), Some("@ca:auth.local.host"));
-}
-
-#[test]
-fn login_response_accepts_one_shot_session_grant_without_private_key() {
-    let response: CoauthLoginOutcome = serde_json::from_value(json!({
-        "status": "success",
-        "viewer": {
-            "id": "user:01K",
-            "handle": "ca",
-            "did": "did:web:auth.local.host:u:ca",
-            "federated_handle": "ca@auth.local.host",
-            "principal_id": "@ca:auth.local.host",
-            "display_name": null
-        },
-        "session_grant": {
-            "kind": "principal_session",
-            "id": "grant-1",
-            "grant_jwt": "eyJ.mock.jwt",
-            "session_public_key": "{\"kty\":\"OKP\",\"crv\":\"Ed25519\",\"x\":\"mock\"}",
-            "expires_at": "2026-05-13T04:00:00Z",
-            "audience": "https://local.host/api",
-            "scopes": ["urn:cokret:principal-server:session.bind"]
-        }
-    }))
-    .unwrap();
-
-    let grant = response.session_grant.expect("session grant");
-    assert_eq!(grant.session_private_key_pem, "");
-    assert_eq!(grant.audience.as_deref(), Some("https://local.host/api"));
 }
 
 /// S256 challenge for a known verifier matches the RFC 7636 Appendix B

@@ -63,7 +63,8 @@ pub fn attach_device_dpop(api: CokretApi) -> CokretApi {
 
 fn try_attach_device_dpop(api: CokretApi) -> anyhow::Result<CokretApi> {
     let mut store = crate::local_state::LocalStateStore::default();
-    let Some(handle) = crate::auth_dpop::load_or_recover_device_key(&mut store)? else {
+    let Some(handle) = crate::account_auth::grant_dpop::load_or_recover_device_key(&mut store)?
+    else {
         return Ok(api);
     };
     Ok(api.with_dpop_device(handle))
@@ -72,7 +73,8 @@ fn try_attach_device_dpop(api: CokretApi) -> anyhow::Result<CokretApi> {
 #[cfg(target_arch = "wasm32")]
 fn require_device_dpop(api: CokretApi) -> anyhow::Result<CokretApi> {
     let mut store = crate::local_state::LocalStateStore::default();
-    let Some(handle) = crate::auth_dpop::load_or_recover_device_key(&mut store)? else {
+    let Some(handle) = crate::account_auth::grant_dpop::load_or_recover_device_key(&mut store)?
+    else {
         anyhow::bail!("missing DPoP device key for authenticated self request");
     };
     Ok(api.with_dpop_device(handle))

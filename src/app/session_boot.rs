@@ -217,7 +217,9 @@ pub(super) fn inject_test_session_grant(
         .unwrap_or_default()
         .to_owned();
 
-    let record = match crate::auth_dpop::dpop_device_key_record_from_seed(&dpop_seed_b64url) {
+    let record = match crate::account_auth::grant_dpop::dpop_device_key_record_from_seed(
+        &dpop_seed_b64url,
+    ) {
         Ok(record) => record,
         Err(error) => {
             tracing::warn!(?error, "test session injection: invalid DPoP seed");

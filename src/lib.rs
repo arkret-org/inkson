@@ -9,6 +9,7 @@
     warn(clippy::unwrap_used, clippy::expect_used, clippy::panic)
 )]
 
+pub mod account_auth;
 pub mod account_data;
 /// Single-source-of-truth resolver for the post-boot "account health" prompt
 /// chain (device authorization → MLS unlock → MLS backup → recovery-missing →
@@ -19,10 +20,6 @@ pub mod account_health;
 pub mod api;
 pub mod app;
 pub mod audit;
-/// G3.Y0 — per-device DPoP signing key management. Sits on top of
-/// `crate::dpop` (the pure JWS builder) and persists the key + JKT via
-/// `LocalStateStore::dpop_device_key`.
-pub mod auth_dpop;
 pub mod avatar_crop;
 pub mod blob;
 pub mod build_info;
@@ -36,8 +33,8 @@ pub mod card_comments;
 /// `cokret_sdk::cokret_core::models::circle`.
 pub mod circle;
 pub mod circle_mls;
+pub mod client_core;
 pub(crate) mod clock;
-pub mod coauth;
 pub mod components;
 pub mod config;
 pub mod conformance;
@@ -55,7 +52,6 @@ pub mod did_key;
 pub mod did_resolver;
 pub mod disappearing;
 pub mod discovery;
-pub mod dpop;
 pub mod event_signer;
 pub mod federation;
 pub mod file_transfer;
@@ -99,7 +95,7 @@ pub(crate) mod payload;
 // against authenticated endpoints. Re-add only together with real
 // wiring (enqueue on send failure, authed replay, app-shell drain).
 // HYG-03: the former empty `oidc` placeholder module was removed — OIDC
-// sign-in lives in `crate::coauth` + `crate::views::login`; the module
+// sign-in lives in `crate::account_auth` + `crate::views::login`; the module
 // carried only a doc comment and no code.
 pub mod operation;
 pub mod organization;

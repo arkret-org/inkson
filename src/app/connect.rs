@@ -58,6 +58,24 @@ async fn bootstrap_session_refresh() -> crate::session::CurrentSessionRefresh {
     }
 }
 
+async fn client_core_events_describe(
+    authed: &crate::api::CokretApi,
+    state_store: Signal<LocalStateStore>,
+) -> anyhow::Result<cokret_sdk::ServiceDescribe> {
+    let http = authed.sdk_http_client()?;
+    let local_state = state_store.read().clone();
+    let secure_store = crate::secure_key_store::default_secure_key_store("yougen");
+    let client_core = crate::client_core::build_client_core(http, local_state, secure_store);
+    client_core.http.events_describe().await.map_err(Into::into)
+}
+
+async fn client_core_account_subscribe_snapshot(
+    authed: &crate::api::CokretApi,
+) -> anyhow::Result<crate::models::ClientSyncOutcome> {
+    let http = authed.sdk_http_client()?;
+    crate::client_core::account_subscribe_snapshot(&http, None).await
+}
+
 /// The single source of truth for restoring or rotating the current session credential.
 ///
 /// Registered once at the app root and reached everywhere through
@@ -262,7 +280,7 @@ fn attach_current_session_material(
     api: CokretApi,
     store: &mut crate::local_state::LocalStateStore,
 ) -> CokretApi {
-    match crate::auth_dpop::load_or_recover_device_key(store) {
+    match crate::account_auth::grant_dpop::load_or_recover_device_key(store) {
         Ok(Some(handle)) => api.with_dpop_device(handle),
         Ok(None) => {
             tracing::warn!(
@@ -339,8 +357,9 @@ pub(super) fn adopt_live_token_for_api(
 /// (decision 0002 §5.4). Resolves the gate base from the Principal Server's
 /// describe, derives this device's `device_public_key` from the persisted
 /// signing seed, reads the next `actor_seq` from the principal control stream,
-/// asks coauth to mint a signed `service_attested` `ck.device.authorize`, and
-/// submits it via `principal_api` (`POST /_cokret/self/events`).
+/// asks the Account Authority to mint a signed `service_attested`
+/// `ck.device.authorize`, and submits it via `principal_api`
+/// (`POST /_cokret/self/events`).
 async fn enroll_current_session_device(
     base: &str,
     actor: &str,
@@ -391,20 +410,25 @@ async fn enroll_current_session_device(
         anyhow::anyhow!("device enrollment requires a local Ed25519 active signer")
     })?;
 
-    let gate_account_base = crate::coauth::resolve_principal_gate_account_base(base)
+    let gate_account_base = crate::account_auth::resolve_principal_gate_account_base(base)
         .await
         .map_err(|error| anyhow::anyhow!("resolve account authority: {error}"))?;
-    let coauth = crate::coauth::CoauthApi::new(&gate_account_base)?;
 
     let device_key = {
         let mut store = state_store.write();
-        crate::auth_dpop::ensure_device_key(&mut store)
+        crate::account_auth::grant_dpop::ensure_device_key(&mut store)
             .map_err(|error| anyhow::anyhow!("load grant-binding key: {error}"))?
     };
-    let htu = coauth.endpoint_url("device-enroll")?;
-    let dpop_proof = device_key
-        .mint_proof("POST", &htu, Some(&grant_jwt))
-        .map_err(|error| anyhow::anyhow!("mint device-enroll DPoP proof: {error}"))?;
+    let account_client = {
+        let sdk_base_url =
+            crate::session_refresh::sdk_base_url_from_gate_account_base(&gate_account_base)?;
+        cokret_sdk::http_client::ClientBuilder::new(sdk_base_url)
+            .auth(cokret_sdk::http_client::Auth::Dpop(
+                device_key.sdk_dpop_auth_for_access_token(grant_jwt),
+            ))
+            .build()
+            .map_err(|error| anyhow::anyhow!("build device-enroll HTTP client: {error}"))?
+    };
 
     // Next control-stream sequence for this principal = highest accepted + 1.
     // `actor_seq` is 1-indexed on the Principal Server (soland rejects 0 with
@@ -433,8 +457,6 @@ async fn enroll_current_session_device(
         crate::did_key::encode_x25519_multibase(&pubkey)
     };
     let request = crate::device_enrollment::DeviceEnrollmentRequest {
-        grant_jwt,
-        dpop_proof,
         device_id: device.to_owned(),
         device_public_key,
         actor_seq,
@@ -442,7 +464,13 @@ async fn enroll_current_session_device(
         hpke_key,
         algorithms: crate::device_enrollment::yougen_device_algorithms(),
     };
-    crate::device_enrollment::enroll_current_device(&coauth, principal_api, &request, device).await
+    crate::device_enrollment::enroll_current_device(
+        &account_client,
+        principal_api,
+        &request,
+        device,
+    )
+    .await
 }
 
 async fn probe_device_authorization_with_auto_enroll(
@@ -533,7 +561,7 @@ pub(super) fn connect(base: String, actor: String, device: String, ctx: ConnectC
         // Authority, so drop the cached authority resolution and let the first
         // describe below repopulate it. Steady-state session refreshes then
         // reuse that cache instead of re-probing `/_cokret/describe`.
-        crate::coauth::clear_authority_resolver_cache();
+        crate::account_auth::clear_authority_resolver_cache();
         did_resolution_health.set(crate::components::DidResolutionHealth::healthy());
         needs_device_authorization.set(false);
         device_authorization_check_complete.set(false);
@@ -1014,7 +1042,7 @@ pub(super) fn connect(base: String, actor: String, device: String, ctx: ConnectC
                 );
                 let sync_result = match bootstrap_request(
                     "account subscribe bootstrap",
-                    authed.account_subscribe_snapshot(None),
+                    client_core_account_subscribe_snapshot(&authed),
                 )
                 .await
                 {
@@ -1033,7 +1061,7 @@ pub(super) fn connect(base: String, actor: String, device: String, ctx: ConnectC
                                         });
                                 bootstrap_request(
                                     "account subscribe bootstrap retry",
-                                    authed.account_subscribe_snapshot(None),
+                                    client_core_account_subscribe_snapshot(&authed),
                                 )
                                 .await
                             }
@@ -1557,7 +1585,7 @@ pub(super) fn connect(base: String, actor: String, device: String, ctx: ConnectC
                 tracing::debug!(target: "session_boot", "connect: post-sync, awaiting events_describe");
                 let events_result = match bootstrap_request(
                     "events describe",
-                    authed.events_describe(),
+                    client_core_events_describe(&authed, state_store),
                 )
                 .await
                 {
@@ -1577,8 +1605,11 @@ pub(super) fn connect(base: String, actor: String, device: String, ctx: ConnectC
                                         .unwrap_or_else(|_| {
                                             api.clone().with_bearer(session_credential.clone())
                                         });
-                                bootstrap_request("events describe retry", authed.events_describe())
-                                    .await
+                                bootstrap_request(
+                                    "events describe retry",
+                                    client_core_events_describe(&authed, state_store),
+                                )
+                                .await
                             }
                             crate::session::CurrentSessionRefresh::SignInRequired { reason } => {
                                 invalidate_bootstrap_session(

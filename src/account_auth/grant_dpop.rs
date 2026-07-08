@@ -1,12 +1,12 @@
 //! G3.Y0 — per-device DPoP key management.
 //!
-//! Layered on top of [`crate::dpop`] (the pure JWS builder). This
-//! module is the policy layer that:
+//! This module is the yougen host policy layer around the shared SDK DPoP
+//! helpers. It:
 //!
 //! 1. Generates an Ed25519 device key on first launch and persists it via
 //!    [`crate::local_state::LocalStateStore::set_dpop_device_key`].
-//! 2. Hands out a `DpopHandle` callers can use to mint proofs without having to plumb through the
-//!    raw `SigningKey`.
+//! 2. Hands out a `DpopHandle` callers can use to mint SDK DPoP proofs without having to plumb
+//!    through the raw `SigningKey`.
 //! 3. Surfaces the RFC 7638 thumbprint so the UI / refresh path can display `cnf.jkt` for
 //!    diagnostic testids.
 //!
@@ -38,12 +38,8 @@ use base64::Engine as _;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use chrono::Utc;
 use ed25519_dalek::SigningKey;
-use sha2::{Digest, Sha256};
 use zeroize::Zeroizing;
 
-use crate::dpop::{
-    DpopClaims, DpopError, build_dpop_proof_ed25519, fresh_dpop_claims, jwk_thumbprint_ed25519,
-};
 use crate::local_state::{DpopDeviceKeyRecord, LocalStateStore};
 
 /// Errors surfaced when minting or loading the device DPoP key.
@@ -58,9 +54,9 @@ pub enum AuthDpopError {
     /// The persisted seed was malformed (truncated / not base64url).
     #[error("DPoP persisted seed invalid: {0}")]
     PersistedSeed(String),
-    /// The underlying [`crate::dpop::build_dpop_proof_ed25519`] failed.
+    /// The shared SDK DPoP proof builder failed.
     #[error("DPoP mint failed: {0}")]
-    Mint(#[from] DpopError),
+    Mint(String),
     /// The session-grant introspection proof could not be signed.
     #[error("session-grant introspection proof failed: {0}")]
     SessionGrantProof(String),
@@ -133,9 +129,27 @@ impl DpopHandle {
         htu: &str,
         ath: Option<&str>,
     ) -> Result<String, AuthDpopError> {
-        let mut claims: DpopClaims = fresh_dpop_claims(htm.to_owned(), htu.to_owned(), None)?;
-        claims.ath = ath.map(dpop_authorization_credential_hash);
-        build_dpop_proof_ed25519(&self.signing_key, &claims).map_err(AuthDpopError::Mint)
+        let mut request = cokret_sdk::dpop::DpopProofRequest::new(htm, htu);
+        if let Some(ath) = ath {
+            request = request.access_token(ath);
+        }
+        cokret_sdk::dpop::build_dpop_proof(&request, &self.signing_key)
+            .map(|proof| proof.header_value)
+            .map_err(|error| AuthDpopError::Mint(error.to_string()))
+    }
+
+    /// Build SDK http-client DPoP auth for requests protected by the
+    /// current session grant.
+    pub fn sdk_dpop_auth_for_access_token(
+        &self,
+        access_token: impl Into<String>,
+    ) -> cokret_sdk::http_client::DpopAuth {
+        cokret_client::session::dpop::access_token_auth(access_token, self.signing_key.clone())
+    }
+
+    /// Build SDK http-client DPoP auth for proof-only requests.
+    pub fn sdk_dpop_proof_only_auth(&self) -> cokret_sdk::http_client::DpopAuth {
+        cokret_client::session::dpop::proof_only_auth(self.signing_key.clone())
     }
 
     /// Sign the one-shot proof that soland forwards to coauth when it
@@ -147,7 +161,7 @@ impl DpopHandle {
         grant_jwt: &str,
         audience: &str,
     ) -> Result<crate::api::SessionGrantIntrospectionProof, AuthDpopError> {
-        crate::coauth::build_session_grant_introspection_proof_bundle(
+        crate::account_auth::build_session_grant_introspection_proof_bundle(
             grant_id,
             grant_jwt,
             audience,
@@ -160,7 +174,7 @@ impl DpopHandle {
 /// RFC 9449 `ath` hash:
 /// `base64url-no-pad(sha256(authorization_credential))`.
 pub fn dpop_authorization_credential_hash(authorization_credential: &str) -> String {
-    URL_SAFE_NO_PAD.encode(Sha256::digest(authorization_credential.as_bytes()))
+    cokret_sdk::dpop::dpop_access_token_hash(authorization_credential)
 }
 
 /// Generate or load the device DPoP key. Calls return the same handle
@@ -195,7 +209,7 @@ pub fn ensure_device_key_with_secure_store(
     // E2EE device identity (decision 0004).
     let material = crate::secure_key_store::ensure_grant_binding_seed(secure_store)
         .map_err(|err| AuthDpopError::SecureStore(format!("ensure grant-binding seed: {err}")))?;
-    let (handle, record) = handle_and_record_from_seed(material.seed);
+    let (handle, record) = handle_and_record_from_seed(material.seed)?;
     store
         .set_dpop_device_key_with_secure_store(Some(record), secure_store)
         .map_err(|err| AuthDpopError::SecureStore(err.to_string()))?;
@@ -217,15 +231,17 @@ fn persist_loaded_record(
     Ok(handle)
 }
 
-fn handle_and_record_from_seed(seed: [u8; 32]) -> (DpopHandle, DpopDeviceKeyRecord) {
+fn handle_and_record_from_seed(
+    seed: [u8; 32],
+) -> Result<(DpopHandle, DpopDeviceKeyRecord), AuthDpopError> {
     let signing_key = SigningKey::from_bytes(&seed);
-    let jkt = jwk_thumbprint_ed25519(&signing_key.verifying_key());
+    let jkt = jwk_thumbprint_ed25519(&signing_key.verifying_key())?;
     let record = DpopDeviceKeyRecord {
         seed_b64: URL_SAFE_NO_PAD.encode(seed),
         jkt: jkt.clone(),
         created_at: Utc::now(),
     };
-    (DpopHandle { signing_key, jkt }, record)
+    Ok((DpopHandle { signing_key, jkt }, record))
 }
 
 fn persist_recovered_seed_record(
@@ -235,7 +251,7 @@ fn persist_recovered_seed_record(
 ) -> Result<DpopHandle, AuthDpopError> {
     // 0004 §4.3: DPoP / grant-binding record only — never activate the event
     // signer here (the device identity key that signs events is decoupled).
-    let (handle, record) = handle_and_record_from_seed(seed);
+    let (handle, record) = handle_and_record_from_seed(seed)?;
     store
         .set_dpop_device_key_with_secure_store(Some(record), secure_store)
         .map_err(|err| AuthDpopError::SecureStore(format!("recover DPoP record: {err}")))?;
@@ -252,7 +268,7 @@ fn ensure_device_key_in_plaintext_state(
     let mut seed = [0u8; 32];
     getrandom::fill(&mut seed).map_err(|err| AuthDpopError::Rng(err.to_string()))?;
     let signing_key = SigningKey::from_bytes(&seed);
-    let jkt = jwk_thumbprint_ed25519(&signing_key.verifying_key());
+    let jkt = jwk_thumbprint_ed25519(&signing_key.verifying_key())?;
     let record = DpopDeviceKeyRecord {
         seed_b64: URL_SAFE_NO_PAD.encode(seed),
         jkt: jkt.clone(),
@@ -335,7 +351,7 @@ pub fn load_or_recover_device_key_with_secure_store(
             .ok()
             .flatten()
             .map(|record| record.jkt);
-        let (seed_handle, _) = handle_and_record_from_seed(material.seed);
+        let (seed_handle, _) = handle_and_record_from_seed(material.seed)?;
         if stored_jkt.as_deref() != Some(seed_handle.jkt()) {
             tracing::warn!(
                 stored_jkt = stored_jkt.as_deref().unwrap_or(""),
@@ -385,7 +401,7 @@ fn decode_record(record: &DpopDeviceKeyRecord) -> Result<DpopHandle, AuthDpopErr
     let mut seed = [0u8; 32];
     seed.copy_from_slice(&bytes);
     let signing_key = SigningKey::from_bytes(&seed);
-    let derived = jwk_thumbprint_ed25519(&signing_key.verifying_key());
+    let derived = jwk_thumbprint_ed25519(&signing_key.verifying_key())?;
     if derived != record.jkt {
         return Err(AuthDpopError::PersistedSeed(format!(
             "stored jkt {} != derived {derived}",
@@ -432,12 +448,20 @@ pub fn dpop_device_key_record_from_seed(
     let mut seed = [0u8; 32];
     seed.copy_from_slice(&bytes);
     let signing_key = SigningKey::from_bytes(&seed);
-    let jkt = jwk_thumbprint_ed25519(&signing_key.verifying_key());
+    let jkt = jwk_thumbprint_ed25519(&signing_key.verifying_key())?;
     Ok(DpopDeviceKeyRecord {
         seed_b64: URL_SAFE_NO_PAD.encode(seed),
         jkt,
         created_at: Utc::now(),
     })
+}
+
+fn jwk_thumbprint_ed25519(
+    verifying_key: &ed25519_dalek::VerifyingKey,
+) -> Result<String, AuthDpopError> {
+    let jwk = cokret_sdk::dpop::DpopJwk::from_ed25519_verifying_key(verifying_key);
+    cokret_sdk::dpop::dpop_jwk_thumbprint(&jwk)
+        .map_err(|error| AuthDpopError::Mint(error.to_string()))
 }
 
 #[cfg(test)]
@@ -521,7 +545,7 @@ mod tests {
     fn authorization_credential_hash_matches_rfc9449_ath_encoding() {
         assert_eq!(
             dpop_authorization_credential_hash("session-credential-1"),
-            URL_SAFE_NO_PAD.encode(Sha256::digest(b"session-credential-1"))
+            cokret_sdk::dpop::dpop_access_token_hash("session-credential-1")
         );
     }
 

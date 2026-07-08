@@ -890,7 +890,7 @@ mod tests {
 
     #[test]
     fn test_constraint_temporal_allow() {
-        let UiCapabilityConstraint = UiCapabilityConstraint::Temporal {
+        let constraint = UiCapabilityConstraint::Temporal {
             not_before: Some("2025-01-01T00:00:00Z".to_owned()),
             expires_at: Some("2027-01-01T00:00:00Z".to_owned()),
         };
@@ -898,15 +898,12 @@ mod tests {
             current_time: "2026-06-15T00:00:00Z".to_owned(),
             ..Default::default()
         };
-        assert_eq!(
-            UiCapabilityConstraint.evaluate(&ctx),
-            UiConstraintResult::Allow
-        );
+        assert_eq!(constraint.evaluate(&ctx), UiConstraintResult::Allow);
     }
 
     #[test]
     fn test_constraint_temporal_deny() {
-        let UiCapabilityConstraint = UiCapabilityConstraint::Temporal {
+        let constraint = UiCapabilityConstraint::Temporal {
             not_before: None,
             expires_at: Some("2025-01-01T00:00:00Z".to_owned()),
         };
@@ -915,14 +912,14 @@ mod tests {
             ..Default::default()
         };
         assert!(matches!(
-            UiCapabilityConstraint.evaluate(&ctx),
+            constraint.evaluate(&ctx),
             UiConstraintResult::Deny(_)
         ));
     }
 
     #[test]
     fn test_constraint_field_access() {
-        let UiCapabilityConstraint = UiCapabilityConstraint::FieldAccess {
+        let constraint = UiCapabilityConstraint::FieldAccess {
             allowed_fields: vec!["name".to_owned(), "email".to_owned()],
             denied_fields: vec!["ssn".to_owned()],
         };
@@ -931,24 +928,21 @@ mod tests {
             requested_fields: Some(vec!["name".to_owned()]),
             ..Default::default()
         };
-        assert_eq!(
-            UiCapabilityConstraint.evaluate(&ctx_allowed),
-            UiConstraintResult::Allow
-        );
+        assert_eq!(constraint.evaluate(&ctx_allowed), UiConstraintResult::Allow);
 
         let ctx_denied = UiCapabilityEvalContext {
             requested_fields: Some(vec!["ssn".to_owned()]),
             ..Default::default()
         };
         assert!(matches!(
-            UiCapabilityConstraint.evaluate(&ctx_denied),
+            constraint.evaluate(&ctx_denied),
             UiConstraintResult::Deny(_)
         ));
     }
 
     #[test]
     fn test_constraint_type_restriction_checks_facets() {
-        let UiCapabilityConstraint = UiCapabilityConstraint::TypeRestriction {
+        let constraint = UiCapabilityConstraint::TypeRestriction {
             allowed_object_types: vec!["strand".to_owned()],
             allowed_facets: vec!["stateful".to_owned(), "rankable".to_owned()],
         };
@@ -958,10 +952,7 @@ mod tests {
             facets: vec!["stateful".to_owned(), "rankable".to_owned()],
             ..Default::default()
         };
-        assert_eq!(
-            UiCapabilityConstraint.evaluate(&ctx_allowed),
-            UiConstraintResult::Allow
-        );
+        assert_eq!(constraint.evaluate(&ctx_allowed), UiConstraintResult::Allow);
 
         let ctx_denied = UiCapabilityEvalContext {
             object_type: Some("strand".to_owned()),
@@ -969,14 +960,14 @@ mod tests {
             ..Default::default()
         };
         assert!(matches!(
-            UiCapabilityConstraint.evaluate(&ctx_denied),
+            constraint.evaluate(&ctx_denied),
             UiConstraintResult::Deny(_)
         ));
     }
 
     #[test]
     fn test_constraint_rate_limiting() {
-        let UiCapabilityConstraint = UiCapabilityConstraint::RateLimiting {
+        let constraint = UiCapabilityConstraint::RateLimiting {
             max_operations: 10,
             window_seconds: 60,
         };
@@ -985,17 +976,14 @@ mod tests {
             operation_counts: HashMap::from([("60s".to_owned(), 5)]),
             ..Default::default()
         };
-        assert_eq!(
-            UiCapabilityConstraint.evaluate(&ctx_under),
-            UiConstraintResult::Allow
-        );
+        assert_eq!(constraint.evaluate(&ctx_under), UiConstraintResult::Allow);
 
         let ctx_over = UiCapabilityEvalContext {
             operation_counts: HashMap::from([("60s".to_owned(), 15)]),
             ..Default::default()
         };
         assert!(matches!(
-            UiCapabilityConstraint.evaluate(&ctx_over),
+            constraint.evaluate(&ctx_over),
             UiConstraintResult::Deny(_)
         ));
     }

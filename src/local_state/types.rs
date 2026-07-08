@@ -578,6 +578,8 @@ pub struct ClientLocalState {
     /// cursors are not interchangeable and MUST NOT be cross-used.
     #[serde(default)]
     pub realm_events_cursors: BTreeMap<String, String>,
+    #[serde(default)]
+    pub client_core_seen_event_ids: BTreeSet<String>,
     pub raw_operations: Vec<RawOperationRecord>,
     #[serde(default)]
     pub realm_lifecycle_state: BTreeMap<String, RealmLifecycleState>,
@@ -963,7 +965,7 @@ impl RootIndex {
 /// We intentionally use ed25519 (EdDSA) rather than ES256 because every
 /// other signing path in yougen is already ed25519 (cross-signing,
 /// move-signing, session-grant introspection proofs) and coauth's
-/// `DpopVerifier` (`coauth::services::dpop`) accepts the `EdDSA`
+/// `DpopVerifier` accepts the `EdDSA`
 /// algorithm out of the box. Sticking with ed25519 keeps a single
 /// key-format story across the client.
 ///
@@ -1036,7 +1038,7 @@ pub struct PersistedSessionGrant {
     /// The signed grant JWT (long-lived, signed by coauth).
     pub grant_jwt: String,
     /// PKCS8 PEM of the ephemeral session signing key. Decoded with
-    /// [`crate::coauth::session_grant_signing_key_from_pem`] before
+    /// [`crate::account_auth::session_grant_signing_key_from_pem`] before
     /// signing a fresh introspection proof.
     pub session_private_key_pem: String,
     /// Grant id assigned by coauth. Embedded in introspection proof claims.
@@ -1062,6 +1064,7 @@ impl Default for ClientLocalState {
         Self {
             sync_cursor: None,
             realm_events_cursors: BTreeMap::new(),
+            client_core_seen_event_ids: BTreeSet::new(),
             raw_operations: Vec::new(),
             realm_lifecycle_state: BTreeMap::new(),
             realm_tree_projections: BTreeMap::new(),

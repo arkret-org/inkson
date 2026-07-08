@@ -5,8 +5,10 @@ impl CokretApi {
         &self,
         realm_id: &str,
     ) -> anyhow::Result<cokret_sdk::CircleList> {
-        self.get_json(&format!("_cokret/self/circles?realm_id={realm_id}"))
+        self.sdk_http_client()?
+            .circle_list(realm_id)
             .await
+            .map_err(anyhow::Error::from)
     }
 
     pub(crate) async fn submit_circle_scope_rotate_events(
@@ -42,12 +44,9 @@ impl CokretApi {
             events: signed_events,
             idempotency_key: Some(idem.clone()),
         };
-        let request = self
-            .http
-            .post(self.endpoint(&format!("_cokret/self/circles/{circle_id}/scope-rotate"))?)
-            .json(&body);
-        let request = self.with_write_request_headers(request, &idem);
-        self.send_json_retryable(self.prepare_request(request), Method::POST)
+        self.sdk_http_client()?
+            .circle_scope_rotate(circle_id, &idem, &body)
             .await
+            .map_err(anyhow::Error::from)
     }
 }

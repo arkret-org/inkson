@@ -71,7 +71,8 @@ pub(crate) fn refresh_notifications(
     spawn(async move {
         let session_credential = session_credential();
         match with_authed_api(&base_url, session_credential, |api| async move {
-            let response = api.account_subscribe_snapshot(None).await?;
+            let http = api.sdk_http_client()?;
+            let response = crate::client_core::account_subscribe_snapshot(&http, None).await?;
             let invite_notifications = optional_invite_notifications(&api).await?;
             Ok::<_, anyhow::Error>((response, invite_notifications))
         })
@@ -312,8 +313,18 @@ fn accept_invite_notification(
             let submit = api
                 .accept_realm_invite(&accepted_realm_for_api, &account.did, &invite_id)
                 .await?;
-            let read_api = api.clone().with_wait_for(submit.cursor);
-            let sync = read_api.account_subscribe_snapshot(None).await;
+            let read_api = api.clone();
+            let sync = match read_api.sdk_http_client() {
+                Ok(http) => {
+                    let options = cokret_sdk::http_client::ClientRequestOptions::new()
+                        .wait_for(submit.cursor);
+                    crate::client_core::account_subscribe_snapshot_with_options(
+                        &http, None, &options,
+                    )
+                    .await
+                }
+                Err(error) => Err(error),
+            };
             let invite_notifications = optional_invite_notifications(&read_api).await?;
             Ok::<_, anyhow::Error>((sync, invite_notifications))
         })

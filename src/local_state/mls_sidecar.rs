@@ -74,9 +74,8 @@ impl LocalStateStore {
         let mut by_epoch =
             crate::secure_key_store::load_realm_history_secrets(&realm_id).unwrap_or_default();
         by_epoch.insert(epoch, secret.clone());
-        if crate::secure_key_store::persist_realm_history_secrets(&realm_id, &by_epoch) {
-            return;
-        }
+        let _persisted =
+            crate::secure_key_store::persist_realm_history_secrets(&realm_id, &by_epoch);
         self.cached
             .history_secrets
             .entry(realm_id)

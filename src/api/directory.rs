@@ -267,12 +267,17 @@ impl CokretApi {
             cursor: next_cursor.map(ToOwned::to_owned),
             limit: Some(20),
         };
-        self.post_json("_cokret/find/directory/search-realms", &body)
+        self.sdk_http_client()?
+            .directory_search_realms(&body)
             .await
+            .map_err(anyhow::Error::from)
     }
 
     pub async fn directory_describe(&self) -> anyhow::Result<DirectoryDescription> {
-        self.get_json("_cokret/find/directory/describe").await
+        self.sdk_http_client()?
+            .directory_describe()
+            .await
+            .map_err(anyhow::Error::from)
     }
 
     /// Resolve a Realm by either its `ck:realm:<uuid>` id OR a human-readable
@@ -308,8 +313,10 @@ impl CokretApi {
             proof_challenge: None,
             claim_presentations: Vec::new(),
         };
-        self.post_json("_cokret/find/directory/resolve-realm", &body)
+        self.sdk_http_client()?
+            .directory_resolve_realm(&body)
             .await
+            .map_err(anyhow::Error::from)
     }
 
     /// R3.3 (CKP-0011) — resolve a shareable object address (Realm / Strand /
@@ -341,8 +348,10 @@ impl CokretApi {
             proofs: Vec::new(),
             token: token.map(str::to_owned),
         };
-        self.post_json("_cokret/find/directory/resolve-target", &body)
+        self.sdk_http_client()?
+            .directory_resolve_target(&body)
             .await
+            .map_err(anyhow::Error::from)
     }
 
     /// `ck.self.snapshot.query.manifest_head`.
@@ -358,12 +367,8 @@ impl CokretApi {
         if !describe.supports_operation(OP_SNAPSHOT_HEAD) {
             return Ok(None);
         }
-        let realm_id = query_component(realm_id);
-        let result = self
-            .get_json::<cokret_sdk::SnapshotManifest>(&format!(
-                "_cokret/self/snapshot/head?realm_id={realm_id}"
-            ))
-            .await;
+        let result = self.sdk_http_client()?.snapshot_head(realm_id).await;
+        let result = result.map_err(anyhow::Error::from);
         match result {
             Ok(manifest) => Ok(Some(manifest)),
             Err(error) if is_snapshot_unavailable_error(&error) => Ok(None),
@@ -387,8 +392,10 @@ impl CokretApi {
             cursor: next_cursor.map(ToOwned::to_owned),
             limit: Some(20),
         };
-        self.post_json("_cokret/find/directory/search-organizations", &body)
+        self.sdk_http_client()?
+            .directory_search_organizations(&body)
             .await
+            .map_err(anyhow::Error::from)
     }
 
     pub async fn search_actors(
@@ -406,8 +413,10 @@ impl CokretApi {
             cursor: next_cursor.map(ToOwned::to_owned),
             limit: Some(20),
         };
-        self.post_json("_cokret/find/directory/search-actors", &body)
+        self.sdk_http_client()?
+            .directory_search_actors(&body)
             .await
+            .map_err(anyhow::Error::from)
     }
 
     /// Global index search has no spec-defined Cokret HTTP endpoint.
@@ -440,8 +449,10 @@ impl CokretApi {
     ) -> anyhow::Result<ResolveHandleView> {
         let body = resolve_handle_request_body(handle, context)?;
         let outcome: cokret_sdk::DirectoryHandleResolutionOutcome = self
-            .post_json("_cokret/find/directory/resolve-handle", &body)
-            .await?;
+            .sdk_http_client()?
+            .directory_resolve_handle(&body)
+            .await
+            .map_err(anyhow::Error::from)?;
         Ok(outcome.into())
     }
 
@@ -473,8 +484,10 @@ impl CokretApi {
             proofs: Vec::new(),
         };
         let outcome: cokret_sdk::models::DirectoryAgentSelectorResolutionOutcome = self
-            .post_json("_cokret/find/directory/resolve-agent-selector", &body)
-            .await?;
+            .sdk_http_client()?
+            .directory_resolve_agent_selector(&body)
+            .await
+            .map_err(anyhow::Error::from)?;
         outcome
             .validate()
             .map_err(|err| anyhow::anyhow!("invalid agent selector outcome: {err}"))?;
@@ -757,13 +770,14 @@ impl CokretApi {
             return Ok(invitee);
         }
         if let Some((resolver_origin, locator_token)) = parse_invite_locator_url(target)? {
-            let resolver = CokretApi::new(&resolver_origin)?;
+            let resolver = cokret_sdk::http_client::Client::new(Url::parse(&resolver_origin)?)?;
             let body = cokret_sdk::InviteLocatorResolveRequestBody::new(locator_token);
             body.validate_minimal()
                 .map_err(|err| anyhow::anyhow!("invalid invite locator token: {err}"))?;
             let locator: cokret_sdk::PrincipalLocator = resolver
-                .post_json(cokret_sdk::INVITE_LOCATOR_RESOLVE_PATH, &body)
-                .await?;
+                .post(cokret_sdk::INVITE_LOCATOR_RESOLVE_PATH, &body)
+                .await
+                .map_err(anyhow::Error::from)?;
             return invitee_from_principal_locator(locator);
         }
 
@@ -830,8 +844,10 @@ impl CokretApi {
             limit: None,
         };
         let res: cokret_sdk::models::DirectorySubjectHandleList = self
-            .post_json("_cokret/find/directory/list-handles-for-subject", &body)
-            .await?;
+            .sdk_http_client()?
+            .directory_list_handles_for_subject(&body)
+            .await
+            .map_err(anyhow::Error::from)?;
         // §0.2 fail-closed: drop the whole response if any claim's subject
         // doesn't match.
         res.validate()

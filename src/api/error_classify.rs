@@ -16,15 +16,25 @@ pub(crate) const DEFAULT_ACCOUNT_SUBSCRIBE_RECONNECT_AFTER_MS: u64 = 5_000;
 pub(crate) static ACCOUNT_SUBSCRIBE_NETWORK_GATE: LazyLock<Mutex<()>> =
     LazyLock::new(|| Mutex::new(()));
 
+fn api_error_status_and_envelope(error: &anyhow::Error) -> Option<(StatusCode, &ErrorEnvelope)> {
+    if let Some(api_error) = error.downcast_ref::<CokretApiError>() {
+        return Some((api_error.status, &api_error.error));
+    }
+    if let Some(cokret_sdk::Error::Api { status, error }) =
+        error.downcast_ref::<cokret_sdk::Error>()
+    {
+        return Some((StatusCode::from_u16(*status).ok()?, error.as_ref()));
+    }
+    None
+}
+
 /// True when a discovery probe failed because the endpoint does not exist on
 /// this server — i.e. the routing layer returned `404 unrecognized_endpoint`
 /// (see `service-http-binding.md` routing rules) rather than a transport,
 /// auth, or server error.
 #[cfg(test)]
 pub(crate) fn is_endpoint_absent(error: &anyhow::Error) -> bool {
-    error
-        .downcast_ref::<CokretApiError>()
-        .is_some_and(|api_error| api_error.status == StatusCode::NOT_FOUND)
+    api_error_status_and_envelope(error).is_some_and(|(status, _)| status == StatusCode::NOT_FOUND)
 }
 
 #[derive(Clone, Debug)]
@@ -85,19 +95,17 @@ pub fn is_auth_expired_error(error: &anyhow::Error) -> bool {
     if is_terminal_session_grant_error(error) {
         return true;
     }
-    error
-        .downcast_ref::<CokretApiError>()
-        .is_some_and(|api_error| {
-            if api_error.status != StatusCode::UNAUTHORIZED {
-                return false;
-            }
-            matches!(
-                api_error.error.code(),
-                code if code == ERROR_CODE_AUTH_EXPIRED
-                    || code == ERROR_CODE_UNAUTHENTICATED
-                    || code == ERROR_CODE_SOFT_LOGGED_OUT
-            )
-        })
+    api_error_status_and_envelope(error).is_some_and(|(status, envelope)| {
+        if status != StatusCode::UNAUTHORIZED {
+            return false;
+        }
+        matches!(
+            envelope.code(),
+            code if code == ERROR_CODE_AUTH_EXPIRED
+                || code == ERROR_CODE_UNAUTHENTICATED
+                || code == ERROR_CODE_SOFT_LOGGED_OUT
+        )
+    })
 }
 
 /// True when the server rejected the request because the authenticated
@@ -118,16 +126,14 @@ pub fn is_auth_expired_error(error: &anyhow::Error) -> bool {
 /// a brand-new account Recovery Key root — it has to be authorized from an
 /// existing device, or the user must restore with their existing Recovery Key.
 pub fn is_device_not_authorized_error(error: &anyhow::Error) -> bool {
-    error
-        .downcast_ref::<CokretApiError>()
-        .is_some_and(|api_error| {
-            matches!(
-                api_error.error.code(),
-                "device_not_authorized"
-                    | "recovery_policy_device_not_authorized"
-                    | "device_enrollment_authority_not_designated"
-            )
-        })
+    api_error_status_and_envelope(error).is_some_and(|(_, envelope)| {
+        matches!(
+            envelope.code(),
+            "device_not_authorized"
+                | "recovery_policy_device_not_authorized"
+                | "device_enrollment_authority_not_designated"
+        )
+    })
 }
 
 /// True when the error envelope says the persisted coauth session grant
@@ -137,19 +143,18 @@ pub fn is_device_not_authorized_error(error: &anyhow::Error) -> bool {
 /// the client must treat them as session loss, not as an ordinary Space/
 /// Strand capability denial.
 pub fn is_terminal_session_grant_error(error: &anyhow::Error) -> bool {
-    error
-        .downcast_ref::<CokretApiError>()
-        .is_some_and(is_terminal_session_grant_api_error)
+    api_error_status_and_envelope(error)
+        .is_some_and(|(status, envelope)| is_terminal_session_grant_api_error(status, envelope))
 }
 
-fn is_terminal_session_grant_api_error(api_error: &CokretApiError) -> bool {
+fn is_terminal_session_grant_api_error(status: StatusCode, envelope: &ErrorEnvelope) -> bool {
     use cokret_sdk::error::{
         ERROR_CODE_AUTH_EXPIRED, ERROR_CODE_CAPABILITY_DENIED, ERROR_CODE_UNAUTHENTICATED,
     };
 
-    let code = api_error.error.code();
-    let message = api_error.error.message().to_ascii_lowercase();
-    (api_error.status == StatusCode::FORBIDDEN || api_error.status == StatusCode::UNAUTHORIZED)
+    let code = envelope.code();
+    let message = envelope.message().to_ascii_lowercase();
+    (status == StatusCode::FORBIDDEN || status == StatusCode::UNAUTHORIZED)
         && (code == ERROR_CODE_CAPABILITY_DENIED
             || code.ends_with(".capability_denied")
             || code == ERROR_CODE_UNAUTHENTICATED
@@ -176,11 +181,11 @@ fn terminal_session_grant_message(message: &str) -> bool {
 /// omitted the hint), `None` otherwise.
 pub fn rate_limited_retry_after(error: &anyhow::Error) -> Option<u64> {
     use cokret_sdk::error::ERROR_CODE_RATE_LIMITED;
-    let api_error = error.downcast_ref::<CokretApiError>()?;
-    if api_error.error.code() != ERROR_CODE_RATE_LIMITED {
+    let (_, envelope) = api_error_status_and_envelope(error)?;
+    if envelope.code() != ERROR_CODE_RATE_LIMITED {
         return None;
     }
-    Some(api_error.error.retry_after_ms().unwrap_or(0))
+    Some(envelope.retry_after_ms().unwrap_or(0))
 }
 
 /// `true` when account subscribe rejected the cursor — expired, invalid,
@@ -194,21 +199,19 @@ pub fn is_invalid_cursor_error(error: &anyhow::Error) -> bool {
     use cokret_sdk::{
         ERROR_CODE_CURSOR_EXPIRED, ERROR_CODE_CURSOR_INVALID, ERROR_CODE_INVALID_PARAM,
     };
-    error
-        .downcast_ref::<CokretApiError>()
-        .is_some_and(|api_error| {
-            let code = api_error.error.code();
-            // `invalid_param` only counts when the message mentions the
-            // cursor — soland uses it for generic schema rejections too.
-            let cursor_message = api_error.error.message().to_lowercase().contains("cursor");
-            matches!(
-                code,
-                code if code == ERROR_CODE_CURSOR_EXPIRED
-                    || code == ERROR_CODE_CURSOR_INTEGRITY_INVALID
-                    || code == ERROR_CODE_CURSOR_UNRECOGNIZED
-            ) || (cursor_message
-                && matches!(code, code if code == ERROR_CODE_INVALID_PARAM || code == ERROR_CODE_CURSOR_INVALID))
-        })
+    api_error_status_and_envelope(error).is_some_and(|(_, envelope)| {
+        let code = envelope.code();
+        // `invalid_param` only counts when the message mentions the
+        // cursor — soland uses it for generic schema rejections too.
+        let cursor_message = envelope.message().to_lowercase().contains("cursor");
+        matches!(
+            code,
+            code if code == ERROR_CODE_CURSOR_EXPIRED
+                || code == ERROR_CODE_CURSOR_INTEGRITY_INVALID
+                || code == ERROR_CODE_CURSOR_UNRECOGNIZED
+        ) || (cursor_message
+            && matches!(code, code if code == ERROR_CODE_INVALID_PARAM || code == ERROR_CODE_CURSOR_INVALID))
+    })
 }
 
 /// `true` for `stale_frontier` — the cursor itself is still valid but the
@@ -218,9 +221,8 @@ pub fn is_invalid_cursor_error(error: &anyhow::Error) -> bool {
 /// (§12.3 step 2) and retry / backfill with the SAME cursor.
 pub fn is_stale_frontier_error(error: &anyhow::Error) -> bool {
     use cokret_sdk::error::ERROR_CODE_STALE_FRONTIER;
-    error
-        .downcast_ref::<CokretApiError>()
-        .is_some_and(|api_error| api_error.error.code() == ERROR_CODE_STALE_FRONTIER)
+    api_error_status_and_envelope(error)
+        .is_some_and(|(_, envelope)| envelope.code() == ERROR_CODE_STALE_FRONTIER)
 }
 
 pub(crate) fn is_snapshot_unavailable_error(error: &anyhow::Error) -> bool {
@@ -229,52 +231,43 @@ pub(crate) fn is_snapshot_unavailable_error(error: &anyhow::Error) -> bool {
         ERROR_CODE_UNRECOGNIZED_ENDPOINT, ERROR_CODE_UNSUPPORTED_FEATURE,
     };
 
-    error
-        .downcast_ref::<CokretApiError>()
-        .is_some_and(|api_error| {
-            let code = api_error.error.code();
-            api_error.status == StatusCode::NOT_FOUND
-                || matches!(
-                    code,
-                    code if code == ERROR_CODE_NOT_IMPLEMENTED
-                        || code == ERROR_CODE_SNAPSHOT_UNAVAILABLE
-                        || code == ERROR_CODE_NOT_FOUND
-                        || code == ERROR_CODE_UNRECOGNIZED_ENDPOINT
-                        || code == ERROR_CODE_UNSUPPORTED_FEATURE
-                )
-        })
+    api_error_status_and_envelope(error).is_some_and(|(status, envelope)| {
+        let code = envelope.code();
+        status == StatusCode::NOT_FOUND
+            || matches!(
+                code,
+                code if code == ERROR_CODE_NOT_IMPLEMENTED
+                    || code == ERROR_CODE_SNAPSHOT_UNAVAILABLE
+                    || code == ERROR_CODE_NOT_FOUND
+                    || code == ERROR_CODE_UNRECOGNIZED_ENDPOINT
+                    || code == ERROR_CODE_UNSUPPORTED_FEATURE
+            )
+    })
 }
 
 pub fn is_plaintext_visibility_policy_error(error: &anyhow::Error) -> bool {
     use cokret_sdk::error::{ERROR_CODE_CAPABILITY_DENIED, ERROR_CODE_POLICY_DENIED};
 
-    error
-        .downcast_ref::<CokretApiError>()
-        .is_some_and(|api_error| {
-            let code = api_error.error.code();
-            api_error.status == StatusCode::FORBIDDEN
-                && (code == ERROR_CODE_POLICY_DENIED
-                    || code == ERROR_CODE_CAPABILITY_DENIED
-                    || code.ends_with(".capability_denied"))
-                && api_error
-                    .error
-                    .message()
-                    .contains("plaintext_visible_services")
-        })
+    api_error_status_and_envelope(error).is_some_and(|(status, envelope)| {
+        let code = envelope.code();
+        status == StatusCode::FORBIDDEN
+            && (code == ERROR_CODE_POLICY_DENIED
+                || code == ERROR_CODE_CAPABILITY_DENIED
+                || code.ends_with(".capability_denied"))
+            && envelope.message().contains("plaintext_visible_services")
+    })
 }
 
 pub fn is_space_membership_denied_error(error: &anyhow::Error) -> bool {
     use cokret_sdk::error::ERROR_CODE_CAPABILITY_DENIED;
 
-    error
-        .downcast_ref::<CokretApiError>()
-        .is_some_and(|api_error| {
-            let code = api_error.error.code();
-            let message = api_error.error.message().to_ascii_lowercase();
-            api_error.status == StatusCode::FORBIDDEN
-                && (code == ERROR_CODE_CAPABILITY_DENIED || code.ends_with(".capability_denied"))
-                && message.contains("not a member")
-        })
+    api_error_status_and_envelope(error).is_some_and(|(status, envelope)| {
+        let code = envelope.code();
+        let message = envelope.message().to_ascii_lowercase();
+        status == StatusCode::FORBIDDEN
+            && (code == ERROR_CODE_CAPABILITY_DENIED || code.ends_with(".capability_denied"))
+            && message.contains("not a member")
+    })
 }
 
 pub fn normalize_wait_for_sync_token(sync_token: &str) -> Option<String> {
@@ -335,8 +328,8 @@ pub enum BlobPresignError {
 
 impl BlobPresignError {
     pub fn from_error(error: &anyhow::Error) -> Option<Self> {
-        let api_error = error.downcast_ref::<CokretApiError>()?;
-        let code = api_error.error.code();
+        let (status, envelope) = api_error_status_and_envelope(error)?;
+        let code = envelope.code();
         match code {
             // Round R2/R3 wire codes from cokret_sdk::error.
             "legal_hold_active" => Some(Self::LegalHoldActive),
@@ -345,9 +338,7 @@ impl BlobPresignError {
                 Some(Self::MediaPlaintextServiceNotAuthorised)
             }
             _ => {
-                if api_error.status == StatusCode::FORBIDDEN
-                    || api_error.status == StatusCode::UNAUTHORIZED
-                {
+                if status == StatusCode::FORBIDDEN || status == StatusCode::UNAUTHORIZED {
                     Some(Self::NotAuthorised)
                 } else {
                     None

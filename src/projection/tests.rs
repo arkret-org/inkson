@@ -1,5 +1,7 @@
 use super::sync::projection_events_from_sync_realms;
 
+const GOLDEN_REALM: &str = "ck:realm:019f1071-0000-7000-8000-000000000000";
+
 #[test]
 fn projection_expiry_stub_does_not_restore_authors_plaintext_sidecar() {
     let path = std::env::temp_dir().join(format!(
@@ -38,6 +40,106 @@ fn projection_expiry_stub_does_not_restore_authors_plaintext_sidecar() {
         .expect("expired event");
 
     assert_eq!(expired.body, "[expired]");
+}
+
+fn golden_realm_id() -> cokret_sdk::RealmId {
+    cokret_sdk::RealmId::new(GOLDEN_REALM).unwrap()
+}
+
+fn golden_actor() -> cokret_sdk::Did {
+    cokret_sdk::Did::new("did:webvh:z6mkfixture:alice.example").unwrap()
+}
+
+fn golden_event(
+    event_id: &str,
+    kind: &str,
+    actor_seq: u64,
+    created_at: &str,
+    payload: serde_json::Value,
+) -> cokret_sdk::Event {
+    let mut event = cokret_sdk::Event::new(
+        kind,
+        golden_realm_id(),
+        golden_actor(),
+        actor_seq,
+        cokret_sdk::Hlc::new("01970e589d21-0004-a13f9c2e").unwrap(),
+        payload,
+    )
+    .unwrap();
+    event.event_id = cokret_sdk::EventId::new(event_id).unwrap();
+    event.created_at = created_at.parse().unwrap();
+    event
+}
+
+#[test]
+fn client_core_message_decode_golden_matches_yougen_ingest() {
+    let create = golden_event(
+        "ck:event:01904100-0000-7000-8000-000000000101",
+        cokret_sdk::events::kinds::MESSAGE_CREATE,
+        1,
+        "2026-07-08T00:00:00Z",
+        serde_json::json!({
+            "strand_id": "ck:strand:01904100-0000-7000-8000-000000000201",
+            "track_name": "discussion",
+            "content": {"kind": "ck.content.text", "body": "hello"}
+        }),
+    );
+    let reaction = golden_event(
+        "ck:event:01904100-0000-7000-8000-000000000102",
+        cokret_sdk::events::kinds::REACTION_ADD,
+        2,
+        "2026-07-08T00:00:01Z",
+        serde_json::json!({
+            "target_ref": "ck:event:01904100-0000-7000-8000-000000000101",
+            "key": "+1"
+        }),
+    );
+    let events = vec![create, reaction];
+    let decoder = cokret_client::InboundDecoder::new();
+
+    let decoded: Vec<_> = events
+        .iter()
+        .cloned()
+        .map(|event| decoder.try_decode_event(event).unwrap())
+        .collect();
+    assert!(matches!(
+        &decoded[0],
+        cokret_client::DecodedInbound::Message(cokret_client::DecodedMessage {
+            payload: cokret_sdk::MessageEventPayload::Create(_),
+            ..
+        })
+    ));
+    assert!(matches!(
+        &decoded[1],
+        cokret_client::DecodedInbound::Message(cokret_client::DecodedMessage {
+            payload: cokret_sdk::MessageEventPayload::ReactionAdd(_),
+            ..
+        })
+    ));
+
+    let event_values: Vec<_> = events
+        .iter()
+        .map(|event| serde_json::to_value(event).unwrap())
+        .collect();
+    let records = super::message_ops::message_operations_from_events(GOLDEN_REALM, &event_values);
+
+    assert_eq!(records.len(), 2);
+    assert_eq!(
+        records[0].operation_id,
+        "ck:event:01904100-0000-7000-8000-000000000101"
+    );
+    assert_eq!(
+        records[0].payload["payload"]["content"]["body"],
+        serde_json::json!("hello")
+    );
+    assert_eq!(
+        records[1].operation_id,
+        "ck:event:01904100-0000-7000-8000-000000000102"
+    );
+    assert_eq!(
+        records[1].payload["payload"]["key"],
+        serde_json::json!("+1")
+    );
 }
 
 #[test]

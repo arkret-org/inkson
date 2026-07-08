@@ -347,7 +347,11 @@ fn refresh_items(
                 return;
             }
         };
-        match api.account_subscribe_snapshot(None).await {
+        let sync_result = match api.sdk_http_client() {
+            Ok(http) => crate::client_core::account_subscribe_snapshot(&http, None).await,
+            Err(error) => Err(error),
+        };
+        match sync_result {
             Ok(sync) => {
                 let next = file_transfer_items_from_account_data(&sync.account_data, &crypto);
                 let count = next.len();

@@ -907,7 +907,9 @@ pub fn ChatPanel(
             {
                 account_display_name_for_load.set(display_name);
             }
-            if let Ok(sync) = api.account_subscribe_snapshot(None).await {
+            if let Ok(http) = api.sdk_http_client()
+                && let Ok(sync) = crate::client_core::account_subscribe_snapshot(&http, None).await
+            {
                 {
                     let mut store = state_store.write();
                     store.save_sync_cursor(sync.cursor.clone());

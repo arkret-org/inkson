@@ -1,3 +1,6 @@
+#[cfg(not(target_arch = "wasm32"))]
+use serde_json::json;
+
 use super::*;
 
 impl LocalStateStore {

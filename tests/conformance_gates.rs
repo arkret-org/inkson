@@ -3,11 +3,12 @@
 //!
 //! Stream J of `_claude_todos.md`: for each typed builder in `yougen::api`,
 //! run build, stamp the wire-only fields a real submitter would attach
-//! (`seal_ref`, `proofs[0]` from a real Ed25519 signer), serialise, and validate
+//! (`seal_basis` when the kind is a Control Move, `proofs[0]` from a real
+//! Ed25519 signer), serialise, and validate
 //! against `cokret-spec/spec/v1/artifacts/schemas/event-envelope.schema.json`.
-//! Schema requires reducer-input events to carry `preconditions`, `effects`,
-//! `seal_ref`, and at least one proof; the gate therefore covers both the
-//! builder output and the sign-and-stamp pipeline immediately downstream.
+//! Schema distinguishes Control Moves, DataEvents, and a few bootstrap/facet
+//! reducer kinds; the gate therefore covers both the builder output and the
+//! sign-and-stamp pipeline immediately downstream.
 
 use std::fs;
 use std::path::PathBuf;
@@ -121,21 +122,49 @@ const TEST_ACTOR_ID: &str = "did:web:alice.example";
 const TEST_INVITEE_DID: &str = "did:web:bob.example";
 const TEST_ANCHOR_REF: &str =
     "ck:seal:sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+const TEST_ROOT_HASH: &str =
+    "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
 
 /// Stamp the wire fields the submit pipeline would normally attach
-/// (seal_ref + Ed25519 proof) so the envelope satisfies the
-/// "reducer-input requires preconditions/effects/seal_ref/proofs"
+/// (CBA basis + Ed25519 proof) so the envelope satisfies the reducer-input
 /// rules baked into event-envelope.schema.json.
 fn stamp_wire_fields(envelope: &mut EventEnvelope) {
-    if envelope.seal_ref.is_none() {
-        envelope.seal_ref =
-            Some(cokret_sdk::SealId::new(TEST_ANCHOR_REF.to_owned()).expect("test seal ref"));
+    if should_stamp_control_move_basis(envelope) && envelope.seal_basis.is_none() {
+        envelope.seal_basis = Some(test_seal_basis());
     }
     let signer_did = TEST_ACTOR_ID;
     let key_id = format!("{signer_did}#device");
     envelope
         .sign_ed25519(signer_did, key_id, test_signing_key())
         .expect("Ed25519 sign succeeds for schema-conformant envelope");
+}
+
+fn should_stamp_control_move_basis(envelope: &EventEnvelope) -> bool {
+    !envelope.effects.is_empty() && !cba_exempt_reducer_kind(&envelope.kind)
+}
+
+fn cba_exempt_reducer_kind(kind: &EventKind) -> bool {
+    matches!(
+        kind,
+        EventKind::RealmCreate
+            | EventKind::MemberState
+            | EventKind::RealmDiscovery
+            | EventKind::RealmHistoryVisibility
+            | EventKind::RealmJoinRule
+            | EventKind::RealmPlaintextVisibleServices
+            | EventKind::RealmPolicyComponents
+    )
+}
+
+fn test_seal_basis() -> cokret_sdk::SealBasis {
+    let view: cokret_sdk::RealmSealFrontierView = serde_json::from_value(serde_json::json!({
+        "realm_id": TEST_REALM_ID,
+        "seal_id": TEST_ANCHOR_REF,
+        "control_event_set_root": TEST_ROOT_HASH,
+        "state_root": TEST_ROOT_HASH
+    }))
+    .expect("test RealmSealFrontierView is valid");
+    view.seal_basis()
 }
 
 /// Sanity check: the validator MUST reject obvious schema violations.

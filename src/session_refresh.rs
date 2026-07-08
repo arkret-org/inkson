@@ -19,12 +19,16 @@
 //! The split keeps the policy pure (testable without spinning up
 //! reqwest) and the IO thin.
 
+use anyhow::Context as _;
 use base64::Engine as _;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use chrono::Utc;
+use cokret_client::{SessionEngine, SessionGrantState, SessionRefreshOptions};
+use cokret_sdk::http_client::{Auth, ClientBuilder, DpopAuth};
 use serde::Serialize;
+use url::Url;
 
-use crate::auth_dpop::DpopHandle;
+use crate::account_auth::grant_dpop::DpopHandle;
 use crate::config::normalize_server_url;
 use crate::local_state::{LocalStateStore, PersistedSessionGrant};
 
@@ -193,7 +197,7 @@ fn prepare_refresh_grant(
     // The DPoP header is signed by the grant-binding key (`cnf.jkt`). The body
     // proof is a separate DID proof signed by the authorized device identity
     // signer, so bind the active signer to the grant's protocol device id here.
-    let device_handle = match crate::auth_dpop::load_or_recover_device_key(store) {
+    let device_handle = match crate::account_auth::grant_dpop::load_or_recover_device_key(store) {
         Ok(Some(handle)) => handle,
         Ok(None) => {
             return RefreshPrepared::Done(RefreshOutcome::Transient {
@@ -283,41 +287,103 @@ async fn rotate_session_grant(
     device_handle: &DpopHandle,
 ) -> anyhow::Result<PersistedSessionGrant> {
     let gate_account_base =
-        crate::coauth::resolve_principal_gate_account_base(&grant.principal_server_url)
+        crate::account_auth::resolve_principal_gate_account_base(&grant.principal_server_url)
             .await
             .map_err(|error| anyhow::anyhow!("resolve Account Authority: {error}"))?;
-    let coauth = crate::coauth::CoauthApi::new(&gate_account_base)?;
-    let htu = coauth.endpoint_url("session-grants/refresh")?;
-    let dpop_proof = device_handle
-        .mint_proof("POST", &htu, Some(&grant.grant_jwt))
-        .map_err(|error| anyhow::anyhow!("mint rotation DPoP proof: {error}"))?;
+    let sdk_base_url = sdk_base_url_from_gate_account_base(&gate_account_base)?;
+    let http = ClientBuilder::new(sdk_base_url)
+        .auth(Auth::Dpop(
+            device_handle.sdk_dpop_auth_for_access_token(grant.grant_jwt.clone()),
+        ))
+        .build()
+        .map_err(|error| anyhow::anyhow!("build session refresh HTTP client: {error}"))?;
     let refresh_proof = mint_session_grant_refresh_proof(grant)
         .map_err(|error| anyhow::anyhow!("mint rotation DID proof: {error}"))?;
-    let outcome = refresh_session_grant(
-        &gate_account_base,
-        &grant.grant_jwt,
-        Some(&grant.audience),
-        &grant.device_id,
-        refresh_proof,
-        &dpop_proof,
-    )
-    .await?;
+    let device_id = cokret_sdk::DeviceId::new(grant.device_id.trim().to_owned())
+        .map_err(|error| anyhow::anyhow!("invalid refresh device_id: {error}"))?;
+    let engine = SessionEngine::with_state(
+        http,
+        session_grant_state_from_persisted(grant, device_handle, Utc::now())?,
+    );
+    let handle = engine
+        .refresh_once(
+            SessionRefreshOptions {
+                audience: Some(grant.audience.clone()),
+                device_id: Some(device_id),
+                proof: Some(refresh_proof),
+                expected_dpop_jkt: Some(device_handle.jkt().to_owned()),
+            },
+            Utc::now(),
+        )
+        .await
+        .map_err(|error| anyhow::anyhow!("session grant refresh: {error}"))?;
+    let state = engine
+        .current_state()
+        .context("session grant refresh did not yield state")?;
     // The rotated grant binds to the same device key (`cnf.jkt` constant), so
     // the introspection signing key persisted with the grant is this device key.
     let session_private_key_pem = device_handle
         .session_signing_key_pkcs8_pem()
         .map_err(|error| anyhow::anyhow!("export device session key: {error}"))?;
     Ok(PersistedSessionGrant {
-        grant_jwt: outcome.grant_jwt,
+        grant_jwt: handle.access_token,
         session_private_key_pem: session_private_key_pem.to_string(),
-        grant_id: outcome.grant_id.to_string(),
-        audience: outcome.audience,
+        grant_id: state.grant_id.as_str().to_owned(),
+        audience: state.audience,
         principal_id: grant.principal_id.clone(),
         device_id: grant.device_id.clone(),
         principal_server_url: grant.principal_server_url.clone(),
-        grant_expires_at: Some(outcome.expires_at),
+        grant_expires_at: Some(state.expires_at),
         stored_at: Utc::now(),
     })
+}
+
+fn session_grant_state_from_persisted(
+    grant: &PersistedSessionGrant,
+    device_handle: &DpopHandle,
+    now: chrono::DateTime<Utc>,
+) -> anyhow::Result<SessionGrantState> {
+    let expires_at = grant
+        .grant_expires_at
+        .filter(|expires_at| *expires_at > now)
+        .unwrap_or_else(|| now + chrono::Duration::seconds(REFRESH_SKEW_SECS));
+    Ok(SessionGrantState {
+        principal_id: cokret_sdk::Did::new(grant.principal_id.trim().to_owned())
+            .map_err(|error| anyhow::anyhow!("invalid refresh principal_id: {error}"))?,
+        device_id: Some(
+            cokret_sdk::DeviceId::new(grant.device_id.trim().to_owned())
+                .map_err(|error| anyhow::anyhow!("invalid refresh device_id: {error}"))?,
+        ),
+        grant_id: cokret_sdk::GrantId::new(grant.grant_id.trim().to_owned())
+            .map_err(|error| anyhow::anyhow!("invalid refresh grant_id: {error}"))?,
+        grant_jwt: grant.grant_jwt.clone(),
+        expires_at,
+        audience: grant.audience.clone(),
+        granted_scope: Vec::new(),
+        session_public_key: "persisted-session-public-key-unavailable".to_owned(),
+        dpop_jkt: Some(device_handle.jkt().to_owned()),
+    })
+}
+
+pub(crate) fn sdk_base_url_from_gate_account_base(gate_account_base: &str) -> anyhow::Result<Url> {
+    let mut url = Url::parse(gate_account_base.trim())
+        .with_context(|| format!("invalid Account Authority URL: {gate_account_base}"))?;
+    url.set_query(None);
+    url.set_fragment(None);
+
+    let path = url.path().trim_end_matches('/');
+    if let Some(prefix) = path.strip_suffix("/_cokret/gate/account") {
+        let root_path = if prefix.is_empty() {
+            "/".to_owned()
+        } else {
+            format!("{}/", prefix.trim_end_matches('/'))
+        };
+        url.set_path(&root_path);
+    } else if !url.path().ends_with('/') {
+        let with_slash = format!("{}/", url.path());
+        url.set_path(&with_slash);
+    }
+    Ok(url)
 }
 
 #[derive(Debug, Serialize)]
@@ -405,7 +471,7 @@ fn soft_logout_restore_request_canonical_digest(
 ) -> anyhow::Result<String> {
     crate::canonical::canonical_sha256(&SoftLogoutRestoreRequestDigest {
         operation: SOFT_LOGOUT_RESTORE_OPERATION,
-        grant_jwt_hash: crate::coauth::session_grant_jwt_hash(grant_jwt),
+        grant_jwt_hash: crate::account_auth::session_grant_jwt_hash(grant_jwt),
         principal_id,
         device_id,
         audience,
@@ -499,10 +565,26 @@ pub async fn refresh_session_grant(
     proof: cokret_sdk::SessionGrantRefreshProof,
     dpop_proof: &str,
 ) -> anyhow::Result<cokret_sdk::SessionGrantRefreshOutcome> {
-    let coauth = crate::coauth::CoauthApi::new(gate_account_base)?;
-    coauth
-        .refresh_session_grant(grant_jwt, audience, device_id, proof, dpop_proof)
+    let sdk_base_url = sdk_base_url_from_gate_account_base(gate_account_base)?;
+    let supplied_dpop = dpop_proof.to_owned();
+    let client = ClientBuilder::new(sdk_base_url)
+        .auth(Auth::Dpop(DpopAuth::with_access_token(
+            grant_jwt.to_owned(),
+            move |_request| Ok(supplied_dpop.clone()),
+        )))
+        .build()
+        .map_err(|error| anyhow::anyhow!("build session refresh HTTP client: {error}"))?;
+    let device_id = cokret_sdk::DeviceId::new(device_id.trim().to_owned())
+        .map_err(|error| anyhow::anyhow!("invalid refresh device_id: {error}"))?;
+    client
+        .auth_refresh_session_grant(&cokret_sdk::SessionGrantRefreshRequestBody {
+            grant_jwt: grant_jwt.to_owned(),
+            audience: audience.map(ToOwned::to_owned),
+            device_id: Some(device_id),
+            proof: Some(proof),
+        })
         .await
+        .map_err(|error| anyhow::anyhow!("refresh session grant: {error}"))
 }
 
 fn is_grant_dead_error(error: &anyhow::Error) -> bool {

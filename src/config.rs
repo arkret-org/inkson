@@ -342,7 +342,7 @@ fn session_credential_secret_key(account_did: &str) -> String {
 /// of the plaintext `config.json` / `profiles.json` / localStorage
 /// blobs. Unit tests run against a process-local in-memory store so
 /// they stay hermetic (no OS keyring access) — same precedent as
-/// `auth_dpop::ensure_device_key`.
+/// `account_auth::grant_dpop::ensure_device_key`.
 fn config_secure_store() -> std::sync::Arc<dyn crate::secure_key_store::SecureKeyStore> {
     #[cfg(not(test))]
     {

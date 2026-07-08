@@ -30,6 +30,7 @@
 //! own 8h TTL means the chain self-heals well before the 24h record TTL.
 
 use chrono::{DateTime, Duration, Utc};
+use cokret_sdk::http_client::{Auth, ClientBuilder};
 use serde::{Deserialize, Serialize};
 use zeroize::Zeroize as _;
 
@@ -135,6 +136,11 @@ pub enum LogoutRunOutcome {
     Retain,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum AccountLogoutRunOutcome {
+    Terminated,
+}
+
 /// Run one pending-logout record to completion via the SINGLE Account
 /// Authority hard logout (T1.Y3). Success — or a "grant already gone" error —
 /// clears the record. A still-live failure keeps the record so a later boot
@@ -150,9 +156,9 @@ pub async fn execute_pending_logout(
         return LogoutRunOutcome::Completed;
     }
     match hard_logout_at_authority(record).await {
-        // `account_logout` already classifies the HTTP result: a terminal
+        // The SDK logout wrapper below classifies the HTTP result: a terminal
         // outcome (revoked / already-gone) → `Ok`, any real failure → `Err`.
-        Ok(crate::coauth::AccountLogoutRunOutcome::Terminated) => {
+        Ok(AccountLogoutRunOutcome::Terminated) => {
             let _ = clear_pending_logout(store);
             LogoutRunOutcome::Completed
         }
@@ -172,7 +178,7 @@ pub async fn execute_pending_logout(
 /// MUST bind the grant.
 async fn hard_logout_at_authority(
     record: &PendingLogout,
-) -> anyhow::Result<crate::coauth::AccountLogoutRunOutcome> {
+) -> anyhow::Result<AccountLogoutRunOutcome> {
     let grant_jwt = record
         .grant_jwt
         .as_deref()
@@ -186,7 +192,7 @@ async fn hard_logout_at_authority(
         .as_deref()
         .ok_or_else(|| anyhow::anyhow!("pending logout missing device jkt"))?;
 
-    let handle = crate::auth_dpop::device_handle_from_seed(seed, jkt)
+    let handle = crate::account_auth::grant_dpop::device_handle_from_seed(seed, jkt)
         .map_err(|error| anyhow::anyhow!("rebuild device handle: {error}"))?;
     // Prefer the journalled gate_account_base; re-resolve from the principal
     // server only if it was not captured.
@@ -196,18 +202,40 @@ async fn hard_logout_at_authority(
             let principal_server_url = record.principal_server_url.as_deref().ok_or_else(|| {
                 anyhow::anyhow!("pending logout missing gate_account_base and principal_server_url")
             })?;
-            crate::coauth::resolve_principal_gate_account_base(principal_server_url)
+            crate::account_auth::resolve_principal_gate_account_base(principal_server_url)
                 .await
                 .map_err(|error| anyhow::anyhow!("resolve account authority: {error}"))?
         }
     };
-    let gate_account = crate::coauth::CoauthApi::new(&gate_account_base)?;
-    // DPoP `htu` MUST equal the actual `/logout` URL; `ath` binds the grant.
-    let htu = gate_account.endpoint_url("logout")?;
-    let dpop_proof = handle
-        .mint_proof("POST", &htu, Some(grant_jwt))
-        .map_err(|error| anyhow::anyhow!("mint logout DPoP proof: {error}"))?;
-    gate_account.account_logout(grant_jwt, &dpop_proof).await
+    let sdk_base_url =
+        crate::session_refresh::sdk_base_url_from_gate_account_base(&gate_account_base)?;
+    let client = ClientBuilder::new(sdk_base_url)
+        .auth(Auth::Dpop(
+            handle.sdk_dpop_auth_for_access_token(grant_jwt.to_owned()),
+        ))
+        .build()
+        .map_err(|error| anyhow::anyhow!("build account logout HTTP client: {error}"))?;
+    match client.auth_account_logout().await {
+        Ok(_) => Ok(AccountLogoutRunOutcome::Terminated),
+        Err(error) if account_logout_error_is_terminal(&error) => {
+            Ok(AccountLogoutRunOutcome::Terminated)
+        }
+        Err(error) => Err(anyhow::anyhow!("account authority logout failed: {error}")),
+    }
+}
+
+fn account_logout_error_is_terminal(error: &cokret_sdk::Error) -> bool {
+    match error {
+        cokret_sdk::Error::Api { status: 404, .. } => true,
+        cokret_sdk::Error::Api { error, .. } => matches!(
+            error.code(),
+            "grant_already_consumed"
+                | "session_logged_out"
+                | "session_grant_not_found"
+                | "authorized_grant_revoked"
+        ),
+        _ => false,
+    }
 }
 
 /// Journal a logout intent to the secure key store. Call this **before**
@@ -374,5 +402,46 @@ mod tests {
         let outcome = execute_pending_logout(&record, &store).await;
         assert_eq!(outcome, LogoutRunOutcome::Completed);
         assert!(restore_pending_logout(&store).unwrap().is_none());
+    }
+
+    #[test]
+    fn account_logout_terminal_errors_complete_pending_logout() {
+        for (status, code) in [
+            (404, "not_found"),
+            (400, "grant_already_consumed"),
+            (401, "session_logged_out"),
+            (404, "session_grant_not_found"),
+            (403, "authorized_grant_revoked"),
+        ] {
+            let error = cokret_sdk::Error::Api {
+                status,
+                error: Box::new(cokret_sdk::ErrorEnvelope::new(code, "terminal")),
+            };
+            assert!(
+                account_logout_error_is_terminal(&error),
+                "{status} {code} should be terminal"
+            );
+        }
+    }
+
+    #[test]
+    fn account_logout_non_terminal_errors_retain_pending_logout() {
+        for (status, code) in [
+            (500, "internal"),
+            (401, "auth_expired"),
+            (403, "capability_denied"),
+        ] {
+            let error = cokret_sdk::Error::Api {
+                status,
+                error: Box::new(cokret_sdk::ErrorEnvelope::new(code, "retryable")),
+            };
+            assert!(
+                !account_logout_error_is_terminal(&error),
+                "{status} {code} should be retryable"
+            );
+        }
+        assert!(!account_logout_error_is_terminal(
+            &cokret_sdk::Error::Protocol("network boundary".to_owned())
+        ));
     }
 }

@@ -22,14 +22,20 @@
 //! cursor never advances for the other member's events), but their durable
 //! events are fully visible through this realm stream.
 //!
-//! Transport reality (wasm): reqwest's browser-fetch backend exposes no
-//! incremental `Response::chunk()` reader, so [`CokretApi::events_subscribe_poll`]
-//! buffers the whole NDJSON response and parses it at stream close. The server
-//! holds the stream open for `max_duration_ms`, so that window doubles as this
-//! engine's liveness latency. Native could later switch to the streaming
-//! `events_subscribe_ndjson` reader for instant push without changing the
-//! ingest / cursor contract here.
+//! Transport reality (wasm): the shared SDK http-client opens the canonical
+//! `events/subscribe` stream, and yougen wraps it as a client-core typed frame
+//! source. The all-target adapter buffers the response and parses typed NDJSON
+//! frames at stream close. The server holds the stream open for
+//! `max_duration_ms`, so that window doubles as this engine's liveness latency.
+//! Native can later switch this adapter to the SDK streaming frame source
+//! without changing the ingest / cursor contract here.
 
+use std::cell::RefCell;
+
+use cokret_client::{
+    ClientEvent, ClientEventSink, DecodedInbound, InboundDecoder, RealmEventsFrameSource,
+    RealmEventsTransport,
+};
 use cokret_sdk::EventsSubscribeFrameKind;
 use dioxus::prelude::*;
 use serde_json::Value;
@@ -84,6 +90,96 @@ enum RealmIterationOutcome {
     /// Terminal session loss; exit and let the account engine / app drive
     /// re-auth (a generation bump retires this loop).
     AuthExpired,
+}
+
+#[derive(Debug)]
+enum RealmIngestPayload {
+    Event(cokret_sdk::Event),
+    Raw(Value),
+}
+
+#[derive(Debug, Default)]
+struct RealmEventsIngestSink {
+    payloads: RefCell<Vec<RealmIngestPayload>>,
+}
+
+impl RealmEventsIngestSink {
+    fn push_raw(&self, payload: Value) {
+        self.payloads
+            .borrow_mut()
+            .push(RealmIngestPayload::Raw(payload));
+    }
+
+    fn into_legacy_payloads(self) -> Vec<Value> {
+        self.payloads
+            .into_inner()
+            .into_iter()
+            .filter_map(|payload| match payload {
+                RealmIngestPayload::Event(event) => match serde_json::to_value(event) {
+                    Ok(value) => Some(value),
+                    Err(error) => {
+                        tracing::warn!(
+                            error = %error,
+                            "failed to serialize decoded realm event for legacy ingest"
+                        );
+                        None
+                    }
+                },
+                RealmIngestPayload::Raw(value) => Some(value),
+            })
+            .collect()
+    }
+}
+
+impl ClientEventSink for RealmEventsIngestSink {
+    fn emit(&self, event: ClientEvent) {
+        let event = match event {
+            ClientEvent::Message(message) => Some(message.event),
+            ClientEvent::Event(event) => Some(event),
+            ClientEvent::AccountUpdates(_)
+            | ClientEvent::RealmDelta { .. }
+            | ClientEvent::Backfill { .. }
+            | ClientEvent::Notification(_)
+            | ClientEvent::ToDevice(_)
+            | ClientEvent::Interrupt(_) => None,
+        };
+
+        if let Some(event) = event {
+            self.payloads
+                .borrow_mut()
+                .push(RealmIngestPayload::Event(event));
+        }
+    }
+}
+
+fn emit_decoded_realm_event<S>(decoder: &InboundDecoder, sink: &S, event: cokret_sdk::Event)
+where
+    S: ClientEventSink + ?Sized,
+{
+    match decoder.decode_event(event) {
+        DecodedInbound::Message(message) => sink.emit(ClientEvent::Message(message)),
+        DecodedInbound::Notification(notification) => {
+            sink.emit(ClientEvent::Event(notification.event));
+        }
+        DecodedInbound::Event(event) => sink.emit(ClientEvent::Event(event)),
+    }
+}
+
+fn route_realm_event_payload_for_legacy_ingest(
+    decoder: &InboundDecoder,
+    sink: &RealmEventsIngestSink,
+    payload: Value,
+) {
+    match serde_json::from_value::<cokret_sdk::Event>(payload.clone()) {
+        Ok(event) => emit_decoded_realm_event(decoder, sink, event),
+        Err(error) => {
+            tracing::debug!(
+                error = %error,
+                "realm events frame payload was not a typed Event; preserving legacy ingest payload"
+            );
+            sink.push_raw(payload);
+        }
+    }
 }
 
 /// Run the realm events subscribe loop for `realm_id` until the generation is
@@ -157,8 +253,9 @@ async fn run_realm_iteration(
         };
     }
 
-    let api = match crate::api::authed_api(&base, token) {
-        Ok(api) => api,
+    let sdk_http = match crate::api::authed_api(&base, token).and_then(|api| api.sdk_http_client())
+    {
+        Ok(sdk_http) => sdk_http,
         Err(_) => {
             return RealmIterationOutcome::Backoff {
                 delay_ms: MIN_BACKOFF_MS,
@@ -172,19 +269,24 @@ async fn run_realm_iteration(
         .read()
         .realm_events_cursor(realm_id)
         .filter(|cursor| !cursor.trim().is_empty() && cursor != "-");
-    let include_history = after.is_none();
-
-    let frames = match api
-        .events_subscribe_poll(
-            realm_id,
-            after.as_deref(),
-            include_history,
-            REALM_EVENTS_POLL_WINDOW_MS,
-        )
+    let realm_id_typed = match cokret_sdk::RealmId::new(realm_id.to_owned()) {
+        Ok(realm_id) => realm_id,
+        Err(error) => {
+            tracing::warn!(error = %error, realm_id, "invalid realm id for events subscribe");
+            return RealmIterationOutcome::Backoff {
+                delay_ms: MIN_BACKOFF_MS,
+            };
+        }
+    };
+    let transport = crate::client_core::YougenRealmEventsTransport::new(sdk_http)
+        .with_max_duration_ms(REALM_EVENTS_POLL_WINDOW_MS);
+    let mut source = match transport
+        .open_realm_events(&realm_id_typed, after.as_deref())
         .await
     {
-        Ok(frames) => frames,
+        Ok(source) => source,
         Err(error) => {
+            let error: anyhow::Error = error.into();
             if is_auth_expired_error(&error) {
                 return RealmIterationOutcome::AuthExpired;
             }
@@ -213,16 +315,43 @@ async fn run_realm_iteration(
         return RealmIterationOutcome::Ok;
     }
 
-    let mut event_payloads: Vec<Value> = Vec::new();
+    let decoder = InboundDecoder::new();
+    let ingest_sink = RealmEventsIngestSink::default();
     let mut next_cursor = after.clone();
     let mut resubscribe = false;
     let mut reconnect_after_ms: Option<u64> = None;
 
-    for frame in frames {
+    loop {
+        let frame = match source.next_frame().await {
+            Ok(Some(frame)) => frame,
+            Ok(None) => break,
+            Err(error) => {
+                let error: anyhow::Error = error.into();
+                if is_auth_expired_error(&error) {
+                    return RealmIterationOutcome::AuthExpired;
+                }
+                if let Some(retry_after_ms) = rate_limited_retry_after(&error) {
+                    return RealmIterationOutcome::Backoff {
+                        delay_ms: retry_after_ms,
+                    };
+                }
+                if is_invalid_cursor_error(&error) {
+                    let mut state_store = ctx.state_store;
+                    state_store.write().save_realm_events_cursor(realm_id, None);
+                }
+                return RealmIterationOutcome::Backoff {
+                    delay_ms: MIN_BACKOFF_MS,
+                };
+            }
+        };
         match frame.kind {
             EventsSubscribeFrameKind::Event => {
                 if !frame.payload.is_null() {
-                    event_payloads.push(frame.payload.clone());
+                    route_realm_event_payload_for_legacy_ingest(
+                        &decoder,
+                        &ingest_sink,
+                        frame.payload,
+                    );
                 }
                 if let Some(cursor) = frame.cursor {
                     next_cursor = Some(cursor.into_string());
@@ -256,6 +385,7 @@ async fn run_realm_iteration(
 
     // Fold new events into the shared kanban overlay; bump the live epoch only
     // when something actually changed so the panel re-projects on real content.
+    let event_payloads = ingest_sink.into_legacy_payloads();
     if !event_payloads.is_empty() {
         let changed = {
             let mut state_store = ctx.state_store;
@@ -294,4 +424,76 @@ async fn run_realm_iteration(
     }
 
     RealmIterationOutcome::Ok
+}
+
+#[cfg(test)]
+mod tests {
+    use serde_json::json;
+
+    use super::*;
+
+    const TEST_REALM: &str = "ck:realm:01904100-0000-7000-8000-000000000001";
+
+    fn test_realm_id() -> cokret_sdk::RealmId {
+        cokret_sdk::RealmId::new(TEST_REALM).unwrap()
+    }
+
+    fn test_actor_id() -> cokret_sdk::Did {
+        cokret_sdk::Did::new("did:webvh:z6mkfixture:alice.example").unwrap()
+    }
+
+    fn test_event(kind: &str, payload: Value) -> cokret_sdk::Event {
+        cokret_sdk::Event::new(
+            kind,
+            test_realm_id(),
+            test_actor_id(),
+            1,
+            cokret_sdk::Hlc::new("01970e589d21-0004-a13f9c2e").unwrap(),
+            payload,
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn realm_events_sink_adapter_decodes_message_events_for_legacy_ingest() {
+        let event = test_event(
+            cokret_sdk::events::kinds::MESSAGE_CREATE,
+            json!({
+                "strand_id": "ck:strand:01904100-0000-7000-8000-000000000002",
+                "track_name": "discussion",
+                "content": {"kind": "ck.content.text", "body": "hello"}
+            }),
+        );
+        let event_value = serde_json::to_value(&event).unwrap();
+        let decoder = InboundDecoder::new();
+        let sink = RealmEventsIngestSink::default();
+
+        route_realm_event_payload_for_legacy_ingest(&decoder, &sink, event_value.clone());
+        let payloads = sink.into_legacy_payloads();
+
+        assert_eq!(payloads.len(), 1);
+        assert_eq!(payloads[0]["event_id"], event_value["event_id"]);
+        assert_eq!(payloads[0]["kind"], event_value["kind"]);
+        assert_eq!(payloads[0]["payload"], event_value["payload"]);
+        let decoded = decoder
+            .try_decode_event(serde_json::from_value(payloads[0].clone()).unwrap())
+            .unwrap();
+        assert!(matches!(decoded, DecodedInbound::Message(_)));
+    }
+
+    #[test]
+    fn realm_events_sink_adapter_preserves_untyped_payload_for_legacy_ingest() {
+        let raw = json!({
+            "event_id": "remote-legacy",
+            "event_kind": "ck.strand.update",
+            "payload": {"title": "from projection shape"}
+        });
+        let decoder = InboundDecoder::new();
+        let sink = RealmEventsIngestSink::default();
+
+        route_realm_event_payload_for_legacy_ingest(&decoder, &sink, raw.clone());
+        let payloads = sink.into_legacy_payloads();
+
+        assert_eq!(payloads, vec![raw]);
+    }
 }

@@ -1,11 +1,9 @@
 //! Invite-quarantine UI surface.
 //!
-//! Lists quarantined invites observed by coauth's
-//! `GET /_cokret/local/admin/invite-quarantine` (admin scope) — or the per-user
-//! self-scope endpoint when the local actor lacks admin scope. Admins
-//! get approve / reject buttons that POST
-//! `/_cokret/local/admin/invite-quarantine/{id}/resolve`; everyone else sees a
-//! read-only "your invites pending review" list.
+//! Lists quarantined invites when a public SDK-backed invite-quarantine
+//! transport is available. The previous coauth-local admin endpoints are not
+//! client-visible Cokret surfaces, so this UI currently fails closed instead of
+//! constructing a private coauth transport client.
 //!
 //! Wire shape (coauth side):
 //!
@@ -30,7 +28,6 @@
 use dioxus::prelude::*;
 use serde_json::Value;
 
-use crate::coauth::CoauthApi;
 use crate::ui::button::{Button, ButtonVariant};
 use crate::ui::input::Input;
 use crate::ui::label::Label;
@@ -98,6 +95,23 @@ pub fn parse_quarantine_list(value: &Value) -> Vec<QuarantineEntry> {
         .unwrap_or_default()
 }
 
+async fn fetch_quarantine_list(_coauth_url: &str, _is_admin: bool) -> anyhow::Result<Value> {
+    anyhow::bail!(
+        "invite quarantine has no SDK-backed public transport surface in yougen; private coauth admin paths are not called"
+    )
+}
+
+async fn resolve_quarantine_invite(
+    _coauth_url: &str,
+    _invite_id: &str,
+    _decision: &str,
+    _reason: Option<&str>,
+) -> anyhow::Result<Value> {
+    anyhow::bail!(
+        "invite quarantine resolution has no SDK-backed public transport surface in yougen; private coauth admin paths are not called"
+    )
+}
+
 #[component]
 pub fn QuarantinePanel(coauth_url: String, is_admin: bool) -> Element {
     let mut entries = use_signal(Vec::<QuarantineEntry>::new);
@@ -110,26 +124,16 @@ pub fn QuarantinePanel(coauth_url: String, is_admin: bool) -> Element {
         let url = coauth_url_load.clone();
         let admin = is_admin;
         spawn(async move {
-            match CoauthApi::new(&url) {
-                Ok(api) => {
-                    let result = if admin {
-                        api.invite_quarantine_list().await
-                    } else {
-                        api.invite_quarantine_self().await
-                    };
-                    match result {
-                        Ok(value) => {
-                            let parsed = parse_quarantine_list(&value);
-                            let count = parsed.len();
-                            entries.set(parsed);
-                            status.set(format!("loaded {count} entries"));
-                        }
-                        Err(err) => {
-                            status.set(format!("quarantine fetch failed: {err}"));
-                        }
-                    }
+            match fetch_quarantine_list(&url, admin).await {
+                Ok(value) => {
+                    let parsed = parse_quarantine_list(&value);
+                    let count = parsed.len();
+                    entries.set(parsed);
+                    status.set(format!("loaded {count} entries"));
                 }
-                Err(err) => status.set(format!("invalid coauth URL: {err}")),
+                Err(err) => {
+                    status.set(format!("quarantine fetch failed: {err}"));
+                }
             }
         });
     };
@@ -216,27 +220,22 @@ pub fn QuarantinePanel(coauth_url: String, is_admin: bool) -> Element {
                                         let url = url.clone();
                                         let invite_id = invite_id.clone();
                                         spawn(async move {
-                                            match CoauthApi::new(&url) {
-                                                Ok(api) => match api
-                                                    .invite_quarantine_resolve(
-                                                        &invite_id,
-                                                        "approve",
-                                                        Some("admin manual approval"),
-                                                    )
-                                                    .await
-                                                {
-                                                    Ok(_) => status.set(format!(
-                                                        "approved invite {}",
-                                                        short_protocol_id(&invite_id)
-                                                    )),
-                                                    Err(err) => status.set(format!(
-                                                        "approve {} failed: {err}",
-                                                        short_protocol_id(&invite_id)
-                                                    )),
-                                                },
-                                                Err(err) => {
-                                                    status.set(format!("invalid coauth URL: {err}"))
-                                                }
+                                            match resolve_quarantine_invite(
+                                                &url,
+                                                &invite_id,
+                                                "approve",
+                                                Some("admin manual approval"),
+                                            )
+                                            .await
+                                            {
+                                                Ok(_) => status.set(format!(
+                                                    "approved invite {}",
+                                                    short_protocol_id(&invite_id)
+                                                )),
+                                                Err(err) => status.set(format!(
+                                                    "approve {} failed: {err}",
+                                                    short_protocol_id(&invite_id)
+                                                )),
                                             }
                                         });
                                     }
@@ -277,27 +276,22 @@ pub fn QuarantinePanel(coauth_url: String, is_admin: bool) -> Element {
                                                 };
                                                 reject_confirm.set(None);
                                                 spawn(async move {
-                                                    match CoauthApi::new(&url) {
-                                                        Ok(api) => match api
-                                                            .invite_quarantine_resolve(
-                                                                &invite_id,
-                                                                "reject",
-                                                                reason_opt.as_deref(),
-                                                            )
-                                                            .await
-                                                        {
-                                                            Ok(_) => status.set(format!(
-                                                                "rejected invite {}",
-                                                                short_protocol_id(&invite_id)
-                                                            )),
-                                                            Err(err) => status.set(format!(
-                                                                "reject {} failed: {err}",
-                                                                short_protocol_id(&invite_id)
-                                                            )),
-                                                        },
-                                                        Err(err) => {
-                                                            status.set(format!("invalid coauth URL: {err}"))
-                                                        }
+                                                    match resolve_quarantine_invite(
+                                                        &url,
+                                                        &invite_id,
+                                                        "reject",
+                                                        reason_opt.as_deref(),
+                                                    )
+                                                    .await
+                                                    {
+                                                        Ok(_) => status.set(format!(
+                                                            "rejected invite {}",
+                                                            short_protocol_id(&invite_id)
+                                                        )),
+                                                        Err(err) => status.set(format!(
+                                                            "reject {} failed: {err}",
+                                                            short_protocol_id(&invite_id)
+                                                        )),
                                                     }
                                                 });
                                             }

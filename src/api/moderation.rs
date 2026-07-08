@@ -23,8 +23,10 @@ impl CokretApi {
             evidence_package: Value::Null,
             franking_proof: Value::Null,
         };
-        self.post_json("_cokret/self/moderation/report", &body)
+        self.sdk_http_client()?
+            .moderation_report(&body)
             .await
+            .map_err(anyhow::Error::from)
     }
 
     /// Client-side telemetry has no spec-defined Cokret ingest endpoint.

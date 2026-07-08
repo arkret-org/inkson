@@ -2,7 +2,6 @@ use cokret_sdk::models::{
     AppletInstallOutcome, AppletInstallPreviewRequestBody, AppletInstallRequestBody,
     AppletRevokeOutcome, AppletRevokeRequestBody,
 };
-use reqwest::Method;
 
 use super::*;
 
@@ -26,8 +25,10 @@ impl CokretApi {
         &self,
         body: &AppletInstallPreviewRequestBody,
     ) -> anyhow::Result<cokret_sdk::AppletInstallPlan> {
-        self.post_json("_cokret/self/applets/install/preview", body)
+        self.sdk_http_client()?
+            .applet_install_preview(body)
             .await
+            .map_err(anyhow::Error::from)
     }
 
     /// `POST /_cokret/self/applets/install` — `ck.self.applet.command.install`.
@@ -40,17 +41,10 @@ impl CokretApi {
         idempotency_key: &str,
         body: &AppletInstallRequestBody,
     ) -> anyhow::Result<AppletInstallOutcome> {
-        // Explicit serialized bytes (not `.json()`) so PoP signing reads the
-        // exact content for the digest, matching `post_json`.
-        let bytes = serde_json::to_vec(body)?;
-        let request = self
-            .http
-            .post(self.endpoint("_cokret/self/applets/install")?)
-            .header(reqwest::header::CONTENT_TYPE, "application/json")
-            .header("Idempotency-Key", idempotency_key)
-            .body(bytes);
-        self.send_json(self.prepare_request(request), Method::POST)
+        self.sdk_http_client()?
+            .applet_install(idempotency_key, body)
             .await
+            .map_err(anyhow::Error::from)
     }
 
     /// `POST /_cokret/self/applets/{applet_id}/revoke` —
@@ -61,8 +55,9 @@ impl CokretApi {
         applet_id: &str,
         body: &AppletRevokeRequestBody,
     ) -> anyhow::Result<AppletRevokeOutcome> {
-        let applet_id = path_component(applet_id);
-        self.post_json(&format!("_cokret/self/applets/{applet_id}/revoke"), body)
+        self.sdk_http_client()?
+            .applet_revoke(applet_id, body)
             .await
+            .map_err(anyhow::Error::from)
     }
 }

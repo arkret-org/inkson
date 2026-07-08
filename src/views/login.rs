@@ -1,15 +1,17 @@
-use chrono::{DateTime, Utc};
+use chrono::Utc;
+use cokret_client::{LoginKind, OidcLogin, SessionEngine, SessionGrantState};
+use cokret_sdk::http_client::{Auth, ClientBuilder};
 use dioxus::prelude::*;
 
-use crate::api::CokretApi;
-use crate::coauth::{
-    AuthorityResolver, CoauthApi, CoauthSessionGrantInfo, build_oidc_authorize_scaffold,
-    build_persisted_oidc_scaffold, capture_current_browser_callback_url,
-    clear_persisted_oidc_scaffold, extract_authorization_code_from_callback,
-    extract_error_description_from_callback, extract_error_from_callback,
-    extract_state_from_callback, open_oidc_authorize_url, persist_oidc_scaffold,
+use crate::account_auth::{
+    AuthorityResolver, build_oidc_authorize_scaffold, build_persisted_oidc_scaffold,
+    capture_current_browser_callback_url, clear_persisted_oidc_scaffold,
+    extract_authorization_code_from_callback, extract_error_description_from_callback,
+    extract_error_from_callback, extract_state_from_callback, fetch_oidc_discovery,
+    oidc_request_canonical_digest, open_oidc_authorize_url, persist_oidc_scaffold,
     restore_oidc_scaffold,
 };
+use crate::api::CokretApi;
 use crate::components::UiIcon;
 use crate::config::{
     LocalConfigStore, normalize_device_id, normalize_server_url, principal_server_options_for,
@@ -580,10 +582,10 @@ pub(crate) async fn start_oidc_strand(
         "OIDC method published neither openid_configuration nor an issuer.".to_owned()
     })?;
     // Standard OpenID Connect Discovery 1.0 — no Cokret-private OAuth family.
-    let discovery = CoauthApi::fetch_oidc_discovery(&discovery_url)
+    let discovery = fetch_oidc_discovery(&discovery_url)
         .await
         .map_err(|error| format!("OIDC discovery failed: {error}"))?;
-    let redirect_uri = crate::coauth::current_oidc_redirect_uri();
+    let redirect_uri = crate::account_auth::current_oidc_redirect_uri();
     let bundle = build_oidc_authorize_scaffold(
         &discovery,
         &method,
@@ -693,8 +695,9 @@ async fn finish_oidc_callback(
     } else {
         scaffold.principal_server_url.clone()
     };
-    let gate_account = CoauthApi::new(&gate_account_base)
-        .map_err(|error| format!("Invalid Account Authority base: {error}"))?;
+    let sdk_base_url =
+        crate::session_refresh::sdk_base_url_from_gate_account_base(&gate_account_base)
+            .map_err(|error| format!("Invalid Account Authority base: {error}"))?;
     let actor_hint = scaffold.principal_actor_id.trim().to_owned();
     let device = if scaffold.device_id.trim().is_empty() {
         device_fallback.trim().to_owned()
@@ -706,25 +709,17 @@ async fn finish_oidc_callback(
     }
     let device = normalize_device_id(&device);
     restore_oidc_callback_device_seed_scope(&device);
-    // T1.Y1 — grant-binding DPoP proof bound to the session-grants URL; this is what
-    // makes the issued grant device-bound (cnf.jkt) at the Account Authority.
-    let session_grants_url = gate_account
-        .endpoint_url("session-grants")
-        .map_err(|error| format!("session-grants URL preparation failed: {error}"))?;
     #[cfg(target_arch = "wasm32")]
     crate::secure_key_store::ensure_wasm_secure_key_store_ready("yougen")
         .await
         .map_err(|error| format!("DPoP key store not ready: {error}"))?;
-    let (issue_dpop, dpop_handle) = {
+    let dpop_handle = {
         let mut store = state_store.write();
-        let handle = crate::auth_dpop::ensure_device_key(&mut store)
+        let handle = crate::account_auth::grant_dpop::ensure_device_key(&mut store)
             .map_err(|error| format!("DPoP key failed: {error}"))?;
         crate::event_signer::bind_active_signer_device_id(&device)
             .map_err(|error| format!("Event signer device binding failed: {error}"))?;
-        let proof = handle
-            .mint_proof("POST", &session_grants_url, None)
-            .map_err(|error| format!("DPoP proof failed: {error}"))?;
-        (proof, handle)
+        handle
     };
     if scaffold.issuer.trim().is_empty() {
         return Err("Sign-in state is missing the OIDC issuer.".to_owned());
@@ -735,36 +730,65 @@ async fn finish_oidc_callback(
     // subject and returns it in `SessionGrantOutcome.principal_id`. A non-empty
     // scaffold value is an explicit binding request and coauth must reject it if
     // it does not match the authenticated user.
-    let outcome = gate_account
-        .issue_session_grant_oidc(
-            &actor_hint,
-            &device,
-            &scaffold.issuer,
-            &scaffold.client_id,
-            &scaffold.callback_uri,
-            &returned_state,
-            &scaffold.expected_nonce,
-            &authorization_code,
-            &scaffold.code_verifier,
-            &scaffold.principal_audience,
-            Vec::new(),
-            &issue_dpop,
+    let principal_id = if actor_hint.trim().is_empty() {
+        None
+    } else {
+        Some(
+            cokret_sdk::Did::new(actor_hint.clone())
+                .map_err(|error| format!("invalid principal_id DID: {error}"))?,
+        )
+    };
+    let device_id = cokret_sdk::DeviceId::new(device.clone())
+        .map_err(|error| format!("invalid device_id: {error}"))?;
+    let request_canonical_digest = oidc_request_canonical_digest(
+        &scaffold.issuer,
+        &scaffold.client_id,
+        &authorization_code,
+        &returned_state,
+    )
+    .map_err(|error| format!("OIDC session-grant digest failed: {error}"))?;
+    let http = ClientBuilder::new(sdk_base_url)
+        .allow_insecure_localhost()
+        .auth(Auth::Dpop(dpop_handle.sdk_dpop_proof_only_auth()))
+        .build()
+        .map_err(|error| format!("Build Account Authority session client failed: {error}"))?;
+    let session_engine = SessionEngine::new(http);
+    session_engine
+        .login(
+            LoginKind::Oidc(OidcLogin {
+                principal_id,
+                device_id: Some(device_id),
+                requested_scope: Vec::new(),
+                challenge: String::new(),
+                request_canonical_digest,
+                audience: scaffold.principal_audience.clone(),
+                issuer: scaffold.issuer.clone(),
+                client_id: scaffold.client_id.clone(),
+                redirect_uri: scaffold.callback_uri.clone(),
+                state: returned_state.clone(),
+                nonce: scaffold.expected_nonce.clone(),
+                authorization_code: authorization_code.clone(),
+                code_verifier: scaffold.code_verifier.clone(),
+            }),
+            Utc::now(),
         )
         .await
         .map_err(|error| format!("Account Authority session-grant issue failed: {error}"))?;
-    let session_grant = session_grant_info_from_outcome(&outcome, &dpop_handle)
-        .map_err(|error| format!("Session grant outcome was incomplete: {error}"))?;
-    let dpop_device_key =
-        crate::auth_dpop::dpop_device_key_record_from_seed(dpop_handle.seed_b64().as_str())
-            .map_err(|error| format!("DPoP device key record failed: {error}"))?;
+    let session_grant = session_engine
+        .current_state()
+        .ok_or_else(|| "Account Authority session-grant issue did not yield state.".to_owned())?;
+    let session_private_key_pem = dpop_handle
+        .session_signing_key_pkcs8_pem()
+        .map_err(|error| format!("export device session key: {error}"))?
+        .to_string();
+    let dpop_device_key = crate::account_auth::grant_dpop::dpop_device_key_record_from_seed(
+        dpop_handle.seed_b64().as_str(),
+    )
+    .map_err(|error| format!("DPoP device key record failed: {error}"))?;
     let principal_target = principal_server_url;
     let principal = CokretApi::new(&principal_target)
         .map_err(|error| format!("Invalid principal server URL: {error}"))?;
-    let actor = if outcome.principal_id.as_str().trim().is_empty() {
-        actor_hint.clone()
-    } else {
-        outcome.principal_id.as_str().to_owned()
-    };
+    let actor = session_grant.principal_id.as_str().to_owned();
     if actor.trim().is_empty() {
         return Err("Account Authority did not return an account DID.".to_owned());
     }
@@ -820,13 +844,13 @@ async fn finish_oidc_callback(
     // Persist the principal session grant as the live credential. The refresh
     // path keeps it fresh by rotating it (grant-binding DPoP proof → fresh grant) when
     // near expiry.
-    let persisted_session_grant = persisted_session_grant_from_parts(
+    let persisted_session_grant = persisted_session_grant_from_state(
         &session_grant,
+        &session_private_key_pem,
         &principal_target,
         &canonical_actor,
         &resolved_device,
-    )
-    .ok();
+    );
 
     Ok(CompletedLogin {
         principal_server_url: principal_target,
@@ -836,76 +860,28 @@ async fn finish_oidc_callback(
         dpop_device_key,
         // The grant JWT is now the live credential carried in the `token` signal.
         session_credential: session_grant.grant_jwt.clone(),
-        session_grant: persisted_session_grant,
+        session_grant: Some(persisted_session_grant),
     })
 }
 
-/// Adapt the SDK [`cokret_sdk::SessionGrantOutcome`] returned by the Account
-/// Authority into the local [`CoauthSessionGrantInfo`] the refresh/persistence
-/// path expects. The grant is device-bound (`cnf.jkt`), so its signing key for
-/// the introspection proof is the device DPoP key, persisted here as
-/// `session_private_key_pem`. `grant_id` / `session_public_key` / `audience`
-/// are top-level outcome fields (mirroring `SessionGrantRefreshOutcome`);
-/// `scope_details` is the agent-only overlay and MUST be absent for human grants.
-fn session_grant_info_from_outcome(
-    outcome: &cokret_sdk::SessionGrantOutcome,
-    dpop_handle: &crate::auth_dpop::DpopHandle,
-) -> Result<CoauthSessionGrantInfo, String> {
-    let grant_id = outcome
-        .grant_id
-        .as_ref()
-        .map(|value| value.as_str().to_owned());
-    let session_public_key = outcome.session_public_key.clone().unwrap_or_default();
-    let audience = outcome.audience.clone();
-    let session_private_key_pem = dpop_handle
-        .session_signing_key_pkcs8_pem()
-        .map_err(|error| format!("export device session key: {error}"))?;
-    Ok(CoauthSessionGrantInfo {
-        kind: Some("session_grant".to_owned()),
-        id: grant_id,
-        grant_jwt: outcome.session_grant.clone(),
-        session_public_key,
-        session_private_key_pem: session_private_key_pem.to_string(),
-        expires_at: outcome.expires_at.to_rfc3339(),
-        audience,
-        scopes: outcome.granted_scope.clone(),
-        principal_server: None,
-    })
-}
-
-fn persisted_session_grant_from_parts(
-    grant: &CoauthSessionGrantInfo,
+fn persisted_session_grant_from_state(
+    grant: &SessionGrantState,
+    session_private_key_pem: &str,
     principal_server_url: &str,
     actor: &str,
     device_id: &str,
-) -> Result<PersistedSessionGrant, String> {
-    let grant_id = grant
-        .id
-        .as_deref()
-        .filter(|value| !value.trim().is_empty())
-        .ok_or_else(|| "Server sign-in did not return a session grant id.".to_owned())?;
-    let audience = grant
-        .audience
-        .as_deref()
-        .filter(|value| !value.trim().is_empty())
-        .ok_or_else(|| "Server sign-in did not return a session grant audience.".to_owned())?;
-    Ok(PersistedSessionGrant {
+) -> PersistedSessionGrant {
+    PersistedSessionGrant {
         grant_jwt: grant.grant_jwt.clone(),
-        session_private_key_pem: grant.session_private_key_pem.clone(),
-        grant_id: grant_id.to_owned(),
-        audience: audience.to_owned(),
+        session_private_key_pem: session_private_key_pem.to_owned(),
+        grant_id: grant.grant_id.as_str().to_owned(),
+        audience: grant.audience.clone(),
         principal_id: actor.to_owned(),
         device_id: device_id.to_owned(),
         principal_server_url: principal_server_url.to_owned(),
-        grant_expires_at: parse_rfc3339_utc(&grant.expires_at),
+        grant_expires_at: Some(grant.expires_at),
         stored_at: Utc::now(),
-    })
-}
-
-fn parse_rfc3339_utc(value: &str) -> Option<DateTime<Utc>> {
-    DateTime::parse_from_rfc3339(value.trim())
-        .ok()
-        .map(|timestamp| timestamp.with_timezone(&Utc))
+    }
 }
 
 #[cfg(test)]
@@ -935,8 +911,10 @@ mod tests {
     }
 
     fn dpop_record_for_seed(seed: [u8; 32]) -> crate::local_state::DpopDeviceKeyRecord {
-        crate::auth_dpop::dpop_device_key_record_from_seed(&URL_SAFE_NO_PAD.encode(seed))
-            .expect("dpop record")
+        crate::account_auth::grant_dpop::dpop_device_key_record_from_seed(
+            &URL_SAFE_NO_PAD.encode(seed),
+        )
+        .expect("dpop record")
     }
 
     fn dummy_grant() -> PersistedSessionGrant {
@@ -1071,34 +1049,33 @@ mod tests {
 
     #[test]
     fn persisted_session_grant_from_login_carries_refresh_material() {
-        let grant = CoauthSessionGrantInfo {
-            kind: Some("session_grant".to_owned()),
-            id: Some("grant-1".to_owned()),
+        let device_id = "ck:device:01964137-0000-7000-8000-000000000001";
+        let grant_id = "ck:grant:01964137-0000-7000-8000-000000000001";
+        let grant = SessionGrantState {
+            principal_id: cokret_sdk::Did::new("did:web:alice.example".to_owned()).unwrap(),
+            device_id: Some(cokret_sdk::DeviceId::new(device_id.to_owned()).unwrap()),
+            grant_id: cokret_sdk::GrantId::new(grant_id.to_owned()).unwrap(),
             grant_jwt: "grant.jwt".to_owned(),
+            expires_at: "2026-05-29T12:00:00Z".parse().unwrap(),
+            audience: "https://local.host/api".to_owned(),
+            granted_scope: vec!["urn:cokret:principal-server:session.bind".to_owned()],
             session_public_key: "public-key".to_owned(),
-            session_private_key_pem: "private-key-pem".to_owned(),
-            expires_at: "2026-05-29T12:00:00Z".to_owned(),
-            audience: Some("https://local.host/api".to_owned()),
-            scopes: vec!["urn:cokret:principal-server:session.bind".to_owned()],
-            principal_server: None,
+            dpop_jkt: Some("dpop-jkt".to_owned()),
         };
-        let persisted = persisted_session_grant_from_parts(
+        let persisted = persisted_session_grant_from_state(
             &grant,
+            "private-key-pem",
             "https://local.host",
             "did:web:alice.example",
-            "ck:device:01964137-0000-7000-8000-000000000001",
-        )
-        .expect("persistable grant");
+            device_id,
+        );
 
         assert_eq!(persisted.grant_jwt, "grant.jwt");
         assert_eq!(persisted.session_private_key_pem, "private-key-pem");
-        assert_eq!(persisted.grant_id, "grant-1");
+        assert_eq!(persisted.grant_id, grant_id);
         assert_eq!(persisted.audience, "https://local.host/api");
         assert_eq!(persisted.principal_id, "did:web:alice.example");
-        assert_eq!(
-            persisted.device_id,
-            "ck:device:01964137-0000-7000-8000-000000000001"
-        );
+        assert_eq!(persisted.device_id, device_id);
         assert_eq!(persisted.principal_server_url, "https://local.host");
         assert_eq!(
             persisted

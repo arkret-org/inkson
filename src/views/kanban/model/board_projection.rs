@@ -496,6 +496,134 @@ mod tests {
             .collect()
     }
 
+    fn sdk_realm_id() -> cokret_sdk::RealmId {
+        cokret_sdk::RealmId::new(REALM).unwrap()
+    }
+
+    fn sdk_actor_id() -> cokret_sdk::Did {
+        cokret_sdk::Did::new("did:webvh:z6mkfixture:alice.example").unwrap()
+    }
+
+    fn sdk_event(
+        event_id: &str,
+        kind: &str,
+        actor_seq: u64,
+        created_at: &str,
+        payload: Value,
+    ) -> cokret_sdk::Event {
+        let mut event = cokret_sdk::Event::new(
+            kind,
+            sdk_realm_id(),
+            sdk_actor_id(),
+            actor_seq,
+            cokret_sdk::Hlc::new("01970e589d21-0004-a13f9c2e").unwrap(),
+            payload,
+        )
+        .unwrap();
+        event.event_id = cokret_sdk::EventId::new(event_id).unwrap();
+        event.created_at = created_at.parse().unwrap();
+        event
+    }
+
+    #[derive(Default)]
+    struct ClientCoreKanbanProjector {
+        raw_operations: Vec<RawOperationRecord>,
+    }
+
+    impl cokret_client::projection::DomainProjector for ClientCoreKanbanProjector {
+        fn apply_domain_events(
+            &mut self,
+            _realm_id: &cokret_sdk::RealmId,
+            events: &[cokret_sdk::Event],
+        ) -> cokret_sdk::Result<()> {
+            let values: Vec<_> = events
+                .iter()
+                .map(|event| serde_json::to_value(event).unwrap())
+                .collect();
+            self.raw_operations
+                .extend(kanban_operations_from_events(&values));
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn client_core_domain_projector_golden_matches_yougen_board_projection() {
+        let events = vec![
+            sdk_event(
+                "ck:event:01904100-0000-7000-8000-000000000111",
+                "ck.space.create",
+                1,
+                "2026-07-08T00:00:00Z",
+                json!({
+                    "object": {
+                        "id": BOARD,
+                        "kind": "board",
+                        "title": "Board1",
+                        "realm_id": REALM
+                    }
+                }),
+            ),
+            sdk_event(
+                "ck:event:01904100-0000-7000-8000-000000000112",
+                "ck.space.create",
+                2,
+                "2026-07-08T00:00:01Z",
+                json!({
+                    "object": {
+                        "id": LIST_A,
+                        "kind": "list",
+                        "title": "Todos",
+                        "realm_id": REALM,
+                        "parent_space_id": BOARD
+                    }
+                }),
+            ),
+            sdk_event(
+                "ck:event:01904100-0000-7000-8000-000000000113",
+                "ck.strand.create",
+                3,
+                "2026-07-08T00:00:02Z",
+                json!({
+                    "object": {
+                        "id": "ck:strand:01904100-0000-7000-8000-000000000301",
+                        "schema": "ck.schema.strand.v1",
+                        "realm_id": REALM,
+                        "created_by": "did:webvh:z6mkfixture:alice.example",
+                        "created_at": "2026-07-08T00:00:02Z",
+                        "metadata": {
+                            "title": "golden card",
+                            "fields": {
+                                "rank": "U",
+                                "strand_kind": "card",
+                                "board_space_id": BOARD,
+                                "list_space_id": LIST_A
+                            }
+                        }
+                    }
+                }),
+            ),
+        ];
+        let direct_values: Vec<_> = events
+            .iter()
+            .map(|event| serde_json::to_value(event).unwrap())
+            .collect();
+        let direct_ops = kanban_operations_from_events(&direct_values);
+        let (direct_columns, ..) = project_board(&direct_ops, BOARD, REALM, None);
+
+        let mut projector = ClientCoreKanbanProjector::default();
+        let mut mount = cokret_client::projection::ProjectionMount::new(sdk_realm_id());
+        mount
+            .apply_events_with_domain(&events, &mut projector)
+            .unwrap();
+        let (projected_columns, ..) = project_board(&projector.raw_operations, BOARD, REALM, None);
+
+        assert_eq!(projected_columns.len(), direct_columns.len());
+        assert_eq!(projected_columns[0].title, "Todos");
+        assert_eq!(projected_columns[0].cards.len(), 1);
+        assert_eq!(projected_columns[0].cards[0].title, "golden card");
+        assert_eq!(projected_columns[0].cards, direct_columns[0].cards);
+    }
+
     /// The decisive cross-member test: two different members each create a card
     /// in the same list; the event-sourced projection MUST show BOTH, regardless
     /// of which session observed which create. This is exactly the symptom the

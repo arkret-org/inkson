@@ -21,7 +21,10 @@ impl CokretApi {
         &self,
         body: &cokret_sdk::AgentProvisionRequestBody,
     ) -> anyhow::Result<cokret_sdk::AgentProvisionOutcome> {
-        self.post_json("_cokret/self/agents", body).await
+        self.sdk_http_client()?
+            .agent_provision(body)
+            .await
+            .map_err(anyhow::Error::from)
     }
 
     /// `POST /_cokret/gate/account/agent-key-pair` —
@@ -32,8 +35,10 @@ impl CokretApi {
         &self,
         body: &AgentKeyPairRequestBody,
     ) -> anyhow::Result<AgentKeyPairOutcome> {
-        self.post_json("_cokret/gate/account/agent-key-pair", body)
+        self.sdk_http_client()?
+            .agent_key_pair(body)
             .await
+            .map_err(anyhow::Error::from)
     }
 
     pub(crate) async fn agent_key_pair_with_authorize_event(
@@ -49,8 +54,10 @@ impl CokretApi {
     /// `GET /_cokret/self/agents` — `ck.self.agent.query.list`. Returns the
     /// controller-self list of agent views (soland enforces caller binding).
     pub async fn agent_list(&self) -> anyhow::Result<cokret_sdk::AgentList> {
-        let value: serde_json::Value = self.get_json("_cokret/self/agents").await?;
-        decode_agent_list_response(value)
+        self.sdk_http_client()?
+            .agent_list()
+            .await
+            .map_err(anyhow::Error::from)
     }
 
     /// `GET /_cokret/self/agents/{id}` — `ck.self.agent.resource.get`.
@@ -58,9 +65,10 @@ impl CokretApi {
         &self,
         agent_principal_id: &str,
     ) -> anyhow::Result<cokret_sdk::AgentView> {
-        let agent_principal_id = path_component(agent_principal_id);
-        self.get_json(&format!("_cokret/self/agents/{agent_principal_id}"))
+        self.sdk_http_client()?
+            .agent_get(agent_principal_id)
             .await
+            .map_err(anyhow::Error::from)
     }
 
     /// `POST /_cokret/self/agents/{id}/pause` — `ck.self.agent.command.pause`.
@@ -72,12 +80,10 @@ impl CokretApi {
         agent_principal_id: &str,
         body: &cokret_sdk::AgentPauseRequestBody,
     ) -> anyhow::Result<cokret_sdk::OperationStatusOutcome> {
-        let agent_principal_id = path_component(agent_principal_id);
-        self.post_json(
-            &format!("_cokret/self/agents/{agent_principal_id}/pause"),
-            body,
-        )
-        .await
+        self.sdk_http_client()?
+            .agent_pause(agent_principal_id, body)
+            .await
+            .map_err(anyhow::Error::from)
     }
 
     /// `POST /_cokret/self/agents/{id}/resume` — `ck.self.agent.command.resume`.
@@ -86,12 +92,10 @@ impl CokretApi {
         agent_principal_id: &str,
         body: &cokret_sdk::AgentResumeRequestBody,
     ) -> anyhow::Result<cokret_sdk::OperationStatusOutcome> {
-        let agent_principal_id = path_component(agent_principal_id);
-        self.post_json(
-            &format!("_cokret/self/agents/{agent_principal_id}/resume"),
-            body,
-        )
-        .await
+        self.sdk_http_client()?
+            .agent_resume(agent_principal_id, body)
+            .await
+            .map_err(anyhow::Error::from)
     }
 
     /// `POST /_cokret/self/agents/{id}/deactivate` — `ck.self.agent.command.deactivate`.
@@ -104,12 +108,10 @@ impl CokretApi {
         agent_principal_id: &str,
         body: &cokret_sdk::AgentDeactivateRequestBody,
     ) -> anyhow::Result<cokret_sdk::OperationStatusOutcome> {
-        let agent_principal_id = path_component(agent_principal_id);
-        self.post_json(
-            &format!("_cokret/self/agents/{agent_principal_id}/deactivate"),
-            body,
-        )
-        .await
+        self.sdk_http_client()?
+            .agent_deactivate(agent_principal_id, body)
+            .await
+            .map_err(anyhow::Error::from)
     }
 
     /// `POST /_cokret/self/agents/{id}/rotate-key` — `ck.self.agent.command.rotate_key`.
@@ -119,12 +121,10 @@ impl CokretApi {
         agent_principal_id: &str,
         body: &cokret_sdk::AgentRotateKeyRequestBody,
     ) -> anyhow::Result<cokret_sdk::AgentRotateKeyOutcome> {
-        let agent_principal_id = path_component(agent_principal_id);
-        self.post_json(
-            &format!("_cokret/self/agents/{agent_principal_id}/rotate-key"),
-            body,
-        )
-        .await
+        self.sdk_http_client()?
+            .agent_rotate_key(agent_principal_id, body)
+            .await
+            .map_err(anyhow::Error::from)
     }
 
     /// `POST /_cokret/self/agents/{id}/grants` — `ck.self.agent.grant.command.attach`.
@@ -135,12 +135,10 @@ impl CokretApi {
         agent_principal_id: &str,
         body: &cokret_sdk::AgentGrantAttachRequestBody,
     ) -> anyhow::Result<cokret_sdk::AgentGrantAttachOutcome> {
-        let agent_principal_id = path_component(agent_principal_id);
-        self.post_json(
-            &format!("_cokret/self/agents/{agent_principal_id}/grants"),
-            body,
-        )
-        .await
+        self.sdk_http_client()?
+            .agent_grant_attach(agent_principal_id, body)
+            .await
+            .map_err(anyhow::Error::from)
     }
 
     /// `DELETE /_cokret/self/agents/{id}/grants/{grant_id}` —
@@ -150,12 +148,12 @@ impl CokretApi {
         agent_principal_id: &str,
         grant_id: &str,
     ) -> anyhow::Result<cokret_sdk::AgentGrantDetachOutcome> {
-        let agent_principal_id = path_component(agent_principal_id);
-        let grant_id = path_component(grant_id);
-        self.delete_json(&format!(
-            "_cokret/self/agents/{agent_principal_id}/grants/{grant_id}"
-        ))
-        .await
+        let grant_id = cokret_sdk::GrantId::new(grant_id.to_owned())
+            .map_err(|err| anyhow::anyhow!("invalid agent grant id: {err}"))?;
+        self.sdk_http_client()?
+            .agent_grant_detach(agent_principal_id, &grant_id)
+            .await
+            .map_err(anyhow::Error::from)
     }
 
     /// `PUT /_cokret/self/agents/{id}/participation` —
@@ -167,12 +165,10 @@ impl CokretApi {
         agent_principal_id: &str,
         body: &AgentParticipationSetRequestBody,
     ) -> anyhow::Result<AgentParticipationOutcome> {
-        let agent_principal_id = path_component(agent_principal_id);
-        self.put_json(
-            &format!("_cokret/self/agents/{agent_principal_id}/participation"),
-            body,
-        )
-        .await
+        self.sdk_http_client()?
+            .agent_participation_replace(agent_principal_id, body)
+            .await
+            .map_err(anyhow::Error::from)
     }
 
     /// `GET /_cokret/self/agents/{id}/participation` —
@@ -182,11 +178,10 @@ impl CokretApi {
         &self,
         agent_principal_id: &str,
     ) -> anyhow::Result<AgentParticipationOutcome> {
-        let agent_principal_id = path_component(agent_principal_id);
-        self.get_json(&format!(
-            "_cokret/self/agents/{agent_principal_id}/participation"
-        ))
-        .await
+        self.sdk_http_client()?
+            .agent_participation_get(agent_principal_id)
+            .await
+            .map_err(anyhow::Error::from)
     }
 
     /// `POST /_cokret/self/agent-sidecar-threads:ensure` —
@@ -206,45 +201,9 @@ impl CokretApi {
         if body.context_ref.strand_id.is_none() && body.context_ref.relation_id.is_none() {
             anyhow::bail!("context_ref must include strand_id or relation_id");
         }
-        self.post_json("_cokret/self/agent-sidecar-threads:ensure", body)
+        self.sdk_http_client()?
+            .agent_sidecar_thread_ensure(body)
             .await
-    }
-}
-
-fn decode_agent_list_response(
-    mut value: serde_json::Value,
-) -> anyhow::Result<cokret_sdk::AgentList> {
-    if let Some(object) = value.as_object_mut() {
-        if !object.contains_key("agents") {
-            if let Some(items) = object.get("items").cloned() {
-                object.insert("agents".to_owned(), items);
-            }
-        }
-        object
-            .entry("has_more".to_owned())
-            .or_insert(serde_json::Value::Bool(false));
-    }
-    serde_json::from_value(value).map_err(Into::into)
-}
-
-#[cfg(test)]
-mod tests {
-    use serde_json::json;
-
-    #[test]
-    fn agent_list_accepts_legacy_items_field() {
-        let list = super::decode_agent_list_response(json!({
-            "items": [{
-                "agent_principal_id": "did:web:agents.example:summary",
-                "display_name": "Summary",
-                "agent_slug": "summary",
-                "status": "active"
-            }]
-        }))
-        .unwrap();
-
-        assert_eq!(list.agents.len(), 1);
-        assert_eq!(list.agents[0]["agent_slug"], "summary");
-        assert!(!list.has_more);
+            .map_err(anyhow::Error::from)
     }
 }
