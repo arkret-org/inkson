@@ -5,24 +5,28 @@ use cokret_sdk::models::{
     RealmOrganizationPayload, RealmOrganizationRelationship, RealmOrganizationStatus,
     SignatureMaterial,
 };
-use serde_json::json;
 
 use super::{
     OperationBuilder, did_id, object_patch_payload_value, patch_from_value, realm_id_value,
+    space_state_transition_payload_value,
 };
 
 /// Build a `ck.space.archive` operation against a container Space. The
 /// Space transitions from `Active` to `Archived`; reversible via
 /// `space_restore`. Spec: `models/realm-and-space.md` §4.4. The wire
 /// payload uses canonical `space_id`.
-pub fn realm_archive(realm_id: &str, actor: &str, container_space_id: &str) -> OperationBuilder {
-    OperationBuilder::new(
+pub fn realm_archive(
+    realm_id: &str,
+    actor: &str,
+    container_space_id: &str,
+) -> anyhow::Result<OperationBuilder> {
+    Ok(OperationBuilder::new(
         realm_id,
         actor,
         cokret_sdk::events::kinds::EventKind::SpaceArchive,
     )
     .target_ref(container_space_id)
-    .body(json!({ "space_id": container_space_id }))
+    .body(space_state_transition_payload_value(container_space_id)?))
 }
 
 /// Build a `ck.message.revise` operation carrying the replacement content

@@ -633,7 +633,7 @@ impl CokretApi {
             target_device_id,
             revoked_by_device_id,
             "user_request",
-        )
+        )?
         .seal_basis(basis)
         .build_sdk_event(revoked_by_device_id)?;
         self.submit_sdk_event(&event).await

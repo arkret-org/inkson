@@ -561,6 +561,7 @@ mod tests {
             "ck.agent.v1",
             &["strand.read"],
         )
+        .expect("builds")
         .build("yougen");
         assert_eq!(op.content["agent_id"], "did:web:agent.example");
         assert_eq!(op.content["endpoints"][0]["protocol"], "ck.agent.v1");
@@ -578,6 +579,7 @@ mod tests {
             serde_json::json!({"summary": "ok"}),
             serde_json::json!({"merkle_root": "sha256:abc"}),
         )
+        .expect("builds")
         .build("yougen");
         assert_eq!(op.content["status"], "completed");
         assert_eq!(op.content["result_objects"][0]["summary"], "ok");

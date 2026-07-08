@@ -667,6 +667,29 @@ pub fn build_space_lifecycle_event(
             ));
         }
     };
+    let space_id_typed = cokret_sdk::SpaceId::new(space_id.to_owned())
+        .map_err(|err| anyhow::anyhow!("invalid space id {space_id:?}: {err}"))?;
+    let body = match &kind {
+        EventKind::SpaceArchive | EventKind::SpaceRestore => {
+            serde_json::to_value(cokret_sdk::SpaceStateTransitionPayload {
+                space_id: space_id_typed,
+                reason: None,
+                effective_at: None,
+            })
+            .map_err(|err| anyhow::anyhow!("space state transition payload: {err}"))?
+        }
+        EventKind::SpaceTombstone => {
+            serde_json::to_value(cokret_sdk::SpaceObjectTombstonePayload {
+                space_id: space_id_typed,
+                reason: None,
+                replacement_space: None,
+                replacement_event: None,
+                effective_at: None,
+            })
+            .map_err(|err| anyhow::anyhow!("space object tombstone payload: {err}"))?
+        }
+        _ => unreachable!("unsupported Space lifecycle kind was rejected above"),
+    };
     let created_at = event_timestamp();
     let cell = space_cell("ck.component.space.state.v1", space_id);
     let preconditions = vec![head_eq_precondition(
@@ -681,7 +704,7 @@ pub fn build_space_lifecycle_event(
     )?];
     let mut event = OperationBuilder::new(realm_id, actor_id, kind)
         .target_ref(space_id)
-        .body(json!({ "space_id": space_id }))
+        .body(body)
         .preconditions(preconditions)
         .effects(effects)
         .build_sdk_event("yougen")?;

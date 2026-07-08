@@ -606,6 +606,13 @@ pub(super) fn dispatch_space_container_lifecycle(
             return;
         }
     };
+    let builder = match builder {
+        Ok(builder) => builder,
+        Err(err) => {
+            board_status.set(format!("lifecycle update failed: {err}"));
+            return;
+        }
+    };
     let event = match builder.build_sdk_event("yougen") {
         Ok(event) => event,
         Err(err) => {
@@ -820,7 +827,7 @@ pub(super) fn dispatch_board_archive_cascade(
         .chain(std::iter::once(&board_space_id))
     {
         match crate::operation::ck_ops::realm_archive(&realm_id, &actor_id, list_id)
-            .build_sdk_event("yougen")
+            .and_then(|builder| builder.build_sdk_event("yougen"))
         {
             Ok(event) => events.push(event),
             Err(err) => {

@@ -1,12 +1,11 @@
 //! Generic Morph object builders.
 //!
 //! `ck.morph.*` is a generic object family in the protocol; the Document
-//! surface that used to drive these builders was removed, but the generic
-//! `ck.morph.update` patch builder is retained for the object-patch family
-//! (it mirrors [`strand_update_patch`](super::strand_update_patch) /
-//! [`space_update_patch`](super::space_update_patch)).
+//! surface that used to drive these builders was removed, but the
+//! `ck.morph.update` patch builder is retained for the Morph patch payload
+//! family.
 
-use super::{OperationBuilder, object_patch_payload_value, patch_from_value};
+use super::{OperationBuilder, morph_update_payload_value, patch_from_value};
 
 /// Build a `ck.morph.update` patch operation. Mirrors
 /// [`strand_update_patch`](super::strand_update_patch) for Morph objects;
@@ -25,5 +24,5 @@ pub fn morph_update_patch(
         cokret_sdk::events::kinds::EventKind::MorphUpdate,
     )
     .target_ref(morph_id)
-    .body(object_patch_payload_value(morph_id, patch)?))
+    .body(morph_update_payload_value(morph_id, patch)?))
 }

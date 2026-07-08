@@ -7,9 +7,33 @@
 //! the wire shape lets soland and the SDK reducer track which agent
 //! owns which session, what status, and what result.
 
-use serde_json::json;
+use std::collections::BTreeMap;
+
+use serde_json::{Value, json};
 
 use super::{OperationBuilder, trim_realm_id};
+
+fn value_object(value: Value, context: &str) -> anyhow::Result<BTreeMap<String, Value>> {
+    match value {
+        Value::Object(map) => Ok(map.into_iter().collect()),
+        _ => anyhow::bail!("{context} must be a JSON object"),
+    }
+}
+
+fn value_object_list(
+    value: Value,
+    context: &str,
+) -> anyhow::Result<Option<Vec<BTreeMap<String, Value>>>> {
+    match value {
+        Value::Null => Ok(None),
+        Value::Array(values) => values
+            .into_iter()
+            .map(|value| value_object(value, context))
+            .collect::<anyhow::Result<Vec<_>>>()
+            .map(|values| (!values.is_empty()).then_some(values)),
+        value => Ok(Some(vec![value_object(value, context)?])),
+    }
+}
 
 /// Round 4 — validate an `agent_id` against the canonical
 /// [`cokret_sdk::AgentId`] shape (strict DID). Wire-breaking: the
@@ -25,21 +49,23 @@ pub fn agent_endpoint(
     agent_id: &str,
     protocol: &str,
     capabilities: &[&str],
-) -> OperationBuilder {
-    let endpoints = json!([{
-        "protocol": protocol,
-        "capabilities": capabilities,
-    }]);
-    OperationBuilder::new(
+) -> anyhow::Result<OperationBuilder> {
+    let mut endpoint = BTreeMap::new();
+    endpoint.insert("protocol".to_owned(), json!(protocol));
+    endpoint.insert("capabilities".to_owned(), json!(capabilities));
+    let payload = cokret_sdk::AgentEndpointPayload {
+        agent_id: parse_agent_identifier(agent_id).map_err(|err| anyhow::anyhow!("{err}"))?,
+        endpoints: vec![endpoint],
+    };
+    let body = serde_json::to_value(payload)
+        .map_err(|err| anyhow::anyhow!("agent_endpoint_payload serialize: {err}"))?;
+    Ok(OperationBuilder::new(
         realm_id,
         actor,
         cokret_sdk::events::kinds::EventKind::AgentEndpoint,
     )
     .target_ref(agent_id)
-    .body(json!({
-        "agent_id": agent_id,
-        "endpoints": endpoints,
-    }))
+    .body(body))
 }
 
 /// `ck.agent.interop_session.start` — kick off an agent
@@ -53,19 +79,30 @@ pub fn agent_interop_session_start(
     protocol: &str,
     _params: serde_json::Value,
     capability_grant: &str,
-) -> OperationBuilder {
-    OperationBuilder::new(
+) -> anyhow::Result<OperationBuilder> {
+    let payload = cokret_sdk::AgentInteropSessionStartPayload {
+        session_id: session_id.to_owned(),
+        task_strand_id: None,
+        counterparty_agent: cokret_sdk::Did::new(counterparty_agent.to_owned())
+            .map_err(|err| anyhow::anyhow!("invalid counterparty agent DID: {err}"))?,
+        protocol: protocol.to_owned(),
+        external_protocol_version: None,
+        endpoint_ref: None,
+        capability_grant: cokret_sdk::GrantId::new(capability_grant.to_owned())
+            .map_err(|err| anyhow::anyhow!("invalid capability grant id: {err}"))?,
+        allowed_artifact_types: None,
+        max_duration_seconds: None,
+        audit_mode: None,
+    };
+    let body = serde_json::to_value(payload)
+        .map_err(|err| anyhow::anyhow!("agent_interop_session_start_payload serialize: {err}"))?;
+    Ok(OperationBuilder::new(
         realm_id,
         actor,
         cokret_sdk::events::kinds::EventKind::AgentInteropSessionStart,
     )
     .target_ref(session_id)
-    .body(json!({
-        "counterparty_agent": counterparty_agent,
-        "session_id": session_id,
-        "protocol": protocol,
-        "capability_grant": capability_grant,
-    }))
+    .body(body))
 }
 
 /// Build the capability-constraint object an external-handoff grant
@@ -102,17 +139,29 @@ pub fn agent_interop_session_status(
     session_id: &str,
     status: &str,
     _detail: serde_json::Value,
-) -> OperationBuilder {
-    OperationBuilder::new(
+) -> anyhow::Result<OperationBuilder> {
+    let payload = cokret_sdk::AgentInteropSessionStatusPayload {
+        session_id: session_id.to_owned(),
+        status: status.to_owned(),
+        external_task_id: None,
+        last_update_at: None,
+        progress_basis_points: None,
+        summary: None,
+        cancelled_by: None,
+        cancelled_at: None,
+        reason_code: None,
+        external_cancel_ref: None,
+        cleanup_required: None,
+    };
+    let body = serde_json::to_value(payload)
+        .map_err(|err| anyhow::anyhow!("agent_interop_session_status_payload serialize: {err}"))?;
+    Ok(OperationBuilder::new(
         realm_id,
         actor,
         cokret_sdk::events::kinds::EventKind::AgentInteropSessionStatus,
     )
     .target_ref(session_id)
-    .body(json!({
-        "session_id": session_id,
-        "status": status,
-    }))
+    .body(body))
 }
 
 /// `ck.agent.interop_session.result` — terminal event carrying the
@@ -123,32 +172,31 @@ pub fn agent_interop_session_result(
     session_id: &str,
     result: serde_json::Value,
     audit_binding: serde_json::Value,
-) -> OperationBuilder {
-    let result_objects = match result {
-        serde_json::Value::Array(values) => values,
-        serde_json::Value::Null => Vec::new(),
-        value => vec![value],
+) -> anyhow::Result<OperationBuilder> {
+    let payload = cokret_sdk::AgentInteropSessionResultPayload {
+        session_id: session_id.to_owned(),
+        status: "completed".to_owned(),
+        result_objects: value_object_list(result, "agent result_objects")?,
+        artifacts: value_object_list(audit_binding, "agent artifacts")?,
+        artifact_retention: None,
+        external_artifact_stub: None,
+        external_transcript_digest: None,
+        completed_at: None,
+        cancelled_by: None,
+        cancelled_at: None,
+        reason_code: None,
+        external_cancel_ref: None,
+        cleanup_required: None,
     };
-    let artifacts = match audit_binding {
-        serde_json::Value::Array(values) => values,
-        serde_json::Value::Null => Vec::new(),
-        value => vec![value],
-    };
-    let mut body = json!({
-        "session_id": session_id,
-        "status": "completed",
-        "result_objects": result_objects,
-    });
-    if !artifacts.is_empty() {
-        body["artifacts"] = json!(artifacts);
-    }
-    OperationBuilder::new(
+    let body = serde_json::to_value(payload)
+        .map_err(|err| anyhow::anyhow!("agent_interop_session_result_payload serialize: {err}"))?;
+    Ok(OperationBuilder::new(
         realm_id,
         actor,
         cokret_sdk::events::kinds::EventKind::AgentInteropSessionResult,
     )
     .target_ref(session_id)
-    .body(body)
+    .body(body))
 }
 
 /// Build the publish-to-source `ck.strand.create` operation for an

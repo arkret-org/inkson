@@ -37,24 +37,30 @@ pub fn build_morph_create(
 /// Build a `ck.morph.update` operation. `patch` is a JSON object of fields to
 /// set/replace; the reducer applies these against the existing Morph state.
 ///
-/// `ck.morph.update` falls onto the generic `object_patch_payload`
+/// `ck.morph.update` uses `morph_update_payload`
 /// (`required:["target_ref","patch"]`, `additionalProperties:false`): the
-/// target Morph is single-sourced by `target_ref`, so we do NOT emit a
-/// separate `morph_id` field — that would trip the reducer's
-/// `schema_violation` gate.
+/// target Morph is single-sourced by `target_ref`, and forbidden patch paths
+/// such as `morph_type` / `stage` are rejected by the SDK strong type.
 pub fn build_morph_update(
     realm_id: &str,
     actor: &str,
     morph_id: &str,
     patch: Value,
-) -> OperationBuilder {
-    OperationBuilder::new(
+) -> anyhow::Result<OperationBuilder> {
+    let patch: cokret_sdk::Patch = serde_json::from_value(patch)
+        .map_err(|err| anyhow::anyhow!("ck.morph.update patch must match ck.patch.v1: {err}"))?;
+    let morph_id_typed = cokret_sdk::MorphId::new(morph_id.to_owned())
+        .map_err(|err| anyhow::anyhow!("invalid morph id {morph_id:?}: {err}"))?;
+    let body = cokret_sdk::MorphUpdatePayload::for_morph(morph_id_typed, patch)
+        .and_then(|payload| payload.to_value())
+        .map_err(|err| anyhow::anyhow!("invalid morph_update_payload: {err}"))?;
+    Ok(OperationBuilder::new(
         realm_id,
         actor,
         cokret_sdk::events::kinds::EventKind::MorphUpdate,
     )
     .target_ref(morph_id)
-    .body(json!({"target_ref": morph_id, "patch": patch}))
+    .body(body))
 }
 
 /// Build a `ck.relation.create` operation. `kind` is a registered
@@ -108,19 +114,22 @@ pub fn build_container_move_item(
     source_ref: &str,
     target_ref: &str,
     rank: &str,
-) -> OperationBuilder {
-    OperationBuilder::new(
+) -> anyhow::Result<OperationBuilder> {
+    let body = serde_json::to_value(cokret_sdk::ContainerPositionPayload {
+        source_ref: source_ref.to_owned(),
+        target_ref: target_ref.to_owned(),
+        container_ref: container_ref.to_owned(),
+        relation_kind: None,
+        rank: rank.to_owned(),
+    })
+    .map_err(|err| anyhow::anyhow!("container_position_payload serialize: {err}"))?;
+    Ok(OperationBuilder::new(
         realm_id,
         actor,
         cokret_sdk::events::kinds::EventKind::ContainerMoveItem,
     )
     .target_ref(container_ref)
-    .body(json!({
-        "container_ref": container_ref,
-        "source_ref": source_ref,
-        "target_ref": target_ref,
-        "rank": rank,
-    }))
+    .body(body))
 }
 
 /// Build a `ck.container.rebalance` operation. The required position fields
@@ -163,17 +172,33 @@ mod tests {
         let op = build_morph_update(
             "ck:realm:0196419b-0000-7000-8000-0000000000ac",
             "did:web:alice",
-            "ck:morph:abc",
-            json!({"morph_type": "task"}),
+            "ck:morph:0196419b-0000-7000-8000-000000000001",
+            json!({"metadata.title": "Roadmap"}),
         )
+        .expect("builds")
         .build("node");
         assert_eq!(op.kind.as_str(), "ck.morph.update");
-        assert_eq!(op.content["target_ref"], "ck:morph:abc");
+        assert_eq!(
+            op.content["target_ref"],
+            "ck:morph:0196419b-0000-7000-8000-000000000001"
+        );
         assert!(
             op.content.get("morph_id").is_none(),
-            "morph_id is not an object_patch_payload field"
+            "morph_id is not a morph_update_payload field"
         );
-        assert_eq!(op.content["patch"]["morph_type"], "task");
+        assert_eq!(op.content["patch"]["metadata.title"], "Roadmap");
+    }
+
+    #[test]
+    fn morph_update_rejects_create_locked_morph_type() {
+        let err = build_morph_update(
+            "ck:realm:0196419b-0000-7000-8000-0000000000ac",
+            "did:web:alice",
+            "ck:morph:0196419b-0000-7000-8000-000000000001",
+            json!({"morph_type": "task"}),
+        )
+        .unwrap_err();
+        assert!(err.to_string().contains("morph_update_payload"));
     }
 
     #[test]
@@ -210,6 +235,7 @@ mod tests {
             "ck:strand:f1",
             "r0",
         )
+        .expect("builds")
         .build("node");
         assert_eq!(op.kind.as_str(), "ck.container.move_item");
         assert_eq!(
