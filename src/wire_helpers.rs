@@ -1,15 +1,5 @@
 use std::fmt::Write;
 
-/// A4b — module-level helper for composing a blob download URL when an API
-/// handle isn't available (e.g. read-only views that already have the Principal
-/// Server `base_url` as a string). Keeps the URL shape canonical so callers
-/// cannot accidentally desync from the API method.
-pub fn blob_download_url_for(base_url: &str, blob_ref: &str) -> String {
-    let base = base_url.trim_end_matches('/');
-    let blob_ref = query_component(canonical_blob_ref(blob_ref));
-    format!("{base}/_cokret/self/blob/get?blob_ref={blob_ref}&purpose=profile_avatar")
-}
-
 pub(crate) fn canonical_blob_ref(blob_ref: &str) -> &str {
     blob_ref.split('#').next().unwrap_or(blob_ref).trim()
 }
@@ -79,41 +69,4 @@ pub(crate) fn soland_path_allowed(normalized_path: &str) -> bool {
         return false;
     }
     true
-}
-
-#[cfg(test)]
-pub(crate) fn events_query_path(realm_id: &str) -> String {
-    format!(
-        "_cokret/self/events?realms={}&limit=100",
-        query_component(realm_id)
-    )
-}
-
-// Builds the legacy `ck.self.events.stream.subscribe` URL. Kept only for URL
-// construction regression tests; production realm subscribe now goes through
-// SDK http-client + client-core.
-#[cfg(test)]
-pub(crate) fn events_subscribe_path(
-    realm_id: &str,
-    after: Option<&str>,
-    include_history: Option<bool>,
-    max_duration_ms: Option<u64>,
-) -> String {
-    let mut url = format!(
-        "_cokret/self/events/subscribe?realms={}",
-        query_component(realm_id)
-    );
-    if let Some(after) = after {
-        url.push_str("&after=");
-        url.push_str(&query_component(after));
-    }
-    if let Some(include_history) = include_history {
-        url.push_str("&include_history=");
-        url.push_str(if include_history { "true" } else { "false" });
-    }
-    if let Some(max_duration_ms) = max_duration_ms {
-        url.push_str("&max_duration_ms=");
-        url.push_str(&max_duration_ms.to_string());
-    }
-    url
 }

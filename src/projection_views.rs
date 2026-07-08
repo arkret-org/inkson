@@ -359,16 +359,3 @@ impl From<cokret_sdk::ProjectionStrandList> for LifecycleProjectionView<StrandPr
         }
     }
 }
-
-/// Server-side Morph row from
-/// `GET /_cokret/self/realms/{realm_id}/morphs`. Same enum as Strand per spec §5.1.
-#[derive(Clone, Debug, Deserialize)]
-pub struct MorphProjectionView {
-    pub morph_id: String,
-    pub realm_id: String,
-    #[serde(default)]
-    pub morph_type: String,
-    #[serde(default)]
-    pub title: Option<String>,
-    pub state: String,
-}

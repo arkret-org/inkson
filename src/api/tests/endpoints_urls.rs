@@ -1,11 +1,5 @@
-use reqwest::StatusCode;
-
 use super::super::*;
-use crate::api_error::{CokretApiError, decode_cokret_error, is_endpoint_absent};
-use crate::wire_helpers::{
-    blob_download_url_for, events_query_path, events_subscribe_path, path_component,
-    query_component, safe_blob_filename_header,
-};
+use crate::wire_helpers::{path_component, query_component, safe_blob_filename_header};
 
 #[test]
 fn endpoint_join_keeps_api_paths_under_base_url() {
@@ -36,38 +30,6 @@ fn endpoint_enforces_private_path_redline() {
 }
 
 #[test]
-fn endpoint_absent_only_triggers_on_404() {
-    // 404 unrecognized_endpoint means the canonical endpoint is absent.
-    let not_found: anyhow::Error = CokretApiError {
-        status: StatusCode::NOT_FOUND,
-        error: decode_cokret_error(StatusCode::NOT_FOUND, b"{}"),
-    }
-    .into();
-    assert!(is_endpoint_absent(&not_found));
-
-    // A 5xx is a real server failure, not an absent endpoint — must propagate.
-    let server_error: anyhow::Error = CokretApiError {
-        status: StatusCode::INTERNAL_SERVER_ERROR,
-        error: decode_cokret_error(StatusCode::INTERNAL_SERVER_ERROR, b"{}"),
-    }
-    .into();
-    assert!(!is_endpoint_absent(&server_error));
-
-    // A non-API transport error must not be mistaken for an absent endpoint.
-    let transport: anyhow::Error = anyhow::anyhow!("connection refused");
-    assert!(!is_endpoint_absent(&transport));
-}
-
-#[test]
-fn blob_download_url_strips_media_hint_before_query() {
-    let url = blob_download_url_for("http://127.0.0.1:8787/", "ck:blob:sha256:abcdef#image/png");
-    assert_eq!(
-        url,
-        "http://127.0.0.1:8787/_cokret/self/blob/get?blob_ref=ck%3Ablob%3Asha256%3Aabcdef&purpose=profile_avatar"
-    );
-}
-
-#[test]
 fn path_component_percent_encodes_did_as_path_segment() {
     assert_eq!(
         path_component("did:web:agent.example"),
@@ -90,32 +52,6 @@ fn blob_upload_filename_header_is_ascii_safe() {
         Some("dump".to_owned())
     );
     assert_eq!(safe_blob_filename_header("🧪").as_deref(), None);
-}
-
-#[test]
-fn event_paths_use_v1_query_parameters() {
-    let backfill = events_query_path("ck:realm:demo");
-    assert_eq!(
-        backfill,
-        "_cokret/self/events?realms=ck%3Arealm%3Ademo&limit=100"
-    );
-    assert!(!backfill.contains("direction="));
-
-    let subscribe =
-        events_subscribe_path("ck:realm:demo", Some("ck:cursor:demo"), Some(true), None);
-    assert_eq!(
-        subscribe,
-        "_cokret/self/events/subscribe?realms=ck%3Arealm%3Ademo&after=ck%3Acursor%3Ademo&include_history=true"
-    );
-    assert!(!subscribe.contains("&from="));
-
-    let subscribe_windowed = events_subscribe_path(
-        "ck:realm:demo",
-        Some("ck:cursor:demo"),
-        Some(true),
-        Some(5_000),
-    );
-    assert!(subscribe_windowed.ends_with("&max_duration_ms=5000"));
 }
 
 #[test]

@@ -795,46 +795,6 @@ pub fn build_realm_archive_event(
     Ok(event)
 }
 
-/// Build a `ck.realm.tombstone` terminal lifecycle event. The successor Realm
-/// is required by spec; callers that do not have one must use
-/// [`build_realm_destroy_event`] instead.
-pub fn build_realm_tombstone_event(
-    realm_id: &str,
-    actor_id: &str,
-    successor_realm_id: &str,
-    reason: &str,
-) -> anyhow::Result<cokret_sdk::Event> {
-    let successor_realm_id = successor_realm_id.trim();
-    if successor_realm_id.is_empty() {
-        return Err(anyhow::anyhow!(
-            "successor_realm_id is required for ck.realm.tombstone"
-        ));
-    }
-    let reason = reason.trim();
-    if reason.is_empty() {
-        return Err(anyhow::anyhow!("reason is required for ck.realm.tombstone"));
-    }
-    let created_at = event_timestamp();
-    let realm_id_wire = trim_realm_id(realm_id);
-    let cell = space_cell("ck.component.realm.destroy.v1", &realm_id_wire);
-    // Strong type: realm_tombstone_payload (reason + successor_realm_id both
-    // required by spec; additionalProperties:false).
-    let successor = cokret_sdk::RealmId::new(successor_realm_id)
-        .map_err(|err| anyhow::anyhow!("invalid successor_realm_id: {err}"))?;
-    let payload = cokret_sdk::RealmTombstonePayload::new(successor, reason).to_value()?;
-    let effects = vec![set_effect(&cell, payload.clone())?];
-    let mut event = OperationBuilder::new(
-        realm_id,
-        actor_id,
-        cokret_sdk::events::kinds::EventKind::RealmTombstone,
-    )
-    .body(payload)
-    .effects(effects)
-    .build_sdk_event("inkson")?;
-    set_sdk_event_created_at(&mut event, &created_at)?;
-    Ok(event)
-}
-
 /// Build a `ck.realm.destroy` terminal lifecycle event.
 pub fn build_realm_destroy_event(
     realm_id: &str,
@@ -876,14 +836,6 @@ pub fn build_realm_history_sharing_policy_event(
         EventKind::RealmHistorySharingPolicy,
         policy,
     )
-}
-
-pub fn build_realm_preview_policy_event(
-    realm_id: &str,
-    actor_id: &str,
-    policy: Value,
-) -> anyhow::Result<cokret_sdk::Event> {
-    build_realm_state_event(realm_id, actor_id, EventKind::RealmPreviewPolicy, policy)
 }
 
 /// Build a `ck.realm.plaintext_visible_services` event when the caller

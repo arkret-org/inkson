@@ -1160,5 +1160,5 @@ pub use cokret_sdk::models::{MediaIceConfigOutcome, MediaIceConfigRequestBody};
 // agent surface now uses the SDK's authoritative types
 // (`cokret_sdk::AgentProvisionOutcome` / `AgentList` / `AgentView` /
 // `AgentRotateKeyOutcome` / `AgentGrantAttachOutcome` /
-// `AgentSidecarThreadEnsureOutcome` / ...) directly in `api::agent` and
-// `views::agents`.
+// `AgentSidecarThreadEnsureOutcome` / ...) directly in `views::agents`
+// (via `with_authed_sdk_client`).

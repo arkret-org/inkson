@@ -1,21 +1,11 @@
 //! Server error-envelope classification for the self-API client:
 //! session-loss / device-authorization / cursor / frontier / rate-limit /
-//! visibility-policy predicates, the `wait_for` sync-token normalizer, and the
-//! blob-presign error class.
+//! visibility-policy predicates, and the `wait_for` sync-token normalizer.
 
 use cokret_sdk::ErrorEnvelope;
 use reqwest::StatusCode;
 
 use super::api_error_status_and_envelope;
-
-/// True when a discovery probe failed because the endpoint does not exist on
-/// this server — i.e. the routing layer returned `404 unrecognized_endpoint`
-/// (see `service-http-binding.md` routing rules) rather than a transport,
-/// auth, or server error.
-#[cfg(test)]
-pub(crate) fn is_endpoint_absent(error: &anyhow::Error) -> bool {
-    api_error_status_and_envelope(error).is_some_and(|(status, _)| status == StatusCode::NOT_FOUND)
-}
 
 /// True when the server has *definitively* told us the session is dead.
 ///
@@ -235,48 +225,4 @@ pub fn normalize_wait_for_sync_token(sync_token: &str) -> Option<String> {
                 .is_some_and(|payload| !payload.is_empty())
         })
         .then(|| tokens.join(","))
-}
-
-/// Round R2/R3 (T11) — classify a server error envelope into the four
-/// fail-closed presign blob error classes. The UI MUST surface a friendly
-/// (translated) message and MUST NOT retry / cache / log the presign URL.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum BlobPresignError {
-    LegalHoldActive,
-    BlobRedacted,
-    MediaPlaintextServiceNotAuthorised,
-    NotAuthorised,
-}
-
-impl BlobPresignError {
-    pub fn from_error(error: &anyhow::Error) -> Option<Self> {
-        let (status, envelope) = api_error_status_and_envelope(error)?;
-        let code = envelope.code();
-        match code {
-            // Round R2/R3 wire codes from cokret_sdk::error.
-            "legal_hold_active" => Some(Self::LegalHoldActive),
-            "blob_redacted" => Some(Self::BlobRedacted),
-            "media_plaintext_service_not_authorised" => {
-                Some(Self::MediaPlaintextServiceNotAuthorised)
-            }
-            _ => {
-                if status == StatusCode::FORBIDDEN || status == StatusCode::UNAUTHORIZED {
-                    Some(Self::NotAuthorised)
-                } else {
-                    None
-                }
-            }
-        }
-    }
-
-    /// i18n key for the user-facing error message. Translation values are
-    /// owned by [`crate::i18n`].
-    pub fn i18n_key(self) -> &'static str {
-        match self {
-            Self::LegalHoldActive => "blob.error.legal_hold_active",
-            Self::BlobRedacted => "blob.error.redacted",
-            Self::MediaPlaintextServiceNotAuthorised => "blob.error.plaintext_not_authorised",
-            Self::NotAuthorised => "blob.error.not_authorised",
-        }
-    }
 }

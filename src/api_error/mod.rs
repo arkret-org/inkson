@@ -125,31 +125,6 @@ pub fn decode_cokret_error(status: StatusCode, bytes: &[u8]) -> ErrorEnvelope {
     envelope
 }
 
-/// Same as [`decode_cokret_error`], but also threads the
-/// `x-cokret-request-id` response header so the resulting envelope
-/// carries the soland trace ID even when the body's `request_id` slot
-/// was missing or `"unknown"`.
-///
-/// P5: callers that have access to the `reqwest::Response::headers()`
-/// map (currently only a few hot paths) should switch to this helper
-/// so error toasts can render the **Copy ID** button consistently.
-pub fn decode_cokret_error_with_header(
-    status: StatusCode,
-    bytes: &[u8],
-    response_request_id: Option<&str>,
-) -> ErrorEnvelope {
-    let mut envelope = decode_cokret_error(status, bytes);
-    if let Some(id) = response_request_id {
-        let trimmed = id.trim();
-        if !trimmed.is_empty()
-            && (envelope.request_id == "unknown" || envelope.request_id.is_empty())
-        {
-            envelope.request_id = trimmed.to_owned();
-        }
-    }
-    envelope
-}
-
 /// G3.Y3 — on a 403 with a policy-shaped envelope, push a
 /// [`crate::components::PolicyDenyEvent`] onto the global queue so the
 /// unified `feedback::ToastHost` mounted near the app shell surfaces it

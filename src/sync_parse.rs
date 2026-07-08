@@ -50,10 +50,6 @@ impl fmt::Display for AccountSubscribeReconnectAfter {
 
 impl std::error::Error for AccountSubscribeReconnectAfter {}
 
-pub fn parse_sync(value: Value) -> anyhow::Result<ClientSyncOutcome> {
-    Ok(serde_json::from_value(value)?)
-}
-
 /// Round 4 (spec a77b995) — parse the round-4 typed
 /// `/events/subscribe` NDJSON stream. The frame body is
 /// [`cokret_sdk::EventsSubscribeFrame`] (tag = "kind",
@@ -81,33 +77,6 @@ pub fn parse_events_subscribe_ndjson_text(
 /// `events.subscribe`) so the resource bound lives in exactly one place.
 #[cfg(not(target_arch = "wasm32"))]
 pub(crate) const MAX_NDJSON_STREAM_FRAME_BYTES: usize = 16 * 1024 * 1024;
-
-// COR-01: the caller MUST enforce [`MAX_NDJSON_STREAM_FRAME_BYTES`] on
-// `pending` before invoking this drainer, so an undelimited / oversized frame
-// cannot grow the buffer without bound (parity with the account.subscribe
-// path in `drain_account_subscribe_response`).
-#[cfg(all(test, not(target_arch = "wasm32")))]
-pub(crate) fn drain_events_subscribe_ndjson_lines<F>(
-    pending: &mut Vec<u8>,
-    on_frame: &mut F,
-) -> anyhow::Result<()>
-where
-    F: FnMut(cokret_sdk::EventsSubscribeFrame) -> anyhow::Result<()>,
-{
-    while let Some(newline) = pending.iter().position(|byte| *byte == b'\n') {
-        let mut line: Vec<u8> = pending.drain(..=newline).collect();
-        if line.last() == Some(&b'\n') {
-            line.pop();
-        }
-        if line.last() == Some(&b'\r') {
-            line.pop();
-        }
-        if let Some(frame) = parse_events_subscribe_ndjson_line(&line)? {
-            on_frame(frame)?;
-        }
-    }
-    Ok(())
-}
 
 pub(crate) fn parse_events_subscribe_ndjson_line(
     line: &[u8],
@@ -143,23 +112,6 @@ const MAX_ACCOUNT_SUBSCRIBE_RECONNECT_AFTER_MS: u64 = 60_000;
 fn clamp_reconnect_after_ms(raw: Option<u64>) -> u64 {
     raw.unwrap_or(DEFAULT_ACCOUNT_SUBSCRIBE_RECONNECT_AFTER_MS)
         .min(MAX_ACCOUNT_SUBSCRIBE_RECONNECT_AFTER_MS)
-}
-
-#[cfg(test)]
-pub(crate) fn parse_account_subscribe_snapshot(bytes: &[u8]) -> anyhow::Result<ClientSyncOutcome> {
-    match parse_account_subscribe_snapshot_outcome(bytes)? {
-        AccountSubscribeSnapshotResult::Delta(response) => Ok(*response),
-        AccountSubscribeSnapshotResult::ReconnectAfter {
-            reconnect_after_ms,
-            reason,
-            reset_cursor,
-        } => Err(AccountSubscribeReconnectAfter {
-            reconnect_after_ms,
-            reason,
-            reset_cursor,
-        }
-        .into()),
-    }
 }
 
 /// Incremental folder for `ck.self.account.stream.subscribe` NDJSON frames.
