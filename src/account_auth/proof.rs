@@ -28,7 +28,7 @@ pub struct SessionGrantIntrospectionProofClaims {
 }
 
 /// Convenience helper: build the full
-/// [`crate::api::SessionGrantIntrospectionProof`] (challenge + proof_jwt
+/// [`cokret_sdk::SessionGrantIntrospectionProof`] (challenge + proof_jwt
 /// bundle) ready to attach to a soland `session-grant/exchange` request.
 /// The challenge is freshly minted from `current_time + grant_id`.
 pub fn build_session_grant_introspection_proof_bundle(
@@ -36,7 +36,7 @@ pub fn build_session_grant_introspection_proof_bundle(
     grant_jwt: &str,
     audience: &str,
     signing_key: &ed25519_dalek::SigningKey,
-) -> anyhow::Result<crate::api::SessionGrantIntrospectionProof> {
+) -> anyhow::Result<cokret_sdk::SessionGrantIntrospectionProof> {
     let challenge = format!(
         "{ts}-{grant_id}",
         ts = chrono::Utc::now().timestamp_millis()
@@ -48,7 +48,7 @@ pub fn build_session_grant_introspection_proof_bundle(
         &challenge,
         signing_key,
     )?;
-    Ok(crate::api::SessionGrantIntrospectionProof {
+    Ok(cokret_sdk::SessionGrantIntrospectionProof {
         challenge,
         proof_jwt,
     })

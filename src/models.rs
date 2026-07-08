@@ -1032,33 +1032,6 @@ pub struct ReceiptResult {
 
 // ── Device & Crypto ─────────────────────────────────────────────
 
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct RevokeDeviceResult {
-    pub ok: bool,
-    pub device_id: String,
-    pub revoked: bool,
-}
-
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct DeviceTrustView {
-    pub devices: Vec<DeviceTrustEntry>,
-}
-
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct DeviceTrustEntry {
-    pub device_id: String,
-    pub trust_state: String,
-    pub verified_at: Option<String>,
-    pub display_name: Option<String>,
-}
-
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct VerifyDeviceResult {
-    pub ok: bool,
-    pub device_id: String,
-    pub trust_state: String,
-}
-
 /// `ck.self.events.command.submit` response.
 ///
 /// Decodes **only** the canonical `EventsSubmitOutcome` wire shape —

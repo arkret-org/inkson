@@ -1,15 +1,13 @@
 use super::*;
 use crate::event_builders::{
-    build_member_state_invite_accept_event, build_member_state_transition_event,
-    build_plaintext_visible_services_event, build_realm_archive_event,
-    build_realm_bootstrap_events, build_realm_destroy_event,
-    build_realm_history_sharing_policy_event, build_realm_state_event, build_realm_tombstone_event,
-    build_space_create_event, build_space_lifecycle_event, parse_realm_bootstrap_members,
+    build_member_state_transition_event, build_plaintext_visible_services_event,
+    build_realm_archive_event, build_realm_bootstrap_events, build_realm_destroy_event,
+    build_realm_history_sharing_policy_event, build_realm_state_event, build_space_create_event,
+    build_space_lifecycle_event, parse_realm_bootstrap_members,
     recommended_history_sharing_policy_for_visibility, recommended_realm_policy_components_value,
 };
 use crate::projection_views::{
-    CollectionProjectionView, LifecycleProjectionView, SpaceContainerProjectionView,
-    StrandProjectionView,
+    CollectionProjectionView, LifecycleProjectionView, StrandProjectionView,
 };
 use crate::realm_helpers::{
     canonical_space_join_rule_v1, patch_touches_create_locked_encryption_profile,
@@ -233,20 +231,6 @@ impl CokretApi {
         anyhow::bail!("admin notary describe has no spec-defined Cokret HTTP endpoint")
     }
 
-    pub async fn authz_check(
-        &self,
-        actor: &str,
-        action: &str,
-        realm_id: &str,
-    ) -> anyhow::Result<AuthzCheckOutcome> {
-        self.authz_check_resource(
-            actor,
-            action,
-            Some(json!({"kind": "realm", "realm_id": realm_id.trim()})),
-        )
-        .await
-    }
-
     pub async fn authz_check_resource(
         &self,
         actor: &str,
@@ -281,7 +265,13 @@ impl CokretApi {
         action: &str,
         realm_id: &str,
     ) -> anyhow::Result<Value> {
-        let response = self.authz_check(actor, action, realm_id).await?;
+        let response = self
+            .authz_check_resource(
+                actor,
+                action,
+                Some(json!({"kind": "realm", "realm_id": realm_id.trim()})),
+            )
+            .await?;
         Ok(serde_json::to_value(response)?)
     }
 
@@ -350,29 +340,6 @@ impl CokretApi {
             crate::operation::ck_ops::space_update_patch(realm_id, actor_id, space_id, patch)?
                 .build_sdk_event("yougen")?;
         self.submit_built_event(&event).await
-    }
-
-    /// Archive a Space via `ck.space.archive` event (spec-canonical).
-    pub async fn archive_space(
-        &self,
-        space_id: &str,
-        realm_id: &str,
-        actor_id: &str,
-    ) -> anyhow::Result<()> {
-        self.change_space_lifecycle(space_id, realm_id, actor_id, EventKind::SpaceArchive)
-            .await
-    }
-
-    /// Tombstone a Space via `ck.space.tombstone` event (spec-canonical).
-    /// Successor of the old deployment-local Space delete REST shim.
-    pub async fn delete_space(
-        &self,
-        space_id: &str,
-        realm_id: &str,
-        actor_id: &str,
-    ) -> anyhow::Result<()> {
-        self.change_space_lifecycle(space_id, realm_id, actor_id, EventKind::SpaceTombstone)
-            .await
     }
 
     /// Set Realm join_rule + history_visibility policy, optionally also
@@ -494,33 +461,6 @@ impl CokretApi {
         Ok(())
     }
 
-    /// Create an invite via `ck.invite.create` event (spec-canonical). The
-    /// `invite_id` is generated client-side so the caller can correlate
-    /// optimistic UI rows with the eventual server projection.
-    pub async fn invite_to_realm(
-        &self,
-        realm_id: &str,
-        actor_id: &str,
-        invite_id: &str,
-        target: &str,
-        role: Option<&str>,
-    ) -> anyhow::Result<SubmitEventResult> {
-        let invitee = self
-            .resolve_invitee_for_invite(target, realm_id, actor_id)
-            .await?;
-        let event = crate::operation::ck_ops::invite_create_structured(
-            realm_id,
-            actor_id,
-            invite_id,
-            &invitee.did,
-            role,
-            invitee.invite_delivery_target,
-            &invitee.introduction_evidence_digest,
-        )?
-        .build_sdk_event("yougen")?;
-        self.submit_built_event(&event).await
-    }
-
     /// Accept an invite via `ck.invite.accept` event (spec-canonical).
     pub async fn accept_realm_invite(
         &self,
@@ -530,24 +470,6 @@ impl CokretApi {
     ) -> anyhow::Result<SubmitEventResult> {
         let mut event = crate::operation::ck_ops::invite_accept(realm_id, actor_id, invite_id)?
             .build_sdk_event("yougen")?;
-        let resolved = self.resolve_realm(realm_id).await?;
-        let candidate =
-            select_join_candidate(&resolved, cokret_sdk::models::RealmJoinMethod::InviteAccept)?;
-        stamp_invite_join_seal_basis(&mut event, candidate)?;
-        self.submit_built_event_via_join_candidate(candidate, &event)
-            .await
-    }
-
-    /// Join a Realm through an outstanding invite. The invite projection
-    /// records are discovery state; the membership change itself is the
-    /// canonical `ck.member.state` invite -> join transition.
-    pub async fn join_realm_from_invite(
-        &self,
-        realm_id: &str,
-        actor_id: &str,
-        invite_id: &str,
-    ) -> anyhow::Result<SubmitEventResult> {
-        let mut event = build_member_state_invite_accept_event(realm_id, actor_id, invite_id)?;
         let resolved = self.resolve_realm(realm_id).await?;
         let candidate =
             select_join_candidate(&resolved, cokret_sdk::models::RealmJoinMethod::InviteAccept)?;
@@ -628,28 +550,6 @@ impl CokretApi {
         actor_id: &str,
     ) -> anyhow::Result<SubmitEventResult> {
         let event = build_realm_archive_event(realm_id, actor_id, true, Some("operator_request"))?;
-        self.submit_built_event(&event).await
-    }
-
-    /// Restore a Realm by writing `ck.realm.archive{archived:false}`.
-    pub async fn restore_realm(
-        &self,
-        realm_id: &str,
-        actor_id: &str,
-    ) -> anyhow::Result<SubmitEventResult> {
-        let event = build_realm_archive_event(realm_id, actor_id, false, Some("operator_request"))?;
-        self.submit_built_event(&event).await
-    }
-
-    /// Tombstone a Realm and point clients at an explicit successor Realm.
-    pub async fn tombstone_realm(
-        &self,
-        realm_id: &str,
-        actor_id: &str,
-        successor_realm_id: &str,
-        reason: &str,
-    ) -> anyhow::Result<SubmitEventResult> {
-        let event = build_realm_tombstone_event(realm_id, actor_id, successor_realm_id, reason)?;
         self.submit_built_event(&event).await
     }
 
@@ -974,24 +874,6 @@ impl CokretApi {
         Ok(view.into())
     }
 
-    // Pull the canonical Space-container / Strand lifecycle state for a Realm so the
-    // kanban view can hydrate `column.state` / `card.lifecycle` after a
-    // refresh. Pairs with soland's `routing::events::projection_query`.
-    pub async fn list_space_container_projections(
-        &self,
-        realm_id: &str,
-    ) -> anyhow::Result<LifecycleProjectionView<SpaceContainerProjectionView>> {
-        // `ck:realm:<uuid>` is RFC-3986-safe in a path segment (colon, hyphen,
-        // and alpha-digit are all pchar), so no percent-encoding needed.
-        let realm_id = trim_realm_id(realm_id);
-        let list: cokret_sdk::ProjectionSpaceList = self
-            .sdk_http_client()?
-            .realm_spaces(&realm_id)
-            .await
-            .map_err(anyhow::Error::from)?;
-        Ok(list.into())
-    }
-
     pub async fn list_strand_projections(
         &self,
         realm_id: &str,
@@ -1003,18 +885,6 @@ impl CokretApi {
             .await
             .map_err(anyhow::Error::from)?;
         Ok(list.into())
-    }
-
-    pub async fn document_projection(
-        &self,
-        realm_id: &str,
-        morph_id: &str,
-    ) -> anyhow::Result<cokret_sdk::DocumentMorphProjectionOutcome> {
-        let realm_id = trim_realm_id(realm_id);
-        self.sdk_http_client()?
-            .document_projection(&realm_id, morph_id)
-            .await
-            .map_err(anyhow::Error::from)
     }
 
     /// Read the verified Realm ↔ organization relationships projection

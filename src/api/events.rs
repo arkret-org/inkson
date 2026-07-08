@@ -182,14 +182,6 @@ impl CokretApi {
             .map_err(|error| anyhow::anyhow!("events describe: {error}"))
     }
 
-    /// Return a cached `events_describe` body. The first call performs
-    /// the round-trip; subsequent calls return the cached reference.
-    pub async fn events_describe_cached(&self) -> anyhow::Result<&cokret_sdk::ServiceDescribe> {
-        self.events_describe_cache
-            .get_or_try_init(|| async { self.events_describe().await })
-            .await
-    }
-
     pub(crate) async fn event_proof_context(
         &self,
     ) -> anyhow::Result<crate::event_signer::EventProofContext> {
@@ -461,38 +453,6 @@ impl CokretApi {
             .post("/_cokret/self/ephemeral", envelope)
             .await
             .map_err(anyhow::Error::from)
-    }
-
-    /// Round R2/R3 (T02) — point-to-point to-device signals (the
-    /// `ck.key.verification.*` family) MUST travel on the device-message
-    /// channel, NOT through `ck.self.events.command.submit` or the broadcast ephemeral
-    /// channel. Thin convenience wrapper around
-    /// [`Self::send_device_message_envelope`] that asserts the kind belongs
-    /// to the to-device ephemeral family.
-    pub async fn submit_to_device_ephemeral(
-        &self,
-        txn_id: &str,
-        target_actor: &str,
-        target_device_id: &str,
-        message_type: &str,
-        content: Value,
-    ) -> anyhow::Result<DeviceMessagesSendOutcome> {
-        if !message_type.starts_with("ck.key.verification.") {
-            anyhow::bail!(
-                "to-device ephemeral submit: message_type {message_type:?} is not in the ck.key.verification.* family"
-            );
-        }
-        // `device-lifecycle.md` §8.2 caps verification request.expires_at at
-        // `timestamp + 10m`; use that window for every step of the family.
-        self.send_device_message_envelope(
-            txn_id,
-            target_actor,
-            target_device_id,
-            message_type,
-            &crate::clock::rfc3339_secs_in(10),
-            content,
-        )
-        .await
     }
 }
 

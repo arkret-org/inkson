@@ -35,9 +35,9 @@
 //! ```
 
 use chime::{
-    ChimePushRegisterDeviceOutcome, ChimePushRegisterDeviceRequest, CokretPushClient,
-    GatewayBinding, PushDeviceConfig, PushGatewayType, PushPreferences, PushRegistrationState,
-    build_register_device_request,
+    ChimePushRegisterDeviceOutcome, ChimePushRegisterDeviceRequest,
+    ChimePushUnregisterDeviceOutcome, CokretPushClient, GatewayBinding, PushDeviceConfig,
+    PushGatewayType, PushPreferences, PushRegistrationState, build_register_device_request,
 };
 
 use crate::account_auth::{
@@ -125,6 +125,14 @@ pub struct RegisterContext {
     pub active_circle_id: Option<String>,
 }
 
+#[derive(Clone, Debug)]
+pub struct UnregisterContext {
+    pub principal_server_url: String,
+    pub device_id: String,
+    pub authorization_credential: Option<String>,
+    pub session_grant: Option<String>,
+}
+
 /// Outcome of a successful chime-driven registration. The persisted
 /// `PushRegistrationState` has already been saved to `LocalStateStore`
 /// — the value is returned for UI labelling.
@@ -159,9 +167,65 @@ pub async fn register_via_chime(
     ensure_production_register_request(&request)
         .map_err(|err| PushRegistrationError::PlaceholderTokenRejected(err.to_string()))?;
 
-    let mut client =
-        CokretPushClient::new(ctx.principal_server_url.as_str()).with_required_session_grant(true);
-    if let Some(token) = ctx.authorization_credential.as_deref() {
+    let client = chime_client(
+        &ctx.principal_server_url,
+        ctx.authorization_credential.as_deref(),
+        &session_grant,
+    )?;
+
+    let response = client
+        .register_device_with_request(&request, request.idempotency_key.as_deref(), None)
+        .await
+        .map_err(|err| PushRegistrationError::Transport(err.to_string()))?;
+
+    let state = registration_state_from_response(&request, &response.body);
+    state_store.save_push_registration(state.clone());
+
+    Ok(RegisterOutcome {
+        state,
+        response: response.body,
+    })
+}
+
+pub async fn unregister_via_chime(
+    ctx: UnregisterContext,
+    state_store: &mut LocalStateStore,
+) -> Result<ChimePushUnregisterDeviceOutcome, PushRegistrationError> {
+    let mut grant_ctx = RegisterContext {
+        principal_server_url: ctx.principal_server_url.clone(),
+        floria_gateway_url: String::new(),
+        device_id: ctx.device_id.clone(),
+        principal_id: None,
+        authorization_credential: ctx.authorization_credential.clone(),
+        session_grant: ctx.session_grant.clone(),
+        active_circle_id: None,
+    };
+    let session_grant = resolve_chime_session_grant(&mut grant_ctx, state_store)?;
+    let request = crate::push::build_unregister_request(
+        &ctx.device_id,
+        state_store.push_registration().as_ref(),
+    )
+    .map_err(PushRegistrationError::BuildRequest)?;
+    let client = chime_client(
+        &ctx.principal_server_url,
+        ctx.authorization_credential.as_deref(),
+        &session_grant,
+    )?;
+    let response = client
+        .unregister_device_with_request(&request, request.idempotency_key.as_deref(), None)
+        .await
+        .map_err(|err| PushRegistrationError::Transport(err.to_string()))?;
+    state_store.clear_push_registration();
+    Ok(response.body)
+}
+
+fn chime_client(
+    principal_server_url: &str,
+    authorization_credential: Option<&str>,
+    session_grant: &ChimeSessionGrantHeaders,
+) -> Result<CokretPushClient, PushRegistrationError> {
+    let mut client = CokretPushClient::new(principal_server_url).with_required_session_grant(true);
+    if let Some(token) = authorization_credential {
         client = client.with_bearer_token(token);
     }
     client = client
@@ -176,19 +240,7 @@ pub async fn register_via_chime(
             .and_then(|client| client.with_header("X-Cokret-Session-Grant-Proof", proof_jwt))
             .map_err(|err| PushRegistrationError::Transport(err.to_string()))?;
     }
-
-    let response = client
-        .register_device_with_request(&request, request.idempotency_key.as_deref(), None)
-        .await
-        .map_err(|err| PushRegistrationError::Transport(err.to_string()))?;
-
-    let state = registration_state_from_response(&request, &response.body);
-    state_store.save_push_registration(state.clone());
-
-    Ok(RegisterOutcome {
-        state,
-        response: response.body,
-    })
+    Ok(client)
 }
 
 fn resolve_chime_session_grant(

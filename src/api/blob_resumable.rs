@@ -62,7 +62,17 @@ impl CokretApi {
                 }
             }
         }
-        self.upload_file_transfer_ciphertext(ciphertext, content_digest)
+        let metadata = Self::blob_upload_metadata(
+            ciphertext.len(),
+            crate::blob::CIPHERTEXT_MEDIA_TYPE,
+            None,
+            Some(content_digest),
+            None,
+            Some("file_transfer"),
+        )?;
+        self.sdk_http_client()?
+            .blob_upload_bytes(&metadata, ciphertext)
             .await
+            .map_err(anyhow::Error::from)
     }
 }

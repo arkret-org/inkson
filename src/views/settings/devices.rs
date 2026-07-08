@@ -182,12 +182,6 @@ pub fn SettingsDevicesPanel(
     let revoke_status = use_signal(String::new);
     let revoke_passphrase = use_signal(String::new);
 
-    // ── Rename state ─────────────────────────────────────────────────
-    // `Some((device_id, original_name))` while the rename modal is open.
-    let rename_target = use_signal(|| Option::<(String, String)>::None);
-    let rename_input = use_signal(String::new);
-    let rename_status = use_signal(String::new);
-
     // Auto-load guard so the device list populates on mount (and once a
     // session credential arrives) without the user clicking Refresh first.
     let mut auto_loaded = use_signal(|| false);
@@ -347,9 +341,6 @@ pub fn SettingsDevicesPanel(
                     token,
                     state_store,
                     revoke_passphrase,
-                    rename_target,
-                    rename_input,
-                    rename_status,
                 )}
             }
         }
@@ -370,9 +361,6 @@ fn render_device_list(
     token: Signal<String>,
     state_store: Signal<LocalStateStore>,
     revoke_passphrase: Signal<String>,
-    rename_target: Signal<Option<(String, String)>>,
-    rename_input: Signal<String>,
-    rename_status: Signal<String>,
 ) -> Element {
     let rows = devices();
     let cur = current_device();
@@ -380,7 +368,6 @@ fn render_device_list(
     let status_msg = load_status();
     let revoke_msg = revoke_status();
     let pending_revoke = revoke_target();
-    let pending_rename = rename_target();
     rsx! {
         div { class: "event", "data-testid": "device-list",
             div { class: "event-head",
@@ -411,8 +398,6 @@ fn render_device_list(
                                 cur.clone(),
                                 local_device_id.clone(),
                                 revoke_target,
-                                rename_target,
-                                rename_input,
                             )}
                         }
                     }
@@ -420,9 +405,6 @@ fn render_device_list(
             }
             if !revoke_msg.is_empty() {
                 div { class: "muted", "data-testid": "device-revoke-status", "{revoke_msg}" }
-            }
-            if !rename_status().is_empty() {
-                div { class: "muted", "data-testid": "device-rename-status", "{rename_status()}" }
             }
         }
 
@@ -442,20 +424,6 @@ fn render_device_list(
             )}
         }
 
-        if let Some((target_id, original_name)) = pending_rename.clone() {
-            {render_rename_modal(
-                target_id,
-                original_name,
-                base_url,
-                token,
-                rename_target,
-                rename_input,
-                rename_status,
-                devices,
-                current_device,
-                load_status,
-            )}
-        }
     }
 }
 
@@ -491,8 +459,6 @@ fn render_device_row(
     server_current: String,
     local_device_id: String,
     mut revoke_target: Signal<Option<String>>,
-    mut rename_target: Signal<Option<(String, String)>>,
-    mut rename_input: Signal<String>,
 ) -> Element {
     // "current" is true when soland says so (server-authoritative
     // current_device_id) OR when our local_state.device_id matches —
@@ -511,8 +477,6 @@ fn render_device_row(
     // can target either: `[data-testid="device-row"][data-current="true"]`
     // or the dedicated `device-row-current` testid below.
     let device_id_for_button = row.device_id.clone();
-    let device_id_for_rename = row.device_id.clone();
-    let name_for_rename = row.display_name.clone();
     let device_id_label = short_protocol_id(&row.device_id);
     // Friendly name is the primary label; the short device-id fragment
     // (`#<suffix>`) disambiguates devices that share a display name, and
@@ -564,18 +528,6 @@ fn render_device_row(
             td { {device_verification_badge(&row.verification_state)} }
             td { "{row.created_at}" }
             td {
-                Button {
-                    variant: ButtonVariant::Secondary,
-                    "data-testid": "device-rename-button",
-                    onclick: move |_| {
-                        rename_input.set(name_for_rename.clone());
-                        rename_target.set(Some((
-                            device_id_for_rename.clone(),
-                            name_for_rename.clone(),
-                        )));
-                    },
-                    "Rename"
-                }
                 Button {
                     variant: ButtonVariant::Secondary,
                     "data-testid": "device-revoke-button",
@@ -773,124 +725,6 @@ fn render_revoke_modal(
                             });
                         },
                         "Confirm revoke"
-                    }
-                }
-            }
-        }
-    }
-}
-
-#[allow(clippy::too_many_arguments)]
-fn render_rename_modal(
-    target_id: String,
-    original_name: String,
-    base_url: Signal<String>,
-    token: Signal<String>,
-    mut rename_target: Signal<Option<(String, String)>>,
-    mut rename_input: Signal<String>,
-    mut rename_status: Signal<String>,
-    mut devices: Signal<Vec<DeviceRow>>,
-    mut current_device: Signal<String>,
-    mut load_status: Signal<String>,
-) -> Element {
-    let target_label = short_protocol_id(&target_id);
-    let id_suffix = crate::device_name::device_id_short_suffix(&target_id);
-    let confirm_id = target_id.clone();
-    let original_for_disable = original_name.clone();
-    rsx! {
-        div { class: "modal-overlay", "data-testid": "device-rename-modal",
-            div { class: "modal",
-                div { class: "event-head",
-                    span { "Rename device" }
-                    span { title: "{target_id}", "{target_label}" }
-                }
-                p { class: "muted",
-                    "Give this device a name you'll recognise. The name is display-only; the device's identity stays its id "
-                    code { "#{id_suffix}" }
-                    "."
-                }
-                Label { html_for: "device-rename-input", "Device name" }
-                Input {
-                    id: "device-rename-input",
-                    "data-testid": "device-rename-input",
-                    r#type: "text",
-                    maxlength: "128",
-                    value: "{rename_input}",
-                    placeholder: "e.g. Work laptop",
-                    oninput: move |event: FormEvent| rename_input.set(event.value()),
-                }
-                div { class: "actions",
-                    Button {
-                        variant: ButtonVariant::Secondary,
-                        "data-testid": "device-rename-cancel-button",
-                        onclick: move |_| {
-                            rename_target.set(None);
-                        },
-                        "Cancel"
-                    }
-                    Button {
-                        variant: ButtonVariant::Primary,
-                        "data-testid": "device-rename-confirm-button",
-                        disabled: rename_input().trim().is_empty()
-                            || rename_input().trim() == original_for_disable.trim(),
-                        onclick: move |_| {
-                            let base = base_url();
-                            let api_token = token();
-                            let target = confirm_id.clone();
-                            let new_name = rename_input().trim().to_owned();
-                            if new_name.is_empty() {
-                                rename_status.set("Enter a device name.".to_owned());
-                                return;
-                            }
-                            let target_label = short_protocol_id(&target);
-                            rename_status.set(format!("Renaming {target_label}…"));
-                            spawn(async move {
-                                let target_inner = target.clone();
-                                let new_name_inner = new_name.clone();
-                                let result = with_authed_api(
-                                    &base,
-                                    api_token.clone(),
-                                    move |api| async move {
-                                        api.rename_device(&target_inner, &new_name_inner).await
-                                    },
-                                )
-                                .await;
-                                match result {
-                                    Ok(_) => {
-                                        rename_status.set(format!(
-                                            "Renamed {target_label} to \"{new_name}\"."
-                                        ));
-                                        rename_target.set(None);
-                                        rename_input.set(String::new());
-                                        // Re-fetch to reflect the new name.
-                                        if let Ok(value) = with_authed_api(
-                                            &base,
-                                            api_token,
-                                            |api| async move { api.list_devices().await },
-                                        )
-                                        .await
-                                        {
-                                            let value =
-                                                serde_json::to_value(&value).unwrap_or_default();
-                                            let (cur, rows) = parse_devices(&value);
-                                            if let Some(c) = cur {
-                                                current_device.set(c);
-                                            }
-                                            let count = rows.len();
-                                            devices.set(rows);
-                                            load_status.set(format!("Loaded {count} device(s)"));
-                                        }
-                                    }
-                                    Err(err) => {
-                                        rename_status.set(format!(
-                                            "Rename failed: {}",
-                                            err.display()
-                                        ));
-                                    }
-                                }
-                            });
-                        },
-                        "Save"
                     }
                 }
             }

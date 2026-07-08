@@ -1,64 +1,10 @@
 use super::super::*;
 
-#[cfg(feature = "demo-crypto")]
-#[test]
-fn demo_crypto_fallbacks_are_local_only_by_default() {
-    let local = CokretApi::new("http://127.0.0.1:8787").unwrap();
-    local
-        .ensure_demo_crypto_fallback_allowed("test fallback")
-        .expect("local dev fallback");
-    let remote = CokretApi::new("https://cokret.example").unwrap();
-    assert!(
-        remote
-            .ensure_demo_crypto_fallback_allowed("test fallback")
-            .is_err()
-    );
-}
-
-#[cfg(not(feature = "demo-crypto"))]
-#[test]
-fn demo_crypto_fallbacks_are_compiled_out() {
-    let local = CokretApi::new("http://127.0.0.1:8787").unwrap();
-    assert!(
-        local
-            .ensure_demo_crypto_fallback_allowed("test fallback")
-            .is_err(),
-        "without the `demo-crypto` feature, even loopback hosts must fail closed"
-    );
-}
-
 // ── Production-path wire guards ─────────────────────────────────
 //
 // `publish_mls_key_package` produces a real event-signer
 // `device_signature` and fails-closed when no signer is installed
-// (asserted just below). `upload_keys` / `send_to_device` are the
-// demo-only placeholder entry points (placeholder one-time key
-// material / opaque ciphertext) and pin the contract that no dev
-// placeholder reaches the wire when the binary is compiled without
-// the `demo-crypto` feature. Their prod path `anyhow::bail!`s
-// synchronously inside the async fn, so it's safe to call without
-// spinning up a network mock — no HTTP byte is sent.
-//
-// CI gate: see `.github/workflows/ci.yml` (`cargo check
-// --workspace --no-default-features`) which compiles this module
-// with `not(feature = "demo-crypto")` enabled.
-
-#[tokio::test]
-async fn upload_keys_fails_closed_without_demo_crypto() {
-    // `upload_keys` ships placeholder one-time key material, so the
-    // non-`demo-crypto` build MUST fail-closed before any wire byte
-    // leaves the device (never emit a placeholder prekey).
-    let api = CokretApi::new("http://127.0.0.1:8787").unwrap();
-    let err = api
-        .upload_keys("ck:device:test-prod-guard")
-        .await
-        .expect_err("MUST refuse to upload placeholder prekeys without demo-crypto");
-    let msg = format!("{err}");
-    assert!(
-        msg.contains("demo-crypto") && msg.contains("placeholder"),
-        "error must name the demo-crypto gate, got: {msg}"
-    );
-}
+// (asserted just below).
 
 #[tokio::test]
 async fn publish_mls_key_package_fails_closed_without_active_signer() {
@@ -111,40 +57,5 @@ fn mls_key_package_upload_entry_carries_digest_and_ref() {
     assert_eq!(
         entry.key_package.as_str(),
         Some(record.key_package.as_str())
-    );
-}
-
-#[cfg(not(feature = "demo-crypto"))]
-#[tokio::test]
-async fn send_to_device_refuses_opaque_ciphertext_placeholder_in_prod_build() {
-    let api = CokretApi::new("http://127.0.0.1:8787").unwrap();
-    let err = api
-        .send_to_device("did:web:bob.example", "ck:device:test-prod-guard")
-        .await
-        .expect_err("prod build MUST refuse to ship opaque ciphertext placeholders");
-    let msg = format!("{err}");
-    assert!(
-        msg.contains("ciphertext") && msg.contains("demo-crypto"),
-        "prod-path error must name the placeholder + missing feature gate, got: {msg}"
-    );
-}
-
-/// Belt-and-braces: even on a loopback host, the prod build of the
-/// helper guard must fail closed. We already cover this in
-/// `demo_crypto_fallbacks_are_compiled_out` for the public
-/// `ensure_demo_crypto_fallback_allowed`; this variant additionally
-/// asserts that the error message names the missing build feature
-/// so the caller can suggest the right fix in operator-facing logs.
-#[cfg(not(feature = "demo-crypto"))]
-#[test]
-fn demo_crypto_guard_message_names_required_build_feature() {
-    let local = CokretApi::new("http://127.0.0.1:8787").unwrap();
-    let err = local
-        .ensure_demo_crypto_fallback_allowed("upload_keys demo device_signature")
-        .expect_err("prod build must fail closed even on loopback");
-    let msg = format!("{err}");
-    assert!(
-        msg.contains("demo-crypto"),
-        "guard error must reference the `demo-crypto` build feature for operators, got: {msg}"
     );
 }

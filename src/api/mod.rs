@@ -1,101 +1,26 @@
 use std::collections::BTreeMap;
 use std::fmt;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
-use chime::{ChimePushRegisterDeviceRequest, ChimePushUnregisterDeviceRequest, CokretPushClient};
 use reqwest::Client;
-use serde::Deserialize;
 use serde_json::{Value, json};
-use tokio::sync::{OnceCell, RwLock};
+use tokio::sync::OnceCell;
 use url::Url;
-
-/// A token that can be used to cancel in-flight API requests.
-#[derive(Clone, Debug)]
-pub struct CancellationToken {
-    cancelled: Arc<AtomicBool>,
-}
-
-#[derive(Clone, Debug, Deserialize)]
-pub struct PrincipalAuthBridgeDescribeView {
-    pub contract: String,
-    pub version: String,
-    pub api_base_path: String,
-    pub auth: PrincipalAuthBridgeAuthDescriptor,
-    pub push: PrincipalAuthBridgePushDescriptor,
-    pub examples: PrincipalAuthBridgeExamples,
-    #[serde(default)]
-    pub todos: Vec<String>,
-}
-
-#[derive(Clone, Debug, Deserialize)]
-pub struct PrincipalAuthBridgeAuthDescriptor {
-    pub dev_login_path: String,
-    pub principal_id_body_field: String,
-}
-
-#[derive(Clone, Debug, Deserialize)]
-pub struct PrincipalAuthBridgePushDescriptor {
-    pub register_device_path: String,
-    pub unregister_device_path: String,
-    pub session_grant_header: String,
-    pub principal_id_body_field: String,
-    pub register_device_mode: String,
-}
-
-#[derive(Clone, Debug, Default, Deserialize)]
-pub struct PrincipalAuthBridgeExamples {
-    #[serde(default)]
-    pub session_grant_issue_request: Value,
-    #[serde(default)]
-    pub register_device_request: Value,
-    #[serde(default)]
-    pub unregister_device_request: Value,
-}
-
-pub use cokret_sdk::SessionGrantIntrospectionProof;
-
-impl CancellationToken {
-    pub fn new() -> Self {
-        Self {
-            cancelled: Arc::new(AtomicBool::new(false)),
-        }
-    }
-
-    /// Cancel all requests using this token.
-    pub fn cancel(&self) {
-        self.cancelled.store(true, Ordering::Relaxed);
-    }
-
-    /// Check if cancellation has been requested.
-    pub fn is_cancelled(&self) -> bool {
-        self.cancelled.load(Ordering::Relaxed)
-    }
-}
-
-impl Default for CancellationToken {
-    fn default() -> Self {
-        Self::new()
-    }
-}
 
 use crate::config::validate_server_url;
 use crate::models::{
     AccountDataSetResult, AuthzCheckOutcome, BackfillView, BlobUploadOutcome, ContactListView,
     CurrentAccount, DeviceMessagesAckOutcome, DeviceMessagesAckRequestBody,
-    DeviceMessagesGetOutcome, DeviceMessagesSendOutcome, DeviceTrustView, DirectoryDescription,
-    GrantList, IdentityDescribeOutcome, IdentityResolveOutcome, IndexSearchView, KeysClaimOutcome,
-    KeysQueryOutcome, KeysUploadOutcome, MediaIceConfigOutcome, MediaIceConfigRequestBody,
-    ModerationReportOutcome, OP_SNAPSHOT_HEAD, OkOutcome, PresenceResult, PushRegisterView,
-    RealmCreateResult, RealmJoinCandidate, RealmPolicyResult, ReceiptResult, ResolveHandleView,
-    ResolveRealmOutcome, SearchActorsView, SearchOrganizationsView, ServerDescription,
-    SpaceCreateResult, SubmitEventResult, TypingResult, VerifyDeviceResult,
+    DeviceMessagesGetOutcome, DeviceMessagesSendOutcome, GrantList, IdentityDescribeOutcome,
+    IdentityResolveOutcome, KeysQueryOutcome, MediaIceConfigOutcome, MediaIceConfigRequestBody,
+    OP_SNAPSHOT_HEAD, PresenceResult, RealmCreateResult, RealmJoinCandidate, RealmPolicyResult,
+    ReceiptResult, ResolveHandleView, ResolveRealmOutcome, SearchActorsView,
+    SearchOrganizationsView, ServerDescription, SpaceCreateResult, SubmitEventResult, TypingResult,
 };
 use crate::operation::{EventKind, trim_realm_id, uuid_v7};
 use crate::wire_helpers::{
-    blob_download_url_for, canonical_blob_ref, path_component, query_component,
-    safe_blob_filename_header, validate_cursor,
+    canonical_blob_ref, path_component, query_component, safe_blob_filename_header, validate_cursor,
 };
 
 #[derive(Clone)]
@@ -104,17 +29,6 @@ pub struct CokretApi {
     pub(crate) http: Client,
     authorization_credential: Option<String>,
     wait_for_sync_token: Option<String>,
-    /// Coauth-issued session grant and optional introspection proof headers
-    /// used by chime push register/unregister calls.
-    chime_session_grant: Option<String>,
-    chime_session_grant_proof: Option<SessionGrantIntrospectionProof>,
-    network_state: Arc<RwLock<NetworkState>>,
-    cancel_token: Option<CancellationToken>,
-    /// SPEC-CR-001 — `ck.session.grant` signing key + its `keyid`. When set,
-    /// requests to the `/_cokret/self/*` surface carry an RFC 9421 PoP
-    /// signature (api-conventions.md §3.2).
-    session_signing_key: Option<ed25519_dalek::SigningKey>,
-    session_key_id: Option<String>,
     /// ②(A+②) — grant-binding (DPoP) key. When set together with a grant in
     /// `authorization_credential`, every `/_cokret/self/*` request carries a freshly-minted
     /// per-request `DPoP` proof (RFC 9449) bound to `htm`/`htu`/`ath=hash(grant)`
@@ -122,10 +36,6 @@ pub struct CokretApi {
     /// presentation: the held credential is the
     /// grant in `authorization_credential`, sender-constrained by this DPoP key.
     dpop_device: Option<crate::account_auth::grant_dpop::DpopHandle>,
-    /// Cached `GET /_cokret/self/events/describe` response (spec
-    /// `ServiceDescribe` shape) so repeat callers avoid re-hitting the
-    /// network.
-    events_describe_cache: Arc<OnceCell<cokret_sdk::ServiceDescribe>>,
     /// Cached `GET /_cokret/describe` response used to bind durable
     /// EventProof signatures to this service's trust domain and audience.
     service_describe_cache: Arc<OnceCell<ServerDescription>>,
@@ -140,24 +50,7 @@ impl fmt::Debug for CokretApi {
                 &self.authorization_credential.as_ref().map(|_| "<redacted>"),
             )
             .field("wait_for_sync_token", &self.wait_for_sync_token)
-            .field(
-                "chime_session_grant",
-                &self.chime_session_grant.as_ref().map(|_| "<redacted>"),
-            )
-            .field(
-                "chime_session_grant_proof",
-                &self.chime_session_grant_proof.as_ref().map(|_| "<proof>"),
-            )
-            .field("cancel_token", &self.cancel_token)
             .field("dpop_device", &self.dpop_device.as_ref().map(|h| h.jkt()))
-            .field(
-                "events_describe_cache",
-                &self
-                    .events_describe_cache
-                    .get()
-                    .map(|_| "<cached>")
-                    .unwrap_or("<empty>"),
-            )
             .field(
                 "service_describe_cache",
                 &self
@@ -168,14 +61,6 @@ impl fmt::Debug for CokretApi {
             )
             .finish()
     }
-}
-
-/// Network connectivity state.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub enum NetworkState {
-    Online,
-    Offline,
-    Reconnecting,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -203,7 +88,6 @@ mod keys;
 mod media;
 mod mls;
 mod moderation;
-mod push;
 mod realm;
 // YOU-07-001: sync / account-subscribe parsers now live at crate root so E2 can
 // delete `src/api/**` without carrying parser code in the old API module.
@@ -216,11 +100,3 @@ mod transport;
 // `tests.rs` (move only); `use super::*` resolves against this module unchanged.
 #[cfg(test)]
 mod tests;
-
-/// PoP signature validity window (seconds). Kept well under the 300s protocol
-/// maximum (api-conventions.md §3.2) while tolerating modest clock skew.
-const POP_SIGNATURE_WINDOW_SECONDS: i64 = 120;
-
-// The RFC 7638 Ed25519 JWK thumbprint (the `keyid` soland accepts for the PoP
-// binding check) is derived through `cokret_sdk::dpop`, keeping the PoP `jkt`
-// and DPoP `jkt` on the same shared implementation.

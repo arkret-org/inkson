@@ -2024,31 +2024,25 @@ pub fn SettingsPanel(
                                     let base = base_url();
                                     let api_token = token();
                                     let dev = device_id();
-                                    let existing = state_store.read().push_registration();
+                                    let mut local_store = state_store.read().clone();
                                     spawn(async move {
-                                        let request = match crate::push::build_unregister_request(&dev, existing.as_ref()) {
-                                            Ok(r) => r,
-                                            Err(error) => {
-                                                crate::components::feedback::toast_error(
-                                                    "feedback.push_unregister_failed",
-                                                    vec![],
-                                                    Some(format!("push unregister unavailable: {error}")),
-                                                );
-                                                return;
-                                            }
+                                        let context = crate::push::registration::UnregisterContext {
+                                            principal_server_url: base,
+                                            device_id: dev,
+                                            authorization_credential: Some(api_token),
+                                            session_grant: None,
                                         };
-                                        match with_authed_api(&base, api_token, |api| async move {
-                                            api.unregister_push_device_with_request(&request).await
-                                        })
-                                        .await
-                                        {
+                                        match crate::push::registration::unregister_via_chime(
+                                            context,
+                                            &mut local_store,
+                                        ).await {
                                             Ok(_) => {
                                                 state_store.write().clear_push_registration();
                                                 push_state.set("Not registered".to_owned());
                                                 crate::components::feedback::toast_success("feedback.push_unregistered", vec![]);
                                             }
                                             Err(err) => {
-                                                let message = format!("push unregister failed: {}", err.display());
+                                                let message = format!("push unregister failed: {err}");
                                                 push_state.set(message.clone());
                                                 crate::components::feedback::toast_error(
                                                     "feedback.push_unregister_failed",

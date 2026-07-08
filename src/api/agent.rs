@@ -31,7 +31,7 @@ impl CokretApi {
     /// `ck.gate.account.command.pair_agent_key`. The runtime generated the
     /// key and PoP; the controller signs `authorize_event` locally before this
     /// method submits the pairing request.
-    pub(crate) async fn agent_key_pair(
+    async fn agent_key_pair(
         &self,
         body: &AgentKeyPairRequestBody,
     ) -> anyhow::Result<AgentKeyPairOutcome> {
@@ -114,19 +114,6 @@ impl CokretApi {
             .map_err(anyhow::Error::from)
     }
 
-    /// `POST /_cokret/self/agents/{id}/rotate-key` — `ck.self.agent.command.rotate_key`.
-    /// Writes the `ck.agent.key.{revoke,authorize}` pair atomically.
-    pub async fn agent_rotate_key(
-        &self,
-        agent_principal_id: &str,
-        body: &cokret_sdk::AgentRotateKeyRequestBody,
-    ) -> anyhow::Result<cokret_sdk::AgentRotateKeyOutcome> {
-        self.sdk_http_client()?
-            .agent_rotate_key(agent_principal_id, body)
-            .await
-            .map_err(anyhow::Error::from)
-    }
-
     /// `POST /_cokret/self/agents/{id}/grants` — `ck.self.agent.grant.command.attach`.
     /// Attaches a capability grant scoped to the agent. The spec body
     /// carries the full grant object under the single `grant` property.
@@ -180,29 +167,6 @@ impl CokretApi {
     ) -> anyhow::Result<AgentParticipationOutcome> {
         self.sdk_http_client()?
             .agent_participation_get(agent_principal_id)
-            .await
-            .map_err(anyhow::Error::from)
-    }
-
-    /// `POST /_cokret/self/agent-sidecar-threads:ensure` —
-    /// `ck.self.agent.sidecar_thread.command.ensure`. Idempotently derives the
-    /// controller_agent_circle_key and ensures a sidecar Circle exists
-    /// for the controller and the addressed native agents.
-    pub async fn agent_sidecar_thread_ensure(
-        &self,
-        body: &cokret_sdk::AgentSidecarThreadEnsureRequestBody,
-    ) -> anyhow::Result<cokret_sdk::AgentSidecarThreadEnsureOutcome> {
-        if body.controller_principal_id.as_str().trim().is_empty() {
-            anyhow::bail!("controller_principal_id is required");
-        }
-        if body.context_ref.realm_id.as_str().trim().is_empty() {
-            anyhow::bail!("context_ref.realm_id is required");
-        }
-        if body.context_ref.strand_id.is_none() && body.context_ref.relation_id.is_none() {
-            anyhow::bail!("context_ref must include strand_id or relation_id");
-        }
-        self.sdk_http_client()?
-            .agent_sidecar_thread_ensure(body)
             .await
             .map_err(anyhow::Error::from)
     }

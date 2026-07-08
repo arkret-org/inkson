@@ -88,12 +88,7 @@ jobs:
         working-directory: yougen
         run: cargo test
 
-      # Production-path gate: build + test with `demo-crypto` OFF so the
-      # `upload_keys` / `publish_mls_key_package` / `send_to_device`
-      # placeholder branches that ship to a release binary stay in the
-      # `anyhow::bail!` arm. Compiling here catches a future refactor
-      # that accidentally drops the prod-path arm or re-introduces
-      # demo crypto bytes on the production wire path.
+      # Production-path gate: build + test without optional local UI surfaces.
       - name: cargo check (no-default-features, prod path)
         working-directory: yougen
         run: cargo check --workspace --no-default-features

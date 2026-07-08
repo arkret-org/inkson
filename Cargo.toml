@@ -24,14 +24,8 @@ incremental = false
 # `proofs: Vec::new()` (there is NO placeholder proof), and the runtime
 # proof-mode default starts in [`operation::ProofMode::Production`] so
 # the submit guard refuses to ship envelopes that were never signed by a
-# real signer. NB: `demo-crypto` is opt-in — the `device_signature` /
-# opaque-ciphertext placeholders only ship when explicitly enabled.
+# real signer.
 default = []
-# I4 — gates the `device_signature` / `ciphertext` placeholders shipped by
-# `upload_keys`, `publish_mls_key_package`, and `send_to_device`. Without
-# this feature, those entry points return an error before any wire byte
-# leaves the device. There is NO runtime env-var override.
-demo-crypto = []
 # Deferred protocol surfaces are compiled by default for unit coverage but
 # hidden from the local 1.0 UI unless explicitly opted in.
 experimental-discussion-promote = []

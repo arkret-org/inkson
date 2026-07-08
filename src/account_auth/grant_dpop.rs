@@ -160,7 +160,7 @@ impl DpopHandle {
         grant_id: &str,
         grant_jwt: &str,
         audience: &str,
-    ) -> Result<crate::api::SessionGrantIntrospectionProof, AuthDpopError> {
+    ) -> Result<cokret_sdk::SessionGrantIntrospectionProof, AuthDpopError> {
         crate::account_auth::build_session_grant_introspection_proof_bundle(
             grant_id,
             grant_jwt,

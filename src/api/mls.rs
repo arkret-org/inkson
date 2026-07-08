@@ -36,43 +36,6 @@ impl CokretApi {
             .map_err(anyhow::Error::from)
     }
 
-    /// Fetch a peer's MLS key package via
-    /// `query_keys`, decoding the most recent `mls_key_packages` entry
-    /// into a typed `MlsKeyPackageRecord`. Returns `Ok(None)` when the
-    /// device exists but has no MLS key package on file (in which case
-    /// the caller should fall back to a non-MLS path or ask the peer to
-    /// publish).
-    pub async fn fetch_mls_key_package(
-        &self,
-        actor: &str,
-        device_id: &str,
-    ) -> anyhow::Result<Option<cokret_sdk::MlsKeyPackageRecord>> {
-        let resp = self.query_keys(actor, device_id).await?;
-        // SDK `KeysQueryOutcome::device_keys` is now a typed
-        // `BTreeMap<Did, BTreeMap<DeviceId, QueryDeviceRecord>>`; the prekey /
-        // keypackage bundle lives under `record.algorithms`. Match the newtype
-        // identifier keys by their string form rather than a borrow-keyed
-        // `BTreeMap::get`.
-        let packages = resp
-            .device_keys
-            .iter()
-            .find(|(did, _)| did.as_str() == actor)
-            .and_then(|(_, actor_map)| actor_map.iter().find(|(dev, _)| dev.as_str() == device_id))
-            .and_then(|(_, record)| record.algorithms.get("mls_key_packages"));
-        let Some(packages) = packages else {
-            return Ok(None);
-        };
-        let map = match packages.as_object() {
-            Some(m) => m,
-            None => return Ok(None),
-        };
-        let Some((_, value)) = map.iter().next() else {
-            return Ok(None);
-        };
-        let record: cokret_sdk::MlsKeyPackageRecord = serde_json::from_value(value.clone())?;
-        Ok(Some(record))
-    }
-
     pub async fn claim_mls_key_package(
         &self,
         target_principal_id: &str,
@@ -113,44 +76,6 @@ impl CokretApi {
             .map_err(anyhow::Error::from)
     }
 
-    pub async fn mimi_key_material(
-        &self,
-        request: &cokret_sdk::MimiKeyMaterialRequestBody,
-    ) -> anyhow::Result<cokret_sdk::MimiKeyMaterialOutcome> {
-        self.sdk_http_client()?
-            .post("/_cokret/open/mimi/key-material", request)
-            .await
-            .map_err(anyhow::Error::from)
-    }
-
-    pub async fn mimi_room_update(
-        &self,
-        room_id: &str,
-        request: &cokret_sdk::MimiRoomUpdateRequestBody,
-    ) -> anyhow::Result<cokret_sdk::MimiRoomUpdateOutcome> {
-        self.sdk_http_client()?
-            .post(
-                &format!("/_cokret/open/mimi/strands/{room_id}/update"),
-                request,
-            )
-            .await
-            .map_err(anyhow::Error::from)
-    }
-
-    pub async fn mimi_notify(
-        &self,
-        room_id: &str,
-        request: &cokret_sdk::MimiNotifyRequestBody,
-    ) -> anyhow::Result<cokret_sdk::MimiNotifyOutcome> {
-        self.sdk_http_client()?
-            .post(
-                &format!("/_cokret/open/mimi/strands/{room_id}/notify"),
-                request,
-            )
-            .await
-            .map_err(anyhow::Error::from)
-    }
-
     pub async fn mimi_submit_message(
         &self,
         room_id: &str,
@@ -175,42 +100,12 @@ impl CokretApi {
             .map_err(anyhow::Error::from)
     }
 
-    pub async fn mimi_request_consent(
-        &self,
-        request: &cokret_sdk::MimiRequestConsentRequestBody,
-    ) -> anyhow::Result<cokret_sdk::MimiRequestConsentOutcome> {
-        self.sdk_http_client()?
-            .post("/_cokret/open/mimi/consent/request", request)
-            .await
-            .map_err(anyhow::Error::from)
-    }
-
-    pub async fn mimi_update_consent(
-        &self,
-        request: &cokret_sdk::MimiUpdateConsentRequestBody,
-    ) -> anyhow::Result<cokret_sdk::MimiUpdateConsentOutcome> {
-        self.sdk_http_client()?
-            .post("/_cokret/open/mimi/consent/update", request)
-            .await
-            .map_err(anyhow::Error::from)
-    }
-
     pub async fn mimi_identifier_query(
         &self,
         request: &cokret_sdk::MimiIdentifierQueryRequestBody,
     ) -> anyhow::Result<cokret_sdk::MimiIdentifierQueryOutcome> {
         self.sdk_http_client()?
             .post("/_cokret/open/mimi/identifiers/query", request)
-            .await
-            .map_err(anyhow::Error::from)
-    }
-
-    pub async fn mimi_report_abuse(
-        &self,
-        request: &cokret_sdk::MimiReportAbuseRequestBody,
-    ) -> anyhow::Result<cokret_sdk::MimiReportAbuseOutcome> {
-        self.sdk_http_client()?
-            .mimi_report_abuse(request)
             .await
             .map_err(anyhow::Error::from)
     }

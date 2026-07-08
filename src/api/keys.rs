@@ -1,20 +1,15 @@
-#[cfg(any(test, feature = "demo-crypto"))]
+#[cfg(test)]
 use base64::Engine as _;
-#[cfg(any(test, feature = "demo-crypto"))]
+#[cfg(test)]
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 
 use super::*;
-use crate::event_builders::{
-    build_device_message_envelope, ensure_device_verification_proof_is_signed,
-};
+use crate::event_builders::build_device_message_envelope;
 
 /// Canonical signing-input prefix for the `keys/upload` `device_signature`
 /// (spec `device-lifecycle.md` §8.1).
-// The keys/upload signing chain below is only exercised by the `demo-crypto`
-// `upload_keys` path (the non-demo build fails closed before signing) and by
-// the wire-shape unit tests; gate it accordingly so the default build stays
-// warning-free.
-#[cfg(any(test, feature = "demo-crypto"))]
+// The keys/upload signing chain below is kept for wire-shape unit tests.
+#[cfg(test)]
 const KEYS_UPLOAD_SIGNATURE_PREFIX: &str = "ck-keys-upload-v1\n";
 
 /// Build the spec `device-lifecycle.md` §8.1 canonical signing input for a
@@ -28,7 +23,7 @@ const KEYS_UPLOAD_SIGNATURE_PREFIX: &str = "ck-keys-upload-v1\n";
 /// object `{}` (not be omitted) so sender and verifier hash byte-identical
 /// input. The body object is canonicalized with RFC 8785 JCS via
 /// [`crate::canonical`].
-#[cfg(any(test, feature = "demo-crypto"))]
+#[cfg(test)]
 fn keys_upload_signing_input(
     device_id: &str,
     one_time_keys: &BTreeMap<String, Value>,
@@ -50,7 +45,7 @@ fn keys_upload_signing_input(
 /// signing the §8.1 canonical input with the local event-signer (the device
 /// identity Ed25519 `did:key`). Fail-closed (`bail!`) when no signer is
 /// installed — never emit a placeholder.
-#[cfg(any(test, feature = "demo-crypto"))]
+#[cfg(test)]
 pub(crate) fn device_signature_tuple_for_input(
     signer: &crate::event_signer::YougenEventSigner,
     signing_input: &[u8],
@@ -66,7 +61,7 @@ pub(crate) fn device_signature_tuple_for_input(
     }))
 }
 
-#[cfg(any(test, feature = "demo-crypto"))]
+#[cfg(test)]
 pub(crate) fn sign_keys_upload_batch_with_signer(
     signer: &crate::event_signer::YougenEventSigner,
     device_id: &str,
@@ -75,23 +70,6 @@ pub(crate) fn sign_keys_upload_batch_with_signer(
 ) -> anyhow::Result<Value> {
     let input = keys_upload_signing_input(device_id, one_time_keys, fallback_keys)?;
     device_signature_tuple_for_input(signer, &input, "keys/upload")
-}
-
-// Only the `demo-crypto` `upload_keys` path ships placeholder one-time keys;
-// the active-signer convenience wrapper is therefore gated with it (the
-// non-demo build fails closed in `upload_keys` before any signing happens).
-#[cfg(feature = "demo-crypto")]
-pub(crate) fn sign_keys_upload_batch(
-    device_id: &str,
-    one_time_keys: &BTreeMap<String, Value>,
-    fallback_keys: &BTreeMap<String, Value>,
-) -> anyhow::Result<Value> {
-    let signer = crate::event_signer::active_signer().ok_or_else(|| {
-        anyhow::anyhow!(
-            "keys/upload device_signature requires an active event-signer (fail-closed)"
-        )
-    })?;
-    sign_keys_upload_batch_with_signer(&signer, device_id, one_time_keys, fallback_keys)
 }
 
 fn key_backup_authorized_event_ref_for_device(viewer: &Value, device_id: &str) -> Option<String> {
@@ -110,72 +88,6 @@ fn key_backup_authorized_event_ref_for_device(viewer: &Value, device_id: &str) -
 }
 
 impl CokretApi {
-    /// Upload one-time / fallback prekeys to `/_cokret/self/keys/upload`.
-    ///
-    /// The one-time-key MATERIAL produced here is a fixed placeholder
-    /// (`key:"yougen-one-time"`), NOT a real curve25519 prekey, so it is
-    /// gated behind the `demo-crypto` feature alongside the other
-    /// dev-placeholder entry points. A real production keys/upload must
-    /// source one-time keys from the device key store (not yet wired); the
-    /// non-`demo-crypto` build therefore fails closed before any wire byte
-    /// leaves the device — mirroring `send_to_device` /
-    /// `device-lifecycle.md §8.1` (one-time keys MUST be real curve25519
-    /// prekeys redeemable via `keys/claim`).
-    #[cfg(feature = "demo-crypto")]
-    pub async fn upload_keys(&self, device_id: &str) -> anyhow::Result<KeysUploadOutcome> {
-        self.ensure_demo_crypto_fallback_allowed("keys/upload placeholder one-time key material")?;
-        let mut one_time_keys = BTreeMap::new();
-        one_time_keys.insert(
-            "signed_curve25519:yougen-otk-1".to_owned(),
-            json!({
-                "key_id": "yougen-otk-1",
-                "key": "yougen-one-time"
-            }),
-        );
-        let fallback_keys: BTreeMap<String, Value> = BTreeMap::new();
-        let device_signature = sign_keys_upload_batch(device_id, &one_time_keys, &fallback_keys)?;
-        let body = cokret_sdk::models::KeysUploadRequestBody {
-            device_id: cokret_sdk::DeviceId::new(device_id.to_owned())
-                .map_err(|err| anyhow::anyhow!("invalid device_id `{device_id}`: {err}"))?,
-            one_time_keys,
-            fallback_keys,
-            device_signature,
-        };
-        self.sdk_http_client()?
-            .keys_upload(&body)
-            .await
-            .map_err(anyhow::Error::from)
-    }
-
-    #[cfg(not(feature = "demo-crypto"))]
-    pub async fn upload_keys(&self, _device_id: &str) -> anyhow::Result<KeysUploadOutcome> {
-        anyhow::bail!(
-            "keys/upload ships placeholder one-time key material and requires the `demo-crypto` build feature; \
-             a production upload must source real curve25519 prekeys from the device key store"
-        )
-    }
-
-    pub async fn claim_keys(
-        &self,
-        actor: &str,
-        device_id: &str,
-        algorithm: &str,
-    ) -> anyhow::Result<KeysClaimOutcome> {
-        let actor = cokret_sdk::Did::new(actor.to_owned())
-            .map_err(|err| anyhow::anyhow!("invalid actor DID `{actor}`: {err}"))?;
-        let device_id = cokret_sdk::DeviceId::new(device_id.to_owned())
-            .map_err(|err| anyhow::anyhow!("invalid device_id `{device_id}`: {err}"))?;
-        let mut device_map = BTreeMap::new();
-        device_map.insert(device_id, algorithm.to_owned());
-        let mut one_time_keys = BTreeMap::new();
-        one_time_keys.insert(actor, device_map);
-        let body = cokret_sdk::models::KeysClaimRequestBody { one_time_keys };
-        self.sdk_http_client()?
-            .keys_claim(&body)
-            .await
-            .map_err(anyhow::Error::from)
-    }
-
     pub async fn query_keys(
         &self,
         actor: &str,
@@ -195,35 +107,6 @@ impl CokretApi {
             .keys_query(&body)
             .await
             .map_err(anyhow::Error::from)
-    }
-
-    #[cfg(feature = "demo-crypto")]
-    pub async fn send_to_device(
-        &self,
-        actor: &str,
-        device_id: &str,
-    ) -> anyhow::Result<DeviceMessagesSendOutcome> {
-        self.ensure_demo_crypto_fallback_allowed("device_messages opaque test ciphertext")?;
-        self.send_device_message_envelope(
-            "yougen-txn-1",
-            actor,
-            device_id,
-            "ck.mls.test",
-            &crate::clock::rfc3339_secs_in(60),
-            json!({"ciphertext": "opaque-yougen-test"}),
-        )
-        .await
-    }
-
-    #[cfg(not(feature = "demo-crypto"))]
-    pub async fn send_to_device(
-        &self,
-        _actor: &str,
-        _device_id: &str,
-    ) -> anyhow::Result<DeviceMessagesSendOutcome> {
-        anyhow::bail!(
-            "send_to_device ships an opaque test ciphertext and requires the `demo-crypto` build feature"
-        )
     }
 
     /// POST a typed `ck.schema.device_message.v1` envelope to soland's
@@ -327,29 +210,6 @@ impl CokretApi {
             .post("/_cokret/self/ephemeral", &envelope)
             .await
             .map_err(anyhow::Error::from)
-    }
-
-    /// Generic typed to-device push of a `ck.realm_key.share` (or any directed
-    /// kind) straight to a recipient device's queue. The provider's primary path
-    /// is the durable `ck.realm_key.share` event (soland projects it to-device);
-    /// this is the direct-push fallback for an out-of-band reply.
-    pub async fn submit_to_device_message(
-        &self,
-        txn_id: &str,
-        target_actor: &str,
-        target_device_id: &str,
-        kind: &str,
-        content: Value,
-    ) -> anyhow::Result<DeviceMessagesSendOutcome> {
-        self.send_device_message_envelope(
-            txn_id,
-            target_actor,
-            target_device_id,
-            kind,
-            &crate::clock::rfc3339_secs_in(60),
-            content,
-        )
-        .await
     }
 
     pub async fn receive_device_messages(&self) -> anyhow::Result<DeviceMessagesGetOutcome> {
@@ -680,16 +540,6 @@ impl CokretApi {
         self.submit_sdk_event(&event).await
     }
 
-    /// Rename is not exposed as a spec-defined Cokret HTTP endpoint.
-    pub async fn rename_device(
-        &self,
-        device_id: &str,
-        display_name: &str,
-    ) -> anyhow::Result<Value> {
-        let _ = (device_id, display_name);
-        anyhow::bail!("rename_device has no spec-defined Cokret HTTP endpoint")
-    }
-
     /// List the principal's active devices from the spec account viewer
     /// (`GET /_cokret/self/account/viewer`). Returns the raw JSON response
     /// shape with `devices[]`; the settings UI derives "current device" from
@@ -711,24 +561,5 @@ impl CokretApi {
             .account_device_pair(body)
             .await
             .map_err(anyhow::Error::from)
-    }
-
-    /// Device trust must be derived from the spec device-message strand.
-    pub async fn get_device_trust(&self) -> anyhow::Result<DeviceTrustView> {
-        anyhow::bail!("device trust table has no spec-defined Cokret HTTP endpoint")
-    }
-
-    /// Device verification must use the spec device-message strand.
-    pub async fn verify_device(
-        &self,
-        device_id: &str,
-        method: &str,
-        proof: Value,
-    ) -> anyhow::Result<VerifyDeviceResult> {
-        ensure_device_verification_proof_is_signed(&proof)?;
-        let _ = (device_id, method, proof);
-        anyhow::bail!(
-            "verify_device must use device messages; there is no spec HTTP verify endpoint"
-        )
     }
 }

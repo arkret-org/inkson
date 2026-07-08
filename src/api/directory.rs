@@ -277,13 +277,6 @@ impl CokretApi {
             .map_err(anyhow::Error::from)
     }
 
-    pub async fn directory_describe(&self) -> anyhow::Result<DirectoryDescription> {
-        self.sdk_http_client()?
-            .directory_describe()
-            .await
-            .map_err(anyhow::Error::from)
-    }
-
     /// Resolve a Realm by either its `ck:realm:<uuid>` id OR a human-readable
     /// realm alias (`engineering`, `engineering:acme.example`, `#engineering…`).
     ///
@@ -421,18 +414,6 @@ impl CokretApi {
             .directory_search_actors(&body)
             .await
             .map_err(anyhow::Error::from)
-    }
-
-    /// Global index search has no spec-defined Cokret HTTP endpoint.
-    pub async fn index_search(
-        &self,
-        query: &str,
-        realm_ids: &[String],
-        object_kinds: Option<&[&str]>,
-        limit: u32,
-    ) -> anyhow::Result<IndexSearchView> {
-        let _ = (query, realm_ids, object_kinds, limit);
-        anyhow::bail!("index_search has no spec-defined Cokret HTTP endpoint")
     }
 
     pub async fn resolve_handle(&self, handle: &str) -> anyhow::Result<ResolveHandleView> {
@@ -627,36 +608,6 @@ impl CokretApi {
             recipient_service_did,
             introduction_evidence: cokret_sdk::ContactIntroductionEvidence::ExplicitAddress,
         })
-    }
-
-    pub async fn resolve_invitee_did(&self, target: &str) -> anyhow::Result<String> {
-        let target = target.trim();
-        if target.is_empty() {
-            anyhow::bail!("invitee is required");
-        }
-        if cokret_sdk::Did::new(target.to_owned()).is_ok() {
-            return Ok(target.to_owned());
-        }
-        let handle = canonical_invitee_handle(target)?;
-        let resolved = self.resolve_handle(&handle).await?;
-        let subject = resolved.subject_did().ok_or_else(|| {
-            anyhow::anyhow!("directory resolve_handle response did not include subject DID")
-        })?;
-        cokret_sdk::Did::new(subject.to_owned())
-            .map_err(|err| anyhow::anyhow!("directory resolved invalid DID `{subject}`: {err}"))?;
-        Ok(subject.to_owned())
-    }
-
-    pub async fn resolve_invitee_did_for_invite(
-        &self,
-        target: &str,
-        realm_id: &str,
-        actor_id: &str,
-    ) -> anyhow::Result<String> {
-        Ok(self
-            .resolve_invitee_for_invite(target, realm_id, actor_id)
-            .await?
-            .did)
     }
 
     /// U3 — resolve the authoritative `recipient_service_did` for a contact DID

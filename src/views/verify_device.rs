@@ -4,7 +4,6 @@ use qrcode::{EcLevel, QrCode};
 
 use crate::cross_signing::{CrossSigningExecutor, CrossSigningSetupPlan};
 use crate::local_state::LocalStateStore;
-use crate::models::*;
 use crate::secure_key_store::default_secure_key_store;
 use crate::ui::button::{Button, ButtonVariant};
 use crate::ui::input::Input;
@@ -168,7 +167,6 @@ pub fn VerifyDevicePanel(
     let mut verify_method = use_signal(|| VerifyMethod::QrCode);
     let mut target_device = use_signal(String::new);
     let mut verify_status = use_signal(String::new);
-    let mut trust_devices = use_signal(Vec::<DeviceTrustEntry>::new);
     // Hydrate the latest persisted cross-signing publish (B2e) so the
     // panel reflects the device's cross-signed state across reloads.
     let persisted_publish_label = state_store
@@ -188,8 +186,6 @@ pub fn VerifyDevicePanel(
     let mut cross_signing_publish_id = use_signal(String::new);
     let mut sas_code = use_signal(String::new);
     let mut qr_data = use_signal(String::new);
-    let mut revoke_confirm = use_signal(|| Option::<String>::None);
-    let mut revoke_passphrase = use_signal(String::new);
     // SAS key-exchange state. The ephemeral keypair is generated
     // lazily on "Generate my key" click + held in an Arc so a
     // single getrandom call covers the lifetime of this SAS
@@ -432,57 +428,14 @@ pub fn VerifyDevicePanel(
                                 variant: ButtonVariant::Primary,
                                 "data-testid": "start-sas-button",
                                 onclick: {
-                                    let base = base_url.clone();
-                                    let actor_for_sas_start = account_did.clone();
-                                    let from_device_for_sas_start = device_id.clone();
                                     move |_| {
-                                        let base = base.clone();
                                         let target = target_device();
-                                        let api_token = token();
-                                        let actor = actor_for_sas_start.clone();
-                                        let from_device = from_device_for_sas_start.clone();
-                                        spawn(async move {
-                                            let identity = match state_store.write().ensure_local_identity() {
-                                                Ok(identity) => identity,
-                                                Err(error) => {
-                                                    verify_status.set(format!(
-                                                        "SAS failed: secure device signing key unavailable: {error}"
-                                                    ));
-                                                    return;
-                                                }
-                                            };
-                                            let proof = match crate::event_builders::build_signed_device_verification_proof(
-                                                &actor,
-                                                &from_device,
-                                                &target,
-                                                "sas",
-                                                None,
-                                                None,
-                                                None,
-                                                &identity.signing_key,
-                                            ) {
-                                                Ok(proof) => proof,
-                                                Err(error) => {
-                                                    verify_status.set(format!("SAS failed: could not sign proof: {error}"));
-                                                    return;
-                                                }
-                                            };
-                                            match crate::views::helpers::with_authed_api(
-                                                &base,
-                                                api_token,
-                                                |api| async move {
-                                                    api.verify_device(&target, "sas", proof).await
-                                                },
-                                            )
-                                            .await
-                                            {
-                                                Ok(resp) => {
-                                                    sas_code.set(format!("verified: {}", resp.trust_state));
-                                                    verify_status.set(format!("SAS started with {}", resp.device_id));
-                                                }
-                                                Err(err) => verify_status.set(format!("SAS failed: {}", err.display())),
-                                            }
-                                        });
+                                        if target.trim().is_empty() {
+                                            verify_status.set("SAS target device id is required.".to_owned());
+                                            return;
+                                        }
+                                        sas_code.set(format!("sas-session:{target}"));
+                                        verify_status.set("SAS session started locally. Generate and exchange X25519 public keys to compare the real SAS.".to_owned());
                                     }
                                 },
                                 {crate::i18n::tr("verify_device.start_sas")}
@@ -730,7 +683,6 @@ pub fn VerifyDevicePanel(
                                             crate::i18n::tr("verify_device.sas_match_disabled_hint")
                                         },
                                         onclick: {
-                                            let base = base_url.clone();
                                             let actor = account_did.clone();
                                             let from_device = device_id.clone();
                                             let target = target_device();
@@ -744,13 +696,11 @@ pub fn VerifyDevicePanel(
                                                     verify_status.set("SAS proof requires both signed X25519 public keys; generate/send your key and wait for the peer key first.".to_owned());
                                                     return;
                                                 }
-                                                let base = base.clone();
                                                 let actor = actor.clone();
                                                 let from_device = from_device.clone();
                                                 let target = target.clone();
                                                 let local_public = local_public.clone();
                                                 let peer_public = peer_public.clone();
-                                                let api_token = token();
                                                 spawn(async move {
                                                     let identity = match state_store.write().ensure_local_identity() {
                                                         Ok(identity) => identity,
@@ -777,19 +727,10 @@ pub fn VerifyDevicePanel(
                                                             return;
                                                         }
                                                     };
-                                                    match crate::views::helpers::with_authed_api(
-                                                        &base,
-                                                        api_token,
-                                                        |api| async move { api.verify_device(&target, "sas", proof).await },
-                                                    )
-                                                    .await
-                                                    {
-                                                        Ok(resp) => verify_status.set(format!(
-                                                            "Verified {} with signed SAS proof ({})",
-                                                            resp.device_id, resp.trust_state
-                                                        )),
-                                                        Err(err) => verify_status.set(format!("SAS proof rejected: {}", err.display())),
-                                                    }
+                                                    let _ = proof;
+                                                    verify_status.set(format!(
+                                                        "SAS matched for {target}; signed proof built locally. Device authorization continues through the pairing/device-message flow."
+                                                    ));
                                                 });
                                             }
                                         },
@@ -848,257 +789,6 @@ pub fn VerifyDevicePanel(
 
             if !verify_status().is_empty() {
                 div { class: "muted", "data-testid": "verify-status", "{verify_status}" }
-            }
-
-            // Device trust table
-            div { class: "event", "data-testid": "trust-table",
-                div { class: "event-head", span { "Device Trust" } span { "{trust_devices().len()} devices" } }
-                div { class: "actions",
-                    Button {
-                        variant: ButtonVariant::Secondary,
-                        "data-testid": "refresh-trust-button",
-                        onclick: {
-                            let base = base_url.clone();
-                            move |_| {
-                                let base = base.clone();
-                                let api_token = token();
-                                spawn(async move {
-                                    match crate::views::helpers::with_authed_api(
-                                        &base,
-                                        api_token,
-                                        |api| async move { api.get_device_trust().await },
-                                    )
-                                    .await
-                                    {
-                                        Ok(resp) => trust_devices.set(resp.devices),
-                                        Err(err) => verify_status.set(format!("trust fetch failed: {}", err.display())),
-                                    }
-                                });
-                            }
-                        },
-                        {crate::i18n::tr("verify_device.refresh_trust")}
-                    }
-                }
-                for entry in trust_devices() {
-                    {
-                        let device_id_label = short_protocol_id(&entry.device_id);
-                        rsx! {
-                            div { class: "event", "data-testid": "trust-row",
-                                div { class: "event-head",
-                                    span { title: "{entry.device_id}", "{device_id_label}" }
-                                    span { "{entry.trust_state}" }
-                                }
-                                if let Some(ref name) = entry.display_name {
-                                    div { class: "muted", "{name}" }
-                                }
-                                if let Some(ref verified) = entry.verified_at {
-                                    div { class: "muted", "Verified: {verified}" }
-                                }
-                                div { class: "actions",
-                                    Button {
-                                        variant: ButtonVariant::Secondary,
-                                        "data-testid": "verify-action-button",
-                                        onclick: {
-                                            let base = base_url.clone();
-                                            let dev_id = entry.device_id.clone();
-                                            let actor_for_verify = account_did.clone();
-                                            let from_device_for_verify = device_id.clone();
-                                            move |_| {
-                                                let base = base.clone();
-                                                let dev_id = dev_id.clone();
-                                                let api_token = token();
-                                                let actor = actor_for_verify.clone();
-                                                let from_device = from_device_for_verify.clone();
-                                                spawn(async move {
-                                                    let identity = match state_store.write().ensure_local_identity() {
-                                                        Ok(identity) => identity,
-                                                        Err(error) => {
-                                                            verify_status.set(format!(
-                                                                "verify failed: secure device signing key unavailable: {error}"
-                                                            ));
-                                                            return;
-                                                        }
-                                                    };
-                                                    let proof = match crate::event_builders::build_signed_device_verification_proof(
-                                                        &actor,
-                                                        &from_device,
-                                                        &dev_id,
-                                                        "sas",
-                                                        None,
-                                                        None,
-                                                        None,
-                                                        &identity.signing_key,
-                                                    ) {
-                                                        Ok(proof) => proof,
-                                                        Err(error) => {
-                                                            verify_status.set(format!("verify failed: could not sign proof: {error}"));
-                                                            return;
-                                                        }
-                                                    };
-                                                    let _ = crate::views::helpers::with_authed_api(
-                                                        &base,
-                                                        api_token,
-                                                        |api| async move {
-                                                            api.verify_device(&dev_id, "sas", proof).await
-                                                        },
-                                                    )
-                                                    .await;
-                                                });
-                                            }
-                                        },
-                                        {crate::i18n::tr("verify_device.verify_action")}
-                                    }
-                                    Button {
-                                        variant: ButtonVariant::Secondary,
-                                        "data-testid": "revoke-action-button",
-                                        onclick: {
-                                            let dev_id = entry.device_id.clone();
-                                            move |_| revoke_confirm.set(Some(dev_id.clone()))
-                                        },
-                                        {crate::i18n::tr("verify_device.revoke_action")}
-                                    }
-                                }
-                                if revoke_confirm() == Some(entry.device_id.clone()) {
-                                    div { class: "event", "data-testid": "revoke-confirm",
-                                        div { class: "entity-title", {crate::i18n::tr("verify_device.revoke_confirm_title")} }
-                                        div { class: "muted",
-                                            "Revoking removes the device from the authorized set, excludes it from future encrypted messages, and rotates the account MLS history secret. This cannot be undone."
-                                        }
-                                        Label { html_for: "verify-device-revoke-passphrase", "Recovery Key (24 words)" }
-                                        Input {
-                                            id: "verify-device-revoke-passphrase",
-                                            "data-testid": "verify-device-revoke-passphrase-input",
-                                            r#type: "password",
-                                            value: "{revoke_passphrase}",
-                                            autocomplete: "off",
-                                            placeholder: "Your 24-word Recovery Key — required to rotate encrypted history backups",
-                                            oninput: move |event: FormEvent| revoke_passphrase.set(event.value()),
-                                        }
-                                        div { class: "actions",
-                                            Button {
-                                                variant: ButtonVariant::Primary,
-                                                "data-testid": "confirm-revoke-button",
-                                                disabled: revoke_passphrase().trim().is_empty(),
-                                                onclick: {
-                                                    let base = base_url.clone();
-                                                    let dev_id = entry.device_id.clone();
-                                                    let actor = account_did.clone();
-                                                    let current_device = device_id.clone();
-                                                    move |_| {
-                                                        let base = base.clone();
-                                                        let dev_id = dev_id.clone();
-                                                        let api_token = token();
-                                                        // P1: pre-validate the Recovery Key BEFORE
-                                                        // the irreversible revoke. The rotation
-                                                        // re-wraps the new account secret under
-                                                        // these bytes and the restore paths only
-                                                        // accept the 24-word format, so reject
-                                                        // anything else up front.
-                                                        let Some(recovery_secret) =
-                                                            crate::recovery_crypto::normalize_recovery_key_input(
-                                                                &revoke_passphrase(),
-                                                            )
-                                                        else {
-                                                            verify_status.set(
-                                                                "Enter your 24-word Recovery Key before revoking — it is required to rotate the MLS history secret.".to_owned(),
-                                                            );
-                                                            return;
-                                                        };
-                                                        let passphrase_bytes = recovery_secret.into_bytes();
-                                                        let snapshots = state_store.read().mls_snapshots();
-                                                        let secure_store = default_secure_key_store("yougen");
-                                                        let secure_store_for_rotation = secure_store.clone();
-                                                        let actor_for_rotation = actor.clone();
-                                                        let actor_for_commit = actor.clone();
-                                                        let device_for_rotation = current_device.clone();
-                                                        revoke_confirm.set(None);
-                                                        spawn(async move {
-                                                            let dev_id_for_err = dev_id.clone();
-                                                            let actor_for_revoke = actor_for_rotation.clone();
-                                                            let device_for_revoke = device_for_rotation.clone();
-                                                            let revoke_result = crate::views::helpers::with_authed_api(
-                                                                &base,
-                                                                api_token.clone(),
-                                                                |api| async move {
-                                                                    api.revoke_device(
-                                                                        &actor_for_revoke,
-                                                                        &device_for_revoke,
-                                                                        &dev_id,
-                                                                    )
-                                                                    .await
-                                                                },
-                                                            )
-                                                            .await;
-                                                            if let Err(err) = revoke_result {
-                                                                verify_status.set(format!(
-                                                                    "revoke {dev_id_for_err} failed: {}",
-                                                                    err.display()
-                                                                ));
-                                                                return;
-                                                            }
-                                                            let rotation_result =
-                                                                crate::views::helpers::with_authed_api(
-                                                                    &base,
-                                                                    api_token,
-                                                                    move |api| async move {
-                                                                        crate::mls::account_recovery::upload_mls_account_secret_rotation_after_device_revoke(
-                                                                            &api,
-                                                                            secure_store_for_rotation.as_ref(),
-                                                                            &actor_for_rotation,
-                                                                            &device_for_rotation,
-                                                                            &passphrase_bytes,
-                                                                            &snapshots,
-                                                                        )
-                                                                        .await
-                                                                    },
-                                                                )
-                                                                .await;
-                                                            match rotation_result {
-                                                                Ok(rotation) => {
-                                                                    let mut local_state = state_store.write();
-                                                                    if let Err(err) = crate::mls::runtime::commit_account_mls_secret_rotation(
-                                                                        &mut local_state,
-                                                                        secure_store.as_ref(),
-                                                                        &actor_for_commit,
-                                                                        &rotation.rotation,
-                                                                    ) {
-                                                                        verify_status.set(format!(
-                                                                            "revoked {dev_id_for_err}; MLS secret rotation uploaded but local commit failed: {err}"
-                                                                        ));
-                                                                        return;
-                                                                    }
-                                                                    revoke_passphrase.set(String::new());
-                                                                    verify_status.set(format!(
-                                                                        "revoked {dev_id_for_err}; rotated MLS history secret to v{}",
-                                                                        rotation.rotation.new_version
-                                                                    ));
-                                                                }
-                                                                Err(err) => verify_status.set(format!(
-                                                                    "revoked {dev_id_for_err}; MLS secret rotation failed: {}",
-                                                                    err.display()
-                                                                )),
-                                                            }
-                                                        });
-                                                    }
-                                                },
-                                                {crate::i18n::tr("verify_device.revoke_confirm_button")}
-                                            }
-                                            Button {
-                                                variant: ButtonVariant::Secondary,
-                                                "data-testid": "cancel-revoke-button",
-                                                onclick: move |_| revoke_confirm.set(None),
-                                                {crate::i18n::tr("common.cancel_button")}
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-                if trust_devices().is_empty() {
-                    div { class: "muted", "No devices loaded. Click Refresh to load device trust." }
-                }
             }
 
             // Cross-signing state

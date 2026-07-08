@@ -48,12 +48,6 @@ impl CokretApi {
             .await
     }
 
-    pub async fn auth_bridge_describe(&self) -> anyhow::Result<PrincipalAuthBridgeDescribeView> {
-        anyhow::bail!(
-            "principal auth bridge describe is not part of the Cokret spec; yougen must not call private bridge paths"
-        )
-    }
-
     // ②(A+②): the Principal Server does not mint a second client-visible
     // credential. The held credential is the `ck.session.grant` itself,
     // presented per-request as
@@ -389,39 +383,6 @@ impl CokretApi {
             .map_err(anyhow::Error::from)
     }
 
-    /// Read one holder-private consent cell for `(holder, peer, scope)`.
-    /// Spec OpenAPI `ck.self.consent.resource.get`. Returns `None` on 404 so
-    /// callers can treat a missing cell as `no-consent` rather than an error.
-    pub async fn consent_cell(
-        &self,
-        holder: &str,
-        peer: &str,
-        scope: &str,
-    ) -> anyhow::Result<Option<cokret_sdk::ConsentCellView>> {
-        let path = format!(
-            "{}/{}?peer={}&consent_scope={}",
-            cokret_sdk::http::PATH_SELF_CONSENT_CELLS,
-            path_component(holder.trim()),
-            query_component(peer.trim()),
-            query_component(scope.trim()),
-        );
-        match self
-            .sdk_http_client()?
-            .get::<cokret_sdk::ConsentCellView>(&path)
-            .await
-            .map_err(anyhow::Error::from)
-        {
-            Ok(view) => Ok(Some(view)),
-            Err(err) => {
-                if err.to_string().contains("404") {
-                    Ok(None)
-                } else {
-                    Err(err)
-                }
-            }
-        }
-    }
-
     /// Grant scoped consent to `peer` from the holder cell. `expires_at` is an
     /// optional RFC 3339 time window upper bound. Spec OpenAPI
     /// `ck.self.consent.command.grant`.
@@ -490,22 +451,6 @@ impl CokretApi {
             .post(cokret_sdk::http::PATH_SELF_CONSENT_REQUEST, &body)
             .await
             .map_err(anyhow::Error::from)
-    }
-
-    /// Single hard logout (account-lifecycle §4.1): the client presents the
-    /// current session grant + DPoP proof to `/_cokret/gate/account/logout`.
-    /// The Account Authority/Principal Server path terminates the Auth-side
-    /// grant chain and the Principal-side device session. Returns whether the
-    /// server reports a session was revoked.
-    pub async fn logout(&self) -> anyhow::Result<bool> {
-        // Spec strong types for the POST body + response, so the wire shape
-        // stays in lockstep with the OpenAPI/DTO contract.
-        let outcome: cokret_sdk::AccountLogoutOutcome = self
-            .sdk_http_client()?
-            .auth_account_logout()
-            .await
-            .map_err(anyhow::Error::from)?;
-        Ok(outcome.revoked)
     }
 
     /// Submit a per-account `ck.account_data.set` event so settings UIs can
@@ -664,35 +609,6 @@ impl CokretApi {
             .map_err(anyhow::Error::from)
     }
 
-    pub async fn profile_presence(&self, did: &str) -> anyhow::Result<Value> {
-        let http = self.sdk_http_client()?;
-        let sync = crate::client_core::account_subscribe_snapshot(&http, None).await?;
-        let presence = sync
-            .presence
-            .iter()
-            .find(|event| {
-                event
-                    .get("actor_id")
-                    .or_else(|| event.get("user_id"))
-                    .or_else(|| event.get("actor"))
-                    .and_then(Value::as_str)
-                    == Some(did)
-            })
-            .cloned()
-            .unwrap_or_else(|| json!({"actor_id": did, "state": "offline"}));
-        let state = presence
-            .get("state")
-            .and_then(Value::as_str)
-            .unwrap_or("offline");
-        Ok(json!({
-            "actor": did,
-            "display_name": did,
-            "presence": {
-                "state": state,
-            },
-        }))
-    }
-
     async fn account_data_actor_scope(&self) -> anyhow::Result<(String, String)> {
         let account = self.account_me().await?;
         let principal = cokret_sdk::Did::new(account.did.clone())
@@ -706,20 +622,6 @@ impl CokretApi {
             .account_describe()
             .await
             .map_err(anyhow::Error::from)
-    }
-
-    pub async fn list_notifications(&self) -> anyhow::Result<Value> {
-        let http = self.sdk_http_client()?;
-        Ok(crate::client_core::account_subscribe_snapshot(&http, None)
-            .await?
-            .notifications)
-    }
-
-    pub async fn mark_all_notifications_read(&self) -> anyhow::Result<Value> {
-        Ok(json!({
-            "ok": true,
-            "local_only": true,
-        }))
     }
 
     pub async fn submit_read_cursor_advance(
