@@ -1,3 +1,4 @@
+#[cfg(test)]
 use std::collections::BTreeMap;
 use std::fmt;
 use std::sync::Arc;
@@ -10,13 +11,12 @@ use url::Url;
 
 use crate::config::validate_server_url;
 use crate::models::{
-    AccountDataSetResult, AuthzCheckOutcome, BlobUploadOutcome, DeviceMessagesAckOutcome,
-    DeviceMessagesAckRequestBody, DeviceMessagesGetOutcome, DeviceMessagesSendOutcome, GrantList,
-    KeysQueryOutcome, MediaIceConfigOutcome, MediaIceConfigRequestBody, OP_SNAPSHOT_HEAD,
-    RealmCreateResult, RealmJoinCandidate, RealmPolicyResult, ResolveHandleView, ServerDescription,
-    SpaceCreateResult, SubmitEventResult,
+    AccountDataSetResult, BlobUploadOutcome, DeviceMessagesAckOutcome,
+    DeviceMessagesAckRequestBody, DeviceMessagesGetOutcome, DeviceMessagesSendOutcome,
+    OP_SNAPSHOT_HEAD, RealmCreateResult, RealmJoinCandidate, RealmPolicyResult, ResolveHandleView,
+    ServerDescription, SpaceCreateResult, SubmitEventResult,
 };
-use crate::operation::{EventKind, trim_realm_id, uuid_v7};
+use crate::operation::{EventKind, uuid_v7};
 use crate::wire_helpers::{canonical_blob_ref, path_component, safe_blob_filename_header};
 
 #[derive(Clone)]

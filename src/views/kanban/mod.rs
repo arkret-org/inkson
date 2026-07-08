@@ -1070,8 +1070,8 @@ pub fn KanbanPanel(
                 .as_ref()
                 .map(|resp| strand_update_operations_from_events(&resp.event_values()))
                 .unwrap_or_default();
-            match with_authed_api(&base, api_token, |api| async move {
-                api.collection_projection(&view).await
+            match with_authed_sdk_client(&base, api_token, |http| async move {
+                crate::realm_read_api::collection_projection(&http, &view).await
             })
             .await
             {
@@ -1204,10 +1204,11 @@ pub fn KanbanPanel(
         spawn(async move {
             if !view.trim().is_empty() {
                 let view_for_call = view.clone();
-                if let Ok(projection) = with_authed_api(&base, api_token, |api| async move {
-                    api.collection_projection(&view_for_call).await
-                })
-                .await
+                if let Ok(projection) =
+                    with_authed_sdk_client(&base, api_token, |http| async move {
+                        crate::realm_read_api::collection_projection(&http, &view_for_call).await
+                    })
+                    .await
                 {
                     let cols = {
                         let decrypt_store = state_store.read();
@@ -2064,8 +2065,8 @@ pub fn KanbanPanel(
                                                         .as_ref()
                                                         .map(|resp| strand_update_operations_from_events(&resp.event_values()))
                                                         .unwrap_or_default();
-                                                    match with_authed_api(&base, api_token, |api| async move {
-                                                        api.collection_projection(&view).await
+                                                    match with_authed_sdk_client(&base, api_token, |http| async move {
+                                                        crate::realm_read_api::collection_projection(&http, &view).await
                                                     })
                                                     .await
                                                     {

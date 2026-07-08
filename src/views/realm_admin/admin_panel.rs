@@ -620,11 +620,14 @@ pub fn RealmAdminPanel(
                                     let realm = realm.clone();
                                     let api_token = token();
                                     spawn(async move {
-                                        match crate::views::helpers::with_authed_api(
+                                        match crate::views::helpers::with_authed_sdk_client(
                                             &base,
                                             api_token,
-                                            |api| async move {
-                                                api.admin_notary_describe(&realm).await
+                                            |http| async move {
+                                                crate::realm_read_api::admin_notary_describe(
+                                                    &http, &realm,
+                                                )
+                                                .await
                                             },
                                         )
                                         .await

@@ -28,7 +28,7 @@ use crate::organization::{
     OrganizationStatementInput, load_organization_control_key, prepare_organization_inception,
     sign_organization_statement, store_organization_control_seed,
 };
-use crate::views::helpers::{short_protocol_id, with_authed_api};
+use crate::views::helpers::{short_protocol_id, with_authed_sdk_client};
 
 /// Context-provided server-administrator signal (D0). Newtype-wrapped so the
 /// context lookup can't collide with any other bare `Signal<bool>`. Sourced from
@@ -310,8 +310,8 @@ pub fn RealmOrganizationPanel(
             let realm_id = realm_id.clone();
             let session = token();
             async move {
-                with_authed_api(&base_url, session, |api| async move {
-                    api.list_realm_organizations(&realm_id).await
+                with_authed_sdk_client(&base_url, session, |http| async move {
+                    crate::realm_read_api::list_realm_organizations(&http, &realm_id).await
                 })
                 .await
                 .map(|list| dtos_from_list(&list))

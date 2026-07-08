@@ -676,10 +676,11 @@ pub async fn join_call_media(
     );
     token_request.desired_media = Some(request.desired_media.into_wire());
 
-    let outcome: CallMediaTokenExchangeOutcome = api
-        .media_token_exchange(&token_request)
-        .await
-        .map_err(|err| RtcClientError::from_api_error(&err))?;
+    let outcome: CallMediaTokenExchangeOutcome = async {
+        crate::media_api::media_token_exchange(&api.sdk_http_client()?, &token_request).await
+    }
+    .await
+    .map_err(|err| RtcClientError::from_api_error(&err))?;
 
     if !is_known_focus_type(&outcome.backend_type) {
         return Err(RtcClientError::UnknownFocusType);
@@ -698,10 +699,10 @@ pub async fn join_call_media(
         device_id: ids.device_id.clone(),
         mode: MediaIceMode::Sfu,
     };
-    let ice_outcome = api
-        .ice_config(&ice_request)
-        .await
-        .map_err(|err| RtcClientError::from_api_error(&err))?;
+    let ice_outcome =
+        async { crate::media_api::ice_config(&api.sdk_http_client()?, &ice_request).await }
+            .await
+            .map_err(|err| RtcClientError::from_api_error(&err))?;
     let ice_config = verify_ice_config_outcome(&ice_outcome, &anchors)
         .map_err(|err| classify_protocol_error(&err))?;
 

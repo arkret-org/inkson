@@ -487,7 +487,9 @@ async fn probe_device_authorization_with_auto_enroll(
 ) -> anyhow::Result<(bool, bool)> {
     // The account-viewer helpers read `devices[]` leniently via `Value`
     // accessors; serialize the typed `AccountView` back to its wire JSON.
-    let viewer = serde_json::to_value(&principal_api.list_devices().await?)?;
+    let viewer = serde_json::to_value(
+        &crate::keys_api::list_devices(&principal_api.sdk_http_client()?).await?,
+    )?;
     let mut has_other = account_has_other_active_devices_from_account_viewer(&viewer, device);
     let mut needs_authorization =
         device_authorization_required_from_account_viewer(&viewer, device);
@@ -503,22 +505,24 @@ async fn probe_device_authorization_with_auto_enroll(
         )
         .await
         {
-            Ok(()) => match principal_api.list_devices().await {
-                Ok(viewer) => {
-                    let viewer = serde_json::to_value(&viewer)?;
-                    has_other =
-                        account_has_other_active_devices_from_account_viewer(&viewer, device);
-                    needs_authorization =
-                        device_authorization_required_from_account_viewer(&viewer, device);
+            Ok(()) => {
+                match crate::keys_api::list_devices(&principal_api.sdk_http_client()?).await {
+                    Ok(viewer) => {
+                        let viewer = serde_json::to_value(&viewer)?;
+                        has_other =
+                            account_has_other_active_devices_from_account_viewer(&viewer, device);
+                        needs_authorization =
+                            device_authorization_required_from_account_viewer(&viewer, device);
+                    }
+                    Err(error) => {
+                        tracing::warn!(
+                            ?error,
+                            "device authorization re-check failed after enrollment"
+                        );
+                        needs_authorization = true;
+                    }
                 }
-                Err(error) => {
-                    tracing::warn!(
-                        ?error,
-                        "device authorization re-check failed after enrollment"
-                    );
-                    needs_authorization = true;
-                }
-            },
+            }
             Err(error) => {
                 tracing::warn!(?error, "device enrollment failed");
             }

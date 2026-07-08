@@ -362,8 +362,9 @@ async fn moderator_signal_authorized(decoded: &DecodedCallSignal, api: Option<&C
         );
         return false;
     };
-    match api
-        .authz_check_resource_raw(
+    match async {
+        crate::realm_read_api::authz_check_resource_raw(
+            &api.sdk_http_client()?,
             &decoded.sender_actor,
             "ck.call.moderate",
             Some(serde_json::json!({
@@ -373,6 +374,8 @@ async fn moderator_signal_authorized(decoded: &DecodedCallSignal, api: Option<&C
             })),
         )
         .await
+    }
+    .await
     {
         Ok(outcome) if authz_check_allows_moderation(&outcome) => true,
         Ok(outcome) => {

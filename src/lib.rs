@@ -72,10 +72,12 @@ pub mod identity_handle;
 pub mod invite_claim;
 pub mod key_backup;
 pub mod key_store;
+pub mod keys_api;
 /// Round R2/R3 (T16) — late key recovery UX helpers.
 pub mod late_recovery;
 pub mod local_state;
 pub mod media;
+pub mod media_api;
 /// R3.1 (cokret-spec @ 7157ee8) — Realm-scoped
 /// `ck.member.identity.update` event store. Sync ingests inlined
 /// `members[].identity_events[]` here; UI views resolve the current
@@ -132,6 +134,7 @@ pub mod realm_events_engine;
 /// extracted out of the (formerly 12k-line) `app` module so the
 /// hierarchy + projection-parsing logic is unit-testable in isolation.
 pub(crate) mod realm_helpers;
+pub mod realm_read_api;
 pub(crate) mod realm_tree;
 pub mod recovery_crypto;
 pub mod recovery_proof;

@@ -270,12 +270,26 @@ pub(super) fn ensure_sidebar_row_perms(
     spawn(async move {
         let perms = match crate::views::helpers::authed_api_with_sync(&base_url, api_token, None) {
             Ok(api) => {
-                let invite = api
-                    .authz_check_raw(&actor, "ck.invite.create", &realm_id)
-                    .await;
-                let settings = api
-                    .authz_check_raw(&actor, "ck.realm.update", &realm_id)
-                    .await;
+                let invite = async {
+                    crate::realm_read_api::authz_check_raw(
+                        &api.sdk_http_client()?,
+                        &actor,
+                        "ck.invite.create",
+                        &realm_id,
+                    )
+                    .await
+                }
+                .await;
+                let settings = async {
+                    crate::realm_read_api::authz_check_raw(
+                        &api.sdk_http_client()?,
+                        &actor,
+                        "ck.realm.update",
+                        &realm_id,
+                    )
+                    .await
+                }
+                .await;
                 SidebarRowRealmPerms {
                     can_add_member: invite.as_ref().map(sidebar_authz_allowed).unwrap_or(false),
                     can_settings: settings

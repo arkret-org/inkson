@@ -1251,8 +1251,8 @@ pub(super) fn rebase_strand_position_after_conflict(
             return;
         }
         let view_for_projection = board_view_id.clone();
-        let new_expected = match with_authed_api(&base_url, token(), |api| async move {
-            api.collection_projection(&view_for_projection).await
+        let new_expected = match with_authed_sdk_client(&base_url, token(), |http| async move {
+            crate::realm_read_api::collection_projection(&http, &view_for_projection).await
         })
         .await
         {

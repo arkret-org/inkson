@@ -115,36 +115,4 @@ impl CokretApi {
         .build_sdk_event("inkson")?;
         self.event_submitter()?.submit_sdk_event(&event).await
     }
-
-    // ── Media ───────────────────────────────────────────────────────
-
-    /// `POST /_cokret/self/rtc/ice-config` using the SDK's authoritative
-    /// wire types (YOU-05-004). NB: when the WebRTC surface consumes the
-    /// outcome, each `ice_servers` entry MUST be parsed through
-    /// `cokret_sdk::IceServer` and pass
-    /// `IceServer::validate_credential_privacy()` before use.
-    pub async fn ice_config(
-        &self,
-        request: &MediaIceConfigRequestBody,
-    ) -> anyhow::Result<MediaIceConfigOutcome> {
-        self.sdk_http_client()?
-            .media_ice_config(request)
-            .await
-            .map_err(anyhow::Error::from)
-    }
-
-    /// `POST /_cokret/self/rtc/token` — `ck.self.call.media.exchange.issue_token`.
-    /// Returns the raw outcome (backend connect URL + token + participant
-    /// binding). Callers MUST run the response through
-    /// `cokret_sdk::verify_call_media_token_outcome` against the realm
-    /// media-service anchors before trusting the backend token.
-    pub async fn media_token_exchange(
-        &self,
-        request: &cokret_sdk::CallMediaTokenExchangeRequestBody,
-    ) -> anyhow::Result<cokret_sdk::CallMediaTokenExchangeOutcome> {
-        self.sdk_http_client()?
-            .media_token_exchange(request)
-            .await
-            .map_err(anyhow::Error::from)
-    }
 }

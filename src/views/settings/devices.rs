@@ -47,7 +47,7 @@ use crate::ui::button::{Button, ButtonVariant};
 use crate::ui::input::Input;
 use crate::ui::label::Label;
 use crate::ui::textarea::Textarea;
-use crate::views::helpers::{short_protocol_id, with_authed_api};
+use crate::views::helpers::{short_protocol_id, with_authed_api, with_authed_sdk_client};
 
 #[derive(Clone, Debug, PartialEq)]
 struct DeviceRow {
@@ -199,37 +199,36 @@ pub fn SettingsDevicesPanel(
     let local_device_id = device_id();
     let has_session = !token().trim().is_empty();
 
-    let refresh_devices =
-        {
-            let base = base_url();
-            let api_token = token();
-            move |_evt: MouseEvent| {
-                let base = base.clone();
-                let api_token = api_token.clone();
-                load_status.set("Loading…".to_owned());
-                spawn(async move {
-                    match with_authed_api(&base, api_token, |api| async move {
-                        api.list_devices().await
-                    })
-                    .await
-                    {
-                        Ok(value) => {
-                            let value = serde_json::to_value(&value).unwrap_or_default();
-                            let (cur, rows) = parse_devices(&value);
-                            if let Some(c) = cur {
-                                current_device.set(c);
-                            }
-                            let count = rows.len();
-                            devices.set(rows);
-                            load_status.set(format!("Loaded {count} device(s)"));
+    let refresh_devices = {
+        let base = base_url();
+        let api_token = token();
+        move |_evt: MouseEvent| {
+            let base = base.clone();
+            let api_token = api_token.clone();
+            load_status.set("Loading…".to_owned());
+            spawn(async move {
+                match with_authed_sdk_client(&base, api_token, |http| async move {
+                    crate::keys_api::list_devices(&http).await
+                })
+                .await
+                {
+                    Ok(value) => {
+                        let value = serde_json::to_value(&value).unwrap_or_default();
+                        let (cur, rows) = parse_devices(&value);
+                        if let Some(c) = cur {
+                            current_device.set(c);
                         }
-                        Err(err) => {
-                            load_status.set(format!("Load failed: {}", err.display()));
-                        }
+                        let count = rows.len();
+                        devices.set(rows);
+                        load_status.set(format!("Loaded {count} device(s)"));
                     }
-                });
-            }
-        };
+                    Err(err) => {
+                        load_status.set(format!("Load failed: {}", err.display()));
+                    }
+                }
+            });
+        }
+    };
 
     // Auto-load the device list on mount. Reads `token()` so it re-runs
     // when the session credential arrives; the `auto_loaded` guard keeps it to
@@ -246,11 +245,9 @@ pub fn SettingsDevicesPanel(
             let api_token = api_token.clone();
             load_status.set("Loading…".to_owned());
             spawn(async move {
-                match with_authed_api(
-                    &base,
-                    api_token,
-                    |api| async move { api.list_devices().await },
-                )
+                match with_authed_sdk_client(&base, api_token, |http| async move {
+                    crate::keys_api::list_devices(&http).await
+                })
                 .await
                 {
                     Ok(value) => {
@@ -699,10 +696,12 @@ fn render_revoke_modal(
                                         let base_refresh = base.clone();
                                         let token_refresh = api_token.clone();
                                         spawn(async move {
-                                            if let Ok(value) = with_authed_api(
+                                            if let Ok(value) = with_authed_sdk_client(
                                                 &base_refresh,
                                                 token_refresh,
-                                                |api| async move { api.list_devices().await },
+                                                |http| async move {
+                                                    crate::keys_api::list_devices(&http).await
+                                                },
                                             )
                                             .await
                                             {
@@ -1019,8 +1018,10 @@ fn render_pair_strand(
                                     requesting_device_id_for_delivery.clone();
                                 let actor = actor_for_delivery.clone();
                                 async move {
-                                    let devices_value =
-                                        serde_json::to_value(&api.list_devices().await?)?;
+                                    let devices_value = serde_json::to_value(
+                                        &crate::keys_api::list_devices(&api.sdk_http_client()?)
+                                            .await?,
+                                    )?;
                                     let (_, rows) = parse_devices(&devices_value);
                                     let expires_at = crate::clock::rfc3339_secs_in(10 * 60);
                                     let content = build_pairing_verification_content(

@@ -88,27 +88,6 @@ fn key_backup_authorized_event_ref_for_device(viewer: &Value, device_id: &str) -
 }
 
 impl CokretApi {
-    pub async fn query_keys(
-        &self,
-        actor: &str,
-        device_id: &str,
-    ) -> anyhow::Result<KeysQueryOutcome> {
-        let actor = cokret_sdk::Did::new(actor.to_owned())
-            .map_err(|err| anyhow::anyhow!("invalid actor DID `{actor}`: {err}"))?;
-        let device_id = cokret_sdk::DeviceId::new(device_id.to_owned())
-            .map_err(|err| anyhow::anyhow!("invalid device_id `{device_id}`: {err}"))?;
-        let mut device_keys = BTreeMap::new();
-        device_keys.insert(actor, vec![device_id]);
-        let body = cokret_sdk::models::KeysQueryRequestBody {
-            device_keys,
-            timeout_ms: None,
-        };
-        self.sdk_http_client()?
-            .keys_query(&body)
-            .await
-            .map_err(anyhow::Error::from)
-    }
-
     /// POST a typed `ck.schema.device_message.v1` envelope to soland's
     /// `/_cokret/self/device_messages` endpoint. Used by device
     /// verification strands (R3), secret sharing (`ck.secret.*`) and any
@@ -313,7 +292,7 @@ impl CokretApi {
         else {
             return Ok(());
         };
-        let viewer = match self.list_devices().await {
+        let viewer = match crate::keys_api::list_devices(&self.sdk_http_client()?).await {
             Ok(viewer) => viewer,
             Err(_) => return Ok(()),
         };
@@ -541,18 +520,6 @@ impl CokretApi {
         .seal_basis(basis)
         .build_sdk_event(revoked_by_device_id)?;
         self.event_submitter()?.submit_sdk_event(&event).await
-    }
-
-    /// List the principal's active devices from the spec account viewer
-    /// (`GET /_cokret/self/account/viewer`). Returns the raw JSON response
-    /// shape with `devices[]`; the settings UI derives "current device" from
-    /// the first device when the viewer projection has no explicit current
-    /// marker.
-    pub async fn list_devices(&self) -> anyhow::Result<cokret_sdk::AccountView> {
-        self.sdk_http_client()?
-            .account_viewer()
-            .await
-            .map_err(|error| anyhow::anyhow!("list devices: {error}"))
     }
 
     /// Pair a new sibling device through the spec account-auth gate.

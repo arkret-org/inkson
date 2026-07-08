@@ -6,9 +6,6 @@ use crate::event_builders::{
     build_space_lifecycle_event, parse_realm_bootstrap_members,
     recommended_history_sharing_policy_for_visibility, recommended_realm_policy_components_value,
 };
-use crate::projection_views::{
-    CollectionProjectionView, LifecycleProjectionView, StrandProjectionView,
-};
 use crate::realm_helpers::{
     canonical_space_join_rule_v1, patch_touches_create_locked_encryption_profile,
     select_join_candidate,
@@ -218,69 +215,6 @@ impl CokretApi {
             realm_id, actor_id, member, from_state, to_state, reason,
         )?;
         self.submit_built_event(&event).await
-    }
-
-    /// Read the current notary cell value for a Realm (admin-only).
-    /// Returns the raw JSON shape the server publishes — typically
-    /// `{ "mode": "single_did" | "threshold" | "open_set" | "mixed",
-    ///    "principals": [...], ... }`. The endpoint is being implemented
-    /// in soland on a separate track (P0 M4); when it 404s the caller's
-    /// `Result::Err` arm should surface a clear "endpoint unavailable"
-    /// message rather than blocking the page.
-    pub async fn admin_notary_describe(&self, realm_id: &str) -> anyhow::Result<serde_json::Value> {
-        let _ = realm_id;
-        anyhow::bail!("admin notary describe has no spec-defined Cokret HTTP endpoint")
-    }
-
-    pub async fn authz_check_resource(
-        &self,
-        actor: &str,
-        action: &str,
-        resource: Option<Value>,
-    ) -> anyhow::Result<AuthzCheckOutcome> {
-        let body = cokret_sdk::models::AuthzCheckRequestBody {
-            actor_id: cokret_sdk::Did::new(actor.trim().to_owned())?,
-            action: action.trim().to_owned(),
-            resource,
-            context: None,
-        };
-        self.sdk_http_client()?
-            .authz_check(&body)
-            .await
-            .map_err(anyhow::Error::from)
-    }
-
-    pub async fn authz_check_resource_raw(
-        &self,
-        actor: &str,
-        action: &str,
-        resource: Option<Value>,
-    ) -> anyhow::Result<Value> {
-        let response = self.authz_check_resource(actor, action, resource).await?;
-        Ok(serde_json::to_value(response)?)
-    }
-
-    pub async fn authz_check_raw(
-        &self,
-        actor: &str,
-        action: &str,
-        realm_id: &str,
-    ) -> anyhow::Result<Value> {
-        let response = self
-            .authz_check_resource(
-                actor,
-                action,
-                Some(json!({"kind": "realm", "realm_id": realm_id.trim()})),
-            )
-            .await?;
-        Ok(serde_json::to_value(response)?)
-    }
-
-    pub async fn effective_grants(&self, subject: &str) -> anyhow::Result<GrantList> {
-        self.sdk_http_client()?
-            .authz_effective_grants_for_subject(subject, None)
-            .await
-            .map_err(anyhow::Error::from)
     }
 
     // ── Space / Realm Management (all writes go through ck.self.events.command.submit) ─
@@ -860,60 +794,6 @@ impl CokretApi {
         )
         .build_sdk_event("inkson")?;
         self.submit_built_event(&event).await
-    }
-
-    // ── Views — collection projection (T20 / YOU-01-009 subtask 3) ──────
-    //
-    // Spec-registered operation `ck.self.views.collection_projection.command.materialize`
-    // (`POST /_cokret/self/views/{view_id}/projection`, spec commit
-    // b0cfa89). The request body is the registered
-    // `view_projection_request_body` (`{cursor?, limit?}` — an empty
-    // object is valid) and the response is parsed as the registered
-    // `collection_projection_view` shape.
-    pub async fn collection_projection(
-        &self,
-        view_id: &str,
-    ) -> anyhow::Result<CollectionProjectionView> {
-        let body = cokret_sdk::models::ViewProjectionRequestBody::default();
-        let view: cokret_sdk::CollectionProjectionView = self
-            .sdk_http_client()?
-            .collection_projection(view_id, &body)
-            .await
-            .map_err(anyhow::Error::from)?;
-        Ok(view.into())
-    }
-
-    pub async fn list_strand_projections(
-        &self,
-        realm_id: &str,
-    ) -> anyhow::Result<LifecycleProjectionView<StrandProjectionView>> {
-        let realm_id = trim_realm_id(realm_id);
-        let list: cokret_sdk::ProjectionStrandList = self
-            .sdk_http_client()?
-            .realm_strands(&realm_id)
-            .await
-            .map_err(anyhow::Error::from)?;
-        Ok(list.into())
-    }
-
-    /// Read the verified Realm ↔ organization relationships projection
-    /// (`ck.self.realm_organization.query.list`,
-    /// `GET /_cokret/self/realms/{realm_id}/organizations`).
-    ///
-    /// The server only returns `verified_active` / `revoked_or_expired`
-    /// lifecycle rows plus `declared_organization_hints` (owning-organization
-    /// DIDs with no verified statement). `pending_consent` is a client-side
-    /// bind-flow state and is never projected here. This is read-only: binding
-    /// and organization-side signing happen in the admin console (sodmin).
-    pub async fn list_realm_organizations(
-        &self,
-        realm_id: &str,
-    ) -> anyhow::Result<cokret_sdk::models::RealmOrganizationRelationshipList> {
-        let realm_id = trim_realm_id(realm_id);
-        self.sdk_http_client()?
-            .realm_organizations(&realm_id)
-            .await
-            .map_err(anyhow::Error::from)
     }
 }
 

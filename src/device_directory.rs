@@ -484,7 +484,7 @@ pub async fn resolve_device_signing_key(
         }
     };
 
-    let outcome = api.query_keys(actor, device).await?;
+    let outcome = crate::keys_api::query_keys(&api.sdk_http_client()?, actor, device).await?;
 
     // P3.2b: DID anchoring (§8.3 step 1) needs the actor's DID document. For
     // `did:web` / `did:webvh` actors that document lives off-host, so fetch +

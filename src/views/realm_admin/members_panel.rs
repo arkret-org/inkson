@@ -3126,12 +3126,26 @@ pub fn RealmMembersPanel(
             spawn(async move {
                 match authed_api_with_sync(&base, api_token, None) {
                     Ok(api) => {
-                        let invite = api
-                            .authz_check_raw(&actor, "ck.invite.create", &realm)
-                            .await;
-                        let cancel_invite = api
-                            .authz_check_raw(&actor, "ck.invite.cancel", &realm)
-                            .await;
+                        let invite = async {
+                            crate::realm_read_api::authz_check_raw(
+                                &api.sdk_http_client()?,
+                                &actor,
+                                "ck.invite.create",
+                                &realm,
+                            )
+                            .await
+                        }
+                        .await;
+                        let cancel_invite = async {
+                            crate::realm_read_api::authz_check_raw(
+                                &api.sdk_http_client()?,
+                                &actor,
+                                "ck.invite.cancel",
+                                &realm,
+                            )
+                            .await
+                        }
+                        .await;
                         // Member removal has no standalone capability action in
                         // v1; it is governed by Realm management authority. Probe
                         // the registered `ck.realm.admin` action (management,
@@ -3140,7 +3154,16 @@ pub fn RealmMembersPanel(
                         // capability-action-registry.json and would be treated as
                         // an unknown high-risk action (fail-closed) by a
                         // spec-conformant server.
-                        let remove = api.authz_check_raw(&actor, "ck.realm.admin", &realm).await;
+                        let remove = async {
+                            crate::realm_read_api::authz_check_raw(
+                                &api.sdk_http_client()?,
+                                &actor,
+                                "ck.realm.admin",
+                                &realm,
+                            )
+                            .await
+                        }
+                        .await;
                         let can_invite = invite.as_ref().map(authz_json_allowed).unwrap_or(false);
                         let can_cancel_invite = cancel_invite
                             .as_ref()

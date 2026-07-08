@@ -15,12 +15,11 @@
 use cokret_sdk::models::{Capability, CapabilitySubject};
 use dioxus::prelude::*;
 
-use crate::api::CokretApi;
 use crate::components::{EmptyState, EmptyStateKind};
 use crate::local_state::LocalStateStore;
 use crate::ui::button::{Button, ButtonSize, ButtonVariant};
 use crate::ui::dialog::Dialog;
-use crate::views::helpers::{display_name_for_did, short_protocol_id, with_authed_api};
+use crate::views::helpers::{display_name_for_did, short_protocol_id, with_authed_sdk_client};
 
 /// One row in the user's capability list. Backed by either the user
 /// being the subject (capability held) or the issuer (capability
@@ -94,8 +93,8 @@ pub fn CapabilitiesSettingsCard(
             return;
         }
         spawn(async move {
-            match with_authed_api(&base, tok, |api: CokretApi| async move {
-                api.effective_grants(&did).await
+            match with_authed_sdk_client(&base, tok, |http| async move {
+                crate::realm_read_api::effective_grants(&http, &did).await
             })
             .await
             {

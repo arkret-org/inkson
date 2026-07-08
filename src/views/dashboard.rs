@@ -7,7 +7,7 @@ use crate::local_state::{ClientLocalState, LocalStateStore};
 use crate::models::{RealmTreeNode, RealmTreeNodeKind, projection_realm_id_for_known_node};
 use crate::routes::Route;
 use crate::ui::button::{Button, ButtonSize, ButtonVariant};
-use crate::views::helpers::{short_protocol_id, with_authed_api, with_authed_sdk_client};
+use crate::views::helpers::{short_protocol_id, with_authed_sdk_client};
 
 #[derive(Clone, Debug, PartialEq)]
 struct DashboardNotificationSummary {
@@ -166,8 +166,8 @@ pub fn DashboardPanel(
         let api_token = token();
         let realm_id = active_projection_realm_id.clone();
         spawn(async move {
-            match with_authed_api(&base, api_token, |api| async move {
-                api.list_strand_projections(&realm_id).await
+            match with_authed_sdk_client(&base, api_token, |http| async move {
+                crate::realm_read_api::list_strand_projections(&http, &realm_id).await
             })
             .await
             {
