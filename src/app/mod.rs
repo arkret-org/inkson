@@ -137,10 +137,10 @@ const APP_OVERRIDES: &str = concat!(
 /// semantic tokens (`--primary/--background/--foreground/...`); the second
 /// layer is dioxus-components compatibility aliases
 /// (`--primary-color-N/--focused-border-color/...`) used by `yoface::ui::*`
-/// `#[css_module]` styles. Values come from the yougen green palette (yoface
-/// tokens.css matches yougen design.css), so this keeps the existing
+/// `#[css_module]` styles. Values come from the inkson green palette (yoface
+/// tokens.css matches inkson design.css), so this keeps the existing
 /// `var(--dark,...)` / `var(--light,...)` and `[data-theme]` switches and the
-/// current yougen green appearance. This replaces the vendored
+/// current inkson green appearance. This replaces the vendored
 /// `assets/dx-components-theme.css` black/white defaults. Injection order stays
 /// before the three existing style blocks so later design.css/app_overrides can
 /// override these tokens.
@@ -332,7 +332,7 @@ pub fn RouterView() -> Element {
         use_future(move || async move {
             crate::runtime_helpers::sleep_for(std::time::Duration::from_millis(1)).await;
             tracing::warn!(target: "secure_store", "secure store upgrade: invoking upgrade_wasm_secure_key_store_async");
-            match crate::secure_key_store::upgrade_wasm_secure_key_store_async("yougen").await {
+            match crate::secure_key_store::upgrade_wasm_secure_key_store_async("inkson").await {
                 Ok(Some(secure_store)) => {
                     tracing::warn!(target: "secure_store", "secure store upgrade: Ok(Some) — IndexedDb tier installed");
                     let loaded_config = config_store_for_secure_upgrade
@@ -488,7 +488,7 @@ pub fn RouterView() -> Element {
                     match stable_device_id_for_signer {
                         Some(stable_device_id) => {
                             match crate::event_signer::bootstrap_default_signer_for_device(
-                                "yougen",
+                                "inkson",
                                 &stable_device_id,
                             ) {
                                 Ok(_) => {
@@ -589,7 +589,7 @@ pub fn RouterView() -> Element {
     }
     // Y1 - session-scoped DID resolution cache handle.
     //
-    // Mount point note: yougen app state is a set of scattered `use_signal`
+    // Mount point note: inkson app state is a set of scattered `use_signal`
     // handles rather than one aggregate struct, so this follows the same
     // minimal-intrusion pattern as `CapabilityEngine`: provide a shared
     // `Signal<DidResolutionCache>` with `use_context_provider`.
@@ -699,8 +699,8 @@ pub fn RouterView() -> Element {
         let _ = dioxus::document::eval(
             r#"
             (() => {
-              if (window.__yougenShortcutHelpBridgeInstalled) return;
-              window.__yougenShortcutHelpBridgeInstalled = true;
+              if (window.__inksonShortcutHelpBridgeInstalled) return;
+              window.__inksonShortcutHelpBridgeInstalled = true;
               window.addEventListener('keydown', (event) => {
                 const target = event.target;
                 const tag = target && target.tagName ? target.tagName.toLowerCase() : '';
@@ -1435,7 +1435,7 @@ pub fn RouterView() -> Element {
             .unwrap_or_default();
             drop(state_for_detection_key);
             let has_local_account_secret = crate::mls::runtime::load_account_mls_secret(
-                crate::secure_key_store::default_secure_key_store("yougen").as_ref(),
+                crate::secure_key_store::default_secure_key_store("inkson").as_ref(),
                 &actor,
             )
             .map(|secret| secret.is_some())
@@ -1488,7 +1488,7 @@ pub fn RouterView() -> Element {
                             return;
                         }
                         let secure_store =
-                            crate::secure_key_store::default_secure_key_store("yougen");
+                            crate::secure_key_store::default_secure_key_store("inkson");
                         let configured_backup_id =
                             crate::mls::account_recovery::select_preferred_mls_account_secret_backup(
                                 &payload,
@@ -2401,7 +2401,7 @@ pub fn RouterView() -> Element {
                         )
                         .await;
                     }
-                    let secure_store = crate::secure_key_store::default_secure_key_store("yougen");
+                    let secure_store = crate::secure_key_store::default_secure_key_store("inkson");
                     let mut store = share_state_store.write();
                     let mut installed_by_realm = BTreeMap::<String, usize>::new();
                     let mut installed_share_ids = Vec::<String>::new();
@@ -2623,7 +2623,7 @@ pub fn RouterView() -> Element {
             );
             drop(state_for_bootstrap_key);
             let has_local_account_secret = crate::mls::runtime::load_account_mls_secret(
-                crate::secure_key_store::default_secure_key_store("yougen").as_ref(),
+                crate::secure_key_store::default_secure_key_store("inkson").as_ref(),
                 &actor,
             )
             .map(|secret| secret.is_some())
@@ -2684,7 +2684,7 @@ pub fn RouterView() -> Element {
                 // Detection errors must NOT block or fail boot — log and
                 // leave the flag false.
                 let has_local_account_secret = crate::mls::runtime::load_account_mls_secret(
-                    crate::secure_key_store::default_secure_key_store("yougen").as_ref(),
+                    crate::secure_key_store::default_secure_key_store("inkson").as_ref(),
                     &detect_actor,
                 )
                 .map(|secret| secret.is_some())
@@ -2720,7 +2720,7 @@ pub fn RouterView() -> Element {
                             return;
                         }
                         let secure_store =
-                            crate::secure_key_store::default_secure_key_store("yougen");
+                            crate::secure_key_store::default_secure_key_store("inkson");
                         let configured_backup_id =
                             crate::mls::account_recovery::select_preferred_mls_account_secret_backup(
                                 &payload,
@@ -3051,9 +3051,9 @@ pub fn RouterView() -> Element {
     let topbar_unread_notifications = unread_notification_count(&state_store.read().load());
     let has_topbar_unread_notifications = topbar_unread_notifications > 0;
     let document_title = if matches!(&route, Route::Dashboard) {
-        "Yougen | Cokret".to_owned()
+        "Inkson | Cokret".to_owned()
     } else {
-        format!("{route_title} | Yougen | Cokret")
+        format!("{route_title} | Inkson | Cokret")
     };
     let shell_class = format!(
         "shell app{}{}{}",
@@ -3670,10 +3670,10 @@ pub fn RouterView() -> Element {
                     },
                 }
                 div { class: "sidebar-header",
-                    Link { class: "brand", to: Route::Dashboard, "aria-label": "Yougen | Cokret Home",
+                    Link { class: "brand", to: Route::Dashboard, "aria-label": "Inkson | Cokret Home",
                         span { class: "logo", "⌘" }
                         span { class: "product-meta",
-                            span { class: "product-name", "Yougen | Cokret" }
+                            span { class: "product-name", "Inkson | Cokret" }
                         }
                     }
                 }
@@ -5233,7 +5233,7 @@ pub fn RouterView() -> Element {
                                                     };
                                                 let logout_secure_store =
                                                     crate::secure_key_store::default_secure_key_store(
-                                                        "yougen",
+                                                        "inkson",
                                                     );
                                                 if let Err(error) =
                                                     crate::pending_logout::persist_pending_logout(

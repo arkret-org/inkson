@@ -352,7 +352,7 @@ async fn web_push_subscribe(
 
 /// FCM provider. Android host code feeds this provider via
 /// [`set_fcm_push_token`] after Firebase returns a registration token; local
-/// desktop/dev runs can inject the same value through `YOUGEN_FCM_PUSH_TOKEN`,
+/// desktop/dev runs can inject the same value through `INKSON_FCM_PUSH_TOKEN`,
 /// `FCM_PUSH_TOKEN`, or `CHASK_PUSH_KEY`.
 #[derive(Clone, Debug, Default)]
 pub struct FcmPushTokenProvider;
@@ -379,14 +379,14 @@ impl PushTokenProvider for FcmPushTokenProvider {
         Ok(bridged_or_env_token(
             "fcm",
             fcm_token_slot(),
-            &["YOUGEN_FCM_PUSH_TOKEN", "FCM_PUSH_TOKEN", "CHASK_PUSH_KEY"],
+            &["INKSON_FCM_PUSH_TOKEN", "FCM_PUSH_TOKEN", "CHASK_PUSH_KEY"],
         ))
     }
 }
 
 /// APNs provider. iOS/macOS host code feeds this provider via
 /// [`set_apns_push_token`] after APNs returns a device token; local runs can
-/// inject it through `YOUGEN_APNS_PUSH_TOKEN`, `APNS_DEVICE_TOKEN`, or
+/// inject it through `INKSON_APNS_PUSH_TOKEN`, `APNS_DEVICE_TOKEN`, or
 /// `CHASK_PUSH_KEY`.
 #[derive(Clone, Debug, Default)]
 pub struct ApnsPushTokenProvider;
@@ -414,7 +414,7 @@ impl PushTokenProvider for ApnsPushTokenProvider {
             "apns",
             apns_token_slot(),
             &[
-                "YOUGEN_APNS_PUSH_TOKEN",
+                "INKSON_APNS_PUSH_TOKEN",
                 "APNS_DEVICE_TOKEN",
                 "CHASK_PUSH_KEY",
             ],
@@ -426,12 +426,12 @@ impl PushTokenProvider for ApnsPushTokenProvider {
 /// push-bridge describe endpoint. The current chime describe schema does
 /// not yet expose VAPID material as a typed field — once the schema
 /// graduates `webpush.vapid_public_key`, this helper picks it up
-/// without a chime version bump on yougen's side.
+/// without a chime version bump on inkson's side.
 ///
 /// The lookup order:
 /// 1. If the gateway advertises a `webpush` profile via
 ///    [`PushBridgeDescribeOutcome::provider_capability_by_kind`], the capability's stable `kind`
-///    ack confirms VAPID is in scope and yougen's deploy MAY rely on environment variable
+///    ack confirms VAPID is in scope and inkson's deploy MAY rely on environment variable
 ///    `VAPID_PUBLIC_KEY` (set by the dev-stack bootstrap) for the actual key bytes.
 /// 2. Otherwise return `None` — the WebPushTokenProvider will subscribe without an
 ///    `applicationServerKey`, which produces an unencrypted Web Push subscription and is fine for

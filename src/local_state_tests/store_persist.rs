@@ -252,7 +252,7 @@ fn local_state_migrates_local_only_drafts_to_account_data_staging() {
 
     let migrated = store
         .migrate_local_only_drafts_to_account_data(
-            b"yougen-account-data-test-key",
+            b"inkson-account-data-test-key",
             "ck:device:01904100-0000-7000-8000-000000000001",
             "01970e589d21-0000-a13f9c2e",
             "2026-06-07T00:00:00Z",
@@ -287,7 +287,7 @@ fn local_state_stages_saved_items_as_private_account_data() {
     let mut store = LocalStateStore::with_path(path.clone());
     let migrated = store
         .migrate_local_only_saved_items_to_account_data(
-            b"yougen-account-data-test-key",
+            b"inkson-account-data-test-key",
             &[crate::account_data::LegacySavedItem {
                 collection_title: "Focus".to_owned(),
                 target_ref: "ck:message:01904100-0000-7000-8000-000000000001".to_owned(),
@@ -500,9 +500,9 @@ fn local_state_store_persists_push_registration_state() {
         schema_version: chime::PUSH_REGISTRATION_STATE_SCHEMA_VERSION,
         principal_id: None,
         registration_id: Some("ck:push:local".to_owned()),
-        device_id: "dev_yougen".to_owned(),
+        device_id: "dev_inkson".to_owned(),
         platform: Some("desktop".to_owned()),
-        app_id: Some("yougen".to_owned()),
+        app_id: Some("inkson".to_owned()),
         push_gateway: "https://push.example/_cokret/edge/push/notify".to_owned(),
         push_key_hash: "sha256:abc".to_owned(),
         push_key_preview: "desktop:<redacted,len=5>".to_owned(),
@@ -516,7 +516,7 @@ fn local_state_store_persists_push_registration_state() {
     let mut reader = LocalStateStore::with_path(path);
     let state = reader.push_registration().expect("push registration");
     assert_eq!(state.registration_id.as_deref(), Some("ck:push:local"));
-    assert_eq!(state.device_id, "dev_yougen");
+    assert_eq!(state.device_id, "dev_inkson");
 
     reader.clear_push_registration();
     assert!(reader.push_registration().is_none());
@@ -577,7 +577,7 @@ fn clear_account_scoped_preserves_device_level_and_session_grant_state() {
     store.save_private_data("did:web:tester.example", "theme", "night");
     store
         .migrate_local_only_drafts_to_account_data(
-            b"yougen-account-data-test-key",
+            b"inkson-account-data-test-key",
             "ck:device:01904100-0000-7000-8000-000000000001",
             "01970e589d21-0000-a13f9c2e",
             "2026-06-07T00:00:00Z",
@@ -585,7 +585,7 @@ fn clear_account_scoped_preserves_device_level_and_session_grant_state() {
         .unwrap();
     store
         .migrate_local_only_saved_items_to_account_data(
-            b"yougen-account-data-test-key",
+            b"inkson-account-data-test-key",
             &[crate::account_data::LegacySavedItem {
                 collection_title: "Focus".to_owned(),
                 target_ref: "ck:message:01904100-0000-7000-8000-000000000001".to_owned(),

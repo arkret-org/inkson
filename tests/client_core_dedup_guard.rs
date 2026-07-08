@@ -1,6 +1,6 @@
 //! Static deduplication gates for client-core extraction.
 //!
-//! These guards pin surfaces that have already been removed from yougen. They
+//! These guards pin surfaces that have already been removed from inkson. They
 //! intentionally do not assert that the `CokretApi` struct itself is gone (its
 //! remaining god-object methods + E8 orchestration are still live work), but
 //! they DO pin the `src/api/**` submodules that have been fully extracted:
@@ -86,7 +86,7 @@ fn removed_private_coauth_and_dpop_surfaces_stay_removed() {
         violations.is_empty(),
         "removed duplicate client-core surface reappeared. Keep CoauthApi and \
          private DPoP helpers in the shared client layer, and do not reintroduce \
-         yougen-local src/dpop.rs or src/auth_dpop.rs. Violations:\n{}",
+         inkson-local src/dpop.rs or src/auth_dpop.rs. Violations:\n{}",
         violations.join("\n")
     );
 }

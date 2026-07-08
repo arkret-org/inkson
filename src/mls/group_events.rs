@@ -344,7 +344,7 @@ pub(crate) fn build_creator_mls_genesis_event_for_effective_scope(
         &summary.group_id,
         &payload,
     )
-    .build_sdk_event("yougen")
+    .build_sdk_event("inkson")
     .map(Some)
     .map_err(|err| format!("MLS genesis SDK Event conversion failed: {err}"))?;
     if let Some(event) = event.as_mut() {
@@ -508,7 +508,7 @@ fn mls_commit_event_from_store_for_effective_scope_with_membership_frontier(
     let mut event =
         crate::operation::ck_ops::mls_commit_with_governance(realm_id, actor_id, &payload)
             .map_err(|err| format!("MLS commit payload failed: {err}"))?
-            .build_sdk_event("yougen")
+            .build_sdk_event("inkson")
             .map_err(|err| format!("MLS commit SDK Event conversion failed: {err}"))?;
     event.event_id = event_id_typed;
     if let Some(circle_id) = circle {

@@ -1,7 +1,7 @@
 import { defineConfig, devices } from "@playwright/test";
 
-const baseURL = process.env.YOUGEN_E2E_BASE_URL ?? "http://127.0.0.1:4527";
-const shouldStartServer = !process.env.YOUGEN_E2E_BASE_URL;
+const baseURL = process.env.INKSON_E2E_BASE_URL ?? "http://127.0.0.1:4527";
+const shouldStartServer = !process.env.INKSON_E2E_BASE_URL;
 
 export default defineConfig({
   testDir: "./tests/e2e",

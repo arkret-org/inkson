@@ -70,7 +70,7 @@ fn build_circle_remove_proposal_event(
         &proposal_payload,
     )
     .map_err(|err| format!("MLS proposal payload failed: {err}"))?
-    .build_sdk_event("yougen")
+    .build_sdk_event("inkson")
     .map_err(|err| format!("MLS proposal SDK Event conversion failed: {err}"))?;
     event.effective_scope = Some(circle_effective_scope(realm_id, circle_id)?);
     Ok(event)

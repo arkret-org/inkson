@@ -1,4 +1,4 @@
-# yougen — Recovery Strand
+# inkson — Recovery Strand
 
 > How to recover Cokret Principal access and encrypted backup material when
 > the device that holds your signing key is lost, broken, or revoked. Spec
@@ -22,20 +22,20 @@ but device authorization is controlled by the active `recovery_policy`.
 
 Use this when:
 
-- You can install yougen on a new device.
+- You can install inkson on a new device.
 - You remember the passphrase you set at onboarding.
 
 ### Steps
 
-1. Install yougen on the recovery device. Sign in via coauth as usual.
+1. Install inkson on the recovery device. Sign in via coauth as usual.
 2. Open **Settings → Recovery → Restore from vault**.
-3. Enter the passphrase. yougen pulls the encrypted blob, runs Argon2id,
+3. Enter the passphrase. inkson pulls the encrypted blob, runs Argon2id,
    decrypts via XChaCha20-Poly1305, then re-bootstraps the device key and
    imports the account MLS history secret when one is present.
 4. After the active `recovery_policy` accepts a bound `recovery_session`
    proof, the device-authorization strand can publish `ck.device.authorize`.
 
-Current yougen status: the restore panel re-hydrates local backup payload and
+Current inkson status: the restore panel re-hydrates local backup payload and
 MLS account-secret material. It does not yet submit the policy proof or
 `ck.device.authorize` by itself.
 
@@ -62,14 +62,14 @@ Use this when:
 ### Steps
 
 1. On the new device, open **Settings → Recovery → Social Recovery**.
-2. yougen displays a recovery code per guardian. Send each one through a
+2. inkson displays a recovery code per guardian. Send each one through a
    trusted channel (in person, signed email, established Signal thread).
-3. Each guardian opens **Settings → Guardian Requests** in their yougen
+3. Each guardian opens **Settings → Guardian Requests** in their inkson
    client and approves with their device signature.
-4. Once N approvals reach the new device, yougen reconstructs the
+4. Once N approvals reach the new device, inkson reconstructs the
    recovery secret and finishes bootstrap.
 
-Current yougen status: guardian configuration and rehearsal timestamps are
+Current inkson status: guardian configuration and rehearsal timestamps are
 stored locally. Server-backed share release, reconstruction, and recovery
 receipt writing are still pending implementation.
 
@@ -86,16 +86,16 @@ shares, not your private key.
 Use this when:
 
 - You stored the high-entropy phrase offline at onboarding.
-- You can install yougen on a new device.
+- You can install inkson on a new device.
 
 ### Steps
 
-1. Install yougen and sign in via coauth.
+1. Install inkson and sign in via coauth.
 2. Open **Settings → Recovery → Restore from recovery key**.
-3. Enter the phrase. yougen derives the master secret and
+3. Enter the phrase. inkson derives the master secret and
    re-bootstraps the device.
 
-Current yougen status: the app can generate and fingerprint a recovery key.
+Current inkson status: the app can generate and fingerprint a recovery key.
 Fresh-device restore through that key still needs policy proof and
 device-authorization wiring.
 
@@ -129,7 +129,7 @@ cached remains readable on that device.
 ## 5. Late recovery / cross-signing reset
 
 If you missed the 24-hour successor window the cross-signing chain may
-have rotated past you. yougen's `late_recovery` module surfaces a
+have rotated past you. inkson's `late_recovery` module surfaces a
 **Late recovery** banner with one-click strands for:
 
 - **Restart cross-signing** — publishes a fresh CSR with a `reset_reason`.

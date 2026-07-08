@@ -284,7 +284,7 @@ pub fn ActionApproveDialog(
                                     cokret_sdk::events::kinds::EventKind::AgentActionApprove,
                                 )
                                 .body(payload)
-                                .build_sdk_event("yougen");
+                                .build_sdk_event("inkson");
                                 let op = match op {
                                     Ok(op) => op,
                                     Err(err) => {
@@ -513,7 +513,7 @@ pub fn DraftApprovalPanel(
                                                         cokret_sdk::events::kinds::EventKind::AgentActionApprove,
                                                     )
                                                     .body(payload)
-                                                    .build_sdk_event("yougen");
+                                                    .build_sdk_event("inkson");
                                                     spawn(async move {
                                                         let op = match op {
                                                             Ok(op) => op,
@@ -576,7 +576,7 @@ pub fn DraftApprovalPanel(
                                                         cokret_sdk::events::kinds::EventKind::AgentActionReject,
                                                     )
                                                     .body(payload)
-                                                    .build_sdk_event("yougen");
+                                                    .build_sdk_event("inkson");
                                                     spawn(async move {
                                                         let op = match op {
                                                             Ok(op) => op,

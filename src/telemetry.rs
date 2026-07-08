@@ -1,12 +1,12 @@
 //! Client-side telemetry mirroring sodmin's `utils/audit.rs` shape.
 //!
-//! Why this exists: yougen needs a structured "what action did the
+//! Why this exists: inkson needs a structured "what action did the
 //! user just take" trace matching the operator console (sodmin). This
 //! module gives every interactive surface (settings page, device-revoke,
 //! OIDC refresh, MLS commit, push subscribe) a single typed call site:
 //!
 //! ```ignore
-//! use yougen::telemetry::{emit_user_action_log, UserActionOutcome};
+//! use inkson::telemetry::{emit_user_action_log, UserActionOutcome};
 //!
 //! emit_user_action_log(
 //!     &mut store,
@@ -26,7 +26,7 @@
 //! `state.json` / `localStorage` channel as the rest of the local state.
 //!
 //! Schema mirrors sodmin's `format_admin_audit_line` so the operator
-//! console can ingest yougen-emitted entries without schema work:
+//! console can ingest inkson-emitted entries without schema work:
 //! `actor` / `action` / `outcome` plus an optional `note`. The
 //! line-formatting helper [`format_user_action_line`] produces the
 //! exact same wire shape sodmin's grep tooling already understands.
@@ -84,7 +84,7 @@ pub fn sentry_init(
         // privacy-preserving by default.
         send_default_pii: false,
         // R18: capture every error event (explicit rather than relying on the
-        // SDK default) while leaving performance tracing off — yougen does not
+        // SDK default) while leaving performance tracing off — inkson does not
         // emit transactions, so traces are not sampled.
         sample_rate: 1.0,
         traces_sample_rate: 0.0,
@@ -106,7 +106,7 @@ pub fn sentry_init(_prefs: crate::components::CrashTelemetryPrefs) -> Option<()>
 
 /// Outcome of a user action — mirrors sodmin's `AdminAuditOutcome`
 /// surface (the wire labels match exactly so a downstream parser can
-/// merge sodmin admin and yougen client audit streams without
+/// merge sodmin admin and inkson client audit streams without
 /// translation).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum UserActionOutcome {
@@ -179,7 +179,7 @@ fn redact_note(note: &str) -> String {
 /// Format a user-action log line. Pure helper — exposed so external
 /// log sinks can re-render the same shape without going through
 /// `tracing`. Mirrors sodmin's `format_admin_audit_line` byte-for-byte
-/// with `yougen.user.action` as the prefix.
+/// with `inkson.user.action` as the prefix.
 pub fn format_user_action_line(
     actor: &str,
     action: &str,
@@ -191,7 +191,7 @@ pub fn format_user_action_line(
         None => String::new(),
     };
     format!(
-        "yougen.user.action actor={} action={} outcome={}{}",
+        "inkson.user.action actor={} action={} outcome={}{}",
         actor,
         action,
         outcome.label(),
@@ -288,7 +288,7 @@ mod tests {
             UserActionOutcome::Success,
             None,
         );
-        assert!(line.starts_with("yougen.user.action"));
+        assert!(line.starts_with("inkson.user.action"));
         assert!(line.contains("actor=did:key:zAlice"));
         assert!(line.contains("action=oidc.refresh"));
         assert!(line.contains("outcome=accepted"));

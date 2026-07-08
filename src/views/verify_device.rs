@@ -534,7 +534,7 @@ pub fn VerifyDevicePanel(
                                                     api_token,
                                                     |api| async move {
                                                         api.send_device_message_envelope(
-                                                            "yougen-sas-key",
+                                                            "inkson-sas-key",
                                                             &account,
                                                             &target,
                                                             "ck.key.verification.key",
@@ -932,7 +932,7 @@ pub fn VerifyDevicePanel(
                                         // 2. Persist the private keys to
                                         //    the OS keychain (or the in-
                                         //    memory fallback on wasm).
-                                        let store = default_secure_key_store("yougen");
+                                        let store = default_secure_key_store("inkson");
                                         if let Err(err) = output
                                             .persist_private_keys(
                                                 store.as_ref(),

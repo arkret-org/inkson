@@ -251,7 +251,7 @@ pub fn build_signed_genesis_recovery_policy_for_session_device(
 fn default_principal_scoped_recovery_policy_signer(
     principal_id: &str,
     device_id: &str,
-) -> anyhow::Result<crate::event_signer::YougenEventSigner> {
+) -> anyhow::Result<crate::event_signer::InksonEventSigner> {
     let principal_id = principal_id.trim();
     if principal_id.is_empty() {
         anyhow::bail!("principal_id is required");
@@ -260,7 +260,7 @@ fn default_principal_scoped_recovery_policy_signer(
     if device_id.is_empty() {
         anyhow::bail!("device_id is required");
     }
-    let store = crate::secure_key_store::default_secure_key_store("yougen");
+    let store = crate::secure_key_store::default_secure_key_store("inkson");
     let material = crate::secure_key_store::ensure_signing_seed(store.as_ref())
         .map_err(|err| anyhow::anyhow!("ensure recovery policy signing seed failed: {err}"))?;
     Ok(
@@ -275,7 +275,7 @@ fn default_principal_scoped_recovery_policy_signer(
 fn build_signed_genesis_recovery_policy_with_signer(
     principal_id: &str,
     trust_domain: &str,
-    signer: &crate::event_signer::YougenEventSigner,
+    signer: &crate::event_signer::InksonEventSigner,
 ) -> anyhow::Result<Value> {
     let verification_method =
         principal_scoped_recovery_policy_verification_method(principal_id, signer)?;
@@ -331,7 +331,7 @@ fn build_signed_genesis_recovery_policy_with_raw_signer(
 
 fn principal_scoped_recovery_policy_verification_method<'a>(
     principal_id: &str,
-    signer: &'a crate::event_signer::YougenEventSigner,
+    signer: &'a crate::event_signer::InksonEventSigner,
 ) -> anyhow::Result<&'a str> {
     let verification_method = signer.verification_method().trim();
     principal_scoped_recovery_policy_verification_method_id(principal_id, verification_method)?;

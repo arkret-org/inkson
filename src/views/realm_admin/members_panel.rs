@@ -1710,7 +1710,7 @@ pub(crate) async fn submit_mls_admission_for_invitee(
                 )
             })?
     };
-    let secure_store = crate::secure_key_store::default_secure_key_store("yougen");
+    let secure_store = crate::secure_key_store::default_secure_key_store("inkson");
     ensure_mls_genesis_frontier_for_invite(
         api,
         state_store,
@@ -1818,7 +1818,7 @@ pub(crate) async fn submit_mls_admission_for_invitee(
     // Eager RRK seal (encryption-and-audit.md §2.10.8): if this Realm declares an
     // effective `durability_policy` (mode != none + mls-exporter-aead-v1), seal
     // the retained history_secret(s) to every recovery recipient right after the
-    // admission commit advances the epoch and before any (future) GC. yougen
+    // admission commit advances the epoch and before any (future) GC. inkson
     // never GCs history_secrets, so this only needs to be eager, not blocking.
     if state_store.read().realm_durability_is_rrk_active(&realm_id) {
         if let Err(err) = seal_history_to_recovery_recipients(
@@ -1839,7 +1839,7 @@ pub(crate) async fn submit_mls_admission_for_invitee(
     }
     // Proactive provider push of `ck.realm_key.share` at admission time would
     // need the invitee device's HPKE public key. The claimed KeyPackage's
-    // X25519 init key is not surfaced by the current SDK, and yougen seals to a
+    // X25519 init key is not surfaced by the current SDK, and inkson seals to a
     // dedicated per-device HPKE key the invitee advertises in a
     // `ck.realm_key.request`. So the proactive push is deferred to the
     // request-driven path: the invitee sends `ck.realm_key.request` (advertising
@@ -2019,7 +2019,7 @@ pub(crate) async fn share_history_to_requester(
     {
         return Ok(false);
     }
-    let secure_store = crate::secure_key_store::default_secure_key_store("yougen");
+    let secure_store = crate::secure_key_store::default_secure_key_store("inkson");
     // Ensure the current epoch's key is retained, then gather every retained
     // (epoch, secret) the requester is asking for.
     {
@@ -2102,7 +2102,7 @@ pub(crate) async fn share_history_to_requester(
 /// (`mode != none` AND `content_scheme == mls-exporter-aead-v1`); the caller
 /// gates on [`LocalStateStore::realm_durability_is_rrk_active`].
 ///
-/// **RYW guard (§2.10.8 eager timing)**: yougen never GCs `history_secret`s
+/// **RYW guard (§2.10.8 eager timing)**: inkson never GCs `history_secret`s
 /// (`mls_sidecar` is monotonic), so the dangerous "GC before seal accepted"
 /// window does not exist structurally — the retained secret survives until the
 /// store is wiped. This hook only has to be *eager*: it fires right after the
@@ -2121,7 +2121,7 @@ pub(crate) async fn seal_history_to_recovery_recipients(
     actor_id: String,
     device_id: String,
 ) -> anyhow::Result<(usize, usize)> {
-    let secure_store = crate::secure_key_store::default_secure_key_store("yougen");
+    let secure_store = crate::secure_key_store::default_secure_key_store("inkson");
     // Ensure the just-advanced epoch's key is retained before sealing.
     {
         let mut store = state_store.write();
@@ -2519,7 +2519,7 @@ pub(crate) async fn request_history_keys_for_realm(
     };
     // This device's HPKE public key — the provider seals the reply to it; the
     // matching private half (same keypair) opens it on ingest.
-    let secure_store = crate::secure_key_store::default_secure_key_store("yougen");
+    let secure_store = crate::secure_key_store::default_secure_key_store("inkson");
     let (_privkey, pubkey) = crate::mls::runtime::load_or_create_device_hpke_keypair(
         secure_store.as_ref(),
         &actor_id,
@@ -2672,7 +2672,7 @@ pub(crate) async fn reconcile_mls_admissions_for_realm(
     // Only Realms this device can admit into: holding MLS state ⇒ able to build
     // the commit + Welcome. Without a snapshot we are not an admit-capable
     // member and have nothing to reconcile.
-    let secure_store = crate::secure_key_store::default_secure_key_store("yougen");
+    let secure_store = crate::secure_key_store::default_secure_key_store("inkson");
     let group_member_dids: BTreeSet<String> = {
         let store = state_store.read();
         match crate::mls::runtime::mls_group_member_principal_ids_for_realm(
@@ -2806,7 +2806,7 @@ pub(crate) async fn submit_mls_admission_for_invitees(
                 )
             })?
     };
-    let secure_store = crate::secure_key_store::default_secure_key_store("yougen");
+    let secure_store = crate::secure_key_store::default_secure_key_store("inkson");
     ensure_mls_genesis_frontier_for_invite(
         api,
         state_store,
@@ -3594,7 +3594,7 @@ pub fn RealmMembersPanel(
                                                             &invitee.introduction_evidence_digest,
                                                         ) {
                                                             Ok(builder) => builder
-                                                                .build_sdk_event("yougen"),
+                                                                .build_sdk_event("inkson"),
                                                             Err(err) => {
                                                                 status_msg.set(format!("invite failed: {err:#}"));
                                                                 return;
@@ -4335,7 +4335,7 @@ mod tests {
 
     fn temp_store(name: &str) -> LocalStateStore {
         let path = std::env::temp_dir().join(format!(
-            "yougen-members-panel-{name}-{}.json",
+            "inkson-members-panel-{name}-{}.json",
             crate::operation::uuid_v7()
         ));
         LocalStateStore::with_path(path)

@@ -113,7 +113,7 @@ const WASM_SENSITIVE_SECRET_INDEXEDDB_REQUIRED: &str = "wasm account secrets and
 /// Production builds MUST leave this unset.
 #[cfg(target_arch = "wasm32")]
 pub(crate) const WASM_ALLOW_LOCALSTORAGE_SECRETS_FLAG: &str =
-    "yougen.security.allow_localstorage_secrets";
+    "inkson.security.allow_localstorage_secrets";
 
 /// `true` when [`WASM_ALLOW_LOCALSTORAGE_SECRETS_FLAG`] is set to a truthy value
 /// (`1`/`true`) in `localStorage`. Reading the flag itself from localStorage is
@@ -168,21 +168,21 @@ pub(crate) fn is_wasm_ed25519_seed_key(key: &str) -> bool {
 /// SecureKeyStore key prefix for per-realm aggregated MLS `history_secret`s
 /// (E2EE-at-rest hardening spec T1). The value is JSON
 /// `{ "<epoch>": "<base64url(secret)>" }` and the full key is
-/// `yougen.mls_history_secret.v1.<base64(realm_id)>`. This is raw exporter key
+/// `inkson.mls_history_secret.v1.<base64(realm_id)>`. This is raw exporter key
 /// material — it MUST live only in the IndexedDB + non-extractable SubtleCrypto
 /// tier (same protection level as the account MLS secret) and MUST NOT be
 /// mirrored to localStorage, so the prefix appears in BOTH
 /// [`is_wasm_indexeddb_required_secret_key`] and
 /// [`is_wasm_no_localstorage_mirror_key`].
-pub(crate) const MLS_HISTORY_SECRET_KEY_PREFIX: &str = "yougen.mls_history_secret.v1.";
+pub(crate) const MLS_HISTORY_SECRET_KEY_PREFIX: &str = "inkson.mls_history_secret.v1.";
 
 #[cfg(any(target_arch = "wasm32", test))]
 pub(crate) fn is_wasm_indexeddb_required_secret_key(key: &str) -> bool {
     is_wasm_ed25519_seed_key(key)
         || key == PENDING_LOGOUT_SECRET_KEY
-        || key.starts_with("yougen.mls_snapshot.account_secret.")
-        || key.starts_with("yougen_mls_account_secret")
-        || key.starts_with("yougen.mls_key_package.identity_state.")
+        || key.starts_with("inkson.mls_snapshot.account_secret.")
+        || key.starts_with("inkson_mls_account_secret")
+        || key.starts_with("inkson.mls_key_package.identity_state.")
         || key.starts_with("coauth.session_credential.")
         || key.starts_with(MLS_HISTORY_SECRET_KEY_PREFIX)
 }
@@ -197,7 +197,7 @@ pub(crate) fn is_wasm_indexeddb_required_secret_key(key: &str) -> bool {
 pub(crate) fn is_wasm_no_localstorage_mirror_key(key: &str) -> bool {
     is_wasm_ed25519_seed_key(key)
         || key == PENDING_LOGOUT_SECRET_KEY
-        || key.starts_with("yougen.mls_key_package.identity_state.")
+        || key.starts_with("inkson.mls_key_package.identity_state.")
         || key.starts_with(MLS_HISTORY_SECRET_KEY_PREFIX)
 }
 
@@ -261,7 +261,7 @@ pub(crate) fn load_realm_history_secrets(
     if !wasm_secure_store_upgraded() {
         return None;
     }
-    let store = default_secure_key_store("yougen");
+    let store = default_secure_key_store("inkson");
     let key = mls_history_secret_store_key(realm_id);
     match store.get_secret(&key) {
         Ok(Some(json)) => Some(decode_history_secrets_json(&json)),
@@ -286,7 +286,7 @@ pub(crate) fn persist_realm_history_secrets(
     if !wasm_secure_store_upgraded() {
         return false;
     }
-    let store = default_secure_key_store("yougen");
+    let store = default_secure_key_store("inkson");
     let key = mls_history_secret_store_key(realm_id);
     if by_epoch.is_empty() {
         return store.delete_secret(&key).is_ok();
@@ -467,8 +467,8 @@ pub trait SecureKeyStore: Send + Sync {
 }
 
 /// wasm-only: one-time migration of the legacy global wrap_seed
-/// (`yougen.secret.yougen.wrap_seed.v1`) into an account DID's namespace
-/// (`yougen.secret.<did>.wrap_seed.v1`). The wrap_seed is now namespaced by the
+/// (`inkson.secret.inkson.wrap_seed.v1`) into an account DID's namespace
+/// (`inkson.secret.<did>.wrap_seed.v1`). The wrap_seed is now namespaced by the
 /// active account scope (see [`signing_seed::wrap_seed_namespace`]); copying the
 /// historical global seed under the migrated owner's namespace keeps any
 /// secrets that owner wrapped under the old shared key decryptable. Best-effort
@@ -483,8 +483,8 @@ pub fn migrate_global_wrap_seed_to_namespace(owner_did: &str) {
         return;
     };
     let suffix = ".wrap_seed.v1";
-    let source_key = format!("yougen.secret.yougen{suffix}");
-    let dest_key = format!("yougen.secret.{owner_did}{suffix}");
+    let source_key = format!("inkson.secret.inkson{suffix}");
+    let dest_key = format!("inkson.secret.{owner_did}{suffix}");
     if source_key == dest_key {
         return;
     }

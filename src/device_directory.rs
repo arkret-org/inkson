@@ -40,7 +40,7 @@
 //!   `device-lifecycle.md` §5.2.1 / §8.3:
 //!
 //!   1. **DID anchoring** (done here, not by the SDK): resolve the actor's DID document through
-//!      yougen's existing resolver chain ([`crate::did_resolver`]) and confirm
+//!      inkson's existing resolver chain ([`crate::did_resolver`]) and confirm
 //!      `cross_signing[principal] .principal_signing_key` (`kid` + `public_key`) equals the
 //!      DID-resolved verification method key byte-for-byte. Mismatch / unresolvable → fail.
 //!   2. **PSK→SSK→device chain**: hand the DID-anchored PSK plus the publish payload, the device's
@@ -69,7 +69,7 @@ use crate::api::CokretApi;
 /// Resolve the DID document for an `actor` so the Tier-2 anchoring step can
 /// confirm the published PSK against the actor's current DID control set.
 ///
-/// Implementations wrap yougen's authority-grade DID resolver
+/// Implementations wrap inkson's authority-grade DID resolver
 /// ([`crate::did_resolver::build_default_resolver`] + `resolve_with_cache`),
 /// so the same fail-closed policy that governs login / trust UI also governs
 /// device-key trust. Returning `None` (unresolvable / disallowed method / no

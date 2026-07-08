@@ -1,5 +1,5 @@
 //! YOU-01-014 regression: the `ck.member.{invite,remove,role_change}` tokens are
-//! yougen-local UI grouping placeholders only. They are NOT registered in
+//! inkson-local UI grouping placeholders only. They are NOT registered in
 //! `capability-action-registry.json`, so they must never be sent on the
 //! protocol authz wire (`authz_check_raw` → `AuthzCheckRequestBody.action` →
 //! `POST /_cokret/self/authz/check`). A spec-conformant server fail-closes on

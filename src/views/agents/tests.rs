@@ -562,7 +562,7 @@ mod tests {
             &["strand.read"],
         )
         .expect("builds")
-        .build("yougen");
+        .build("inkson");
         assert_eq!(op.payload["agent_id"], "did:web:agent.example");
         assert_eq!(op.payload["endpoints"][0]["protocol"], "ck.agent.v1");
         assert_eq!(op.payload["endpoints"][0]["capabilities"][0], "strand.read");
@@ -580,7 +580,7 @@ mod tests {
             serde_json::json!({"merkle_root": "sha256:abc"}),
         )
         .expect("builds")
-        .build("yougen");
+        .build("inkson");
         assert_eq!(op.payload["status"], "completed");
         assert_eq!(op.payload["result_objects"][0]["summary"], "ok");
         assert_eq!(op.payload["artifacts"][0]["merkle_root"], "sha256:abc");
@@ -981,7 +981,7 @@ mod tests {
             "ck:morph:01904100-0000-7000-8000-00000000bbbb",
         )
         .unwrap()
-        .build("yougen");
+        .build("inkson");
         // actor_id is the controller; attribution preserves the agent.
         assert_eq!(op.actor_id.as_str(), "did:web:alice.example");
         assert_eq!(

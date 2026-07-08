@@ -91,7 +91,7 @@ test("login page delegates account lifecycle to coauth OIDC", async ({ page }) =
   const storageState = await page.context().storageState();
   const oidcScaffoldEntry = storageState.origins
     .flatMap((origin) => origin.localStorage)
-    .find((entry) => entry.name === "yougen.oidc_scaffold.v1");
+    .find((entry) => entry.name === "inkson.oidc_scaffold.v1");
   expect(oidcScaffoldEntry).toBeTruthy();
   const oidcScaffold = JSON.parse(oidcScaffoldEntry?.value ?? "{}");
   expect(oidcScaffold.principal_actor_id).toBe("");

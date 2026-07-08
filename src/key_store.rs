@@ -101,7 +101,7 @@ pub trait KeyStore: Send + Sync {
 
 /// Default in-memory key store. Wraps a [`LocalStateStore`] reference so
 /// the existing on-disk `state.json` record is the source of truth — i.e.
-/// flipping yougen onto the [`KeyStore`] trait without changing the
+/// flipping inkson onto the [`KeyStore`] trait without changing the
 /// backend is a no-op.
 ///
 /// The store is `Clone`-able (cheap `Arc<Mutex<...>>` clone) so multiple
@@ -300,7 +300,7 @@ mod tests {
             .duration_since(UNIX_EPOCH)
             .expect("time")
             .as_nanos();
-        std::env::temp_dir().join(format!("yougen-keystore-{name}-{stamp}.json"))
+        std::env::temp_dir().join(format!("inkson-keystore-{name}-{stamp}.json"))
     }
 
     fn isolated_store() -> InMemoryKeyStore {
@@ -363,14 +363,14 @@ mod tests {
 
     #[test]
     fn macos_keychain_stub_reports_unsupported() {
-        let store = MacOsKeychainKeyStore::new("yougen.test");
+        let store = MacOsKeychainKeyStore::new("inkson.test");
         let err = store.load_identity("did:key:zX").unwrap_err();
         assert!(matches!(err, KeyStoreError::Unsupported("macos-keychain")));
     }
 
     #[test]
     fn linux_secret_service_stub_reports_unsupported() {
-        let store = LinuxSecretServiceKeyStore::new("default", "yougen.identity");
+        let store = LinuxSecretServiceKeyStore::new("default", "inkson.identity");
         let err = store.load_identity("did:key:zX").unwrap_err();
         assert!(matches!(
             err,
@@ -380,7 +380,7 @@ mod tests {
 
     #[test]
     fn windows_credential_stub_reports_unsupported() {
-        let store = WindowsCredentialKeyStore::new("yougen/test");
+        let store = WindowsCredentialKeyStore::new("inkson/test");
         let err = store
             .save_identity(
                 "did:key:zX",

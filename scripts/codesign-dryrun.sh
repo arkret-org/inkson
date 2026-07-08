@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Reproducible codesign / notarization DRY-RUN for yougen desktop.
+# Reproducible codesign / notarization DRY-RUN for inkson desktop.
 #
 # NOT FOR PRODUCTION USE. This script never submits to Apple, Microsoft
 # timestamp authorities, or external signing services. It records what the
@@ -14,9 +14,9 @@ SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd -- "${SCRIPT_DIR}/.." && pwd)"
 cd "${REPO_ROOT}"
 
-ARTIFACT_PATH="${1:-target/release/yougen}"
-DIST_DIR="${YOUGEN_DIST_DIR:-dist/signing}"
-NO_BUILD="${YOUGEN_NO_BUILD:-0}"
+ARTIFACT_PATH="${1:-target/release/inkson}"
+DIST_DIR="${INKSON_DIST_DIR:-dist/signing}"
+NO_BUILD="${INKSON_NO_BUILD:-0}"
 
 mkdir -p "${DIST_DIR}"
 
@@ -48,7 +48,7 @@ if [[ "${HOST_OS}" == "darwin" ]]; then
     CODESIGN_AVAIL="false"; command -v codesign >/dev/null 2>&1 && CODESIGN_AVAIL="true"
     XCRUN_AVAIL="false"; command -v xcrun >/dev/null 2>&1 && XCRUN_AVAIL="true"
     IDENTITY_PRESENT="false"
-    [[ -n "${YOUGEN_MACOS_SIGN_IDENTITY:-}" ]] && IDENTITY_PRESENT="true"
+    [[ -n "${INKSON_MACOS_SIGN_IDENTITY:-}" ]] && IDENTITY_PRESENT="true"
     NOTARY_PRESENT="false"
     if [[ -n "${APPLE_ID:-}" && -n "${APPLE_TEAM_ID:-}" ]] && \
        { [[ -n "${APPLE_APP_SPECIFIC_PASSWORD:-}" ]] || [[ -n "${APPLE_KEYCHAIN_PROFILE:-}" ]]; }; then
@@ -75,7 +75,7 @@ EOF
 )
 else
     GPG_AVAIL="false"; command -v gpg >/dev/null 2>&1 && GPG_AVAIL="true"
-    TARBALL="${DIST_DIR}/yougen-linux-x64.tar.gz"
+    TARBALL="${DIST_DIR}/inkson-linux-x64.tar.gz"
     WOULD_TAR="${ARTIFACT_EXISTS}"
     WOULD_SIGN="false"
     [[ "${ARTIFACT_EXISTS}" == "true" && "${GPG_AVAIL}" == "true" ]] && WOULD_SIGN="true"
@@ -102,7 +102,7 @@ GENERATED_AT="$(date -u +"%Y-%m-%dT%H:%M:%S.000Z")"
 EVIDENCE_PATH="${DIST_DIR}/codesign-dryrun.json"
 cat > "${EVIDENCE_PATH}" <<EOF
 {
-  "schema": "yougen/codesign-dryrun/v1",
+  "schema": "inkson/codesign-dryrun/v1",
   "script_version": "${SCRIPT_VERSION}",
   "generated_at": "${GENERATED_AT}",
   "host": {

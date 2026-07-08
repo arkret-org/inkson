@@ -58,7 +58,7 @@ async fn join_via_api(
     device: &str,
     realm_mls_snapshot: Option<crate::mls::persistence::MlsSnapshotEnvelope>,
 ) -> Result<(JoinedMediaSession, PerSenderFrameKeys), RtcClientError> {
-    let secure_store = crate::secure_key_store::default_secure_key_store("yougen");
+    let secure_store = crate::secure_key_store::default_secure_key_store("inkson");
     let exporter = crate::media::rtc::RealmMlsExporter::for_realm(
         realm_mls_snapshot,
         secure_store.as_ref(),
@@ -155,7 +155,7 @@ pub(super) async fn submit_call_state_participant(
     )
     .target_ref(call_id)
     .body(body)
-    .build_sdk_event("yougen")
+    .build_sdk_event("inkson")
     .map_err(|err| err.to_string())?;
     with_authed_api(base, api_token.to_owned(), move |api| async move {
         api.event_submitter()?.submit_sdk_event(&op).await?;

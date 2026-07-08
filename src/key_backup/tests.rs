@@ -36,7 +36,7 @@ fn build_recovery_vault_backup_body(
         "recovery_vault",
         &KeyBackupContentItem {
             item_type: "recovery_secret".to_owned(),
-            secret_id: Some("yougen_recovery_vault_payload".to_owned()),
+            secret_id: Some("inkson_recovery_vault_payload".to_owned()),
             ..Default::default()
         },
     )
@@ -460,7 +460,7 @@ fn recovery_public_key_backup_round_trips_and_validates() {
         "mls_snapshot",
         &KeyBackupContentItem {
             item_type: "mls_group_state".to_owned(),
-            secret_id: Some("yougen_mls_snapshot".to_owned()),
+            secret_id: Some("inkson_mls_snapshot".to_owned()),
             ..Default::default()
         },
         b"opaque mls snapshot bytes",

@@ -557,7 +557,7 @@ mod tests {
     }
 
     #[test]
-    fn client_core_domain_projector_golden_matches_yougen_board_projection() {
+    fn client_core_domain_projector_golden_matches_inkson_board_projection() {
         let events = vec![
             sdk_event(
                 "ck:event:01904100-0000-7000-8000-000000000111",
@@ -984,7 +984,7 @@ mod tests {
                 json!({ "rank": rank }),
             )
             .unwrap()
-            .build_sdk_event("yougen")
+            .build_sdk_event("inkson")
             .unwrap()
             .payload
         };
@@ -1026,7 +1026,7 @@ mod tests {
             json!({ "list_space_id": LIST_B, "rank": "U" }),
         )
         .unwrap()
-        .build_sdk_event("yougen")
+        .build_sdk_event("inkson")
         .unwrap()
         .payload;
         let mut ops = kanban_operations_from_events(&[

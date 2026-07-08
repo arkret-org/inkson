@@ -11,7 +11,7 @@
 //! 2. set `key_schedule_cell` to the new schedule's content hash.
 //! 3. add the attested governance seal to `covered_seals_cell`.
 //!
-//! This module wraps `cokret_sdk::mls_move::*` so yougen can produce the
+//! This module wraps `cokret_sdk::mls_move::*` so inkson can produce the
 //! canonical Move precondition / effect tuples used by the hardening profile.
 //! It is not the `ck.mls.commit` event payload type; event payloads must use
 //! `cokret_sdk::MlsCommitPayload` and `cokret_sdk::MlsGovernanceBindingPayload`.
@@ -73,7 +73,7 @@ impl GovernanceBindingPayload {
         // tuples so the resulting Move body carries them verbatim. The
         // server enforces `mls_governance_binding.full.v1` by checking that
         // the submitted Move's preconditions/effects EXACTLY match these
-        // SDK-derived shapes — yougen must not re-derive or shorten them.
+        // SDK-derived shapes — inkson must not re-derive or shorten them.
         let preconditions =
             mls_commit_preconditions(&group_id, realm_id, prev_epoch, attested_governance_seal)
                 .map_err(|e| anyhow::anyhow!("mls_commit_preconditions invalid: {e:?}"))?;

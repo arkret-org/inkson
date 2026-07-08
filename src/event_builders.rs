@@ -397,7 +397,7 @@ pub fn build_realm_create_event(
     .preconditions(preconditions)
     .effects(effects)
     .requirements(event_requirements_with_schema("ck.schema.realm.v1"))
-    .build_sdk_event("yougen")?;
+    .build_sdk_event("inkson")?;
     set_sdk_event_created_at(&mut event, &created_at_for_object)?;
     Ok(event)
 }
@@ -632,7 +632,7 @@ pub fn build_space_create_event(
     .preconditions(preconditions)
     .effects(effects)
     .requirements(event_requirements_with_schema("ck.schema.space.v1"))
-    .build_sdk_event("yougen")?;
+    .build_sdk_event("inkson")?;
     set_sdk_event_created_at(&mut event, &created_at)?;
     Ok(event)
 }
@@ -704,7 +704,7 @@ pub fn build_space_lifecycle_event(
         .body(body)
         .preconditions(preconditions)
         .effects(effects)
-        .build_sdk_event("yougen")?;
+        .build_sdk_event("inkson")?;
     set_sdk_event_created_at(&mut event, &created_at)?;
     Ok(event)
 }
@@ -760,7 +760,7 @@ pub fn build_realm_state_event(
         .body(body)
         .preconditions(preconditions)
         .effects(effects)
-        .build_sdk_event("yougen")?;
+        .build_sdk_event("inkson")?;
     set_sdk_event_created_at(&mut event, &created_at)?;
     Ok(event)
 }
@@ -790,7 +790,7 @@ pub fn build_realm_archive_event(
     )
     .body(payload)
     .effects(effects)
-    .build_sdk_event("yougen")?;
+    .build_sdk_event("inkson")?;
     set_sdk_event_created_at(&mut event, &created_at)?;
     Ok(event)
 }
@@ -830,7 +830,7 @@ pub fn build_realm_tombstone_event(
     )
     .body(payload)
     .effects(effects)
-    .build_sdk_event("yougen")?;
+    .build_sdk_event("inkson")?;
     set_sdk_event_created_at(&mut event, &created_at)?;
     Ok(event)
 }
@@ -860,7 +860,7 @@ pub fn build_realm_destroy_event(
     )
     .body(payload)
     .effects(effects)
-    .build_sdk_event("yougen")?;
+    .build_sdk_event("inkson")?;
     set_sdk_event_created_at(&mut event, &created_at)?;
     Ok(event)
 }
@@ -946,7 +946,7 @@ pub fn build_plaintext_visible_services_event(
     .body(body_value)
     .preconditions(preconditions)
     .effects(effects)
-    .build_sdk_event("yougen")?;
+    .build_sdk_event("inkson")?;
     set_sdk_event_created_at(&mut event, &created_at)?;
     Ok(Some(event))
 }
@@ -1084,7 +1084,7 @@ fn build_member_state_transition_event_with_binding(
     .body(payload)
     .preconditions(preconditions)
     .effects(effects)
-    .build_sdk_event("yougen")
+    .build_sdk_event("inkson")
 }
 
 fn space_cell(cell_family: &str, space_id: &str) -> String {
@@ -1171,7 +1171,7 @@ pub fn build_signed_device_verification_proof(
     }
     let canonical = cokret_sdk::canonical::canonical_json_bytes(&body)
         .map_err(|error| anyhow::anyhow!("canonicalize device verification proof: {error}"))?;
-    let verification_method = format!("{}#yougen-device", from_device);
+    let verification_method = format!("{}#inkson-device", from_device);
     let signer = cokret_sdk::signatures::proof::Ed25519DetachedJwsSigner::new(
         signing_key.clone(),
         verification_method,

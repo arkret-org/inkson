@@ -4,7 +4,7 @@
 //! described in `cokret-spec/.../crypto-media/device-lifecycle.md` §10.7: a
 //! newly authorized device that has completed SAS verification (§10.3) with an
 //! existing authorized device can pull the account-scoped MLS secret
-//! (`yougen_mls_account_secret`, see [`crate::mls::account_recovery`] /
+//! (`inkson_mls_account_secret`, see [`crate::mls::account_recovery`] /
 //! [`crate::mls::runtime`]) directly from that sibling device over HPKE,
 //! without the user re-entering the 24-word Recovery Key.
 //!
@@ -45,7 +45,7 @@ pub const SECRET_SHARE_SCHEME: &str = "ck.hpke_x25519_aead_chacha20poly1305.v1";
 /// `secret_id` for the account MLS snapshot secret — the only secret class the
 /// D2D direct-share path ships in v1. Equal to
 /// [`crate::mls::account_recovery::MLS_ACCOUNT_SECRET_SECRET_ID`].
-pub const SECRET_SHARE_SECRET_ID: &str = "yougen_mls_account_secret";
+pub const SECRET_SHARE_SECRET_ID: &str = "inkson_mls_account_secret";
 
 /// HPKE `info` (domain separation). Distinct from the key-backup `info` so a
 /// secret-share envelope can never be confused with a recovery backup envelope.

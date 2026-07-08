@@ -1,20 +1,20 @@
 use chrono::Utc;
-use reqwest::StatusCode;
-use serde_json::json;
-use yougen::account_data::{
+use inkson::account_data::{
     AccountDataKey, ContactRemark, RealmRemark, contact_remark_account_data_key,
     realm_remark_account_data_key,
 };
-use yougen::api_error::{CokretApiError, decode_cokret_error, is_auth_expired_error};
-use yougen::config::{ClientConfig, LocalConfigStore};
-use yougen::models::ServerDescriptionExt;
-use yougen::operation::OperationBuilder;
-use yougen::push::validate_blind_wakeup_payload;
-use yougen::service_parse::{
+use inkson::api_error::{CokretApiError, decode_cokret_error, is_auth_expired_error};
+use inkson::config::{ClientConfig, LocalConfigStore};
+use inkson::models::ServerDescriptionExt;
+use inkson::operation::OperationBuilder;
+use inkson::push::validate_blind_wakeup_payload;
+use inkson::service_parse::{
     parse_directory_describe, parse_resolve_realm, parse_server_description, parse_sync_describe,
 };
-use yougen::sync_parse::{parse_events_subscribe_ndjson_text, parse_sync};
-use yougen::telemetry::{UserActionOutcome, build_user_action_entry, format_user_action_line};
+use inkson::sync_parse::{parse_events_subscribe_ndjson_text, parse_sync};
+use inkson::telemetry::{UserActionOutcome, build_user_action_entry, format_user_action_line};
+use reqwest::StatusCode;
+use serde_json::json;
 
 fn snapshot_contract_event_id(suffix: &str) -> cokret_sdk::EventId {
     cokret_sdk::EventId::new(format!("ck:event:01904100-0000-7000-8000-{suffix}")).unwrap()
@@ -90,7 +90,7 @@ fn snapshot_contract_manifest_payload() -> serde_json::Value {
 }
 
 #[test]
-fn yougen_accepts_server_contract_payloads() {
+fn inkson_accepts_server_contract_payloads() {
     let describe = parse_server_description(json!({
         "service_did": "did:web:server.local",
         "trust_domain": "ck:trust_domain:server.local",
@@ -150,7 +150,7 @@ fn yougen_accepts_server_contract_payloads() {
         Some("/_cokret")
     );
 
-    let identity: yougen::models::IdentityDescribeOutcome = serde_json::from_value(json!({
+    let identity: inkson::models::IdentityDescribeOutcome = serde_json::from_value(json!({
         "service_did": "did:web:server.local",
         "registry_mode": "development_local",
         "supported_receipts": ["local"],
@@ -160,7 +160,7 @@ fn yougen_accepts_server_contract_payloads() {
     .unwrap();
     assert_eq!(identity.registry_mode, "development_local");
 
-    let resolved_identity: yougen::models::IdentityResolveOutcome = serde_json::from_value(json!({
+    let resolved_identity: inkson::models::IdentityResolveOutcome = serde_json::from_value(json!({
         "did_document": {
             "did": "did:web:alice.example",
             "document": {"id": "did:web:alice.example"}
@@ -293,7 +293,7 @@ fn yougen_accepts_server_contract_payloads() {
         "did:web:server.local"
     );
 
-    let submit: yougen::models::SubmitEventResult = serde_json::from_value(json!({
+    let submit: inkson::models::SubmitEventResult = serde_json::from_value(json!({
         "status": "accepted",
         "accepted": ["ck:event:019640ca-0000-7000-8000-000000000000"],
         "duplicate": [],
@@ -334,7 +334,7 @@ fn yougen_accepts_server_contract_payloads() {
         .is_err()
     );
 
-    let authz: yougen::models::AuthzCheckOutcome = serde_json::from_value(json!({
+    let authz: inkson::models::AuthzCheckOutcome = serde_json::from_value(json!({
         "decision": "allow",
         "reason_code": null,
         "grants": [{"actor": "did:web:alice.example"}],
@@ -346,7 +346,7 @@ fn yougen_accepts_server_contract_payloads() {
     // `GrantList` is the SDK authoritative wire type (soland serialises it
     // verbatim), so rows must be full `ck.schema.capability_grant.v1`
     // grants rather than free-form objects.
-    let grants: yougen::models::GrantList = serde_json::from_value(json!({
+    let grants: inkson::models::GrantList = serde_json::from_value(json!({
         "grants": [{
             "id": "ck:grant:0196419b-0000-7000-8000-000000000000",
             "schema": "ck.schema.capability_grant.v1",
@@ -366,7 +366,7 @@ fn yougen_accepts_server_contract_payloads() {
     .unwrap();
     assert_eq!(grants.grants.len(), 1);
 
-    let invites: yougen::models::AuthzInviteList = serde_json::from_value(json!({
+    let invites: inkson::models::AuthzInviteList = serde_json::from_value(json!({
         "invites": [],
         "next_cursor": null,
         "has_more": false
@@ -374,21 +374,21 @@ fn yougen_accepts_server_contract_payloads() {
     .unwrap();
     assert!(invites.invites.is_empty());
 
-    let keys: yougen::models::KeysUploadOutcome = serde_json::from_value(json!({
+    let keys: inkson::models::KeysUploadOutcome = serde_json::from_value(json!({
         "one_time_key_counts": {"signed_curve25519": 1},
         "fallback_keys": {}
     }))
     .unwrap();
     assert_eq!(keys.one_time_key_counts["signed_curve25519"], 1);
 
-    let claimed: yougen::models::KeysClaimOutcome = serde_json::from_value(json!({
+    let claimed: inkson::models::KeysClaimOutcome = serde_json::from_value(json!({
         "one_time_keys": {"did:web:alice.example": {"ck:device:0196419b-0000-7000-8000-000000000000": {"key_id": "alice-otk-1"}}},
         "failures": []
     }))
     .unwrap();
     assert!(!claimed.one_time_keys.is_empty());
 
-    let device_send: yougen::models::DeviceMessagesSendOutcome = serde_json::from_value(json!({
+    let device_send: inkson::models::DeviceMessagesSendOutcome = serde_json::from_value(json!({
         "ok": true,
         "delivered": {"did:web:alice.example": ["dev_alice"]},
         "unknown_devices": {}
@@ -397,7 +397,7 @@ fn yougen_accepts_server_contract_payloads() {
     assert!(device_send.ok);
 
     // SDK shape: the to-device queue field is `messages`, not the old `events`.
-    let device_receive: yougen::models::DeviceMessagesGetOutcome = serde_json::from_value(json!({
+    let device_receive: inkson::models::DeviceMessagesGetOutcome = serde_json::from_value(json!({
         "messages": [],
         "next_cursor": "ck:cursor:device-messages",
         "limited": false
@@ -405,7 +405,7 @@ fn yougen_accepts_server_contract_payloads() {
     .unwrap();
     assert!(!device_receive.limited);
 
-    let push: yougen::models::PushRegisterView = serde_json::from_value(json!({
+    let push: inkson::models::PushRegisterView = serde_json::from_value(json!({
         "ok": true,
         "registration_id": "ck:push:dev_alice",
         "expires_at": null
@@ -413,13 +413,13 @@ fn yougen_accepts_server_contract_payloads() {
     .unwrap();
     assert_eq!(push.registration_id.as_deref(), Some("ck:push:dev_alice"));
 
-    let ok: yougen::models::OkOutcome = serde_json::from_value(json!({"ok": true})).unwrap();
+    let ok: inkson::models::OkOutcome = serde_json::from_value(json!({"ok": true})).unwrap();
     assert!(ok.ok);
 
     // Spec rename: blob upload response uses `size_bytes` and
     // `content_digest`; no serde aliases in aggressive migration mode.
     let blob_digest = format!("sha256:{}", "ab".repeat(32));
-    let blob: yougen::models::BlobUploadOutcome = serde_json::from_value(json!({
+    let blob: inkson::models::BlobUploadOutcome = serde_json::from_value(json!({
         "blob_ref": format!("ck:blob:{blob_digest}"),
         "size_bytes": 23,
         "media_type": "application/octet-stream",
@@ -446,7 +446,7 @@ fn yougen_accepts_server_contract_payloads() {
 
     // SDK spec shape: status is `submitted`, and routed_to is a pure DID array
     // without fragments.
-    let report: yougen::models::ModerationReportOutcome = serde_json::from_value(json!({
+    let report: inkson::models::ModerationReportOutcome = serde_json::from_value(json!({
         "report_id": "ck:report:1760000000000",
         "status": "submitted",
         "routed_to": ["did:web:server.local"]
@@ -545,7 +545,7 @@ fn server_description_gates_event_envelope_write_plane() {
     );
 
     // A partial / pre-v2 describe payload now fails to deserialize at all —
-    // the SDK type is strict per `service-describe.schema.json`, so yougen
+    // the SDK type is strict per `service-describe.schema.json`, so inkson
     // can no longer accept a stripped-down describe and flag it post-hoc.
     // This is the spec-correct fail-closed behaviour for v2.
     assert!(
@@ -561,7 +561,7 @@ fn server_description_gates_event_envelope_write_plane() {
     );
 
     // A v2-shaped payload that still omits the event write requirements is
-    // accepted by the SDK parser but flagged by the yougen helpers.
+    // accepted by the SDK parser but flagged by the inkson helpers.
     let events_missing = parse_server_description(json!({
         "service_did": "did:web:minimal.local",
         "trust_domain": "ck:trust_domain:minimal.local",
@@ -604,12 +604,12 @@ fn server_description_gates_event_envelope_write_plane() {
 }
 
 #[test]
-fn yougen_accepts_v1_sync_buckets_and_subscribe_ndjson_contract() {
+fn inkson_accepts_v1_sync_buckets_and_subscribe_ndjson_contract() {
     // Spec-aligned wire shape per `cokret-spec/.../client-sync.md §2`:
     // flat `realms` keyed by realm id, explicit top-level
     // `left_realms`, flat arrays for `to_device` / `account_data` /
     // `presence`. The SDK's `SyncOutcome` is the single source of
-    // truth; yougen no longer owns a custom deserializer.
+    // truth; inkson no longer owns a custom deserializer.
     let sync = parse_sync(json!({
         "cursor": "sx:v1-bucket",
         "realms": {
@@ -725,7 +725,7 @@ fn local_remarks_do_not_leak_into_event_push_search_log_or_directory_surfaces() 
     validate_blind_wakeup_payload(&json!({"local_name": secret}))
         .expect_err("blind push must reject local remark fields");
 
-    let search = yougen::models::IndexSearchView {
+    let search = inkson::models::IndexSearchView {
         query: "hello".to_owned(),
         results: vec![json!({
             "kind": "message",
@@ -785,7 +785,7 @@ fn local_remarks_do_not_leak_into_event_push_search_log_or_directory_surfaces() 
 }
 
 #[test]
-fn yougen_config_store_preserves_server_actor_device_and_token() {
+fn inkson_config_store_preserves_server_actor_device_and_token() {
     let mut store = LocalConfigStore::default();
     let config = ClientConfig::from_fields(
         "http://127.0.0.1:8788",
@@ -800,13 +800,13 @@ fn yougen_config_store_preserves_server_actor_device_and_token() {
 }
 
 #[test]
-fn yougen_e2ee_workflow_matches_protocol_mls_envelope_behavior() {
-    let mut alice = yougen::crypto::LocalMlsDevice::new(
+fn inkson_e2ee_workflow_matches_protocol_mls_envelope_behavior() {
+    let mut alice = inkson::crypto::LocalMlsDevice::new(
         "did:web:alice.example",
         "ck:device:01904100-0000-7000-8000-000000000001",
     )
     .unwrap();
-    let mut bob = yougen::crypto::LocalMlsDevice::new(
+    let mut bob = inkson::crypto::LocalMlsDevice::new(
         "did:web:bob.example",
         "ck:device:01904100-0000-7000-8000-000000000002",
     )

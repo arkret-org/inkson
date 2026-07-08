@@ -179,7 +179,7 @@ impl DisplayMetadata {
             location: None,
             website: None,
             custom_fields: HashMap::new(),
-            updated_at: Hlc::now("yougen"),
+            updated_at: Hlc::now("inkson"),
         }
     }
 }
@@ -479,7 +479,7 @@ mod tests {
                 hlc: Hlc::from_parts(5000, 0, 1),
             },
             read_count: 5,
-            set_at: Hlc::now("yougen"),
+            set_at: Hlc::now("inkson"),
         });
 
         let merged = merger.get_merged_marker("ck:realm:test", "did:web:alice", &scope);
@@ -502,7 +502,7 @@ mod tests {
                 hlc: Hlc::from_parts(5000, 0, 1),
             },
             read_count: 5,
-            set_at: Hlc::now("yougen"),
+            set_at: Hlc::now("inkson"),
         });
 
         merger.set_marker(ReadMarker {
@@ -515,7 +515,7 @@ mod tests {
                 hlc: Hlc::from_parts(8000, 0, 2),
             },
             read_count: 8,
-            set_at: Hlc::now("yougen"),
+            set_at: Hlc::now("inkson"),
         });
 
         let merged = merger
@@ -544,7 +544,7 @@ mod tests {
                 hlc: Hlc::from_parts(5000, 0, 1),
             },
             read_count: 5,
-            set_at: Hlc::now("yougen"),
+            set_at: Hlc::now("inkson"),
         });
 
         let marker = merger.get_device_marker("ck:realm:test", "did:web:alice", &scope, "device-1");
@@ -607,7 +607,7 @@ mod tests {
             },
             allowed_discoverers: vec![],
             anti_enumeration: false,
-            updated_at: Hlc::now("yougen"),
+            updated_at: Hlc::now("inkson"),
         });
 
         let config = manager.get_realm_discovery("ck:realm:test");
@@ -622,7 +622,7 @@ mod tests {
             is_encrypted: true,
             message_type: "message".to_owned(),
             sender_hint: Some("alice".to_owned()),
-            timestamp: Hlc::now("yougen"),
+            timestamp: Hlc::now("inkson"),
         };
 
         let json = serde_json::to_string(&metadata).unwrap();

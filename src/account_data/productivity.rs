@@ -112,7 +112,7 @@ pub fn validate_draft_sync_value(value: &cokret_sdk::DraftSyncValue) -> anyhow::
     validate_timestamp_canonical(&value.retention_expires_at)
         .map_err(|error| anyhow::anyhow!("retention_expires_at is not canonical: {error:?}"))?;
     super::draft_account_data_key(
-        b"yougen-draft-validation-namespace",
+        b"inkson-draft-validation-namespace",
         value.kind,
         &value.target_ref,
         &value.draft_slot,
@@ -145,7 +145,7 @@ pub fn validate_saved_item_value(value: &cokret_sdk::SavedItemValue) -> anyhow::
     }
     Hlc::parse(&value.updated_hlc)?;
     super::saved_account_data_key(
-        b"yougen-saved-validation-namespace",
+        b"inkson-saved-validation-namespace",
         &value.collection_title,
         &value.target_ref,
     )?;

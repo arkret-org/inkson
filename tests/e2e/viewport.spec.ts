@@ -16,7 +16,7 @@ async function bootAuthenticatedShell(page: Page, viewport = MOBILE_VIEWPORT) {
   await mockCokretApi(page);
   await page.addInitScript(() => {
     localStorage.setItem(
-      "yougen.config.v1",
+      "inkson.config.v1",
       JSON.stringify({
         server_url: "https://local.host",
         account_did: "did:web:alice.example",

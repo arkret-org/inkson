@@ -5,14 +5,14 @@
 //! enforce it:
 //!
 //! 1. `is_placeholder_push_key()` recognises every literal we hand-rolled in `src/push.rs`
-//!    (`yougen-dev-…`, `placeholder`).
+//!    (`inkson-dev-…`, `placeholder`).
 //! 2. `ensure_production_register_request()` refuses to hand a request that still carries one of
 //!    those placeholders to the gateway.
 //!
 //! If either check stops firing — because we added another scaffold marker,
 //! or removed the predicate — these tests fail loudly.
 
-use yougen::push::{
+use inkson::push::{
     PLACEHOLDER_PUSH_KEY_MARKERS, build_register_request, build_register_request_for_actor,
     ensure_production_register_request, is_placeholder_push_key,
 };
@@ -28,11 +28,11 @@ fn placeholder_marker_set_is_non_empty() {
 
 #[test]
 fn default_scaffold_push_key_is_recognised_as_placeholder() {
-    let request = build_register_request("dev_yougen").expect("scaffold register request builds");
+    let request = build_register_request("dev_inkson").expect("scaffold register request builds");
     assert!(
         is_placeholder_push_key(&request.push_key),
         "default-build push key `{}` must still be flagged as a development placeholder; \
-         either keep the dev marker (`yougen-dev-`/`placeholder`) or wire a real OS push \
+         either keep the dev marker (`inkson-dev-`/`placeholder`) or wire a real OS push \
          token before changing this assertion.",
         request.push_key
     );
@@ -41,14 +41,14 @@ fn default_scaffold_push_key_is_recognised_as_placeholder() {
 #[test]
 fn ensure_production_register_request_blocks_default_scaffold() {
     let request =
-        build_register_request_for_actor("dev_yougen", Some("did:web:alice.example")).unwrap();
+        build_register_request_for_actor("dev_inkson", Some("did:web:alice.example")).unwrap();
 
     let err = ensure_production_register_request(&request)
         .expect_err("default-build register request must NOT be accepted by the production guard");
 
     let message = err.to_string();
     assert!(
-        message.contains("dev_yougen"),
+        message.contains("dev_inkson"),
         "guard error must mention the device id, got: {message}"
     );
     assert!(
@@ -59,7 +59,7 @@ fn ensure_production_register_request_blocks_default_scaffold() {
 
 #[test]
 fn ensure_production_register_request_passes_real_token() {
-    let mut request = build_register_request("dev_yougen").unwrap();
+    let mut request = build_register_request("dev_inkson").unwrap();
     request.push_key = "apns:0123456789abcdef0123456789abcdef".to_owned();
     ensure_production_register_request(&request)
         .expect("a real platform push token must clear the production guard");
@@ -67,8 +67,8 @@ fn ensure_production_register_request_passes_real_token() {
 
 #[test]
 fn placeholder_predicate_is_case_insensitive() {
-    assert!(is_placeholder_push_key("DESKTOP:YOUGEN-DEV-XYZ"));
-    assert!(is_placeholder_push_key("webpush:Yougen-Dev-Token"));
+    assert!(is_placeholder_push_key("DESKTOP:INKSON-DEV-XYZ"));
+    assert!(is_placeholder_push_key("webpush:Inkson-Dev-Token"));
     assert!(is_placeholder_push_key("Some-Placeholder-Marker"));
     assert!(!is_placeholder_push_key(
         "apns:5dccd5b9c8be12a8d10dc1ad6c0a3a8d"

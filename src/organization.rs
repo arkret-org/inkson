@@ -33,7 +33,7 @@ use crate::secure_key_store::{SecureKeyStore, SecureKeyStoreError};
 /// convention.
 const ORGANIZATION_CONTROL_SEED_KEY: &str = "organization.control.seed";
 
-/// A `getrandom`-backed [`RngCore`] (rand_core 0.6) adapter. yougen routes all
+/// A `getrandom`-backed [`RngCore`] (rand_core 0.6) adapter. inkson routes all
 /// randomness through `getrandom::fill` (uniform across native + wasm); the SDK
 /// inception builder wants a `rand_core` 0.6 `RngCore`, so this wraps the OS
 /// source into that trait. It is also a `CryptoRng` because `getrandom` is a

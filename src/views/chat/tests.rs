@@ -124,7 +124,7 @@ fn folds_received_redaction_tombstone_onto_message() {
 
 #[test]
 fn chat_visible_read_receipt_send_respects_preferences() {
-    let temp = std::env::temp_dir().join(format!("yougen-chat-rr-pref-{}", uuid_v7()));
+    let temp = std::env::temp_dir().join(format!("inkson-chat-rr-pref-{}", uuid_v7()));
     let mut store = LocalStateStore::with_path(temp);
     assert!(chat_visible_read_receipt_should_send(
         &store,
@@ -182,7 +182,7 @@ fn chat_visible_read_receipt_send_respects_preferences() {
 
 #[test]
 fn chat_visible_read_receipt_display_respects_local_preferences() {
-    let temp = std::env::temp_dir().join(format!("yougen-chat-rr-display-{}", uuid_v7()));
+    let temp = std::env::temp_dir().join(format!("inkson-chat-rr-display-{}", uuid_v7()));
     let mut store = LocalStateStore::with_path(temp);
     assert!(chat_visible_read_receipt_should_display(
         &store,
@@ -624,7 +624,7 @@ fn private_saved_item_uses_saved_account_data_not_pin_event() {
         wire,
     )
     .unwrap()
-    .build("yougen");
+    .build("inkson");
     assert_eq!(op.kind, "ck.account_data.set");
     assert_eq!(op.payload["key"], item.account_data_key);
     assert_eq!(op.payload["encrypted_payload"]["kind"], "saved_item");
@@ -1562,7 +1562,7 @@ fn rebuild_restores_authors_own_encrypted_message_from_sidecar() {
     // `chat_messages_from_local_state_with_sidecar`. The stub now carries
     // `message_id` + `strand_id`, so the rebuild can re-key the sidecar and
     // restore the author's own (otherwise undecryptable) message body.
-    let temp = std::env::temp_dir().join(format!("yougen-x10_6-rebuild-sidecar-{}", uuid_v7()));
+    let temp = std::env::temp_dir().join(format!("inkson-x10_6-rebuild-sidecar-{}", uuid_v7()));
     let mut store = LocalStateStore::with_path(temp);
     store.save_private_plaintext(
         "ck:realm:local",
@@ -1618,7 +1618,7 @@ fn rebuild_restores_authors_own_encrypted_message_from_sidecar() {
 
 #[test]
 fn pending_message_refreshes_from_restored_private_plaintext_sidecar() {
-    let temp = std::env::temp_dir().join(format!("yougen-pending-sidecar-refresh-{}", uuid_v7()));
+    let temp = std::env::temp_dir().join(format!("inkson-pending-sidecar-refresh-{}", uuid_v7()));
     let mut store = LocalStateStore::with_path(temp);
     let realm = "ck:realm:local";
     let strand = "ck:strand:announce";
@@ -1680,7 +1680,7 @@ fn pending_message_refreshes_from_restored_private_plaintext_sidecar() {
 
 #[test]
 fn expiry_stub_does_not_restore_authors_plaintext_sidecar() {
-    let temp = std::env::temp_dir().join(format!("yougen-expiry-stub-sidecar-{}", uuid_v7()));
+    let temp = std::env::temp_dir().join(format!("inkson-expiry-stub-sidecar-{}", uuid_v7()));
     let mut store = LocalStateStore::with_path(temp);
     let realm = "ck:realm:local";
     let strand = "ck:strand:announce";
@@ -1715,7 +1715,7 @@ fn expiry_stub_does_not_restore_authors_plaintext_sidecar() {
 
 #[test]
 fn late_recovery_guards_block_sidecar_plaintext_before_timeline_entry() {
-    let temp = std::env::temp_dir().join(format!("yougen-late-recovery-{}", uuid_v7()));
+    let temp = std::env::temp_dir().join(format!("inkson-late-recovery-{}", uuid_v7()));
     let mut store = LocalStateStore::with_path(temp);
     let realm = "ck:realm:local";
     let strand = "ck:strand:announce";
@@ -1760,7 +1760,7 @@ fn late_recovery_guards_block_sidecar_plaintext_before_timeline_entry() {
 
 #[test]
 fn late_recovery_guards_allow_sidecar_plaintext_when_all_pass() {
-    let temp = std::env::temp_dir().join(format!("yougen-late-recovery-ok-{}", uuid_v7()));
+    let temp = std::env::temp_dir().join(format!("inkson-late-recovery-ok-{}", uuid_v7()));
     let mut store = LocalStateStore::with_path(temp);
     let realm = "ck:realm:local";
     let strand = "ck:strand:announce";
@@ -2398,7 +2398,7 @@ fn mention_candidate_without_handle_is_not_displayed_as_did() {
 
 #[test]
 fn mention_candidate_uses_cached_member_handle() {
-    let temp = std::env::temp_dir().join(format!("yougen-chat-mention-handle-{}", uuid_v7()));
+    let temp = std::env::temp_dir().join(format!("inkson-chat-mention-handle-{}", uuid_v7()));
     let mut store = LocalStateStore::with_path(temp);
     store.save_member_handle_lookup(
         "did:web:bob.example",
@@ -2670,7 +2670,7 @@ fn decrypt_chat_encrypted_content_soft_fails_without_snapshot() {
     // so the caller leaves the message in Decrypting/KeyMissing rather than
     // surfacing garbage.
     let temp = std::env::temp_dir().join(format!(
-        "yougen-chat-decrypt-{}.json",
+        "inkson-chat-decrypt-{}.json",
         crate::operation::uuid_v7()
     ));
     let store = LocalStateStore::with_path(temp);
@@ -2739,7 +2739,7 @@ fn chat_message_from_event_keeps_bodyless_encrypted_payload_visible() {
 #[test]
 fn chat_message_from_event_marks_failed_local_decrypt_as_key_missing() {
     let temp = std::env::temp_dir().join(format!(
-        "yougen-chat-key-missing-{}.json",
+        "inkson-chat-key-missing-{}.json",
         crate::operation::uuid_v7()
     ));
     let store = LocalStateStore::with_path(temp);

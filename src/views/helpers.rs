@@ -18,7 +18,7 @@ use crate::ui::button::{Button, ButtonVariant};
 pub fn handle_from_did(did: &str) -> String {
     did.rsplit(':')
         .next()
-        .unwrap_or("yougen")
+        .unwrap_or("inkson")
         .chars()
         .map(|ch| {
             if ch.is_ascii_alphanumeric() || ch == '-' || ch == '_' || ch == '.' {
@@ -254,7 +254,7 @@ pub fn handle_display_from_did(did: &str) -> Option<String> {
 }
 
 /// F-REMARK-FANOUT-1: actor-private `local_name` lookup for a DID,
-/// reused everywhere yougen would otherwise show a raw `did:web:...`.
+/// reused everywhere inkson would otherwise show a raw `did:web:...`.
 ///
 /// The actor's `ContactRemark` rows arrive via account_data sync
 /// (`ck.contacts.actor.<did>`) and live on `LocalStateStore`. Each

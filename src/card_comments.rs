@@ -23,7 +23,7 @@
 //! - Threading uses `reply_to` (a `message_id`); the previous `thread_root` field was not part of
 //!   this payload.
 //!
-//! @-mention extraction is deliberately conservative — yougen
+//! @-mention extraction is deliberately conservative — inkson
 //! recognizes the `did:web:` / `did:key:` / `did:plc:` / `did:webvh:` forms
 //! when prefixed with `@`. Anything else falls through unchanged so a
 //! literal email / handle text isn't mistakenly notified. Recognized DIDs
@@ -267,7 +267,7 @@ mod tests {
 
     #[test]
     fn extract_mentions_ignores_unknown_did_methods() {
-        // bogus method shouldn't notify anyone — yougen only
+        // bogus method shouldn't notify anyone — inkson only
         // recognizes web / key / plc / webvh per the reducer's
         // allow list.
         let body = "@did:bogus:alice ping";
@@ -276,7 +276,7 @@ mod tests {
 
     #[test]
     fn extract_mentions_skips_bare_at_without_did_prefix() {
-        let body = "@alice please look — yougen treats @ + handle as plain text.";
+        let body = "@alice please look — inkson treats @ + handle as plain text.";
         assert!(extract_mentions(body).is_empty());
     }
 

@@ -116,7 +116,7 @@ impl IndexedDbSecureKeyStore {
     /// initialised store ready for sync access via the
     /// [`SecureKeyStore`] trait.
     pub async fn new_async(service_name: &str) -> Result<Self, SecureKeyStoreError> {
-        let db_name = format!("yougen.secret.{service_name}");
+        let db_name = format!("inkson.secret.{service_name}");
         tracing::warn!(target: "secure_store", db_name=%db_name, "new_async: step 1/3 open_db (awaiting IndexedDB open)…");
         let db = Self::open_db(&db_name).await?;
         tracing::warn!(target: "secure_store", "new_async: step 1/3 open_db OK; step 2/3 load_or_derive_wrapping_key (SubtleCrypto)…");
@@ -1109,7 +1109,7 @@ pub async fn upgrade_wasm_secure_key_store_async(
 }
 
 /// Walk `localStorage` looking for keys under the
-/// `yougen.secret.<service_name>.*` prefix written by
+/// `inkson.secret.<service_name>.*` prefix written by
 /// [`LocalStorageSecureKeyStore`], decrypt each via the
 /// existing AEAD wrapping seed, re-store under the IndexedDB tier
 /// via [`IndexedDbSecureKeyStore::store_secret`], then `removeItem`
@@ -1117,7 +1117,7 @@ pub async fn upgrade_wasm_secure_key_store_async(
 ///
 /// Ed25519 signing seeds are deleted instead of migrated in the production
 /// hardening path. The e2e/localStorage-secret opt-in is the exception: when
-/// `yougen.security.allow_localstorage_secrets` is set, first-paint device
+/// `inkson.security.allow_localstorage_secrets` is set, first-paint device
 /// enrollment may already have generated a valid session-device seed in
 /// localStorage, so migration preserves it to keep later recovery-policy
 /// signatures bound to the same authorized device key.
@@ -1162,9 +1162,9 @@ pub async fn migrate_localstorage_entries_to_indexeddb(
     wrapping_key.copy_from_slice(&wrapping_seed_bytes);
 
     // Enumerate localStorage entries whose key matches the H2
-    // prefix `yougen.secret.<service_name>.*` (excluding the
+    // prefix `inkson.secret.<service_name>.*` (excluding the
     // wrap_seed key itself).
-    let prefix = format!("yougen.secret.{service_name}.");
+    let prefix = format!("inkson.secret.{service_name}.");
     let length = storage
         .length()
         .map_err(|err| SecureKeyStoreError::Backend(format!("ls length: {err:?}")))?;

@@ -103,7 +103,7 @@ pub(crate) fn default_strand_id_for_realm(realm_id: &str) -> String {
 
 /// YOU-05-010: shared test fixture — build a `LocalStateStore` rooted at a
 /// unique temp file so tests never read or pollute the developer's real
-/// `state.json` (or the `YOUGEN_STATE_PATH` override). On wasm32 the
+/// `state.json` (or the `INKSON_STATE_PATH` override). On wasm32 the
 /// default store is memory-only and therefore already hermetic. The `tag`
 /// keeps any leftover temp file attributable to the test that created it;
 /// uniqueness comes from the uuid_v7 suffix.
@@ -112,7 +112,7 @@ pub(crate) fn isolated_store_for_tests(tag: &str) -> LocalStateStore {
     #[cfg(not(target_arch = "wasm32"))]
     {
         let path = std::env::temp_dir().join(format!(
-            "yougen-test-{tag}-{}.json",
+            "inkson-test-{tag}-{}.json",
             crate::operation::uuid_v7()
         ));
         LocalStateStore::with_path(path)
@@ -149,7 +149,7 @@ pub(crate) fn browser_storage() -> Option<web_sys::Storage> {
 
 #[cfg(not(target_arch = "wasm32"))]
 pub(crate) fn default_state_path() -> PathBuf {
-    std::env::var_os("YOUGEN_STATE_PATH")
+    std::env::var_os("INKSON_STATE_PATH")
         .map(PathBuf::from)
         .unwrap_or_else(|| app_data_dir().join("state.json"))
 }
@@ -161,7 +161,7 @@ pub(crate) fn app_data_dir() -> PathBuf {
         .or_else(|| std::env::var_os("HOME").map(|home| Path::new(&home).join(".config").into()))
         .map(PathBuf::from)
         .unwrap_or_else(|| PathBuf::from("."))
-        .join("yougen")
+        .join("inkson")
 }
 
 /// XOR-based symmetric encryption for client-side private data.
@@ -282,7 +282,7 @@ pub(crate) fn plaintext_identity_seed_fallback_allowed() -> bool {
     #[cfg(not(target_arch = "wasm32"))]
     {
         cfg!(test)
-            || std::env::var("YOUGEN_ALLOW_PLAINTEXT_IDENTITY_SEED")
+            || std::env::var("INKSON_ALLOW_PLAINTEXT_IDENTITY_SEED")
                 .ok()
                 .is_some_and(|value| value == "1" || value.eq_ignore_ascii_case("true"))
     }

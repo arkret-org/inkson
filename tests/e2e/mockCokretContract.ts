@@ -1,6 +1,6 @@
-// Parity contract consumed by `cotest/tests/yougen_mock_parity.rs`.
+// Parity contract consumed by `cotest/tests/inkson_mock_parity.rs`.
 // Each branch here is shadowed by a fixture entry in
-// `cotest/tests/fixtures/yougen_mock_parity.json` and gets compared
+// `cotest/tests/fixtures/inkson_mock_parity.json` and gets compared
 // against a real soland process. When adding a branch, also add the
 // matching fixture case — unmatched branches are silently dead code.
 const DEMO_REALM = "ck:realm:0196419b-0000-7000-8000-000000000000";
@@ -70,7 +70,7 @@ export function mockCokretContract(req) {
         schema: "ck.schema.actor_profile.v1",
         principal_id: "did:web:alice.example",
         actor_kind: "user",
-        display_name: "yougen",
+        display_name: "inkson",
         created_at: "2026-04-28T12:00:00Z",
       },
     });
@@ -174,7 +174,7 @@ export function mockCokretContract(req) {
 // Short-form aliases for callers that pass a path without the `/_cokret/`
 // prefix. Each alias MUST resolve to a path with a matching branch above;
 // `/realm/create` and `/realms/create` were dropped together with the
-// realm/space creation surface forbidden by yougen/tests/server_contract.rs.
+// realm/space creation surface forbidden by inkson/tests/server_contract.rs.
 // `/account/viewer` is the short alias for the spec account viewer. Profile
 // update remains distinct and MUST NOT collapse onto this read path.
 export function canonicalPath(path) {

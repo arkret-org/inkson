@@ -1,4 +1,4 @@
-//! Yougen-side wrappers for the Cokret object model objects.
+//! Inkson-side wrappers for the Cokret object model objects.
 //!
 //! Re-exports the SDK's canonical types and provides minimal builders that
 //! turn them into SDK event write actions. The

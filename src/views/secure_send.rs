@@ -69,7 +69,7 @@ pub(crate) fn run_local_mls_encrypt(
     plaintext_bytes: &[u8],
 ) -> LocalMlsEncryptResult {
     let empty = (None, Vec::new(), None, None, None);
-    let secure_store = crate::secure_key_store::default_secure_key_store("yougen");
+    let secure_store = crate::secure_key_store::default_secure_key_store("inkson");
     let aad = cokret_sdk::EncryptedEnvelopeAadV1::hidden(realm_id, "ck.message.create");
     let Ok(aad_value) = serde_json::to_value(&aad) else {
         return empty;
@@ -291,7 +291,7 @@ pub(crate) fn build_secure_send(
             )
             .map_err(|err| format!("MLS commit payload failed: {err}"))?;
             let mut commit_event = commit_builder
-                .build_sdk_event("yougen")
+                .build_sdk_event("inkson")
                 .map_err(|err| format!("MLS commit SDK Event conversion failed: {err}"))?;
             commit_event.event_id = commit_event_id_typed;
             (commit_event_id, Some(commit_event))
@@ -334,7 +334,7 @@ pub(crate) fn build_secure_send(
         cokret_sdk::events::kinds::EventKind::MessageCreate,
     )
     .body(msg_payload_value)
-    .build_sdk_event("yougen");
+    .build_sdk_event("inkson");
 
     let commit_event = commit_envelope;
     let message_event = message_envelope

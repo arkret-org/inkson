@@ -136,10 +136,10 @@ jobs:
       packages: write
 
     steps:
-      - name: Check out yougen
+      - name: Check out inkson
         uses: actions/checkout@v4
         with:
-          path: yougen
+          path: inkson
 
       - name: Check out Cokret Rust SDK
         uses: actions/checkout@v4
@@ -217,7 +217,7 @@ jobs:
             --platform linux/arm64 \
             --pull \
             "${tag_args[@]}" \
-            -f yougen/Dockerfile \
+            -f inkson/Dockerfile \
             .
 
       - name: Push ARM64 image tags

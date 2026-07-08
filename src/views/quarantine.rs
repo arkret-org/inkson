@@ -97,7 +97,7 @@ pub fn parse_quarantine_list(value: &Value) -> Vec<QuarantineEntry> {
 
 async fn fetch_quarantine_list(_coauth_url: &str, _is_admin: bool) -> anyhow::Result<Value> {
     anyhow::bail!(
-        "invite quarantine has no SDK-backed public transport surface in yougen; private coauth admin paths are not called"
+        "invite quarantine has no SDK-backed public transport surface in inkson; private coauth admin paths are not called"
     )
 }
 
@@ -108,7 +108,7 @@ async fn resolve_quarantine_invite(
     _reason: Option<&str>,
 ) -> anyhow::Result<Value> {
     anyhow::bail!(
-        "invite quarantine resolution has no SDK-backed public transport surface in yougen; private coauth admin paths are not called"
+        "invite quarantine resolution has no SDK-backed public transport surface in inkson; private coauth admin paths are not called"
     )
 }
 

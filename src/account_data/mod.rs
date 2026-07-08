@@ -2,7 +2,7 @@
 //!
 //! Spec: actor-private preferences (UI state, read-receipt overrides, presence
 //! gating, blocklist, language) are stored as `ck.account_data.set` events with
-//! actor-private wire scope. Yougen previously kept these as ad-hoc fields on
+//! actor-private wire scope. Inkson previously kept these as ad-hoc fields on
 //! `LocalState`; this module centralizes the storage shape so
 //! `ck.account_data.set` writes have a single canonical entry point.
 

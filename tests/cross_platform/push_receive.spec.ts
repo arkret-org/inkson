@@ -2,7 +2,7 @@
 //
 // Local desktop browsers cannot receive a real APNs/FCM/WebPush delivery
 // without provider credentials, TLS origin policy, and OS notification
-// entitlements. This smoke pins the browser contract yougen relies on after
+// entitlements. This smoke pins the browser contract inkson relies on after
 // the provider wakes the app: a service worker receives an opaque
 // `background_sync_needed` payload and can signal the foreground page without
 // exposing message/title/sender/collapse metadata.
@@ -14,7 +14,7 @@ import {
   waitForBundleReady,
 } from "./_helpers";
 
-const PUSH_SW_PATH = "/yougen-cross-platform-push-sw.js";
+const PUSH_SW_PATH = "/inkson-cross-platform-push-sw.js";
 const LEAK_FIELDS = [
   "body",
   "message_body",
@@ -75,7 +75,7 @@ const PUSH_WORKER_SCRIPT = `
   function receiveEnvelope(payload) {
     const incoming = payload && typeof payload === "object" ? payload : {};
     const outbound = {
-      type: "yougen.push.receive",
+      type: "inkson.push.receive",
       reason: incoming.reason === "background_sync_needed"
         ? "background_sync_needed"
         : "background_sync_needed",
@@ -158,7 +158,7 @@ async function simulatePushReceive(
       }>((resolve, reject) => {
         const timeout = setTimeout(() => reject(new Error("push receive timeout")), 10_000);
         navigator.serviceWorker.addEventListener("message", function onMessage(event) {
-          if (event.data?.type !== "yougen.push.receive") {
+          if (event.data?.type !== "inkson.push.receive") {
             return;
           }
           clearTimeout(timeout);

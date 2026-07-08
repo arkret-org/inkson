@@ -34,7 +34,7 @@ impl Default for ProjectionEvent {
             id: String::new(),
             message_id: None,
             realm_id: None,
-            sender: "yougen".to_owned(),
+            sender: "inkson".to_owned(),
             sender_display: "local".to_owned(),
             body: String::new(),
             timestamp: String::new(),

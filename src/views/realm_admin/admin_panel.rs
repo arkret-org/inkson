@@ -1018,7 +1018,7 @@ pub fn RealmAdminPanel(
                                 // Build the forced self-update commit + the
                                 // canonical ck.mls.commit event locally.
                                 let secure_store =
-                                    crate::secure_key_store::default_secure_key_store("yougen");
+                                    crate::secure_key_store::default_secure_key_store("inkson");
                                 let built = {
                                     let store = state_store.read();
                                     crate::mls::runtime::force_epoch_rotation_commit(
@@ -1341,7 +1341,7 @@ pub fn RealmAdminPanel(
                                     &tag_val,
                                     constraint_json,
                                 )
-                                .build_sdk_event("yougen");
+                                .build_sdk_event("inkson");
                                 let envelope = match envelope {
                                     Ok(envelope) => envelope,
                                     Err(err) => {
@@ -1423,7 +1423,7 @@ pub fn RealmAdminPanel(
                                     &tag_val,
                                     reason_opt.as_deref(),
                                 )
-                                .build_sdk_event("yougen");
+                                .build_sdk_event("inkson");
                                 let envelope = match envelope {
                                     Ok(envelope) => envelope,
                                     Err(err) => {
@@ -1597,7 +1597,7 @@ pub fn RealmAdminPanel(
                         span { "Admin tooling" }
                     }
                     div { class: "muted",
-                        "Trust bundle import, validation, and revocation are not wired in yougen. Use the deployment's admin tooling for federation trust changes."
+                        "Trust bundle import, validation, and revocation are not wired in inkson. Use the deployment's admin tooling for federation trust changes."
                     }
                 }
                 // SOL-ORG-06 — read-only view of this Realm's verified

@@ -10,7 +10,7 @@
 //! API.
 //!
 //! Design notes:
-//! - The struct is intentionally minimal — `title`, `body`, optional `app_id`. yougen wires it to
+//! - The struct is intentionally minimal — `title`, `body`, optional `app_id`. inkson wires it to
 //!   the chat / kanban / call paths via a plain `From<&NotificationDecision>` builder rather than
 //!   burying the conversion inside the rule engine, so a unit test can build a fixture decision and
 //!   exercise the formatting without pulling in the OS bridge.
@@ -23,7 +23,7 @@
 
 use serde::{Deserialize, Serialize};
 
-/// Minimum payload yougen needs to fire a desktop notification.
+/// Minimum payload inkson needs to fire a desktop notification.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct NativeNotification {
     /// Notification title — typically the source space / sender name.
@@ -33,7 +33,7 @@ pub struct NativeNotification {
     /// blinded body here so plaintext doesn't leak to the OS bridge.
     pub body: String,
     /// Optional application id used by the freedesktop / Windows
-    /// bridges to group notifications. Defaults to `"yougen"`.
+    /// bridges to group notifications. Defaults to `"inkson"`.
     #[serde(default)]
     pub app_id: Option<String>,
 }
@@ -87,7 +87,7 @@ pub fn fire_native(notification: &NativeNotification) -> Result<(), FireError> {
     if let Some(app_id) = &notification.app_id {
         builder.appname(app_id);
     } else {
-        builder.appname("yougen");
+        builder.appname("inkson");
     }
     builder
         .show()
@@ -157,8 +157,8 @@ mod tests {
 
     #[test]
     fn with_app_id_sets_grouping_handle() {
-        let native = NativeNotification::new("t", "b").with_app_id("yougen-test");
-        assert_eq!(native.app_id.as_deref(), Some("yougen-test"));
+        let native = NativeNotification::new("t", "b").with_app_id("inkson-test");
+        assert_eq!(native.app_id.as_deref(), Some("inkson-test"));
     }
 
     #[cfg(target_arch = "wasm32")]

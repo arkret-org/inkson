@@ -64,7 +64,7 @@ async fn client_core_events_describe(
 ) -> anyhow::Result<cokret_sdk::ServiceDescribe> {
     let http = authed.sdk_http_client()?;
     let local_state = state_store.read().clone();
-    let secure_store = crate::secure_key_store::default_secure_key_store("yougen");
+    let secure_store = crate::secure_key_store::default_secure_key_store("inkson");
     let client_core = crate::client_core::build_client_core(http, local_state, secure_store);
     client_core.http.events_describe().await.map_err(Into::into)
 }
@@ -105,7 +105,7 @@ pub(super) async fn refresh_session_credential_for_active_context(
     let generation = session_generation();
 
     #[cfg(target_arch = "wasm32")]
-    if let Err(error) = crate::secure_key_store::ensure_wasm_secure_key_store_ready("yougen").await
+    if let Err(error) = crate::secure_key_store::ensure_wasm_secure_key_store_ready("inkson").await
     {
         return crate::session::CurrentSessionRefresh::RetryLater {
             reason: format!("secure key store is not ready for session refresh: {error}"),
@@ -400,7 +400,7 @@ async fn enroll_current_session_device(
 
     let signer = match crate::event_signer::active_signer() {
         Some(signer) => signer,
-        None => crate::event_signer::bootstrap_default_signer("yougen")
+        None => crate::event_signer::bootstrap_default_signer("inkson")
             .map_err(|error| anyhow::anyhow!("bootstrap device signer: {error}"))?,
     };
     let signer = crate::event_signer::bind_active_signer_device_id(device)
@@ -451,7 +451,7 @@ async fn enroll_current_session_device(
     // stable X25519 HPKE public key (same keypair the history-sharing /
     // secret-send paths open with).
     let hpke_key = {
-        let secure_store = crate::secure_key_store::default_secure_key_store("yougen");
+        let secure_store = crate::secure_key_store::default_secure_key_store("inkson");
         let (_privkey, pubkey) = crate::mls::runtime::load_or_create_device_hpke_keypair(
             secure_store.as_ref(),
             actor,
@@ -466,7 +466,7 @@ async fn enroll_current_session_device(
         actor_seq,
         not_before: None,
         hpke_key,
-        algorithms: crate::device_enrollment::yougen_device_algorithms(),
+        algorithms: crate::device_enrollment::inkson_device_algorithms(),
     };
     crate::device_enrollment::enroll_current_device(
         &account_client,
@@ -906,7 +906,7 @@ pub(super) fn connect(base: String, actor: String, device: String, ctx: ConnectC
                     }
                 }
                 {
-                    let secure_store = crate::secure_key_store::default_secure_key_store("yougen");
+                    let secure_store = crate::secure_key_store::default_secure_key_store("inkson");
                     crate::secure_key_store::set_active_device_seed_scope(Some(&canonical_actor));
                     if let Err(error) = crate::secure_key_store::store_device_id_scoped(
                         secure_store.as_ref(),
@@ -916,7 +916,7 @@ pub(super) fn connect(base: String, actor: String, device: String, ctx: ConnectC
                         tracing::warn!(?error, "connect: persist canonical device_id failed");
                     }
                     if let Err(error) =
-                        crate::event_signer::bootstrap_default_signer_for_device("yougen", &device)
+                        crate::event_signer::bootstrap_default_signer_for_device("inkson", &device)
                     {
                         tracing::warn!(?error, "connect: device identity signer bootstrap failed");
                     }

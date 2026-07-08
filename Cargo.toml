@@ -1,11 +1,11 @@
 [package]
-name = "yougen"
+name = "inkson"
 version = "0.3.0"
 edition = "2024"
 rust-version = "1.96"
 description = "Dioxus desktop and web Cokret v1 reference client"
 license = "Apache-2.0"
-repository = "https://github.com/cokret/yougen"
+repository = "https://github.com/cokret/inkson"
 
 [profile.wasm-dev]
 inherits = "dev"
@@ -34,7 +34,7 @@ experimental-applets = []
 # Mobile host-bridge stubs. The `AndroidKeystoreSecureKeyStore` /
 # `IosKeychainSecureKeyStore` types are host-bridge wrappers around a
 # `HostSecretBridge` trait the platform shell installs; there is NO real
-# JNI / Security.framework FFI inside yougen. The actual mobile artifacts
+# JNI / Security.framework FFI inside inkson. The actual mobile artifacts
 # are outside the local 1.0 milestone.
 #
 # Gating rule: these types are compiled when EITHER the target is the
@@ -104,7 +104,7 @@ dioxus-primitives = {workspace = true,default-features = false}
 dioxus-router = {workspace = true}
 # C3: shared Cokret frontend component crate. The former `src/ui/`
 # css-module wrappers now live in yoface, which re-exports
-# `dioxus_primitives` and `dioxus_icons`; yougen imports
+# `dioxus_primitives` and `dioxus_icons`; inkson imports
 # `yoface::ui::*` through the SDK-local `pub use yoface::ui`.
 # Keep the patch sections below aligned with the yoface README.
 yoface = {path = "../yoface"}
@@ -112,7 +112,7 @@ ed25519-dalek = {workspace = true,features = ["pem", "pkcs8", "zeroize"]}
 getrandom = {workspace = true,features = ["wasm_js"]}
 getrandom_02 = {workspace = true,features = ["js"]}
 # rand_core 0.6 alias for the cokret SDK webvh inception builder
-# (`prepare_inception` takes a 0.6 `RngCore`); yougen's primary rand_core is 0.10.
+# (`prepare_inception` takes a 0.6 `RngCore`); inkson's primary rand_core is 0.10.
 rand_core_06 = {workspace = true}
 hkdf = {workspace = true}
 hmac = {workspace = true}
@@ -129,7 +129,7 @@ url = {workspace = true}
 x25519-dalek = {workspace = true,features = ["static_secrets"]}
 zeroize = {workspace = true,features = ["derive"]}
 
-# Build-time only: stamps `YOUGEN_BUILD_ID` (local build time + git short hash)
+# Build-time only: stamps `INKSON_BUILD_ID` (local build time + git short hash)
 # so the running wasm can print which bundle the browser loaded — the
 # definitive stale-cached-wasm check. Build deps do not affect the wasm binary.
 [build-dependencies]
@@ -344,7 +344,7 @@ qrcode = {version = "0.14",default-features = false}
 rand_core = "0.10"
 # Distinct alias for the rand_core 0.6 API the cokret SDK's webvh inception
 # builder expects (`prepare_inception` takes a `rand_core::RngCore` from 0.6).
-# yougen's primary `rand_core` is 0.10, so the SDK's RngCore trait is reached
+# inkson's primary `rand_core` is 0.10, so the SDK's RngCore trait is reached
 # through this aliased dependency to keep trait identity matched.
 rand_core_06 = {package = "rand_core", version = "0.6.4", features = ["std"]}
 regex = "1.12"

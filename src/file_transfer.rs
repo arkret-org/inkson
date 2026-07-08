@@ -112,7 +112,7 @@ pub fn load_or_create_file_transfer_crypto_context(
     actor_id: &str,
     device_id: &str,
 ) -> anyhow::Result<FileTransferCryptoContext> {
-    let secure_store = crate::secure_key_store::default_secure_key_store("yougen");
+    let secure_store = crate::secure_key_store::default_secure_key_store("inkson");
     let account_secret = crate::mls::runtime::load_or_create_account_mls_secret(
         secure_store.as_ref(),
         actor_id,
@@ -125,7 +125,7 @@ pub fn load_or_create_file_transfer_crypto_context(
 pub fn load_file_transfer_crypto_context(
     actor_id: &str,
 ) -> anyhow::Result<Option<FileTransferCryptoContext>> {
-    let secure_store = crate::secure_key_store::default_secure_key_store("yougen");
+    let secure_store = crate::secure_key_store::default_secure_key_store("inkson");
     let Some(account_secret) =
         crate::mls::runtime::load_account_mls_secret(secure_store.as_ref(), actor_id)
             .map_err(|error| anyhow::anyhow!("account MLS secret unavailable: {error}"))?

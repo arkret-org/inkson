@@ -61,7 +61,7 @@ pub(crate) fn theme_renders_as_night(theme: &str, system_theme_is_night: bool) -
 /// (`--primary-color`, …) on `:root` and flips it with a
 /// `var(--light, …) var(--dark, …)` switch keyed on `html[data-theme]`.
 /// Those derived custom properties are substituted **once at `:root`**, so
-/// toggling `--light`/`--dark` on the shell `<div>` (where yougen renders
+/// toggling `--light`/`--dark` on the shell `<div>` (where inkson renders
 /// its `data-theme`) has no effect — descendants inherit the already-computed
 /// palette. CSS cannot propagate a `<div>` attribute up to `:root`, so the
 /// switch must live on `<html>` itself. Writing `data-theme` here lets the

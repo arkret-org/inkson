@@ -1,4 +1,4 @@
-# yougen Local Release Checklist
+# inkson Local Release Checklist
 
 This checklist is intentionally local-only. It does not create git tags,
 push commits, publish crates, push container images, upload to GHCR, submit
@@ -7,15 +7,15 @@ or upload Sigstore transparency-log entries.
 
 ## Inputs
 
-- A clean yougen worktree except for deliberate release changes.
+- A clean inkson worktree except for deliberate release changes.
 - Sibling `../cokret-rust-sdk` and `../chime` checkouts matching the local
   release plan.
 - Dioxus CLI `0.7.5`.
 - Docker for web image evidence.
 - Optional local signing tools:
-  - macOS: `codesign`, `xcrun`, `YOUGEN_MACOS_SIGN_IDENTITY`.
-  - Windows: `signtool.exe`, `YOUGEN_WINDOWS_CERT_PATH`, optional
-    `YOUGEN_WINDOWS_CERT_PASSWORD`.
+  - macOS: `codesign`, `xcrun`, `INKSON_MACOS_SIGN_IDENTITY`.
+  - Windows: `signtool.exe`, `INKSON_WINDOWS_CERT_PATH`, optional
+    `INKSON_WINDOWS_CERT_PASSWORD`.
   - Linux: `gpg`.
   - Web evidence: `trivy`, `syft`, `cosign`, optional `COSIGN_KEY`.
 
@@ -58,7 +58,7 @@ Platform notes:
   It never runs `notarytool submit` or `stapler`.
 - Windows: the script uses `signtool sign /fd SHA256 /f <cert>` when a local
   certificate path is configured. It omits `/tr` and `/t`.
-- Linux: the script creates `dist/signing/yougen-linux-x64.tar.gz` and a GPG
+- Linux: the script creates `dist/signing/inkson-linux-x64.tar.gz` and a GPG
   detached signature when `gpg` is present.
 
 ## Linux package formats
@@ -73,7 +73,7 @@ powershell -ExecutionPolicy Bypass -File scripts/linux-package-local.ps1
 # create a local spec under dist/rpm/SPECS/ and run rpmbuild -bb
 
 # AppImage, when appimagetool is installed
-# create dist/appimage/Yougen.AppDir and run appimagetool locally
+# create dist/appimage/Inkson.AppDir and run appimagetool locally
 
 # Flatpak, when flatpak-builder is installed
 # use a local manifest and local build-dir; do not publish to Flathub
@@ -89,7 +89,7 @@ Build and scan the web image locally:
 powershell -ExecutionPolicy Bypass -File scripts/web-image-evidence.ps1
 ```
 
-The script builds `yougen-web:local`, saves a local image tar, writes a SHA-256
+The script builds `inkson-web:local`, saves a local image tar, writes a SHA-256
 hash, runs Trivy when available, generates an SBOM through Syft or Trivy when
 available, and signs the image tar as a blob through Cosign only when
 `COSIGN_KEY` is set. Cosign is invoked with `--tlog-upload=false`.
@@ -101,5 +101,5 @@ Before recording a local `v0.9.0` milestone in notes:
 - Confirm no release workflow has registry push, tag-triggered publish, or
   notarization submit semantics.
 - Confirm `dist/signing/` and `dist/web-image/` contain evidence JSON files.
-- Confirm unresolved items remain listed in `_yougen_todos.md`.
-- Commit with a subject beginning `yougen:`.
+- Confirm unresolved items remain listed in `_inkson_todos.md`.
+- Commit with a subject beginning `inkson:`.

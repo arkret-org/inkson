@@ -4,7 +4,7 @@
 > 依据：`cokret-spec/spec/v1/zh/identity/key-management.md`（§3.3 / §5 / §7 / §8）、
 > `cokret-spec/spec/v1/zh/crypto-media/device-lifecycle.md`（§1.2 / §2 / §10 / §15）、
 > `cokret-spec/spec/v1/zh/models/realm-and-space.md`（§2.3 / §2.8.1）。
-> 本文描述 yougen 客户端面向最终用户的完整流程编排；协议细节以 spec 为准。
+> 本文描述 inkson 客户端面向最终用户的完整流程编排；协议细节以 spec 为准。
 > 配套的 spec 缺口（F1–F6）已于 2026-06-12 全部修复，记录见 `_spec_review/2026-06-12-key-lifecycle-strand-review.md`。
 > 关键结论：**PCR 的两条加密 floor 已在协议层（`realm.schema.json` PCR 守卫）钉死为 `e2ee_required`**，
 > 因此正确实现下 PCR projection 必然携带达标 floor；"PCR 加密建议"弹窗仅对存量/异常 Realm 生效。
@@ -74,7 +74,7 @@ flowchart TD
 
 - 优先级 1–3 是**功能性阻塞**（不处理就丢数据或用不了 E2EE），4–5 是**建议性**。
 - 第 2 步优先旧设备直传（device-lifecycle §10.7 `ck.secret.request/send`，服务端零知识），用户体验上"旧设备点一下确认"优于重新输入 24 词；旧设备不可用才回落到助记词。
-- 第 4 步弹窗（即 yougen 的 `EncryptionFloorPrompt`）内嵌第 5 步的依赖：启用推荐加密前必须先有 Recovery Key，否则刚产生的 MLS 材料没有备份归宿。
+- 第 4 步弹窗（即 inkson 的 `EncryptionFloorPrompt`）内嵌第 5 步的依赖：启用推荐加密前必须先有 Recovery Key，否则刚产生的 MLS 材料没有备份归宿。
 - `needs_mls_unlock` 与 `needs_mls_backup` 互斥，unlock 优先（先恢复再谈备份）。
 
 ---
@@ -93,7 +93,7 @@ flowchart TD
 
 ---
 
-## 5. S1 首次注册并进入 yougen
+## 5. S1 首次注册并进入 inkson
 
 ```mermaid
 flowchart TD
@@ -114,7 +114,7 @@ flowchart TD
 
 要点：
 
-1. **PCR 创建即推荐地板，不询问用户**。"是否加密 PCR"不是用户决策——协议固定 `mls_rfc9420`，yougen 在 genesis 时同时把双 floor 写成 `e2ee_required`。首注用户因此永远见不到加密建议弹窗。
+1. **PCR 创建即推荐地板，不询问用户**。"是否加密 PCR"不是用户决策——协议固定 `mls_rfc9420`，inkson 在 genesis 时同时把双 floor 写成 `e2ee_required`。首注用户因此永远见不到加密建议弹窗。
 2. **"强烈建议加密"在首注流程的真实形态是 first-backup gate**：因为 PCR 本身就是 MLS Realm，注册完成即产生了 E2EE 材料，材料需要备份归宿，备份归宿需要 Recovery Key——所以 24 词设置被编排成注册主线的一步，而不是事后建议。
 3. 拒绝分支的代价要明示：SPOF 账号丢失唯一设备 = 永久丢失账号控制与全部 E2EE 历史；且 inception key 24h 窗口过期后只能由 device key 承担日常授权。
 4. gate 失败（网络等）时 MUST 阻止 inception 退场，不得静默销毁 inception key。
@@ -236,7 +236,7 @@ flowchart TD
 
 ---
 
-## 10. 与 yougen 现有实现的对照（含本轮改动）
+## 10. 与 inkson 现有实现的对照（含本轮改动）
 
 ### 10.1 新抽象：`account_health` 统一自检链解析器
 
@@ -261,7 +261,7 @@ flowchart TD
 
 图例：✅ 已落地 ／ ◑ 既存框架但有缺口 ／ ❌ 缺失。
 
-### 10.3 E2E 测试覆盖（`yougen/tests/e2e/yougen.strands.spec.ts`）
+### 10.3 E2E 测试覆盖（`inkson/tests/e2e/inkson.strands.spec.ts`）
 
 本轮按新流程逻辑更新并新增 Playwright e2e（对 mock soland），全部通过：
 
@@ -287,4 +287,4 @@ flowchart TD
 - [x] 两个"必须设助记词"的强时点（注册 first-backup gate、首次创建加密 Realm）+ 两个"建议"时点（floor 启用、SPOF 提醒）互不冲突，全部收敛到同一个 24 词设置流程。
 - [x] S4 完成后不可能弹"设置助记词"（用户刚输入过）；S3 完成后可能弹——四象限表（§6.1）闭合。
 - [x] 与 spec 的冲突点（PCR floor 未固定、history_visibility 不一致、SSK 域归属矛盾、Realm 创建前置门缺失）已全部修复，见 `_spec_review/2026-06-12-key-lifecycle-strand-review.md` 处置表（F1–F6 resolved，lint 通过）。
-- [x] yougen 侧本轮改动：新增 `account_health` 统一解析器（替代散落 suppression）+ S6 加密 Realm 创建 recovery soft-gate；`cargo check --lib` 与 `cargo test --lib -- account_health encryption_floor_prompt`（22 通过）均绿，未引入新 warning。
+- [x] inkson 侧本轮改动：新增 `account_health` 统一解析器（替代散落 suppression）+ S6 加密 Realm 创建 recovery soft-gate；`cargo check --lib` 与 `cargo test --lib -- account_health encryption_floor_prompt`（22 通过）均绿，未引入新 warning。

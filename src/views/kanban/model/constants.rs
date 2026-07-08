@@ -125,8 +125,8 @@ pub(crate) const MLS_LOCKED_FIELD_PLACEHOLDER: &str =
 /// (not tied to an account or Space), so they live in `localStorage`
 /// on the web build and become no-ops on desktop where there is no
 /// browser storage — the session-default applies there instead.
-pub(crate) const CARD_DETAIL_DOCKED_STORAGE_KEY: &str = "yougen.card-detail.docked";
-pub(crate) const CARD_DETAIL_DOCK_WIDTH_STORAGE_KEY: &str = "yougen.card-detail.dock-width";
+pub(crate) const CARD_DETAIL_DOCKED_STORAGE_KEY: &str = "inkson.card-detail.docked";
+pub(crate) const CARD_DETAIL_DOCK_WIDTH_STORAGE_KEY: &str = "inkson.card-detail.dock-width";
 pub(crate) const CARD_DETAIL_DOCK_WIDTH_DEFAULT: f64 = 720.0;
 pub(crate) const CARD_DETAIL_DOCK_WIDTH_MIN: f64 = 380.0;
 pub(crate) const CARD_DETAIL_DOCK_WIDTH_MAX: f64 = 1100.0;

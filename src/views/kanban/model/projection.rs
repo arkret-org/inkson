@@ -1,8 +1,8 @@
 use super::*;
 
 pub(crate) fn kanban_seed_fallback_allowed(_base_url: &str) -> bool {
-    if truthy_env_value(option_env!("YOUGEN_ALLOW_KANBAN_SEED_FALLBACK"))
-        || std::env::var("YOUGEN_ALLOW_KANBAN_SEED_FALLBACK")
+    if truthy_env_value(option_env!("INKSON_ALLOW_KANBAN_SEED_FALLBACK"))
+        || std::env::var("INKSON_ALLOW_KANBAN_SEED_FALLBACK")
             .ok()
             .as_deref()
             .is_some_and(|value| truthy_env_value(Some(value)))
@@ -192,7 +192,7 @@ pub(crate) fn overlay_local_board_space_options(
 
 /// T20 / YOU-01-009 subtask 3 - Map a spec-registered
 /// [`crate::projection_views::CollectionProjectionView`]
-/// (`view.schema.json#/$defs/collection_projection_view`) into the yougen
+/// (`view.schema.json#/$defs/collection_projection_view`) into the inkson
 /// renderer's [`Vec<KanbanColumn>`] shape.
 ///
 /// Pure adapter so it's unit-testable without a live HTTP client.

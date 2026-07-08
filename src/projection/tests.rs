@@ -5,7 +5,7 @@ const GOLDEN_REALM: &str = "ck:realm:019f1071-0000-7000-8000-000000000000";
 #[test]
 fn projection_expiry_stub_does_not_restore_authors_plaintext_sidecar() {
     let path = std::env::temp_dir().join(format!(
-        "yougen-projection-expiry-stub-{}.json",
+        "inkson-projection-expiry-stub-{}.json",
         crate::operation::uuid_v7()
     ));
     let mut store = crate::local_state::LocalStateStore::with_path(path);
@@ -72,7 +72,7 @@ fn golden_event(
 }
 
 #[test]
-fn client_core_message_decode_golden_matches_yougen_ingest() {
+fn client_core_message_decode_golden_matches_inkson_ingest() {
     let create = golden_event(
         "ck:event:01904100-0000-7000-8000-000000000101",
         cokret_sdk::events::kinds::MESSAGE_CREATE,
@@ -145,7 +145,7 @@ fn client_core_message_decode_golden_matches_yougen_ingest() {
 #[test]
 fn projection_late_recovery_rejection_blocks_sidecar_plaintext() {
     let path = std::env::temp_dir().join(format!(
-        "yougen-projection-late-recovery-{}.json",
+        "inkson-projection-late-recovery-{}.json",
         crate::operation::uuid_v7()
     ));
     let mut store = crate::local_state::LocalStateStore::with_path(path);

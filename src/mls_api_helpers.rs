@@ -29,7 +29,7 @@ pub(crate) fn keypackage_upload_signing_input(
 }
 
 pub(crate) fn sign_keypackage_upload_batch_with_signer(
-    signer: &crate::event_signer::YougenEventSigner,
+    signer: &crate::event_signer::InksonEventSigner,
     device_id: &str,
     key_packages: &[Value],
 ) -> anyhow::Result<cokret_sdk::KeyOperationSignature> {

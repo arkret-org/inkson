@@ -1,6 +1,6 @@
 //! MLS group state persistence + cross-device restore.
 //!
-//! Yougen needs MLS group state to survive process restarts: without
+//! Inkson needs MLS group state to survive process restarts: without
 //! persistence the next message must refetch a Welcome and rejoin from
 //! scratch, which drops the device's leaf and churns the epoch — not
 //! viable for production, since MLS commits are causally tied to the
@@ -42,7 +42,7 @@
 //! ### Crypto choice
 //!
 //! The envelope uses ChaCha20-Poly1305 AEAD. The `chacha20poly1305`
-//! crate is already a direct yougen dependency (used by the cloud-vault
+//! crate is already a direct inkson dependency (used by the cloud-vault
 //! recovery path) and builds cleanly on wasm32. The layout:
 //!
 //! * **Key derivation:** HKDF-SHA256 with the per-envelope salt and the device snapshot secret as
@@ -86,7 +86,7 @@ pub const AEAD_VERSION_CHACHA20_POLY1305: u8 = 1;
 /// storage entries) lives inside the key-backup `ciphertext`.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct MlsSnapshotEnvelope {
-    /// Yougen's realm id the envelope belongs to. Not encrypted —
+    /// Inkson's realm id the envelope belongs to. Not encrypted —
     /// the boot path needs to know which envelope maps to which
     /// Realm without decrypting them all first.
     pub realm_id: String,
@@ -167,7 +167,7 @@ pub enum EnvelopeError {
     InvalidStateRecord(String),
     /// Crypto error from the SDK's `restore_from_state_record` call.
     /// Only emitted on native targets; the wasm path is feature-gated
-    /// because the SDK's MLS surface is native-only inside yougen.
+    /// because the SDK's MLS surface is native-only inside inkson.
     #[error("SDK restore failed: {0}")]
     SdkRestore(String),
     /// F-WASM-MLS-1: the byte-level envelope decrypted cleanly but
@@ -361,7 +361,7 @@ impl MlsSnapshotEnvelope {
                 "item_type": "mls_group_state",
                 "mls_group_id": self.group_id,
                 "epoch": self.epoch,
-                "secret_id": "yougen_mls_snapshot",
+                "secret_id": "inkson_mls_snapshot",
                 "realm_id": self.realm_id
             }],
             "ciphertext": ciphertext,

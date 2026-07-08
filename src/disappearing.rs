@@ -111,7 +111,7 @@ mod tests {
     #[test]
     fn sync_realm_shredder_drops_author_sidecar_for_expiry_stub() {
         let path = std::env::temp_dir().join(format!(
-            "yougen-disappearing-shred-{}.json",
+            "inkson-disappearing-shred-{}.json",
             crate::operation::uuid_v7()
         ));
         let realm = "ck:realm:019e4fd4-4e26-7cc9-af7e-d7102d6f4a22";

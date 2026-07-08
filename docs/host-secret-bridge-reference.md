@@ -1,14 +1,14 @@
 # Host-side `HostSecretBridge` reference implementations
 
 Sprint Q1 第二十二增量 (H1) inverted the mobile FFI relationship:
-yougen exposes a [`HostSecretBridge`][bridge] trait, and the host
+inkson exposes a [`HostSecretBridge`][bridge] trait, and the host
 runtime (Android shell + iOS shell that embed the Dioxus app)
 implements that trait + registers it via
 [`install_host_secret_bridge`][install] at startup.
 
 Sprint Q1 第二十四增量 (H1-mobile-host) ships **reference
 implementations** for the host side that drop into a Dioxus mobile
-project. The yougen / cokret-rust-sdk / soland workspaces do NOT
+project. The inkson / cokret-rust-sdk / soland workspaces do NOT
 link the JNI / Objective-C code — they can't, because the mobile
 toolchain isn't wired into the regular `cargo build`. The host
 project pastes these in, swaps the module path / package, then
@@ -35,10 +35,10 @@ when the host wants step-up.
 
 ### 1.1 Java helper (`SecureKeyStoreBridge.java`)
 
-Drop in `app/src/main/java/com/cokret/yougen/SecureKeyStoreBridge.java`:
+Drop in `app/src/main/java/com/cokret/inkson/SecureKeyStoreBridge.java`:
 
 ```java
-package com.cokret.yougen;
+package com.cokret.inkson;
 
 import android.security.keystore.KeyGenParameterSpec;
 import android.security.keystore.KeyProperties;
@@ -130,7 +130,7 @@ public final class SecureKeyStoreBridge {
 use std::sync::Arc;
 
 use jni::{JavaVM, JNIEnv, objects::JObject};
-use yougen::secure_key_store::{
+use inkson::secure_key_store::{
     HostSecretBridge, SecureKeyStoreError, install_host_secret_bridge,
 };
 
@@ -168,7 +168,7 @@ impl HostSecretBridge for AndroidJniSecretBridge {
                 .map_err(|e| SecureKeyStoreError::Backend(format!("new_string val: {e}")))?
                 .into();
             env.call_static_method(
-                "com/cokret/yougen/SecureKeyStoreBridge",
+                "com/cokret/inkson/SecureKeyStoreBridge",
                 "put",
                 "(Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;)Ljava/lang/String;",
                 &[(&s_service).into(), (&s_key).into(), (&s_val).into()],
@@ -190,7 +190,7 @@ impl HostSecretBridge for AndroidJniSecretBridge {
                 .into();
             let ret = env
                 .call_static_method(
-                    "com/cokret/yougen/SecureKeyStoreBridge",
+                    "com/cokret/inkson/SecureKeyStoreBridge",
                     "get",
                     "(Ljava/lang/String;Ljava/lang/String;)Ljava/lang/String;",
                     &[(&s_service).into(), (&s_key).into()],
@@ -220,7 +220,7 @@ impl HostSecretBridge for AndroidJniSecretBridge {
                 .map_err(|e| SecureKeyStoreError::Backend(format!("new_string key: {e}")))?
                 .into();
             env.call_static_method(
-                "com/cokret/yougen/SecureKeyStoreBridge",
+                "com/cokret/inkson/SecureKeyStoreBridge",
                 "delete",
                 "(Ljava/lang/String;Ljava/lang/String;)V",
                 &[(&s_service).into(), (&s_key).into()],
@@ -236,7 +236,7 @@ impl HostSecretBridge for AndroidJniSecretBridge {
 }
 
 /// Call this from the JNI `JNI_OnLoad` or from
-/// `MainActivity.onCreate` via a `Java_com_cokret_yougen_RustBridge_init`
+/// `MainActivity.onCreate` via a `Java_com_cokret_inkson_RustBridge_init`
 /// `extern "C"` shim. Receives the `JavaVM` reference that lives for
 /// the process lifetime.
 pub fn register_android_keystore_bridge(jvm: JavaVM) {
@@ -255,7 +255,7 @@ pub fn register_android_keystore_bridge(jvm: JavaVM) {
 use std::ffi::c_void;
 use std::sync::Arc;
 
-use yougen::secure_key_store::{
+use inkson::secure_key_store::{
     HostSecretBridge, SecureKeyStoreError, install_host_secret_bridge,
 };
 
@@ -338,7 +338,7 @@ Both platforms follow the same shape:
      // or
      register_ios_keychain_bridge();          // iOS
 3. host mounts the Dioxus app
-4. Dioxus app calls `default_secure_key_store("yougen")`
+4. Dioxus app calls `default_secure_key_store("inkson")`
      → on Android/iOS path returns AndroidKeystoreSecureKeyStore /
        IosKeychainSecureKeyStore which delegate through the
        registered bridge
@@ -355,7 +355,7 @@ caveat applies until the host wires its bridge.
 
 ## 4. Test contract
 
-The yougen crate already provides `TestHostSecretBridge` (a
+The inkson crate already provides `TestHostSecretBridge` (a
 `HashMap<(service, key), value>`-backed implementation) under
 `#[cfg(test)]` to verify the trait surface. Hosts that ship a real
 bridge should mirror the assertions in

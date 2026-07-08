@@ -13,10 +13,10 @@ use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use super::MlsRuntimeError;
 use crate::secure_key_store::{SecureKeyStore, SecureKeyStoreError};
 
-const ACCOUNT_MLS_SECRET_PREFIX: &str = "yougen.mls_snapshot.account_secret";
+const ACCOUNT_MLS_SECRET_PREFIX: &str = "inkson.mls_snapshot.account_secret";
 pub const ACCOUNT_MLS_SECRET_CURRENT_VERSION: u32 = 1;
 const ACCOUNT_MLS_SECRET_MAX_SCAN_VERSION: u32 = 32;
-const MLS_KEY_PACKAGE_IDENTITY_STATE_PREFIX: &str = "yougen.mls_key_package.identity_state.v1";
+const MLS_KEY_PACKAGE_IDENTITY_STATE_PREFIX: &str = "inkson.mls_key_package.identity_state.v1";
 // `.v2`: bumped when the bootstrap publish switched from a single-use
 // KeyPackage to a reusable last-resort one. Bumping the marker namespace makes
 // every client miss its old (single-use, possibly already-consumed) marker once
@@ -29,7 +29,7 @@ const MLS_KEY_PACKAGE_IDENTITY_STATE_PREFIX: &str = "yougen.mls_key_package.iden
 // declaring `ExtensionType::LastResort`), so an admin `Add` of them fails with
 // `UnsupportedExtension` and admission stalls. The bump invalidates the stale
 // publish marker so the corrected KeyPackage is re-published on next boot.
-const MLS_KEY_PACKAGE_PUBLISH_MARKER_PREFIX: &str = "yougen.mls_key_package.publish_marker.v3";
+const MLS_KEY_PACKAGE_PUBLISH_MARKER_PREFIX: &str = "inkson.mls_key_package.publish_marker.v3";
 /// Per-(actor, device) X25519 keypair used to receive HPKE-sealed
 /// `history_secret`s in a `ck.realm_key.share`. This device advertises the
 /// public half as `recipient_hpke_public_key` in a `ck.realm_key.request` and
@@ -43,7 +43,7 @@ const MLS_KEY_PACKAGE_PUBLISH_MARKER_PREFIX: &str = "yougen.mls_key_package.publ
 /// therefore can only seal once the receiver has advertised this key (the
 /// request path); the admission-time proactive push is best-effort and skipped
 /// when the invitee's HPKE public key is not yet known.
-const DEVICE_HPKE_PRIVATE_KEY_PREFIX: &str = "yougen.device_hpke_x25519.private.v1";
+const DEVICE_HPKE_PRIVATE_KEY_PREFIX: &str = "inkson.device_hpke_x25519.private.v1";
 
 /// Stored account-scoped MLS snapshot secret plus the local key version that
 /// carried it.

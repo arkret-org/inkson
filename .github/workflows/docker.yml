@@ -9,17 +9,17 @@ permissions:
   contents: read
 
 env:
-  IMAGE_NAME: yougen-web:local
+  IMAGE_NAME: inkson-web:local
 
 jobs:
   image:
     name: Build and scan local web image
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout yougen
+      - name: Checkout inkson
         uses: actions/checkout@v6
         with:
-          path: yougen
+          path: inkson
 
       - name: Checkout cokret-rust-sdk
         uses: actions/checkout@v6
@@ -47,7 +47,7 @@ jobs:
             --exclude node_modules \
             --exclude test-results \
             --exclude playwright-report \
-            yougen/ docker-context/yougen/
+            inkson/ docker-context/inkson/
           rsync -a --delete \
             --exclude .git \
             --exclude target \
@@ -61,7 +61,7 @@ jobs:
         uses: docker/build-push-action@v6
         with:
           context: docker-context
-          file: docker-context/yougen/Dockerfile
+          file: docker-context/inkson/Dockerfile
           load: true
           push: false
           tags: ${{ env.IMAGE_NAME }}
@@ -84,7 +84,7 @@ jobs:
 
       - name: Generate local image evidence
         shell: pwsh
-        working-directory: yougen
+        working-directory: inkson
         run: |
           New-Item -ItemType Directory -Force -Path dist/web-image | Out-Null
           Move-Item -Force ../trivy-image.json dist/web-image/trivy-image.json
@@ -93,6 +93,6 @@ jobs:
       - name: Upload local-only image evidence
         uses: actions/upload-artifact@v7
         with:
-          name: yougen-web-local-evidence
-          path: yougen/dist/web-image/
+          name: inkson-web-local-evidence
+          path: inkson/dist/web-image/
           if-no-files-found: error

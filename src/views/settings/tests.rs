@@ -3,7 +3,7 @@ use std::collections::BTreeMap;
 use super::*;
 
 /// F-BLOCKLIST-VALID-1: the live form validator should accept the
-/// DID Core shapes the rest of yougen routinely round-trips through
+/// DID Core shapes the rest of inkson routinely round-trips through
 /// soland (web, key, plc) and reject the obvious noise users paste
 /// in by accident. The point is to give *fast* feedback while the
 /// reducer remains the source of truth — so we don't try to be

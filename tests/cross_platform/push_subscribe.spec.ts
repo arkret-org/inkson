@@ -53,7 +53,7 @@ test.describe("PushManager.subscribe with VAPID", () => {
     page,
   }) => {
     const length = await page.evaluate((b64url: string) => {
-      // Equivalent to yougen's `decode_vapid_application_server_key`
+      // Equivalent to inkson's `decode_vapid_application_server_key`
       // helper: URL-safe → standard base64 + add padding to a
       // multiple of 4.
       const standard = b64url

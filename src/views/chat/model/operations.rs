@@ -87,7 +87,7 @@ pub(crate) fn shared_message_pin_add_operation(
     )
     .target_ref(target_ref)
     .body(payload)
-    .build_sdk_event("yougen")
+    .build_sdk_event("inkson")
 }
 
 pub(crate) fn shared_message_pin_remove_operation(
@@ -110,7 +110,7 @@ pub(crate) fn shared_message_pin_remove_operation(
     )
     .target_ref(target_ref)
     .body(payload)
-    .build_sdk_event("yougen")
+    .build_sdk_event("inkson")
 }
 
 fn validate_pin_payload(kind: &str, payload: &Value) -> anyhow::Result<()> {
@@ -124,7 +124,7 @@ pub(crate) fn load_chat_productivity_namespace_key(
     actor_id: &str,
     device_id: &str,
 ) -> anyhow::Result<[u8; crate::account_data::PRODUCTIVITY_ACCOUNT_DATA_NAMESPACE_KEY_LEN]> {
-    let secure_store = crate::secure_key_store::default_secure_key_store("yougen");
+    let secure_store = crate::secure_key_store::default_secure_key_store("inkson");
     let account_secret = crate::mls::runtime::load_or_create_account_mls_secret(
         secure_store.as_ref(),
         actor_id,
@@ -181,7 +181,7 @@ pub(crate) fn chat_message_revise_operation(
         },
         "target_ref": event_id,
     }))
-    .build_sdk_event("yougen")
+    .build_sdk_event("inkson")
 }
 
 pub(crate) fn chat_message_redact_operation(
@@ -223,7 +223,7 @@ pub(crate) fn chat_message_redact_operation(
     )
     .target_ref(target_id)
     .body(body)
-    .build_sdk_event("yougen")
+    .build_sdk_event("inkson")
 }
 
 pub(crate) fn chat_reaction_add_operation(
@@ -242,7 +242,7 @@ pub(crate) fn chat_reaction_add_operation(
         "target_ref": event_id,
         "key": key,
     }))
-    .build_sdk_event("yougen")
+    .build_sdk_event("inkson")
 }
 
 /// E2EE reaction (encryption-and-audit.md §2.9): the plaintext `key` carries
@@ -269,7 +269,7 @@ pub(crate) fn chat_reaction_add_operation_encrypted(
         "key": routing_tag,
         "encrypted_payload": encrypted_payload_json,
     }))
-    .build_sdk_event("yougen")
+    .build_sdk_event("inkson")
 }
 
 /// Build the `ck.reaction.add` operation for a tapped emoji, choosing the
@@ -290,7 +290,7 @@ pub(crate) fn build_chat_reaction_add_operation(
         return chat_reaction_add_operation(realm_id, actor, event_id, emoji).map(Some);
     }
     let realm_id = trim_realm_id(realm_id);
-    let secure_store = crate::secure_key_store::default_secure_key_store("yougen");
+    let secure_store = crate::secure_key_store::default_secure_key_store("inkson");
     match crate::mls::runtime::encrypt_reaction_with_device_snapshot(
         &mut state_store.write(),
         secure_store.as_ref(),
@@ -441,7 +441,7 @@ pub(crate) fn chat_message_create_operation_with_expiry(
         payload.to_value(),
         "chat ck.message.create payload serialize",
     )?)
-    .build_sdk_event("yougen")
+    .build_sdk_event("inkson")
 }
 
 pub(crate) fn chat_send_error_message(error: &anyhow::Error) -> String {

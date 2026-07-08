@@ -412,12 +412,12 @@ fn read_cursor_position_covers_event(
 /// helper, then map that to a localised UI string.
 ///
 /// Routing the decision through the shared client helper (instead of
-/// reading the reason from yougen's richer evaluator directly) keeps
+/// reading the reason from inkson's richer evaluator directly) keeps
 /// the UI surface aligned with what the Sync Service would have
 /// returned, so the same `(watch_level, event)` pair never produces
 /// different copy across surfaces.
 fn watch_hint_for_event(ctx: &NotificationEvalContext) -> String {
-    // Default to `MentionsOnly` to match the yougen evaluator's
+    // Default to `MentionsOnly` to match the inkson evaluator's
     // default; cosmetic only since the caller already established
     // `watch_suppressed=true`.
     let core_level = ctx.watch_level.unwrap_or_default();
@@ -432,7 +432,7 @@ fn watch_hint_for_event(ctx: &NotificationEvalContext) -> String {
     let (decision, reason) = evaluate_watch_level(core_level, &core_ctx);
 
     // Even if the core says "Notify" (the inputs disagree with the
-    // yougen evaluator's richer rules), still surface a generic
+    // inkson evaluator's richer rules), still surface a generic
     // change-watch-level hint so the UI stays consistent with what
     // the user observed.
     //

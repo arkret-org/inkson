@@ -8,7 +8,7 @@ impl LocalStateStore {
     pub fn local_identity_record(&self) -> Option<LocalIdentityRecord> {
         #[cfg(not(test))]
         {
-            let secure_store = crate::secure_key_store::default_secure_key_store("yougen");
+            let secure_store = crate::secure_key_store::default_secure_key_store("inkson");
             if let Some(record) = load_identity_record_from_secure_store(secure_store.as_ref()) {
                 return Some(record);
             }
@@ -60,7 +60,7 @@ impl LocalStateStore {
     pub fn ensure_local_identity(&mut self) -> anyhow::Result<LocalIdentity> {
         #[cfg(not(test))]
         {
-            let secure_store = crate::secure_key_store::default_secure_key_store("yougen");
+            let secure_store = crate::secure_key_store::default_secure_key_store("inkson");
             self.ensure_local_identity_with_secure_store(secure_store.as_ref())
         }
         #[cfg(test)]
@@ -173,7 +173,7 @@ impl LocalStateStore {
     pub fn clear_session_scoped_for_logout(&mut self) {
         #[cfg(not(test))]
         {
-            let secure_store = crate::secure_key_store::default_secure_key_store("yougen");
+            let secure_store = crate::secure_key_store::default_secure_key_store("inkson");
             if let Err(error) = secure_store.delete_secret(
                 &crate::secure_key_store::account_scoped_device_key(Self::SECURE_DPOP_DEVICE_KEY),
             ) {

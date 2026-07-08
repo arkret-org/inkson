@@ -25,7 +25,7 @@ pub(crate) struct OutboxMessage {
 
 #[cfg(target_arch = "wasm32")]
 fn storage_key(account_did: &str) -> String {
-    format!("yougen.chat.outbox.v1::{account_did}")
+    format!("inkson.chat.outbox.v1::{account_did}")
 }
 
 /// Load the persisted outbox for `account_did`. Returns an empty vec when

@@ -15,7 +15,7 @@ use crate::recovery_crypto::{
 /// Serialize a SDK `KeyBackupContentItem` into the on-wire `contents[]` object.
 /// The content item is the spec-defined type (`ck.schema.key_backup.v1`); the
 /// authoritative shape lives in `cokret_sdk::models::KeyBackupContentItem`, so
-/// neither yougen nor soland redefines it. `skip_serializing_if` keeps absent
+/// neither inkson nor soland redefines it. `skip_serializing_if` keeps absent
 /// optionals (e.g. `secret_version` on share items) out of the canonical bytes.
 fn backup_content_object(item: &KeyBackupContentItem) -> anyhow::Result<Value> {
     serde_json::to_value(item).map_err(|error| anyhow::anyhow!("key backup content item: {error}"))
@@ -233,7 +233,7 @@ pub fn build_did_recovery_backup_body(
         "recovery_policy",
         &KeyBackupContentItem {
             item_type: "recovery_key_share".to_owned(),
-            secret_id: Some("yougen_did_recovery_share".to_owned()),
+            secret_id: Some("inkson_did_recovery_share".to_owned()),
             ..Default::default()
         },
         plaintext,

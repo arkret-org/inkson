@@ -164,7 +164,7 @@ pub fn MlsUnlockPrompt(
                         ),
                     );
                     crate::runtime_helpers::sleep_for(std::time::Duration::from_millis(16)).await;
-                    let secure_store = crate::secure_key_store::default_secure_key_store("yougen");
+                    let secure_store = crate::secure_key_store::default_secure_key_store("inkson");
                     match state_store.try_write() {
                         Ok(mut store) => {
                             tracing::warn!(
@@ -367,7 +367,7 @@ pub fn MlsRecoverySetupMissingBanner(
 
     let actor = actor_id();
     if !actor.trim().is_empty() {
-        let secure_store = crate::secure_key_store::default_secure_key_store("yougen");
+        let secure_store = crate::secure_key_store::default_secure_key_store("inkson");
         if matches!(
             crate::mls::runtime::load_account_mls_secret(secure_store.as_ref(), actor.trim()),
             Ok(Some(_))

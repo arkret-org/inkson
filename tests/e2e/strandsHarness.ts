@@ -7,8 +7,8 @@ const DEFAULT_SERVER_URL = "https://local.host";
 const DEFAULT_ACCOUNT_DID = "did:web:alice.example";
 const DEFAULT_DEVICE_ID = "ck:device:01964137-0000-7000-8000-0000000000a1";
 const DEFAULT_SESSION_CREDENTIAL = "sx:e2e-token";
-const TEST_SESSION_INJECTION_KEY = "yougen.test.session_injection.v1";
-const LOCALSTORAGE_SECRETS_FLAG = "yougen.security.allow_localstorage_secrets";
+const TEST_SESSION_INJECTION_KEY = "inkson.test.session_injection.v1";
+const LOCALSTORAGE_SECRETS_FLAG = "inkson.security.allow_localstorage_secrets";
 const DEFAULT_DPOP_SEED_B64URL = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA";
 
 const defaultLocalConfig = {
@@ -123,10 +123,10 @@ export async function writeLocalConfig(
 ) {
   await page.evaluate(
     ({ defaults, nextConfig }) => {
-      const current = localStorage.getItem("yougen.config.v1");
+      const current = localStorage.getItem("inkson.config.v1");
       const parsed = current ? JSON.parse(current) : {};
       localStorage.setItem(
-        "yougen.config.v1",
+        "inkson.config.v1",
         JSON.stringify({
           ...defaults,
           ...parsed,
@@ -214,10 +214,10 @@ export async function writeLocalConfigAndReload(
 ) {
   await page.evaluate(
     ({ defaults, nextConfig }) => {
-      const current = localStorage.getItem("yougen.config.v1");
+      const current = localStorage.getItem("inkson.config.v1");
       const parsed = current ? JSON.parse(current) : {};
       localStorage.setItem(
-        "yougen.config.v1",
+        "inkson.config.v1",
         JSON.stringify({
           ...defaults,
           ...parsed,
@@ -232,7 +232,7 @@ export async function writeLocalConfigAndReload(
 }
 
 export async function readLocalConfig(page: import("@playwright/test").Page) {
-  return page.evaluate(() => JSON.parse(localStorage.getItem("yougen.config.v1") ?? "{}"));
+  return page.evaluate(() => JSON.parse(localStorage.getItem("inkson.config.v1") ?? "{}"));
 }
 
 export async function seedLocalRecoveryKeyMetadata(page: import("@playwright/test").Page) {
@@ -263,13 +263,13 @@ export async function seedLocalRecoveryKeyMetadata(page: import("@playwright/tes
     // mls_recovery_backup_configured() true, which both bypasses the S6 create
     // gate and drives the backup prompt's "use existing key" branch.
     const backupState = JSON.stringify({ backup_id: "ck:backup:e2e-existing-0000" });
-    const state = JSON.parse(localStorage.getItem("yougen.local_state.v1") ?? "{}");
+    const state = JSON.parse(localStorage.getItem("inkson.local_state.v1") ?? "{}");
     state.private_data = {
       ...(state.private_data ?? {}),
       "recovery.state.v1": xorHex(recoveryState),
       "mls.recovery_backup.v1": xorHex(backupState),
     };
-    localStorage.setItem("yougen.local_state.v1", JSON.stringify(state));
+    localStorage.setItem("inkson.local_state.v1", JSON.stringify(state));
   });
   await page.reload({ waitUntil: "domcontentloaded" });
   await expect(latestTestId(page, "client-shell")).toBeVisible({ timeout: 120_000 });
@@ -315,10 +315,10 @@ export function registerStrandsBeforeEach() {
       return;
     }
     await page.addInitScript((initialConfig) => {
-      if (localStorage.getItem("yougen.config.v1")) {
+      if (localStorage.getItem("inkson.config.v1")) {
         return;
       }
-      localStorage.setItem("yougen.config.v1", JSON.stringify(initialConfig));
+      localStorage.setItem("inkson.config.v1", JSON.stringify(initialConfig));
     }, {
       ...defaultLocalConfig,
       device_id: initialDeviceId,

@@ -371,7 +371,7 @@ pub(super) fn ensure_default_push_token_provider() {
     ))]
     {
         // Desktop / server builds: install the FCM provider as the
-        // safe default. It reads `YOUGEN_FCM_PUSH_TOKEN`,
+        // safe default. It reads `INKSON_FCM_PUSH_TOKEN`,
         // `FCM_PUSH_TOKEN`, or `CHASK_PUSH_KEY` for local bridge
         // testing, and otherwise reports "no token" without emitting a
         // placeholder to the gateway.

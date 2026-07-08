@@ -403,7 +403,7 @@ pub fn AppletsPanel(
                                         let op = crate::operation::ck_ops::applet_registration(
                                             &realm, &actor, &did, &ns, &caps_refs,
                                         )
-                                        .build_sdk_event("yougen");
+                                        .build_sdk_event("inkson");
                                         let op = match op {
                                             Ok(op) => op,
                                             Err(err) => {
@@ -975,7 +975,7 @@ mod tests {
             "extensions",
             &["read"],
         )
-        .build("yougen");
+        .build("inkson");
         assert_eq!(op.payload["service_did"], "did:web:applet.example");
         assert_eq!(op.payload["namespace"], "extensions");
         assert_eq!(op.payload["capabilities"][0], "read");

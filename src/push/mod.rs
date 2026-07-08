@@ -26,9 +26,9 @@ pub use token_source::*;
 use crate::secure_key_store::SecureKeyStore;
 
 /// Application identifier stamped into every register-device request.
-pub(crate) const APP_ID: &str = "yougen";
+pub(crate) const APP_ID: &str = "inkson";
 /// Human-readable display name stamped into register-device requests.
-pub(crate) const DISPLAY_NAME: &str = "yougen";
+pub(crate) const DISPLAY_NAME: &str = "inkson";
 
 #[cfg(test)]
 #[allow(clippy::field_reassign_with_default)] // inner gateway field needs a separate type literal.

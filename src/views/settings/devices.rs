@@ -625,7 +625,7 @@ fn render_revoke_modal(
                             };
                             let passphrase_bytes = recovery_secret.into_bytes();
                             let snapshots = state_store.read().mls_snapshots();
-                            let secure_store = crate::secure_key_store::default_secure_key_store("yougen");
+                            let secure_store = crate::secure_key_store::default_secure_key_store("inkson");
                             let actor_for_rotation = actor.clone();
                             let device_for_rotation = current_device.clone();
                             let secure_store_for_rotation = secure_store.clone();

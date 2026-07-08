@@ -18,10 +18,10 @@ pub use callback::*;
 pub use proof::*;
 pub(crate) use util::*;
 
-const YOUGEN_OIDC_REDIRECT_URI_NATIVE: &str = "urn:yougen:oauth:callback";
+const INKSON_OIDC_REDIRECT_URI_NATIVE: &str = "urn:inkson:oauth:callback";
 /// Fallback OIDC `client_id` when `auth_metadata.methods[].oidc.client_id` is
 /// absent. Public (PKCE, no secret) client.
-const YOUGEN_OIDC_CLIENT_ID: &str = "yougen";
+const INKSON_OIDC_CLIENT_ID: &str = "inkson";
 // Device-binding scope prefix (see coauth docs/zh/reference/scopes.md).
 // Requesting `urn:cokret:client:device:{device_id}` at authorize time binds
 // the OAuth session to our stable, persisted device id so coauth introspection
@@ -84,4 +84,4 @@ pub struct PersistedOidcScaffold {
 }
 
 #[cfg(target_arch = "wasm32")]
-pub(crate) const OIDC_SCAFFOLD_STORAGE_KEY: &str = "yougen.oidc_scaffold.v1";
+pub(crate) const OIDC_SCAFFOLD_STORAGE_KEY: &str = "inkson.oidc_scaffold.v1";

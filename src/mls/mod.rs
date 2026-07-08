@@ -1,4 +1,4 @@
-//! MLS (Messaging Layer Security) integration for yougen.
+//! MLS (Messaging Layer Security) integration for inkson.
 //!
 //! Grouped from the former top-level MLS governance and persistence files.
 //! MIMI protocol calls live in `crate::api::mls`, which uses the shared SDK

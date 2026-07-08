@@ -286,7 +286,7 @@ pub fn clear_pending_logout(
 /// by its own TTL). Live records are executed; the record is cleared on
 /// success and retained on transient failure for the next attempt.
 pub async fn run_pending_logout_if_any(now: DateTime<Utc>) {
-    let store = crate::secure_key_store::default_secure_key_store("yougen");
+    let store = crate::secure_key_store::default_secure_key_store("inkson");
     run_pending_logout_with_store(now, store.as_ref()).await;
 }
 

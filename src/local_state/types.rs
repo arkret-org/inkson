@@ -360,7 +360,7 @@ impl Eq for LocalIdentity {}
 
 impl LocalIdentity {
     /// Generate a fresh device identity. Uses `getrandom::fill` for the
-    /// 32-byte seed — same RNG yougen uses for OIDC PKCE state/nonce/verifier.
+    /// 32-byte seed — same RNG inkson uses for OIDC PKCE state/nonce/verifier.
     pub fn generate() -> anyhow::Result<Self> {
         let mut seed = [0u8; 32];
         getrandom::fill(&mut seed).map_err(|err| anyhow::anyhow!("rng fill: {err}"))?;
@@ -889,7 +889,7 @@ pub struct KnownAccount {
 /// never under a per-account entry, so toggling a theme on one account is
 /// observed by every account but carries no identity/account/key material.
 ///
-/// Kept deliberately minimal: today yougen still persists theme/locale through
+/// Kept deliberately minimal: today inkson still persists theme/locale through
 /// the per-account `private_data` channel, so this map is reserved for prefs
 /// that are explicitly routed here. Free-form string KV so adding a pref
 /// doesn't churn the on-disk schema.
@@ -917,7 +917,7 @@ pub struct PendingLogin {
 
 /// Small, cold-written root index that replaces the former single global
 /// `ClientLocalState` blob. Each account's full [`ClientLocalState`] lives in
-/// its own sibling key (`yougen.local_state.v1.account.<did>`); this index only
+/// its own sibling key (`inkson.local_state.v1.account.<did>`); this index only
 /// records which account is active, the cross-account [`DevicePrefs`], any
 /// in-flight [`PendingLogin`] device material, and the set of known account
 /// DIDs (for enumeration / cleanup). Hot per-write flushes touch only the
@@ -963,7 +963,7 @@ impl RootIndex {
 /// private seed is stored as base64url-no-pad of 32 raw ed25519 bytes.
 ///
 /// We intentionally use ed25519 (EdDSA) rather than ES256 because every
-/// other signing path in yougen is already ed25519 (cross-signing,
+/// other signing path in inkson is already ed25519 (cross-signing,
 /// move-signing, session-grant introspection proofs) and coauth's
 /// `DpopVerifier` accepts the `EdDSA`
 /// algorithm out of the box. Sticking with ed25519 keeps a single
@@ -1003,7 +1003,7 @@ pub(crate) const MEMBER_HANDLE_NEGATIVE_CACHE_TTL_SECONDS: i64 = 5 * 60;
 /// flush path can serialise straight to JSON.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct UserActionLogEntry {
-    /// Who took the action. For yougen this is typically the local
+    /// Who took the action. For inkson this is typically the local
     /// device DID (or `did:anon` when the user hasn't logged in yet).
     pub actor: String,
     /// Verb-style action name (e.g. `message.create`,

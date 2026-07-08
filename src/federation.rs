@@ -90,7 +90,7 @@ impl TrustBundle {
         };
         // Pinned `public_key` is interpreted as the expected service DID
         // string until the SDK exposes a typed Ed25519 verifier surface to
-        // yougen. We match it case-sensitively against the well-known DID.
+        // inkson. We match it case-sensitively against the well-known DID.
         if seal.public_key != record.service_did.as_str() {
             return TrustCheck::SignatureMismatch(record.service_did.as_str().to_owned());
         }
@@ -162,8 +162,8 @@ pub fn well_known_cokret_server_url(base_url: &str) -> Result<String, WellKnownF
 /// Spec `discovery/server-discovery.md` mandates clients call this on
 /// first contact with a new domain so they can pre-flight the service
 /// DID against the trust bundle before issuing any privileged request.
-/// Yougen wraps the SDK [`WellKnownCokretServer`] type — that struct
-/// owns the JSON shape, and yougen owns the HTTP + error mapping.
+/// Inkson wraps the SDK [`WellKnownCokretServer`] type — that struct
+/// owns the JSON shape, and inkson owns the HTTP + error mapping.
 ///
 /// This helper deliberately does **no** caching; the caller threads
 /// the result through [`TrustBundle::verify_well_known`] and decides

@@ -144,7 +144,7 @@ fn add_r3_error_keys_zh(dict: &mut TranslationDict) {
 pub fn chinese_translations() -> TranslationDict {
     let mut dict = TranslationDict::new(Locale::Zh);
 
-    dict.set("app.title", "yougen");
+    dict.set("app.title", "inkson");
     dict.set("nav.dashboard", "主页");
     dict.set("nav.chat", "聊天");
     dict.set("nav.forum", "论坛");

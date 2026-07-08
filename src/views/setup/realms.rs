@@ -743,7 +743,7 @@ pub(super) fn RealmsSection(
                                             plaintext_service_did.clone();
                                         spawn(async move {
                                             if crate::event_signer::active_signer().is_none() {
-                                                match crate::event_signer::bootstrap_default_signer("yougen") {
+                                                match crate::event_signer::bootstrap_default_signer("inkson") {
                                                     Ok(_) => {}
                                                     Err(error) => {
                                                         let message = format!(
@@ -877,7 +877,7 @@ pub(super) fn RealmsSection(
                                                         if crate::security_state::encryption_profile_is_encrypted(
                                                             &encryption_profile,
                                                         ) {
-                                                            let secure = crate::secure_key_store::default_secure_key_store("yougen");
+                                                            let secure = crate::secure_key_store::default_secure_key_store("inkson");
                                                             let (snapshot, creator_genesis_summary) = {
                                                                 let mut store = state_store.write();
                                                                 match crate::mls::runtime::ensure_creator_mls_snapshot(

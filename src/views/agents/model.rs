@@ -505,7 +505,7 @@ pub fn build_agent_key_authorize_event_for_pairing(
         runtime_attestation,
     };
     let realm_id = RealmId::new(cokret_sdk::auth::principal_control_realm_id(&controller))?;
-    let hlc = cokret_sdk::Hlc::new(crate::hlc::Hlc::now("yougen").encode())?;
+    let hlc = cokret_sdk::Hlc::new(crate::hlc::Hlc::now("inkson").encode())?;
     let mut event =
         cokret_sdk::agent::build_agent_key_authorize_event(&payload, realm_id, controller, 1, hlc)?;
     event.unsigned.insert(
@@ -947,7 +947,7 @@ impl AuditVerifyStatus {
 }
 
 /// Verify a soland `ck.agent.interop_session.result` payload's
-/// `audit_binding` block. Yougen delegates the `binding_kind` switch
+/// `audit_binding` block. Inkson delegates the `binding_kind` switch
 /// to the SDK so future schemes land in one place instead of being
 /// re-implemented by every client surface.
 pub(crate) fn verify_agent_audit_binding(payload: &Value) -> AuditVerifyStatus {
@@ -1195,5 +1195,5 @@ pub fn build_act_on_behalf_message_operation(
     .executed_by(agent_principal_id)
     .authorization_ref(authorization_ref)
     .body(payload)
-    .build_sdk_event("yougen")
+    .build_sdk_event("inkson")
 }

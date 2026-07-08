@@ -1,6 +1,6 @@
-# yougen — First Login
+# inkson — First Login
 
-> What happens between launching yougen for the first time and reaching the
+> What happens between launching inkson for the first time and reaching the
 > dashboard. References `crypto-media/device-lifecycle.md` §1-§3 and the
 > coauth OIDC sign-in strand.
 
@@ -12,21 +12,21 @@ The first-login strand has three legs:
 3. **Bootstrap the local device** — generate a signing key, publish
    `ck.device.authorize`, run optional verification.
 
-The /onboarding view in yougen owns leg 3 and adds an optional recovery
+The /onboarding view in inkson owns leg 3 and adds an optional recovery
 policy step. Legs 1 + 2 belong to coauth.
 
 ---
 
 ## 1. Discover the Principal Server
 
-On first launch yougen shows the **Server picker** in the top bar.
+On first launch inkson shows the **Server picker** in the top bar.
 
 <!-- TODO(screenshot): server-picker-empty.png -->
 
 1. Click **Server / Switch**.
 2. Choose an existing entry or **Add server**.
 3. Enter the soland base URL (for local testing: `https://local.host`).
-4. yougen pulls `/.well-known/cokret-discovery` and renders the result.
+4. inkson pulls `/.well-known/cokret-discovery` and renders the result.
 
 If discovery fails you will see an error toast carrying the
 `x-cokret-request-id` from soland. Capture that header before opening
@@ -39,10 +39,10 @@ a bug — see [`faq-troubleshooting.md`](../faq-troubleshooting.md#discovery-fai
 ## 2. Sign in via coauth
 
 1. Click **Login** in the top bar (or visit `/login`).
-2. yougen redirects to coauth's OIDC page in the same window.
+2. inkson redirects to coauth's OIDC page in the same window.
 3. Complete the sign-in (passkey / password / TOTP — coauth owns the
    factor set).
-4. coauth redirects back to yougen with an OIDC code; yougen exchanges it
+4. coauth redirects back to inkson with an OIDC code; inkson exchanges it
    for an access token and persists the bundle in `LocalStateStore`.
 
 <!-- TODO(screenshot): coauth-oidc-page.png -->
@@ -73,7 +73,7 @@ resolve to your DID; they are **not** a permission key.
 
 ### Step 3 — Device key
 
-yougen generates a local ed25519 signing key, hands it to the keychain
+inkson generates a local ed25519 signing key, hands it to the keychain
 (desktop) or IndexedDB (web), and publishes
 `ck.device.authorize`. You may then run a `KeyVerification` round against
 a previously enrolled device to elevate trust.

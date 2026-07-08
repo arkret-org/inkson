@@ -54,7 +54,7 @@ pub(crate) fn safe_blob_filename_header(filename: &str) -> Option<String> {
     (!sanitized.is_empty()).then_some(sanitized)
 }
 
-/// H3 — central guard for the `ck:cursor:*` prefix invariant. Every yougen
+/// H3 — central guard for the `ck:cursor:*` prefix invariant. Every inkson
 /// entry point that takes a cursor / `next_cursor` / `after` query argument
 /// passes it through this helper before going on the wire. The nil-initial
 /// account subscribe case (`after: None`) is handled by callers using

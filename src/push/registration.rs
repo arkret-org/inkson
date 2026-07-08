@@ -19,14 +19,14 @@
 //!
 //! ```rust,ignore
 //! use std::sync::Arc;
-//! use yougen::push::{set_push_token_provider, FcmPushTokenProvider};
-//! use yougen::push_registration::{register_via_chime, RegisterContext};
+//! use inkson::push::{set_push_token_provider, FcmPushTokenProvider};
+//! use inkson::push_registration::{register_via_chime, RegisterContext};
 //!
 //! set_push_token_provider(Arc::new(FcmPushTokenProvider));
 //! let outcome = register_via_chime(RegisterContext {
 //!     principal_server_url: "https://principal.example".into(),
 //!     floria_gateway_url: "https://push.example/_cokret/edge/push/notify".into(),
-//!     device_id: "dev-yougen".into(),
+//!     device_id: "dev-inkson".into(),
 //!     principal_id: Some("did:web:alice.example".into()),
 //!     authorization_credential: Some(api_token),
 //!     session_grant: None,
@@ -102,9 +102,9 @@ pub struct RegisterContext {
     /// Floria gateway notify URL. Stamped into the register request as
     /// `push_gateway`. Falls back to [`floria_gateway_url`] (which is
     /// env-driven and resolves to an empty no-op in release builds
-    /// without `YOUGEN_FLORIA_URL` set) when empty.
+    /// without `INKSON_FLORIA_URL` set) when empty.
     pub floria_gateway_url: String,
-    /// Device id (e.g. `dev_yougen` or `did:web:alice#device-phone`).
+    /// Device id (e.g. `dev_inkson` or `did:web:alice#device-phone`).
     pub device_id: String,
     /// Owning actor DID. `None` for the pre-login boot path; populated
     /// once OIDC / coauth resolves.
@@ -113,7 +113,7 @@ pub struct RegisterContext {
     /// `Authorization: Bearer ...` HTTP scheme).
     pub authorization_credential: Option<String>,
     /// X-Cokret-Session-Grant header (coauth-issued grant). `None`
-    /// means yougen loads the persisted coauth session grant from
+    /// means inkson loads the persisted coauth session grant from
     /// `LocalStateStore`, mints the matching introspection proof headers,
     /// and fails closed if no grant is available.
     pub session_grant: Option<String>,
@@ -392,8 +392,8 @@ fn build_request(
         ..Default::default()
     };
     let idempotency_key = match active_circle {
-        Some(circle) => format!("yougen-push-register-{}-{circle}", ctx.device_id),
-        None => format!("yougen-push-register-{}", ctx.device_id),
+        Some(circle) => format!("inkson-push-register-{}-{circle}", ctx.device_id),
+        None => format!("inkson-push-register-{}", ctx.device_id),
     };
     let platform = current_platform_str();
     let config = PushDeviceConfig {
@@ -401,10 +401,10 @@ fn build_request(
         device_id: ctx.device_id.as_str(),
         push_key: Some(push_key),
         platform: Some(platform),
-        app_id: Some("yougen"),
+        app_id: Some("inkson"),
         domestic_app_id: None,
         registration_id: None,
-        display_name: Some("yougen"),
+        display_name: Some("inkson"),
         idempotency_key: Some(idempotency_key.as_str()),
         request_id: None,
         proof: None,
@@ -500,20 +500,20 @@ mod tests {
 
     #[test]
     fn build_request_uses_floria_url_as_push_gateway() {
-        let request = build_request(&ctx("dev_yougen"), "apns:01234567890abcdef").expect("build");
-        assert_eq!(request.device_id, "dev_yougen");
+        let request = build_request(&ctx("dev_inkson"), "apns:01234567890abcdef").expect("build");
+        assert_eq!(request.device_id, "dev_inkson");
         assert_eq!(request.push_key, "apns:01234567890abcdef");
         assert_eq!(
             request.push_gateway,
             "https://push.example/_cokret/edge/push/notify"
         );
-        assert_eq!(request.app_id.as_deref(), Some("yougen"));
+        assert_eq!(request.app_id.as_deref(), Some("inkson"));
         assert_eq!(request.platform.as_deref(), Some(current_platform_str()));
     }
 
     #[test]
     fn build_request_falls_back_to_runtime_floria_gateway_when_empty() {
-        let mut c = ctx("dev_yougen");
+        let mut c = ctx("dev_inkson");
         c.floria_gateway_url = "   ".to_owned();
         let request = build_request(&c, "apns:01234567890abcdef").expect("build");
         assert_eq!(request.push_gateway, floria_gateway_url());
@@ -521,7 +521,7 @@ mod tests {
 
     #[test]
     fn build_request_stamps_active_circle_into_idempotency_key() {
-        let mut c = ctx("dev_yougen");
+        let mut c = ctx("dev_inkson");
         c.active_circle_id = Some("ck:circle:opsroom".to_owned());
         let request = build_request(&c, "apns:01234567890abcdef").expect("build");
         let key = request.idempotency_key.as_deref().expect("idempotency_key");
@@ -531,8 +531,8 @@ mod tests {
     #[test]
     fn resolves_persisted_grant_into_chime_headers() {
         let mut store = isolated_store("grant-headers");
-        store.set_session_grant(Some(persisted_grant("dev_yougen")));
-        let mut context = ctx("dev_yougen");
+        store.set_session_grant(Some(persisted_grant("dev_inkson")));
+        let mut context = ctx("dev_inkson");
         context.principal_id = None;
 
         let headers = resolve_chime_session_grant(&mut context, &store).expect("grant headers");
@@ -548,7 +548,7 @@ mod tests {
 
     #[test]
     fn missing_grant_fails_closed_before_register() {
-        let mut context = ctx("dev_yougen");
+        let mut context = ctx("dev_inkson");
         let store = isolated_store("missing-grant");
         let err = resolve_chime_session_grant(&mut context, &store).unwrap_err();
         assert!(matches!(err, PushRegistrationError::MissingSessionGrant));
@@ -559,7 +559,7 @@ mod tests {
         // Even if a buggy provider hands back a placeholder marker, the
         // production guard MUST reject it before we POST.
         let request =
-            build_request(&ctx("dev_yougen"), "desktop:yougen-dev-placeholder-token").unwrap();
+            build_request(&ctx("dev_inkson"), "desktop:inkson-dev-placeholder-token").unwrap();
         let err = ensure_production_register_request(&request).unwrap_err();
         assert!(err.to_string().contains("placeholder"));
     }

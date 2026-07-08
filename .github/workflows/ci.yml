@@ -17,10 +17,10 @@ jobs:
     name: Rust tests and web build
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout yougen
+      - name: Checkout inkson
         uses: actions/checkout@v6
         with:
-          path: yougen
+          path: inkson
 
       - name: Checkout cokret-spec
         uses: actions/checkout@v6
@@ -60,63 +60,63 @@ jobs:
       - name: Cache Cargo
         uses: Swatinem/rust-cache@v2
         with:
-          workspaces: yougen
+          workspaces: inkson
 
       - name: Install Node
         uses: actions/setup-node@v6
         with:
           node-version: "22"
           cache: npm
-          cache-dependency-path: yougen/package-lock.json
+          cache-dependency-path: inkson/package-lock.json
 
       - name: Install npm dependencies
-        working-directory: yougen
+        working-directory: inkson
         run: npm ci
 
       - name: Install Dioxus CLI
         run: cargo install dioxus-cli --version "${DIOXUS_CLI_VERSION}" --locked
 
       - name: Check formatting
-        working-directory: yougen
+        working-directory: inkson
         run: cargo fmt --all -- --check
 
       - name: Clippy
-        working-directory: yougen
+        working-directory: inkson
         run: cargo clippy --all-targets -- -D warnings
 
       - name: Rust tests
-        working-directory: yougen
+        working-directory: inkson
         run: cargo test
 
       # Production-path gate: build + test without optional local UI surfaces.
       - name: cargo check (no-default-features, prod path)
-        working-directory: yougen
+        working-directory: inkson
         run: cargo check --workspace --no-default-features
 
       - name: cargo test (no-default-features)
-        working-directory: yougen
+        working-directory: inkson
         run: cargo test --workspace --no-default-features --no-run
 
       - name: Web build
-        working-directory: yougen
+        working-directory: inkson
         run: dx build --platform web
 
       - name: Start web preview for Lighthouse
-        working-directory: yougen
+        working-directory: inkson
         shell: bash
         run: |
-          nohup dx serve --platform web --port 4528 --open false > ../yougen-lighthouse-server.log 2>&1 &
+          nohup dx serve --platform web --port 4528 --open false > ../inkson-lighthouse-server.log 2>&1 &
           for i in {1..90}; do
             if curl -fsS http://127.0.0.1:4528 >/dev/null; then
               exit 0
             fi
             sleep 2
           done
-          cat ../yougen-lighthouse-server.log
+          cat ../inkson-lighthouse-server.log
           exit 1
 
       - name: Lighthouse budget
-        working-directory: yougen
+        working-directory: inkson
         run: npx --yes lighthouse@12 http://127.0.0.1:4528 --output=json --output-path=dist/lighthouse/lighthouse.json --budget-path=docs/lighthouse-budget.json --chrome-flags="--headless=new --no-sandbox"
 
       - name: Upload Lighthouse report
@@ -124,5 +124,5 @@ jobs:
         uses: actions/upload-artifact@v7
         with:
           name: lighthouse-report
-          path: yougen/dist/lighthouse/
+          path: inkson/dist/lighthouse/
           if-no-files-found: ignore

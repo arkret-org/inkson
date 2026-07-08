@@ -16,10 +16,10 @@ try {
 
     if (-not $ArtifactPath) {
         if ($isWindowsHost) {
-            $ArtifactPath = "target/release/yougen.exe"
+            $ArtifactPath = "target/release/inkson.exe"
         }
         else {
-            $ArtifactPath = "target/release/yougen"
+            $ArtifactPath = "target/release/inkson"
         }
     }
 
@@ -41,7 +41,7 @@ try {
     if ($isMacHost) {
         $codesign = Get-Command codesign -ErrorAction SilentlyContinue
         $xcrun = Get-Command xcrun -ErrorAction SilentlyContinue
-        $identity = $env:YOUGEN_MACOS_SIGN_IDENTITY
+        $identity = $env:INKSON_MACOS_SIGN_IDENTITY
         $mac = [ordered]@{
             platform = "macos"
             codesign_available = [bool]$codesign
@@ -65,7 +65,7 @@ try {
     }
     elseif ($isWindowsHost) {
         $signtool = Get-Command signtool.exe -ErrorAction SilentlyContinue
-        $certPath = $env:YOUGEN_WINDOWS_CERT_PATH
+        $certPath = $env:INKSON_WINDOWS_CERT_PATH
         $win = [ordered]@{
             platform = "windows"
             signtool_available = [bool]$signtool
@@ -79,8 +79,8 @@ try {
 
         if ($artifactExists -and $signtool -and $certPath -and (Test-Path -LiteralPath $certPath)) {
             $args = @("sign", "/fd", "SHA256", "/f", $certPath)
-            if ($env:YOUGEN_WINDOWS_CERT_PASSWORD) {
-                $args += @("/p", $env:YOUGEN_WINDOWS_CERT_PASSWORD)
+            if ($env:INKSON_WINDOWS_CERT_PASSWORD) {
+                $args += @("/p", $env:INKSON_WINDOWS_CERT_PASSWORD)
             }
             $args += $ArtifactPath
             & signtool.exe @args
@@ -92,7 +92,7 @@ try {
     }
     else {
         $gpg = Get-Command gpg -ErrorAction SilentlyContinue
-        $tarball = Join-Path $DistDir "yougen-linux-x64.tar.gz"
+        $tarball = Join-Path $DistDir "inkson-linux-x64.tar.gz"
         $linux = [ordered]@{
             platform = "linux"
             gpg_available = [bool]$gpg

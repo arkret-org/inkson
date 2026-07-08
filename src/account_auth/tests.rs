@@ -203,7 +203,7 @@ fn test_oidc_method() -> cokret_sdk::AuthMethod {
         openid_configuration: Some(
             "https://issuer.example/.well-known/openid-configuration".to_owned(),
         ),
-        client_id: Some("yougen-test".to_owned()),
+        client_id: Some("inkson-test".to_owned()),
         scopes: vec!["openid".to_owned(), "profile".to_owned()],
         grant_exchange: cokret_sdk::AuthGrantExchange {
             proof_kind: cokret_sdk::SessionGrantProofKind::OidcCodeExchange,
@@ -358,7 +358,7 @@ fn authorize_url_requests_standard_and_device_scope() {
     );
 }
 
-/// `client_id` falls back to the native yougen id when the method omits it.
+/// `client_id` falls back to the native inkson id when the method omits it.
 #[test]
 fn authorize_url_falls_back_to_native_client_id() {
     let mut method = test_oidc_method();
@@ -372,7 +372,7 @@ fn authorize_url_falls_back_to_native_client_id() {
         "https://principal.example/api",
     )
     .unwrap();
-    assert_eq!(bundle.client_id, YOUGEN_OIDC_CLIENT_ID);
+    assert_eq!(bundle.client_id, INKSON_OIDC_CLIENT_ID);
     let parsed = Url::parse(&bundle.authorize_url).unwrap();
     assert_eq!(
         parsed
@@ -380,7 +380,7 @@ fn authorize_url_falls_back_to_native_client_id() {
             .find(|(key, _)| key == "client_id")
             .unwrap()
             .1,
-        YOUGEN_OIDC_CLIENT_ID
+        INKSON_OIDC_CLIENT_ID
     );
 }
 

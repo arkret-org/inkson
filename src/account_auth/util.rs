@@ -3,7 +3,7 @@ use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use sha2::{Digest, Sha256};
 
 #[cfg(not(target_arch = "wasm32"))]
-use super::YOUGEN_OIDC_REDIRECT_URI_NATIVE;
+use super::INKSON_OIDC_REDIRECT_URI_NATIVE;
 use crate::config::validate_server_url;
 
 pub(crate) fn principal_audience(principal_server_url: &str) -> anyhow::Result<String> {
@@ -19,12 +19,12 @@ pub(crate) fn current_oidc_redirect_uri() -> String {
     web_sys::window()
         .and_then(|window| window.location().origin().ok())
         .map(|origin| format!("{origin}/auth/callback"))
-        .unwrap_or_else(|| super::YOUGEN_OIDC_REDIRECT_URI_NATIVE.to_owned())
+        .unwrap_or_else(|| super::INKSON_OIDC_REDIRECT_URI_NATIVE.to_owned())
 }
 
 #[cfg(not(target_arch = "wasm32"))]
 pub(crate) fn current_oidc_redirect_uri() -> String {
-    YOUGEN_OIDC_REDIRECT_URI_NATIVE.to_owned()
+    INKSON_OIDC_REDIRECT_URI_NATIVE.to_owned()
 }
 
 pub(crate) fn preferred_pkce_method(methods: &[String]) -> Option<&'static str> {

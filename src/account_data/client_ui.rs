@@ -2,7 +2,7 @@
 //! per-Realm view, avatar blob ref cache).
 //!
 //! Spec: `discovery/client-preferences.md` §2 — the `client.ui`
-//! account-data key carries cross-device UI preferences. Yougen persists
+//! account-data key carries cross-device UI preferences. Inkson persists
 //! theme + sidebar state locally and best-effort syncs them across
 //! devices via `ck.account_data.set`.
 
@@ -13,7 +13,7 @@ use serde_json::Value;
 // ─────────────────────────────────────────────────────────────────────────
 // A4a — `client.ui` payload (theme, sidebar collapsed, per-Realm view).
 // Spec: `discovery/client-preferences.md` §2 — the `client.ui`
-// account-data key carries cross-device UI preferences. Yougen persists
+// account-data key carries cross-device UI preferences. Inkson persists
 // theme + sidebar state locally and best-effort syncs them across
 // devices via `ck.account_data.set`.
 // ─────────────────────────────────────────────────────────────────────────

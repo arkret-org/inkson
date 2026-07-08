@@ -1,5 +1,5 @@
 param(
-    [string]$ImageTag = "yougen-web:local",
+    [string]$ImageTag = "inkson-web:local",
     [string]$DistDir = "dist/web-image",
     [switch]$SkipBuild
 )
@@ -25,14 +25,14 @@ try {
             throw "pwsh or powershell is required to prepare the Docker context"
         }
         & $ps.Path -ExecutionPolicy Bypass -File "scripts/prepare-docker-context.ps1"
-        & docker build -f "docker-context/yougen/Dockerfile" -t $ImageTag "docker-context"
+        & docker build -f "docker-context/inkson/Dockerfile" -t $ImageTag "docker-context"
     }
 
     $imageId = (& docker image inspect $ImageTag --format "{{.Id}}").Trim()
-    $imageTar = Join-Path $DistDir "yougen-web-image.tar"
+    $imageTar = Join-Path $DistDir "inkson-web-image.tar"
     & docker save $ImageTag -o $imageTar
 
-    $shaFile = Join-Path $DistDir "yougen-web-image.tar.sha256"
+    $shaFile = Join-Path $DistDir "inkson-web-image.tar.sha256"
     Get-FileHash -Algorithm SHA256 -LiteralPath $imageTar |
         ForEach-Object { "$($_.Hash.ToLowerInvariant())  $(Split-Path -Leaf $imageTar)" } |
         Set-Content -Encoding ASCII -Path $shaFile

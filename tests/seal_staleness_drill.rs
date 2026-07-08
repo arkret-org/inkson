@@ -23,19 +23,19 @@
 //! server running locally. Run with:
 //!
 //! ```text
-//! cargo test --test seal_staleness_drill -p yougen -- --ignored
+//! cargo test --test seal_staleness_drill -p inkson -- --ignored
 //! ```
 //!
-//! and set `YOUGEN_TEST_SOLAND_URL=http://localhost:8698` (or wherever
+//! and set `INKSON_TEST_SOLAND_URL=http://localhost:8698` (or wherever
 //! the test soland instance listens). When unset, the test is skipped
 //! with a visible log line.
 
 use ed25519_dalek::SigningKey;
+use inkson::canonical::hex_encode;
+use inkson::event_builders;
+use inkson::operation::{EventEnvelope, EventEnvelopeExt};
 use regex::Regex;
 use sha2::{Digest, Sha256};
-use yougen::canonical::hex_encode;
-use yougen::event_builders;
-use yougen::operation::{EventEnvelope, EventEnvelopeExt};
 
 const TEST_REALM_ID: &str = "ck:realm:0196419b-0000-7000-8000-000000000001";
 const TEST_ACTOR_ID: &str = "did:web:alice.example";
@@ -234,26 +234,26 @@ fn assert_seal_ref_is_real(envelope: &EventEnvelope) {
 }
 
 /// Live-soland end-to-end drill. Marked `#[ignore]` because it requires
-/// a running soland instance reachable via `YOUGEN_TEST_SOLAND_URL`.
+/// a running soland instance reachable via `INKSON_TEST_SOLAND_URL`.
 /// Run with:
 ///
 /// ```text
-/// YOUGEN_TEST_SOLAND_URL=http://localhost:8698 \
-///   cargo test --test seal_staleness_drill -p yougen -- --ignored
+/// INKSON_TEST_SOLAND_URL=http://localhost:8698 \
+///   cargo test --test seal_staleness_drill -p inkson -- --ignored
 /// ```
 ///
-/// When `YOUGEN_TEST_SOLAND_URL` is unset, the test logs a skip line
+/// When `INKSON_TEST_SOLAND_URL` is unset, the test logs a skip line
 /// and returns success. When set but unreachable, the test panics —
 /// that's the desired behaviour for a live drill on CI.
 #[test]
 #[ignore]
 fn roundtrip_through_live_principal_endpoint() {
-    let url = match std::env::var("YOUGEN_TEST_SOLAND_URL") {
+    let url = match std::env::var("INKSON_TEST_SOLAND_URL") {
         Ok(u) if !u.is_empty() => u,
         _ => {
             eprintln!(
                 "[seal_staleness_drill] skipped: set \
-                 YOUGEN_TEST_SOLAND_URL=http://localhost:8698 to run the live drill"
+                 INKSON_TEST_SOLAND_URL=http://localhost:8698 to run the live drill"
             );
             return;
         }
@@ -261,7 +261,7 @@ fn roundtrip_through_live_principal_endpoint() {
 
     // The live path needs:
     //   1. A test CokretApi pointed at `url`.
-    //   2. An installed real Ed25519 signer (yougen::event_signer::install_active_signer).
+    //   2. An installed real Ed25519 signer (inkson::event_signer::install_active_signer).
     //   3. A `ck.realm.create` round-trip whose returned envelope must pass the same assertions
     //      exercised above.
     //

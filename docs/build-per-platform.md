@@ -1,4 +1,4 @@
-# yougen — Build per Platform
+# inkson — Build per Platform
 
 > Reproducible build instructions for macOS / Windows / Linux desktop and
 > the web image. Codesign / notarization stay in **dry-run** mode — see
@@ -22,10 +22,10 @@ Clone the workspace and the sibling SDK:
 git clone <cokret> cokret
 cd cokret
 ls
-# yougen/ chime/ soland/ floria/ cokret-rust-sdk/ ...
+# inkson/ chime/ soland/ floria/ cokret-rust-sdk/ ...
 ```
 
-All commands below run from `cokret/yougen/`.
+All commands below run from `cokret/inkson/`.
 
 The `justfile` mirrors the same build plan for local use:
 
@@ -50,7 +50,7 @@ cargo build --release
 
 Outputs:
 
-- `target/release/yougen` — universal-arch binary (set `CARGO_BUILD_TARGET`
+- `target/release/inkson` — universal-arch binary (set `CARGO_BUILD_TARGET`
   for explicit `aarch64-apple-darwin` / `x86_64-apple-darwin`).
 - `dist/signing/codesign-dryrun.json` — codesign + notarytool plan.
 
@@ -71,7 +71,7 @@ powershell -ExecutionPolicy Bypass -File scripts/codesign-dryrun.ps1
 
 Outputs:
 
-- `target/release/yougen.exe`
+- `target/release/inkson.exe`
 - `dist/signing/codesign-dryrun.json` — signtool plan.
 
 For an MSI you also need:
@@ -80,7 +80,7 @@ For an MSI you also need:
 powershell -ExecutionPolicy Bypass -File scripts/windows-msi-local.ps1
 ```
 
-The MSI build uses WiX 4 and lands at `dist/yougen-windows.msi`. It is
+The MSI build uses WiX 4 and lands at `dist/inkson-windows.msi`. It is
 **unsigned**; the codesign dry-run never invokes a timestamp authority.
 
 ---
@@ -94,8 +94,8 @@ cargo build --release
 
 Outputs:
 
-- `target/release/yougen`
-- `dist/signing/yougen-linux-x64.tar.gz` (+ optional `.asc` GPG
+- `target/release/inkson`
+- `dist/signing/inkson-linux-x64.tar.gz` (+ optional `.asc` GPG
   signature if `gpg` is on PATH).
 
 To produce distro packages locally:
@@ -115,7 +115,7 @@ The script wraps `cargo-deb` / `cargo-generate-rpm` / `appimagetool` /
 dx build --platform web --release
 ```
 
-Outputs land under `target/dx/yougen/release/web/`. Serve with any static
+Outputs land under `target/dx/inkson/release/web/`. Serve with any static
 host that preserves the Dioxus asset paths.
 
 The web build uses the same in-tree OpenMLS patch as native builds for
@@ -128,13 +128,13 @@ For a containerized build:
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File scripts/prepare-docker-context.ps1
-docker build -f docker-context/yougen/Dockerfile -t yougen-web:local docker-context
+docker build -f docker-context/inkson/Dockerfile -t inkson-web:local docker-context
 ```
 
 Run locally:
 
 ```bash
-docker run --rm -p 4527:80 yougen-web:local
+docker run --rm -p 4527:80 inkson-web:local
 ```
 
 The Dockerfile sets a strict CSP:
@@ -192,7 +192,7 @@ just check-mobile-stubs
 
 The iOS and Android targets are **stubs only** — they install host-bridge wrappers
 around the `HostSecretBridge` trait. There is no real JNI or
-Security.framework FFI inside yougen. See
+Security.framework FFI inside inkson. See
 `docs/platform-stub-roadmap.md` for the path to real artifacts.
 
 Gitea CI mirrors this shape in `.gitea/workflows/smoke.yml`: web/WASM

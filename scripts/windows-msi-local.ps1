@@ -1,5 +1,5 @@
 param(
-    [string]$BinaryPath = "target/release/yougen.exe",
+    [string]$BinaryPath = "target/release/inkson.exe",
     [string]$DistDir = "dist/windows-msi",
     [string]$Version = "0.1.0-local"
 )
@@ -23,7 +23,7 @@ try {
     }
 
     if (-not (Test-Path -LiteralPath $BinaryPath)) {
-        throw "yougen.exe not found at $BinaryPath — run `cargo build --release` first"
+        throw "inkson.exe not found at $BinaryPath — run `cargo build --release` first"
     }
 
     New-Item -ItemType Directory -Force -Path $DistDir | Out-Null
@@ -42,7 +42,7 @@ try {
     if ($cargoWix) {
         Write-Host "Using cargo-wix ($($cargoWix.Source))"
         & cargo wix init --force 2>&1 | Out-Host
-        & cargo wix --no-build --nocapture --output (Join-Path $DistDir "yougen-$Version.msi") 2>&1 | Out-Host
+        & cargo wix --no-build --nocapture --output (Join-Path $DistDir "inkson-$Version.msi") 2>&1 | Out-Host
         $msi = Get-ChildItem -Path $DistDir -Filter "*.msi" -ErrorAction SilentlyContinue | Select-Object -First 1
         if ($msi) {
             $evidence.msi_path = $msi.FullName
@@ -50,16 +50,16 @@ try {
     }
     elseif ($candle) {
         Write-Host "Falling back to raw WiX (candle.exe) — minimal wix harness only."
-        $wxs = Join-Path $DistDir "yougen.wxs"
+        $wxs = Join-Path $DistDir "inkson.wxs"
         @"
 <?xml version="1.0" encoding="UTF-8"?>
 <Wix xmlns="http://schemas.microsoft.com/wix/2006/wi">
-  <Product Id="*" Name="yougen" Language="1033" Version="$Version" Manufacturer="Cokret" UpgradeCode="00000000-0000-0000-0000-000000000000">
+  <Product Id="*" Name="inkson" Language="1033" Version="$Version" Manufacturer="Cokret" UpgradeCode="00000000-0000-0000-0000-000000000000">
     <Package InstallerVersion="500" Compressed="yes" InstallScope="perUser" />
     <MediaTemplate />
     <Directory Id="TARGETDIR" Name="SourceDir">
       <Directory Id="ProgramFilesFolder">
-        <Directory Id="INSTALLFOLDER" Name="yougen" />
+        <Directory Id="INSTALLFOLDER" Name="inkson" />
       </Directory>
     </Directory>
     <ComponentGroup Id="ProductComponents" Directory="INSTALLFOLDER">
@@ -67,18 +67,18 @@ try {
         <File Source="$BinaryPath" />
       </Component>
     </ComponentGroup>
-    <Feature Id="MainFeature" Title="yougen" Level="1">
+    <Feature Id="MainFeature" Title="inkson" Level="1">
       <ComponentGroupRef Id="ProductComponents" />
     </Feature>
   </Product>
 </Wix>
 "@ | Set-Content -Path $wxs
-        & candle.exe -out (Join-Path $DistDir "yougen.wixobj") $wxs
-        $evidence.msi_path = (Join-Path $DistDir "yougen.wixobj")
+        & candle.exe -out (Join-Path $DistDir "inkson.wixobj") $wxs
+        $evidence.msi_path = (Join-Path $DistDir "inkson.wixobj")
     }
     else {
         Write-Host "Neither cargo-wix nor candle.exe found — writing stub manifest only."
-        $stub = Join-Path $DistDir "yougen-$Version.msi.stub.json"
+        $stub = Join-Path $DistDir "inkson-$Version.msi.stub.json"
         @{
             warning = "Stub only — no real MSI generated"
             binary = $BinaryPath

@@ -679,7 +679,7 @@ fn build_account_data_set_emits_canonical_kind() {
 
 #[test]
 fn productivity_account_data_keys_use_sdk_private_derivation() {
-    let ns = b"yougen-account-data-test-key";
+    let ns = b"inkson-account-data-test-key";
     let target_ref = "ck:strand:01904100-0000-7000-8000-000000000001";
     let snooze = snooze_account_data_key(ns, target_ref).unwrap();
     let saved = saved_account_data_key(ns, "Focus", target_ref).unwrap();
@@ -767,7 +767,7 @@ fn private_account_data_builders_emit_encrypted_payload() {
 #[test]
 fn private_account_data_builder_can_emit_cas_guard() {
     let key = draft_account_data_key(
-        b"yougen-account-data-test-key",
+        b"inkson-account-data-test-key",
         cokret_sdk::DraftKind::Message,
         "ck:realm:01904100-0000-7000-8000-000000000001",
         DRAFT_MESSAGE_SLOT,
@@ -932,7 +932,7 @@ fn legacy_local_drafts_migrate_to_private_draft_account_data() {
         "   ".to_owned(),
     );
     let migrated = migrate_legacy_local_drafts(
-        b"yougen-account-data-test-key",
+        b"inkson-account-data-test-key",
         &drafts,
         "ck:device:01904100-0000-7000-8000-000000000001",
         "01970e589d21-0000-a13f9c2e",
@@ -955,7 +955,7 @@ fn legacy_local_drafts_migrate_to_private_draft_account_data() {
 #[test]
 fn legacy_saved_items_migrate_to_independent_private_values() {
     let migrated = migrate_legacy_saved_items(
-        b"yougen-account-data-test-key",
+        b"inkson-account-data-test-key",
         &[LegacySavedItem {
             collection_title: "Focus".to_owned(),
             target_ref: "ck:message:01904100-0000-7000-8000-000000000001".to_owned(),

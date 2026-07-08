@@ -1,4 +1,4 @@
-# yougen cross-platform deployment test harness
+# inkson cross-platform deployment test harness
 
 Round 27 deliverable. Drives the five wasm-facing platform contracts
 (SubtleCrypto AES-GCM, PushManager + VAPID, opaque push receive,
@@ -24,11 +24,11 @@ wakeup without exposing notification text or collapse metadata.
 npx playwright test --config tests/cross_platform/playwright.config.ts
 
 # Subset (e.g. CI box with only Firefox installed).
-YOUGEN_CROSS_PLATFORM=firefox npx playwright test \
+INKSON_CROSS_PLATFORM=firefox npx playwright test \
     --config tests/cross_platform/playwright.config.ts
 
 # Reuse an externally-served bundle (skips the dx serve step).
-YOUGEN_CROSS_PLATFORM_BASE_URL=http://127.0.0.1:9000 \
+INKSON_CROSS_PLATFORM_BASE_URL=http://127.0.0.1:9000 \
     npx playwright test --config tests/cross_platform/playwright.config.ts
 ```
 

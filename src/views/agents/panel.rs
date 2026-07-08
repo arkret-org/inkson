@@ -329,7 +329,7 @@ pub fn AgentsPanel(
                                         let op = crate::operation::ck_ops::agent_endpoint(
                                             &realm, &actor, &did, &proto, &caps_refs,
                                         )
-                                        .and_then(|builder| builder.build_sdk_event("yougen"));
+                                        .and_then(|builder| builder.build_sdk_event("inkson"));
                                         let op = match op {
                                             Ok(op) => op,
                                             Err(err) => {
@@ -638,7 +638,7 @@ pub fn AgentsPanel(
                                                 serde_json::json!({ "handoff_intent": "controller_initiated" }),
                                                 "ck:grant:01904100-0000-7000-8000-000000000099",
                                             )
-                                            .and_then(|builder| builder.build_sdk_event("yougen"));
+                                            .and_then(|builder| builder.build_sdk_event("inkson"));
                                             let op = match op {
                                                 Ok(op) => op,
                                                 Err(err) => {
@@ -879,7 +879,7 @@ pub fn AgentsPanel(
                                                     None,
                                                     constraint,
                                                 )
-                                                .build_sdk_event("yougen");
+                                                .build_sdk_event("inkson");
                                                 let op = match op {
                                                     Ok(op) => op,
                                                     Err(err) => {
@@ -1064,7 +1064,7 @@ pub fn AgentsPanel(
                                                 &result_ref,
                                                 &artifact_ref,
                                             )
-                                            .and_then(|builder| builder.build_sdk_event("yougen"));
+                                            .and_then(|builder| builder.build_sdk_event("inkson"));
                                             let op = match op {
                                                 Ok(op) => op,
                                                 Err(err) => {

@@ -2,7 +2,7 @@
 //! composer-banner family that lets the user pick between Realm scope
 //! (default) and any Circle the active account belongs to.
 //!
-//! Spec: CKP-0007 / `_yougen_todos.md` §P3B.2.2-§P3B.2.3.
+//! Spec: CKP-0007 / `_inkson_todos.md` §P3B.2.2-§P3B.2.3.
 
 use dioxus::prelude::*;
 

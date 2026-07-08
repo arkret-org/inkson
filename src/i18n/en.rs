@@ -10,7 +10,7 @@ pub fn english_translations() -> TranslationDict {
     let mut dict = TranslationDict::new(Locale::En);
 
     // Navigation & Shell
-    dict.set("app.title", "yougen");
+    dict.set("app.title", "inkson");
     dict.set("nav.dashboard", "Home");
     dict.set("nav.chat", "Chat");
     dict.set("nav.forum", "Forum");

@@ -1,4 +1,4 @@
-# yougen
+# inkson
 
 > **Spec target**: [cokret-spec @ 0b80cc78](../cokret-spec) (R3.4 sync 2026-06-13; includes §5.6 receive-chain persistence MUST from 58d68c89)
 
@@ -66,7 +66,7 @@ the protocol spec tree (`../cokret-spec/spec/v1/`) for the normative source.
   channel (broadcast) or `ck.schema.device_message.v1` (to-device key
   verification). This is transparent to end users but is a
   wire-breaking change for any third-party client built against the
-  old yougen behaviour.
+  old inkson behaviour.
 - **Moderation appeal strand** — when a moderation decision blocks a
   member, they can now file an appeal directly from the timeline.
   Status surfaces back to the appellant as `Submitted → UnderReview →
@@ -132,9 +132,9 @@ npm install
 npm run e2e
 ```
 
-The Playwright runner starts `dx serve --platform web --port 4527 --open false` and exercises the web shell against mocked `/_cokret/*` responses. Use `YOUGEN_E2E_BASE_URL=http://127.0.0.1:<port>` when testing an already-running web build.
+The Playwright runner starts `dx serve --platform web --port 4527 --open false` and exercises the web shell against mocked `/_cokret/*` responses. Use `INKSON_E2E_BASE_URL=http://127.0.0.1:<port>` when testing an already-running web build.
 
-The e2e suite under `tests/e2e/` is **mock-only**: it pins yougen's UI surface against the contract in `tests/e2e/mockCokretContract.ts` and never speaks to a real Cokret server. Full UI ↔ real-server integration lives in the sibling [`cotest`](../cotest) joint suite (`cotest/e2e/`), which boots both `yougen` and a real `soland` process. Any test that needs a live server should be added there, not here.
+The e2e suite under `tests/e2e/` is **mock-only**: it pins inkson's UI surface against the contract in `tests/e2e/mockCokretContract.ts` and never speaks to a real Cokret server. Full UI ↔ real-server integration lives in the sibling [`cotest`](../cotest) joint suite (`cotest/e2e/`), which boots both `inkson` and a real `soland` process. Any test that needs a live server should be added there, not here.
 
 The UI compile guard is included in `cargo test` and verifies the exported Dioxus root component signature used by `src/main.rs`.
 
@@ -157,11 +157,11 @@ The repository includes CI for:
 - `Docker`: local web image build, Trivy scan, SBOM evidence, and local cosign blob evidence when a local key is supplied. It does not push to GHCR or any registry.
 - `Dependabot`: weekly updates for GitHub Actions, Cargo, npm, and Docker.
 
-CI checks out `cokret-rust-sdk` and `chime` next to `yougen` because `Cargo.toml` uses sibling path dependencies. The expected GitHub repository names are `${OWNER}/cokret-rust-sdk` and `${OWNER}/chime`.
+CI checks out `cokret-rust-sdk` and `chime` next to `inkson` because `Cargo.toml` uses sibling path dependencies. The expected GitHub repository names are `${OWNER}/cokret-rust-sdk` and `${OWNER}/chime`.
 
 ### Gitea Actions
 
-The Gitea smoke workflow lives in `.gitea/workflows/smoke.yml`. It follows the lightweight Rust-check structure used by the related synpad workflows and checks out `yougen`, `cokret-rust-sdk`, and `chime` as sibling directories so the local path dependencies resolve.
+The Gitea smoke workflow lives in `.gitea/workflows/smoke.yml`. It follows the lightweight Rust-check structure used by the related synpad workflows and checks out `inkson`, `cokret-rust-sdk`, and `chime` as sibling directories so the local path dependencies resolve.
 
 The smoke job installs the Linux desktop build packages and runs:
 
@@ -173,11 +173,11 @@ cargo test --locked
 
 The expected Gitea repository names are `${OWNER}/cokret-rust-sdk` and `${OWNER}/chime`.
 
-The Docker image serves the Dioxus web build with nginx. Build it from a clean context containing `yougen`, `cokret-rust-sdk`, and `chime`:
+The Docker image serves the Dioxus web build with nginx. Build it from a clean context containing `inkson`, `cokret-rust-sdk`, and `chime`:
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File scripts/prepare-docker-context.ps1
-docker build -f docker-context/yougen/Dockerfile -t yougen-web docker-context
+docker build -f docker-context/inkson/Dockerfile -t inkson-web docker-context
 ```
 
 Local release evidence commands are documented in [`docs/RELEASING.md`](docs/RELEASING.md). The release plan is local-only: no tag creation, registry push, crates.io publish, notarization submit, ticket stapling, timestamp authority, or Sigstore transparency-log upload is part of the phase-3 workflow.
@@ -204,5 +204,5 @@ Unauthenticated users see only the login or registration entry screen. After a r
 
 <!-- circle-rollout milestone pointer -->
 > **Active milestone tracking** (local-only, gitignored): see
-> `_yougen_todos.md` in the parent `cokret/` directory for the
+> `_inkson_todos.md` in the parent `cokret/` directory for the
 > circle-rollout (CKP-0007) work item list and per-stage checkpoints.

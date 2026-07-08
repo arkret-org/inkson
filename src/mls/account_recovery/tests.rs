@@ -222,7 +222,7 @@ fn select_account_secret_finds_it_in_a_list_payload() {
         "backups": [
             { "backup_id": "ck:backup:a", "backup_class": "mls_history" },
             { "backup_id": "ck:backup:b", "backup_class": "recovery",
-              "contents": [ { "secret_id": "yougen_recovery_vault_payload" } ] },
+              "contents": [ { "secret_id": "inkson_recovery_vault_payload" } ] },
             account_secret_body.clone(),
         ]
     });

@@ -353,7 +353,7 @@ pub fn build_poll_create_op(
         payload.to_value(),
         "poll ck.message.create payload serialize",
     )?)
-    .build_sdk_event("yougen")?;
+    .build_sdk_event("inkson")?;
     let message_ref = event
         .event_id
         .as_str()
@@ -417,7 +417,7 @@ pub fn build_poll_vote_op(
         payload.to_value(),
         "poll vote ck.message.create payload serialize",
     )?)
-    .build_sdk_event("yougen")
+    .build_sdk_event("inkson")
 }
 
 /// Generate a fresh local poll id (`poll-<uuid>`), used only as the

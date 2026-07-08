@@ -32,8 +32,8 @@ import {
 } from "./_helpers";
 
 const AUTHORIZE_ENDPOINT = "https://example.test/authorize";
-const CLIENT_ID = "yougen-cross-platform-2026";
-const REDIRECT_URI = "https://yougen.example/oidc/callback";
+const CLIENT_ID = "inkson-cross-platform-2026";
+const REDIRECT_URI = "https://inkson.example/oidc/callback";
 
 test.describe("OIDC PKCE strand start", () => {
   test.beforeEach(async ({ page }) => {

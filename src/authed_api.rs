@@ -82,7 +82,7 @@ fn require_device_dpop(api: CokretApi) -> anyhow::Result<CokretApi> {
 async fn ensure_self_path_auth_material_ready() -> Result<(), ApiCallError> {
     #[cfg(target_arch = "wasm32")]
     {
-        crate::secure_key_store::ensure_wasm_secure_key_store_ready("yougen")
+        crate::secure_key_store::ensure_wasm_secure_key_store_ready("inkson")
             .await
             .map(|_| ())
             .map_err(|error| {
@@ -216,7 +216,7 @@ where
 
 /// Same three-way auth/refresh/classification contract as [`with_authed_api`],
 /// but hands the closure the shared SDK `http-client::Client` instead of the
-/// yougen [`CokretApi`] facade. This is the CokretApi-free transport exit that
+/// inkson [`CokretApi`] facade. This is the CokretApi-free transport exit that
 /// migrated call sites use: they call the SDK endpoint method directly on the
 /// client (`|http| async move { http.some_endpoint(&body).await.map_err(...) }`),
 /// keeping the session-refresh + terminal-session-death handling identical to

@@ -104,7 +104,7 @@ impl CokretApi {
         let normalized = path.trim().trim_start_matches('/');
         if !soland_path_allowed(normalized) {
             anyhow::bail!(
-                "yougen redline: forbidden soland private path `{normalized}`; use only spec-defined `/_cokret/` endpoints"
+                "inkson redline: forbidden soland private path `{normalized}`; use only spec-defined `/_cokret/` endpoints"
             );
         }
         Ok(self.base_url.join(normalized)?)

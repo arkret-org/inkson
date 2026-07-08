@@ -1,8 +1,8 @@
-//! Conformance gate: every typed builder in yougen MUST produce an
+//! Conformance gate: every typed builder in inkson MUST produce an
 //! EventEnvelope that validates against cokret-spec event-envelope.schema.json.
 //!
 //! Stream J of `_claude_todos.md`: for each typed builder in
-//! `yougen::event_builders`,
+//! `inkson::event_builders`,
 //! run build, stamp the wire-only fields a real submitter would attach
 //! (`seal_basis` when the kind is a Control Move, `proofs[0]` from a real
 //! Ed25519 signer), serialise, and validate
@@ -16,10 +16,10 @@ use std::path::PathBuf;
 use std::sync::OnceLock;
 
 use ed25519_dalek::SigningKey;
+use inkson::event_builders;
+use inkson::operation::{EventEnvelope, EventEnvelopeExt, EventKind};
 use jsonschema::{Registry, Resource};
 use serde_json::Value;
-use yougen::event_builders;
-use yougen::operation::{EventEnvelope, EventEnvelopeExt, EventKind};
 
 // ----------------------------------------------------------------------
 // Shared path / file helpers
@@ -29,7 +29,7 @@ fn spec_artifact(path: &str) -> PathBuf {
     let manifest = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     manifest
         .parent()
-        .expect("yougen lives next to cokret-spec")
+        .expect("inkson lives next to cokret-spec")
         .join("cokret-spec")
         .join("spec")
         .join("v1")

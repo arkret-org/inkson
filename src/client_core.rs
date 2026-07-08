@@ -1,6 +1,6 @@
 //! Thin host-adapter entry points for the shared `cokret-client` runtime.
 //!
-//! The production path still uses the existing yougen engines until the E-wave
+//! The production path still uses the existing inkson engines until the E-wave
 //! migration replaces them. This module gives that migration a typed,
 //! target-aware construction point without pulling UI state into client-core.
 
@@ -18,11 +18,11 @@ use reqwest::header::CONTENT_TYPE;
 use crate::sync_parse::{AccountSubscribeReconnectAfter, AccountSubscribeSnapshotResult};
 
 #[derive(Clone, Debug)]
-pub struct YougenLocalStateStoreAdapter {
+pub struct InksonLocalStateStoreAdapter {
     inner: Arc<Mutex<crate::local_state::LocalStateStore>>,
 }
 
-impl YougenLocalStateStoreAdapter {
+impl InksonLocalStateStoreAdapter {
     pub fn new(store: crate::local_state::LocalStateStore) -> Self {
         Self {
             inner: Arc::new(Mutex::new(store)),
@@ -51,7 +51,7 @@ impl YougenLocalStateStoreAdapter {
     }
 }
 
-impl cokret_client::CursorStore for YougenLocalStateStoreAdapter {
+impl cokret_client::CursorStore for InksonLocalStateStoreAdapter {
     async fn load(
         &self,
         scope: cokret_client::CursorScope,
@@ -97,7 +97,7 @@ impl cokret_client::CursorStore for YougenLocalStateStoreAdapter {
     }
 }
 
-impl cokret_client::EventCacheStore for YougenLocalStateStoreAdapter {
+impl cokret_client::EventCacheStore for InksonLocalStateStoreAdapter {
     async fn seen(&self, event_id: cokret_sdk::EventId) -> cokret_sdk::Result<bool> {
         let store = self.lock()?;
         Ok(store.client_core_event_seen(event_id.as_str()))
@@ -111,12 +111,12 @@ impl cokret_client::EventCacheStore for YougenLocalStateStoreAdapter {
 }
 
 #[derive(Clone)]
-pub struct YougenSecureKeyStoreAdapter {
+pub struct InksonSecureKeyStoreAdapter {
     inner: Arc<dyn crate::secure_key_store::SecureKeyStore>,
     key_index: Arc<Mutex<BTreeSet<String>>>,
 }
 
-impl YougenSecureKeyStoreAdapter {
+impl InksonSecureKeyStoreAdapter {
     pub fn new(inner: Arc<dyn crate::secure_key_store::SecureKeyStore>) -> Self {
         Self {
             inner,
@@ -153,15 +153,15 @@ impl YougenSecureKeyStoreAdapter {
     }
 }
 
-impl std::fmt::Debug for YougenSecureKeyStoreAdapter {
+impl std::fmt::Debug for InksonSecureKeyStoreAdapter {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("YougenSecureKeyStoreAdapter")
+        f.debug_struct("InksonSecureKeyStoreAdapter")
             .field("backend", &self.inner.backend_name())
             .finish_non_exhaustive()
     }
 }
 
-impl cokret_client::SecureKeyStore for YougenSecureKeyStoreAdapter {
+impl cokret_client::SecureKeyStore for InksonSecureKeyStoreAdapter {
     fn store_secret_bytes(
         &self,
         key: &str,
@@ -250,11 +250,11 @@ pub type MemoryClientCore<E> = cokret_client::CokretClient<
     cokret_client::MemorySecureKeyStore,
 >;
 
-pub type YougenClientCore<E> = cokret_client::CokretClient<
+pub type InksonClientCore<E> = cokret_client::CokretClient<
     E,
-    YougenLocalStateStoreAdapter,
-    YougenLocalStateStoreAdapter,
-    YougenSecureKeyStoreAdapter,
+    InksonLocalStateStoreAdapter,
+    InksonLocalStateStoreAdapter,
+    InksonSecureKeyStoreAdapter,
 >;
 
 pub struct BufferedRealmEventsFrameSource {
@@ -281,13 +281,13 @@ impl RealmEventsFrameSource for BufferedRealmEventsFrameSource {
 }
 
 #[derive(Clone, Debug)]
-pub struct YougenRealmEventsTransport {
+pub struct InksonRealmEventsTransport {
     http: cokret_sdk::http_client::Client,
     max_duration_ms: Option<u64>,
     heartbeat_ms: Option<u64>,
 }
 
-impl YougenRealmEventsTransport {
+impl InksonRealmEventsTransport {
     pub fn new(http: cokret_sdk::http_client::Client) -> Self {
         Self {
             http,
@@ -309,7 +309,7 @@ impl YougenRealmEventsTransport {
     }
 }
 
-impl RealmEventsTransport for YougenRealmEventsTransport {
+impl RealmEventsTransport for InksonRealmEventsTransport {
     type Source = BufferedRealmEventsFrameSource;
 
     fn open_realm_events<'a>(
@@ -467,14 +467,14 @@ pub fn build_client_core(
     http: cokret_sdk::http_client::Client,
     local_state: crate::local_state::LocalStateStore,
     secure_key_store: Arc<dyn crate::secure_key_store::SecureKeyStore>,
-) -> YougenClientCore<cokret_client::NativeExecutor> {
-    let local_state = YougenLocalStateStoreAdapter::new(local_state);
+) -> InksonClientCore<cokret_client::NativeExecutor> {
+    let local_state = InksonLocalStateStoreAdapter::new(local_state);
     cokret_client::CokretClient::new(
         http,
         cokret_client::NativeExecutor,
         local_state.clone(),
         local_state,
-        YougenSecureKeyStoreAdapter::new(secure_key_store),
+        InksonSecureKeyStoreAdapter::new(secure_key_store),
     )
 }
 
@@ -483,14 +483,14 @@ pub fn build_client_core(
     http: cokret_sdk::http_client::Client,
     local_state: crate::local_state::LocalStateStore,
     secure_key_store: Arc<dyn crate::secure_key_store::SecureKeyStore>,
-) -> YougenClientCore<cokret_client::WasmExecutor> {
-    let local_state = YougenLocalStateStoreAdapter::new(local_state);
+) -> InksonClientCore<cokret_client::WasmExecutor> {
+    let local_state = InksonLocalStateStoreAdapter::new(local_state);
     cokret_client::CokretClient::new(
         http,
         cokret_client::WasmExecutor,
         local_state.clone(),
         local_state,
-        YougenSecureKeyStoreAdapter::new(secure_key_store),
+        InksonSecureKeyStoreAdapter::new(secure_key_store),
     )
 }
 
@@ -522,10 +522,10 @@ mod tests {
     #[tokio::test]
     async fn local_state_adapter_persists_client_core_cursors_and_event_cache() {
         let path = std::env::temp_dir().join(format!(
-            "yougen-client-core-adapter-{}.json",
+            "inkson-client-core-adapter-{}.json",
             crate::operation::uuid_v7()
         ));
-        let adapter = super::YougenLocalStateStoreAdapter::new(
+        let adapter = super::InksonLocalStateStoreAdapter::new(
             crate::local_state::LocalStateStore::with_path(path),
         );
         let account_scope = cokret_client::CursorScope::Account {
@@ -586,7 +586,7 @@ mod tests {
 
     #[tokio::test]
     async fn secure_key_store_adapter_round_trips_binary_secrets() {
-        let adapter = super::YougenSecureKeyStoreAdapter::new(std::sync::Arc::new(
+        let adapter = super::InksonSecureKeyStoreAdapter::new(std::sync::Arc::new(
             crate::secure_key_store::MemorySecureKeyStore::new(),
         ));
 

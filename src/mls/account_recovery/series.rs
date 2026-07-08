@@ -38,7 +38,7 @@ pub(super) fn apply_next_series(previous: Option<&Value>, body: &mut Value) -> R
 /// `sha256:<hex>` over the canonical bytes of the predecessor backup envelope,
 /// used to bind a series successor's `supersedes_digest`. Any
 /// `auth_data.signature` is stripped first so the digest stays stable across
-/// (re)signing (yougen bodies currently carry no `auth_data`, so this is a
+/// (re)signing (inkson bodies currently carry no `auth_data`, so this is a
 /// no-op today, but keeps the digest definition spec-aligned).
 pub(super) fn series_supersedes_digest(previous: &Value) -> Result<String> {
     let mut canonical = previous.clone();

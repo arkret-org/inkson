@@ -1,6 +1,6 @@
-# yougen — FAQ & Troubleshooting
+# inkson — FAQ & Troubleshooting
 
-Common issues and their fixes. Every server-error toast in yougen surfaces
+Common issues and their fixes. Every server-error toast in inkson surfaces
 the `x-cokret-request-id` header from soland — capture that ID before
 filing a bug.
 
@@ -40,9 +40,9 @@ it ships `ck.session.grant` claims.
 **Symptom**: macOS Keychain prompts for permission every signing operation
 instead of "Always allow".
 
-**Fix**: open Keychain Access → search for `yougen` → double-click the
+**Fix**: open Keychain Access → search for `inkson` → double-click the
 entry → **Access Control** → "Allow all applications to access this item"
-OR add yougen explicitly. The `keyring 3.6` crate cannot bypass the
+OR add inkson explicitly. The `keyring 3.6` crate cannot bypass the
 prompt programmatically.
 
 ---
@@ -54,7 +54,7 @@ prompt programmatically.
 
 **Fix**: the Credential Manager service is disabled. Run
 `services.msc` → enable **Credential Manager** → set to Automatic →
-restart yougen.
+restart inkson.
 
 ---
 
@@ -90,9 +90,9 @@ intentional — inception without a backup envelope is unrecoverable.
 
 1. **Settings → Notifications** shows **Wakeup-only** is enabled.
 2. The platform push credentials are set on the chime gateway, not in
-   yougen (see [`deployment.md`](deployment.md#push-gateway-wiring)).
-3. For local desktop tests you've exported `YOUGEN_FCM_PUSH_TOKEN`,
-   `YOUGEN_APNS_PUSH_TOKEN`, `FCM_PUSH_TOKEN`, `APNS_DEVICE_TOKEN`, or
+   inkson (see [`deployment.md`](deployment.md#push-gateway-wiring)).
+3. For local desktop tests you've exported `INKSON_FCM_PUSH_TOKEN`,
+   `INKSON_APNS_PUSH_TOKEN`, `FCM_PUSH_TOKEN`, `APNS_DEVICE_TOKEN`, or
    `CHASK_PUSH_KEY`.
 
 **Fix**: check chime logs for a matching `register_device` call. If the

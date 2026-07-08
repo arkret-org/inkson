@@ -12,7 +12,7 @@ use super::{SecureKeyStore, SecureKeyStoreError};
 /// * **Windows** — Windows Credential Manager (`wincred`).
 ///
 /// The store is keyed by a constant `service_name` (typically
-/// `"yougen"` or `"yougen.test"`) plus the per-secret `key` as the
+/// `"inkson"` or `"inkson.test"`) plus the per-secret `key` as the
 /// "username" slot. That two-level naming matches `cmdkey /list`,
 /// `Keychain Access.app`, and `seahorse` UX.
 #[derive(Clone, Debug)]
@@ -31,7 +31,7 @@ pub struct KeyringSecureKeyStore {
 
 impl KeyringSecureKeyStore {
     /// Construct a store whose entries land under
-    /// `service_name`. Conventional value: `"yougen"`.
+    /// `service_name`. Conventional value: `"inkson"`.
     pub fn new(service_name: impl Into<String>) -> Self {
         let service_name = service_name.into();
         let expected_service = service_name.clone().into_boxed_str();

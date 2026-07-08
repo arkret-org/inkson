@@ -16,7 +16,7 @@ use crate::components::{EmptyState, EmptyStateKind, HelpTip};
 use crate::local_state::LocalStateStore;
 use crate::views::helpers::short_protocol_id;
 
-/// Default protocol version advertised by yougen — kept here so the
+/// Default protocol version advertised by inkson — kept here so the
 /// developer panel can surface a stable label until the conformance
 /// module exports a canonical constant.
 const PROTOCOL_VERSION: &str = "1.0";

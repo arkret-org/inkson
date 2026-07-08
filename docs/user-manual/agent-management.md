@@ -1,4 +1,4 @@
-# yougen — Agent Management
+# inkson — Agent Management
 
 > How to register, govern, and revoke automated members (bots / personal
 > agents / services). Spec source: `cokret-spec/spec/v1/zh/extensions/agent-integration.md`.
@@ -35,7 +35,7 @@ The agent surface lives in `/agents` and is gated by the
    - **protocol** — e.g. `ck.agent.v1`.
    - **capabilities** — comma-separated. Use the autocomplete to pick
      from the 14 canonical capabilities.
-4. Click **Register**. yougen submits a `ck.agent.endpoint` envelope.
+4. Click **Register**. inkson submits a `ck.agent.endpoint` envelope.
 
 <!-- TODO(screenshot): agent-register-form.png -->
 
@@ -117,7 +117,7 @@ full chain (start → status* → result) and surface the outcome via the
 1. Click **Deactivate** on the agent row.
 2. Type `DEACTIVATE` in the confirmation field.
 3. Click **Confirm — destructive**.
-4. yougen publishes a `ck.agent.lifecycle.deactivate` envelope. The agent
+4. inkson publishes a `ck.agent.lifecycle.deactivate` envelope. The agent
    can no longer be summoned by any controller.
 
 <!-- TODO(screenshot): agent-deactivate-confirm.png -->

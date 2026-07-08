@@ -1,6 +1,6 @@
 //! WebRTC signaling builders (`crypto-media/webrtc-signaling.md`).
 //!
-//! Yougen does NOT bundle a WebRTC stack — SDP / ICE / SFU plumbing belongs to
+//! Inkson does NOT bundle a WebRTC stack — SDP / ICE / SFU plumbing belongs to
 //! the platform renderer. This module provides typed operation builders for
 //! the spec's three signaling event kinds so the renderer can publish into the
 //! durable event chain without re-discovering the body shape:
@@ -141,7 +141,7 @@ impl CallSignalReceiver {
         );
         if let Err(err) = self.state.observe(&key, payload.seq) {
             tracing::warn!(
-                target: "yougen::webrtc",
+                target: "inkson::webrtc",
                 "ck.call.signal seq rollback: {err}"
             );
             return CallSignalIngestOutcome::SeqRollback {

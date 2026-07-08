@@ -81,7 +81,7 @@ pub(crate) fn upload_recovery_key_account_backup(
                     &recovery_secret,
                 )
                 .await?;
-            let secure = crate::secure_key_store::default_secure_key_store("yougen");
+            let secure = crate::secure_key_store::default_secure_key_store("inkson");
             crate::mls::runtime::load_or_create_account_mls_secret(
                 secure.as_ref(),
                 &actor,
@@ -137,7 +137,7 @@ pub(crate) fn upload_recovery_key_account_backup(
                     let _ =
                         with_authed_api(&base_for_sidecar, session_for_sidecar, |api| async move {
                             let secure =
-                                crate::secure_key_store::default_secure_key_store("yougen");
+                                crate::secure_key_store::default_secure_key_store("inkson");
                             crate::mls::account_recovery::upload_mls_private_plaintext_backup(
                                 &api,
                                 secure.as_ref(),

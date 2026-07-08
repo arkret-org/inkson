@@ -1,6 +1,6 @@
-# yougen Deployment Guide
+# inkson Deployment Guide
 
-yougen is a client artifact. Deployment means packaging a desktop or web build
+inkson is a client artifact. Deployment means packaging a desktop or web build
 and pointing it at already deployed Cokret services.
 
 ## Service pairing
@@ -28,8 +28,8 @@ The client reads push-gateway capability data from service discovery and then
 registers device metadata with chime using a coauth session grant. Web builds
 use the browser Push API. Native builds expect host code to pass real FCM/APNs
 tokens into `set_fcm_push_token` or `set_apns_push_token`; local desktop tests
-may inject the same values through `YOUGEN_FCM_PUSH_TOKEN`,
-`YOUGEN_APNS_PUSH_TOKEN`, `FCM_PUSH_TOKEN`, `APNS_DEVICE_TOKEN`, or
+may inject the same values through `INKSON_FCM_PUSH_TOKEN`,
+`INKSON_APNS_PUSH_TOKEN`, `FCM_PUSH_TOKEN`, `APNS_DEVICE_TOKEN`, or
 `CHASK_PUSH_KEY`.
 
 Required deployment inputs:
@@ -37,7 +37,7 @@ Required deployment inputs:
 - soland push registration endpoint enabled.
 - chime gateway reachable from the client network.
 - coauth session grant persisted in local state before `register_device`.
-- Platform push credentials configured on the gateway, not embedded in yougen.
+- Platform push credentials configured on the gateway, not embedded in inkson.
 - The client principal server URL and device ID match the persisted grant; the
   registration path fails closed on mismatch.
 
@@ -67,7 +67,7 @@ Prepare the sibling checkout context and build the image:
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File scripts/prepare-docker-context.ps1
-docker build -f docker-context/yougen/Dockerfile -t yougen-web:local docker-context
+docker build -f docker-context/inkson/Dockerfile -t inkson-web:local docker-context
 ```
 
 Generate local image evidence:
@@ -126,18 +126,18 @@ Notes:
   can drop `unsafe-inline`.
 - Enumerate the soland + chime origins explicitly in `connect-src`. Do
   **not** ship `connect-src *`.
-- `frame-ancestors 'none'` prevents click-jacking. yougen is a top-level
+- `frame-ancestors 'none'` prevents click-jacking. inkson is a top-level
   app, not an embed.
 - `dangerous_inner_html` is permanently disabled at the source level — see
   `crate::content` and `pulldown-cmark` configuration.
 
 ### CORS
 
-soland sets the CORS policy; yougen is the browser caller. Required
-soland response headers for the yougen web origin:
+soland sets the CORS policy; inkson is the browser caller. Required
+soland response headers for the inkson web origin:
 
 ```text
-Access-Control-Allow-Origin: https://<yougen-web-origin>
+Access-Control-Allow-Origin: https://<inkson-web-origin>
 Access-Control-Allow-Credentials: true
 Access-Control-Allow-Headers: authorization, content-type, idempotency-key,
                               x-cokret-request-id, dpop
@@ -154,12 +154,12 @@ also sends DPoP-bound credentials and the `ck.session.grant` cookie.
 - Minimum: TLS 1.2; prefer 1.3.
 - Reject SHA-1 cert chains.
 - Use a separate certificate per origin (soland, chime, the static
-  yougen host). Wildcards are acceptable when scoped to a single trust
+  inkson host). Wildcards are acceptable when scoped to a single trust
   boundary.
 - HSTS: `Strict-Transport-Security: max-age=63072000; includeSubDomains; preload`
-  for the yougen web origin.
+  for the inkson web origin.
 - OCSP stapling on the soland edge to reduce a fingerprinting vector.
-- Certificate transparency: rely on your CA. yougen does not currently
+- Certificate transparency: rely on your CA. inkson does not currently
   pin certificates — that is a deferred mobile-only concern.
 
 ### Update channel
@@ -184,7 +184,7 @@ versioning the asset path (Dioxus does this by default).
 
 ## macOS notarization gate (no version bump)
 
-yougen's R3 sync is a no-version-bump release: the binary identity stays
+inkson's R3 sync is a no-version-bump release: the binary identity stays
 the same, but the contents change. Apple's notarization service does NOT
 require a version bump, but it DOES require that every distributed
 binary has been notarized and stapled. The "no version bump" constraint
@@ -202,11 +202,11 @@ Steps for a no-bump notarization:
        --options runtime \
        --entitlements deploy/macos/entitlements.plist \
        --timestamp \
-       target/release/yougen.app
+       target/release/inkson.app
    ```
 3. **Submit to notary**:
    ```sh
-   xcrun notarytool submit yougen.zip \
+   xcrun notarytool submit inkson.zip \
        --apple-id "release@acroidea.com" \
        --team-id TEAMID \
        --password "$NOTARY_APP_SPECIFIC_PASSWORD" \
@@ -215,8 +215,8 @@ Steps for a no-bump notarization:
    Typical turnaround: 5–30 minutes.
 4. **Staple**:
    ```sh
-   xcrun stapler staple target/release/yougen.app
-   xcrun stapler validate target/release/yougen.app
+   xcrun stapler staple target/release/inkson.app
+   xcrun stapler validate target/release/inkson.app
    ```
 5. **Re-zip and publish** the stapled `.app` to the distribution
    channel.
@@ -254,11 +254,11 @@ Setup:
        /fd SHA256 `
        /tr http://timestamp.digicert.com `
        /td SHA256 `
-       target/release/yougen.exe
+       target/release/inkson.exe
    ```
 4. Verify:
    ```powershell
-   signtool verify /pa /v target/release/yougen.exe
+   signtool verify /pa /v target/release/inkson.exe
    ```
 
 No-version-bump constraints:
@@ -288,14 +288,14 @@ EV token operational concerns:
   - Notarization-equivalent signing (provisioning profile + distribution
     cert).
   - App Store review (1–7 days first submission; faster for updates).
-  - Privacy manifest declaring data collection — for yougen, declare:
+  - Privacy manifest declaring data collection — for inkson, declare:
     "Contact info: collected for account creation; not linked to user
     across apps; not used for tracking".
 - No-bump constraint: App Store Connect REQUIRES a version-string bump
   for every new build accepted into review. To honor the no-bump policy,
   do NOT submit no-bump R3 rebuilds to App Store Connect; ship them
   through enterprise distribution / TestFlight internal-only.
-- Export compliance: yougen uses E2EE (MLS + SFrame); declare under the
+- Export compliance: inkson uses E2EE (MLS + SFrame); declare under the
   export-compliance section. Exemption category: "App uses standard,
   publicly-available encryption (TLS, MLS RFC 9420, SFrame draft)".
 
@@ -311,10 +311,10 @@ EV token operational concerns:
 - No-bump constraint: Play Console requires a `versionCode` bump for
   every uploaded build. Same workaround as iOS: do NOT publish no-bump
   rebuilds through Play; ship via enterprise / sideload-only channels.
-- Target API level: yougen pins target SDK at the Play-required minimum
+- Target API level: inkson pins target SDK at the Play-required minimum
   (currently 34, may rise per Play schedule).
 - Sideload distribution: produce APK + signed APKM manifest with
-  SHA-256; users add yougen's update channel URL to the in-app updater
+  SHA-256; users add inkson's update channel URL to the in-app updater
   to receive sideload-distributed updates.
 
 ### Publish-gate quick reference

@@ -1,4 +1,4 @@
-//! Canonical JSON wrapper used by yougen write paths.
+//! Canonical JSON wrapper used by inkson write paths.
 //!
 //! Re-exports `cokret_sdk::canonical` so all envelope, Move, Seal, and key-
 //! backup bodies can be hashed and signed against a single canonical encoder
@@ -13,7 +13,7 @@ use serde::Serialize;
 
 /// Wire-canonical JSON bytes — sorted object keys, integer-only numbers per
 /// `encoding.md` §3.2. Returns an `anyhow::Error` so call sites can chain into
-/// the rest of yougen's error surface without dragging `cokret_core::Error`
+/// the rest of inkson's error surface without dragging `cokret_core::Error`
 /// across module boundaries.
 pub fn canonical_json_bytes<T: Serialize>(value: &T) -> anyhow::Result<Vec<u8>> {
     sdk_canonical_json_bytes(value).map_err(|e| anyhow::anyhow!("canonical encode failed: {e:?}"))
@@ -84,7 +84,7 @@ pub fn canonical_event_digest<T: Serialize>(body: &T) -> anyhow::Result<String> 
 }
 
 // F-CANONICAL-1 (2026-05-19): named entry points for the three
-// wire-shaped canonicalizations that yougen actually emits / verifies.
+// wire-shaped canonicalizations that inkson actually emits / verifies.
 // The SDK already enforces field ordering / integer-only numbers /
 // UTF-8 byte order through `sdk_canonical_json_bytes`; these wrappers
 // make the call-site intent explicit (so an audit reader sees
@@ -106,7 +106,7 @@ pub fn canonical_event_envelope_bytes(envelope: &cokret_sdk::Event) -> anyhow::R
 /// F-CANONICAL-1: canonical bytes for a Move body. Used at the move
 /// signer / verifier seam. Generic so callers can pass either the
 /// SDK's typed `Move` (when available in scope) or a `serde_json::Value`
-/// representing one. The encoder is the same — yougen does not maintain
+/// representing one. The encoder is the same — inkson does not maintain
 /// a parallel Move serializer.
 pub fn canonical_move_bytes<T: Serialize>(move_payload: &T) -> anyhow::Result<Vec<u8>> {
     canonical_json_bytes(move_payload)

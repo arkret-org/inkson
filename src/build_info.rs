@@ -8,5 +8,5 @@
 /// timestamp than a cached one, so a build id older than your last rebuild means
 /// the browser is serving STALE cached wasm (hard-reload or a fresh profile).
 pub fn build_id() -> &'static str {
-    env!("YOUGEN_BUILD_ID")
+    env!("INKSON_BUILD_ID")
 }

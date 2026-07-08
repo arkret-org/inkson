@@ -213,7 +213,7 @@ impl CryptoBoundary for RustSdkBoundary {
         aad: Option<&[u8]>,
     ) -> Result<Vec<u8>, CryptoBoundaryError> {
         // The Rust SDK boundary intentionally does NOT pull in
-        // aes-gcm just for the trait surface — yougen's real bulk-crypto
+        // aes-gcm just for the trait surface — inkson's real bulk-crypto
         // path goes through `MessageCrypto` (MLS). This method exists so
         // the trait shape is uniform; consumers that need an AEAD over
         // arbitrary bytes route through the WebCryptoBoundary on WASM

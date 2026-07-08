@@ -728,7 +728,7 @@ fn seed_strand_ids_are_valid_object_patch_targets() {
             json!({"synthesis": {"$op": "set", "value": "demo synthesis"}}),
         )
         .expect("builds")
-        .build("yougen");
+        .build("inkson");
         assert_eq!(event.kind.as_str(), "ck.strand.update");
         assert_eq!(sdk_event_local_target_ref(&event), Some(strand_id));
     }

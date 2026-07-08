@@ -787,7 +787,7 @@ fn board_first_mls_bootstrap_key_never_prompts_for_passphrase() {
     let key = mls_welcome_bootstrap_key(
         "http://localhost:8080",
         "secret-session-token",
-        "did:web:yougen.example",
+        "did:web:inkson.example",
         "ck:device:01964137-0000-7000-8000-000000000001",
         realm_id,
         true,
@@ -927,7 +927,7 @@ fn mls_recovery_setup_missing_stays_false_for_local_recovery_key_and_did_backup(
 fn mls_welcome_bootstrap_key_waits_for_e2ee_profile_and_sync() {
     let base = "https://local.host/";
     let session = "session-token";
-    let actor = "did:web:yougen.example";
+    let actor = "did:web:inkson.example";
     let device = "ck:device:01964137-0000-7000-8000-000000000001";
     let realm = "ck:realm:019e67a5-8edc-7347-9ca1-a0b880987bdc";
 
@@ -950,7 +950,7 @@ fn mls_welcome_bootstrap_key_waits_for_e2ee_profile_and_sync() {
 fn mls_key_package_publish_key_waits_for_e2ee_profile_and_sync() {
     let base = "https://local.host/";
     let session = "session-token";
-    let actor = "did:web:yougen.example";
+    let actor = "did:web:inkson.example";
     let device = "ck:device:01964137-0000-7000-8000-000000000001";
 
     assert_eq!(

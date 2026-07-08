@@ -484,7 +484,7 @@ fn default_history_sharing_policy_matches_prejoin_visibility() {
 }
 
 /// Regression: every genesis bootstrap envelope must produce the SAME
-/// canonical digest whether hashed by yougen's local builder or after a
+/// canonical digest whether hashed by inkson's local builder or after a
 /// round-trip through the authoritative `cokret_sdk::Event` wire model.
 ///
 /// The bug this guards: genesis preconditions assert `head_eq null` (an
@@ -493,7 +493,7 @@ fn default_history_sharing_policy_matches_prejoin_visibility() {
 /// the SDK `Predicate` / `LatticeOp` collapsed that `null` to `None` on
 /// deserialize and dropped it on re-serialize, so the SDK digest no longer
 /// matched the locally-signed one — the SDK submit path failed closed
-/// with "event digest drift between yougen builder and SDK Event" and the
+/// with "event digest drift between inkson builder and SDK Event" and the
 /// Realm could never be created.
 #[test]
 fn bootstrap_envelopes_have_no_sdk_digest_drift() {
@@ -668,7 +668,7 @@ fn outgoing_payload_schema_gate_accepts_sdk_object_patch_payload() {
     )
     .target_ref(strand_id)
     .body(payload)
-    .build("yougen");
+    .build("inkson");
 
     validate_outgoing_registered_event_payload(event.kind.as_str(), &event.payload).unwrap();
 }

@@ -17,10 +17,10 @@ jobs:
     name: Rust format, check, and tests
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout yougen
+      - name: Checkout inkson
         uses: actions/checkout@v4
         with:
-          path: yougen
+          path: inkson
 
       - name: Checkout cokret-rust-sdk
         uses: actions/checkout@v4
@@ -51,25 +51,25 @@ jobs:
           components: rustfmt
 
       - name: Format check
-        working-directory: yougen
+        working-directory: inkson
         run: cargo fmt --check
 
       - name: Cargo check
-        working-directory: yougen
+        working-directory: inkson
         run: cargo check --locked --all-targets
 
       - name: Rust tests
-        working-directory: yougen
+        working-directory: inkson
         run: cargo test --locked
 
   platform-checks:
     name: Web and cross-platform checks
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout yougen
+      - name: Checkout inkson
         uses: actions/checkout@v4
         with:
-          path: yougen
+          path: inkson
 
       - name: Checkout cokret-rust-sdk
         uses: actions/checkout@v4
@@ -109,34 +109,34 @@ jobs:
         run: cargo install dioxus-cli --version 0.7.9 --locked
 
       - name: Web wasm check
-        working-directory: yougen
+        working-directory: inkson
         run: cargo check --locked --target wasm32-unknown-unknown
 
       - name: Dioxus web build
-        working-directory: yougen
+        working-directory: inkson
         run: dx build --platform web --release
 
       - name: Linux target check
-        working-directory: yougen
+        working-directory: inkson
         run: cargo check --locked --target x86_64-unknown-linux-gnu
 
       - name: Windows target check
-        working-directory: yougen
+        working-directory: inkson
         continue-on-error: true
         run: cargo check --locked --target x86_64-pc-windows-gnu
 
       - name: macOS target check
-        working-directory: yougen
+        working-directory: inkson
         continue-on-error: true
         run: cargo check --locked --target aarch64-apple-darwin
 
       - name: iOS host-bridge stub check
-        working-directory: yougen
+        working-directory: inkson
         continue-on-error: true
         run: cargo check --locked --target aarch64-apple-ios --features mobile-ios
 
       - name: Android host-bridge stub check
-        working-directory: yougen
+        working-directory: inkson
         continue-on-error: true
         run: cargo check --locked --target aarch64-linux-android --features mobile-android
 
@@ -144,10 +144,10 @@ jobs:
     name: Responsive viewport e2e
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout yougen
+      - name: Checkout inkson
         uses: actions/checkout@v4
         with:
-          path: yougen
+          path: inkson
 
       - name: Checkout cokret-rust-sdk
         uses: actions/checkout@v4
@@ -176,14 +176,14 @@ jobs:
         with:
           node-version: "22"
           cache: npm
-          cache-dependency-path: yougen/package-lock.json
+          cache-dependency-path: inkson/package-lock.json
 
       - name: Install browser dependencies
-        working-directory: yougen
+        working-directory: inkson
         run: |
           npm ci
           npx playwright install --with-deps chromium
 
       - name: Run responsive viewport tests
-        working-directory: yougen
+        working-directory: inkson
         run: npm run e2e:viewport

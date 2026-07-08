@@ -42,7 +42,7 @@ pub struct Hlc {
 ///
 /// Node-id derivation is the SDK's `compute_node_id` (`encoding.md` §7); it
 /// is private, so generator construction is the supported way to run it.
-/// yougen carries a single process-wide node identifier, which maps onto the
+/// inkson carries a single process-wide node identifier, which maps onto the
 /// `device_id` slot with empty realm/secret — full §7 Realm-scoped secret
 /// wiring is a separate work item; the node segment stays an opaque,
 /// SDK-derived pseudonymous hash either way.

@@ -65,9 +65,9 @@ test("setup realm form stays in the main workspace layout", async ({ page }) => 
         return (byte ^ keyByte).toString(16).padStart(2, "0");
       })
       .join("");
-    const state = JSON.parse(localStorage.getItem("yougen.local_state.v1") ?? "{}");
+    const state = JSON.parse(localStorage.getItem("inkson.local_state.v1") ?? "{}");
     state.private_data = { ...(state.private_data ?? {}), locale: encrypted };
-    localStorage.setItem("yougen.local_state.v1", JSON.stringify(state));
+    localStorage.setItem("inkson.local_state.v1", JSON.stringify(state));
   });
   await page.reload({ waitUntil: "domcontentloaded" });
   await expect(page.getByTestId("client-shell")).toHaveAttribute("data-direction", "rtl");
@@ -98,7 +98,7 @@ test("setup, onboarding, and Board entry works", async ({ page }) => {
   await expect(setupPanel.getByRole("button", { name: "Delete Space" })).toHaveCount(0);
 
   await page.getByTestId("realm-title-input").fill("Setup Strand Space");
-  await page.getByTestId("realm-summary-input").fill("Created from yougen workspace setup");
+  await page.getByTestId("realm-summary-input").fill("Created from inkson workspace setup");
   await page.getByTestId("new-realm-next-button").click();
   await expect(page.getByTestId("realm-lifecycle-strand")).toContainText("three independent axes");
   await page.getByTestId("new-realm-next-button").click();

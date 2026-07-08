@@ -25,7 +25,7 @@ function Copy-CleanDirectory {
     }
 }
 
-Copy-CleanDirectory -Source (Join-Path $parent "yougen") -Destination (Join-Path $context "yougen")
+Copy-CleanDirectory -Source (Join-Path $parent "inkson") -Destination (Join-Path $context "inkson")
 Copy-CleanDirectory -Source (Join-Path $parent "cokret-rust-sdk") -Destination (Join-Path $context "cokret-rust-sdk")
 Copy-CleanDirectory -Source (Join-Path $parent "chime") -Destination (Join-Path $context "chime")
 

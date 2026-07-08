@@ -30,7 +30,7 @@ use base64::engine::general_purpose::{STANDARD_NO_PAD, URL_SAFE_NO_PAD};
 use super::{SecureKeyStore, SecureKeyStoreError, require_wasm_indexeddb_ed25519_seed_store};
 
 /// Canonical key name for the active-device Ed25519 signing seed in the
-/// secure-key store. Scoped by `service_name` (`"yougen"` in production)
+/// secure-key store. Scoped by `service_name` (`"inkson"` in production)
 /// so dev and prod builds never collide.
 ///
 /// The seed is additionally scoped *per account* (see
@@ -466,7 +466,7 @@ pub fn delete_grant_binding_seed(store: &dyn SecureKeyStore) -> Result<(), Secur
 const DEVICE_ID_KEY: &str = "device.id.v1";
 
 #[cfg(target_arch = "wasm32")]
-const DEVICE_ID_LOCALSTORAGE_KEY: &str = "yougen.device_id.v1";
+const DEVICE_ID_LOCALSTORAGE_KEY: &str = "inkson.device_id.v1";
 
 /// Storage key for the `device_id` under `scope` (account DID), or the bootstrap
 /// key when `scope` is `None`/empty. The account segment is URL-safe-base64

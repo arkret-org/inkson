@@ -1,4 +1,4 @@
-//! Canonical `did:key` (Ed25519) helpers shared across yougen.
+//! Canonical `did:key` (Ed25519) helpers shared across inkson.
 
 use ed25519_dalek::VerifyingKey;
 

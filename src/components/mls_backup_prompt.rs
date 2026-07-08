@@ -320,7 +320,7 @@ async fn upload_mls_private_plaintext_backup_job_snapshot(
     job: MlsPrivatePlaintextBackupJob,
 ) -> anyhow::Result<(String, serde_json::Value)> {
     with_authed_api(&job.base_url, job.token, |api| async move {
-        let secure_store = crate::secure_key_store::default_secure_key_store("yougen");
+        let secure_store = crate::secure_key_store::default_secure_key_store("inkson");
         let previous_body = match job.cached_previous_body {
             Some(body) => Some(body),
             None => {
@@ -465,7 +465,7 @@ async fn maybe_backup_or_flag_mls_backup_after_encrypted_write(
     // Local account secret must exist (encryption has been used) — otherwise
     // there's nothing to back up yet.
     let has_local_secret = {
-        let secure_store = crate::secure_key_store::default_secure_key_store("yougen");
+        let secure_store = crate::secure_key_store::default_secure_key_store("inkson");
         crate::mls::runtime::load_account_mls_secret(secure_store.as_ref(), &actor_id)
             .map(|secret| secret.is_some())
             .unwrap_or(false)
@@ -536,7 +536,7 @@ async fn maybe_backup_or_flag_mls_backup_after_encrypted_write(
         let actor_for_upload = actor_id.clone();
         let device_for_upload = device_id.clone();
         let upload_result = with_authed_api(&base_url, token.clone(), |api| async move {
-            let secure_store = crate::secure_key_store::default_secure_key_store("yougen");
+            let secure_store = crate::secure_key_store::default_secure_key_store("inkson");
             crate::mls::account_recovery::upload_mls_account_secret_backup_with_recovery_public_key(
                 &api,
                 secure_store.as_ref(),
@@ -557,7 +557,7 @@ async fn maybe_backup_or_flag_mls_backup_after_encrypted_write(
                     let device = device_id;
                     let _ = with_authed_api(&base_url, token, |api| async move {
                         let secure_store =
-                            crate::secure_key_store::default_secure_key_store("yougen");
+                            crate::secure_key_store::default_secure_key_store("inkson");
                         crate::mls::account_recovery::upload_mls_private_plaintext_backup(
                             &api,
                             secure_store.as_ref(),
@@ -623,7 +623,7 @@ fn upload_mls_backup_with_recovery_key(
         let base_for_sidecar = base.clone();
         let session_for_sidecar = session.clone();
         let result = with_authed_api(&base, session, |api| async move {
-            let secure_store = crate::secure_key_store::default_secure_key_store("yougen");
+            let secure_store = crate::secure_key_store::default_secure_key_store("inkson");
             crate::mls::account_recovery::upload_mls_account_secret_backup_with_recovery_key(
                 &api,
                 secure_store.as_ref(),
@@ -646,7 +646,7 @@ fn upload_mls_backup_with_recovery_key(
                     let outcome =
                         with_authed_api(&base_for_sidecar, session_for_sidecar, |api| async move {
                             let secure_store =
-                                crate::secure_key_store::default_secure_key_store("yougen");
+                                crate::secure_key_store::default_secure_key_store("inkson");
                             crate::mls::account_recovery::upload_mls_private_plaintext_backup(
                                 &api,
                                 secure_store.as_ref(),

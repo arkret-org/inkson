@@ -146,7 +146,7 @@ pub fn OnboardingPanel(
     let device_id_label = short_protocol_id(&device_id_value);
     let mut register_did = use_signal(|| account_did());
     let mut register_handle = use_signal(|| handle_from_did(&account_did()));
-    let mut register_display_name = use_signal(|| "yougen".to_owned());
+    let mut register_display_name = use_signal(|| "inkson".to_owned());
     let mut register_device_id = use_signal(|| device_id());
     let mut account_state = use_signal(|| "No bootstrap action yet".to_owned());
 

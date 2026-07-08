@@ -99,7 +99,7 @@ pub fn RetryableError(props: RetryableErrorProps) -> Element {
                             // browser / native shell. TODO(P5-impl):
                             // wire to platform clipboard once the
                             // shared helper lands.
-                            tracing::debug!(target: "yougen.ui", request_id = %request_id_full, "copy request_id requested");
+                            tracing::debug!(target: "inkson.ui", request_id = %request_id_full, "copy request_id requested");
                         },
                         "Copy ID"
                     }

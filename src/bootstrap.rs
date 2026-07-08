@@ -418,7 +418,7 @@ pub(crate) fn local_mls_key_package_publish_hint(
     if base_scope.is_empty() || actor_id.trim().is_empty() || device_id.trim().is_empty() {
         return "not-ready".to_owned();
     }
-    let secure_store = crate::secure_key_store::default_secure_key_store("yougen");
+    let secure_store = crate::secure_key_store::default_secure_key_store("inkson");
     match crate::mls::runtime::load_mls_key_package_publish_marker(
         secure_store.as_ref(),
         &base_scope,
@@ -456,7 +456,7 @@ pub(crate) async fn ensure_local_mls_key_package_published(
     {
         return Ok(None);
     }
-    let secure_store = crate::secure_key_store::default_secure_key_store("yougen");
+    let secure_store = crate::secure_key_store::default_secure_key_store("inkson");
     if let Some(key_package_id) = crate::mls::runtime::load_mls_key_package_publish_marker(
         secure_store.as_ref(),
         &base_scope,
@@ -635,7 +635,7 @@ pub(crate) async fn bootstrap_mls_welcome_for_realm(
     // and showed empty/locked encrypted Realms.
     let messages_value =
         serde_json::to_value(&messages).map_err(|error| format!("device messages: {error}"))?;
-    let secure_store = crate::secure_key_store::default_secure_key_store("yougen");
+    let secure_store = crate::secure_key_store::default_secure_key_store("inkson");
     let welcome_outcome = {
         let mut store = state_store.write();
         crate::mls::runtime::apply_welcome_messages_with_device_snapshot(

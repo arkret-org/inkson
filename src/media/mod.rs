@@ -57,12 +57,12 @@ mod tests {
     #[test]
     fn sha256_hex_matches_known_bytes() {
         assert_eq!(
-            crate::canonical::sha256_hex(b"yougen encrypted bytes"),
-            "01015dc8af66d01f557ea63f13538f1964848840a350c5311d1efc8ad138bb91"
+            crate::canonical::sha256_hex(b"inkson encrypted bytes"),
+            "962823272bba564e070376ee0b28c2cae5883afeb6d54ef139632e5f1a41608c"
         );
         assert!(hash_matches(
-            "sha256:01015dc8af66d01f557ea63f13538f1964848840a350c5311d1efc8ad138bb91",
-            b"yougen encrypted bytes"
+            "sha256:962823272bba564e070376ee0b28c2cae5883afeb6d54ef139632e5f1a41608c",
+            b"inkson encrypted bytes"
         ));
     }
 

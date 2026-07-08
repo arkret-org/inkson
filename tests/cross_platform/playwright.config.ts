@@ -1,4 +1,4 @@
-// Round 27: cross-platform deployment test harness for the yougen
+// Round 27: cross-platform deployment test harness for the inkson
 // wasm bundle. Drives the same scenario set across Chromium, Firefox,
 // and WebKit (Safari) so we catch the SubtleCrypto / PushManager /
 // service-worker push receive / LocalStorage / OIDC PKCE divergences that the round 26
@@ -7,7 +7,7 @@
 //
 // Each project is gated by a per-browser env flag so the matrix can
 // run in CI on a host that only has one engine installed without
-// reporting "missing executable" failures. Set `YOUGEN_CROSS_PLATFORM`
+// reporting "missing executable" failures. Set `INKSON_CROSS_PLATFORM`
 // to a comma-separated list of `chromium,firefox,webkit` to opt in;
 // the per-test `test.skip` guards inside the suite mean unset projects
 // quietly skip rather than fail.
@@ -18,10 +18,10 @@
 import { defineConfig, devices } from "@playwright/test";
 
 const baseURL =
-  process.env.YOUGEN_CROSS_PLATFORM_BASE_URL ?? "http://127.0.0.1:4528";
-const shouldStartServer = !process.env.YOUGEN_CROSS_PLATFORM_BASE_URL;
+  process.env.INKSON_CROSS_PLATFORM_BASE_URL ?? "http://127.0.0.1:4528";
+const shouldStartServer = !process.env.INKSON_CROSS_PLATFORM_BASE_URL;
 
-const enabled = (process.env.YOUGEN_CROSS_PLATFORM ?? "chromium,firefox,webkit")
+const enabled = (process.env.INKSON_CROSS_PLATFORM ?? "chromium,firefox,webkit")
   .split(",")
   .map((s) => s.trim().toLowerCase())
   .filter((s) => s.length > 0);

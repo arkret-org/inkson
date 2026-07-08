@@ -11,7 +11,7 @@
 //! The authoritative recovery-recipient resolution + seal are owned by the SDK
 //! (`cokret_sdk::history_recovery`): [`resolve_realm_history_recovery_key`] and
 //! [`seal_history_secrets_to_recovery_recipient`]. This module is the **thin
-//! yougen adapter** both the eager seal hook (§2.10.8) and the disclosure banner
+//! inkson adapter** both the eager seal hook (§2.10.8) and the disclosure banner
 //! route through — it never re-implements the RRK crypto or the
 //! service-entry verification. It only:
 //!
@@ -359,7 +359,7 @@ mod tests {
     #[test]
     fn adapter_resolve_then_seal_round_trips() {
         // The adapter delegates to the SDK authority; an end-to-end resolve+seal
-        // proves the yougen wrapper threads the document and scope correctly.
+        // proves the inkson wrapper threads the document and scope correctly.
         let (sk, pk) = crate::hpke_backup::generate_recovery_keypair().unwrap();
         let pk32: [u8; 32] = pk.as_slice().try_into().unwrap();
         let recipient = recipient();

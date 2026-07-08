@@ -11,7 +11,7 @@ impl CokretApi {
     // envelope bytes, excluding `proof`). Recording is a durable
     // `ck.call.recording.start` event. There is NO `/_cokret/self/webrtc/*`
     // session or signal endpoint in the spec OpenAPI — the prior
-    // session/signal/recording HTTP shims (and their `yougen-device-proof`
+    // session/signal/recording HTTP shims (and their `inkson-device-proof`
     // placeholder proof) have been removed.
 
     /// Build, device-sign, and submit a `ck.call.signal` ephemeral
@@ -112,7 +112,7 @@ impl CokretApi {
             mode,
             true,
         )
-        .build_sdk_event("yougen")?;
+        .build_sdk_event("inkson")?;
         self.event_submitter()?.submit_sdk_event(&event).await
     }
 

@@ -1,4 +1,4 @@
-//! Stamps a per-build identifier into the binary via `YOUGEN_BUILD_ID` so the
+//! Stamps a per-build identifier into the binary via `INKSON_BUILD_ID` so the
 //! running wasm can print which bundle the browser actually loaded. Comparing
 //! the printed id against the latest rebuild is the definitive way to spot a
 //! stale cached wasm bundle (the recurring "is the browser running old wasm?"
@@ -31,5 +31,5 @@ fn main() {
         .unwrap_or(false);
     let dirty_suffix = if dirty { "+dirty" } else { "" };
 
-    println!("cargo:rustc-env=YOUGEN_BUILD_ID={built_at} {git_short}{dirty_suffix}");
+    println!("cargo:rustc-env=INKSON_BUILD_ID={built_at} {git_short}{dirty_suffix}");
 }

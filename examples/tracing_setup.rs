@@ -1,4 +1,4 @@
-//! Tracing initialisation sample for yougen.
+//! Tracing initialisation sample for inkson.
 //!
 //! This example shows the two recommended wirings:
 //!
@@ -21,7 +21,7 @@ fn main() {
     use tracing::{debug, info, warn};
 
     // Honour `RUST_LOG`; fall back to `info` everywhere if unset.
-    let filter = std::env::var("RUST_LOG").unwrap_or_else(|_| "info,yougen=debug".to_owned());
+    let filter = std::env::var("RUST_LOG").unwrap_or_else(|_| "info,inkson=debug".to_owned());
 
     // The real client uses `tracing-subscriber` for the formatting layer; in
     // production builds add an `EnvFilter` + `fmt` layer here. For this
@@ -29,14 +29,14 @@ fn main() {
     // through `tracing`'s default subscriber.
     eprintln!("[tracing_setup] would init subscriber with filter: {filter}");
 
-    info!(target: "yougen::example", "tracing-subscriber wired");
+    info!(target: "inkson::example", "tracing-subscriber wired");
     debug!("debug event — only visible when filter allows it");
     warn!("a warn-level event survives the default filter");
 
     // In real code (see `src/telemetry.rs`) the native sentry layer is
     // attached behind the `CrashTelemetryPrefs` toggle:
     //
-    //     yougen::telemetry::sentry_init(&prefs);
+    //     inkson::telemetry::sentry_init(&prefs);
     //
     // Sketch of the production native chain (kept as a comment so this
     // example stays dependency-light):
@@ -44,7 +44,7 @@ fn main() {
     //     use tracing_subscriber::{fmt, EnvFilter, prelude::*};
     //     tracing_subscriber::registry()
     //         .with(EnvFilter::try_from_default_env()
-    //             .unwrap_or_else(|_| EnvFilter::new("info,yougen=debug")))
+    //             .unwrap_or_else(|_| EnvFilter::new("info,inkson=debug")))
     //         .with(fmt::layer().with_ansi(true))
     //         .with(sentry_tracing::layer())  // gated on telemetry prefs
     //         .init();

@@ -13,7 +13,7 @@ jobs:
     name: Spell check
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout yougen
+      - name: Checkout inkson
         uses: actions/checkout@v6
 
       - name: Check typos

@@ -10,15 +10,15 @@ use super::{SecureKeyStore, SecureKeyStoreError};
 ///
 /// The mobile-platform FFI surface (JNI on Android,
 /// `Security.framework` on iOS) cannot be cleanly initialised from
-/// inside yougen alone — the Android Keystore path needs a `JNIEnv`
+/// inside inkson alone — the Android Keystore path needs a `JNIEnv`
 /// that's only valid on the current Java thread, and iOS Keychain
 /// access against `kSecClassGenericPassword` needs Objective-C
 /// runtime + an app-level entitlement. Both of those are owned by
 /// the host runtime (Dioxus mobile + the platform-native shell that
 /// embeds it).
 ///
-/// We solve this by inverting the relationship: instead of yougen
-/// linking against a mobile FFI crate, yougen exposes a
+/// We solve this by inverting the relationship: instead of inkson
+/// linking against a mobile FFI crate, inkson exposes a
 /// [`HostSecretBridge`] trait that the host implements and registers
 /// via [`install_host_secret_bridge`]. When
 /// [`super::default_secure_key_store`] runs on `target_os = "android"` or
@@ -35,7 +35,7 @@ use super::{SecureKeyStore, SecureKeyStoreError};
 ///
 /// The host implementation contract:
 ///
-/// * **Android** — bridge methods call into a Java class (`com.cokret.yougen.SecureKeyStoreBridge`
+/// * **Android** — bridge methods call into a Java class (`com.cokret.inkson.SecureKeyStoreBridge`
 ///   or similar) via JNI. That class proxies to `java.security.KeyStore` with provider
 ///   `"AndroidKeyStore"`, aliasing entries as `"<service_name>:<key>"`. AES-256-GCM is the
 ///   recommended cipher; the platform Keystore can be configured to require user authentication /
@@ -76,7 +76,7 @@ pub trait HostSecretBridge: Send + Sync {
     ///
     /// On iOS, Keychain items default to the calling app's private
     /// access group (the `application-identifier` entitlement). When
-    /// yougen ships extensions (Notification Service Extension for
+    /// inkson ships extensions (Notification Service Extension for
     /// silent-push key unwrap, share extension, etc.) the extension and
     /// the main app need to share Keychain entries; the OS enforces
     /// that via a matching `kSecAttrAccessGroup` value on both sides

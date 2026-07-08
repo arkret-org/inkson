@@ -42,7 +42,7 @@ pub(super) fn encrypt_private_card_detail_patch_values(
     device_id: &str,
     mut state_store: Signal<LocalStateStore>,
 ) -> Result<(Value, EncryptedWriteMlsEvents), String> {
-    let secure_store = crate::secure_key_store::default_secure_key_store("yougen");
+    let secure_store = crate::secure_key_store::default_secure_key_store("inkson");
     let mut store = state_store.write();
     encrypt_private_card_detail_patch_values_with_store(
         patch,
@@ -238,7 +238,7 @@ pub(super) fn dispatch_card_detail_update(
         &current.id,
         patch,
     ) {
-        Ok(builder) => builder.build_sdk_event("yougen"),
+        Ok(builder) => builder.build_sdk_event("inkson"),
         Err(err) => {
             board_status.set(format!("cannot update card: {err:#}"));
             return false;

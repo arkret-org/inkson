@@ -4,17 +4,17 @@
 //! T5.2 (Round 22, 2026-05-20) — T5.1 landed `Ed25519DetachedJwsSigner`,
 //! `EventProofBuilder`, and `ProductionVerifier` in the SDK
 //! (`cokret-rust-sdk/crates/signatures/src/proof.rs`). Before T5.2
-//! yougen's previous EventEnvelope signing helper hand-rolled
+//! inkson's previous EventEnvelope signing helper hand-rolled
 //! the same canonical-bytes → JWS pipeline, which meant a bug fixed in
-//! the SDK had to be ported a second time into yougen. This module
+//! the SDK had to be ported a second time into inkson. This module
 //! collapses both code paths through the SDK.
 //!
 //! ## What lives here
 //!
-//! * [`YougenEventSigner`] — opaque handle around an `EventSigner` trait object plus the metadata
+//! * [`InksonEventSigner`] — opaque handle around an `EventSigner` trait object plus the metadata
 //!   UI surfaces want (`signer_did`, `verification_method`, last-sign timestamp).
 //! * [`build_ed25519_signer`] — bootstrap that takes a 32-byte Ed25519 seed (typically loaded via
-//!   `secure_key_store::ensure_signing_seed`) and returns a `YougenEventSigner` ready to attach
+//!   `secure_key_store::ensure_signing_seed`) and returns a `InksonEventSigner` ready to attach
 //!   detached JWS proofs to event envelopes.
 //! * [`install_active_signer`] / [`active_signer`] — a process-wide `OnceLock` that holds the
 //!   active signer; [`crate::api::CokretApi::submit_sdk_event`] reaches into this to lazily sign
@@ -32,7 +32,7 @@
 //! Boot (e.g. `app::init`) should call:
 //!
 //! ```ignore
-//! let store = crate::secure_key_store::default_secure_key_store("yougen");
+//! let store = crate::secure_key_store::default_secure_key_store("inkson");
 //! let material = crate::secure_key_store::ensure_signing_seed(&*store)?;
 //! let signer = crate::event_signer::build_ed25519_signer(
 //!     material.seed,
@@ -44,7 +44,7 @@
 //!
 //! Hosts that prefer to hand in an external signer (HSM, WebAuthn,
 //! `secret-service`-mediated PIN-protected key) skip the seed step and
-//! call [`YougenEventSigner::from_dyn_signer`] directly. The submit
+//! call [`InksonEventSigner::from_dyn_signer`] directly. The submit
 //! guard then routes through their backend instead of the in-process
 //! seed.
 
@@ -107,8 +107,8 @@ impl EventProofContext {
 }
 
 /// Opaque handle wrapping an SDK [`SdkEventSigner`] trait object plus
-/// the metadata yougen's UI / submit guard care about.
-pub struct YougenEventSigner {
+/// the metadata inkson's UI / submit guard care about.
+pub struct InksonEventSigner {
     inner: Arc<dyn SdkEventSigner + Send + Sync>,
     /// The DID the verifier should resolve to obtain the public key.
     /// For did:key-derived signers this matches the device DID; for
@@ -136,9 +136,9 @@ pub struct YougenEventSigner {
     last_signed_at: Mutex<Option<DateTime<Utc>>>,
 }
 
-impl std::fmt::Debug for YougenEventSigner {
+impl std::fmt::Debug for InksonEventSigner {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("YougenEventSigner")
+        f.debug_struct("InksonEventSigner")
             .field("signer_did", &self.signer_did)
             .field("verification_method", &self.verification_method)
             .field("device_id", &self.device_id)
@@ -150,7 +150,7 @@ impl std::fmt::Debug for YougenEventSigner {
     }
 }
 
-impl YougenEventSigner {
+impl InksonEventSigner {
     /// Wrap an arbitrary SDK [`SdkEventSigner`] (HSM, WebAuthn,
     /// external host-bridge). `signer_did` is the DID receivers will
     /// resolve to fetch the verifying key. The verification method
@@ -423,7 +423,7 @@ impl YougenEventSigner {
     }
 }
 
-/// Build a [`YougenEventSigner`] backed by the SDK's
+/// Build a [`InksonEventSigner`] backed by the SDK's
 /// `Ed25519DetachedJwsSigner` over a raw 32-byte seed.
 ///
 /// The signing seed should originate from
@@ -434,7 +434,7 @@ impl YougenEventSigner {
 /// `signer_did` is the did:key (or did:web, etc.) the produced proofs
 /// will reference. The verification-method id becomes
 /// `<signer_did>#device`.
-pub fn build_ed25519_signer(seed: [u8; 32], signer_did: impl Into<String>) -> YougenEventSigner {
+pub fn build_ed25519_signer(seed: [u8; 32], signer_did: impl Into<String>) -> InksonEventSigner {
     let signer_did = signer_did.into();
     let verification_method = format!("{signer_did}#device");
     build_ed25519_signer_with_verification_method(seed, signer_did, verification_method)
@@ -446,7 +446,7 @@ pub fn build_ed25519_device_signer(
     seed: [u8; 32],
     signer_did: impl Into<String>,
     device_id: impl Into<String>,
-) -> YougenEventSigner {
+) -> InksonEventSigner {
     let mut signer = build_ed25519_signer(seed, signer_did);
     signer.device_id = normalize_signer_device_id(Some(device_id.into()));
     signer
@@ -459,7 +459,7 @@ pub fn build_ed25519_device_signer(
 /// the same Ed25519 key.
 pub fn install_device_signer_from_material(
     material: &crate::secure_key_store::SigningSeedMaterial,
-) -> Arc<YougenEventSigner> {
+) -> Arc<InksonEventSigner> {
     let signer = Arc::new(build_ed25519_signer(
         material.seed,
         material.local_signing_did.clone(),
@@ -470,7 +470,7 @@ pub fn install_device_signer_from_material(
 pub fn install_device_signer_from_material_for_device(
     material: &crate::secure_key_store::SigningSeedMaterial,
     device_id: &str,
-) -> Arc<YougenEventSigner> {
+) -> Arc<InksonEventSigner> {
     let signer = Arc::new(build_ed25519_device_signer(
         material.seed,
         material.local_signing_did.clone(),
@@ -479,7 +479,7 @@ pub fn install_device_signer_from_material_for_device(
     install_device_signer(signer)
 }
 
-fn install_device_signer(signer: Arc<YougenEventSigner>) -> Arc<YougenEventSigner> {
+fn install_device_signer(signer: Arc<InksonEventSigner>) -> Arc<InksonEventSigner> {
     let installed = install_active_signer(signer.clone());
     crate::operation::set_proof_mode(crate::operation::ProofMode::RealEd25519);
     if installed {
@@ -498,7 +498,7 @@ fn install_device_signer(signer: Arc<YougenEventSigner>) -> Arc<YougenEventSigne
 pub fn activate_device_signer_from_seed(
     seed: [u8; 32],
     persist_store: Option<&dyn crate::secure_key_store::SecureKeyStore>,
-) -> Result<Arc<YougenEventSigner>, anyhow::Error> {
+) -> Result<Arc<InksonEventSigner>, anyhow::Error> {
     activate_device_signer_from_seed_for_device(seed, persist_store, None)
 }
 
@@ -506,7 +506,7 @@ pub fn activate_device_signer_from_seed_for_device(
     seed: [u8; 32],
     persist_store: Option<&dyn crate::secure_key_store::SecureKeyStore>,
     device_id: Option<&str>,
-) -> Result<Arc<YougenEventSigner>, anyhow::Error> {
+) -> Result<Arc<InksonEventSigner>, anyhow::Error> {
     let material = match persist_store {
         Some(store) => crate::secure_key_store::store_signing_seed(store, &seed)
             .map_err(|err| anyhow::anyhow!("persist device signing seed failed: {err}"))?,
@@ -554,7 +554,7 @@ pub fn activate_device_signer_from_seed_for_device(
 pub fn activate_device_signer_from_seed_b64url(
     seed_b64url: &str,
     persist_store: Option<&dyn crate::secure_key_store::SecureKeyStore>,
-) -> Result<Arc<YougenEventSigner>, anyhow::Error> {
+) -> Result<Arc<InksonEventSigner>, anyhow::Error> {
     activate_device_signer_from_seed_b64url_for_device(seed_b64url, persist_store, None)
 }
 
@@ -562,7 +562,7 @@ pub fn activate_device_signer_from_seed_b64url_for_device(
     seed_b64url: &str,
     persist_store: Option<&dyn crate::secure_key_store::SecureKeyStore>,
     device_id: Option<&str>,
-) -> Result<Arc<YougenEventSigner>, anyhow::Error> {
+) -> Result<Arc<InksonEventSigner>, anyhow::Error> {
     let bytes = URL_SAFE_NO_PAD
         .decode(seed_b64url.as_bytes())
         .map_err(|err| anyhow::anyhow!("device signing seed base64url decode: {err}"))?;
@@ -585,13 +585,13 @@ pub fn build_ed25519_signer_with_verification_method(
     seed: [u8; 32],
     signer_did: impl Into<String>,
     verification_method: impl Into<String>,
-) -> YougenEventSigner {
+) -> InksonEventSigner {
     use cokret_sdk::signatures::proof::Ed25519DetachedJwsSigner;
     let signer_did = signer_did.into();
     let verification_method = verification_method.into();
     let raw_signing_key = SigningKey::from_bytes(&seed);
     let sdk_signer = Ed25519DetachedJwsSigner::from_seed(seed, verification_method.clone());
-    YougenEventSigner {
+    InksonEventSigner {
         inner: Arc::new(sdk_signer),
         signer_did,
         verification_method,
@@ -604,7 +604,7 @@ pub fn build_ed25519_signer_with_verification_method(
 
 pub fn bind_active_signer_device_id(
     device_id: &str,
-) -> Result<Option<Arc<YougenEventSigner>>, anyhow::Error> {
+) -> Result<Option<Arc<InksonEventSigner>>, anyhow::Error> {
     let Some(active) = active_signer() else {
         return Ok(None);
     };
@@ -618,7 +618,7 @@ pub fn bind_active_signer_device_id(
     if active.device_id.as_deref() == Some(device_id.as_str()) {
         return Ok(Some(active));
     }
-    let rebound = Arc::new(YougenEventSigner {
+    let rebound = Arc::new(InksonEventSigner {
         inner: active.inner.clone(),
         signer_did: active.signer_did.clone(),
         verification_method: active.verification_method.clone(),
@@ -661,9 +661,9 @@ fn verification_method_controller(verification_method: &str) -> &str {
 // hardware-key unlock that happens after first paint) can call
 // [`replace_active_signer`]. Tests use the same swap path to reset
 // between cases.
-static ACTIVE_SIGNER: OnceLock<std::sync::RwLock<Option<Arc<YougenEventSigner>>>> = OnceLock::new();
+static ACTIVE_SIGNER: OnceLock<std::sync::RwLock<Option<Arc<InksonEventSigner>>>> = OnceLock::new();
 
-fn active_slot() -> &'static std::sync::RwLock<Option<Arc<YougenEventSigner>>> {
+fn active_slot() -> &'static std::sync::RwLock<Option<Arc<InksonEventSigner>>> {
     ACTIVE_SIGNER.get_or_init(|| std::sync::RwLock::new(None))
 }
 
@@ -671,7 +671,7 @@ fn active_slot() -> &'static std::sync::RwLock<Option<Arc<YougenEventSigner>>> {
 /// on first install. Subsequent calls leave the current signer in place;
 /// callers that intentionally rotate the device signer must use
 /// [`replace_active_signer`].
-pub fn install_active_signer(signer: Arc<YougenEventSigner>) -> bool {
+pub fn install_active_signer(signer: Arc<InksonEventSigner>) -> bool {
     let mut guard = match active_slot().write() {
         Ok(g) => g,
         Err(poison) => poison.into_inner(),
@@ -686,8 +686,8 @@ pub fn install_active_signer(signer: Arc<YougenEventSigner>) -> bool {
 /// Swap the active signer (for tests and for hosts that need to
 /// rotate). Returns the previous signer when one was installed.
 pub fn replace_active_signer(
-    signer: Option<Arc<YougenEventSigner>>,
-) -> Option<Arc<YougenEventSigner>> {
+    signer: Option<Arc<InksonEventSigner>>,
+) -> Option<Arc<InksonEventSigner>> {
     let mut guard = match active_slot().write() {
         Ok(g) => g,
         Err(poison) => poison.into_inner(),
@@ -696,7 +696,7 @@ pub fn replace_active_signer(
 }
 
 /// Returns the currently-installed active signer, if any.
-pub fn active_signer() -> Option<Arc<YougenEventSigner>> {
+pub fn active_signer() -> Option<Arc<InksonEventSigner>> {
     let guard = match active_slot().read() {
         Ok(g) => g,
         Err(poison) => poison.into_inner(),
@@ -800,7 +800,7 @@ pub fn signer_status() -> Option<SignerStatus> {
 /// [`ProofMode::Production`] and surface the error to the user.
 pub fn bootstrap_default_signer(
     service_name: &str,
-) -> Result<Arc<YougenEventSigner>, anyhow::Error> {
+) -> Result<Arc<InksonEventSigner>, anyhow::Error> {
     let store = crate::secure_key_store::default_secure_key_store(service_name);
     let material = crate::secure_key_store::ensure_signing_seed(&*store)
         .map_err(|err| anyhow::anyhow!("ensure_signing_seed failed: {err}"))?;
@@ -817,7 +817,7 @@ pub fn bootstrap_default_signer(
 pub fn bootstrap_default_signer_for_device(
     service_name: &str,
     device_id: &str,
-) -> Result<Arc<YougenEventSigner>, anyhow::Error> {
+) -> Result<Arc<InksonEventSigner>, anyhow::Error> {
     let device_id = normalize_signer_device_id(Some(device_id))
         .ok_or_else(|| anyhow::anyhow!("device_id is required for device-bound event signer"))?;
     cokret_sdk::DeviceId::new(device_id.clone())
@@ -1341,7 +1341,7 @@ mod tests {
 
     #[test]
     fn proof_type_tag_is_production() {
-        let pt = YougenEventSigner::proof_type_tag();
+        let pt = InksonEventSigner::proof_type_tag();
         assert!(!pt.is_development());
     }
 }

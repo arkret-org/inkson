@@ -8,7 +8,7 @@ use super::{Locale, TranslationDict};
 pub fn arabic_translations() -> TranslationDict {
     let mut dict = TranslationDict::new(Locale::Ar);
 
-    dict.set("app.title", "yougen");
+    dict.set("app.title", "inkson");
     dict.set("nav.dashboard", "Home");
     dict.set("nav.chat", "الدردشة");
     dict.set("nav.forum", "المنتدى");
@@ -41,7 +41,7 @@ pub fn arabic_translations() -> TranslationDict {
 /// `translate_chain` fallback.
 pub fn spanish_translations() -> TranslationDict {
     let mut dict = TranslationDict::new(Locale::Es);
-    dict.set("app.title", "yougen");
+    dict.set("app.title", "inkson");
     dict.set("nav.dashboard", "Home");
     dict.set("nav.chat", "Chat");
     dict.set("nav.forum", "Foro");
@@ -81,7 +81,7 @@ pub fn spanish_translations() -> TranslationDict {
 /// Phase D.2 #8: Japanese — nav / common starter set.
 pub fn japanese_translations() -> TranslationDict {
     let mut dict = TranslationDict::new(Locale::Ja);
-    dict.set("app.title", "yougen");
+    dict.set("app.title", "inkson");
     dict.set("nav.dashboard", "Home");
     dict.set("nav.chat", "チャット");
     dict.set("nav.forum", "フォーラム");
@@ -121,7 +121,7 @@ pub fn japanese_translations() -> TranslationDict {
 /// Phase D.2 #8: French — nav / common starter set.
 pub fn french_translations() -> TranslationDict {
     let mut dict = TranslationDict::new(Locale::Fr);
-    dict.set("app.title", "yougen");
+    dict.set("app.title", "inkson");
     dict.set("nav.dashboard", "Home");
     dict.set("nav.chat", "Discussion");
     dict.set("nav.forum", "Forum");

@@ -1,4 +1,4 @@
-//! SDK-backed v1 Event Envelope builder used by yougen's active write paths.
+//! SDK-backed v1 Event Envelope builder used by inkson's active write paths.
 //!
 //! Spec source of truth: `cokret-spec/spec/v1/artifacts/schemas/event-envelope.schema.json`.
 //!
@@ -374,7 +374,7 @@ impl EventEnvelopeExt for EventEnvelope {
         let signer_did = signer_did.into();
         let sdk_signer =
             Ed25519DetachedJwsSigner::new(signing_key.clone(), format!("{signer_did}#device"));
-        let signer = crate::event_signer::YougenEventSigner::from_dyn_signer(
+        let signer = crate::event_signer::InksonEventSigner::from_dyn_signer(
             Arc::new(sdk_signer),
             signer_did.clone(),
         );

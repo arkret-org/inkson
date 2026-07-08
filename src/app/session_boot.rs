@@ -144,13 +144,13 @@ pub(super) fn initial_session_credential_from_state(
     String::new()
 }
 
-/// localStorage key the cotest joint-e2e harness uses to hand yougen a real
+/// localStorage key the cotest joint-e2e harness uses to hand inkson a real
 /// `ck.session.grant` + the DPoP device seed it is bound to. Read ONCE at boot,
 /// only on wasm and only when `wasm_allow_localstorage_secrets()` is set — the
 /// same dev-only opt-in the harness already toggles. Production never sets
 /// either key, so this path is fully inert there.
 #[cfg(target_arch = "wasm32")]
-pub(super) const TEST_SESSION_INJECTION_KEY: &str = "yougen.test.session_injection.v1";
+pub(super) const TEST_SESSION_INJECTION_KEY: &str = "inkson.test.session_injection.v1";
 
 /// Dev-only boot injection of a real grant + DPoP key (cotest joint e2e,
 /// ②(A+②) model). Returns the injected grant JWT so the caller can seed the
@@ -226,7 +226,7 @@ pub(super) fn inject_test_session_grant(
             return None;
         }
     };
-    let secure_store = crate::secure_key_store::default_secure_key_store("yougen");
+    let secure_store = crate::secure_key_store::default_secure_key_store("inkson");
     if let Err(error) = state_store
         .write()
         .set_dpop_device_key_with_secure_store(Some(record), secure_store.as_ref())
@@ -253,7 +253,7 @@ pub(super) fn inject_test_session_grant(
         return None;
     }
     if let Err(error) =
-        crate::event_signer::bootstrap_default_signer_for_device("yougen", device_id)
+        crate::event_signer::bootstrap_default_signer_for_device("inkson", device_id)
     {
         tracing::warn!(
             ?error,

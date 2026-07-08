@@ -1,5 +1,5 @@
 param(
-    [string]$BinaryPath = "target/release/yougen",
+    [string]$BinaryPath = "target/release/inkson",
     [string]$DistDir = "dist/linux-packages",
     [string]$Version = "0.9.0-local"
 )
@@ -34,11 +34,11 @@ try {
         $installDir = Join-Path $pkgRoot "usr/bin"
         $controlDir = Join-Path $pkgRoot "DEBIAN"
         New-Item -ItemType Directory -Force -Path $installDir, $controlDir | Out-Null
-        Copy-Item -Force -LiteralPath $BinaryPath -Destination (Join-Path $installDir "yougen")
-        chmod 0755 (Join-Path $installDir "yougen")
+        Copy-Item -Force -LiteralPath $BinaryPath -Destination (Join-Path $installDir "inkson")
+        chmod 0755 (Join-Path $installDir "inkson")
 
         @"
-Package: yougen
+Package: inkson
 Version: $Version
 Section: utils
 Priority: optional
@@ -47,7 +47,7 @@ Maintainer: Cokret Local Release <local-release@example.invalid>
 Description: Cokret cross-platform client local package
 "@ | Set-Content -Encoding ASCII -Path (Join-Path $controlDir "control")
 
-        $debPath = Join-Path $DistDir "yougen_${Version}_amd64.deb"
+        $debPath = Join-Path $DistDir "inkson_${Version}_amd64.deb"
         & dpkg-deb --build $pkgRoot $debPath
         $hashPath = "$debPath.sha256"
         Get-FileHash -Algorithm SHA256 -LiteralPath $debPath |

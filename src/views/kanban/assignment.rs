@@ -114,7 +114,7 @@ pub(super) fn card_assignment_mutations(
             assignee_id,
         )
         .map_err(|err| format!("cannot build assigned_to relation: {err:#}"))?
-        .build_sdk_event("yougen")
+        .build_sdk_event("inkson")
         .map_err(|err| format!("cannot build assigned_to relation event: {err}"))?;
         let relation_id =
             relation_id_from_event_id(operation.event_id.as_str()).ok_or_else(|| {
@@ -140,7 +140,7 @@ pub(super) fn card_assignment_mutations(
         for relation_id in relation_ids {
             let operation =
                 crate::operation::ck_ops::relation_tombstone(realm_id, actor_id, relation_id)
-                    .build_sdk_event("yougen")
+                    .build_sdk_event("inkson")
                     .map_err(|err| format!("cannot build assigned_to tombstone event: {err}"))?;
             mutations.push(CardAssignmentMutation::Tombstone {
                 actor_id: assignee_id.clone(),

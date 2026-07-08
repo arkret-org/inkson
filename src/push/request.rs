@@ -30,7 +30,7 @@ pub fn build_register_request_for_actor(
     let platform = current_platform();
     let prefs = push_preferences();
     let binding = default_gateway_binding();
-    let idempotency_key = format!("yougen-push-register-{device_id}");
+    let idempotency_key = format!("inkson-push-register-{device_id}");
     let config = PushDeviceConfig {
         principal_id,
         device_id,
@@ -53,7 +53,7 @@ pub fn build_unregister_request(
     existing: Option<&PushRegistrationState>,
 ) -> anyhow::Result<ChimePushUnregisterDeviceRequest> {
     let platform = current_platform();
-    let idempotency_key = format!("yougen-push-unregister-{device_id}");
+    let idempotency_key = format!("inkson-push-unregister-{device_id}");
     let registration_id = existing.and_then(|state| state.registration_id.as_deref());
     let app_id = existing
         .and_then(|state| state.app_id.as_deref())

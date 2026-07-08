@@ -1,12 +1,12 @@
-# yougen Threat Model
+# inkson Threat Model
 
 ## Scope
 
-This model covers the yougen client surfaces in the local 1.0 milestone:
+This model covers the inkson client surfaces in the local 1.0 milestone:
 desktop and web. Mobile host-bridge references exist for a future phase, but
 iOS and Android artifacts are not built or shipped by this plan. Server
 authorization, federation, and push gateway internals are owned by soland,
-coauth, and chime, but yougen is responsible for preserving their security
+coauth, and chime, but inkson is responsible for preserving their security
 properties at the client boundary.
 
 ## Assets
@@ -22,9 +22,9 @@ properties at the client boundary.
 ## Trust boundaries
 
 - Browser or desktop renderer to local storage.
-- yougen to soland HTTP API.
-- yougen to coauth OIDC and grant endpoints.
-- yougen to chime push registration path.
+- inkson to soland HTTP API.
+- inkson to coauth OIDC and grant endpoints.
+- inkson to chime push registration path.
 - Local OS secure storage boundary.
 - Clipboard, filesystem import/export, and crash/log output.
 
@@ -48,7 +48,7 @@ Controls:
 
 Open phase-3 items:
 
-- IndexedDB key-store hardening is tracked in `_yougen_todos.md` §20.
+- IndexedDB key-store hardening is tracked in `_inkson_todos.md` §20.
 - Android Keystore and iOS Keychain package work is out of the desktop/web
   local milestone and remains behind the mobile scope gate in §5-§8.
 
@@ -125,7 +125,7 @@ Security consequences:
 - Device revocation does not currently erase an account secret already copied
   onto the revoked device. The revoked device may retain access to history it
   already stored or can still fetch through valid server credentials.
-- Yougen cannot issue a remote wipe for browser localStorage, IndexedDB,
+- Inkson cannot issue a remote wipe for browser localStorage, IndexedDB,
   native keychain records, exported logs, or cached plaintext on a device that
   is offline or controlled by an attacker. The revocation UI therefore warns
   users that rotation protects future backups and group epochs, not old
@@ -156,7 +156,7 @@ Controls:
 
 ## MLS-Exporter SFrame key derivation strand
 
-yougen's E2EE call layer derives SFrame keying material from an MLS group
+inkson's E2EE call layer derives SFrame keying material from an MLS group
 via the MLS Exporter interface. This section is the canonical reference
 for the derivation chain and the threat-model decisions behind it.
 
@@ -196,7 +196,7 @@ The derivation chain is deliberately structured so that:
 
 1. **No backend party can derive the SFrame key.** soland, floria, and
    the media SFU never see the MLS group state. The exporter API runs
-   exclusively inside yougen on each participant's device.
+   exclusively inside inkson on each participant's device.
 
 2. **Per-epoch key rotation is automatic.** Every MLS epoch advance
    (member add/remove, re-keying) produces a new `exporter_secret`. The
@@ -210,7 +210,7 @@ The derivation chain is deliberately structured so that:
 4. **Backend cloud key escrow is explicitly rejected.** A common
    "convenience" anti-pattern is to have the SFU or the call control
    plane hold a copy of the SFrame key for server-side recording or
-   transcoding. yougen refuses this on threat-model grounds:
+   transcoding. inkson refuses this on threat-model grounds:
    - If the SFU holds the key, it can decrypt every frame — the E2EE
      promise reduces to ESEE (encryption *to* the SFU).
    - If a "trusted recording service" holds the key, the recording
@@ -235,5 +235,5 @@ The derivation chain is deliberately structured so that:
 - Key compromise impersonation (KCI) of a single participant is handled
   at the MLS layer; SFrame inherits MLS's KCI posture and adds no
   further mitigation.
-- Post-quantum migration: when MLS gains a PQ KEM, yougen will follow.
+- Post-quantum migration: when MLS gains a PQ KEM, inkson will follow.
   The exporter API and SFrame layer are unchanged by that migration.

@@ -1,6 +1,6 @@
-//! Default DID resolver chain for yougen.
+//! Default DID resolver chain for inkson.
 //!
-//! Wraps `cokret_sdk::identity::*` resolvers with a yougen-specific
+//! Wraps `cokret_sdk::identity::*` resolvers with a inkson-specific
 //! `ResolverPolicy` so login / coauth / Move-signing call sites can validate
 //! principal DIDs before relying on a server-asserted identity.
 //!
@@ -288,7 +288,7 @@ const DID_WEBVH_MAX_LOG_BYTES: usize = DID_WEB_MAX_DOCUMENT_BYTES * 32;
 ///   `169.254.169.254` cloud-metadata endpoint), CGNAT `100.64/10`; IPv6 `::1`, unique-local
 ///   `fc00::/7`, link-local `fe80::/10`, and any IPv4-mapped form of the above. The IP
 ///   classification is delegated to the SDK's [`host_is_safe_for_outbound`] (the shared STA-05-001
-///   egress blocklist) so yougen and the SDK never drift on which ranges count as private.
+///   egress blocklist) so inkson and the SDK never drift on which ranges count as private.
 /// - bare `localhost` / `*.localhost` (handled by the SDK helper) and any host ending in `.local`
 ///   (mDNS — added here on top of the SDK helper).
 ///
@@ -510,7 +510,7 @@ pub fn resolve_with_cache(
 /// resolved DIDs + key logs to avoid repeated network calls. The SDK
 /// `CompositeDidResolver` carries a `ttl` field on its policy but does
 /// not actually cache: every `resolve_did(...)` call walks the resolver
-/// chain again. This struct fills that gap on the yougen side.
+/// chain again. This struct fills that gap on the inkson side.
 ///
 /// Invariants:
 /// - `max_entries == 0` disables caching entirely (every `get` misses).
@@ -664,7 +664,7 @@ impl DidResolutionCache {
 
 impl Default for DidResolutionCache {
     /// Default cache:
-    /// - 128 entries — a comfortable upper bound on the number of distinct actors a single yougen
+    /// - 128 entries — a comfortable upper bound on the number of distinct actors a single inkson
     ///   session interacts with.
     fn default() -> Self {
         Self::new(128)

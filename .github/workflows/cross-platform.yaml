@@ -14,7 +14,7 @@
 # - **Forks can't access secrets.** GitHub doesn't expose secrets to
 #   PRs from forks; the cross-platform suite itself doesn't currently
 #   read any secrets, but the e2e harness in `playwright.config.ts`
-#   does for `YOUGEN_E2E_*` and the round-27 helpers all skip cleanly
+#   does for `INKSON_E2E_*` and the round-27 helpers all skip cleanly
 #   when env vars are missing. To stay aligned, this workflow also
 #   self-skips when the PR's head repo is not the upstream repo
 #   (`pull_request.head.repo.full_name` != `github.repository`). The
@@ -133,10 +133,10 @@ jobs:
       matrix:
         browser: [chromium, firefox, webkit]
     steps:
-      - name: Checkout yougen
+      - name: Checkout inkson
         uses: actions/checkout@v6
         with:
-          path: yougen
+          path: inkson
 
       - name: Checkout cokret-spec
         uses: actions/checkout@v6
@@ -174,21 +174,21 @@ jobs:
       - name: Cache Cargo
         uses: Swatinem/rust-cache@v2
         with:
-          workspaces: yougen
+          workspaces: inkson
 
       - name: Install Node
         uses: actions/setup-node@v6
         with:
           node-version: "22"
           cache: npm
-          cache-dependency-path: yougen/package-lock.json
+          cache-dependency-path: inkson/package-lock.json
 
       - name: Install npm dependencies
-        working-directory: yougen
+        working-directory: inkson
         run: npm ci
 
       - name: Cargo lib tests (sanity gate)
-        working-directory: yougen
+        working-directory: inkson
         # Round 35 (C37.2): the cross-platform matrix exercises the
         # wasm bundle through the browser's native APIs, but if the
         # native lib tests are red the wasm bundle is almost certainly
@@ -202,7 +202,7 @@ jobs:
         run: cargo install dioxus-cli --version "${DIOXUS_CLI_VERSION}" --locked
 
       - name: Install Playwright browsers (${{ matrix.browser }})
-        working-directory: yougen
+        working-directory: inkson
         # `--with-deps` pulls the OS-level shared libraries each engine
         # needs (chromium pulls libnss3, firefox pulls libxt6, webkit
         # pulls libwoff1 etc.). This is the upstream Playwright recipe
@@ -210,12 +210,12 @@ jobs:
         run: npx playwright install --with-deps ${{ matrix.browser }}
 
       - name: Run cross-platform suite (${{ matrix.browser }})
-        working-directory: yougen
+        working-directory: inkson
         env:
           # Pin the project list to the matrix browser so unrelated
           # engines don't even get queued (the playwright.config.ts
           # already filters by this env var).
-          YOUGEN_CROSS_PLATFORM: ${{ matrix.browser }}
+          INKSON_CROSS_PLATFORM: ${{ matrix.browser }}
           # CI flag — playwright.config.ts uses it to decide whether
           # to reuse an existing dev server.
           CI: "1"
@@ -241,7 +241,7 @@ jobs:
         with:
           name: playwright-report-${{ matrix.browser }}
           path: |
-            yougen/playwright-report/
-            yougen/test-results/
+            inkson/playwright-report/
+            inkson/test-results/
           retention-days: 7
           if-no-files-found: ignore

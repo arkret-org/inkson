@@ -20,7 +20,7 @@ use wasm_bindgen::prelude::*;
 /// `web/public/assets/` so the shim's hard-coded
 /// `import "/assets/livekit_vendor.js"` (see [`assets/livekit_shim.js`]) resolves
 /// to real JavaScript instead of falling through to the SPA `index.html` fallback
-/// (which the browser rejects as a module, collapsing the whole `yougen.js` module
+/// (which the browser rejects as a module, collapsing the whole `inkson.js` module
 /// graph and leaving a blank white screen).
 ///
 /// The shim imports the vendor by a fixed, unhashed path from *outside* Rust code,

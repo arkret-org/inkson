@@ -47,7 +47,7 @@ fn keys_upload_signing_input(
 /// installed — never emit a placeholder.
 #[cfg(test)]
 pub(crate) fn device_signature_tuple_for_input(
-    signer: &crate::event_signer::YougenEventSigner,
+    signer: &crate::event_signer::InksonEventSigner,
     signing_input: &[u8],
     context: &str,
 ) -> anyhow::Result<Value> {
@@ -63,7 +63,7 @@ pub(crate) fn device_signature_tuple_for_input(
 
 #[cfg(test)]
 pub(crate) fn sign_keys_upload_batch_with_signer(
-    signer: &crate::event_signer::YougenEventSigner,
+    signer: &crate::event_signer::InksonEventSigner,
     device_id: &str,
     one_time_keys: &BTreeMap<String, Value>,
     fallback_keys: &BTreeMap<String, Value>,

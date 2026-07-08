@@ -1641,7 +1641,7 @@ pub fn SettingsPanel(
                                                 device_id: cokret_sdk::DeviceId::new(device.trim().to_owned())?,
                                                 ciphertext: json!({
                                                     "source_format": "text/markdown;variant=GFM-MIMI",
-                                                    "body": "MIMI interop test from yougen",
+                                                    "body": "MIMI interop test from inkson",
                                                     "mimi_room_uri": "mimi://mimi.example.com/rooms/01JSMIMI"
                                                 }),
                                                 mls_group_id: None,
@@ -2886,7 +2886,7 @@ pub fn SettingsPanel(
                 }
 
                 // ── YG-HC-1 — Handle management (issuer-managed) ─────
-                // Per spec §3.2.3 / §3.4 yougen MUST NOT set or override
+                // Per spec §3.2.3 / §3.4 inkson MUST NOT set or override
                 // handles via ck.profile.update / ck.member.identity.update.
                 // Handles come from signed ck.schema.handle_claim.v1
                 // evidence issued by the org's coauth issuer. So instead

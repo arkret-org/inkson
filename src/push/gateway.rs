@@ -18,7 +18,7 @@ use super::token_provider::vapid_public_key_from_describe;
 
 /// P4 (CKP-0007 hygiene): the previous hard-coded
 /// `https://push.example/_cokret/edge/push/notify` placeholder is gone.
-/// We now read `YOUGEN_FLORIA_URL` at the call site (see
+/// We now read `INKSON_FLORIA_URL` at the call site (see
 /// [`floria_gateway_url`]); when it's unset in dev we point at
 /// localhost, when it's unset in prod we return an empty string and
 /// the registration code no-ops rather than POSTing to a fake host.
@@ -32,13 +32,13 @@ const NOOP_FLORIA_GATEWAY: &str = "";
 /// Read the floria push gateway URL at runtime.
 ///
 /// Resolution order:
-/// 1. `YOUGEN_FLORIA_URL` env var, if non-empty.
+/// 1. `INKSON_FLORIA_URL` env var, if non-empty.
 /// 2. Debug builds (`cfg(debug_assertions)`): localhost dev gateway.
 /// 3. Release builds: empty string ⇒ no-op (registration short-circuits).
 pub fn floria_gateway_url() -> String {
     #[cfg(not(target_arch = "wasm32"))]
     {
-        if let Ok(value) = std::env::var("YOUGEN_FLORIA_URL") {
+        if let Ok(value) = std::env::var("INKSON_FLORIA_URL") {
             let trimmed = value.trim();
             if !trimmed.is_empty() {
                 return trimmed.to_owned();
@@ -56,7 +56,7 @@ pub fn floria_gateway_url() -> String {
 /// these substrings is a build-time placeholder that must NEVER reach a
 /// production push gateway — see `tests/dev_token_guard.rs` for the regression
 /// suite that holds this invariant.
-pub const PLACEHOLDER_PUSH_KEY_MARKERS: &[&str] = &["placeholder", "yougen-dev-"];
+pub const PLACEHOLDER_PUSH_KEY_MARKERS: &[&str] = &["placeholder", "inkson-dev-"];
 
 /// True when `key` carries one of the development placeholder markers. The
 /// login wiring uses this to gate registration against production push

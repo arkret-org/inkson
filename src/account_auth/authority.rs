@@ -28,7 +28,7 @@ pub fn clear_authority_resolver_cache() {
 }
 
 /// R3.2 (YG-HC-1) — best-effort deep link to the issuer/coauth handle
-/// issuance strand (`/handles/me`). yougen does NOT manage handle lifecycle
+/// issuance strand (`/handles/me`). inkson does NOT manage handle lifecycle
 /// (per spec §3.2.3 / §3.4): `ck.profile.update` /
 /// `ck.member.identity.update` MUST NOT set or override handles. Instead
 /// the settings UI surfaces "Handle managed by your organization" with a

@@ -61,7 +61,7 @@ pub(crate) struct SpaceProjectionInput {
 /// store the instant a create succeeds, before the authoritative sync
 /// projection lands.
 ///
-/// Internally tagged on `__kind` (the yougen-local Realm/Space marker read
+/// Internally tagged on `__kind` (the inkson-local Realm/Space marker read
 /// by [`projection_tree_node_kind`]). Each variant flattens its own typed body, so a Realm can
 /// never carry Space-only fields and a Space can never carry Realm-only fields —
 /// the discriminant and the field set can't disagree. The tag lives at
@@ -795,7 +795,7 @@ pub(crate) fn is_realm_or_space_projection_id(id: &str) -> bool {
 
 pub(crate) fn projection_tree_node_kind(id: &str, body: &Value) -> RealmTreeNodeKind {
     // Classify Realm vs Space. Wire signals:
-    // - `__kind` (yougen-local tag from optimistic save)
+    // - `__kind` (inkson-local tag from optimistic save)
     // - `schema` (server projection — ck.schema.realm.v1 vs ck.schema.space.v1)
     // - id prefix (`ck:realm:*` vs `ck:space:*`)
     match body

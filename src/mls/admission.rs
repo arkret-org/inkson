@@ -77,7 +77,7 @@ pub(crate) fn build_realm_mls_admission_events_from_claim(
         &add.welcome.group_id,
         &welcome_payload,
     )
-    .build_sdk_event("yougen")
+    .build_sdk_event("inkson")
     .map_err(|err| format!("MLS Welcome SDK Event conversion failed: {err}"))?;
     Ok(RealmMlsAdmissionEvents {
         commit,
@@ -155,7 +155,7 @@ pub(crate) fn build_realm_mls_admission_events_from_claims(
             &welcome_envelope.group_id,
             &welcome_payload,
         )
-        .build_sdk_event("yougen")
+        .build_sdk_event("inkson")
         .map_err(|err| format!("MLS Welcome SDK Event conversion failed: {err}"))?;
         welcomes.push(welcome);
     }
@@ -239,7 +239,7 @@ pub(crate) fn build_realm_key_share_event(
         cokret_sdk::events::kinds::EventKind::RealmKeyShare,
     )
     .body(body)
-    .build_sdk_event("yougen")
+    .build_sdk_event("inkson")
     .map_err(|err| format!("ck.realm_key.share SDK Event conversion failed: {err}"))
 }
 
@@ -269,7 +269,7 @@ pub(crate) fn wrap_realm_key_share_payload_event(
         cokret_sdk::events::kinds::EventKind::RealmKeyShare,
     )
     .body(body)
-    .build_sdk_event("yougen")
+    .build_sdk_event("inkson")
     .map_err(|err| format!("ck.realm_key.share SDK Event conversion failed: {err}"))
 }
 
@@ -400,7 +400,7 @@ fn sign_welcome_claim_envelope(
     envelope.requester_device_id = Some(sender_device_id.to_owned());
     let signer = match crate::event_signer::active_signer() {
         Some(signer) => signer,
-        None => crate::event_signer::bootstrap_default_signer("yougen")
+        None => crate::event_signer::bootstrap_default_signer("inkson")
             .map_err(|err| format!("MLS Welcome device signer bootstrap: {err}"))?,
     };
     envelope.signature.kid = signer.verification_method().to_owned();
@@ -440,7 +440,7 @@ mod tests {
     };
     use crate::secure_key_store::MemorySecureKeyStore;
 
-    struct ActiveSignerGuard(Option<std::sync::Arc<crate::event_signer::YougenEventSigner>>);
+    struct ActiveSignerGuard(Option<std::sync::Arc<crate::event_signer::InksonEventSigner>>);
 
     impl ActiveSignerGuard {
         fn install(seed: [u8; 32], signer_did: &str) -> Self {

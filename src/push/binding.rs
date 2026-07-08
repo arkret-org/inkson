@@ -33,8 +33,8 @@ use super::request::build_register_request_for_actor;
 use crate::secure_key_store::{SecureKeyStore, SecureKeyStoreError, unwrap_secret, wrap_secret};
 
 /// SecureKeyStore key under which the AEAD wrapping seed for push tokens
-/// is held. Keyed by service_name, so a `yougen` install and a
-/// `yougen.test` install have separate seeds (and so do their
+/// is held. Keyed by service_name, so a `inkson` install and a
+/// `inkson.test` install have separate seeds (and so do their
 /// ciphertext entries).
 pub const PUSH_TOKEN_WRAP_SEED_KEY: &str = "push.token.wrap_seed.v1";
 

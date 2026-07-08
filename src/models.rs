@@ -287,13 +287,13 @@ pub const OP_EVENTS_DESCRIBE: &str = "ck.self.events.query.describe";
 pub const OP_EVENTS_SUBMIT: &str = "ck.self.events.command.submit";
 pub const OP_SNAPSHOT_HEAD: &str = "ck.self.snapshot.query.manifest_head";
 
-/// Yougen-side convenience methods over the SDK's [`ServerDescription`].
+/// Inkson-side convenience methods over the SDK's [`ServerDescription`].
 ///
-/// Yougen no longer maintains its own `ServerDescription` struct; the SDK
+/// Inkson no longer maintains its own `ServerDescription` struct; the SDK
 /// type is now the single source of truth, matching the spec at
 /// `cokret-spec/spec/v1/artifacts/schemas/service-describe.schema.json`
 /// (17 required Round 4 fields, typed `claimed_profiles` / `compat_surfaces`,
-/// validated `Did` / `TypedTrustDomainId`). Because yougen cannot add
+/// validated `Did` / `TypedTrustDomainId`). Because inkson cannot add
 /// inherent impls on a foreign type, the previous helper methods now live
 /// on this extension trait — call sites only need `use
 /// crate::models::ServerDescriptionExt;` to get them back.
@@ -385,27 +385,27 @@ impl ServerDescriptionExt for ServerDescription {
 // R35: `ck.identity.describe` body. The SDK's canonical type is
 // `IdentityDescription` (same fields, with `service_did: Did` validated on
 // construction); the SDK's own `IdentityDescribeOutcome` is a transparent
-// newtype around it. We re-export the inner struct under the yougen-local
+// newtype around it. We re-export the inner struct under the inkson-local
 // name so call sites (`registry_mode` read in `views/dashboard.rs`) stay
 // unchanged while the field shapes are now SDK-owned.
 // `ck.self.account.query.describe` decodes into the SDK's authoritative
-// `cokret_sdk::models::SyncDescription`; the former yougen-local
+// `cokret_sdk::models::SyncDescription`; the former inkson-local
 // `SyncDescribeView` mirror was removed in favor of the wire type.
 /// Directory `describe` response. The SDK's `DirectoryDescribeOutcome` is a
-/// transparent wrapper over this exact wire body, so yougen consumes the SDK
+/// transparent wrapper over this exact wire body, so inkson consumes the SDK
 /// authority directly instead of maintaining a flat local mirror.
 pub use cokret_sdk::models::DirectoryDescription;
 /// Wire-shape sync response — re-exports the SDK's canonical
 /// [`cokret_sdk::models::SyncOutcome`] so client + server can never
 /// drift on field names / per-realm body shape. Spec source of truth
-/// at `cokret-spec/spec/v1/zh/sync/client-sync.md §2`. Yougen used to
+/// at `cokret-spec/spec/v1/zh/sync/client-sync.md §2`. Inkson used to
 /// own a custom `ClientSyncOutcome` with a bucketed-`spaces`
 /// deserializer; that was an older Matrix-style transcript that
 /// disagreed with what soland actually emits.
 pub use cokret_sdk::models::SyncOutcome as ClientSyncOutcome;
 // `resolve-realm` decodes into the canonical SDK wire types so the client stays
 // byte-compatible with soland's `DirectoryRealmResolutionOutcome` response. A
-// yougen-local duplicate previously drifted from the wire (a required
+// inkson-local duplicate previously drifted from the wire (a required
 // `public`/`title` on the preview node, a non-optional `join_rule`) and broke
 // invite-accept with "error decoding response body" whenever the server omitted
 // those fields. The SDK type is the single source of truth.
@@ -418,7 +418,7 @@ pub use cokret_sdk::models::{
 
 /// Sidebar tag distinguishing a security-boundary Realm from a product
 /// Space. Wire signal is either the `ck.schema.{realm,space}.v1` schema
-/// field on a projection body, or a yougen-local `__kind` tag used by
+/// field on a projection body, or a inkson-local `__kind` tag used by
 /// optimistic post-create state.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -830,7 +830,7 @@ impl From<cokret_sdk::EventsQueryOutcome> for BackfillView {
 pub use cokret_sdk::models::AuthzCheckOutcome;
 /// `ck.self.authz.invites` decodes into the SDK's authoritative
 /// `AuthzInviteList` (`invites: Vec<Invite>`, `next_cursor`, `has_more`); the
-/// former yougen-local `InvitesView` mirror was removed in favor of the wire
+/// former inkson-local `InvitesView` mirror was removed in favor of the wire
 /// type.
 pub use cokret_sdk::models::AuthzInviteList;
 /// `ck.self.authz.grants.query.effective` response. soland serialises the SDK
@@ -1038,7 +1038,7 @@ pub struct ReceiptResult {
 /// `{status, accepted[], duplicate[], rejected[], actor_frontier,
 /// realm_frontier, cursor}` (spec
 /// `service-operation-dtos.schema.json#/$defs/EventsSubmitOutcome`,
-/// required: `status`, `accepted`). The yougen-facing flat surface is
+/// required: `status`, `accepted`). The inkson-facing flat surface is
 /// folded from the SDK `EventsSubmitOutcome` on deserialize:
 ///   * `event_id` ← first `accepted` (else first `duplicate`)
 ///   * `cursor`   ← `cursor` (read-your-writes barrier)
@@ -1128,7 +1128,7 @@ impl<'de> Deserialize<'de> for SubmitEventResult {
 /// Round R2/R3 (T02) — server response shape for the
 // The `POST /_cokret/self/ephemeral` channel is fire-and-forget; its response
 // decodes into the SDK's authoritative `cokret_sdk::EphemeralSubmitOutcome`
-// (`accepted`, `dispatched_to`, `server_received_at`). The former yougen-local
+// (`accepted`, `dispatched_to`, `server_received_at`). The former inkson-local
 // `EphemeralSubmitResult` mirror was removed in favor of the wire type.
 
 // ── Media ────────────────────────────────────────────────────────

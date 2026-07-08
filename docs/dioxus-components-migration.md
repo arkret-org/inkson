@@ -1,6 +1,6 @@
-# yougen → dioxus-components 迁移规范(表单原语 Pass)
+# inkson → dioxus-components 迁移规范(表单原语 Pass)
 
-本文是把 yougen 视图从裸 HTML 原语迁移到 `src/ui/`(dioxus-components / dioxus-primitives 样式化组件)的**精确执行手册**。组件已主题化对齐 yougen 设计 token,观感保持不变。
+本文是把 inkson 视图从裸 HTML 原语迁移到 `src/ui/`(dioxus-components / dioxus-primitives 样式化组件)的**精确执行手册**。组件已主题化对齐 inkson 设计 token,观感保持不变。
 
 ## 本 Pass 范围(只做这些)
 

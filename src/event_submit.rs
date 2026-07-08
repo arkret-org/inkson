@@ -396,7 +396,7 @@ impl EventSubmitter {
     /// accepted body shapes (single envelope,
     /// [`cokret_sdk::EventsSubmitBatchRequestBody`],
     /// [`cokret_sdk::EventsSubmitFederationRequestBody`]) by JSON shape, not
-    /// by URL suffix. The federation shape is S2S only and yougen MUST
+    /// by URL suffix. The federation shape is S2S only and inkson MUST
     /// NEVER serialise it.
     ///
     /// SDK Events MUST already be signed by the caller (typically via

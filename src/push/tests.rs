@@ -4,9 +4,9 @@ use super::*;
 
 #[test]
 fn builds_chime_register_request() {
-    let request = build_register_request("dev_yougen").unwrap();
-    assert_eq!(request.device_id, "dev_yougen");
-    assert_eq!(request.app_id.as_deref(), Some("yougen"));
+    let request = build_register_request("dev_inkson").unwrap();
+    assert_eq!(request.device_id, "dev_inkson");
+    assert_eq!(request.app_id.as_deref(), Some("inkson"));
     assert_eq!(request.platform.as_deref(), Some(current_platform()));
     assert!(!request.push_key.is_empty());
 }
@@ -16,8 +16,8 @@ fn dev_placeholder_token_source_returns_pinned_markers() {
     let source = DevPlaceholderTokenSource;
     let desktop = source.current_token("desktop").unwrap();
     let web = source.current_token("web").unwrap();
-    assert_eq!(desktop, "desktop:yougen-dev-placeholder-token");
-    assert_eq!(web, "webpush:yougen-dev-placeholder-token");
+    assert_eq!(desktop, "desktop:inkson-dev-placeholder-token");
+    assert_eq!(web, "webpush:inkson-dev-placeholder-token");
     assert!(is_placeholder_push_key(&desktop));
     assert!(is_placeholder_push_key(&web));
     assert!(source.rotate_token("desktop").is_none());
@@ -25,30 +25,30 @@ fn dev_placeholder_token_source_returns_pinned_markers() {
 
 #[test]
 fn builds_persistable_registration_state() {
-    let request = build_register_request("dev_yougen").unwrap();
+    let request = build_register_request("dev_inkson").unwrap();
     let mut response = ChimePushRegisterDeviceOutcome::default();
     response.ok = true;
     response.registration_id = Some("ck:push:test".to_owned());
     let state = registration_state_from_response(&request, &response);
 
     assert_eq!(state.registration_id.as_deref(), Some("ck:push:test"));
-    assert_eq!(state.device_id, "dev_yougen");
+    assert_eq!(state.device_id, "dev_inkson");
     assert!(state.push_key_hash.starts_with("sha256:"));
     assert!(!state.push_key_hash.contains("placeholder"));
 }
 
 #[test]
 fn builds_unregister_request_from_existing_state() {
-    let request = build_register_request("dev_yougen").unwrap();
+    let request = build_register_request("dev_inkson").unwrap();
     let mut response = ChimePushRegisterDeviceOutcome::default();
     response.ok = true;
     response.registration_id = Some("ck:push:test".to_owned());
     let state = registration_state_from_response(&request, &response);
-    let unregister = build_unregister_request("dev_yougen", Some(&state)).unwrap();
+    let unregister = build_unregister_request("dev_inkson", Some(&state)).unwrap();
 
-    assert_eq!(unregister.device_id, "dev_yougen");
+    assert_eq!(unregister.device_id, "dev_inkson");
     assert_eq!(unregister.registration_id.as_deref(), Some("ck:push:test"));
-    assert_eq!(unregister.app_id.as_deref(), Some("yougen"));
+    assert_eq!(unregister.app_id.as_deref(), Some("inkson"));
 }
 
 #[test]
@@ -82,12 +82,12 @@ fn summarizes_push_bridge_contract() {
 #[test]
 fn placeholder_push_key_predicate_matches_known_markers() {
     assert!(is_placeholder_push_key(
-        "desktop:yougen-dev-placeholder-token"
+        "desktop:inkson-dev-placeholder-token"
     ));
     assert!(is_placeholder_push_key(
-        "webpush:yougen-dev-placeholder-token"
+        "webpush:inkson-dev-placeholder-token"
     ));
-    assert!(is_placeholder_push_key("DESKTOP:Yougen-Dev-Placeholder"));
+    assert!(is_placeholder_push_key("DESKTOP:Inkson-Dev-Placeholder"));
     assert!(!is_placeholder_push_key("apns:abcd1234efgh"));
     assert!(!is_placeholder_push_key(
         "webpush:https://example.com/wp/abc123"
@@ -96,17 +96,17 @@ fn placeholder_push_key_predicate_matches_known_markers() {
 
 #[test]
 fn ensure_production_register_rejects_placeholder_keys() {
-    let request = build_register_request("dev_yougen").unwrap();
+    let request = build_register_request("dev_inkson").unwrap();
     let err = ensure_production_register_request(&request)
         .expect_err("default scaffold push key must be rejected");
     let message = err.to_string();
-    assert!(message.contains("dev_yougen"));
+    assert!(message.contains("dev_inkson"));
     assert!(message.contains("placeholder"));
 }
 
 #[test]
 fn ensure_production_register_accepts_real_keys() {
-    let mut request = build_register_request("dev_yougen").unwrap();
+    let mut request = build_register_request("dev_inkson").unwrap();
     request.push_key = "apns:5dccd5b9c8be12a8d10dc1ad6c0a3a8d".to_owned();
     ensure_production_register_request(&request).expect("real push key must be accepted");
 }
@@ -135,7 +135,7 @@ fn blind_wakeup_payload_lint_rejects_stable_identifiers() {
 
 #[test]
 fn push_status_label_treats_state_without_registration_id_as_registered() {
-    let request = build_register_request("dev_yougen").unwrap();
+    let request = build_register_request("dev_inkson").unwrap();
     let mut response = ChimePushRegisterDeviceOutcome::default();
     response.ok = true;
     let state = registration_state_from_response(&request, &response);
@@ -299,7 +299,7 @@ use crate::secure_key_store::MemorySecureKeyStore;
 #[test]
 fn push_token_binding_round_trips_a_token() {
     let store: Arc<dyn SecureKeyStore> = Arc::new(MemorySecureKeyStore::new());
-    let binding = PushTokenBinding::new(store.clone(), "dev_yougen");
+    let binding = PushTokenBinding::new(store.clone(), "dev_inkson");
     assert!(binding.load_token().unwrap().is_none());
     binding.store_token("fcm:real-token-abc").unwrap();
     assert_eq!(
@@ -392,11 +392,11 @@ fn push_token_binding_delete_is_idempotent() {
 #[test]
 fn build_register_request_with_secure_store_persists_token() {
     let store: Arc<dyn SecureKeyStore> = Arc::new(MemorySecureKeyStore::new());
-    let request = build_register_request_with_secure_store("dev_yougen", None, &store).unwrap();
-    assert_eq!(request.device_id, "dev_yougen");
+    let request = build_register_request_with_secure_store("dev_inkson", None, &store).unwrap();
+    assert_eq!(request.device_id, "dev_inkson");
     assert!(!request.push_key.is_empty());
 
-    let binding = PushTokenBinding::new(store.clone(), "dev_yougen");
+    let binding = PushTokenBinding::new(store.clone(), "dev_inkson");
     let loaded = binding.load_token().unwrap().expect("token persisted");
     // Compare via hash to avoid printing the token if the test
     // logs are leaked anywhere — sha256_hex is also used for the

@@ -26,7 +26,7 @@ use super::{
 /// signing seeds, local identity seeds, account MLS secrets, and session
 /// credentials are refused so they cannot land in localStorage. The IndexedDB
 /// + non-extractable SubtleCrypto tier uses the same
-/// `yougen.secret.<service_name>.<key>` namespace after async upgrade.
+/// `inkson.secret.<service_name>.<key>` namespace after async upgrade.
 pub struct LocalStorageSecureKeyStore {
     service_name: String,
     wrapping_key: [u8; 32],
@@ -91,7 +91,7 @@ impl LocalStorageSecureKeyStore {
             .ok_or_else(|| SecureKeyStoreError::Unsupported("window.localStorage not available"))
     }
 
-    /// The wrap_seed key — `yougen.secret.<namespace>.wrap_seed.v1`. The
+    /// The wrap_seed key — `inkson.secret.<namespace>.wrap_seed.v1`. The
     /// namespace is GLOBAL (the bare `service_name`); see
     /// [`super::wrap_seed_namespace`] for why it must stay constant across a
     /// sign-in. Per-account device-key isolation is at the entry-key level, not
@@ -99,13 +99,13 @@ impl LocalStorageSecureKeyStore {
     pub(super) fn wrapping_seed_key(service_name: &str) -> String {
         let namespace = super::wrap_seed_namespace(service_name);
         format!(
-            "yougen.secret.{namespace}{}",
+            "inkson.secret.{namespace}{}",
             Self::WRAPPING_KEY_STORAGE_KEY_SUFFIX
         )
     }
 
     fn entry_key(&self, key: &str) -> String {
-        format!("yougen.secret.{}.{key}", self.service_name)
+        format!("inkson.secret.{}.{key}", self.service_name)
     }
 
     /// Store a transient AEAD-wrapped mirror used only by the

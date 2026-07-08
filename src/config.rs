@@ -17,11 +17,11 @@ const LOCAL_PROXY_SERVER_PORT: u16 = 8787;
 const DEFAULT_ACCOUNT_DID: &str = "";
 const DEVICE_ID_PREFIX: &str = "ck:device:";
 #[cfg(target_arch = "wasm32")]
-const CONFIG_STORAGE_KEY: &str = "yougen.config.v1";
+const CONFIG_STORAGE_KEY: &str = "inkson.config.v1";
 /// P3B.4: localStorage key for the multi-profile config holding the
 /// `MultiProfileConfig`.
 #[cfg(target_arch = "wasm32")]
-const PROFILES_STORAGE_KEY: &str = "yougen.profiles.v1";
+const PROFILES_STORAGE_KEY: &str = "inkson.profiles.v1";
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ClientConfig {
@@ -346,7 +346,7 @@ fn session_credential_secret_key(account_did: &str) -> String {
 fn config_secure_store() -> std::sync::Arc<dyn crate::secure_key_store::SecureKeyStore> {
     #[cfg(not(test))]
     {
-        crate::secure_key_store::default_secure_key_store("yougen")
+        crate::secure_key_store::default_secure_key_store("inkson")
     }
     #[cfg(test)]
     {
@@ -863,7 +863,7 @@ fn browser_storage() -> Option<web_sys::Storage> {
 
 #[cfg(not(target_arch = "wasm32"))]
 fn default_config_path() -> PathBuf {
-    std::env::var_os("YOUGEN_CONFIG_PATH")
+    std::env::var_os("INKSON_CONFIG_PATH")
         .map(PathBuf::from)
         .unwrap_or_else(|| app_data_dir().join("config.json"))
 }
@@ -875,7 +875,7 @@ fn app_data_dir() -> PathBuf {
         .or_else(|| std::env::var_os("HOME").map(|home| Path::new(&home).join(".config").into()))
         .map(PathBuf::from)
         .unwrap_or_else(|| PathBuf::from("."))
-        .join("yougen")
+        .join("inkson")
 }
 
 #[cfg(test)]
@@ -978,14 +978,14 @@ mod tests {
         let config = ClientConfig::from_fields(
             "https://local.host",
             "did:web:alice.example",
-            "dev_yougen",
+            "dev_inkson",
             "old_token",
         );
 
         assert_eq!(config.server_url, "https://local.host");
         assert_eq!(config.account_did, "did:web:alice.example");
         assert!(is_valid_device_id(&config.device_id));
-        assert_ne!(config.device_id, "dev_yougen");
+        assert_ne!(config.device_id, "dev_inkson");
         assert!(config.session_credential.is_empty());
     }
 
@@ -1243,7 +1243,7 @@ mod tests {
             .duration_since(UNIX_EPOCH)
             .expect("time")
             .as_nanos();
-        let dir = std::env::temp_dir().join(format!("yougen-profiles-redacted-{stamp}"));
+        let dir = std::env::temp_dir().join(format!("inkson-profiles-redacted-{stamp}"));
         let path = dir.join("config.json");
         let mut store = LocalConfigStore::with_path(path.clone());
 
@@ -1285,6 +1285,6 @@ mod tests {
             .duration_since(UNIX_EPOCH)
             .expect("time")
             .as_nanos();
-        std::env::temp_dir().join(format!("yougen-{name}-{stamp}.json"))
+        std::env::temp_dir().join(format!("inkson-{name}-{stamp}.json"))
     }
 }

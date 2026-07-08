@@ -1,6 +1,6 @@
 //! G3.Y0 — per-device DPoP key management.
 //!
-//! This module is the yougen host policy layer around the shared SDK DPoP
+//! This module is the inkson host policy layer around the shared SDK DPoP
 //! helpers. It:
 //!
 //! 1. Generates an Ed25519 device key on first launch and persists it via
@@ -15,7 +15,7 @@
 //! Ed25519 (`alg=EdDSA`, `kty=OKP`, `crv=Ed25519`) over ES256. Three
 //! reasons, in order of weight:
 //!
-//! * Every other signing surface in yougen — `event_signer`, `cross_signing`, `move_builder`,
+//! * Every other signing surface in inkson — `event_signer`, `cross_signing`, `move_builder`,
 //!   `session_grant` proofs — is already ed25519. Adding a second curve doubles the WASM bundle
 //!   surface for no protocol benefit.
 //! * coauth's `DpopVerifier` (`coauth/crates/backend/src/services/dpop.rs`) accepts `EdDSA` as a
@@ -182,7 +182,7 @@ pub fn dpop_authorization_credential_hash(authorization_credential: &str) -> Str
 pub fn ensure_device_key(store: &mut LocalStateStore) -> Result<DpopHandle, AuthDpopError> {
     #[cfg(not(test))]
     {
-        let secure_store = crate::secure_key_store::default_secure_key_store("yougen");
+        let secure_store = crate::secure_key_store::default_secure_key_store("inkson");
         ensure_device_key_with_secure_store(store, secure_store.as_ref())
     }
 
@@ -283,7 +283,7 @@ fn ensure_device_key_in_plaintext_state(
 pub fn load_device_key(store: &LocalStateStore) -> Result<Option<DpopHandle>, AuthDpopError> {
     #[cfg(not(test))]
     {
-        let secure_store = crate::secure_key_store::default_secure_key_store("yougen");
+        let secure_store = crate::secure_key_store::default_secure_key_store("inkson");
         load_device_key_with_secure_store(store, secure_store.as_ref())
     }
 
@@ -321,7 +321,7 @@ pub fn load_device_key_with_secure_store(
 pub fn load_or_recover_device_key(
     store: &mut LocalStateStore,
 ) -> Result<Option<DpopHandle>, AuthDpopError> {
-    let secure_store = crate::secure_key_store::default_secure_key_store("yougen");
+    let secure_store = crate::secure_key_store::default_secure_key_store("inkson");
     load_or_recover_device_key_with_secure_store(store, secure_store.as_ref())
 }
 

@@ -18,7 +18,7 @@ impl ActionGroup {
     ///
     /// Registered action names are the **canonical, fully-qualified** forms
     /// from the spec `capability-action-registry.json` (always `ck.`
-    /// prefixed). Entries that are yougen-local UI grouping placeholders are
+    /// prefixed). Entries that are inkson-local UI grouping placeholders are
     /// marked inline and must not be written into capability grants.
     /// F-CAP-FIX-1 (2026-05-19) brought this table in line with spec
     /// fixtures, which write `actions: ["ck.strand.read", ...]` — under the
@@ -67,7 +67,7 @@ impl ActionGroup {
                 "ck.read_cursor.advance",
                 // R14: `ck.comment.*` are not in capability-action-registry.json
                 // (the registry has no comment action family). These remain
-                // yougen-local UI grouping placeholders only.
+                // inkson-local UI grouping placeholders only.
                 "ck.comment.create",
                 "ck.comment.update",
                 "ck.comment.redact",
@@ -79,7 +79,7 @@ impl ActionGroup {
                 "ck.morph.archive",
                 "ck.morph.restore",
                 // R14: `ck.morph.tombstone` is not in
-                // capability-action-registry.json; yougen-local UI grouping
+                // capability-action-registry.json; inkson-local UI grouping
                 // placeholder only.
                 "ck.morph.tombstone",
             ],
@@ -94,7 +94,7 @@ impl ActionGroup {
                 // capability-action-registry.json. Member lifecycle is driven
                 // by the `ck.circle.member.*` / `ck.invite.*` registry actions
                 // and the `ck.member.state` FSM; these three remain
-                // yougen-local UI grouping placeholders only.
+                // inkson-local UI grouping placeholders only.
                 "ck.member.invite",
                 "ck.member.remove",
                 "ck.member.role_change",
@@ -425,7 +425,7 @@ pub struct UiResourceRef {
 /// surface (issuer / proofs / issued_at / delegation depth / parent /
 /// revocable) plus a `GrantBuilder`, `cx_capability` op factory,
 /// `GrantProof` and `CapabilityRevocation`. None of that was ever wired
-/// into yougen's production paths — the only consumers are the UI pre-gate
+/// into inkson's production paths — the only consumers are the UI pre-gate
 /// helpers in `kanban.rs`, which need `subject` / `actions` /
 /// `resource_selectors` / `constraints` to answer "should this button be
 /// enabled". Everything else was dead write-side scaffolding and has been
@@ -455,11 +455,11 @@ pub enum UiAuthzDecision {
 /// The capability authorization engine.
 ///
 /// **UI pre-gate only.** This engine exists purely to pre-disable controls
-/// in yougen's UI so users get immediate feedback before hitting the
+/// in inkson's UI so users get immediate feedback before hitting the
 /// server. It is **not** a security boundary: the authoritative
 /// authorization decision — including grant signature/proof verification,
 /// delegation-chain validation, and revocation — is made by the server.
-/// yougen never trusts a local Allow.
+/// inkson never trusts a local Allow.
 #[derive(Clone, Debug, Default)]
 pub struct CapabilityEngine {
     /// Grants the UI has hydrated for pre-gating, indexed by subject.
@@ -477,7 +477,7 @@ impl CapabilityEngine {
     /// does **not** verify any proof/signature — the server is the sole
     /// authority for grant validity (R5). When the `ck.capability.grant`
     /// projection path is wired up, grants arrive already
-    /// server-validated; yougen simply mirrors them to pre-gate buttons.
+    /// server-validated; inkson simply mirrors them to pre-gate buttons.
     /// Do not treat a grant present here as proof of authorization.
     pub fn add_grant(&mut self, grant: UiCapabilityGrant) {
         self.grants.push(grant);
@@ -486,7 +486,7 @@ impl CapabilityEngine {
     /// Check whether a subject can perform an action on a resource.
     ///
     /// **Fail-closed (R5):** absent an explicit, UiCapabilityConstraint-satisfied
-    /// Allow this returns `Deny`. yougen never derives an Allow from the
+    /// Allow this returns `Deny`. inkson never derives an Allow from the
     /// lack of a matching deny. This decision is advisory for the UI only;
     /// the server makes the authoritative call.
     pub fn check(
@@ -559,7 +559,7 @@ impl CapabilityEngine {
     /// Returns a [`CapabilityGate`] suitable for binding to a Dioxus
     /// button's `disabled` + `title` attributes. The contract: when the
     /// engine carries no grants for `subject` at all the gate stays open
-    /// (yougen still trusts the server's authoritative check). Once the
+    /// (inkson still trusts the server's authoritative check). Once the
     /// engine has been seeded with grants for the actor — typically by
     /// hydrating `ck.capability.grant` events on login — the gate
     /// disables the control whenever `check` returns anything other than
@@ -676,7 +676,7 @@ mod tests {
 
     #[test]
     fn test_ui_gate_open_when_no_grants_for_subject() {
-        // Empty engine — yougen should keep the button enabled and let
+        // Empty engine — inkson should keep the button enabled and let
         // the server make the final call. This is the "we haven't
         // hydrated capability state yet" path.
         let engine = CapabilityEngine::new();

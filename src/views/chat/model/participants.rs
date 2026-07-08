@@ -584,7 +584,7 @@ pub(crate) fn display_label_for_actor(
 
 pub(crate) fn is_own_message_sender(sender: &str, account_did: &str) -> bool {
     let sender = sender.trim();
-    !sender.is_empty() && (sender == "yougen" || sender == account_did.trim())
+    !sender.is_empty() && (sender == "inkson" || sender == account_did.trim())
 }
 
 pub(crate) fn short_principal_label(value: &str) -> String {
@@ -757,7 +757,7 @@ pub(crate) fn sender_display_label(
             .or(did_handle_label)
             .unwrap_or_else(|| {
                 if account_did.is_empty() {
-                    "yougen".to_owned()
+                    "inkson".to_owned()
                 } else {
                     short_principal_label(account_did)
                 }

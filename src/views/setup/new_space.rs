@@ -403,7 +403,7 @@ pub(super) fn NewSpaceSection(
                                                     // Persist a tagged Space projection so
                                                     // the sidebar (M-SIDEBAR-TIER-1) can
                                                     // classify it without re-fetching.
-                                                    // `__kind` is yougen-local metadata —
+                                                    // `__kind` is inkson-local metadata —
                                                     // server-projected entries use the
                                                     // canonical `schema` field, but for the
                                                     // optimistic local write here we use the

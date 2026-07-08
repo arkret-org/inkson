@@ -232,7 +232,7 @@
           - text: did:web:alice.example
         - generic:
           - strong: Device ID
-          - text: dev_yougen
+          - text: dev_inkson
         - generic:
           - strong: Crypto
           - text: MLS ready; plaintext fallback available

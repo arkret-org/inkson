@@ -25,7 +25,7 @@
 //! - `E2eeManager::remove_member(group_id, did)` — DID-level removal (model layer; companion to the
 //!   SDK-level OpenMLS calls above).
 //!
-//! [`execute_mls_remove`] is the yougen adapter on top of the SDK: takes a
+//! [`execute_mls_remove`] is the inkson adapter on top of the SDK: takes a
 //! restored [`CokretMlsGroup`] + target DID + space id and produces both
 //! the [`MlsRemoveMemberResult`] and the canonical `mls_commit` Operation
 //! envelope a caller submits to soland. State persistence (re-encrypting

@@ -898,7 +898,7 @@ mod tests {
     /// `context = "ck-event-proof-v1"` domain tag), with `event_digest` =
     /// canonical hash of the envelope without `proof`.
     fn signed_call_signal_envelope(
-        signer: &crate::event_signer::YougenEventSigner,
+        signer: &crate::event_signer::InksonEventSigner,
         actor_id: &str,
         device_id: &str,
     ) -> Value {

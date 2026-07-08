@@ -301,7 +301,7 @@ impl CokretApi {
         }
         let event =
             crate::operation::ck_ops::realm_update_patch(realm_id, actor_id, realm_id, patch)?
-                .build_sdk_event("yougen")?;
+                .build_sdk_event("inkson")?;
         self.submit_built_event(&event).await
     }
 
@@ -342,7 +342,7 @@ impl CokretApi {
     ) -> anyhow::Result<SubmitEventResult> {
         let event =
             crate::operation::ck_ops::space_update_patch(realm_id, actor_id, space_id, patch)?
-                .build_sdk_event("yougen")?;
+                .build_sdk_event("inkson")?;
         self.submit_built_event(&event).await
     }
 
@@ -473,7 +473,7 @@ impl CokretApi {
         invite_id: &str,
     ) -> anyhow::Result<SubmitEventResult> {
         let mut event = crate::operation::ck_ops::invite_accept(realm_id, actor_id, invite_id)?
-            .build_sdk_event("yougen")?;
+            .build_sdk_event("inkson")?;
         let resolved = self.resolve_realm(realm_id).await?;
         let candidate =
             select_join_candidate(&resolved, cokret_sdk::models::RealmJoinMethod::InviteAccept)?;
@@ -526,7 +526,7 @@ impl CokretApi {
         reason: Option<&str>,
     ) -> anyhow::Result<SubmitEventResult> {
         let event = crate::operation::ck_ops::invite_cancel(realm_id, actor_id, invite_id, reason)?
-            .build_sdk_event("yougen")?;
+            .build_sdk_event("inkson")?;
         self.submit_built_event(&event).await
     }
 
@@ -586,7 +586,7 @@ impl CokretApi {
     // via `ck.self.events.command.submit` (`POST /_cokret/self/events`) —
     // mirroring `transition_member_state` / `ban_member`. P1 (capability)
     // and P2 (moderation) projected the matching reducers in soland and the
-    // sodmin-side admin write paths were retired; these are the yougen-side
+    // sodmin-side admin write paths were retired; these are the inkson-side
     // submitters that drive them.
 
     /// Grant Realm admin authority to `subject` by emitting a
@@ -611,7 +611,7 @@ impl CokretApi {
             None,
             Value::Null,
         )
-        .build_sdk_event("yougen")?;
+        .build_sdk_event("inkson")?;
         self.submit_built_event(&event).await
     }
 
@@ -632,7 +632,7 @@ impl CokretApi {
             "ck.realm.admin",
             reason,
         )
-        .build_sdk_event("yougen")?;
+        .build_sdk_event("inkson")?;
         self.submit_built_event(&event).await
     }
 
@@ -655,7 +655,7 @@ impl CokretApi {
             verdict,
             reason_code,
         )
-        .build_sdk_event("yougen")?;
+        .build_sdk_event("inkson")?;
         self.submit_built_event(&event).await
     }
 
@@ -675,7 +675,7 @@ impl CokretApi {
             decision_ref,
             reason_code,
         )
-        .build_sdk_event("yougen")?;
+        .build_sdk_event("inkson")?;
         self.submit_built_event(&event).await
     }
 
@@ -690,7 +690,7 @@ impl CokretApi {
         let event = crate::operation::ck_ops::moderation_appeal_review(
             realm_id, actor_id, appeal_id, notes_ref,
         )
-        .build_sdk_event("yougen")?;
+        .build_sdk_event("inkson")?;
         self.submit_built_event(&event).await
     }
 
@@ -717,7 +717,7 @@ impl CokretApi {
             reason_text_ref,
             modify_decision_ref,
         )
-        .build_sdk_event("yougen")?;
+        .build_sdk_event("inkson")?;
         self.submit_built_event(&event).await
     }
 
@@ -746,14 +746,14 @@ impl CokretApi {
             reason_text_ref,
             None,
         )
-        .build_sdk_event("yougen")?;
+        .build_sdk_event("inkson")?;
         let lift_event = crate::operation::ck_ops::moderation_decision_lift(
             realm_id,
             actor_id,
             decision_ref,
             lift_reason_code,
         )
-        .build_sdk_event("yougen")?;
+        .build_sdk_event("inkson")?;
         self.sign_and_submit_moderation_batch(realm_id, vec![appeal_event, lift_event])
             .await
     }
@@ -787,7 +787,7 @@ impl CokretApi {
             new_verdict,
             new_reason_code,
         )
-        .build_sdk_event("yougen")?;
+        .build_sdk_event("inkson")?;
         // The reducer matches `modify_decision_ref` against the new decision's
         // EVENT id, so pin the SDK Event id to the same value we report.
         new_decision.event_id = cokret_sdk::EventId::new(new_decision_id.clone())
@@ -800,7 +800,7 @@ impl CokretApi {
             appeal_reason_text_ref,
             Some(&new_decision_id),
         )
-        .build_sdk_event("yougen")?;
+        .build_sdk_event("inkson")?;
         let result = self
             .sign_and_submit_moderation_batch(realm_id, vec![appeal_event, new_decision])
             .await?;
@@ -857,7 +857,7 @@ impl CokretApi {
             appeal_id,
             close_reason,
         )
-        .build_sdk_event("yougen")?;
+        .build_sdk_event("inkson")?;
         self.submit_built_event(&event).await
     }
 

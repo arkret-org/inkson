@@ -323,7 +323,7 @@ impl LocalStateStore {
     pub fn clear_device_scoped(&mut self) {
         #[cfg(not(test))]
         {
-            let secure_store = crate::secure_key_store::default_secure_key_store("yougen");
+            let secure_store = crate::secure_key_store::default_secure_key_store("inkson");
             let _ = secure_store.delete_secret(
                 &crate::secure_key_store::account_scoped_device_key(Self::SECURE_DPOP_DEVICE_KEY),
             );
@@ -343,7 +343,7 @@ impl LocalStateStore {
     pub fn set_dpop_device_key(&mut self, record: Option<DpopDeviceKeyRecord>) {
         #[cfg(not(test))]
         if record.is_none() {
-            let secure_store = crate::secure_key_store::default_secure_key_store("yougen");
+            let secure_store = crate::secure_key_store::default_secure_key_store("inkson");
             if let Err(error) = secure_store.delete_secret(
                 &crate::secure_key_store::account_scoped_device_key(Self::SECURE_DPOP_DEVICE_KEY),
             ) {

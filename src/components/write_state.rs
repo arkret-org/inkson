@@ -1,6 +1,6 @@
 //! Write state badge — unified offline / optimistic / accepted / conflict states.
 //!
-//! The yougen client surfaces the same write lifecycle in Board, Card, and
+//! The inkson client surfaces the same write lifecycle in Board, Card, and
 //! Room views. `views/kanban.rs` originally defined its own `CardState`; this
 //! module pulls the same semantics into a shared component for chat / forum /
 //! Board reuse, preventing drift across the three call sites.

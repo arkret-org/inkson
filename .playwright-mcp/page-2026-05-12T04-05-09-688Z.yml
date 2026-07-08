@@ -227,7 +227,7 @@
               - generic [ref=e353]: signs Events; server cannot forge
             - generic [ref=e354]:
               - strong [ref=e355]: Device
-              - text: dev_yougen
+              - text: dev_inkson
               - generic [ref=e356]: local client identity
           - generic [ref=e357]:
             - generic [ref=e358]: HTTP/JSON
@@ -258,7 +258,7 @@
           - generic [ref=e379]: Account DID
           - textbox [ref=e380]: did:web:alice.example
           - generic [ref=e381]: Device ID
-          - textbox [ref=e382]: dev_yougen
+          - textbox [ref=e382]: dev_inkson
         - generic [ref=e383]:
           - generic [ref=e384]:
             - generic [ref=e385]: Session
@@ -332,7 +332,7 @@
           - text: did:web:alice.example
         - generic:
           - strong: Device ID
-          - text: dev_yougen
+          - text: dev_inkson
         - generic:
           - strong: Crypto
           - text: MLS ready; plaintext fallback available

@@ -14,7 +14,7 @@ use crate::recovery_crypto::VaultKek;
 ///
 /// Both soland's validator
 /// (`soland/src/routing/identity/key_backup.rs::KEY_BACKUP_CONTENT_TYPES`)
-/// and the yougen client validator
+/// and the inkson client validator
 /// (`key_backup::item_type_allowed_for_class`) allowlist this dedicated
 /// content type under the `secret_storage` class, so it is the primary
 /// discriminator for the recovery import path. `secret_id` is still carried
@@ -22,7 +22,7 @@ use crate::recovery_crypto::VaultKek;
 pub const MLS_ACCOUNT_SECRET_ITEM_TYPE: &str = "mls_account_secret";
 /// `secret_id` carried by the account MLS snapshot secret backup. This is the
 /// stable discriminator the recovery import path matches against.
-pub const MLS_ACCOUNT_SECRET_SECRET_ID: &str = "yougen_mls_account_secret";
+pub const MLS_ACCOUNT_SECRET_SECRET_ID: &str = "inkson_mls_account_secret";
 
 /// X5.3 — `item_type` carried by the encrypted local-plaintext sidecar backup.
 ///
@@ -34,11 +34,11 @@ pub const MLS_ACCOUNT_SECRET_SECRET_ID: &str = "yougen_mls_account_secret";
 /// browsers. The sidecar JSON is encrypted under a KEK derived from the ACCOUNT
 /// SECRET (not the passphrase directly) so the restore strand — which imports the
 /// account secret first — can decrypt it with NO second passphrase prompt. Both
-/// soland's validator and the yougen client validator allowlist this content
+/// soland's validator and the inkson client validator allowlist this content
 /// type under the `secret_storage` class.
 pub const MLS_PRIVATE_PLAINTEXT_ITEM_TYPE: &str = "mls_private_plaintext";
 /// `secret_id` carried by the encrypted local-plaintext sidecar backup.
-pub const MLS_PRIVATE_PLAINTEXT_SECRET_ID: &str = "yougen_mls_private_plaintext";
+pub const MLS_PRIVATE_PLAINTEXT_SECRET_ID: &str = "inkson_mls_private_plaintext";
 
 /// Build a `secret_storage` PUT body that wraps the account MLS snapshot secret
 /// behind an already-derived recovery KEK.

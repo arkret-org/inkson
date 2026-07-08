@@ -34,7 +34,7 @@ pub(super) fn temp_state_path(name: &str) -> PathBuf {
         .duration_since(UNIX_EPOCH)
         .expect("time")
         .as_nanos();
-    std::env::temp_dir().join(format!("yougen-state-{name}-{stamp}.json"))
+    std::env::temp_dir().join(format!("inkson-state-{name}-{stamp}.json"))
 }
 
 pub(super) fn snapshot_event_id(suffix: &str) -> cokret_sdk::EventId {

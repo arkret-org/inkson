@@ -229,7 +229,7 @@ pub fn AppealEntrypoint(
                                     return;
                                 }
                             };
-                            let envelope = match op.build_sdk_event("yougen") {
+                            let envelope = match op.build_sdk_event("inkson") {
                                 Ok(envelope) => envelope,
                                 Err(err) => {
                                     status.set(format!("Appeal build failed: {err}"));

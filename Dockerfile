@@ -1,7 +1,7 @@
 # syntax=docker/dockerfile:1.7
-# Build context must contain `yougen/`, sibling `cokret-rust-sdk/`, and sibling `chime/`.
+# Build context must contain `inkson/`, sibling `cokret-rust-sdk/`, and sibling `chime/`.
 # From the parent directory run:
-#   docker build -f yougen/Dockerfile -t yougen-web .
+#   docker build -f inkson/Dockerfile -t inkson-web .
 
 FROM rust:1-bookworm AS build
 
@@ -15,18 +15,18 @@ WORKDIR /workspace
 
 COPY cokret-rust-sdk ./cokret-rust-sdk
 COPY chime ./chime
-COPY yougen ./yougen
+COPY inkson ./inkson
 
-WORKDIR /workspace/yougen
+WORKDIR /workspace/inkson
 
 RUN --mount=type=cache,target=/usr/local/cargo/registry \
     --mount=type=cache,target=/usr/local/cargo/git \
-    --mount=type=cache,target=/workspace/yougen/target \
+    --mount=type=cache,target=/workspace/inkson/target \
     dx build --platform web --release
 
 FROM nginx:1.29-alpine
 
-COPY --from=build /workspace/yougen/target/dx/yougen/release/web/public /usr/share/nginx/html
+COPY --from=build /workspace/inkson/target/dx/inkson/release/web/public /usr/share/nginx/html
 
 EXPOSE 80
 

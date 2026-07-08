@@ -78,11 +78,11 @@ type MockAccountDevice = {
 };
 
 type MockCircleState = "active" | "archived" | "tombstoned";
-type YougenWireCommand = "canonical-json" | "sha256-canonical-json";
-type YougenWireCanonicalJson = { canonical: string };
-type YougenWireDigest = { digest: string };
+type InksonWireCommand = "canonical-json" | "sha256-canonical-json";
+type InksonWireCanonicalJson = { canonical: string };
+type InksonWireDigest = { digest: string };
 
-const yougenRepoRoot = resolve(
+const inksonRepoRoot = resolve(
   dirname(fileURLToPath(import.meta.url)),
   "..",
   "..",
@@ -90,25 +90,25 @@ const yougenRepoRoot = resolve(
 
 function canonicalJson(value: unknown): string {
   assertJsonTransportable(value, "$");
-  return yougenWire<YougenWireCanonicalJson>("canonical-json", { value })
+  return inksonWire<InksonWireCanonicalJson>("canonical-json", { value })
     .canonical;
 }
 
 function canonicalSha256(value: unknown) {
   assertJsonTransportable(value, "$");
-  return yougenWire<YougenWireDigest>("sha256-canonical-json", { value })
+  return inksonWire<InksonWireDigest>("sha256-canonical-json", { value })
     .digest;
 }
 
-function yougenWire<T>(command: YougenWireCommand, input: unknown): T {
-  const binary = process.env.YOUGEN_WIRE_BIN;
+function inksonWire<T>(command: InksonWireCommand, input: unknown): T {
+  const binary = process.env.INKSON_WIRE_BIN;
   const result = spawnSync(
     binary ?? "cargo",
     binary
       ? [command]
-      : ["run", "--quiet", "--bin", "yougen-wire", "--", command],
+      : ["run", "--quiet", "--bin", "inkson-wire", "--", command],
     {
-      cwd: yougenRepoRoot,
+      cwd: inksonRepoRoot,
       encoding: "utf8",
       input: JSON.stringify(input),
       maxBuffer: 10 * 1024 * 1024,
@@ -119,7 +119,7 @@ function yougenWire<T>(command: YougenWireCommand, input: unknown): T {
   }
   if (result.status !== 0) {
     throw new Error(
-      `yougen-wire ${command} failed with exit ${result.status}:\n${result.stderr}`,
+      `inkson-wire ${command} failed with exit ${result.status}:\n${result.stderr}`,
     );
   }
   return JSON.parse(result.stdout.trim()) as T;
@@ -778,7 +778,7 @@ export async function mockCokretApi(
       route.request().method() === "GET"
     ) {
       // Spec ck.self.events.query.describe -> canonical ServiceDescribe shape
-      // (17 required fields; yougen decodes the SDK ServerDescription).
+      // (17 required fields; inkson decodes the SDK ServerDescription).
       return json(route, {
         service_did: "did:web:server.local",
         trust_domain: "ck:trust_domain:server.local",
@@ -906,7 +906,7 @@ export async function mockCokretApi(
           event.payload?.object?.summary ??
           event.payload?.summary ??
           event.payload?.fields?.summary ??
-          "Created from yougen workspace setup";
+          "Created from inkson workspace setup";
         const encryptionProfile =
           event.payload?.object?.encryption_profile ??
           event.payload?.encryption_profile ??
@@ -1005,7 +1005,7 @@ export async function mockCokretApi(
       }
       // soland (head 37ce729) returns the canonical EventsSubmitOutcome wire
       // shape: {status, accepted[], cursor} — no top-level event_id/sync_token.
-      // yougen folds accepted[0] -> event_id and keeps cursor as-is.
+      // inkson folds accepted[0] -> event_id and keeps cursor as-is.
       return json(route, {
         status: "accepted",
         accepted: body.event_id ? [body.event_id] : [],
@@ -1210,7 +1210,7 @@ export async function mockCokretApi(
             schema: "ck.schema.actor_profile.v1",
             principal_id: body.principal_id,
             actor_kind: "user",
-            display_name: body.display_name ?? "yougen",
+            display_name: body.display_name ?? "inkson",
             profile_fields: {},
             accountable_principal_ids: [],
             created_at: "2026-04-28T12:00:00Z",
@@ -1227,7 +1227,7 @@ export async function mockCokretApi(
       const body = await route.request().postDataJSON();
       const patch = body.patch ?? {};
       const displayName =
-        typeof patch.display_name === "string" ? patch.display_name : "yougen";
+        typeof patch.display_name === "string" ? patch.display_name : "inkson";
       const avatarBlobRef =
         typeof patch.avatar_blob_ref === "string"
           ? patch.avatar_blob_ref
@@ -1899,7 +1899,7 @@ export async function mockCokretApi(
           schema: "ck.schema.actor_profile.v1",
           principal_id: accountPrincipalId,
           actor_kind: "user",
-          display_name: "yougen",
+          display_name: "inkson",
           created_at: "2026-04-28T12:00:00Z",
         },
         current_device_id: currentDeviceId,
@@ -2090,7 +2090,7 @@ export async function mockCokretApi(
     ) {
       return json(route, {
         ok: true,
-        delivered: { "did:web:alice.example": ["dev_yougen"] },
+        delivered: { "did:web:alice.example": ["dev_inkson"] },
         unknown_devices: {},
       });
     }
@@ -2207,7 +2207,7 @@ export async function mockCokretApi(
       return route.fulfill({
         status: 200,
         contentType: "application/octet-stream",
-        body: "yougen encrypted bytes",
+        body: "inkson encrypted bytes",
       });
     }
 

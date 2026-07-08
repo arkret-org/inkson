@@ -24,7 +24,7 @@ pub(crate) fn push_preferences() -> PushPreferences {
 
 /// F-BUILD-FIX-1: chime's `build_register_device_request` moved the push
 /// gateway URL off `PushPreferences` and onto a per-call `GatewayBinding`.
-/// Yougen only registers against a single configured gateway (the floria
+/// Inkson only registers against a single configured gateway (the floria
 /// `/_cokret/edge/push/notify` endpoint by default), so this helper resolves the
 /// runtime gateway URL into a freshly-constructed binding for every
 /// register / state-rebuild call site.
@@ -66,7 +66,7 @@ pub trait PushTokenSource: Send + Sync {
     }
 }
 
-/// Default token source; emits the well-known `yougen-dev-placeholder-token`
+/// Default token source; emits the well-known `inkson-dev-placeholder-token`
 /// markers per platform. Replaced via [`set_push_token_source`] once a real
 /// APNs / FCM / Web Push integration is wired in.
 #[derive(Clone, Debug, Default)]
@@ -75,8 +75,8 @@ pub struct DevPlaceholderTokenSource;
 impl PushTokenSource for DevPlaceholderTokenSource {
     fn current_token(&self, platform: &str) -> Option<String> {
         Some(match platform {
-            "web" => "webpush:yougen-dev-placeholder-token".to_owned(),
-            _ => "desktop:yougen-dev-placeholder-token".to_owned(),
+            "web" => "webpush:inkson-dev-placeholder-token".to_owned(),
+            _ => "desktop:inkson-dev-placeholder-token".to_owned(),
         })
     }
 }
@@ -107,12 +107,12 @@ pub(crate) fn acquire_platform_push_key() -> String {
     }
     push_token_source()
         .current_token(current_platform())
-        .unwrap_or_else(|| "desktop:yougen-dev-placeholder-token".to_owned())
+        .unwrap_or_else(|| "desktop:inkson-dev-placeholder-token".to_owned())
 }
 
 #[cfg(target_arch = "wasm32")]
 pub(crate) fn acquire_platform_push_key() -> String {
     push_token_source()
         .current_token(current_platform())
-        .unwrap_or_else(|| "webpush:yougen-dev-placeholder-token".to_owned())
+        .unwrap_or_else(|| "webpush:inkson-dev-placeholder-token".to_owned())
 }

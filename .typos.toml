@@ -12,6 +12,6 @@ extend-exclude = [
 [default.extend-words]
 Dioxus = "Dioxus"
 OpenMLS = "OpenMLS"
-yougen = "yougen"
+inkson = "inkson"
 authz = "authz"
 to_device = "to_device"

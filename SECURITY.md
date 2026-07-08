@@ -26,7 +26,7 @@ Include:
 
 Use the lowest-bandwidth channel that still lets you attach repro steps.
 
-> **Pre-release notice:** yougen has not been publicly released, so the
+> **Pre-release notice:** inkson has not been publicly released, so the
 > dedicated security email and PGP key below are **not yet provisioned**.
 > Until they are, report privately through GitHub Private Vulnerability
 > Reporting on the canonical repository, or via direct maintainer contact.
@@ -41,7 +41,7 @@ Use the lowest-bandwidth channel that still lets you attach repro steps.
 
 Reports are acknowledged within 3 business days. If you do not receive an
 acknowledgement, your message did not arrive — please retry through a
-different channel (mention "yougen security" in the subject line).
+different channel (mention "inkson security" in the subject line).
 
 What to expect:
 
@@ -87,7 +87,7 @@ current branch:
 ### Dev token guard (`tests/dev_token_guard.rs`)
 
 The integration test asserts that the dev-only placeholder push tokens
-(`yougen-dev-…`, `placeholder`) are always recognised by the production
+(`inkson-dev-…`, `placeholder`) are always recognised by the production
 guard so they can never reach a real push gateway. Event envelopes carry
 NO placeholder proof: `OperationBuilder::build()` always emits
 `proofs: Vec::new()` and the submit guard stays fail-closed in

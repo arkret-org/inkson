@@ -14,7 +14,7 @@
 //!
 //! Write side: binding a Realm to an organization and signing organization-side
 //! statements (and revocations) is the organization DID controller's authority,
-//! exercised in the admin console (sodmin). yougen does NOT mint or submit
+//! exercised in the admin console (sodmin). inkson does NOT mint or submit
 //! organization-side signatures and does NOT call coauth admin endpoints; this
 //! panel only reads and links operators to where the binding flow lives.
 
@@ -219,7 +219,7 @@ pub(crate) fn phase_from_lifecycle(
     }
 }
 
-/// One row rendered by the panel. Built from the SDK projection — yougen does
+/// One row rendered by the panel. Built from the SDK projection — inkson does
 /// not define the wire type, only this display-side view.
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) struct OrgRelationshipDto {
@@ -536,7 +536,7 @@ fn OrganizationCreatePanel(
                                 // network failure after a successful mint cannot
                                 // strand a DID with no recoverable control key.
                                 let secure_store =
-                                    crate::secure_key_store::default_secure_key_store("yougen");
+                                    crate::secure_key_store::default_secure_key_store("inkson");
                                 if let Err(err) = store_organization_control_seed(
                                     secure_store.as_ref(),
                                     &organization.did,
@@ -779,7 +779,7 @@ fn OrganizationBindPanel(
                                     .map(|org| org.did_key_id.clone())
                                     .unwrap_or_else(|| format!("{org_did}#did-key-1"));
                                 let secure_store =
-                                    crate::secure_key_store::default_secure_key_store("yougen");
+                                    crate::secure_key_store::default_secure_key_store("inkson");
                                 let control_key = match load_organization_control_key(
                                     secure_store.as_ref(),
                                     &org_did,
@@ -870,7 +870,7 @@ fn OrganizationBindPanel(
                                             return;
                                         }
                                     };
-                                let event = match builder.build_sdk_event("yougen") {
+                                let event = match builder.build_sdk_event("inkson") {
                                     Ok(event) => event,
                                     Err(err) => {
                                         status_msg.set(format!("event build failed: {err}"));

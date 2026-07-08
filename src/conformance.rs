@@ -20,7 +20,7 @@ pub const PROFILE_KANBAN_MVP: &str = "ck.profile.kanban_mvp.v1";
 pub const PROFILE_FULL_CLIENT: &str = "ck.profile.full_client.v1";
 pub const PROFILE_E2EE_CLIENT: &str = "ck.profile.e2ee_client.v1";
 pub const PROFILE_FEDERATION_MINIMAL: &str = "ck.profile.federation_minimal.v1";
-// T0.3: push_gateway is a gateway role profile (not a client role). yougen
+// T0.3: push_gateway is a gateway role profile (not a client role). inkson
 // is a client and MUST NOT declare itself as supporting the push_gateway
 // profile (no entry in client_profile_declarations()). The constant is kept
 // only so the settings panel can read whether the *server* advertises a
@@ -28,7 +28,7 @@ pub const PROFILE_FEDERATION_MINIMAL: &str = "ck.profile.federation_minimal.v1";
 pub const PROFILE_PUSH_GATEWAY: &str = "ck.profile.push_gateway.v1";
 /// MLS Governance Binding hardening profile (`encryption-and-audit.md` §10).
 ///
-/// Yougen ships the canonical event payload through
+/// Inkson ships the canonical event payload through
 /// [`cokret_sdk::MlsGovernanceBindingPayload`] / [`cokret_sdk::MlsCommitPayload`],
 /// and the `covered_seals_cell` add-effect through [`cokret_sdk::mls_move`].
 /// The commit submit path remains gated on server features advertised via
@@ -64,7 +64,7 @@ pub fn known_profiles() -> Vec<ConformanceProfile> {
 /// Conformance tier per `artifacts/profiles/conformance-profiles.json` `profile_tiers`.
 ///
 /// - `V1Core` — must be implemented to claim v1 conformance. 14 profiles total at the spec level;
-///   yougen exposes the client-side subset.
+///   inkson exposes the client-side subset.
 /// - `V1_1Extension` — opt-in extension shipping after v1 core stable. Currently `applet_service`,
 ///   `agent_runtime`, `mimi_interop`. Implementations MAY declare these without violating v1 core
 ///   conformance.
@@ -155,7 +155,7 @@ pub fn client_profile_declarations() -> Vec<ClientProfileDeclaration> {
             tier: ConformanceTier::V1Core,
         },
         // T0.3: push_gateway profile is a gateway role, not a client role.
-        // yougen is the client; it MUST NOT declare local_supported for the
+        // inkson is the client; it MUST NOT declare local_supported for the
         // push_gateway profile. The notification *projection* surface lives
         // in [`crate::push_registration`], but the client only registers
         // with the gateway and consumes its describe — it does not implement
@@ -208,7 +208,7 @@ pub fn local_supported_profile_ids() -> Vec<&'static str> {
         .collect()
 }
 
-/// Canonical event kinds that yougen claims to emit / consume.
+/// Canonical event kinds that inkson claims to emit / consume.
 ///
 /// This list is used by:
 /// - The explanatory panels in `views/audit.rs` / `views/realm_admin.rs`.
@@ -236,7 +236,7 @@ pub fn known_event_kinds() -> Vec<&'static str> {
 /// The chat / call / verification views use this to keep ephemeral signals
 /// from being rendered as durable history. The classification delegates to
 /// `cokret_sdk::events::kinds::event_wire_scope`, so wire-scope facts come
-/// from the SDK's spec-sync surface instead of a yougen-local mirror.
+/// from the SDK's spec-sync surface instead of a inkson-local mirror.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum EventKindWireScope {
     Durable,
@@ -288,12 +288,12 @@ fn sdk_wire_scope(event_kind: &str) -> Option<EventKindWireScope> {
 ///
 /// Spec `conformance/conformance-profiles.md §2` says implementations
 /// MUST reject events whose `kind` is outside the profile they declared
-/// — yougen's profile surface lives in [`known_event_kinds()`], so any
+/// — inkson's profile surface lives in [`known_event_kinds()`], so any
 /// kind absent from that list is by definition out-of-profile and a
 /// likely sign of either a buggy server, a profile-drift attack, or a
-/// spec bump that yougen hasn't picked up yet.
+/// spec bump that inkson hasn't picked up yet.
 ///
-/// Returns `true` for every kind yougen typed (durable / actor-private
+/// Returns `true` for every kind inkson typed (durable / actor-private
 /// / ephemeral); returns `false` for unknown kinds. Reducer / sync
 /// entry points should call [`require_known_event_kind`] to convert
 /// the rejection into a [`ValidationError`].
@@ -316,7 +316,7 @@ pub fn require_known_event_kind(event_kind: &str) -> Result<(), ValidationError>
 }
 
 /// Returns the canonical `wire_scope` for `event_kind`, or `None` when the
-/// kind is unknown to yougen. Unknown kinds default to "treat as durable" at
+/// kind is unknown to inkson. Unknown kinds default to "treat as durable" at
 /// the call site so we never leak signaling into a state path by accident.
 pub fn event_kind_wire_scope(event_kind: &str) -> Option<EventKindWireScope> {
     if known_event_kind_slice().contains(&event_kind) {
@@ -325,7 +325,7 @@ pub fn event_kind_wire_scope(event_kind: &str) -> Option<EventKindWireScope> {
     None
 }
 
-/// All event kinds yougen currently classifies as ephemeral signaling. The
+/// All event kinds inkson currently classifies as ephemeral signaling. The
 /// chat/call views use this to render their "ephemeral signals" banners
 /// programmatically rather than re-typing kind literals.
 pub fn ephemeral_event_kinds() -> &'static [&'static str] {
@@ -339,7 +339,7 @@ pub fn ephemeral_event_kinds() -> &'static [&'static str] {
     EPHEMERAL_EVENT_KINDS.as_slice()
 }
 
-/// All event kinds yougen currently classifies as actor-private.
+/// All event kinds inkson currently classifies as actor-private.
 pub fn actor_private_event_kinds() -> &'static [&'static str] {
     static ACTOR_PRIVATE_EVENT_KINDS: LazyLock<Vec<&'static str>> = LazyLock::new(|| {
         known_event_kind_slice()
@@ -485,7 +485,7 @@ fn validate_event_schema(value: &Value) -> Result<(), ValidationError> {
     // F-PROFILE-1: enforce the conformance profile by rejecting any
     // `kind` outside `known_event_kinds()`.
     // The schema-level shape check above already guarantees `kind` is
-    // present; here we ensure it's also a kind yougen is qualified
+    // present; here we ensure it's also a kind inkson is qualified
     // to apply.
     if let Some(kind) = obj.get("kind").and_then(|v| v.as_str()) {
         require_known_event_kind(kind)?;
@@ -528,10 +528,10 @@ pub enum ValidationError {
     #[error("invalid value for {field}, expected: {expected}")]
     InvalidValue { field: String, expected: String },
     /// F-PROFILE-1: the event's `kind` is not in the conformance profile
-    /// yougen advertises (see [`known_event_kinds`]). Surfaces as a
+    /// inkson advertises (see [`known_event_kinds`]). Surfaces as a
     /// rejection at event ingest so a profile-drift attack / spec bump
     /// can't smuggle an unknown reducer kind into local state.
-    #[error("event kind `{0}` is outside yougen's conformance profile")]
+    #[error("event kind `{0}` is outside inkson's conformance profile")]
     UnknownEventKind(String),
 }
 
@@ -566,7 +566,7 @@ mod tests {
                 .iter()
                 .any(|p| p.profile_id == "ck.profile.chat_mvp.v1" && p.supported)
         );
-        // T0.3: yougen is a client, push_gateway is a gateway role — it
+        // T0.3: inkson is a client, push_gateway is a gateway role — it
         // MUST NOT appear in the client's supported profile set.
         assert!(
             !profiles

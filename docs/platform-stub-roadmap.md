@@ -34,11 +34,11 @@ backend today and the body will fill in later.
   field; metadata in attributes.
 - **Shell integration**: the host shell (Tauri / Dioxus desktop) must
   declare the appropriate Keychain entitlement; without it, every
-  read prompts the user. yougen does not currently bundle a macOS
+  read prompts the user. inkson does not currently bundle a macOS
   shell, so this stub stays a stub until the desktop shell crate is
   on the roadmap.
 - **SDK dependency**: the upstream `cokret-rust-sdk` does not yet
-  publish a `KeyStore` trait — yougen owns the local one. Once the
+  publish a `KeyStore` trait — inkson owns the local one. Once the
   SDK trait lands, this implementation will be moved alongside it and
   this crate will re-export.
 - **Target**: v1.1+ (after macOS desktop shell exists).
@@ -50,7 +50,7 @@ backend today and the body will fill in later.
   dependencies, identical wire protocol.
 - **Items**: stored in the user's default collection (or one named by
   `LinuxSecretServiceKeyStore::collection`). Each item is labelled
-  `<label_prefix>:<device_did>` so multiple yougen-like apps coexist.
+  `<label_prefix>:<device_did>` so multiple inkson-like apps coexist.
 - **DBus session**: the backend requires an active DBus session bus,
   which is present in any logged-in GNOME / KDE session but absent
   in headless / SSH environments. The implementation must fail fast
@@ -77,7 +77,7 @@ backend today and the body will fill in later.
   implementation will take a `CredentialPersistence` enum parameter.
 - **SDK dependency**: same as macOS / Linux.
 - **Target**: v1.1+ (lowest priority — degooglified Windows users
-  are a small slice of yougen's audience for now, but the work is
+  are a small slice of inkson's audience for now, but the work is
   small once the SDK trait exists).
 
 ## SDK trait dependency
@@ -86,7 +86,7 @@ All three stubs are blocked on the same upstream change:
 `cokret-rust-sdk` currently only exposes
 `PlatformKeyStoreDescriptor` / `PlatformKeyStoreKind` — descriptor
 types with no trait. Once the SDK ships a real `KeyStore` trait,
-yougen's local trait becomes a thin re-export and these three structs
+inkson's local trait becomes a thin re-export and these three structs
 get real bodies in a single sweep.
 
 Until then, the stubs stay tiny on purpose: every line of stub

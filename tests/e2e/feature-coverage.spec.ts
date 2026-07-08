@@ -44,11 +44,11 @@ test.describe("feature coverage placeholders", () => {
   test.beforeEach(async ({ page }) => {
     await mockCokretApi(page);
     await page.addInitScript(() => {
-      if (localStorage.getItem("yougen.config.v1")) {
+      if (localStorage.getItem("inkson.config.v1")) {
         return;
       }
       localStorage.setItem(
-        "yougen.config.v1",
+        "inkson.config.v1",
         JSON.stringify({
           server_url: "https://local.host",
           account_did: "did:web:alice.example",
@@ -70,7 +70,7 @@ test.describe("feature coverage placeholders", () => {
   // spec: overview/current-model.md §4, models/views.md §6
   test("board: drag strand across lists writes ck.strand.move", async ({ page }) => {
     // The drag-drop pipeline is exercised end-to-end by
-    // yougen.strands.spec.ts::"kanban card drag queues a strand move".
+    // inkson.strands.spec.ts::"kanban card drag queues a strand move".
     // This placeholder pins the structural contract the drop relies
     // on: the move-queue + write-records data-testids MUST
     // exist on /kanban so soland can dispatch ck.strand.move /
@@ -187,11 +187,11 @@ test.describe("feature coverage placeholders", () => {
     // (d) the local-state writeback that keeps the panel's status line
     // hydrated across reloads.
     await page.addInitScript(() => {
-      if (localStorage.getItem("yougen.config.v1")) {
+      if (localStorage.getItem("inkson.config.v1")) {
         return;
       }
       localStorage.setItem(
-        "yougen.config.v1",
+        "inkson.config.v1",
         JSON.stringify({
           server_url: "https://local.host",
           account_did: "did:web:alice.example",
@@ -330,8 +330,8 @@ test.describe("feature coverage placeholders", () => {
     expect(raw).not.toContain(PASSPHRASE);
     // Equally, the placeholder demo salt/nonce from the deprecated
     // builder must not leak through if a regression swaps back to it.
-    expect(raw).not.toContain("yougen_demo_salt");
-    expect(raw).not.toContain("yougen_demo_nonce");
+    expect(raw).not.toContain("inkson_demo_salt");
+    expect(raw).not.toContain("inkson_demo_nonce");
     expect(raw).not.toContain("BASE64URL_OPAQUE_BLOB_PLACEHOLDER");
 
     await expect(recoveryPanel.getByTestId("vault-status")).toContainText(/Uploaded backup|stored/i, {
@@ -510,7 +510,7 @@ test.describe("feature coverage placeholders", () => {
   // UI surface: call
   // spec: crypto-media/webrtc-signaling.md
   test("call: SFU mode never enters plaintext path; recording requires explicit grant", async ({ page }) => {
-    // yougen ships the call SIGNALING surface
+    // inkson ships the call SIGNALING surface
     // (`ck.call.signal` / `ck.call.state` / `ck.call.recording.start`)
     // but the WebRTC media stack is renderer-provided and hidden from
     // the default local 1.0 UI until `experimental-webrtc` is enabled.
@@ -527,7 +527,7 @@ test.describe("feature coverage placeholders", () => {
   // UI surface: inbox
   // spec: discovery/push-notifications.md, crypto-media/devices-and-auth.md §5
   test("push gateway only ships background_sync_needed payload", async ({ page }) => {
-    // the push-register payload yougen sends to
+    // the push-register payload inkson sends to
     // soland (`POST /_cokret/edge/push/register-device`) MUST NOT carry any
     // body / title / sender / collapse_key fields — only the minimal
     // device registration metadata. The downstream gateway then ships

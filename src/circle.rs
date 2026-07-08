@@ -3,7 +3,7 @@
 //! A `Circle` is an intra-Realm cryptographic sub-boundary that hosts its
 //! own MLS group and a strict-subset of the parent Realm's membership. The
 //! spec is in `cokret-rust-sdk/crates/core/src/model/circle.rs`; this
-//! module is the *client* surface that the rest of yougen consumes:
+//! module is the *client* surface that the rest of inkson consumes:
 //!
 //! - [`CircleScope`] is the active scope a composer / new-Strand form is writing into. `Realm` is
 //!   the default; `Circle { … }` flags a Circle-scoped write that must end up with

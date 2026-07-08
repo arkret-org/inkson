@@ -90,7 +90,7 @@ const MIN_BACKOFF_SECS: u64 = 1;
 /// this, an `Ok -> loop -> Ok -> loop` cycle spins at network RTT and
 /// floods the browser network panel with identical snapshots.
 ///
-/// Yougen currently folds each NDJSON response with `Response::bytes()`,
+/// Inkson currently folds each NDJSON response with `Response::bytes()`,
 /// so it cannot yet keep the spec's long-lived account stream open
 /// (YOU-01-010 residual: wasm needs a web-sys ReadableStream frame reader
 /// before this can become a resident stream). Every frame of each response IS consumed and the
@@ -515,7 +515,7 @@ async fn run_circle_scope_rotate_pass(
     if realm_ids.is_empty() {
         return;
     }
-    let secure_store = crate::secure_key_store::default_secure_key_store("yougen");
+    let secure_store = crate::secure_key_store::default_secure_key_store("inkson");
     for realm_id in realm_ids {
         if generation() != start_generation {
             return;
@@ -708,7 +708,7 @@ async fn run_idle_self_update_pass(
     }
     let now = crate::clock::now_utc();
     let realm_ids: Vec<String> = ctx.state_store.read().mls_snapshots().into_keys().collect();
-    let secure_store = crate::secure_key_store::default_secure_key_store("yougen");
+    let secure_store = crate::secure_key_store::default_secure_key_store("inkson");
     for realm_id in realm_ids {
         // Re-check cancellation between Realms: a logout / profile rotation
         // mid-pass must not keep minting commits under the dead generation.
@@ -813,7 +813,7 @@ async fn run_iteration(
         return IterationOutcome::NotReady;
     }
     #[cfg(target_arch = "wasm32")]
-    if let Err(error) = crate::secure_key_store::ensure_wasm_secure_key_store_ready("yougen").await
+    if let Err(error) = crate::secure_key_store::ensure_wasm_secure_key_store_ready("inkson").await
     {
         return IterationOutcome::Transient(format!(
             "sync_engine: secure key store is not ready for authenticated sync: {error}"
@@ -2238,7 +2238,7 @@ mod tests {
 
     fn temp_store(tag: &str) -> LocalStateStore {
         let path = std::env::temp_dir().join(format!(
-            "yougen-engine-{tag}-{}.json",
+            "inkson-engine-{tag}-{}.json",
             std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .unwrap()
@@ -2316,9 +2316,9 @@ mod tests {
 
     #[cfg(not(target_arch = "wasm32"))]
     #[test]
-    fn account_subscription_engine_accepts_yougen_local_state_adapter() {
+    fn account_subscription_engine_accepts_inkson_local_state_adapter() {
         let store = temp_store("subscription-engine-adapter");
-        let adapter = crate::client_core::YougenLocalStateStoreAdapter::new(store);
+        let adapter = crate::client_core::InksonLocalStateStoreAdapter::new(store);
         let engine = cokret_client::SubscriptionEngine::new(
             cokret_client::NativeExecutor,
             adapter.clone(),
@@ -2498,7 +2498,7 @@ mod tests {
     #[test]
     fn sync_state_events_ingest_kanban_strand_updates_as_synced_raw_operations() {
         let temp = std::env::temp_dir().join(format!(
-            "yougen-sync-state-events-{}.json",
+            "inkson-sync-state-events-{}.json",
             crate::operation::uuid_v7()
         ));
         let mut store = LocalStateStore::with_path(temp);

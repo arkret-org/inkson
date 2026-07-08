@@ -1,6 +1,6 @@
 //! Media blob upload / download helpers (`crypto-media/media-and-blob.md`).
 //!
-//! Yougen ships a Media classifier already (`media.rs`); this module adds the
+//! Inkson ships a Media classifier already (`media.rs`); this module adds the
 //! protocol-level send paths so blob references survive in event payloads
 //! with the spec's content-hash typed-id (`ck:blob:sha256:<hex>`).
 //!
@@ -14,7 +14,7 @@
 //! All client-side attachment encryption is delegated to
 //! [`cokret_sdk::blob_aead`], the canonical implementation of
 //! `ck.blob.stream_aead.v1` (chunked streaming AEAD) and
-//! `ck.blob.whole_file_aead.v1` (whole-file AEAD). Yougen no longer ships a
+//! `ck.blob.whole_file_aead.v1` (whole-file AEAD). Inkson no longer ships a
 //! private XChaCha envelope or its own nonce derivation; the
 //! `mls_exported_secret` (32 bytes from the MLS exporter) is passed straight
 //! through as the SDK `content_key`. The envelope carried on the wire is the

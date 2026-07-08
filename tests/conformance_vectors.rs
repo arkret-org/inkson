@@ -1,7 +1,7 @@
 //! Conformance fixture replay: encoding & crypto-signature.
 //!
 //! Loads `spec/v1/artifacts/fixtures/encoding-fixture.json` and
-//! `crypto-signature-fixture.json` and asserts that yougen's canonical encoder
+//! `crypto-signature-fixture.json` and asserts that inkson's canonical encoder
 //! and SHA-256 digest match the canonical bytes / digests embedded in the
 //! fixture. This is the regression gate referenced by `_todos.md` T07 / C12.
 //!
@@ -10,16 +10,16 @@
 
 use std::path::PathBuf;
 
-use serde_json::Value;
-use yougen::canonical::{
+use inkson::canonical::{
     canonical_json_bytes, canonical_json_string, canonical_sha256, hex_encode,
 };
+use serde_json::Value;
 
 fn fixture_path(name: &str) -> PathBuf {
     let manifest = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     manifest
         .parent()
-        .expect("yougen lives next to cokret-spec")
+        .expect("inkson lives next to cokret-spec")
         .join("cokret-spec")
         .join("spec")
         .join("v1")
@@ -100,7 +100,7 @@ fn encoding_fixture_canonical_bytes_match() {
         }
         if let Some(expected_digest) = vector["expected_digest"].as_str() {
             let actual_digest = canonical_sha256(input).unwrap();
-            // When the fixture is consistent, yougen's digest must match.
+            // When the fixture is consistent, inkson's digest must match.
             // When the fixture is inconsistent, we still record the actual
             // digest but accept that the upstream fixture needs a refresh.
             if bytes_consistent_with_digest {
@@ -110,7 +110,7 @@ fn encoding_fixture_canonical_bytes_match() {
                 );
             } else {
                 eprintln!(
-                    "{vector_id}: actual yougen digest = {actual_digest}, fixture digest = {expected_digest}"
+                    "{vector_id}: actual inkson digest = {actual_digest}, fixture digest = {expected_digest}"
                 );
             }
         }
@@ -129,7 +129,7 @@ fn encoding_fixture_canonical_bytes_match() {
 fn encoding_fixture_rejects_non_canonical_numbers() {
     // Mirrors the ck.vector.encoding.reject_noncanonical_numbers.v1 vector.
     // The fixture lists JSON literals; we only test the ones that arrive at
-    // yougen's encoder as a serde_json::Value::Number (NaN / Infinity / -0 /
+    // inkson's encoder as a serde_json::Value::Number (NaN / Infinity / -0 /
     // 1.0). String entries like "NaN" are JSON strings and stay valid.
     use serde_json::json;
     assert!(canonical_json_bytes(&json!({"n": 1.5})).is_err());
@@ -177,7 +177,7 @@ fn crypto_signature_fixture_canonical_binding_matches() {
         );
 
         // Protected header canonical encoding is independent of the payload but
-        // also part of the JWS signing input; verify yougen reproduces it.
+        // also part of the JWS signing input; verify inkson reproduces it.
         if let Some(expected_header) = vector["protected_header_canonical"].as_str() {
             let actual_header =
                 canonical_json_string(&vector["protected_header"]).expect("encode header");

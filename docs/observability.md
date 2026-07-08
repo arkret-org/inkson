@@ -1,12 +1,12 @@
-# yougen — Observability
+# inkson — Observability
 
-> Crash + structured-trace pipeline for yougen. Everything below is
+> Crash + structured-trace pipeline for inkson. Everything below is
 > **opt-in**: nothing leaves the device until the user flips the
 > telemetry toggle and the build is configured.
 
 ## 1. Structured tracing (`tracing-subscriber`)
 
-yougen uses the `tracing` crate workspace-wide. The default subscriber
+inkson uses the `tracing` crate workspace-wide. The default subscriber
 is installed in `main.rs` for native targets and via the wasm
 console-bridge subscriber on the web build.
 
@@ -14,7 +14,7 @@ To raise verbosity in a dev session:
 
 | Target | How |
 | --- | --- |
-| Native | `RUST_LOG=yougen=debug,cokret=info cargo run` |
+| Native | `RUST_LOG=inkson=debug,cokret=info cargo run` |
 | Web | DevTools → Console; pass `?log=debug` if your dev server honours it. |
 
 Log line fields you can rely on:
@@ -28,7 +28,7 @@ Log line fields you can rely on:
 - `note` — optional free-form context.
 
 The line format mirrors sodmin's `format_admin_audit_line` so operator
-tools can ingest yougen output without schema work.
+tools can ingest inkson output without schema work.
 
 ## 2. Sentry opt-in
 
@@ -57,7 +57,7 @@ collects on demand when the user submits a bug.
 ```powershell
 $env:SENTRY_DSN = "https://<key>@<org>.ingest.sentry.io/<project>"
 cargo build --release
-./target/release/yougen
+./target/release/inkson
 ```
 
 Then in the running app: **Settings → Privacy → Crash telemetry → On**.
@@ -70,7 +70,7 @@ the toggle is flipped again.
 
 ## 3. `request_id` propagation (P5)
 
-Every yougen → soland HTTP call sets the `x-cokret-request-id` header.
+Every inkson → soland HTTP call sets the `x-cokret-request-id` header.
 soland echoes the value in:
 
 - Success response bodies (when applicable).
@@ -82,7 +82,7 @@ The P5 work threads the same value end-to-end on the client:
 1. `crate::api` stores the inbound `x-cokret-request-id` on every
    response.
 2. `tracing` log lines emitted during the call carry the value via the
-   `request_id` field so a `grep` across yougen + soland logs lines up.
+   `request_id` field so a `grep` across inkson + soland logs lines up.
 3. Error toasts surface a **Copy ID** button so users can paste the ID
    into a bug report. The button is rendered by the global toast
    handler and tagged `data-testid="error-toast-copy-request-id"`.

@@ -1307,7 +1307,7 @@ pub fn ChatPanel(
                                             &title,
                                         ) {
                                             Ok(builder) => {
-                                                let mut op = match builder.build_sdk_event("yougen") {
+                                                let mut op = match builder.build_sdk_event("inkson") {
                                                     Ok(event) => event,
                                                     Err(error) => {
                                                         status_msg.set(format!(
@@ -1543,7 +1543,7 @@ pub fn ChatPanel(
                                                                             Some(watch_level_wire_value(option)),
                                                                             None,
                                                                         ) {
-                                                                            Ok(builder) => builder.build_sdk_event("yougen"),
+                                                                            Ok(builder) => builder.build_sdk_event("inkson"),
                                                                             Err(err) => {
                                                                                 tracing::warn!("strand_watch_set build failed: {err:#}");
                                                                                 strand_watch_level.set(prev);
@@ -1917,7 +1917,7 @@ pub fn ChatPanel(
                                             return;
                                         }
                                     };
-                                    let updated_hlc = Hlc::now("yougen").encode();
+                                    let updated_hlc = Hlc::now("inkson").encode();
                                     let item = match chat_saved_account_data_item(
                                         &namespace_key,
                                         &target_for_saved,
@@ -5047,7 +5047,7 @@ pub fn ChatPanel(
                                 let token_for_backup_trigger = api_token.clone();
                                 let actor_for_backup_trigger = actor.clone();
                                 spawn(async move {
-                                let _hlc = Hlc::now("yougen").to_string();
+                                let _hlc = Hlc::now("inkson").to_string();
                                 let seal_view = state_store.read().seal_view_for_realm(&realm);
                                 // Shared MLS core: encrypt → forced ck.mls.commit
                                 // envelope (governance / prev→post epoch /
@@ -5277,7 +5277,7 @@ pub fn ChatPanel(
                                         &resp_event_id,
                                         audit_delivered.clone(),
                                     )
-                                    .build_sdk_event("yougen");
+                                    .build_sdk_event("inkson");
                                     // YOU-02-007: surface a silent receipt failure so
                                     // the sender knows the audit row is missing (the
                                     // message itself sent).

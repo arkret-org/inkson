@@ -52,7 +52,7 @@ const AUDIO_BOOTSTRAP_JS: &str = r#"
     if (!AudioContextCtor) {
       return;
     }
-    const key = "__yougenNotificationAudio";
+    const key = "__inksonNotificationAudio";
     const state = window[key] || {
       ctx: null,
       pending: false,
@@ -123,7 +123,7 @@ const AUDIO_BOOTSTRAP_JS: &str = r#"
 const PLAY_NOTIFICATION_SOUND_JS: &str = r#"
 (() => {
   try {
-    const key = "__yougenNotificationAudio";
+    const key = "__inksonNotificationAudio";
     if (!window[key]) {
       return;
     }

@@ -78,7 +78,7 @@ mod native {
         ///
         /// Returns Err if the principal has no leaf in this group, if
         /// the underlying group is not yet created, or if OpenMLS rejects
-        /// the operation. The caller (yougen device_revoke executor) is
+        /// the operation. The caller (inkson device_revoke executor) is
         /// expected to surface those errors back to the UI's
         /// device-revoke-plan card so the user can retry / dismiss.
         pub fn remove_member_by_principal(
@@ -222,7 +222,7 @@ fn compose_local_encrypted_message_inner(
 /// Wasm builds do not link the native MLS stack, so there is no real
 /// ciphertext to produce here. R17: the previous implementation emitted a
 /// hard-coded placeholder ciphertext (gated on
-/// `YOUGEN_ALLOW_PLACEHOLDER_CIPHERTEXT=1`) while still tagging it
+/// `INKSON_ALLOW_PLACEHOLDER_CIPHERTEXT=1`) while still tagging it
 /// `scheme: MlsRfc9420` — a fake ciphertext masquerading as a real MLS
 /// payload. That fallback has been removed entirely: this path is now
 /// unconditionally fail-closed so no fake "MLS" ciphertext can ever reach the

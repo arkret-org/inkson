@@ -124,7 +124,7 @@ fn start_recovery_key_generation(
         let base_for_sidecar = base.clone();
         let session_for_sidecar = session.clone();
         let result = with_authed_api(&base, session, |api| async move {
-            let secure_store = crate::secure_key_store::default_secure_key_store("yougen");
+            let secure_store = crate::secure_key_store::default_secure_key_store("inkson");
             crate::mls::account_recovery::upload_mls_account_secret_backup_with_recovery_key(
                 &api,
                 secure_store.as_ref(),
@@ -149,7 +149,7 @@ fn start_recovery_key_generation(
                     let outcome =
                         with_authed_api(&base_for_sidecar, session_for_sidecar, |api| async move {
                             let secure_store =
-                                crate::secure_key_store::default_secure_key_store("yougen");
+                                crate::secure_key_store::default_secure_key_store("inkson");
                             crate::mls::account_recovery::upload_mls_private_plaintext_backup(
                                 &api,
                                 secure_store.as_ref(),
@@ -205,7 +205,7 @@ pub fn SettingsMlsRecoveryPanel(
                 return;
             }
             let local_secret = {
-                let secure_store = crate::secure_key_store::default_secure_key_store("yougen");
+                let secure_store = crate::secure_key_store::default_secure_key_store("inkson");
                 crate::mls::runtime::load_account_mls_secret(secure_store.as_ref(), &actor)
                     .ok()
                     .flatten()

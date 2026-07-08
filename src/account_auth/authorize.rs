@@ -8,8 +8,8 @@ use super::util::{
     pkce_code_challenge_s256, preferred_pkce_method, random_url_safe_token,
 };
 use super::{
-    COKRET_DEVICE_SCOPE_PREFIX, OidcDiscoveryDocument, OidcScaffoldBundle, PersistedOidcScaffold,
-    YOUGEN_OIDC_CLIENT_ID,
+    COKRET_DEVICE_SCOPE_PREFIX, INKSON_OIDC_CLIENT_ID, OidcDiscoveryDocument, OidcScaffoldBundle,
+    PersistedOidcScaffold,
 };
 
 pub fn active_oidc_redirect_uri() -> String {
@@ -20,7 +20,7 @@ pub fn active_oidc_redirect_uri() -> String {
 /// `authorization_endpoint` URL) directly from standard OIDC discovery and the
 /// chosen `methods[].oidc`, without any Cokret-private bridge. `client_id` is
 /// taken from the auth method when published, else falls back to the native
-/// yougen client id.
+/// inkson client id.
 pub fn build_oidc_authorize_scaffold(
     discovery: &OidcDiscoveryDocument,
     method: &cokret_sdk::AuthMethod,
@@ -35,7 +35,7 @@ pub fn build_oidc_authorize_scaffold(
         .map(str::trim)
         .filter(|value| !value.is_empty())
         .map(ToOwned::to_owned)
-        .unwrap_or_else(|| YOUGEN_OIDC_CLIENT_ID.to_owned());
+        .unwrap_or_else(|| INKSON_OIDC_CLIENT_ID.to_owned());
     let state = random_url_safe_token(STATE_NONCE_TOKEN_BYTES)?;
     let nonce = random_url_safe_token(STATE_NONCE_TOKEN_BYTES)?;
     let code_verifier = random_url_safe_token(PKCE_VERIFIER_BYTES)?;

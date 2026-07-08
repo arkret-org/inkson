@@ -128,7 +128,7 @@ pub(super) fn submit_column_order_updates(
             &column_id,
             json!({ "rank": rank }),
         ) {
-            Ok(builder) => match builder.build_sdk_event("yougen") {
+            Ok(builder) => match builder.build_sdk_event("inkson") {
                 Ok(event) => event,
                 Err(err) => {
                     board_status.set(format!("Column order failed: {err}"));
@@ -186,7 +186,7 @@ pub(super) fn submit_column_rename(
         &column_id,
         json!({ "title": title }),
     ) {
-        Ok(builder) => match builder.build_sdk_event("yougen") {
+        Ok(builder) => match builder.build_sdk_event("inkson") {
             Ok(event) => event,
             Err(err) => {
                 board_status.set(format!("List rename failed: {err}"));
@@ -227,7 +227,7 @@ pub(super) fn submit_kanban_move(
     mut write_records: Signal<Vec<BoardWriteRecord>>,
     mut board_status: Signal<String>,
 ) {
-    let hlc = Hlc::now("yougen").to_string();
+    let hlc = Hlc::now("inkson").to_string();
     let seal_ref = state_store.read().seal_ref_for_realm_move(&realm_id);
     if actor_id.trim().is_empty() {
         board_status.set("sign in before updating cards".to_owned());
@@ -268,7 +268,7 @@ pub(super) fn submit_kanban_move(
         )
     };
     let envelope = match envelope {
-        Ok(builder) => builder.build_sdk_event("yougen"),
+        Ok(builder) => builder.build_sdk_event("inkson"),
         Err(err) => {
             board_status.set(format!("cannot submit card update: {err:#}"));
             return;
@@ -613,7 +613,7 @@ pub(super) fn dispatch_space_container_lifecycle(
             return;
         }
     };
-    let event = match builder.build_sdk_event("yougen") {
+    let event = match builder.build_sdk_event("inkson") {
         Ok(event) => event,
         Err(err) => {
             board_status.set(format!("lifecycle update failed: {err}"));
@@ -704,7 +704,7 @@ pub(super) fn dispatch_strand_lifecycle(
             return;
         }
     };
-    let event = match builder.and_then(|builder| builder.build_sdk_event("yougen")) {
+    let event = match builder.and_then(|builder| builder.build_sdk_event("inkson")) {
         Ok(event) => event,
         Err(err) => {
             board_status.set(format!("lifecycle update failed: {err:#}"));
@@ -813,7 +813,7 @@ pub(super) fn dispatch_board_archive_cascade(
     let mut events: Vec<cokret_sdk::Event> = Vec::new();
     for strand_id in &active_card_ids {
         match crate::operation::ck_ops::strand_archive(&realm_id, &actor_id, strand_id)
-            .and_then(|builder| builder.build_sdk_event("yougen"))
+            .and_then(|builder| builder.build_sdk_event("inkson"))
         {
             Ok(event) => events.push(event),
             Err(err) => {
@@ -827,7 +827,7 @@ pub(super) fn dispatch_board_archive_cascade(
         .chain(std::iter::once(&board_space_id))
     {
         match crate::operation::ck_ops::realm_archive(&realm_id, &actor_id, list_id)
-            .and_then(|builder| builder.build_sdk_event("yougen"))
+            .and_then(|builder| builder.build_sdk_event("inkson"))
         {
             Ok(event) => events.push(event),
             Err(err) => {
@@ -974,7 +974,7 @@ pub(super) fn submit_strand_position_cas_move_with_attempt(
     mut write_records: Signal<Vec<BoardWriteRecord>>,
     mut board_status: Signal<String>,
 ) {
-    let hlc = Hlc::now("yougen").to_string();
+    let hlc = Hlc::now("inkson").to_string();
     let seal_ref = state_store.read().seal_ref_for_realm_move(&realm_id);
     if actor_id.trim().is_empty() {
         board_status.set("sign in before moving cards".to_owned());
@@ -1007,7 +1007,7 @@ pub(super) fn submit_strand_position_cas_move_with_attempt(
         expected_json.clone(),
         effect_json.clone(),
     ) {
-        Ok(builder) => builder.build_sdk_event("yougen"),
+        Ok(builder) => builder.build_sdk_event("inkson"),
         Err(err) => {
             board_status.set(format!("cannot submit {kind}: {err:#}"));
             return;

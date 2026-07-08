@@ -493,7 +493,7 @@ mod tests {
     #[test]
     fn helper_consumes_sdk_member_identity_constructor() {
         // Sanity check the SDK types compile + are reachable through
-        // the wire-rename path. Yougen does not construct identities
+        // the wire-rename path. Inkson does not construct identities
         // itself — it consumes ingested events — but a smoke test here
         // keeps the SDK surface honest.
         let identity = MemberIdentity {

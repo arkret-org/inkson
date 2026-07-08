@@ -191,10 +191,10 @@ fn wasm_indexeddb_required_key_classifier_covers_high_value_secrets() {
         "identity.local.primary.v1"
     ));
     assert!(is_wasm_indexeddb_required_secret_key(
-        "yougen.mls_snapshot.account_secret.v1.did:example:alice"
+        "inkson.mls_snapshot.account_secret.v1.did:example:alice"
     ));
     assert!(is_wasm_indexeddb_required_secret_key(
-        "yougen_mls_account_secret"
+        "inkson_mls_account_secret"
     ));
     assert!(is_wasm_indexeddb_required_secret_key(
         "coauth.session_credential.did:example:alice"
@@ -365,11 +365,11 @@ fn trait_object_dispatch_works_for_memory_backend() {
 #[test]
 fn default_secure_key_store_returns_a_usable_backend() {
     // We don't hit the OS keychain in unit tests — too easy to
-    // pollute the developer's keychain with stale `yougen.test`
+    // pollute the developer's keychain with stale `inkson.test`
     // entries and to flake on locked sessions in CI. We only
     // assert that the constructor returns a value whose
     // `backend_name` matches the platform expectation.
-    let store = default_secure_key_store("yougen.test.unit");
+    let store = default_secure_key_store("inkson.test.unit");
     let name = store.backend_name();
     if cfg!(any(
         target_os = "linux",
@@ -389,14 +389,14 @@ fn default_secure_key_store_returns_a_usable_backend() {
 #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows",))]
 #[test]
 fn keyring_store_exposes_service_name() {
-    let store = KeyringSecureKeyStore::new("yougen.test.unit");
-    assert_eq!(store.service_name(), "yougen.test.unit");
+    let store = KeyringSecureKeyStore::new("inkson.test.unit");
+    assert_eq!(store.service_name(), "inkson.test.unit");
     assert_eq!(store.backend_name(), "keyring");
 }
 
 /// Android Keystore store constructed against an explicit in-memory
 /// bridge round-trips secrets through the bridge. store/get/delete
-/// work because the host-bridge pattern moves the FFI out of yougen
+/// work because the host-bridge pattern moves the FFI out of inkson
 /// and into a pluggable trait. A real Android build wires a
 /// JNI-backed bridge here;
 /// this test wires `MemorySecureKeyStore` behind a thin adapter
@@ -408,8 +408,8 @@ fn keyring_store_exposes_service_name() {
 #[test]
 fn android_keystore_via_bridge_round_trips_secrets() {
     let bridge: Arc<dyn HostSecretBridge> = Arc::new(TestHostSecretBridge::new("android-keystore"));
-    let store = AndroidKeystoreSecureKeyStore::new_with_bridge("yougen.test.unit", bridge);
-    assert_eq!(store.service_name(), "yougen.test.unit");
+    let store = AndroidKeystoreSecureKeyStore::new_with_bridge("inkson.test.unit", bridge);
+    assert_eq!(store.service_name(), "inkson.test.unit");
     assert_eq!(store.backend_name(), "android-keystore");
     store
         .store_secret("session_credential", "credential-123")
@@ -430,8 +430,8 @@ fn android_keystore_via_bridge_round_trips_secrets() {
 #[test]
 fn ios_keychain_via_bridge_round_trips_secrets() {
     let bridge: Arc<dyn HostSecretBridge> = Arc::new(TestHostSecretBridge::new("ios-keychain"));
-    let store = IosKeychainSecureKeyStore::new_with_bridge("yougen.test.unit", bridge);
-    assert_eq!(store.service_name(), "yougen.test.unit");
+    let store = IosKeychainSecureKeyStore::new_with_bridge("inkson.test.unit", bridge);
+    assert_eq!(store.service_name(), "inkson.test.unit");
     assert_eq!(store.backend_name(), "ios-keychain");
     store
         .store_secret("session_credential", "credential-123")

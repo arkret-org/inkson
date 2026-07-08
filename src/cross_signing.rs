@@ -73,7 +73,7 @@ impl CrossSigningSetupStep {
     /// F-CXSIGN-KIND-1 (2026-05-19): the spec `event-kind-registry.json`
     /// declares cross-signing events without a `.v1` suffix
     /// (`ck.cross_signing.publish`, `ck.cross_signing.reset`); the
-    /// suffix is reserved for `schema-registry.json` entries. Yougen
+    /// suffix is reserved for `schema-registry.json` entries. Inkson
     /// historically wrote the suffixed forms everywhere — this method,
     /// the OperationBuilder kind constant, the conformance test
     /// assertions, the workflows.rs dependency note, the verify_device
@@ -214,7 +214,7 @@ impl CrossSigningSetupPlan {
 
 /// Trust-chain status the UI should surface per device. Mirrors the SDK
 /// [`cokret::DeviceTrustChainOutcome`] but with a string discriminator that
-/// fits yougen's JSON response shape.
+/// fits inkson's JSON response shape.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum CrossSigningTrustState {
@@ -346,7 +346,7 @@ impl CrossSigningSetupOutput {
     /// Hex is intentional: hex-encoded values are 7-bit-safe and round-
     /// trip through the OS keychain backends without padding nuance. The
     /// secret is still secret — the backend keeps it encrypted at rest;
-    /// hex only fixes the wire shape between yougen and the backend.
+    /// hex only fixes the wire shape between inkson and the backend.
     pub fn persist_private_keys(
         &self,
         store: &dyn SecureKeyStore,
@@ -378,7 +378,7 @@ impl CrossSigningSetupOutput {
         Ok(())
     }
 
-    /// Construct the SDK Event yougen submits to write the
+    /// Construct the SDK Event inkson submits to write the
     /// `ck.cross_signing.publish` event. The caller supplies the
     /// `realm_id` of the principal's control Realm and the `actor` DID
     /// (typically the same as the principal). The envelope is unsigned;
@@ -397,7 +397,7 @@ impl CrossSigningSetupOutput {
         )
         .target_ref(self.publish_content.principal_id.as_str())
         .body(body)
-        .build_sdk_event("yougen")
+        .build_sdk_event("inkson")
     }
 }
 

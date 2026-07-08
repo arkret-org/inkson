@@ -8,7 +8,7 @@ use crate::mls::runtime::*;
 use crate::secure_key_store::{MemorySecureKeyStore, SecureKeyStoreError};
 
 #[cfg(not(target_arch = "wasm32"))]
-struct ActiveSignerGuard(Option<std::sync::Arc<crate::event_signer::YougenEventSigner>>);
+struct ActiveSignerGuard(Option<std::sync::Arc<crate::event_signer::InksonEventSigner>>);
 
 #[cfg(not(target_arch = "wasm32"))]
 impl ActiveSignerGuard {
@@ -92,7 +92,7 @@ fn authoring_exporter_aead_content_retains_history_secret() {
     // this test MUST use a realm id no other test writes, or the `is_none()`
     // precondition below would observe another test's retained secret.
     let realm = "ck:realm:01904100-0000-7000-8000-0000000000f7";
-    let history_store = crate::secure_key_store::default_secure_key_store("yougen");
+    let history_store = crate::secure_key_store::default_secure_key_store("inkson");
     let history_key = crate::secure_key_store::mls_history_secret_store_key(realm);
     let _ = history_store.delete_secret(&history_key);
 
@@ -186,7 +186,7 @@ fn receive_chain_persists_across_restart_and_plaintext_is_never_at_rest() {
     // over the same backing file) must NOT be able to re-render the consumed
     // message — its plaintext is never written at rest.
     let path = std::env::temp_dir().join(format!(
-        "yougen-test-receive-chain-{}.json",
+        "inkson-test-receive-chain-{}.json",
         crate::operation::uuid_v7()
     ));
     let mut state = crate::local_state::LocalStateStore::with_path(path.clone());
@@ -260,7 +260,7 @@ fn out_of_order_skipped_keys_survive_restart() {
     // restarts, then decrypts the earlier m1 — which requires the
     // skipped keys to have been persisted with the advanced chain.
     let path = std::env::temp_dir().join(format!(
-        "yougen-test-skipped-keys-{}.json",
+        "inkson-test-skipped-keys-{}.json",
         crate::operation::uuid_v7()
     ));
     let mut state = crate::local_state::LocalStateStore::with_path(path.clone());
@@ -877,12 +877,12 @@ fn history_secrets_do_not_land_in_account_state_json() {
     use base64::Engine as _;
 
     let path = std::env::temp_dir().join(format!(
-        "yougen-test-history-secret-at-rest-{}.json",
+        "inkson-test-history-secret-at-rest-{}.json",
         crate::operation::uuid_v7()
     ));
     let realm = "ck:realm:01904100-0000-7000-8000-0000000000d9";
     let secret = vec![9u8; 32];
-    let store = crate::secure_key_store::default_secure_key_store("yougen");
+    let store = crate::secure_key_store::default_secure_key_store("inkson");
     let key = crate::secure_key_store::mls_history_secret_store_key(realm);
     let _ = store.delete_secret(&key);
     {
@@ -1006,7 +1006,7 @@ fn tier3_history_decrypt_works_without_local_snapshot() {
     let realm = "ck:realm:01904100-0000-7000-8000-0000000000f3";
     let bob_actor = "did:web:bob.example";
     let bob_device = "ck:device:01904100-0000-7000-8000-0000000000f4";
-    let history_store = crate::secure_key_store::default_secure_key_store("yougen");
+    let history_store = crate::secure_key_store::default_secure_key_store("inkson");
     let history_key = crate::secure_key_store::mls_history_secret_store_key(realm);
     let _ = history_store.delete_secret(&history_key);
 

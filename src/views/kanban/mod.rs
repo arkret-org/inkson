@@ -397,16 +397,16 @@ fn toast_editor_bootstrap_script(host_id: &str, fallback_id: &str, value: &str) 
         return;
     }}
 
-    const registry = window.__yougenToastEditors || (window.__yougenToastEditors = new Map());
+    const registry = window.__inksonToastEditors || (window.__inksonToastEditors = new Map());
     const existing = registry.get(config.hostId);
     if (existing && host.childElementCount > 0) {{
         releaseBridge();
         return;
     }}
 
-    if (!window.__yougenLoadToastEditor) {{
-        window.__yougenLoadToastEditor = () => new Promise((resolve, reject) => {{
-            const cssId = "yougen-toast-editor-css";
+    if (!window.__inksonLoadToastEditor) {{
+        window.__inksonLoadToastEditor = () => new Promise((resolve, reject) => {{
+            const cssId = "inkson-toast-editor-css";
             if (!document.getElementById(cssId)) {{
                 const link = document.createElement("link");
                 link.id = cssId;
@@ -420,7 +420,7 @@ fn toast_editor_bootstrap_script(host_id: &str, fallback_id: &str, value: &str) 
                 return;
             }}
 
-            const scriptId = "yougen-toast-editor-script";
+            const scriptId = "inkson-toast-editor-script";
             const loadedScript = document.getElementById(scriptId);
             if (loadedScript) {{
                 loadedScript.addEventListener("load", () => resolve(), {{ once: true }});
@@ -439,9 +439,9 @@ fn toast_editor_bootstrap_script(host_id: &str, fallback_id: &str, value: &str) 
     }}
 
     try {{
-        await window.__yougenLoadToastEditor();
+        await window.__inksonLoadToastEditor();
     }} catch (error) {{
-        console.warn("[yougen] Toast UI Editor unavailable; using textarea fallback", error);
+        console.warn("[inkson] Toast UI Editor unavailable; using textarea fallback", error);
         fallback.classList.remove("toast-fallback-hidden");
         releaseBridge();
         return;
@@ -529,7 +529,7 @@ fn toast_editor_bootstrap_script(host_id: &str, fallback_id: &str, value: &str) 
                 : `${{outcome.blob_ref}}#${{markdownMediaType}}`;
             callback(markdownTarget, blob.name || "image");
         }} catch (error) {{
-            console.warn("[yougen] image upload failed", error);
+            console.warn("[inkson] image upload failed", error);
             window.alert("Image upload failed.");
         }}
         return false;
@@ -704,7 +704,7 @@ pub fn KanbanPanel(
         use_signal(Vec::<crate::projection_views::StrandProjectionView>::new);
     // Cap-Gate-2: consume the app-level CapabilityEngine context so the
     // Archive / Restore buttons can pre-gate themselves. When the engine
-    // carries no grants for the actor the gate stays open (yougen still
+    // carries no grants for the actor the gate stays open (inkson still
     // trusts the server). Cap-Gate-3 (below) computes the per-button
     // gate inside the render path.
     let capability_engine = use_context::<Signal<crate::capability::CapabilityEngine>>();
@@ -1301,7 +1301,7 @@ pub fn KanbanPanel(
             {
                 return;
             }
-            let secure_store = crate::secure_key_store::default_secure_key_store("yougen");
+            let secure_store = crate::secure_key_store::default_secure_key_store("inkson");
             if !matches!(
                 crate::mls::runtime::load_account_mls_secret(secure_store.as_ref(), &restore_actor),
                 Ok(Some(_))
@@ -1392,7 +1392,7 @@ pub fn KanbanPanel(
                         }
                     };
 
-                    let secure_store = crate::secure_key_store::default_secure_key_store("yougen");
+                    let secure_store = crate::secure_key_store::default_secure_key_store("inkson");
                     let restored_private_plaintext = {
                         let mut store = state_store.write();
                         let report = crate::mls::account_recovery::restore_mls_history_with_local_secret_from_payload(
@@ -1834,7 +1834,7 @@ pub fn KanbanPanel(
                                                 Some(&rank),
                                             ) {
                                                 Ok(builder) => builder
-                                                    .build_sdk_event("yougen"),
+                                                    .build_sdk_event("inkson"),
                                                 Err(err) => {
                                                     board_status.set(format!("cannot create list: {err:#}"));
                                                     return;
@@ -1943,7 +1943,7 @@ pub fn KanbanPanel(
                                                     None,
                                                 ) {
                                                     Ok(builder) => builder
-                                                        .build_sdk_event("yougen"),
+                                                        .build_sdk_event("inkson"),
                                                     Err(err) => {
                                                         board_status.set(format!("cannot create board: {err:#}"));
                                                         return;
@@ -2137,7 +2137,7 @@ pub fn KanbanPanel(
                                             div { class: "metric", strong { "Writes" } span { if event_write_ready { "Online" } else { "Queued" } } div { class: "muted", "server when online" } }
                                         }
                                         div { class: "muted",
-                                            "View lifecycle: create, update, reconcile. Refresh uses server projection; demo seed requires YOUGEN_ALLOW_KANBAN_SEED_FALLBACK=1."
+                                            "View lifecycle: create, update, reconcile. Refresh uses server projection; demo seed requires INKSON_ALLOW_KANBAN_SEED_FALLBACK=1."
                                         }
                                     }
                                 }

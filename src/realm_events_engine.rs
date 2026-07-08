@@ -23,7 +23,7 @@
 //! events are fully visible through this realm stream.
 //!
 //! Transport reality (wasm): the shared SDK http-client opens the canonical
-//! `events/subscribe` stream, and yougen wraps it as a client-core typed frame
+//! `events/subscribe` stream, and inkson wraps it as a client-core typed frame
 //! source. The all-target adapter buffers the response and parses typed NDJSON
 //! frames at stream close. The server holds the stream open for
 //! `max_duration_ms`, so that window doubles as this engine's liveness latency.
@@ -243,7 +243,7 @@ async fn run_realm_iteration(
         return RealmIterationOutcome::NotReady;
     }
     #[cfg(target_arch = "wasm32")]
-    if crate::secure_key_store::ensure_wasm_secure_key_store_ready("yougen")
+    if crate::secure_key_store::ensure_wasm_secure_key_store_ready("inkson")
         .await
         .is_err()
     {
@@ -277,7 +277,7 @@ async fn run_realm_iteration(
             };
         }
     };
-    let transport = crate::client_core::YougenRealmEventsTransport::new(sdk_http)
+    let transport = crate::client_core::InksonRealmEventsTransport::new(sdk_http)
         .with_max_duration_ms(REALM_EVENTS_POLL_WINDOW_MS);
     let mut source = match transport
         .open_realm_events(&realm_id_typed, after.as_deref())

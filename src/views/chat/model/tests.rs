@@ -9,7 +9,7 @@ mod device_identity_proof_tests {
     /// hash of the envelope without `proofs` / `unsigned` (matching
     /// `event_signer::sign_envelope`).
     fn signed_message_envelope(
-        signer: &crate::event_signer::YougenEventSigner,
+        signer: &crate::event_signer::InksonEventSigner,
         actor_id: &str,
         device_id: &str,
     ) -> Value {
@@ -17,7 +17,7 @@ mod device_identity_proof_tests {
     }
 
     fn signed_message_envelope_inner(
-        signer: &crate::event_signer::YougenEventSigner,
+        signer: &crate::event_signer::InksonEventSigner,
         actor_id: &str,
         device_id: Option<&str>,
     ) -> Value {

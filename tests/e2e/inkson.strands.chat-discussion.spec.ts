@@ -34,7 +34,7 @@ test("chat reloads sent messages and keeps actor sequence increasing", async ({ 
   const reloadedMessage = page.getByTestId("chat-message").last();
   await expect(reloadedMessage).toContainText("message before reload");
   await expect(reloadedMessage).toHaveClass(/is-own/);
-  await expect(reloadedMessage.locator(".name")).toHaveText("yougen");
+  await expect(reloadedMessage.locator(".name")).toHaveText("inkson");
   await expect(reloadedMessage).not.toContainText("did:web:alice.example");
 
   const secondSend = page.waitForRequest(
@@ -56,19 +56,19 @@ test("chat composer sends with Ctrl+Enter", async ({ page }) => {
   await expect(page.getByTestId("chat-panel")).toBeVisible();
 
   await page.evaluate(() => {
-    (window as Window & { __yougenSendClicks?: number }).__yougenSendClicks = 0;
+    (window as Window & { __inksonSendClicks?: number }).__inksonSendClicks = 0;
     document
       .querySelector('[data-testid="send-chat-button"]')
       ?.addEventListener("click", () => {
-        (window as Window & { __yougenSendClicks?: number }).__yougenSendClicks =
-          ((window as Window & { __yougenSendClicks?: number }).__yougenSendClicks ?? 0) + 1;
+        (window as Window & { __inksonSendClicks?: number }).__inksonSendClicks =
+          ((window as Window & { __inksonSendClicks?: number }).__inksonSendClicks ?? 0) + 1;
       });
   });
   await page.getByTestId("chat-input").fill("sent from ctrl enter");
   await page.keyboard.press("Control+Enter");
 
   await expect
-    .poll(() => page.evaluate(() => (window as Window & { __yougenSendClicks?: number }).__yougenSendClicks ?? 0))
+    .poll(() => page.evaluate(() => (window as Window & { __inksonSendClicks?: number }).__inksonSendClicks ?? 0))
     .toBe(1);
   await expect(page.getByTestId("chat-message").last()).toContainText("sent from ctrl enter");
   await expect(page.getByTestId("chat-status")).toContainText(/Message sent|Send Secure/);

@@ -2,7 +2,7 @@
 //! links.
 //!
 //! A user can share a Realm / Strand / Message as a link. This module is the
-//! yougen-side glue on top of the SDK's client-agnostic addressing grammar
+//! inkson-side glue on top of the SDK's client-agnostic addressing grammar
 //! ([`cokret_sdk::models::parse_address`] / [`build_address`] /
 //! [`build_https_landing`]) plus the [`target_digest`] invite / preview token binding:
 //!
@@ -24,7 +24,7 @@
 //!   defence lives in the SDK's [`cokret_sdk::models::verify_token_target`]).
 //!
 //! ## Web protocol-handler registration — design choice
-//! yougen deliberately ships the **HTTPS-fragment-only** landing path and does
+//! inkson deliberately ships the **HTTPS-fragment-only** landing path and does
 //! NOT register a `web+cokret:` web protocol handler by default. Rationale:
 //! `navigator.registerProtocolHandler('web+cokret', template)` is only privacy
 //! safe if the template substitutes `%s` INSIDE its own fragment
@@ -261,7 +261,7 @@ impl OpenedLink {
     /// route to be navigable; an alias-only address routes to the directory so
     /// the user can resolve it there.
     ///
-    /// yougen routes a Realm through the default Realm surface, a Strand to its
+    /// inkson routes a Realm through the default Realm surface, a Strand to its
     /// Board task deep link, and a Message to the Realm discussion surface.
     pub fn route_for(&self, target_kind: TargetKind) -> Route {
         match target_kind {
@@ -340,7 +340,7 @@ pub fn web_protocol_handler_template(landing: &str) -> String {
 /// wasm-only: opt-in registration of the `web+cokret:` web protocol handler,
 /// using the fragment-only template from [`web_protocol_handler_template`].
 ///
-/// This is NOT called by the default UI strand (yougen prefers the
+/// This is NOT called by the default UI strand (inkson prefers the
 /// HTTPS-fragment landing link, which needs no registration). It exists for
 /// embedders that want the "open in app from the browser" affordance and have
 /// confirmed the privacy posture of the fragment-only template.

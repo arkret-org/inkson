@@ -3,7 +3,7 @@
 //
 // The wasm `LocalStateStore::write_persisted_state` path stores the
 // entire `ClientLocalState` JSON under `LOCAL_STATE_STORAGE_KEY =
-// "yougen.local_state.v1"`. This test exercises the same key with a
+// "inkson.local_state.v1"`. This test exercises the same key with a
 // `LocalIdentityRecord`-shaped payload to confirm:
 //   * Safari ITP / private browsing doesn't silently drop writes (the
 //     test self-skips when storage is rejected — that's the expected
@@ -16,7 +16,7 @@
 import { expect, test } from "@playwright/test";
 import { gotoOrSkip, waitForBundleReady } from "./_helpers";
 
-const STORAGE_KEY = "yougen.local_state.v1";
+const STORAGE_KEY = "inkson.local_state.v1";
 
 const SAMPLE_LOCAL_IDENTITY = {
   // Mirrors `LocalIdentityRecord` — verified_handle + signing_seed

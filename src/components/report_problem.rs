@@ -33,14 +33,14 @@ impl CrashTelemetryPrefs {
     /// The persisted preference lives in `LocalStateStore` and isn't
     /// readable until the Dioxus app tree mounts. For the
     /// `sentry_init` boot call we accept a single env-var override
-    /// (`YOUGEN_CRASH_TELEMETRY_OPT_IN=1`) so deploys / CI can opt
+    /// (`INKSON_CRASH_TELEMETRY_OPT_IN=1`) so deploys / CI can opt
     /// the entire process in without waiting for the persisted
     /// toggle to settle. Returns `default()` (opt-out) on any other
     /// value or when the var is absent.
     pub fn load_from_env() -> Self {
         #[cfg(not(target_arch = "wasm32"))]
         {
-            if let Ok(value) = std::env::var("YOUGEN_CRASH_TELEMETRY_OPT_IN") {
+            if let Ok(value) = std::env::var("INKSON_CRASH_TELEMETRY_OPT_IN") {
                 let normalized = value.trim().to_ascii_lowercase();
                 let enabled = matches!(normalized.as_str(), "1" | "true" | "on" | "yes");
                 return Self { enabled };
@@ -56,7 +56,7 @@ impl CrashTelemetryPrefs {
 /// - `os` — `std::env::consts::OS` on native, `"web"` on wasm.
 pub fn build_report_body(recent_tracing: &[String], app_version: &str, os: &str) -> String {
     let mut body = String::new();
-    body.push_str("# yougen — problem report\n\n");
+    body.push_str("# inkson — problem report\n\n");
     body.push_str("Please describe what you were trying to do above this line.\n\n");
     body.push_str("---\n\n");
     body.push_str(&format!("**App version**: `{app_version}`\n"));
@@ -203,7 +203,7 @@ pub fn CrashTelemetryToggle(
             }
             span { class: "field-label", "Send anonymous crash reports (opt-in)" }
             p { class: "field-help muted",
-                "Off by default. When on, yougen sends sanitized crash + panic stack traces via Sentry. Toggle off any time."
+                "Off by default. When on, inkson sends sanitized crash + panic stack traces via Sentry. Toggle off any time."
             }
         }
     }
@@ -267,7 +267,7 @@ mod tests {
         // SAFETY: env vars are process-global; the mutex above scopes
         // mutation to one test at a time within this binary.
         unsafe {
-            std::env::remove_var("YOUGEN_CRASH_TELEMETRY_OPT_IN");
+            std::env::remove_var("INKSON_CRASH_TELEMETRY_OPT_IN");
         }
         let prefs = CrashTelemetryPrefs::load_from_env();
         assert!(!prefs.is_opt_in());
@@ -280,14 +280,14 @@ mod tests {
         for value in ["1", "true", "TRUE", "on", "yes"] {
             // SAFETY: env mutation is serialised by ENV_LOCK above.
             unsafe {
-                std::env::set_var("YOUGEN_CRASH_TELEMETRY_OPT_IN", value);
+                std::env::set_var("INKSON_CRASH_TELEMETRY_OPT_IN", value);
             }
             let prefs = CrashTelemetryPrefs::load_from_env();
             assert!(prefs.is_opt_in(), "expected opt-in for value {value}");
         }
         // SAFETY: env mutation is serialised by ENV_LOCK above.
         unsafe {
-            std::env::remove_var("YOUGEN_CRASH_TELEMETRY_OPT_IN");
+            std::env::remove_var("INKSON_CRASH_TELEMETRY_OPT_IN");
         }
     }
 

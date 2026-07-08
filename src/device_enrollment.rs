@@ -67,14 +67,14 @@ impl DeviceEnrollmentRequest {
     }
 }
 
-/// Canonical algorithm ids a yougen device advertises in its
+/// Canonical algorithm ids a inkson device advertises in its
 /// `ck.device.authorize` record: the default-MUST HPKE suite (secret / key
 /// envelope sealing) plus the MLS v1 group algorithm. UTF-8 bytewise sorted.
-pub const YOUGEN_DEVICE_ALGORITHMS: &[&str] =
+pub const INKSON_DEVICE_ALGORITHMS: &[&str] =
     &["ck.hpke_x25519_aead_chacha20poly1305.v1", "ck.mls.v1"];
 
-pub fn yougen_device_algorithms() -> Vec<String> {
-    YOUGEN_DEVICE_ALGORITHMS
+pub fn inkson_device_algorithms() -> Vec<String> {
+    INKSON_DEVICE_ALGORITHMS
         .iter()
         .map(|value| (*value).to_owned())
         .collect()
@@ -91,7 +91,7 @@ pub fn device_public_key_multibase(material: &SigningSeedMaterial) -> String {
 /// the parsed envelope on success.
 ///
 /// Checks (fail-closed): the event is a `ck.device.authorize`, it is signed
-/// (carries proofs — yougen never submits an unsigned enrollment event), and its
+/// (carries proofs — inkson never submits an unsigned enrollment event), and its
 /// `payload.device_id` equals `expected_device_id` (this session's device id, so
 /// a server bug cannot enroll a different device under this session).
 pub fn parse_signed_device_authorize(

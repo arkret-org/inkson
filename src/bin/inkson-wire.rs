@@ -16,7 +16,7 @@ fn main() -> Result<()> {
     let output = match command.as_str() {
         "canonical-json" => canonical_json(input)?,
         "sha256-canonical-json" => sha256_canonical_json(input)?,
-        _ => bail!("unknown yougen-wire command {command:?}"),
+        _ => bail!("unknown inkson-wire command {command:?}"),
     };
 
     println!("{}", serde_json::to_string(&output)?);

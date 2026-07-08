@@ -76,7 +76,7 @@ pub fn LoginPanel(
     let mut is_busy = use_signal(|| auto_capture_callback);
     let mut callback_started = use_signal(|| false);
     let mut state_store_write = state_store;
-    // Whether the styled Principal Server preset list is expanded. Yougen is a
+    // Whether the styled Principal Server preset list is expanded. Inkson is a
     // neutral client: the field is a free-text URL input that the user can edit
     // to point at ANY server, with this custom-styled dropdown offering the
     // configured presets (and the current value) as one-click choices.
@@ -136,7 +136,7 @@ pub fn LoginPanel(
                         store.clear_account_scoped();
                         store.set_session_grant(None);
                     }
-                    let secure_store = crate::secure_key_store::default_secure_key_store("yougen");
+                    let secure_store = crate::secure_key_store::default_secure_key_store("inkson");
                     if let Err(error) = persist_completed_login_dpop_key(
                         &mut store,
                         secure_store.as_ref(),
@@ -209,7 +209,7 @@ pub fn LoginPanel(
         is_busy.set(false);
     });
 
-    // Account selection belongs to the Account Authority. Yougen chooses only
+    // Account selection belongs to the Account Authority. Inkson chooses only
     // the Principal Server; it must not turn the locally persisted account DID
     // into a hidden account selection. Therefore an interactive OIDC sign-in
     // omits `principal_id`. When a signed-out account is locally known, reuse
@@ -225,16 +225,16 @@ pub fn LoginPanel(
         spawn(async move {
             #[cfg(target_arch = "wasm32")]
             if let Err(error) =
-                crate::secure_key_store::ensure_wasm_secure_key_store_ready("yougen").await
+                crate::secure_key_store::ensure_wasm_secure_key_store_ready("inkson").await
             {
                 tracing::warn!(%error, "secure store unavailable before sign-in");
                 is_busy.set(false);
                 auth_status.set(format!(
-                    "Could not open browser secure storage for sign-in: {error}. Close other Yougen tabs and try again."
+                    "Could not open browser secure storage for sign-in: {error}. Close other Inkson tabs and try again."
                 ));
                 return;
             }
-            let secure_store = crate::secure_key_store::default_secure_key_store("yougen");
+            let secure_store = crate::secure_key_store::default_secure_key_store("inkson");
             if let Err(error) =
                 crate::secure_key_store::reset_device_seed_scope_for_signin(secure_store.as_ref())
             {
@@ -282,7 +282,7 @@ pub fn LoginPanel(
 
             div { class: "auth-form",
                 Label { html_for: "login-server-url-input", "Principal server" }
-                // Yougen is a neutral client: this is a free-text Principal
+                // Inkson is a neutral client: this is a free-text Principal
                 // Server URL the user can edit to point at ANY server. The
                 // custom-styled dropdown below offers the configured presets
                 // (and the current value) as one-click choices — a styled
@@ -363,7 +363,7 @@ pub fn LoginPanel(
                 }
 
                 // A single sign-in action. Account selection is delegated to the
-                // Account Authority's OIDC screen — yougen only chooses the
+                // Account Authority's OIDC screen — inkson only chooses the
                 // Principal Server and does not assert a local account DID.
                 Button {
                     variant: ButtonVariant::Primary,
@@ -710,7 +710,7 @@ async fn finish_oidc_callback(
     let device = normalize_device_id(&device);
     restore_oidc_callback_device_seed_scope(&device);
     #[cfg(target_arch = "wasm32")]
-    crate::secure_key_store::ensure_wasm_secure_key_store_ready("yougen")
+    crate::secure_key_store::ensure_wasm_secure_key_store_ready("inkson")
         .await
         .map_err(|error| format!("DPoP key store not ready: {error}"))?;
     let dpop_handle = {
@@ -724,7 +724,7 @@ async fn finish_oidc_callback(
     if scaffold.issuer.trim().is_empty() {
         return Err("Sign-in state is missing the OIDC issuer.".to_owned());
     }
-    // `principal_id` is optional for Account Authority session-grants. Yougen's
+    // `principal_id` is optional for Account Authority session-grants. Inkson's
     // neutral interactive login leaves the scaffold actor hint blank (sent as
     // `None`), so the Account Authority derives the principal DID from the OIDC
     // subject and returns it in `SessionGrantOutcome.principal_id`. A non-empty
@@ -816,7 +816,7 @@ async fn finish_oidc_callback(
     // key. Sets the active seed scope to this account for the rest of the
     // session.
     {
-        let secure_store = crate::secure_key_store::default_secure_key_store("yougen");
+        let secure_store = crate::secure_key_store::default_secure_key_store("inkson");
         if let Err(error) = crate::secure_key_store::adopt_device_seed_scope_on_login(
             secure_store.as_ref(),
             &canonical_actor,

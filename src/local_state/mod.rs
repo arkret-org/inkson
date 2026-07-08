@@ -22,7 +22,7 @@ use crate::notification_rules::WatchLevel;
 /// that points at per-account entries). Read-time migration upgrades any blob
 /// still in the old shape.
 #[cfg(target_arch = "wasm32")]
-const LOCAL_STATE_STORAGE_KEY: &str = "yougen.local_state.v1";
+const LOCAL_STATE_STORAGE_KEY: &str = "inkson.local_state.v1";
 
 /// Reserved namespace for the pre-login (signed-out) account entry. Local state
 /// exists before any DID is known — drafts, UI scratch, the boot-time device

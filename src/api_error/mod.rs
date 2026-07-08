@@ -116,7 +116,7 @@ pub fn decode_cokret_error(status: StatusCode, bytes: &[u8]) -> ErrorEnvelope {
         });
     crate::components::maybe_dispatch_circle_error(envelope.code(), reason);
     tracing::warn!(
-        target: "yougen.api",
+        target: "inkson.api",
         request_id = %envelope.request_id,
         status = %status.as_u16(),
         code = %envelope.code(),
