@@ -10,6 +10,9 @@ use crate::event_builders::{
     ensure_device_verification_proof_is_signed, recommended_history_sharing_policy_for_visibility,
 };
 use crate::operation::OperationBuilder;
+use crate::projection_views::{
+    LifecycleProjectionView, SpaceContainerProjectionView, StrandProjectionView,
+};
 use crate::realm_defaults::RECOMMENDED_REALM_ENCRYPTION_FLOOR;
 use crate::realm_helpers::{
     canonical_space_join_rule_v1, patch_touches_create_locked_encryption_profile,

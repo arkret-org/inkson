@@ -1,7 +1,7 @@
 use super::*;
 
 pub(crate) fn strand_projection_field_string(
-    strand: &crate::api::StrandProjectionView,
+    strand: &crate::projection_views::StrandProjectionView,
     top_level: Option<&str>,
     field_names: &[&str],
 ) -> Option<String> {
@@ -20,7 +20,9 @@ pub(crate) fn strand_projection_field_string(
         })
 }
 
-pub(crate) fn strand_projection_labels(strand: &crate::api::StrandProjectionView) -> Vec<String> {
+pub(crate) fn strand_projection_labels(
+    strand: &crate::projection_views::StrandProjectionView,
+) -> Vec<String> {
     match strand.fields.get("labels") {
         Some(Value::Array(labels)) => labels
             .iter()
@@ -35,7 +37,7 @@ pub(crate) fn strand_projection_labels(strand: &crate::api::StrandProjectionView
 }
 
 pub(crate) fn strand_projection_assignee(
-    strand: &crate::api::StrandProjectionView,
+    strand: &crate::projection_views::StrandProjectionView,
 ) -> Option<String> {
     if strand.assigned_actor_ids.is_empty() {
         return None;
@@ -44,7 +46,7 @@ pub(crate) fn strand_projection_assignee(
 }
 
 pub(crate) fn strand_projection_assigned_to_relations(
-    strand: &crate::api::StrandProjectionView,
+    strand: &crate::projection_views::StrandProjectionView,
 ) -> Vec<CardAssignedToRelation> {
     strand
         .assigned_to_relations
@@ -61,7 +63,7 @@ pub(crate) fn strand_projection_assigned_to_relations(
 }
 
 pub(crate) fn strand_projection_security_state(
-    strand: &crate::api::StrandProjectionView,
+    strand: &crate::projection_views::StrandProjectionView,
 ) -> Option<bool> {
     let mut value = Map::new();
     value.insert("fields".to_owned(), Value::Object(strand.fields.clone()));
@@ -116,7 +118,7 @@ pub(crate) fn collect_content_text(value: &Value, lines: &mut Vec<String>) {
 }
 
 pub(crate) fn card_from_strand_projection(
-    strand: &crate::api::StrandProjectionView,
+    strand: &crate::projection_views::StrandProjectionView,
     decrypt_ctx: Option<&MlsDecryptCtx<'_>>,
 ) -> KanbanCard {
     let title = if strand.title.trim().is_empty() {

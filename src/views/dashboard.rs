@@ -48,7 +48,7 @@ pub fn DashboardPanel(
 ) -> Element {
     let mut protocol_health = use_signal(Vec::<(String, String)>::new);
     let mut health_loading = use_signal(|| false);
-    let mut recent_strands = use_signal(Vec::<crate::api::StrandProjectionView>::new);
+    let mut recent_strands = use_signal(Vec::<crate::projection_views::StrandProjectionView>::new);
     let mut recent_strands_loaded_for = use_signal(String::new);
     let mut recent_strands_status = use_signal(String::new);
     let mut contacts_summary = use_signal(Option::<DashboardContactsSummary>::default);

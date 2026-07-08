@@ -117,6 +117,7 @@ pub mod perf;
 /// Sync projection layer (account/realm wire payloads -> local projection
 /// models); moved out of `views/` (YGN-ARCH-01 step 3).
 pub mod projection;
+pub mod projection_views;
 pub mod push;
 pub mod rank;
 pub mod realm_defaults;

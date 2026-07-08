@@ -7,6 +7,10 @@ use crate::event_builders::{
     build_space_create_event, build_space_lifecycle_event, parse_realm_bootstrap_members,
     recommended_history_sharing_policy_for_visibility, recommended_realm_policy_components_value,
 };
+use crate::projection_views::{
+    CollectionProjectionView, LifecycleProjectionView, SpaceContainerProjectionView,
+    StrandProjectionView,
+};
 use crate::realm_helpers::{
     canonical_space_join_rule_v1, patch_touches_create_locked_encryption_profile,
     select_join_candidate,
@@ -956,11 +960,11 @@ impl CokretApi {
     // b0cfa89). The request body is the registered
     // `view_projection_request_body` (`{cursor?, limit?}` — an empty
     // object is valid) and the response is parsed as the registered
-    // `collection_projection_view` shape (`super::CollectionProjectionView`).
+    // `collection_projection_view` shape.
     pub async fn collection_projection(
         &self,
         view_id: &str,
-    ) -> anyhow::Result<super::CollectionProjectionView> {
+    ) -> anyhow::Result<CollectionProjectionView> {
         let body = cokret_sdk::models::ViewProjectionRequestBody::default();
         let view: cokret_sdk::CollectionProjectionView = self
             .sdk_http_client()?

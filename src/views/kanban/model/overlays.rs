@@ -66,7 +66,7 @@ pub(crate) fn overlay_local_card_creates_with_decrypt(
 }
 
 pub(crate) fn overlay_collection_projection_with_operations(
-    projection: &crate::api::CollectionProjectionView,
+    projection: &crate::projection_views::CollectionProjectionView,
     state_store: &LocalStateStore,
     board_space_id: &str,
     remote_operations: &[RawOperationRecord],
@@ -817,7 +817,7 @@ pub(crate) fn collection_item_private_field_value<'a>(
 }
 
 pub(crate) fn strand_projection_private_field_value<'a>(
-    strand: &'a crate::api::StrandProjectionView,
+    strand: &'a crate::projection_views::StrandProjectionView,
     paths: &[&'static str],
 ) -> Option<(&'a Value, &'static str)> {
     paths.iter().find_map(|path| {

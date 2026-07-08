@@ -1,6 +1,7 @@
 //! Projection view models for the self-API client.
 
-use super::*;
+use serde::{Deserialize, Serialize};
+use serde_json::Value;
 
 /// Generic wrapper for soland's
 /// `/_cokret/self/realms/{realm_id}/{spaces|strands}` lifecycle endpoints. Keeps

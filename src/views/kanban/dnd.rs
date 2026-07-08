@@ -1298,7 +1298,7 @@ pub(super) fn rebase_strand_position_after_conflict(
 /// the cell is in initial state) so the next CAS Move uses
 /// `head_eq null`.
 pub(super) fn locate_strand_position_in_projection(
-    projection: &crate::api::CollectionProjectionView,
+    projection: &crate::projection_views::CollectionProjectionView,
     strand_id: &str,
 ) -> StrandPositionExpectation {
     for group in &projection.groups {

@@ -94,7 +94,7 @@ fn patch_entry_string(patch: &Value, keys: &[&str]) -> Option<Option<String>> {
 /// Fold a `ck.space.update` patch op (structural metadata: `rank`, `title`)
 /// into the running container view.
 fn apply_space_update_to_view(
-    view: &mut crate::api::SpaceContainerProjectionView,
+    view: &mut crate::projection_views::SpaceContainerProjectionView,
     record: &RawOperationRecord,
 ) {
     let Some(patch) = op_body(record).and_then(|body| body.get("patch")) else {
@@ -115,7 +115,7 @@ fn apply_space_update_to_view(
 /// (`object.metadata.*`) and the local optimistic shape (`object.*`).
 fn strand_view_from_create_op(
     record: &RawOperationRecord,
-) -> Option<crate::api::StrandProjectionView> {
+) -> Option<crate::projection_views::StrandProjectionView> {
     let body = op_body(record)?;
     let object = body.get("object").unwrap_or(body);
     let metadata = object.get("metadata");
@@ -176,7 +176,7 @@ fn strand_view_from_create_op(
         .or_else(|| json_path_string(Some(object), &["realm_id"]))
         .unwrap_or_default();
 
-    Some(crate::api::StrandProjectionView {
+    Some(crate::projection_views::StrandProjectionView {
         strand_id,
         realm_id,
         title,
@@ -198,7 +198,10 @@ fn strand_view_from_create_op(
 
 /// Fold a `ck.strand.move` op (cross-list move; `target_space_id` is the new
 /// List Space) into the running view.
-fn apply_move_to_view(view: &mut crate::api::StrandProjectionView, record: &RawOperationRecord) {
+fn apply_move_to_view(
+    view: &mut crate::projection_views::StrandProjectionView,
+    record: &RawOperationRecord,
+) {
     let body = op_body(record);
     if let Some(target) = json_path_string(body, &["target_space_id"]) {
         view.list_space_id = Some(target);
@@ -213,7 +216,10 @@ fn apply_move_to_view(view: &mut crate::api::StrandProjectionView, record: &RawO
 
 /// Fold a `ck.strand.reorder` op (same List Space; only `rank` changes) into the
 /// running view.
-fn apply_reorder_to_view(view: &mut crate::api::StrandProjectionView, record: &RawOperationRecord) {
+fn apply_reorder_to_view(
+    view: &mut crate::projection_views::StrandProjectionView,
+    record: &RawOperationRecord,
+) {
     let body = op_body(record);
     if let Some(rank) = json_path_string(body, &["rank"]) {
         view.rank = Some(rank);
@@ -237,12 +243,14 @@ fn apply_reorder_to_view(view: &mut crate::api::StrandProjectionView, record: &R
 /// the board renderer hides non-active cards from the active columns.
 pub(crate) fn strand_views_from_ops(
     ops: &[RawOperationRecord],
-) -> Vec<crate::api::StrandProjectionView> {
+) -> Vec<crate::projection_views::StrandProjectionView> {
     // Preserve first-seen (create) order for stable output; placement/sort is
     // applied by `columns_from_lifecycle_projection`.
     let mut order: Vec<String> = Vec::new();
-    let mut by_id: std::collections::BTreeMap<String, crate::api::StrandProjectionView> =
-        std::collections::BTreeMap::new();
+    let mut by_id: std::collections::BTreeMap<
+        String,
+        crate::projection_views::StrandProjectionView,
+    > = std::collections::BTreeMap::new();
 
     for record in ordered_operations(ops) {
         if !raw_operation_allows_overlay(&record.payload) {
@@ -304,10 +312,12 @@ pub(crate) fn strand_views_from_ops(
 pub(crate) fn space_container_views_from_ops(
     ops: &[RawOperationRecord],
     realm_id: &str,
-) -> Vec<crate::api::SpaceContainerProjectionView> {
+) -> Vec<crate::projection_views::SpaceContainerProjectionView> {
     let mut order: Vec<String> = Vec::new();
-    let mut by_id: std::collections::BTreeMap<String, crate::api::SpaceContainerProjectionView> =
-        std::collections::BTreeMap::new();
+    let mut by_id: std::collections::BTreeMap<
+        String,
+        crate::projection_views::SpaceContainerProjectionView,
+    > = std::collections::BTreeMap::new();
     for record in ordered_operations(ops) {
         if !raw_operation_allows_overlay(&record.payload) {
             continue;
@@ -325,7 +335,7 @@ pub(crate) fn space_container_views_from_ops(
             }
             by_id.insert(
                 local.id.clone(),
-                crate::api::SpaceContainerProjectionView {
+                crate::projection_views::SpaceContainerProjectionView {
                     space_id: local.id,
                     realm_id: local.realm_id.unwrap_or_else(|| trim_realm_id(realm_id)),
                     kind: local.kind,

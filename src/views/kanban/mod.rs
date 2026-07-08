@@ -699,8 +699,9 @@ pub fn KanbanPanel(
     });
     let mut board_view_id = use_signal(String::new);
     let mut lifecycle_container_projection =
-        use_signal(Vec::<crate::api::SpaceContainerProjectionView>::new);
-    let mut lifecycle_strand_projection = use_signal(Vec::<crate::api::StrandProjectionView>::new);
+        use_signal(Vec::<crate::projection_views::SpaceContainerProjectionView>::new);
+    let mut lifecycle_strand_projection =
+        use_signal(Vec::<crate::projection_views::StrandProjectionView>::new);
     // Cap-Gate-2: consume the app-level CapabilityEngine context so the
     // Archive / Restore buttons can pre-gate themselves. When the engine
     // carries no grants for the actor the gate stays open (yougen still

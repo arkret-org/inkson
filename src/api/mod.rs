@@ -6,7 +6,7 @@ use std::time::Duration;
 
 use chime::{ChimePushRegisterDeviceRequest, ChimePushUnregisterDeviceRequest, CokretPushClient};
 use reqwest::Client;
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
 use serde_json::{Value, json};
 use tokio::sync::{OnceCell, RwLock};
 use url::Url;
@@ -238,10 +238,6 @@ mod request_helpers;
 // moved out of this file into `transport` (move only). All `impl CokretApi`
 // inherent methods, so no free-item re-export is needed.
 mod transport;
-// Structural split: projection view models + recommended-encryption constants
-// moved out of this file into `views` (move only). The glob re-export keeps the
-// `crate::api::*` public paths and sibling/tests `use super::*` resolution unchanged.
-mod views;
 // Structural split: the former inline `#[cfg(test)] mod tests { … }` moved to
 // `tests.rs` (move only); `use super::*` resolves against this module unchanged.
 #[cfg(test)]
@@ -250,7 +246,6 @@ mod tests;
 pub use authed::*;
 pub(crate) use mls::{generate_mls_claim_nonce, keypackage_claim_record_to_mls_record};
 pub(crate) use request_helpers::*;
-pub use views::*;
 
 /// PoP signature validity window (seconds). Kept well under the 300s protocol
 /// maximum (api-conventions.md §3.2) while tolerating modest clock skew.

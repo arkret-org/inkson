@@ -108,7 +108,7 @@ fn calendar_projection_reads_schedule_and_plain_location() {
         ),
         ("location".to_owned(), json!({ "title": "Board room" })),
     ]);
-    let strand = crate::api::StrandProjectionView {
+    let strand = crate::projection_views::StrandProjectionView {
         strand_id: TEST_CALENDAR_STRAND_ID.to_owned(),
         realm_id: TEST_REALM_ID.to_owned(),
         title: "Planning session".to_owned(),

@@ -7,7 +7,7 @@ use super::*;
 /// this test fails and points at the renderer adapter.
 #[test]
 fn collection_projection_maps_to_kanban_columns() {
-    use crate::api::{
+    use crate::projection_views::{
         CollectionProjectionGroupView, CollectionProjectionView, ProjectionItemView,
         StateFrontierView,
     };
@@ -101,7 +101,7 @@ fn collection_projection_maps_to_kanban_columns() {
 
 #[test]
 fn collection_projection_overlay_applies_remote_encrypted_strand_updates() {
-    use crate::api::{
+    use crate::projection_views::{
         CollectionProjectionGroupView, CollectionProjectionView, ProjectionItemView,
         StateFrontierView,
     };
@@ -190,7 +190,7 @@ fn collection_projection_overlay_applies_remote_encrypted_strand_updates() {
 /// without a locked_strand.
 #[test]
 fn projection_item_without_discussion_renders_synthesis_only() {
-    use crate::api::ProjectionItemView;
+    use crate::projection_views::ProjectionItemView;
     let item = ProjectionItemView {
         object: serde_json::json!({
             "id": "ck:strand:01doc",
@@ -210,7 +210,7 @@ fn projection_item_without_discussion_renders_synthesis_only() {
 #[test]
 fn board_space_options_pick_board_spaces_from_projection() {
     let options = board_space_options_from_projection(&[
-        crate::api::SpaceContainerProjectionView {
+        crate::projection_views::SpaceContainerProjectionView {
             space_id: "ck:space:0196419b-0000-7000-8000-000000000001".to_owned(),
             realm_id: "ck:realm:0196419b-0000-7000-8000-000000000000".to_owned(),
             kind: "board".to_owned(),
@@ -219,7 +219,7 @@ fn board_space_options_pick_board_spaces_from_projection() {
             rank: None,
             parent_space_id: None,
         },
-        crate::api::SpaceContainerProjectionView {
+        crate::projection_views::SpaceContainerProjectionView {
             space_id: "ck:space:0196419b-0000-7000-8000-000000000002".to_owned(),
             realm_id: "ck:realm:0196419b-0000-7000-8000-000000000000".to_owned(),
             kind: "list".to_owned(),
@@ -284,7 +284,7 @@ fn lifecycle_projection_builds_persisted_board_columns_and_cards() {
     let board_id = "ck:space:0196419b-0000-7000-8000-000000000001";
     let list_id = "ck:space:0196419b-0000-7000-8000-000000000002";
     let containers = vec![
-        crate::api::SpaceContainerProjectionView {
+        crate::projection_views::SpaceContainerProjectionView {
             space_id: board_id.to_owned(),
             realm_id: "ck:realm:0196419b-0000-7000-8000-000000000000".to_owned(),
             kind: "board".to_owned(),
@@ -293,7 +293,7 @@ fn lifecycle_projection_builds_persisted_board_columns_and_cards() {
             rank: None,
             parent_space_id: None,
         },
-        crate::api::SpaceContainerProjectionView {
+        crate::projection_views::SpaceContainerProjectionView {
             space_id: list_id.to_owned(),
             realm_id: "ck:realm:0196419b-0000-7000-8000-000000000000".to_owned(),
             kind: "list".to_owned(),
@@ -303,7 +303,7 @@ fn lifecycle_projection_builds_persisted_board_columns_and_cards() {
             parent_space_id: Some(board_id.to_owned()),
         },
     ];
-    let strands = vec![crate::api::StrandProjectionView {
+    let strands = vec![crate::projection_views::StrandProjectionView {
         strand_id: "ck:strand:0196419b-0000-7000-8000-000000000003".to_owned(),
         realm_id: "ck:realm:0196419b-0000-7000-8000-000000000000".to_owned(),
         title: "Persisted card".to_owned(),
@@ -316,7 +316,7 @@ fn lifecycle_projection_builds_persisted_board_columns_and_cards() {
         list_space_id: Some(list_id.to_owned()),
         rank: Some("U".to_owned()),
         assigned_actor_ids: vec!["did:web:alice.example".to_owned()],
-        assigned_to_relations: vec![crate::api::AssignedToRelationProjectionView {
+        assigned_to_relations: vec![crate::projection_views::AssignedToRelationProjectionView {
             relation_id: "ck:relation:0196419b-0000-7000-8000-000000000004".to_owned(),
             actor_id: "did:web:alice.example".to_owned(),
         }],
@@ -359,7 +359,7 @@ fn lifecycle_projection_builds_persisted_board_columns_and_cards() {
 fn lifecycle_projection_infers_board_from_list_parent() {
     let board_id = "ck:space:0196419b-0000-7000-8000-000000000001";
     let list_id = "ck:space:0196419b-0000-7000-8000-000000000002";
-    let containers = vec![crate::api::SpaceContainerProjectionView {
+    let containers = vec![crate::projection_views::SpaceContainerProjectionView {
         space_id: list_id.to_owned(),
         realm_id: "ck:realm:0196419b-0000-7000-8000-000000000000".to_owned(),
         kind: "list".to_owned(),
