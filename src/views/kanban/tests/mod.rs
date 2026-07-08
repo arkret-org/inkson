@@ -41,7 +41,7 @@ impl TestEventPayloadView for cokret_sdk::Event {
     }
 
     fn payload_for_schema(&self) -> &serde_json::Value {
-        &self.content
+        &self.payload
     }
 }
 

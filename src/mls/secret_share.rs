@@ -24,8 +24,6 @@
 //! history restore (server-held `mls_history` backups) is shared with the
 //! recovery strand.
 
-use std::collections::BTreeMap;
-
 use anyhow::{Result, anyhow, bail};
 use base64::Engine as _;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
@@ -112,13 +110,12 @@ pub fn build_request_content(
     req: &SecretShareRequester,
     requesting_device_id: &str,
 ) -> Result<Value> {
-    let content = cokret_sdk::events::SecretRequestContent {
+    let content = cokret_sdk::SecretShareRequestContent {
         request_id: req.request_id.clone(),
         secret_id: SECRET_SHARE_SECRET_ID.to_owned(),
         from_device: cokret_sdk::DeviceId::new(requesting_device_id.to_owned())
             .map_err(|err| anyhow!("invalid secret-share requesting device id: {err}"))?,
         recipient_hpke_public_key: req.recipient_public_b64.clone(),
-        extra: BTreeMap::new(),
     };
     serde_json::to_value(content)
         .map_err(|err| anyhow!("serialize ck.secret.request content: {err}"))
@@ -126,7 +123,7 @@ pub fn build_request_content(
 
 /// Parse and validate an inbound `ck.secret.request.content`.
 pub fn parse_request_content(content: &Value) -> Result<ParsedSecretRequest> {
-    let content: cokret_sdk::events::SecretRequestContent = serde_json::from_value(content.clone())
+    let content: cokret_sdk::SecretShareRequestContent = serde_json::from_value(content.clone())
         .map_err(|err| anyhow!("decode ck.secret.request.content: {err}"))?;
     let request_id = content.request_id;
     let secret_id = content.secret_id;
@@ -174,7 +171,7 @@ pub fn build_send_content(
         expires_at,
     )?;
     let sealed = hpke_backup::hpke_seal(&recipient_pk, SECRET_SHARE_HPKE_INFO, &aad, &plaintext)?;
-    let content = cokret_sdk::events::SecretSendContent {
+    let content = cokret_sdk::SecretShareSendContent {
         request_id: request.request_id.clone(),
         secret_id: SECRET_SHARE_SECRET_ID.to_owned(),
         from_device: cokret_sdk::DeviceId::new(self_device_id.to_owned())
@@ -182,7 +179,6 @@ pub fn build_send_content(
         scheme: SECRET_SHARE_SCHEME.to_owned(),
         enc: URL_SAFE_NO_PAD.encode(sealed.enc),
         ciphertext: URL_SAFE_NO_PAD.encode(sealed.ciphertext),
-        extra: BTreeMap::new(),
     };
     serde_json::to_value(content).map_err(|err| anyhow!("serialize ck.secret.send content: {err}"))
 }
@@ -202,7 +198,7 @@ pub fn open_send_content(
     our_device_id: &str,
     expires_at: &str,
 ) -> Result<OpenedSecret> {
-    let send_content: cokret_sdk::events::SecretSendContent =
+    let send_content: cokret_sdk::SecretShareSendContent =
         serde_json::from_value(send_content.clone())
             .map_err(|err| anyhow!("decode ck.secret.send.content: {err}"))?;
     let outer_request_id = send_content.request_id;

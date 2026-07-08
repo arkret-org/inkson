@@ -37,7 +37,7 @@ pub(super) fn submit_kanban_operation_event(
             "actor_id": actor_id,
             "created_at": created_at,
             "write_state": "queued",
-            "body": operation.content.clone(),
+            "body": operation.payload.clone(),
         }),
     );
     board_status.set(format!(
@@ -293,7 +293,7 @@ pub(super) fn submit_kanban_move(
         .map(|board_space_id| strand_position_cell_id(board_space_id, &subject))
         .unwrap_or_else(|| format!("ck:cell:ck.component.strand.position.v1:{subject}"));
     let effect_summary = if kind == "ck.strand.create" {
-        serde_json::to_string(&event.content).unwrap_or_else(|_| "{}".to_owned())
+        serde_json::to_string(&event.payload).unwrap_or_else(|_| "{}".to_owned())
     } else {
         serde_json::to_string(&value).unwrap_or_else(|_| "{}".to_owned())
     };
@@ -321,7 +321,7 @@ pub(super) fn submit_kanban_move(
             "cell": cell_id,
             "effect": value,
             "wire_kind": wire_kind.clone(),
-            "body": event.content.clone(),
+            "body": event.payload.clone(),
             "write_state": "queued",
         }),
     );
@@ -635,7 +635,7 @@ pub(super) fn dispatch_space_container_lifecycle(
             "actor_id": actor_id,
             "created_at": event.created_at.to_rfc3339(),
             "write_state": "queued",
-            "body": event.content.clone(),
+            "body": event.payload.clone(),
         }),
     );
     let base = base_url.clone();
@@ -725,7 +725,7 @@ pub(super) fn dispatch_strand_lifecycle(
             "actor_id": actor_id,
             "created_at": event.created_at.to_rfc3339(),
             "write_state": "queued",
-            "body": event.content.clone(),
+            "body": event.payload.clone(),
         }),
     );
     let base = base_url.clone();
@@ -854,7 +854,7 @@ pub(super) fn dispatch_board_archive_cascade(
                         "actor_id": actor_id,
                         "created_at": event.created_at.to_rfc3339(),
                         "write_state": "queued",
-                        "body": event.content.clone(),
+                        "body": event.payload.clone(),
                     }),
                 );
                 operation_id
@@ -1074,7 +1074,7 @@ pub(super) fn submit_strand_position_cas_move_with_attempt(
             // `apply_reorder_to_view`) folds the optimistic move immediately —
             // `columns` is a pure `use_memo` over `raw_operations`, so the
             // relocation must live in the op log, not a direct signal mutation.
-            "body": event.content.clone(),
+            "body": event.payload.clone(),
             "write_state": "submitted",
         }),
     );

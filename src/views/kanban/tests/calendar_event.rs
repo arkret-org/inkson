@@ -74,10 +74,10 @@ fn calendar_rsvp_operation_uses_occurrence_payload() {
         sdk_event_local_target_ref(&event),
         Some(TEST_CALENDAR_STRAND_ID)
     );
-    assert_eq!(event.content["event_ref"], TEST_CALENDAR_STRAND_ID);
-    assert_eq!(event.content["status"], "accepted");
+    assert_eq!(event.payload["event_ref"], TEST_CALENDAR_STRAND_ID);
+    assert_eq!(event.payload["status"], "accepted");
     assert_eq!(
-        event.content["occurrence"],
+        event.payload["occurrence"],
         "2026-06-20T09:00:00[Asia/Shanghai]"
     );
     assert_registered_payload_valid(&event);

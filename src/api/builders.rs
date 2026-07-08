@@ -1015,7 +1015,7 @@ pub fn build_member_state_invite_accept_event(
         "invite_accept",
         None,
     )?;
-    event.content["invite_ref"] = json!(invite_id);
+    event.payload["invite_ref"] = json!(invite_id);
     Ok(event)
 }
 

@@ -256,39 +256,39 @@ fn space_bootstrap_events_use_canonical_create_and_facet_kinds() {
     );
 
     let create = &events[0];
-    assert_eq!(create.content["object"]["schema"], "ck.schema.realm.v1");
+    assert_eq!(create.payload["object"]["schema"], "ck.schema.realm.v1");
     // Spec rename (head 37ce729 / SDK 4d5a1af): realm.schema.json
     // `created_by_principal` → `created_by`.
     assert_eq!(
-        create.content["object"]["created_by"],
+        create.payload["object"]["created_by"],
         create.actor_id.as_str()
     );
     assert_eq!(
-        create.content["object"]["created_at"].as_str().unwrap(),
+        create.payload["object"]["created_at"].as_str().unwrap(),
         create
             .created_at
             .to_rfc3339_opts(chrono::SecondsFormat::Secs, true),
         "Realm create cross-field semantic validation requires matching timestamps",
     );
-    assert_eq!(create.content["object"]["default_join_rule"], "invite");
-    assert_eq!(create.content["object"]["history_visibility"], "shared");
-    assert!(create.content["object"]["content_encryption_floor"].is_null());
-    assert!(create.content["object"]["metadata_encryption_floor"].is_null());
-    assert_eq!(create.content["object"]["notary"]["type"], "single_did");
+    assert_eq!(create.payload["object"]["default_join_rule"], "invite");
+    assert_eq!(create.payload["object"]["history_visibility"], "shared");
+    assert!(create.payload["object"]["content_encryption_floor"].is_null());
+    assert!(create.payload["object"]["metadata_encryption_floor"].is_null());
+    assert_eq!(create.payload["object"]["notary"]["type"], "single_did");
     assert_eq!(
-        create.content["object"]["notary"]["did"],
+        create.payload["object"]["notary"]["did"],
         create.actor_id.as_str()
     );
     assert_eq!(
-        create.content["object"]["notary"]["recovery_members"][0],
+        create.payload["object"]["notary"]["recovery_members"][0],
         "did:web:alice.example:recovery:notary",
     );
     assert_eq!(
-        create.content["object"]["notary"]["controller_organization"],
+        create.payload["object"]["notary"]["controller_organization"],
         "did:web:alice.example",
     );
     assert_eq!(
-        create.content["object"]["notary"]["recovery_controller_organizations"][0],
+        create.payload["object"]["notary"]["recovery_controller_organizations"][0],
         "did:web:alice.example:recovery",
     );
     assert_eq!(
@@ -308,50 +308,50 @@ fn space_bootstrap_events_use_canonical_create_and_facet_kinds() {
     // history_visibility, history_sharing_policy, discovery,
     // plaintext_visible, member-invite.
     assert_eq!(
-        events[1].content["value"]["content_encryption_floor"],
+        events[1].payload["value"]["content_encryption_floor"],
         RECOMMENDED_REALM_ENCRYPTION_FLOOR
     );
     assert_eq!(
-        events[1].content["value"]["metadata_encryption_floor"],
+        events[1].payload["value"]["metadata_encryption_floor"],
         RECOMMENDED_REALM_ENCRYPTION_FLOOR
     );
-    assert_eq!(events[1].content["value"]["policy_revision"], 1);
+    assert_eq!(events[1].payload["value"]["policy_revision"], 1);
     assert_eq!(
-        events[1].content["value"]["content_scheme"],
+        events[1].payload["value"]["content_scheme"],
         "mls-exporter-aead-v1"
     );
-    assert_eq!(events[2].content["value"], "invite");
-    assert_eq!(events[3].content["value"], "shared");
+    assert_eq!(events[2].payload["value"], "invite");
+    assert_eq!(events[3].payload["value"], "shared");
     assert_eq!(
-        events[4].content["value"]["default_key_share"],
+        events[4].payload["value"]["default_key_share"],
         "event_time_visibility"
     );
     assert_eq!(
-        events[4].content["value"]["pre_join_history"],
+        events[4].payload["value"]["pre_join_history"],
         "allow_if_visibility_allows"
     );
     assert_eq!(
-        events[4].content["value"]["allowed_key_sources"],
+        events[4].payload["value"]["allowed_key_sources"],
         json!(["verified_member_device"])
     );
     assert_eq!(
-        events[4].content["value"]["allowed_receiver_states"],
+        events[4].payload["value"]["allowed_receiver_states"],
         json!(["active_member"])
     );
     assert_eq!(
-        events[4].content["value"]["audit"],
+        events[4].payload["value"]["audit"],
         json!({
             "share_audit_event_required": false,
             "access_audit_required": false
         })
     );
-    assert_eq!(events[5].content["value"], "listed");
+    assert_eq!(events[5].payload["value"], "listed");
     assert_eq!(
-        events[6].content["services"][0]["service_did"],
+        events[6].payload["services"][0]["service_did"],
         "did:web:server.example"
     );
     assert_eq!(
-        events[6].content["services"][0]["data_classes"],
+        events[6].payload["services"][0]["data_classes"],
         json!([
             "message_content",
             "full_text_index",
@@ -359,7 +359,7 @@ fn space_bootstrap_events_use_canonical_create_and_facet_kinds() {
             "inbox_preview",
         ])
     );
-    assert_eq!(events[7].content["membership"], "invite");
+    assert_eq!(events[7].payload["membership"], "invite");
 }
 
 #[test]
@@ -384,9 +384,9 @@ fn plaintext_realm_create_does_not_claim_e2ee_floors() {
     )
     .unwrap();
 
-    assert_eq!(envelope.content["object"]["encryption_profile"], "none");
-    assert!(envelope.content["object"]["content_encryption_floor"].is_null());
-    assert!(envelope.content["object"]["metadata_encryption_floor"].is_null());
+    assert_eq!(envelope.payload["object"]["encryption_profile"], "none");
+    assert!(envelope.payload["object"]["content_encryption_floor"].is_null());
+    assert!(envelope.payload["object"]["metadata_encryption_floor"].is_null());
 }
 
 #[test]
@@ -441,7 +441,7 @@ fn realm_bootstrap_allows_joined_history_with_strict_mls_scheme() {
     )
     .expect("joined history is valid with the strict MLS content scheme");
 
-    assert_eq!(events[1].content["value"]["content_scheme"], "mls-rfc9420");
+    assert_eq!(events[1].payload["value"]["content_scheme"], "mls-rfc9420");
 }
 
 #[test]
@@ -565,18 +565,18 @@ fn member_state_invite_accept_event_carries_invite_ref() {
     assert_eq!(event.actor_id.as_str(), "did:web:bob.example");
     // Spec `membership_payload` requires `realm_id` in the body for join.
     assert_eq!(
-        event.content["realm_id"],
+        event.payload["realm_id"],
         "ck:realm:0196419b-0000-7000-8000-000000000010"
     );
-    assert_eq!(event.content["actor_id"], "did:web:bob.example");
-    assert_eq!(event.content["membership"], "join");
-    assert_eq!(event.content["reason"], "invite_accept");
+    assert_eq!(event.payload["actor_id"], "did:web:bob.example");
+    assert_eq!(event.payload["membership"], "join");
+    assert_eq!(event.payload["reason"], "invite_accept");
     assert_eq!(
-        event.content["invite_ref"],
+        event.payload["invite_ref"],
         "ck:invite:0196419b-0000-7000-8000-000000000020"
     );
-    assert!(event.content.get("invite_id").is_none());
-    assert_eq!(event.content["delivery_status"], "unroutable");
+    assert!(event.payload.get("invite_id").is_none());
+    assert_eq!(event.payload["delivery_status"], "unroutable");
     assert_eq!(event.preconditions.len(), 1);
     assert_eq!(
         event.preconditions[0].cell.as_str(),
@@ -609,11 +609,11 @@ fn member_state_ban_event_uses_realm_scoped_member_cell() {
 
     assert_eq!(event.kind.as_str(), "ck.member.state");
     assert_eq!(
-        event.content["realm_id"],
+        event.payload["realm_id"],
         "ck:realm:0196419b-0000-7000-8000-000000000010"
     );
-    assert_eq!(event.content["actor_id"], "did:web:bob.example");
-    assert_eq!(event.content["membership"], "ban");
+    assert_eq!(event.payload["actor_id"], "did:web:bob.example");
+    assert_eq!(event.payload["membership"], "ban");
     assert_eq!(event.preconditions.len(), 1);
     assert_eq!(
         event.preconditions[0].cell.as_str(),
@@ -652,7 +652,7 @@ fn outgoing_payload_schema_gate_accepts_sdk_object_patch_payload() {
     .body(payload)
     .build("yougen");
 
-    validate_outgoing_registered_event_payload(event.kind.as_str(), &event.content).unwrap();
+    validate_outgoing_registered_event_payload(event.kind.as_str(), &event.payload).unwrap();
 }
 
 /// Contract test: ck.space.create payload must satisfy spec
@@ -677,11 +677,11 @@ fn space_create_payload_matches_spec_schema() {
     if catalog
         .missing_payload_validators_for(std::iter::once(event.kind.as_str()))
         .is_empty()
-        && let Err(error) = catalog.validate_payload(event.kind.as_str(), &event.content)
+        && let Err(error) = catalog.validate_payload(event.kind.as_str(), &event.payload)
     {
         panic!(
             "ck.space.create payload violates spec: {error}\npayload: {}",
-            serde_json::to_string_pretty(&event.content).unwrap_or_default()
+            serde_json::to_string_pretty(&event.payload).unwrap_or_default()
         );
     }
 }
@@ -719,13 +719,13 @@ fn realm_bootstrap_payloads_match_spec_schema() {
         if catalog
             .missing_payload_validators_for(std::iter::once(event.kind.as_str()))
             .is_empty()
-            && let Err(error) = catalog.validate_payload(event.kind.as_str(), &event.content)
+            && let Err(error) = catalog.validate_payload(event.kind.as_str(), &event.payload)
         {
             panic!(
                 "event kind `{}` payload violates spec schema: {error}\n\
                  payload was: {}",
                 event.kind.as_str(),
-                serde_json::to_string_pretty(&event.content).unwrap_or_default()
+                serde_json::to_string_pretty(&event.payload).unwrap_or_default()
             );
         }
     }

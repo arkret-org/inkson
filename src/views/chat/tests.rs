@@ -241,34 +241,34 @@ fn chat_message_create_operation_emits_schema_canonical_content() {
 
     assert_eq!(op.kind.as_str(), "ck.message.create");
     assert_eq!(
-        op.content["message_id"].as_str(),
+        op.payload["message_id"].as_str(),
         Some("ck:message:01904100-0000-7000-8000-000000000001")
     );
     assert_eq!(
-        op.content["strand_id"].as_str(),
+        op.payload["strand_id"].as_str(),
         Some("ck:strand:01904100-0000-7000-8000-000000000001")
     );
-    assert_eq!(op.content["track_name"].as_str(), Some("discussion"));
+    assert_eq!(op.payload["track_name"].as_str(), Some("discussion"));
     assert_eq!(
-        op.content["content"]["kind"].as_str(),
+        op.payload["content"]["kind"].as_str(),
         Some("ck.content.text")
     );
     assert_eq!(
-        op.content["content"]["body"].as_str(),
+        op.payload["content"]["body"].as_str(),
         Some("hello from chat")
     );
-    assert!(op.content["content"].get("blocks").is_none());
-    assert!(op.content.get("body").is_none());
-    assert!(op.content.get("encrypted").is_none());
-    assert!(op.content.get("kind").is_none());
-    assert!(op.content.get("mentions").is_none());
-    assert!(op.content.get("audience_mentions").is_none());
-    assert!(op.content.get("mention_relations").is_none());
-    assert!(op.content.get("reply_to").is_none());
-    assert!(op.content.get("thread_id").is_none());
+    assert!(op.payload["content"].get("blocks").is_none());
+    assert!(op.payload.get("body").is_none());
+    assert!(op.payload.get("encrypted").is_none());
+    assert!(op.payload.get("kind").is_none());
+    assert!(op.payload.get("mentions").is_none());
+    assert!(op.payload.get("audience_mentions").is_none());
+    assert!(op.payload.get("mention_relations").is_none());
+    assert!(op.payload.get("reply_to").is_none());
+    assert!(op.payload.get("thread_id").is_none());
     cokret_sdk::schema::event_payload_validator_catalog()
         .unwrap()
-        .validate_payload(op.kind.as_str(), &op.content)
+        .validate_payload(op.kind.as_str(), &op.payload)
         .unwrap();
 }
 
@@ -303,16 +303,16 @@ fn chat_message_create_operation_keeps_public_update_notification_projection_out
     )
     .expect("builds");
 
-    assert!(op.content.get("priority").is_none());
-    assert!(op.content["content"].get("priority").is_none());
-    assert!(op.content["content"].get("notification").is_none());
+    assert!(op.payload.get("priority").is_none());
+    assert!(op.payload["content"].get("priority").is_none());
+    assert!(op.payload["content"].get("notification").is_none());
     assert_eq!(
-        op.content["content"]["body"].as_str(),
+        op.payload["content"]["body"].as_str(),
         Some("SEV-1 public update: checkout latency is recovering")
     );
     cokret_sdk::schema::event_payload_validator_catalog()
         .unwrap()
-        .validate_payload(op.kind.as_str(), &op.content)
+        .validate_payload(op.kind.as_str(), &op.payload)
         .unwrap();
 }
 
@@ -337,13 +337,13 @@ fn chat_message_create_operation_with_expiry_puts_contract_at_payload_top_level(
     )
     .expect("builds");
 
-    assert_eq!(op.content["expiry"]["ttl_ms"], 60_000);
-    assert_eq!(op.content["expiry"]["trigger"], "on_first_read");
-    assert_eq!(op.content["expiry"]["grace_ms"], 5_000);
-    assert!(op.content["content"].get("expiry").is_none());
+    assert_eq!(op.payload["expiry"]["ttl_ms"], 60_000);
+    assert_eq!(op.payload["expiry"]["trigger"], "on_first_read");
+    assert_eq!(op.payload["expiry"]["grace_ms"], 5_000);
+    assert!(op.payload["content"].get("expiry").is_none());
     cokret_sdk::schema::event_payload_validator_catalog()
         .unwrap()
-        .validate_payload(op.kind.as_str(), &op.content)
+        .validate_payload(op.kind.as_str(), &op.payload)
         .unwrap();
 }
 
@@ -363,15 +363,15 @@ fn chat_message_create_operation_embeds_audience_mentions_in_content_only() {
     .expect("builds");
 
     assert_eq!(
-        op.content["content"]["audience_mentions"][0]["audience"].as_str(),
+        op.payload["content"]["audience_mentions"][0]["audience"].as_str(),
         Some("strand_engaged")
     );
-    assert!(op.content.get("audience_mentions").is_none());
-    assert!(op.content.get("mentions").is_none());
-    assert!(op.content.get("mention_relations").is_none());
+    assert!(op.payload.get("audience_mentions").is_none());
+    assert!(op.payload.get("mentions").is_none());
+    assert!(op.payload.get("mention_relations").is_none());
     cokret_sdk::schema::event_payload_validator_catalog()
         .unwrap()
-        .validate_payload(op.kind.as_str(), &op.content)
+        .validate_payload(op.kind.as_str(), &op.payload)
         .unwrap();
 }
 
@@ -403,7 +403,7 @@ fn chat_message_create_operation_embeds_agent_selector_mention_metadata() {
     )
     .expect("builds");
 
-    let mention = &op.content["content"]["mentions"][0];
+    let mention = &op.payload["content"]["mentions"][0];
     assert_eq!(mention["kind"].as_str(), Some("mention"));
     assert_eq!(
         mention["subject_id"].as_str(),
@@ -419,10 +419,10 @@ fn chat_message_create_operation_embeds_agent_selector_mention_metadata() {
     );
     assert_eq!(mention["agent_slug_at_time"].as_str(), Some("summary"));
     assert!(mention.get("target").is_none());
-    assert!(op.content.get("mentions").is_none());
+    assert!(op.payload.get("mentions").is_none());
     cokret_sdk::schema::event_payload_validator_catalog()
         .unwrap()
-        .validate_payload(op.kind.as_str(), &op.content)
+        .validate_payload(op.kind.as_str(), &op.payload)
         .unwrap();
 }
 
@@ -441,13 +441,13 @@ fn chat_message_create_operation_includes_reply_fields_only_when_present() {
     .expect("builds");
 
     assert_eq!(
-        op.content["reply_to"].as_str(),
+        op.payload["reply_to"].as_str(),
         Some("ck:message:01904100-0000-7000-8000-000000000004")
     );
-    assert!(op.content.get("thread_id").is_none());
+    assert!(op.payload.get("thread_id").is_none());
     cokret_sdk::schema::event_payload_validator_catalog()
         .unwrap()
-        .validate_payload(op.kind.as_str(), &op.content)
+        .validate_payload(op.kind.as_str(), &op.payload)
         .unwrap();
 }
 
@@ -543,13 +543,13 @@ fn shared_pin_operations_use_pin_events_not_account_data() {
     .expect("shared pin add builds");
 
     assert_eq!(add.kind.as_str(), "ck.pin.add");
-    assert_eq!(add.content["pin_scope"]["kind"], "strand");
-    assert_eq!(add.content["pin_scope"]["id"], strand_id);
-    assert_eq!(add.content["target_ref"], target_ref);
-    assert_eq!(add.content["rank"], "r100");
-    assert!(add.content.get("key").is_none());
-    assert!(add.content.get("encrypted_payload").is_none());
-    assert!(add.content.get("body").is_none());
+    assert_eq!(add.payload["pin_scope"]["kind"], "strand");
+    assert_eq!(add.payload["pin_scope"]["id"], strand_id);
+    assert_eq!(add.payload["target_ref"], target_ref);
+    assert_eq!(add.payload["rank"], "r100");
+    assert!(add.payload.get("key").is_none());
+    assert!(add.payload.get("encrypted_payload").is_none());
+    assert!(add.payload.get("body").is_none());
 
     let remove = shared_message_pin_remove_operation(
         "ck:realm:01904100-0000-7000-8000-000000000010",
@@ -559,15 +559,15 @@ fn shared_pin_operations_use_pin_events_not_account_data() {
     )
     .expect("shared pin remove builds");
     assert_eq!(remove.kind.as_str(), "ck.pin.remove");
-    assert_eq!(remove.content["target_ref"], target_ref);
-    assert!(remove.content.get("key").is_none());
+    assert_eq!(remove.payload["target_ref"], target_ref);
+    assert!(remove.payload.get("key").is_none());
     cokret_sdk::schema::event_payload_validator_catalog()
         .unwrap()
-        .validate_payload(add.kind.as_str(), &add.content)
+        .validate_payload(add.kind.as_str(), &add.payload)
         .unwrap();
     cokret_sdk::schema::event_payload_validator_catalog()
         .unwrap()
-        .validate_payload(remove.kind.as_str(), &remove.content)
+        .validate_payload(remove.kind.as_str(), &remove.payload)
         .unwrap();
 }
 
@@ -587,12 +587,12 @@ fn default_discussion_shared_pin_uses_realm_scope() {
     .expect("shared pin add builds");
 
     assert_eq!(add.kind.as_str(), "ck.pin.add");
-    assert_eq!(add.content["pin_scope"]["kind"], "realm");
-    assert_eq!(add.content["pin_scope"]["id"], realm_id);
-    assert_eq!(add.content["target_ref"], target_ref);
+    assert_eq!(add.payload["pin_scope"]["kind"], "realm");
+    assert_eq!(add.payload["pin_scope"]["id"], realm_id);
+    assert_eq!(add.payload["target_ref"], target_ref);
     cokret_sdk::schema::event_payload_validator_catalog()
         .unwrap()
-        .validate_payload(add.kind.as_str(), &add.content)
+        .validate_payload(add.kind.as_str(), &add.payload)
         .unwrap();
 }
 
@@ -626,9 +626,9 @@ fn private_saved_item_uses_saved_account_data_not_pin_event() {
     .unwrap()
     .build("yougen");
     assert_eq!(op.kind, "ck.account_data.set");
-    assert_eq!(op.content["key"], item.account_data_key);
-    assert_eq!(op.content["encrypted_payload"]["kind"], "saved_item");
-    assert!(op.content.get("body").is_none());
+    assert_eq!(op.payload["key"], item.account_data_key);
+    assert_eq!(op.payload["encrypted_payload"]["kind"], "saved_item");
+    assert!(op.payload.get("body").is_none());
     assert_ne!(op.kind, "ck.pin.add");
 }
 
@@ -2787,16 +2787,16 @@ fn chat_message_revise_operation_uses_schema_target_ref() {
     .expect("builds");
 
     assert_eq!(
-        op.content["target_ref"],
+        op.payload["target_ref"],
         "ck:event:019e4fd4-4e26-7cc9-af7e-d7102d6f4a23"
     );
-    assert_eq!(op.content["content"]["kind"], "ck.content.text");
-    assert_eq!(op.content["content"]["body"], "edited");
-    assert!(op.content.get("body").is_none());
-    assert!(op.content.get("target_event_id").is_none());
+    assert_eq!(op.payload["content"]["kind"], "ck.content.text");
+    assert_eq!(op.payload["content"]["body"], "edited");
+    assert!(op.payload.get("body").is_none());
+    assert!(op.payload.get("target_event_id").is_none());
     cokret_sdk::schema::event_payload_validator_catalog()
         .unwrap()
-        .validate_payload(op.kind.as_str(), &op.content)
+        .validate_payload(op.kind.as_str(), &op.payload)
         .unwrap();
 }
 
@@ -2811,12 +2811,12 @@ fn chat_message_revise_operation_accepts_message_id_target_ref() {
     .expect("builds");
 
     assert_eq!(
-        op.content["target_ref"],
+        op.payload["target_ref"],
         "ck:message:019e4fd4-4e26-7cc9-af7e-d7102d6f4a23"
     );
     cokret_sdk::schema::event_payload_validator_catalog()
         .unwrap()
-        .validate_payload(op.kind.as_str(), &op.content)
+        .validate_payload(op.kind.as_str(), &op.payload)
         .unwrap();
 }
 
@@ -2831,14 +2831,14 @@ fn chat_message_redact_operation_uses_event_target_for_event_id() {
     .expect("builds");
 
     assert_eq!(
-        op.content["target_event_id"],
+        op.payload["target_event_id"],
         "ck:event:019e4fd4-4e26-7cc9-af7e-d7102d6f4a23"
     );
-    assert_eq!(op.content["reason"], "author_redaction");
-    assert!(op.content.get("message_id").is_none());
+    assert_eq!(op.payload["reason"], "author_redaction");
+    assert!(op.payload.get("message_id").is_none());
     cokret_sdk::schema::event_payload_validator_catalog()
         .unwrap()
-        .validate_payload(op.kind.as_str(), &op.content)
+        .validate_payload(op.kind.as_str(), &op.payload)
         .unwrap();
 }
 
@@ -2853,14 +2853,14 @@ fn chat_message_redact_operation_uses_message_id_for_message_target() {
     .expect("builds");
 
     assert_eq!(
-        op.content["message_id"],
+        op.payload["message_id"],
         "ck:message:019e4fd4-4e26-7cc9-af7e-d7102d6f4a23"
     );
-    assert_eq!(op.content["reason"], "author_redaction");
-    assert!(op.content.get("target_event_id").is_none());
+    assert_eq!(op.payload["reason"], "author_redaction");
+    assert!(op.payload.get("target_event_id").is_none());
     cokret_sdk::schema::event_payload_validator_catalog()
         .unwrap()
-        .validate_payload(op.kind.as_str(), &op.content)
+        .validate_payload(op.kind.as_str(), &op.payload)
         .unwrap();
 }
 
@@ -2875,14 +2875,14 @@ fn chat_reaction_add_operation_uses_schema_target_ref() {
     .expect("builds");
 
     assert_eq!(
-        op.content["target_ref"],
+        op.payload["target_ref"],
         "ck:event:019e4fd4-4e26-7cc9-af7e-d7102d6f4a23"
     );
-    assert_eq!(op.content["key"], "+1");
-    assert!(op.content.get("event_id").is_none());
-    assert!(op.content.get("actor").is_none());
+    assert_eq!(op.payload["key"], "+1");
+    assert!(op.payload.get("event_id").is_none());
+    assert!(op.payload.get("actor").is_none());
     cokret_sdk::schema::event_payload_validator_catalog()
         .unwrap()
-        .validate_payload(op.kind.as_str(), &op.content)
+        .validate_payload(op.kind.as_str(), &op.payload)
         .unwrap();
 }

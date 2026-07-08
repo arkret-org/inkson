@@ -272,7 +272,7 @@ pub(super) fn dispatch_card_assignees_update(
                 "actor_id": operation.actor_id.to_string(),
                 "created_at": operation.created_at.to_rfc3339(),
                 "write_state": "queued",
-                "body": operation.content.clone(),
+                "body": operation.payload.clone(),
                 "assignment_strand_id": current.id.clone(),
                 "assignment_actor_id": mutation.actor_id(),
                 "assignment_relation_id": mutation.relation_id(),

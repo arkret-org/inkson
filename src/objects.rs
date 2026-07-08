@@ -177,14 +177,14 @@ mod tests {
         .build("node");
         assert_eq!(op.kind.as_str(), "ck.morph.update");
         assert_eq!(
-            op.content["target_ref"],
+            op.payload["target_ref"],
             "ck:morph:0196419b-0000-7000-8000-000000000001"
         );
         assert!(
-            op.content.get("morph_id").is_none(),
+            op.payload.get("morph_id").is_none(),
             "morph_id is not a morph_update_payload field"
         );
-        assert_eq!(op.content["patch"]["metadata.title"], "Roadmap");
+        assert_eq!(op.payload["patch"]["metadata.title"], "Roadmap");
     }
 
     #[test]
@@ -215,12 +215,12 @@ mod tests {
         // relation id is routed via target_ref, not a payload field.
         assert_eq!(op.local_target_ref(), Some("ck:relation:r1"));
         assert!(
-            op.content.get("relation_id").is_none(),
+            op.payload.get("relation_id").is_none(),
             "relation_id is not a relation_create_payload field"
         );
-        assert_eq!(op.content["kind"], "contains");
-        assert_eq!(op.content["from_ref"], "ck:strand:f1");
-        assert_eq!(op.content["to_ref"], "ck:strand:f2");
+        assert_eq!(op.payload["kind"], "contains");
+        assert_eq!(op.payload["from_ref"], "ck:strand:f1");
+        assert_eq!(op.payload["to_ref"], "ck:strand:f2");
     }
 
     #[test]
@@ -241,12 +241,12 @@ mod tests {
             Some("ck:space:0196419b-0000-7000-8000-000000000001")
         );
         assert_eq!(
-            op.content["container_ref"],
+            op.payload["container_ref"],
             "ck:space:0196419b-0000-7000-8000-000000000001"
         );
-        assert_eq!(op.content["source_ref"], "ck:strand:f1");
-        assert_eq!(op.content["target_ref"], "ck:strand:f1");
-        assert_eq!(op.content["rank"], "r0");
+        assert_eq!(op.payload["source_ref"], "ck:strand:f1");
+        assert_eq!(op.payload["target_ref"], "ck:strand:f1");
+        assert_eq!(op.payload["rank"], "r0");
     }
 
     #[test]
@@ -266,12 +266,12 @@ mod tests {
         .build("node");
         assert_eq!(op.kind.as_str(), "ck.container.rebalance");
         assert_eq!(
-            op.content["container_ref"],
+            op.payload["container_ref"],
             "ck:space:0196419b-0000-7000-8000-000000000001"
         );
-        assert_eq!(op.content["target_ref"], "ck:strand:f2");
-        assert_eq!(op.content["rank"], "r1");
-        assert_eq!(op.content["items"][0]["item_ref"], "ck:strand:f1");
-        assert_eq!(op.content["items"][1]["rank"], "r1");
+        assert_eq!(op.payload["target_ref"], "ck:strand:f2");
+        assert_eq!(op.payload["rank"], "r1");
+        assert_eq!(op.payload["items"][0]["item_ref"], "ck:strand:f1");
+        assert_eq!(op.payload["items"][1]["rank"], "r1");
     }
 }
