@@ -16,6 +16,7 @@ use super::token_source::{
     acquire_platform_push_key, current_platform, default_gateway_binding, push_preferences,
 };
 use super::{APP_ID, DISPLAY_NAME};
+use crate::models::PushRegisterView;
 
 pub fn build_register_request(device_id: &str) -> anyhow::Result<ChimePushRegisterDeviceRequest> {
     build_register_request_for_actor(device_id, None)
@@ -92,4 +93,14 @@ pub fn registration_state_from_response(
     let registered_at = Utc::now().to_rfc3339();
 
     build_registration_state(&binding, request, response, Some(registered_at.as_str()))
+}
+
+pub fn push_register_view_from_chime_response(
+    response: ChimePushRegisterDeviceOutcome,
+) -> PushRegisterView {
+    PushRegisterView {
+        ok: response.ok,
+        registration_id: response.registration_id,
+        expires_at: response.expires_at,
+    }
 }

@@ -23,19 +23,6 @@ pub(crate) fn canonical_blob_ref(blob_ref: &str) -> &str {
     blob_ref.split('#').next().unwrap_or(blob_ref).trim()
 }
 
-/// Project chime's full [`ChimePushRegisterDeviceOutcome`](chime::ChimePushRegisterDeviceOutcome)
-/// onto yougen's slimmer `PushRegisterView` view (the upstream
-/// fields not modelled here are intentionally dropped for now).
-pub(crate) fn map_chime_register_response(
-    response: ChimePushRegisterDeviceOutcome,
-) -> PushRegisterView {
-    PushRegisterView {
-        ok: response.ok,
-        registration_id: response.registration_id,
-        expires_at: response.expires_at,
-    }
-}
-
 /// Decode a server error response into an SDK [`ErrorEnvelope`]. We try
 /// the current on-the-wire shapes in order:
 ///

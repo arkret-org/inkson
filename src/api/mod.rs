@@ -5,8 +5,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
 use chime::{
-    ChimePushRegisterDeviceOutcome, ChimePushRegisterDeviceRequest,
-    ChimePushUnregisterDeviceRequest, CokretPushClient,
+    ChimePushRegisterDeviceRequest, ChimePushUnregisterDeviceRequest, CokretPushClient,
 };
 use cokret_sdk::ErrorEnvelope;
 use reqwest::{Client, StatusCode};

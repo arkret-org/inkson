@@ -16,7 +16,9 @@ impl CokretApi {
             .register_device_with_request(request, request.idempotency_key.as_deref(), None)
             .await
             .map_err(anyhow::Error::from)?;
-        Ok(map_chime_register_response(response.body))
+        Ok(crate::push::push_register_view_from_chime_response(
+            response.body,
+        ))
     }
 
     pub async fn register_push_device_with_request(
@@ -29,7 +31,9 @@ impl CokretApi {
             .register_device_with_request(request, request.idempotency_key.as_deref(), None)
             .await
             .map_err(anyhow::Error::from)?;
-        Ok(map_chime_register_response(response.body))
+        Ok(crate::push::push_register_view_from_chime_response(
+            response.body,
+        ))
     }
 
     pub async fn unregister_push_device(&self, device_id: &str) -> anyhow::Result<OkOutcome> {
