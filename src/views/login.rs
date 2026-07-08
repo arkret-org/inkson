@@ -1,7 +1,7 @@
 use chrono::Utc;
-use cokret_client::{LoginKind, OidcLogin, SessionEngine, SessionGrantState};
 use cokret_sdk::http_client::{Auth, ClientBuilder};
 use dioxus::prelude::*;
+use garth::{LoginKind, OidcLogin, SessionEngine, SessionGrantState};
 
 use crate::account_auth::{
     AuthorityResolver, build_oidc_authorize_scaffold, build_persisted_oidc_scaffold,

@@ -540,7 +540,7 @@ mod tests {
         raw_operations: Vec<RawOperationRecord>,
     }
 
-    impl cokret_client::projection::DomainProjector for ClientCoreKanbanProjector {
+    impl garth::projection::DomainProjector for ClientCoreKanbanProjector {
         fn apply_domain_events(
             &mut self,
             _realm_id: &cokret_sdk::RealmId,
@@ -621,7 +621,7 @@ mod tests {
         let (direct_columns, ..) = project_board(&direct_ops, BOARD, REALM, None);
 
         let mut projector = ClientCoreKanbanProjector::default();
-        let mut mount = cokret_client::projection::ProjectionMount::new(sdk_realm_id());
+        let mut mount = garth::projection::ProjectionMount::new(sdk_realm_id());
         mount
             .apply_events_with_domain(&events, &mut projector)
             .unwrap();

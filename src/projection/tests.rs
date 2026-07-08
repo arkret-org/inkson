@@ -95,7 +95,7 @@ fn client_core_message_decode_golden_matches_inkson_ingest() {
         }),
     );
     let events = vec![create, reaction];
-    let decoder = cokret_client::InboundDecoder::new();
+    let decoder = garth::InboundDecoder::new();
 
     let decoded: Vec<_> = events
         .iter()
@@ -104,14 +104,14 @@ fn client_core_message_decode_golden_matches_inkson_ingest() {
         .collect();
     assert!(matches!(
         &decoded[0],
-        cokret_client::DecodedInbound::Message(cokret_client::DecodedMessage {
+        garth::DecodedInbound::Message(garth::DecodedMessage {
             payload: cokret_sdk::MessageEventPayload::Create(_),
             ..
         })
     ));
     assert!(matches!(
         &decoded[1],
-        cokret_client::DecodedInbound::Message(cokret_client::DecodedMessage {
+        garth::DecodedInbound::Message(garth::DecodedMessage {
             payload: cokret_sdk::MessageEventPayload::ReactionAdd(_),
             ..
         })

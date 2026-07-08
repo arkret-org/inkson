@@ -1018,24 +1018,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "cokret-client"
-version = "0.3.0"
-dependencies = [
- "chrono",
- "cokret",
- "cokret-core",
- "cokret-http-client",
- "ed25519-dalek",
- "gloo-timers 0.3.0",
- "serde",
- "serde_json",
- "thiserror 2.0.18",
- "tokio",
- "wasm-bindgen-futures",
- "zeroize",
-]
-
-[[package]]
 name = "cokret-core"
 version = "0.3.0"
 dependencies = [
@@ -2912,6 +2894,24 @@ dependencies = [
 ]
 
 [[package]]
+name = "garth"
+version = "0.3.0"
+dependencies = [
+ "chrono",
+ "cokret",
+ "cokret-core",
+ "cokret-http-client",
+ "ed25519-dalek",
+ "gloo-timers 0.3.0",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.18",
+ "tokio",
+ "wasm-bindgen-futures",
+ "zeroize",
+]
+
+[[package]]
 name = "gdk"
 version = "0.18.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3958,12 +3958,12 @@ dependencies = [
  "chime",
  "chrono",
  "cokret",
- "cokret-client",
  "dioxus",
  "dioxus-icons",
  "dioxus-primitives",
  "dioxus-router",
  "ed25519-dalek",
+ "garth",
  "getrandom 0.2.17",
  "getrandom 0.4.2",
  "gloo-timers 0.4.0",

@@ -165,7 +165,7 @@ chrono = {workspace = true}
 # empty DSN logs a debug message and skips init silently per
 # `src/telemetry.rs::sentry_init`. Wasm builds skip the dep entirely.
 cokret-sdk = {workspace = true,features = ["full-surface", "signer"]}
-cokret-client = {path = "../cokret-rust-sdk/crates/client",default-features = false,features = ["native"]}
+garth = {path = "../garth",default-features = false,features = ["native"]}
 dioxus = {workspace = true,features = ["desktop", "web"]}
 keyring = {workspace = true,features = ["apple-native", "windows-native", "linux-native"]}
 notify-rust = {workspace = true}
@@ -199,7 +199,7 @@ tracing-subscriber = {workspace = true,features = ["env-filter", "fmt"]}
 # platform". `gloo-timers` routes through `setTimeout` instead, which is what
 # `sleep_for` uses for HTTP retry backoff in the wasm build.
 cokret-sdk = {workspace = true,features = ["full-surface", "signer"]}
-cokret-client = {path = "../cokret-rust-sdk/crates/client",default-features = false,features = ["wasm"]}
+garth = {path = "../garth",default-features = false,features = ["wasm"]}
 dioxus = {workspace = true,features = ["web"]}
 gloo-timers = {workspace = true,features = ["futures"]}
 js-sys = {workspace = true}

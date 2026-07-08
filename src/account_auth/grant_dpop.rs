@@ -144,12 +144,12 @@ impl DpopHandle {
         &self,
         access_token: impl Into<String>,
     ) -> cokret_sdk::http_client::DpopAuth {
-        cokret_client::session::dpop::access_token_auth(access_token, self.signing_key.clone())
+        garth::session::dpop::access_token_auth(access_token, self.signing_key.clone())
     }
 
     /// Build SDK http-client DPoP auth for proof-only requests.
     pub fn sdk_dpop_proof_only_auth(&self) -> cokret_sdk::http_client::DpopAuth {
-        cokret_client::session::dpop::proof_only_auth(self.signing_key.clone())
+        garth::session::dpop::proof_only_auth(self.signing_key.clone())
     }
 
     /// Sign the one-shot proof that soland forwards to coauth when it

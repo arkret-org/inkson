@@ -23,8 +23,8 @@ use anyhow::Context as _;
 use base64::Engine as _;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use chrono::Utc;
-use cokret_client::{SessionEngine, SessionGrantState, SessionRefreshOptions};
 use cokret_sdk::http_client::{Auth, ClientBuilder, DpopAuth};
+use garth::{SessionEngine, SessionGrantState, SessionRefreshOptions};
 use serde::Serialize;
 use url::Url;
 

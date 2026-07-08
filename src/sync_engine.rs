@@ -34,8 +34,8 @@ use std::cell::RefCell;
 use std::collections::BTreeSet;
 use std::time::Duration;
 
-use cokret_client::{ClientEvent, ClientEventSink, DecodedInbound, InboundDecoder};
 use dioxus::prelude::*;
+use garth::{ClientEvent, ClientEventSink, DecodedInbound, InboundDecoder};
 use serde_json::{Value, json};
 
 use crate::api::CokretApi;
@@ -309,7 +309,7 @@ where
     let updates = processor.process(response.clone())?;
     let realm_updates = updates.realm_updates.clone();
 
-    cokret_client::emit_account_updates(sink, updates);
+    garth::emit_account_updates(sink, updates);
     for update in &realm_updates {
         emit_account_realm_update_events(decoder, sink, update);
     }
@@ -2319,11 +2319,8 @@ mod tests {
     fn account_subscription_engine_accepts_inkson_local_state_adapter() {
         let store = temp_store("subscription-engine-adapter");
         let adapter = crate::client_core::InksonLocalStateStoreAdapter::new(store);
-        let engine = cokret_client::SubscriptionEngine::new(
-            cokret_client::NativeExecutor,
-            adapter.clone(),
-            adapter,
-        );
+        let engine =
+            garth::SubscriptionEngine::new(garth::NativeExecutor, adapter.clone(), adapter);
 
         let _control = engine.control();
     }

@@ -1,4 +1,4 @@
-//! Thin host-adapter entry points for the shared `cokret-client` runtime.
+//! Thin host-adapter entry points for the shared `garth` client runtime.
 //!
 //! The production path still uses the existing inkson engines until the E-wave
 //! migration replaces them. This module gives that migration a typed,
@@ -11,7 +11,7 @@ use std::sync::{Arc, Mutex};
 
 use base64::Engine as _;
 use base64::engine::general_purpose::STANDARD_NO_PAD;
-use cokret_client::{RealmEventsFrameSource, RealmEventsTransport};
+use garth::{RealmEventsFrameSource, RealmEventsTransport};
 #[cfg(not(target_arch = "wasm32"))]
 use reqwest::header::CONTENT_TYPE;
 
@@ -41,63 +41,61 @@ impl InksonLocalStateStoreAdapter {
             .map_err(|err| cokret_sdk::Error::Protocol(format!("local state lock poisoned: {err}")))
     }
 
-    fn realm_id(scope: &cokret_client::CursorScope) -> Option<String> {
+    fn realm_id(scope: &garth::CursorScope) -> Option<String> {
         match scope {
-            cokret_client::CursorScope::RealmEvents { realm_id, .. } => {
-                Some(realm_id.as_str().to_owned())
-            }
+            garth::CursorScope::RealmEvents { realm_id, .. } => Some(realm_id.as_str().to_owned()),
             _ => None,
         }
     }
 }
 
-impl cokret_client::CursorStore for InksonLocalStateStoreAdapter {
+impl garth::CursorStore for InksonLocalStateStoreAdapter {
     async fn load(
         &self,
-        scope: cokret_client::CursorScope,
-    ) -> cokret_sdk::Result<Option<cokret_client::OpaqueCursor>> {
+        scope: garth::CursorScope,
+    ) -> cokret_sdk::Result<Option<garth::OpaqueCursor>> {
         let store = self.lock()?;
         match scope {
-            cokret_client::CursorScope::Account { .. } => Ok(store.sync_cursor()),
-            cokret_client::CursorScope::RealmEvents { realm_id, .. } => {
+            garth::CursorScope::Account { .. } => Ok(store.sync_cursor()),
+            garth::CursorScope::RealmEvents { realm_id, .. } => {
                 Ok(store.realm_events_cursor(realm_id.as_str()))
             }
-            cokret_client::CursorScope::EventsQuery { .. } => Ok(None),
+            garth::CursorScope::EventsQuery { .. } => Ok(None),
         }
     }
 
     async fn save(
         &self,
-        scope: cokret_client::CursorScope,
-        cursor: cokret_client::OpaqueCursor,
+        scope: garth::CursorScope,
+        cursor: garth::OpaqueCursor,
     ) -> cokret_sdk::Result<()> {
         let mut store = self.lock()?;
         match scope {
-            cokret_client::CursorScope::Account { .. } => store.save_sync_cursor(cursor),
-            cokret_client::CursorScope::RealmEvents { realm_id, .. } => {
+            garth::CursorScope::Account { .. } => store.save_sync_cursor(cursor),
+            garth::CursorScope::RealmEvents { realm_id, .. } => {
                 store.save_realm_events_cursor(realm_id.as_str(), Some(cursor));
             }
-            cokret_client::CursorScope::EventsQuery { .. } => {}
+            garth::CursorScope::EventsQuery { .. } => {}
         }
         Ok(())
     }
 
-    async fn clear(&self, scope: cokret_client::CursorScope) -> cokret_sdk::Result<()> {
+    async fn clear(&self, scope: garth::CursorScope) -> cokret_sdk::Result<()> {
         let mut store = self.lock()?;
         match scope {
-            cokret_client::CursorScope::Account { .. } => store.clear_sync_cursor(),
-            cokret_client::CursorScope::RealmEvents { .. } => {
+            garth::CursorScope::Account { .. } => store.clear_sync_cursor(),
+            garth::CursorScope::RealmEvents { .. } => {
                 if let Some(realm_id) = Self::realm_id(&scope) {
                     store.save_realm_events_cursor(&realm_id, None);
                 }
             }
-            cokret_client::CursorScope::EventsQuery { .. } => {}
+            garth::CursorScope::EventsQuery { .. } => {}
         }
         Ok(())
     }
 }
 
-impl cokret_client::EventCacheStore for InksonLocalStateStoreAdapter {
+impl garth::EventCacheStore for InksonLocalStateStoreAdapter {
     async fn seen(&self, event_id: cokret_sdk::EventId) -> cokret_sdk::Result<bool> {
         let store = self.lock()?;
         Ok(store.client_core_event_seen(event_id.as_str()))
@@ -126,25 +124,25 @@ impl InksonSecureKeyStoreAdapter {
 
     fn map_error(
         error: crate::secure_key_store::SecureKeyStoreError,
-    ) -> cokret_client::SecureKeyStoreError {
+    ) -> garth::SecureKeyStoreError {
         match error {
             crate::secure_key_store::SecureKeyStoreError::NotFound => {
-                cokret_client::SecureKeyStoreError::NotFound
+                garth::SecureKeyStoreError::NotFound
             }
             crate::secure_key_store::SecureKeyStoreError::Backend(error) => {
-                cokret_client::SecureKeyStoreError::Backend(error)
+                garth::SecureKeyStoreError::Backend(error)
             }
             crate::secure_key_store::SecureKeyStoreError::Unsupported(backend) => {
-                cokret_client::SecureKeyStoreError::Unsupported(backend)
+                garth::SecureKeyStoreError::Unsupported(backend)
             }
         }
     }
 
-    fn remember_key(&self, key: &str) -> Result<(), cokret_client::SecureKeyStoreError> {
+    fn remember_key(&self, key: &str) -> Result<(), garth::SecureKeyStoreError> {
         self.key_index
             .lock()
             .map_err(|err| {
-                cokret_client::SecureKeyStoreError::Backend(format!(
+                garth::SecureKeyStoreError::Backend(format!(
                     "secure key index lock poisoned: {err}"
                 ))
             })?
@@ -161,12 +159,12 @@ impl std::fmt::Debug for InksonSecureKeyStoreAdapter {
     }
 }
 
-impl cokret_client::SecureKeyStore for InksonSecureKeyStoreAdapter {
+impl garth::SecureKeyStore for InksonSecureKeyStoreAdapter {
     fn store_secret_bytes(
         &self,
         key: &str,
         value: &[u8],
-    ) -> Result<(), cokret_client::SecureKeyStoreError> {
+    ) -> Result<(), garth::SecureKeyStoreError> {
         let encoded = STANDARD_NO_PAD.encode(value);
         self.inner
             .store_secret(key, &encoded)
@@ -179,7 +177,7 @@ impl cokret_client::SecureKeyStore for InksonSecureKeyStoreAdapter {
         key: &'a str,
         value: &'a [u8],
     ) -> std::pin::Pin<
-        Box<dyn std::future::Future<Output = Result<(), cokret_client::SecureKeyStoreError>> + 'a>,
+        Box<dyn std::future::Future<Output = Result<(), garth::SecureKeyStoreError>> + 'a>,
     > {
         let encoded = STANDARD_NO_PAD.encode(value);
         Box::pin(async move {
@@ -194,17 +192,17 @@ impl cokret_client::SecureKeyStore for InksonSecureKeyStoreAdapter {
     fn get_secret_bytes(
         &self,
         key: &str,
-    ) -> Result<Option<cokret_client::SecretBytes>, cokret_client::SecureKeyStoreError> {
+    ) -> Result<Option<garth::SecretBytes>, garth::SecureKeyStoreError> {
         let Some(encoded) = self.inner.get_secret(key).map_err(Self::map_error)? else {
             return Ok(None);
         };
         let bytes = STANDARD_NO_PAD.decode(encoded.as_bytes()).map_err(|err| {
-            cokret_client::SecureKeyStoreError::Backend(format!("base64 secret decode: {err}"))
+            garth::SecureKeyStoreError::Backend(format!("base64 secret decode: {err}"))
         })?;
         Ok(Some(zeroize::Zeroizing::new(bytes)))
     }
 
-    fn delete_secret(&self, key: &str) -> Result<(), cokret_client::SecureKeyStoreError> {
+    fn delete_secret(&self, key: &str) -> Result<(), garth::SecureKeyStoreError> {
         self.inner.delete_secret(key).map_err(Self::map_error)?;
         if let Ok(mut index) = self.key_index.lock() {
             index.remove(key);
@@ -215,11 +213,9 @@ impl cokret_client::SecureKeyStore for InksonSecureKeyStoreAdapter {
     fn list_secret_keys(
         &self,
         prefix: Option<&str>,
-    ) -> Result<Vec<String>, cokret_client::SecureKeyStoreError> {
+    ) -> Result<Vec<String>, garth::SecureKeyStoreError> {
         let index = self.key_index.lock().map_err(|err| {
-            cokret_client::SecureKeyStoreError::Backend(format!(
-                "secure key index lock poisoned: {err}"
-            ))
+            garth::SecureKeyStoreError::Backend(format!("secure key index lock poisoned: {err}"))
         })?;
         Ok(index
             .iter()
@@ -228,8 +224,8 @@ impl cokret_client::SecureKeyStore for InksonSecureKeyStoreAdapter {
             .collect())
     }
 
-    fn backend_info(&self) -> cokret_client::SecureKeyStoreBackendInfo {
-        cokret_client::SecureKeyStoreBackendInfo {
+    fn backend_info(&self) -> garth::SecureKeyStoreBackendInfo {
+        garth::SecureKeyStoreBackendInfo {
             name: self.inner.backend_name(),
             hardware_backed: matches!(
                 self.inner.backend_name(),
@@ -243,14 +239,10 @@ impl cokret_client::SecureKeyStore for InksonSecureKeyStoreAdapter {
     }
 }
 
-pub type MemoryClientCore<E> = cokret_client::CokretClient<
-    E,
-    cokret_client::MemoryStore,
-    cokret_client::MemoryStore,
-    cokret_client::MemorySecureKeyStore,
->;
+pub type MemoryClientCore<E> =
+    garth::CokretClient<E, garth::MemoryStore, garth::MemoryStore, garth::MemorySecureKeyStore>;
 
-pub type InksonClientCore<E> = cokret_client::CokretClient<
+pub type InksonClientCore<E> = garth::CokretClient<
     E,
     InksonLocalStateStoreAdapter,
     InksonLocalStateStoreAdapter,
@@ -446,19 +438,19 @@ pub async fn account_subscribe_snapshot_outcome_with_options(
 }
 
 #[cfg(not(target_arch = "wasm32"))]
-pub type DefaultClientCore = MemoryClientCore<cokret_client::NativeExecutor>;
+pub type DefaultClientCore = MemoryClientCore<garth::NativeExecutor>;
 
 #[cfg(target_arch = "wasm32")]
-pub type DefaultClientCore = MemoryClientCore<cokret_client::WasmExecutor>;
+pub type DefaultClientCore = MemoryClientCore<garth::WasmExecutor>;
 
 #[cfg(not(target_arch = "wasm32"))]
 pub fn build_memory_client_core(http: cokret_sdk::http_client::Client) -> DefaultClientCore {
-    cokret_client::CokretClient::new(
+    garth::CokretClient::new(
         http,
-        cokret_client::NativeExecutor,
-        cokret_client::MemoryStore::new(),
-        cokret_client::MemoryStore::new(),
-        cokret_client::MemorySecureKeyStore::new(),
+        garth::NativeExecutor,
+        garth::MemoryStore::new(),
+        garth::MemoryStore::new(),
+        garth::MemorySecureKeyStore::new(),
     )
 }
 
@@ -467,11 +459,11 @@ pub fn build_client_core(
     http: cokret_sdk::http_client::Client,
     local_state: crate::local_state::LocalStateStore,
     secure_key_store: Arc<dyn crate::secure_key_store::SecureKeyStore>,
-) -> InksonClientCore<cokret_client::NativeExecutor> {
+) -> InksonClientCore<garth::NativeExecutor> {
     let local_state = InksonLocalStateStoreAdapter::new(local_state);
-    cokret_client::CokretClient::new(
+    garth::CokretClient::new(
         http,
-        cokret_client::NativeExecutor,
+        garth::NativeExecutor,
         local_state.clone(),
         local_state,
         InksonSecureKeyStoreAdapter::new(secure_key_store),
@@ -483,11 +475,11 @@ pub fn build_client_core(
     http: cokret_sdk::http_client::Client,
     local_state: crate::local_state::LocalStateStore,
     secure_key_store: Arc<dyn crate::secure_key_store::SecureKeyStore>,
-) -> InksonClientCore<cokret_client::WasmExecutor> {
+) -> InksonClientCore<garth::WasmExecutor> {
     let local_state = InksonLocalStateStoreAdapter::new(local_state);
-    cokret_client::CokretClient::new(
+    garth::CokretClient::new(
         http,
-        cokret_client::WasmExecutor,
+        garth::WasmExecutor,
         local_state.clone(),
         local_state,
         InksonSecureKeyStoreAdapter::new(secure_key_store),
@@ -496,18 +488,18 @@ pub fn build_client_core(
 
 #[cfg(target_arch = "wasm32")]
 pub fn build_memory_client_core(http: cokret_sdk::http_client::Client) -> DefaultClientCore {
-    cokret_client::CokretClient::new(
+    garth::CokretClient::new(
         http,
-        cokret_client::WasmExecutor,
-        cokret_client::MemoryStore::new(),
-        cokret_client::MemoryStore::new(),
-        cokret_client::MemorySecureKeyStore::new(),
+        garth::WasmExecutor,
+        garth::MemoryStore::new(),
+        garth::MemoryStore::new(),
+        garth::MemorySecureKeyStore::new(),
     )
 }
 
 #[cfg(test)]
 mod tests {
-    use cokret_client::{CursorStore, EventCacheStore, SecureKeyStore};
+    use garth::{CursorStore, EventCacheStore, SecureKeyStore};
 
     #[test]
     fn memory_client_core_exposes_session_and_subscription_engines() {
@@ -528,13 +520,13 @@ mod tests {
         let adapter = super::InksonLocalStateStoreAdapter::new(
             crate::local_state::LocalStateStore::with_path(path),
         );
-        let account_scope = cokret_client::CursorScope::Account {
+        let account_scope = garth::CursorScope::Account {
             service_did: None,
             actor_id: cokret_sdk::Did::new("did:webvh:z6mkfixture:alice.example").unwrap(),
             device_id: cokret_sdk::DeviceId::new("ck:device:01904100-0000-7000-8000-000000000001")
                 .unwrap(),
         };
-        let realm_scope = cokret_client::CursorScope::RealmEvents {
+        let realm_scope = garth::CursorScope::RealmEvents {
             service_did: None,
             realm_id: cokret_sdk::RealmId::new("ck:realm:01904100-0000-7000-8000-000000000001")
                 .unwrap(),
@@ -570,7 +562,7 @@ mod tests {
         adapter.clear(realm_scope).await.unwrap();
         assert!(
             adapter
-                .load(cokret_client::CursorScope::Account {
+                .load(garth::CursorScope::Account {
                     service_did: None,
                     actor_id: cokret_sdk::Did::new("did:webvh:z6mkfixture:alice.example").unwrap(),
                     device_id: cokret_sdk::DeviceId::new(

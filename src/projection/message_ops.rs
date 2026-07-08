@@ -142,10 +142,10 @@ fn message_raw_operation_from_event(realm_id: &str, event: &Value) -> Option<Raw
 
 fn typed_message_raw_operation_from_event(event: &Value) -> Option<RawOperationRecord> {
     let sdk_event: cokret_sdk::Event = serde_json::from_value(event.clone()).ok()?;
-    let decoded = cokret_client::InboundDecoder::new()
+    let decoded = garth::InboundDecoder::new()
         .try_decode_event(sdk_event)
         .ok()?;
-    let cokret_client::DecodedInbound::Message(message) = decoded else {
+    let garth::DecodedInbound::Message(message) = decoded else {
         return None;
     };
     Some(RawOperationRecord {

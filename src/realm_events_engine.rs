@@ -32,12 +32,12 @@
 
 use std::cell::RefCell;
 
-use cokret_client::{
+use cokret_sdk::EventsSubscribeFrameKind;
+use dioxus::prelude::*;
+use garth::{
     ClientEvent, ClientEventSink, DecodedInbound, InboundDecoder, RealmEventsFrameSource,
     RealmEventsTransport,
 };
-use cokret_sdk::EventsSubscribeFrameKind;
-use dioxus::prelude::*;
 use serde_json::Value;
 
 use crate::api_error::{is_auth_expired_error, is_invalid_cursor_error, rate_limited_retry_after};
