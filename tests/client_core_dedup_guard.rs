@@ -1,13 +1,28 @@
 //! Static deduplication gates for client-core extraction.
 //!
 //! These guards pin surfaces that have already been removed from yougen. They
-//! intentionally do not assert anything about `CokretApi`, which still has live
-//! migration work.
+//! intentionally do not assert that the `CokretApi` struct itself is gone (its
+//! remaining god-object methods + E8 orchestration are still live work), but
+//! they DO pin the `src/api/**` submodules that have been fully extracted:
+//! the durable/ephemeral event engine now lives in `crate::event_submit`
+//! (`api::events`/`api::agent` deleted), and the applet/moderation surfaces
+//! moved to the SDK http-client via the keystone. Reintroducing any of these
+//! files would resurrect a duplicate of the client-core engine.
 
 use std::fs;
 use std::path::{Path, PathBuf};
 
-const FORBIDDEN_SOURCE_FILES: &[&str] = &["dpop.rs", "auth_dpop.rs"];
+const FORBIDDEN_SOURCE_FILES: &[&str] = &[
+    "dpop.rs",
+    "auth_dpop.rs",
+    // Event-submission engine extracted to crate::event_submit; these
+    // CokretApi delegator modules were deleted and must stay deleted.
+    "api/events.rs",
+    "api/agent.rs",
+    // Pure-passthrough surfaces migrated onto the SDK http-client keystone.
+    "api/applet.rs",
+    "api/moderation.rs",
+];
 
 const FORBIDDEN_TOKENS: &[&str] = &[
     "CoauthApi",
