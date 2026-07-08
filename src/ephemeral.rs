@@ -1,15 +1,12 @@
 //! Ephemeral / durable envelope builders and submit-acceptance helpers for the
-//! self-API client: outgoing-payload schema validation, read-cursor advance
-//! events, the `ck.typing` / `ck.receipt.read` / `ck.presence` /
-//! `ck.call.signal` ephemeral envelopes, and the events-batch acceptance gate.
-//! Structural move out of `api/mod.rs` with no logic change; the helpers used
-//! by the `events` sibling module and tests stay `pub(crate)` and the free
-//! builders are re-exported from the parent module so existing `crate::api::*`
-//! / sibling `super::*` paths resolve unchanged.
+//! self client: outgoing-payload schema validation, read-cursor advance events,
+//! the `ck.typing` / `ck.receipt.read` / `ck.presence` / `ck.call.signal`
+//! ephemeral envelopes, and the events-batch acceptance gate.
 
 use chrono::Timelike as _;
+use serde_json::{Value, json};
 
-use super::*;
+use crate::operation::{EventKind, OperationBuilder, trim_realm_id};
 
 pub(crate) fn validate_outgoing_registered_event_payload(
     kind: &str,

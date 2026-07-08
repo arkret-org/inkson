@@ -20,7 +20,7 @@ use crate::operation::OperationBuilder;
 // NOTE: `ck.call.signal` is an ephemeral kind and MUST route through
 // `EphemeralEnvelope` (`ck.schema.ephemeral_envelope.v1`), NOT through
 // `ck.self.events.command.submit`. The canonical builder lives in
-// `crate::api::build_call_signal_envelope_v1` and accepts the v1
+// `crate::ephemeral::build_call_signal_envelope_v1` and accepts the v1
 // canonical signal_type values (`invite`, `answer`, `candidate`,
 // `renegotiate`, `hangup`, `ack`, `reject`, `mute_state`, `media_state`,
 // `speaking`, `focus_join`, `focus_leave`, `error`). Do
@@ -261,7 +261,7 @@ mod tests {
     }
 
     fn make_v1_envelope(seq: u64, signal_type: &str) -> cokret_sdk::EphemeralEnvelope {
-        let mut env = crate::api::build_call_signal_envelope_v1(
+        let mut env = crate::ephemeral::build_call_signal_envelope_v1(
             "ck:realm:01904100-0000-7000-8000-000000000001",
             "did:web:alice.example",
             "ck:device:01904100-0000-7000-8000-000000000002",
@@ -289,7 +289,7 @@ mod tests {
 
     #[test]
     fn v1_builder_rejects_unknown_signal_type() {
-        let err = crate::api::build_call_signal_envelope_v1(
+        let err = crate::ephemeral::build_call_signal_envelope_v1(
             "ck:realm:01904100-0000-7000-8000-000000000001",
             "did:web:alice.example",
             "ck:device:01904100-0000-7000-8000-000000000002",

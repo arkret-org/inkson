@@ -4,6 +4,11 @@ use reqwest::StatusCode;
 
 use super::*;
 use crate::api_error::CokretApiError;
+use crate::ephemeral::{
+    attach_broadcast_ephemeral_proof, build_presence_envelope, build_receipt_read_envelope,
+    build_typing_envelope, ensure_events_submit_accepted,
+    validate_outgoing_registered_event_payload,
+};
 #[cfg(test)]
 use crate::service_parse::parse_server_description;
 
@@ -49,7 +54,7 @@ impl CokretApi {
         typing: bool,
     ) -> anyhow::Result<TypingResult> {
         let mut envelope = build_typing_envelope(realm_id, actor, device_id, strand_id, typing)?;
-        super::ephemeral::attach_broadcast_ephemeral_proof(&mut envelope)?;
+        attach_broadcast_ephemeral_proof(&mut envelope)?;
         let response = self.submit_ephemeral_envelope(&envelope).await?;
         Ok(TypingResult {
             ok: response.accepted,
@@ -73,7 +78,7 @@ impl CokretApi {
             status_message,
             last_active_at,
         )?;
-        super::ephemeral::attach_broadcast_ephemeral_proof(&mut envelope)?;
+        attach_broadcast_ephemeral_proof(&mut envelope)?;
         let response = self.submit_ephemeral_envelope(&envelope).await?;
         Ok(PresenceResult {
             ok: response.accepted,
@@ -101,7 +106,7 @@ impl CokretApi {
         }
         let mut envelope =
             build_receipt_read_envelope(realm_id, actor, device_id, strand_id, event_id)?;
-        super::ephemeral::attach_broadcast_ephemeral_proof(&mut envelope)?;
+        attach_broadcast_ephemeral_proof(&mut envelope)?;
         let response = self.submit_ephemeral_envelope(&envelope).await?;
         Ok(ReceiptResult {
             ok: response.accepted,

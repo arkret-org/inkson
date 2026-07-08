@@ -93,7 +93,7 @@ use crate::models::{
     ResolveRealmOutcome, SearchActorsView, SearchOrganizationsView, ServerDescription,
     SpaceCreateResult, SubmitEventResult, TypingResult, VerifyDeviceResult,
 };
-use crate::operation::{EventKind, OperationBuilder, trim_realm_id, uuid_v7};
+use crate::operation::{EventKind, trim_realm_id, uuid_v7};
 use crate::wire_helpers::{
     blob_download_url_for, canonical_blob_ref, path_component, query_component,
     safe_blob_filename_header, validate_cursor,
@@ -224,9 +224,6 @@ mod blob_resumable;
 mod builders;
 mod circle;
 mod directory;
-// Structural split: ephemeral / durable envelope builders + submit-acceptance
-// helpers moved out of this file into `ephemeral` (move only).
-mod ephemeral;
 mod events;
 mod keys;
 mod media;
@@ -256,7 +253,6 @@ mod tests;
 
 pub use authed::*;
 pub use builders::*;
-pub use ephemeral::*;
 pub(crate) use mls::{generate_mls_claim_nonce, keypackage_claim_record_to_mls_record};
 pub(crate) use request_helpers::*;
 pub use views::*;

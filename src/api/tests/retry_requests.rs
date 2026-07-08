@@ -1,4 +1,5 @@
 use super::super::*;
+use crate::ephemeral::ensure_events_submit_accepted;
 
 #[test]
 fn events_batch_response_rejects_partial_acceptance() {

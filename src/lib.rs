@@ -53,6 +53,7 @@ pub mod did_key;
 pub mod did_resolver;
 pub mod disappearing;
 pub mod discovery;
+pub(crate) mod ephemeral;
 pub mod event_signer;
 pub mod federation;
 pub mod file_transfer;

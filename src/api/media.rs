@@ -1,4 +1,5 @@
 use super::*;
+use crate::ephemeral::{attach_broadcast_ephemeral_proof, build_call_signal_envelope_v1};
 
 impl CokretApi {
     // ── WebRTC calls ───────────────────────────────────────────────
@@ -41,7 +42,7 @@ impl CokretApi {
         // is detached-JWS, isomorphic to the persistent Event proof, with
         // verification_method `{actor_id}#{device_id}` (fragment = the full
         // ck:device id) over the canonical envelope bytes without `proof`.
-        super::ephemeral::attach_broadcast_ephemeral_proof(&mut envelope)?;
+        attach_broadcast_ephemeral_proof(&mut envelope)?;
 
         self.submit_ephemeral_envelope(&envelope).await
     }

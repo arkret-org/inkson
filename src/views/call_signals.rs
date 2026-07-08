@@ -893,7 +893,7 @@ mod tests {
     // ── Receiver proof verification (device-identity Phase 2) ──────────
 
     /// Build a real signed `ck.call.signal` envelope the same way the sender
-    /// (`api::ephemeral::attach_broadcast_ephemeral_proof`) does: a detached JWS
+    /// (`ephemeral::attach_broadcast_ephemeral_proof`) does: a detached JWS
     /// over the SDK's authoritative proof binding object (which folds in the
     /// `context = "ck-event-proof-v1"` domain tag), with `event_digest` =
     /// canonical hash of the envelope without `proof`.

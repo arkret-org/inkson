@@ -1,4 +1,9 @@
 use super::super::*;
+use crate::ephemeral::{
+    build_presence_envelope, build_receipt_read_envelope, build_typing_envelope,
+    validate_outgoing_registered_event_payload,
+};
+use crate::operation::OperationBuilder;
 use crate::realm_helpers::{
     canonical_space_join_rule_v1, patch_touches_create_locked_encryption_profile,
 };
