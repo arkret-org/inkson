@@ -64,5 +64,4 @@ impl CokretApi {
     // is carried by the canonical `ck.mls.commit` event built from a
     // local `self_update_commit`
     // (`crate::mls::runtime::force_epoch_rotation_commit`).
-
 }

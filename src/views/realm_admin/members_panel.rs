@@ -245,17 +245,17 @@ fn member_agent_row_from_value(
 }
 
 async fn fetch_owned_agent_rows(
-    api: &crate::api::CokretApi,
+    http: &cokret_sdk::http_client::Client,
     realm: &str,
     fallback_controller_did: &str,
 ) -> anyhow::Result<Vec<MemberAgentRow>> {
-    let list = api.agent_list().await?;
+    let list = http.agent_list().await?;
     let mut rows = Vec::<MemberAgentRow>::new();
     for value in list.agents {
         let Some(mut row) = member_agent_row_from_value(value, fallback_controller_did) else {
             continue;
         };
-        match api.agent_participation_get(&row.agent_principal_id).await {
+        match http.agent_participation_get(&row.agent_principal_id).await {
             Ok(outcome) => {
                 let (policy, selection) = mention_state_from_entries(&outcome.entries, realm);
                 row.mention_policy = policy;
@@ -3070,11 +3070,14 @@ pub fn RealmMembersPanel(
             let realm = realm.clone();
             let fallback_controller_did = fallback_controller_did.clone();
             spawn(async move {
-                let result =
-                    crate::views::helpers::with_authed_api(&base, api_token, |api| async move {
-                        fetch_owned_agent_rows(&api, &realm, &fallback_controller_did).await
-                    })
-                    .await;
+                let result = crate::views::helpers::with_authed_sdk_client(
+                    &base,
+                    api_token,
+                    |http| async move {
+                        fetch_owned_agent_rows(&http, &realm, &fallback_controller_did).await
+                    },
+                )
+                .await;
                 if let Ok(rows) = result {
                     owned_agents.set(rows);
                 }
@@ -4154,10 +4157,10 @@ pub fn RealmMembersPanel(
                                                                                                     act_on_behalf: previous.act_on_behalf,
                                                                                                 },
                                                                                             };
-                                                                                            match crate::views::helpers::with_authed_api(&base, api_token, |api| {
+                                                                                            match crate::views::helpers::with_authed_sdk_client(&base, api_token, |http| {
                                                                                                 let body = body.clone();
                                                                                                 let agent_id = agent_id.clone();
-                                                                                                async move { api.agent_participation_set(&agent_id, &body).await }
+                                                                                                async move { http.agent_participation_replace(&agent_id, &body).await.map_err(anyhow::Error::from) }
                                                                                             })
                                                                                             .await
                                                                                             {

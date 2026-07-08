@@ -10,7 +10,7 @@ use crate::views::agents::{
     build_agent_key_authorize_event_for_pairing, parse_runtime_key_approval_request,
     runtime_key_pairing_error_message, summarize_runtime_key_approval_request,
 };
-use crate::views::helpers::{short_protocol_id, with_authed_api};
+use crate::views::helpers::{short_protocol_id, with_authed_api, with_authed_sdk_client};
 
 const APPROVAL_POLL_INTERVAL: Duration = Duration::from_millis(5_000);
 
@@ -274,8 +274,8 @@ async fn fetch_pending_agent_runtime_approval(
     token: String,
     handled: HashSet<String>,
 ) -> Result<Option<PendingAgentRuntimeApproval>, crate::authed_api::ApiCallError> {
-    with_authed_api(base_url, token, move |api| async move {
-        let list = api.agent_list().await?;
+    with_authed_sdk_client(base_url, token, move |http| async move {
+        let list = http.agent_list().await?;
         for row in list.agents {
             if row.get("status").and_then(Value::as_str) != Some("pending_runtime_key") {
                 continue;
@@ -287,7 +287,7 @@ async fn fetch_pending_agent_runtime_approval(
             else {
                 continue;
             };
-            let view = api.agent_get(agent_principal_id).await?;
+            let view = http.agent_get(agent_principal_id).await?;
             let Some(request) = pending_runtime_approval_from_view(&view) else {
                 continue;
             };

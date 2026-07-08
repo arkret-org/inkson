@@ -27,7 +27,7 @@ use crate::components::UiIcon;
 use crate::ui::button::{Button, ButtonSize, ButtonVariant};
 use crate::ui::checkbox::Checkbox;
 use crate::ui::input::Input;
-use crate::views::helpers::{short_protocol_id, with_authed_api};
+use crate::views::helpers::{short_protocol_id, with_authed_sdk_client};
 
 fn agent_field(agent: &AgentView, key: &str) -> String {
     agent
@@ -138,11 +138,9 @@ fn spawn_refresh_agents(
             list_status.set("Sign in to load your agents.".to_owned());
             return;
         }
-        match with_authed_api(
-            &base,
-            api_token,
-            |api| async move { api.agent_list().await },
-        )
+        match with_authed_sdk_client(&base, api_token, |http| async move {
+            http.agent_list().await.map_err(anyhow::Error::from)
+        })
         .await
         {
             Ok(resp) => {
@@ -200,9 +198,9 @@ fn spawn_load_agent_details(
         if id.trim().is_empty() {
             return;
         }
-        match with_authed_api(&base, api_token, move |api| {
+        match with_authed_sdk_client(&base, api_token, move |http| {
             let id = id.clone();
-            async move { api.agent_get(&id).await }
+            async move { http.agent_get(&id).await.map_err(anyhow::Error::from) }
         })
         .await
         {
@@ -609,12 +607,12 @@ pub fn PersonalAgentAdminPanel(
                                                 let base = base.clone();
                                                 let api_token = token();
                                                 spawn(async move {
-                                                    let outcome = match with_authed_api(
+                                                    let outcome = match with_authed_sdk_client(
                                                         &base,
                                                         api_token.clone(),
-                                                        move |api| {
+                                                        move |http| {
                                                             let body = body.clone();
-                                                            async move { api.agent_provision(&body).await }
+                                                            async move { http.agent_provision(&body).await.map_err(anyhow::Error::from) }
                                                         },
                                                     )
                                                     .await
@@ -853,10 +851,10 @@ pub fn PersonalAgentAdminPanel(
                                             let api_token = token();
                                             let body = AgentPauseRequestBody { reason: Some("controller_paused".to_owned()) };
                                             spawn(async move {
-                                                match with_authed_api(&base, api_token, move |api| {
+                                                match with_authed_sdk_client(&base, api_token, move |http| {
                                                     let id = id.clone();
                                                     let body = body.clone();
-                                                    async move { api.agent_pause(&id, &body).await }
+                                                    async move { http.agent_pause(&id, &body).await.map_err(anyhow::Error::from) }
                                                 })
                                                 .await
                                                 {
@@ -890,10 +888,10 @@ pub fn PersonalAgentAdminPanel(
                                             let api_token = token();
                                             let body = AgentResumeRequestBody { sidecar_exposure_ack: None };
                                             spawn(async move {
-                                                match with_authed_api(&base, api_token, move |api| {
+                                                match with_authed_sdk_client(&base, api_token, move |http| {
                                                     let id = id.clone();
                                                     let body = body.clone();
-                                                    async move { api.agent_resume(&id, &body).await }
+                                                    async move { http.agent_resume(&id, &body).await.map_err(anyhow::Error::from) }
                                                 })
                                                 .await
                                                 {
@@ -936,10 +934,10 @@ pub fn PersonalAgentAdminPanel(
                                             let api_token = token();
                                             let body = AgentDeactivateRequestBody { reason: Some("controller_deactivated".to_owned()) };
                                             spawn(async move {
-                                                match with_authed_api(&base, api_token, move |api| {
+                                                match with_authed_sdk_client(&base, api_token, move |http| {
                                                     let id = id.clone();
                                                     let body = body.clone();
-                                                    async move { api.agent_deactivate(&id, &body).await }
+                                                    async move { http.agent_deactivate(&id, &body).await.map_err(anyhow::Error::from) }
                                                 })
                                                 .await
                                                 {
@@ -1016,11 +1014,13 @@ pub fn PersonalAgentAdminPanel(
                                                                 let grant_id = grant_id.clone();
                                                                 let grant_id_for_retain = grant_id.clone();
                                                                 spawn(async move {
-                                                                    match with_authed_api(&base, api_token, move |api| {
+                                                                    match with_authed_sdk_client(&base, api_token, move |http| {
                                                                         let id = id.clone();
                                                                         let grant_id = grant_id.clone();
                                                                         async move {
-                                                                            api.agent_grant_detach(&id, &grant_id).await
+                                                                            let grant_id = cokret_sdk::GrantId::new(grant_id)
+                                                                                .map_err(|err| anyhow::anyhow!("invalid agent grant id: {err}"))?;
+                                                                            http.agent_grant_detach(&id, &grant_id).await.map_err(anyhow::Error::from)
                                                                         }
                                                                     })
                                                                     .await
@@ -1081,11 +1081,11 @@ pub fn PersonalAgentAdminPanel(
                                                 let base = base.clone();
                                                 let api_token = token();
                                                 spawn(async move {
-                                                    match with_authed_api(&base, api_token, move |api| {
+                                                    match with_authed_sdk_client(&base, api_token, move |http| {
                                                         let id = id.clone();
                                                         let body = body.clone();
                                                         async move {
-                                                            api.agent_grant_attach(&id, &body).await
+                                                            http.agent_grant_attach(&id, &body).await.map_err(anyhow::Error::from)
                                                         }
                                                     })
                                                     .await
@@ -1173,11 +1173,11 @@ pub fn PersonalAgentAdminPanel(
                                                 let base = base.clone();
                                                 let api_token = token();
                                                 spawn(async move {
-                                                    match with_authed_api(&base, api_token, move |api| {
+                                                    match with_authed_sdk_client(&base, api_token, move |http| {
                                                         let id = id.clone();
                                                         let body = body.clone();
                                                         async move {
-                                                            api.agent_participation_set(&id, &body).await
+                                                            http.agent_participation_replace(&id, &body).await.map_err(anyhow::Error::from)
                                                         }
                                                     })
                                                     .await
@@ -1211,10 +1211,10 @@ pub fn PersonalAgentAdminPanel(
                                                 let base = base.clone();
                                                 let api_token = token();
                                                 spawn(async move {
-                                                    match with_authed_api(&base, api_token, move |api| {
+                                                    match with_authed_sdk_client(&base, api_token, move |http| {
                                                         let id = id.clone();
                                                         async move {
-                                                            api.agent_participation_get(&id).await
+                                                            http.agent_participation_get(&id).await.map_err(anyhow::Error::from)
                                                         }
                                                     })
                                                     .await
