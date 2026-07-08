@@ -351,12 +351,12 @@ fn encrypted_private_patch_creator_bootstraps_initial_mls_snapshot() {
         .genesis
         .expect("freshly-created creator group should emit genesis");
     assert_eq!(genesis.kind.as_str(), "ck.mls.genesis");
-    assert_eq!(genesis.content["epoch"].as_u64(), Some(0));
+    assert_eq!(genesis.payload["epoch"].as_u64(), Some(0));
     assert_eq!(
-        genesis.content["creator_principal_id"].as_str(),
+        genesis.payload["creator_principal_id"].as_str(),
         Some(actor)
     );
-    assert!(genesis.content.get("governance_binding").is_some());
+    assert!(genesis.payload.get("governance_binding").is_some());
     assert_registered_payload_valid(&genesis);
 }
 
@@ -439,24 +439,24 @@ fn encrypted_private_patch_with_ready_snapshot_replaces_plaintext() {
         .expect("overdue minimal metadata MLS snapshot should emit commit event");
     assert_eq!(commit.kind.as_str(), "ck.mls.commit");
     assert_registered_payload_valid(&commit);
-    assert!(commit.content.get("group_id").is_none());
-    assert!(commit.content.get("expected_prev_epoch").is_none());
-    assert!(commit.content.get("commit_bytes_b64").is_none());
-    assert!(commit.content.get("preconditions").is_none());
-    assert!(commit.content.get("effects").is_none());
+    assert!(commit.payload.get("group_id").is_none());
+    assert!(commit.payload.get("expected_prev_epoch").is_none());
+    assert!(commit.payload.get("commit_bytes_b64").is_none());
+    assert!(commit.payload.get("preconditions").is_none());
+    assert!(commit.payload.get("effects").is_none());
     assert_eq!(
-        commit.content["governance_binding"]["realm_id"],
+        commit.payload["governance_binding"]["realm_id"],
         json!("ck:realm:01904100-0000-7000-8000-000000000001")
     );
     assert_eq!(
-        commit.content["governance_binding"]["effective_scope"],
+        commit.payload["governance_binding"]["effective_scope"],
         json!({
             "kind": "realm",
             "realm_id": "ck:realm:01904100-0000-7000-8000-000000000001",
         })
     );
     assert_eq!(
-        commit.content["governance_binding"]["membership_frontier"][0],
+        commit.payload["governance_binding"]["membership_frontier"][0],
         json!(base_group_state_ref)
     );
     assert!(state.load().raw_operations.is_empty());
@@ -500,11 +500,11 @@ fn mls_remove_commit_uses_explicit_revocation_membership_frontier() {
     .unwrap();
 
     assert_eq!(
-        event.content["governance_binding"]["membership_frontier"],
+        event.payload["governance_binding"]["membership_frontier"],
         json!([revoke_frontier.as_str()])
     );
     assert_ne!(
-        event.content["governance_binding"]["membership_frontier"][0],
+        event.payload["governance_binding"]["membership_frontier"][0],
         json!("ck:event:0196419b-0000-7000-8000-000000000099")
     );
 }

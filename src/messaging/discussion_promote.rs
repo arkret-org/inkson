@@ -168,32 +168,32 @@ mod tests {
         assert_eq!(ops[1].kind.as_str(), "ck.strand.create");
         assert_eq!(ops[2].kind.as_str(), "ck.relation.create");
         assert_eq!(
-            ops[0].content["object"]["realm_id"],
+            ops[0].payload["object"]["realm_id"],
             "ck:realm:0196419b-0000-7000-8000-000000000001"
         );
-        assert_eq!(ops[1].content["object"]["scope_circle_id"], ids.circle_id);
-        assert_eq!(ops[2].content["kind"], "confidential_discussion_of");
+        assert_eq!(ops[1].payload["object"]["scope_circle_id"], ids.circle_id);
+        assert_eq!(ops[2].payload["kind"], "confidential_discussion_of");
         // relation_create_payload is additionalProperties:false — the private
         // scope is carried by the Circle-scoped Strand (ops[1]), NOT by an
         // illegal `scope_circle_id` key on the relation payload.
         assert!(
-            ops[2].content.get("scope_circle_id").is_none(),
+            ops[2].payload.get("scope_circle_id").is_none(),
             "scope_circle_id is not a relation_create_payload field"
         );
-        assert_eq!(ops[2].content["from_ref"], ids.discussion_strand_id);
+        assert_eq!(ops[2].payload["from_ref"], ids.discussion_strand_id);
         assert_eq!(
-            ops[2].content["to_ref"],
+            ops[2].payload["to_ref"],
             "ck:strand:0196419b-0000-7000-8000-000000000003"
         );
         for event in &ops {
             cokret_sdk::schema::event_payload_validator_catalog()
                 .unwrap()
-                .validate_payload(event.kind.as_str(), &event.content)
+                .validate_payload(event.kind.as_str(), &event.payload)
                 .unwrap_or_else(|err| {
                     panic!(
                         "discussion promote {} payload violates spec: {err}\npayload: {}",
                         event.kind.as_str(),
-                        serde_json::to_string_pretty(&event.content).unwrap()
+                        serde_json::to_string_pretty(&event.payload).unwrap()
                     );
                 });
         }

@@ -253,19 +253,8 @@ fn realm_key_share_payload_candidate(value: &serde_json::Value) -> Option<&serde
 
 fn realm_key_share_payload_value(envelope: &serde_json::Value) -> Option<&serde_json::Value> {
     envelope
-        .get("content")
+        .get("payload")
         .and_then(realm_key_share_payload_candidate)
-        .or_else(|| {
-            envelope
-                .get("payload")
-                .and_then(realm_key_share_payload_candidate)
-        })
-        .or_else(|| {
-            envelope
-                .get("content")
-                .and_then(|content| content.get("payload"))
-                .and_then(realm_key_share_payload_candidate)
-        })
         .or_else(|| {
             envelope
                 .get("payload")
@@ -306,16 +295,6 @@ pub fn realm_key_share_message_operation_id(envelope: &serde_json::Value) -> Opt
     envelope
         .get("operation_id")
         .or_else(|| envelope.get("event_id"))
-        .or_else(|| {
-            envelope
-                .get("content")
-                .and_then(|content| content.get("operation_id"))
-        })
-        .or_else(|| {
-            envelope
-                .get("content")
-                .and_then(|content| content.get("event_id"))
-        })
         .or_else(|| {
             envelope
                 .get("payload")
@@ -377,7 +356,6 @@ pub fn ingest_realm_key_share(
     share_envelope: &serde_json::Value,
 ) -> usize {
     let content = realm_key_share_payload_value(share_envelope)
-        .or_else(|| share_envelope.get("content"))
         .or_else(|| share_envelope.get("payload"))
         .unwrap_or(share_envelope);
     let payload: cokret_sdk::RealmKeySharePayload = match serde_json::from_value(content.clone()) {
@@ -476,11 +454,6 @@ pub fn realm_key_share_sender_device_pair(
     let payload = realm_key_share_payload_value(envelope);
     let device_id = envelope
         .get("sender_device_id")
-        .or_else(|| {
-            envelope
-                .get("content")
-                .and_then(|content| content.get("sender_device_id"))
-        })
         .or_else(|| {
             envelope
                 .get("payload")

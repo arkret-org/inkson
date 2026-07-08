@@ -287,7 +287,7 @@ pub(super) fn dispatch_card_detail_update(
             "actor_id": op.actor_id.to_string(),
             "created_at": op.created_at.to_rfc3339(),
             "write_state": "queued",
-            "body": op.content.clone(),
+            "body": op.payload.clone(),
             "activity_summary": card_detail_activity_summary(&current, &draft),
             "synthesis_entry_id": synthesis_entry_id,
             "synthesis_revision_body": local_synthesis_revision_body,

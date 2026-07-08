@@ -440,7 +440,7 @@ pub(super) fn dispatch_calendar_rsvp(
             "actor_id": op.actor_id.to_string(),
             "created_at": op.created_at.to_rfc3339(),
             "write_state": "queued",
-            "body": op.content.clone(),
+            "body": op.payload.clone(),
             "activity_summary": format!("RSVP {status}"),
         }),
     );

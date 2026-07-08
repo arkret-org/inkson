@@ -220,7 +220,7 @@ mod tests {
         )
         .build("node");
         assert_eq!(op.kind, "ck.call.state");
-        assert_eq!(op.content["state"], "active");
+        assert_eq!(op.payload["state"], "active");
     }
 
     #[test]
@@ -236,11 +236,11 @@ mod tests {
         )
         .build("node");
         assert_eq!(op.kind, "ck.call.recording.start");
-        assert_eq!(op.content["recording_agent"], "did:web:alice");
-        assert_eq!(op.content["capture_kind"], "recording");
-        assert_eq!(op.content["mode"], "audio_video");
-        assert_eq!(op.content["visible_notice"], true);
-        assert!(op.content.get("consent_actors").is_none());
+        assert_eq!(op.payload["recording_agent"], "did:web:alice");
+        assert_eq!(op.payload["capture_kind"], "recording");
+        assert_eq!(op.payload["mode"], "audio_video");
+        assert_eq!(op.payload["visible_notice"], true);
+        assert!(op.payload.get("consent_actors").is_none());
     }
 
     #[test]
@@ -256,8 +256,8 @@ mod tests {
         )
         .build("node");
         assert_eq!(op.kind, "ck.call.recording.start");
-        assert_eq!(op.content["capture_kind"], "transcript");
-        assert_eq!(op.content["mode"], "audio");
+        assert_eq!(op.payload["capture_kind"], "transcript");
+        assert_eq!(op.payload["mode"], "audio");
     }
 
     fn make_v1_envelope(seq: u64, signal_type: &str) -> cokret_sdk::EphemeralEnvelope {

@@ -303,7 +303,7 @@ fn content_kind(content: &Value) -> Option<&str> {
 /// (`content-block-poll.schema.json#/$defs/poll_block`) as a
 /// `ck.message.create` event. The poll's wire identity is the stamped
 /// `message_id` (`ck:message:<uuid7>` derived from the event id) — callers
-/// read it back from `event.content["message_id"]` to address later
+/// read it back from `event.payload["message_id"]` to address later
 /// `poll_response.poll_ref`s at this poll.
 pub fn build_poll_create_op(
     realm_id: &str,
@@ -358,7 +358,7 @@ pub fn build_poll_create_op(
         .event_id
         .as_str()
         .replacen("ck:event:", "ck:message:", 1);
-    event.content["message_id"] = json!(message_ref);
+    event.payload["message_id"] = json!(message_ref);
     Ok(event)
 }
 
@@ -367,7 +367,7 @@ pub fn build_poll_create_op(
 /// `poll_response.poll_ref`s point at.
 pub fn poll_message_ref(event: &cokret_sdk::Event) -> Option<String> {
     event
-        .content
+        .payload
         .get("message_id")
         .and_then(Value::as_str)
         .map(ToOwned::to_owned)
@@ -502,9 +502,9 @@ mod tests {
         )
         .expect("builds");
         assert_eq!(op.kind.as_str(), "ck.message.create");
-        assert!(op.content.get("encrypted").is_none());
+        assert!(op.payload.get("encrypted").is_none());
         // Canonical poll_block: nested `poll` object, no flat legacy fields.
-        let block = op.content.get("content").unwrap();
+        let block = op.payload.get("content").unwrap();
         assert_eq!(block["kind"], "ck.content.poll");
         assert_eq!(block["body"], "ship?");
         assert!(block.get("poll_id").is_none());
@@ -522,7 +522,7 @@ mod tests {
         assert!(message_ref.starts_with("ck:message:"));
         cokret_sdk::schema::event_payload_validator_catalog()
             .unwrap()
-            .validate_payload(op.kind.as_str(), &op.content)
+            .validate_payload(op.kind.as_str(), &op.payload)
             .unwrap();
     }
 
@@ -536,7 +536,7 @@ mod tests {
             &["opt-1".to_owned()],
         )
         .expect("builds");
-        let block = op.content.get("content").unwrap();
+        let block = op.payload.get("content").unwrap();
         assert_eq!(block["kind"], "ck.content.poll.response");
         assert!(block.get("poll_id").is_none());
         assert!(block.get("choice").is_none());
@@ -547,7 +547,7 @@ mod tests {
         assert_eq!(block["poll_response"]["selections"], json!(["opt-1"]));
         cokret_sdk::schema::event_payload_validator_catalog()
             .unwrap()
-            .validate_payload(op.kind.as_str(), &op.content)
+            .validate_payload(op.kind.as_str(), &op.payload)
             .unwrap();
     }
 

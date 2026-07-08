@@ -87,10 +87,10 @@ pub(super) fn kanban_event_carries_plaintext_private_content(event: &cokret_sdk:
         ]
         .iter()
         .any(|path| {
-            value_at_path(&event.content, path).is_some_and(value_is_plaintext_private_content)
+            value_at_path(&event.payload, path).is_some_and(value_is_plaintext_private_content)
         }),
         "ck.strand.update" => {
-            patch_touches_private_paths(&event.content, KANBAN_PRIVATE_STRAND_PATCH_PATHS)
+            patch_touches_private_paths(&event.payload, KANBAN_PRIVATE_STRAND_PATCH_PATHS)
         }
         _ => false,
     }

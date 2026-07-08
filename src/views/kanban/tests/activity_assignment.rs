@@ -121,13 +121,13 @@ fn card_assignment_mutations_create_and_tombstone_relation_events() {
         .expect("create mutation");
     assert_eq!(create.actor_id(), "did:web:alice.example");
     assert_eq!(create.operation().kind.as_str(), "ck.relation.create");
-    assert_eq!(create.operation().content["kind"], json!("assigned_to"));
-    assert_eq!(create.operation().content["from_ref"], json!(current.id));
+    assert_eq!(create.operation().payload["kind"], json!("assigned_to"));
+    assert_eq!(create.operation().payload["from_ref"], json!(current.id));
     assert_eq!(
-        create.operation().content["to_ref"],
+        create.operation().payload["to_ref"],
         json!("did:web:alice.example")
     );
-    assert!(create.operation().content.get("relation_id").is_none());
+    assert!(create.operation().payload.get("relation_id").is_none());
 
     let tombstone = mutations
         .iter()
@@ -139,7 +139,7 @@ fn card_assignment_mutations_create_and_tombstone_relation_events() {
     );
     assert_eq!(tombstone.operation().kind.as_str(), "ck.relation.tombstone");
     assert_eq!(
-        tombstone.operation().content["relation_id"],
+        tombstone.operation().payload["relation_id"],
         json!("ck:relation:0196419b-0000-7000-8000-0000000000bb")
     );
 

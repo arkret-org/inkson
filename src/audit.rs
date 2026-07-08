@@ -192,17 +192,17 @@ mod tests {
         )
         .build("node");
         assert_eq!(op.kind, "ck.audit.accessed");
-        assert_eq!(op.content["target_ref"], "ck:event:abc");
-        assert_eq!(op.content["actor_id"], "did:web:alice");
+        assert_eq!(op.payload["target_ref"], "ck:event:abc");
+        assert_eq!(op.payload["actor_id"], "did:web:alice");
         assert!(
-            op.content["purpose"]
+            op.payload["purpose"]
                 .as_str()
                 .is_some_and(|p| p.contains("reader_device=did:key:zDevice"))
         );
-        assert!(op.content["accessed_at"].is_string());
+        assert!(op.payload["accessed_at"].is_string());
         // No illegal top-level fields under the strict audit_payload schema.
-        assert!(op.content.get("reader_device").is_none());
-        assert!(op.content.get("target_event_id").is_none());
+        assert!(op.payload.get("reader_device").is_none());
+        assert!(op.payload.get("target_event_id").is_none());
     }
 
     #[test]
@@ -215,17 +215,17 @@ mod tests {
         )
         .build("node");
         assert_eq!(op.kind, "ck.audit.ryw_receipt");
-        assert_eq!(op.content["target_ref"], "ck:event:abc");
-        assert_eq!(op.content["actor_id"], "did:web:alice");
+        assert_eq!(op.payload["target_ref"], "ck:event:abc");
+        assert_eq!(op.payload["actor_id"], "did:web:alice");
         assert!(
-            op.content["purpose"]
+            op.payload["purpose"]
                 .as_str()
                 .is_some_and(|p| p.contains("did:key:zA") && p.contains("did:key:zB"))
         );
-        assert!(op.content["accessed_at"].is_string());
+        assert!(op.payload["accessed_at"].is_string());
         // No illegal top-level fields under the strict audit_payload schema.
-        assert!(op.content.get("delivered_to_devices").is_none());
-        assert!(op.content.get("source_event_id").is_none());
+        assert!(op.payload.get("delivered_to_devices").is_none());
+        assert!(op.payload.get("source_event_id").is_none());
     }
 
     #[test]
@@ -238,7 +238,7 @@ mod tests {
         )
         .build("node");
         assert_eq!(op.kind, "ck.identity.presentation_request");
-        assert_eq!(op.content["requested_claims"][0], "display_name");
+        assert_eq!(op.payload["requested_claims"][0], "display_name");
     }
 
     #[test]
@@ -252,7 +252,7 @@ mod tests {
         )
         .build("node");
         assert_eq!(op.kind, "ck.identity.disclosure_receipt");
-        assert_eq!(op.content["counterparty"], "did:web:bob");
+        assert_eq!(op.payload["counterparty"], "did:web:bob");
     }
 
     #[test]

@@ -755,7 +755,7 @@ fn realm_key_share_envelope(
     .unwrap();
     json!({
         "kind": event.kind.as_str(),
-        "content": event.content,
+        "payload": event.payload,
     })
 }
 
@@ -808,9 +808,9 @@ fn ingest_realm_key_share_installs_history_secrets() {
 #[test]
 fn ingest_realm_key_share_accepts_projected_payload_envelope() {
     // soland projects durable ck.realm_key.share events into device_messages as
-    // `{ kind, realm_id, sender, sender_device_id, payload }`, not the older
-    // local `{ kind, content }` test shape. The receiver must parse the spec
-    // payload field or Bob never installs the shared history key.
+    // `{ kind, realm_id, sender, sender_device_id, payload }`. The receiver
+    // must parse the spec payload field or Bob never installs the shared
+    // history key.
     let mut state = temp_state_store("history-share-projected-payload");
     let secure = MemorySecureKeyStore::new();
     let realm = "ck:realm:01904100-0000-7000-8000-0000000000e8";
@@ -822,7 +822,7 @@ fn ingest_realm_key_share_accepts_projected_payload_envelope() {
     let (_priv, bob_pub) =
         load_or_create_device_hpke_keypair(&secure, bob_actor, bob_device).unwrap();
     let secrets = vec![(0_u64, vec![7u8; 32])];
-    let legacy = realm_key_share_envelope(
+    let local = realm_key_share_envelope(
         realm,
         bob_actor,
         bob_device,
@@ -836,7 +836,7 @@ fn ingest_realm_key_share_accepts_projected_payload_envelope() {
         "sender_device_id": alice_device,
         "realm_id": realm,
         "operation_id": "ck:event:01904100-0000-7000-8000-0000000000ee",
-        "payload": legacy.get("content").unwrap().clone(),
+        "payload": local.get("payload").unwrap().clone(),
     });
 
     assert_eq!(
@@ -1089,7 +1089,7 @@ fn realm_key_share_sender_signature_round_trips() {
     )
     .unwrap();
     let payload: cokret_sdk::RealmKeySharePayload =
-        serde_json::from_value(event.content.clone()).unwrap();
+        serde_json::from_value(event.payload.clone()).unwrap();
 
     // A real signature object was attached, and it verifies.
     assert!(

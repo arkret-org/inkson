@@ -415,11 +415,11 @@ mod personal_agent_tests {
         .unwrap();
 
         assert_eq!(event.kind.as_str(), cokret_sdk::OP_AGENT_KEY_AUTHORIZE);
-        assert_eq!(event.content["agent_principal_id"], agent);
-        assert_eq!(event.content["verification_method"], verification_method);
-        assert_eq!(event.content["public_key_digest"], runtime_digest.as_str());
+        assert_eq!(event.payload["agent_principal_id"], agent);
+        assert_eq!(event.payload["verification_method"], verification_method);
+        assert_eq!(event.payload["public_key_digest"], runtime_digest.as_str());
         assert_eq!(
-            event.content["approval_evidence"]["request_canonical_digest"],
+            event.payload["approval_evidence"]["request_canonical_digest"],
             expected_pairing_digest.as_str()
         );
     }
@@ -524,10 +524,10 @@ mod personal_agent_tests {
             Some("ck:grant:01904100-0000-7000-8000-000000000002")
         );
         assert_eq!(
-            operation.content["approval_request_id"],
+            operation.payload["approval_request_id"],
             "ck:agent-action-request:01904100-0000-7000-8000-000000000003"
         );
-        assert_eq!(operation.content["approval_nonce"], "nonce-01904100");
+        assert_eq!(operation.payload["approval_nonce"], "nonce-01904100");
     }
 
     #[test]
@@ -563,11 +563,11 @@ mod tests {
         )
         .expect("builds")
         .build("yougen");
-        assert_eq!(op.content["agent_id"], "did:web:agent.example");
-        assert_eq!(op.content["endpoints"][0]["protocol"], "ck.agent.v1");
-        assert_eq!(op.content["endpoints"][0]["capabilities"][0], "strand.read");
-        assert!(op.content.get("protocol").is_none());
-        assert!(op.content.get("capabilities").is_none());
+        assert_eq!(op.payload["agent_id"], "did:web:agent.example");
+        assert_eq!(op.payload["endpoints"][0]["protocol"], "ck.agent.v1");
+        assert_eq!(op.payload["endpoints"][0]["capabilities"][0], "strand.read");
+        assert!(op.payload.get("protocol").is_none());
+        assert!(op.payload.get("capabilities").is_none());
     }
 
     #[test]
@@ -581,10 +581,10 @@ mod tests {
         )
         .expect("builds")
         .build("yougen");
-        assert_eq!(op.content["status"], "completed");
-        assert_eq!(op.content["result_objects"][0]["summary"], "ok");
-        assert_eq!(op.content["artifacts"][0]["merkle_root"], "sha256:abc");
-        assert!(op.content.get("audit_binding").is_none());
+        assert_eq!(op.payload["status"], "completed");
+        assert_eq!(op.payload["result_objects"][0]["summary"], "ok");
+        assert_eq!(op.payload["artifacts"][0]["merkle_root"], "sha256:abc");
+        assert!(op.payload.get("audit_binding").is_none());
     }
 
     // Pin the verify helper's outcomes for each canonical wire
@@ -985,14 +985,14 @@ mod tests {
         // actor_id is the controller; attribution preserves the agent.
         assert_eq!(op.actor_id.as_str(), "did:web:alice.example");
         assert_eq!(
-            op.content["object"]["attribution"],
+            op.payload["object"]["attribution"],
             "did:web:remote-agent.example"
         );
         assert_eq!(
-            op.content["object"]["metadata"]["fields"]["workflow_type"],
+            op.payload["object"]["metadata"]["fields"]["workflow_type"],
             "synthesis"
         );
-        assert!(op.content["object"]["tracks"].get("synthesis").is_some());
+        assert!(op.payload["object"]["tracks"].get("synthesis").is_some());
     }
 
     #[test]

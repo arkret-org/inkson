@@ -659,7 +659,7 @@ fn validate_signed_sdk_event_for_submit(event: &cokret_sdk::Event) -> anyhow::Re
     event.validate_proof_bindings().map_err(|err| {
         anyhow::anyhow!("event proof binding invalid for {}: {err}", event.event_id)
     })?;
-    validate_outgoing_registered_event_payload(event.kind.as_str(), &event.content)
+    validate_outgoing_registered_event_payload(event.kind.as_str(), &event.payload)
 }
 
 fn is_actor_frontier_absent(error: &anyhow::Error) -> bool {

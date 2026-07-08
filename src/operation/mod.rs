@@ -284,7 +284,7 @@ impl OperationBuilder {
                 .map_err(|err| anyhow::anyhow!("generated HLC is invalid: {err}"))?,
             prev_refs,
             refs: self.refs,
-            content: self.body,
+            payload: self.body,
             preconditions: self.preconditions,
             effects: self.effects,
             seal_ref: self

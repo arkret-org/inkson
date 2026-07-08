@@ -54,7 +54,7 @@ pub(crate) fn build_realm_mls_admission_events_from_claim(
         &add.commit,
     )?;
     let governance_binding = commit
-        .content
+        .payload
         .get("governance_binding")
         .cloned()
         .ok_or_else(|| "MLS commit event missing governance_binding".to_owned())?;
@@ -124,7 +124,7 @@ pub(crate) fn build_realm_mls_admission_events_from_claims(
         &add.commit,
     )?;
     let governance_binding = commit
-        .content
+        .payload
         .get("governance_binding")
         .cloned()
         .ok_or_else(|| "MLS commit event missing governance_binding".to_owned())?;
@@ -582,19 +582,19 @@ mod tests {
 
         let catalog = cokret_sdk::schema::event_payload_validator_catalog().unwrap();
         catalog
-            .validate_payload(event.kind.as_str(), &event.content)
+            .validate_payload(event.kind.as_str(), &event.payload)
             .unwrap_or_else(|err| {
                 panic!(
                     "ck.realm_key.share payload violates registered schema: {err}\npayload: {}",
-                    serde_json::to_string_pretty(&event.content).unwrap()
+                    serde_json::to_string_pretty(&event.payload).unwrap()
                 )
             });
         assert_eq!(
-            event.content["key_scope"]["effective_scope"],
+            event.payload["key_scope"]["effective_scope"],
             json!({ "kind": "realm", "realm_id": realm })
         );
-        assert_eq!(event.content["key_scope"]["policy_digest"], policy_digest);
-        let created_at = event.content["created_at"]
+        assert_eq!(event.payload["key_scope"]["policy_digest"], policy_digest);
+        let created_at = event.payload["created_at"]
             .as_str()
             .expect("realm_key.share created_at is a string");
         cokret_sdk::canonical::validate_timestamp_canonical(created_at)
@@ -659,28 +659,28 @@ mod tests {
 
         assert_eq!(admission.commit.kind.as_str(), "ck.mls.commit");
         assert_eq!(
-            admission.commit.content["base_epoch_ref"],
+            admission.commit.payload["base_epoch_ref"],
             json!(genesis_event.event_id.as_str())
         );
         assert_eq!(admission.welcome.kind.as_str(), "ck.mls.welcome");
         assert_eq!(
-            admission.welcome.content["ciphertext"],
+            admission.welcome.payload["ciphertext"],
             admission.welcome_envelope.welcome
         );
-        assert!(admission.welcome.content.get("welcome_bytes_b64").is_none());
-        assert!(admission.welcome.content.get("key_package_id").is_none());
+        assert!(admission.welcome.payload.get("welcome_bytes_b64").is_none());
+        assert!(admission.welcome.payload.get("key_package_id").is_none());
         assert!(
-            admission.welcome.content["claim_envelope"]["signature"]["sig"]
+            admission.welcome.payload["claim_envelope"]["signature"]["sig"]
                 .as_str()
                 .is_some_and(|sig| !sig.is_empty())
         );
         let catalog = cokret_sdk::schema::event_payload_validator_catalog().unwrap();
         catalog
-            .validate_payload(admission.welcome.kind.as_str(), &admission.welcome.content)
+            .validate_payload(admission.welcome.kind.as_str(), &admission.welcome.payload)
             .unwrap_or_else(|err| {
                 panic!(
                     "ck.mls.welcome payload violates registered schema: {err}\npayload: {}",
-                    serde_json::to_string_pretty(&admission.welcome.content).unwrap()
+                    serde_json::to_string_pretty(&admission.welcome.payload).unwrap()
                 )
             });
 
@@ -741,7 +741,7 @@ mod tests {
         .unwrap()
         .expect("creator genesis event");
         alice_state.mark_mls_genesis_emitted_with_event(realm, &genesis_event.event_id);
-        let genesis_policy_root = genesis_event.content["governance_binding"]["policy_root"]
+        let genesis_policy_root = genesis_event.payload["governance_binding"]["policy_root"]
             .as_str()
             .expect("genesis governance binding carries policy_root")
             .to_owned();
@@ -783,7 +783,7 @@ mod tests {
         )
         .unwrap();
 
-        let commit_policy_root = admission.commit.content["governance_binding"]["policy_root"]
+        let commit_policy_root = admission.commit.payload["governance_binding"]["policy_root"]
             .as_str()
             .expect("commit governance binding carries policy_root");
         assert_eq!(

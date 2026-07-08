@@ -311,18 +311,18 @@ mod tests {
         .build("test-node");
         assert_eq!(op.kind, "ck.moderation.appeal.submit");
         assert_eq!(
-            op.content["realm_id"],
+            op.payload["realm_id"],
             "ck:realm:01904100-0000-7000-8000-000000000001"
         );
-        assert!(op.content["appeal_id"].is_string());
-        assert!(op.content.get("schema").is_none());
+        assert!(op.payload["appeal_id"].is_string());
+        assert!(op.payload.get("schema").is_none());
         let registry = cokret_sdk::schema::schema_registry_from_default_spec_artifacts()
             .unwrap()
             .unwrap();
         registry
             .validate_value(
                 "ck.schema.moderation_appeal.v1#/$defs/submit_payload",
-                &op.content,
+                &op.payload,
             )
             .unwrap();
     }

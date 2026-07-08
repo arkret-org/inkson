@@ -88,7 +88,7 @@ pub fn parse_signed_device_authorize(
         anyhow::bail!("enrollment authority returned an unsigned device.authorize");
     }
     let payload_device_id = event
-        .content
+        .payload
         .get("device_id")
         .and_then(serde_json::Value::as_str)
         .unwrap_or_default();

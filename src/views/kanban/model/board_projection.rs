@@ -813,7 +813,7 @@ mod tests {
     }
 
     /// Lock the REAL wire shapes: build the optimistic ops through the same
-    /// `ck_ops` builders the submit helpers use (`body = event.content`) so the
+    /// `ck_ops` builders the submit helpers use (`body = event.payload`) so the
     /// reducer is proven against the actual serialized payloads, not hand-rolled
     /// JSON. Guards against a builder/reducer drift (e.g. a patch entry that
     /// serializes differently than `patch_entry_string` expects).
@@ -848,7 +848,7 @@ mod tests {
             .unwrap()
             .build_sdk_event("yougen")
             .unwrap()
-            .content
+            .payload
         };
         let mut ops = kanban_operations_from_events(&[
             space_create_event(BOARD, "board", "Board1", None),
@@ -890,7 +890,7 @@ mod tests {
         .unwrap()
         .build_sdk_event("yougen")
         .unwrap()
-        .content;
+        .payload;
         let mut ops = kanban_operations_from_events(&[
             space_create_event(BOARD, "board", "Board1", None),
             space_create_event(LIST_A, "list", "Todos", Some(BOARD)),

@@ -1306,22 +1306,22 @@ pub fn ChatPanel(
                                                         return;
                                                     }
                                                 };
-                                                if !op.content["object"]
+                                                if !op.payload["object"]
                                                     .get("fields")
                                                     .is_some_and(|fields| fields.is_object())
                                                 {
-                                                    op.content["object"]["fields"] = json!({});
+                                                    op.payload["object"]["fields"] = json!({});
                                                 }
-                                                op.content["object"]["fields"]["category"] =
+                                                op.payload["object"]["fields"]["category"] =
                                                     json!(category.clone());
-                                                op.content["object"]["fields"]["has_synthesis"] =
+                                                op.payload["object"]["fields"]["has_synthesis"] =
                                                     json!(create_card);
-                                                op.content["object"]["rank"] = json!(rank.clone());
+                                                op.payload["object"]["rank"] = json!(rank.clone());
                                                 if !summary.is_empty() {
-                                                    op.content["object"]["summary"] = json!(summary.clone());
+                                                    op.payload["object"]["summary"] = json!(summary.clone());
                                                 }
                                                 if !create_card
-                                                    && let Some(tracks) = op.content["object"]["tracks"].as_object_mut()
+                                                    && let Some(tracks) = op.payload["object"]["tracks"].as_object_mut()
                                                 {
                                                     tracks.remove("synthesis");
                                                 }
@@ -1380,7 +1380,7 @@ pub fn ChatPanel(
                                                                         "category": category,
                                                                         "summary": channel_topic,
                                                                         "create_card": create_card,
-                                                                        "object": sdk_op.content["object"].clone(),
+                                                                        "object": sdk_op.payload["object"].clone(),
                                                                         "event_id": submitted.event_id,
                                                                     }),
                                                                 );
@@ -2206,7 +2206,7 @@ pub fn ChatPanel(
                                                                             json!({
                                                                                 "event_id": submitted.event_id.clone(),
                                                                                 "kind": op.kind.as_str(),
-                                                                                "payload": op.content.clone(),
+                                                                                "payload": op.payload.clone(),
                                                                             }),
                                                                         );
                                                                     }
@@ -2829,7 +2829,7 @@ pub fn ChatPanel(
                                                                                 json!({
                                                                                     "event_id": submitted.event_id.clone(),
                                                                                     "kind": op.kind.as_str(),
-                                                                                    "payload": op.content.clone(),
+                                                                                    "payload": op.payload.clone(),
                                                                                 }),
                                                                             );
                                                                         }
@@ -4836,7 +4836,7 @@ pub fn ChatPanel(
                                                 &mention_dids,
                                             );
                                         if let Some(content) = op
-                                            .content
+                                            .payload
                                             .get_mut("content")
                                             .and_then(Value::as_object_mut)
                                         {

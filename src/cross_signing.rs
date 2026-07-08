@@ -796,11 +796,11 @@ mod tests {
         // The full publish content body must round-trip — losing any
         // field here is the same as publishing a malformed event, which
         // the SDK validator would reject on the receiver side.
-        let body_principal = envelope.content["principal_id"]
+        let body_principal = envelope.payload["principal_id"]
             .as_str()
             .expect("body.principal_id is a string");
         assert_eq!(body_principal, principal.as_str());
-        assert_eq!(envelope.content["generation"].as_u64(), Some(1));
+        assert_eq!(envelope.payload["generation"].as_u64(), Some(1));
     }
 
     #[test]
