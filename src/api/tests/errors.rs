@@ -1,9 +1,11 @@
 use reqwest::StatusCode;
 
 use crate::api_error::{
-    CokretApiError, decode_cokret_error, is_auth_expired_error, is_device_not_authorized_error,
+    CokretApiError, decode_cokret_error, is_actor_frontier_absent_error,
+    is_actor_seq_cas_conflict_error, is_auth_expired_error, is_device_not_authorized_error,
     is_invalid_cursor_error, is_plaintext_visibility_policy_error, is_snapshot_unavailable_error,
-    is_space_membership_denied_error, is_terminal_session_grant_error, rate_limited_retry_after,
+    is_space_membership_denied_error, is_terminal_session_grant_error,
+    is_terminal_session_grant_refresh_error, rate_limited_retry_after, unsupported_endpoint_status,
 };
 
 fn sdk_api_error(status: StatusCode, body: &'static [u8]) -> anyhow::Error {
@@ -106,6 +108,35 @@ fn sdk_api_errors_use_same_classifiers() {
         br#"{"ok":false,"error":{"code":"capability_denied","message":"session grant is not active: revoked"}}"#,
     );
     assert!(is_terminal_session_grant_error(&revoked_session_grant));
+
+    let unsupported_endpoint = sdk_api_error(
+        StatusCode::NOT_IMPLEMENTED,
+        br#"{"ok":false,"error":{"code":"not_implemented","message":"account_data unavailable"}}"#,
+    );
+    assert_eq!(
+        unsupported_endpoint_status(&unsupported_endpoint),
+        Some(StatusCode::NOT_IMPLEMENTED)
+    );
+
+    let actor_frontier_absent = sdk_api_error(
+        StatusCode::NOT_FOUND,
+        br#"{"ok":false,"error":{"code":"not_found","message":"actor frontier not found"}}"#,
+    );
+    assert!(is_actor_frontier_absent_error(&actor_frontier_absent));
+
+    let actor_seq_cas = sdk_api_error(
+        StatusCode::CONFLICT,
+        br#"{"ok":false,"error":{"code":"cas_conflict","message":"actor_seq is behind the accepted frontier"}}"#,
+    );
+    assert!(is_actor_seq_cas_conflict_error(&actor_seq_cas));
+
+    let consumed_refresh_grant = sdk_api_error(
+        StatusCode::BAD_REQUEST,
+        br#"{"ok":false,"error":{"code":"grant_already_consumed","message":"session grant already consumed"}}"#,
+    );
+    assert!(is_terminal_session_grant_refresh_error(
+        &consumed_refresh_grant
+    ));
 }
 
 #[test]

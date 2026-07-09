@@ -81,6 +81,17 @@ pub fn is_terminal_session_grant_error(error: &anyhow::Error) -> bool {
         .is_some_and(|(status, envelope)| is_terminal_session_grant_api_error(status, envelope))
 }
 
+/// True for terminal errors returned by the Account Authority session-grant
+/// refresh endpoint. This is intentionally narrower than ordinary auth
+/// expiry handling at the call site: only a structured refresh-specific
+/// envelope is allowed to clear the persisted grant.
+pub fn is_terminal_session_grant_refresh_error(error: &anyhow::Error) -> bool {
+    api_error_status_and_envelope(error).is_some_and(|(status, envelope)| {
+        terminal_session_grant_refresh_code(envelope.code())
+            || is_terminal_session_grant_api_error(status, envelope)
+    })
+}
+
 fn is_terminal_session_grant_api_error(status: StatusCode, envelope: &ErrorEnvelope) -> bool {
     use cokret_sdk::error::{
         ERROR_CODE_AUTH_EXPIRED, ERROR_CODE_CAPABILITY_DENIED, ERROR_CODE_UNAUTHENTICATED,
@@ -96,6 +107,28 @@ fn is_terminal_session_grant_api_error(status: StatusCode, envelope: &ErrorEnvel
         && terminal_session_grant_message(&message)
 }
 
+fn terminal_session_grant_refresh_code(code: &str) -> bool {
+    use cokret_sdk::error::{
+        ERROR_CODE_AUTHORIZED_GRANT_REVOKED, ERROR_CODE_DID_PROOF_REQUIRED,
+        ERROR_CODE_GRANT_ALREADY_CONSUMED, ERROR_CODE_INVALID_SIGNATURE,
+        ERROR_CODE_SESSION_GRANT_NOT_FOUND, ERROR_CODE_SESSION_LOGGED_OUT,
+    };
+
+    [
+        ERROR_CODE_GRANT_ALREADY_CONSUMED,
+        ERROR_CODE_SESSION_GRANT_NOT_FOUND,
+        ERROR_CODE_SESSION_LOGGED_OUT,
+        ERROR_CODE_INVALID_SIGNATURE,
+        ERROR_CODE_DID_PROOF_REQUIRED,
+        ERROR_CODE_AUTHORIZED_GRANT_REVOKED,
+    ]
+    .contains(&code)
+        || matches!(
+            code,
+            "invalid_grant" | "grant_expired" | "grant_revoked" | "session_grant_revoked"
+        )
+}
+
 fn terminal_session_grant_message(message: &str) -> bool {
     message.contains("session grant")
         && (message.contains("revoked")
@@ -103,6 +136,29 @@ fn terminal_session_grant_message(message: &str) -> bool {
             || message.contains("expired")
             || message.contains("locked")
             || message.contains("suspended"))
+}
+
+pub fn unsupported_endpoint_status(error: &anyhow::Error) -> Option<StatusCode> {
+    let (status, _) = api_error_status_and_envelope(error)?;
+    matches!(
+        status,
+        StatusCode::NOT_FOUND | StatusCode::NOT_IMPLEMENTED | StatusCode::METHOD_NOT_ALLOWED
+    )
+    .then_some(status)
+}
+
+pub fn is_actor_frontier_absent_error(error: &anyhow::Error) -> bool {
+    api_error_status_and_envelope(error).is_some_and(|(status, _)| status == StatusCode::NOT_FOUND)
+}
+
+pub fn is_actor_seq_cas_conflict_error(error: &anyhow::Error) -> bool {
+    use cokret_sdk::error::ERROR_CODE_CAS_CONFLICT;
+
+    api_error_status_and_envelope(error).is_some_and(|(status, envelope)| {
+        status == StatusCode::CONFLICT
+            && envelope.code() == ERROR_CODE_CAS_CONFLICT
+            && envelope.message().contains("actor_seq")
+    })
 }
 
 /// Recognise a `rate_limited` (HTTP 429) error envelope from the

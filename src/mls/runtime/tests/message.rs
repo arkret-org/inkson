@@ -873,6 +873,82 @@ fn ingest_realm_key_share_accepts_projected_payload_envelope() {
 
 #[cfg(not(target_arch = "wasm32"))]
 #[test]
+fn ingest_realm_key_share_accepts_soland_content_payload_envelope() {
+    // The REAL soland wire shape (sync `to_device[]` and device-messages,
+    // projection/apply.rs) nests the spec payload one level deeper than the
+    // fixture above:
+    //   { kind, sender_principal_id, sender_device_id,
+    //     content: { operation_id, realm_id, payload: { key_scope, ... } } }
+    // The 2026-07-09 joint-full run proved the old parser silently dropped
+    // this shape: Bob's install loop never grouped the share by realm, so the
+    // pre-join history secret was never installed and the card stayed locked.
+    let mut state = temp_state_store("history-share-content-payload");
+    let secure = MemorySecureKeyStore::new();
+    let realm = "ck:realm:01904100-0000-7000-8000-0000000000f0";
+    let bob_actor = "did:web:bob.example";
+    let bob_device = "ck:device:01904100-0000-7000-8000-0000000000f1";
+    let alice_actor = "did:web:alice.example";
+    let alice_device = "ck:device:01904100-0000-7000-8000-0000000000a2";
+
+    let (_priv, bob_pub) =
+        load_or_create_device_hpke_keypair(&secure, bob_actor, bob_device).unwrap();
+    let secrets = vec![(0_u64, vec![5u8; 32])];
+    let local = realm_key_share_envelope(
+        realm,
+        bob_actor,
+        bob_device,
+        alice_device,
+        &bob_pub,
+        &secrets,
+    );
+    let projected = json!({
+        "kind": "ck.realm_key.share",
+        "sender_principal_id": alice_actor,
+        "sender_device_id": alice_device,
+        "content": {
+            "operation_id": "ck:event:01904100-0000-7000-8000-0000000000f2",
+            "realm_id": realm,
+            "payload": local.get("payload").unwrap().clone(),
+        },
+    });
+
+    assert_eq!(
+        realm_key_share_message_realm_id(&projected),
+        Some(realm.to_owned())
+    );
+    assert_eq!(
+        collect_realm_key_share_messages_for_realm(&[projected.clone()], realm).len(),
+        1
+    );
+    assert_eq!(
+        realm_key_share_sender_device_pair(&projected),
+        Some((alice_actor.to_owned(), alice_device.to_owned()))
+    );
+    assert_eq!(
+        realm_key_share_message_operation_id(&projected).as_deref(),
+        Some("ck:event:01904100-0000-7000-8000-0000000000f2")
+    );
+    let mut ingestable = projected.clone();
+    ingestable
+        .as_object_mut()
+        .unwrap()
+        .remove("sender_principal_id");
+    assert_eq!(
+        ingest_realm_key_share(
+            &mut state,
+            &secure,
+            realm,
+            bob_actor,
+            bob_device,
+            &ingestable
+        ),
+        1
+    );
+    assert_eq!(state.history_secret_for(realm, 0), Some(vec![5u8; 32]));
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+#[test]
 fn history_secrets_do_not_land_in_account_state_json() {
     use base64::Engine as _;
 

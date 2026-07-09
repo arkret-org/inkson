@@ -14,10 +14,11 @@
 //! [`crate::event_submit::EventSubmitter`], reached through
 //! [`crate::authed_api::with_event_submitter`].
 
+use serde_json::Value;
+
 use crate::ephemeral::{attach_broadcast_ephemeral_proof, build_call_signal_envelope_v1};
 use crate::event_submit::EventSubmitter;
 use crate::models::{MediaIceConfigOutcome, MediaIceConfigRequestBody, SubmitEventResult};
-use serde_json::Value;
 
 /// `POST /_cokret/self/rtc/ice-config` using the SDK's authoritative
 /// wire types (YOU-05-004). NB: when the WebRTC surface consumes the

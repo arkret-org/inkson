@@ -484,11 +484,11 @@ pub(crate) async fn submit_chat_operation_with_plaintext_retry(
                 actor_id,
                 services,
             )
-                .await
-                .map_err(|update_error| {
-                    anyhow::anyhow!(
-                        "plaintext policy update failed: {update_error}; original send failed: {error}"
-                    )
+            .await
+            .map_err(|update_error| {
+                anyhow::anyhow!(
+                    "plaintext policy update failed: {update_error}; original send failed: {error}"
+                )
             })?;
             api.event_submitter()?.submit_sdk_event(operation).await
         }

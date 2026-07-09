@@ -13,9 +13,8 @@ use url::Url;
 
 use crate::config::validate_server_url;
 use crate::models::{
-    BlobUploadOutcome, DeviceMessagesAckOutcome,
-    DeviceMessagesAckRequestBody, DeviceMessagesGetOutcome,
-    OP_SNAPSHOT_HEAD, RealmJoinCandidate, ResolveHandleView,
+    BlobUploadOutcome, DeviceMessagesAckOutcome, DeviceMessagesAckRequestBody,
+    DeviceMessagesGetOutcome, OP_SNAPSHOT_HEAD, RealmJoinCandidate, ResolveHandleView,
     ServerDescription, SubmitEventResult,
 };
 use crate::wire_helpers::{canonical_blob_ref, safe_blob_filename_header};

@@ -2003,7 +2003,7 @@ pub fn SettingsPanel(
                                     let api_token = token();
                                     let dev = device_id();
                                     let principal_id = account_did();
-                                    let mut local_store = state_store.read().clone();
+                                    let local_store = state_store.read().clone();
                                     spawn(async move {
                                         let principal_id =
                                             (!principal_id.trim().is_empty()).then_some(principal_id);
@@ -2018,7 +2018,7 @@ pub fn SettingsPanel(
                                         };
                                         match crate::push::registration::register_via_chime(
                                             context,
-                                            &mut local_store,
+                                            &local_store,
                                         )
                                         .await
                                         {
@@ -2059,7 +2059,7 @@ pub fn SettingsPanel(
                                     let base = base_url();
                                     let api_token = token();
                                     let dev = device_id();
-                                    let mut local_store = state_store.read().clone();
+                                    let local_store = state_store.read().clone();
                                     spawn(async move {
                                         let context = crate::push::registration::UnregisterContext {
                                             principal_server_url: base,
@@ -2069,7 +2069,7 @@ pub fn SettingsPanel(
                                         };
                                         match crate::push::registration::unregister_via_chime(
                                             context,
-                                            &mut local_store,
+                                            &local_store,
                                         ).await {
                                             Ok(_) => {
                                                 state_store.write().clear_push_registration();

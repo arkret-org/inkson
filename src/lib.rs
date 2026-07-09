@@ -11,7 +11,6 @@
 
 pub mod account_api;
 pub mod account_auth;
-pub mod circle_api;
 pub mod account_data;
 /// Single-source-of-truth resolver for the post-boot "account health" prompt
 /// chain (device authorization → MLS unlock → MLS backup → recovery-missing →
@@ -36,6 +35,7 @@ pub mod card_comments;
 /// the client-side surface; the canonical struct lives in
 /// `cokret_sdk::cokret_core::models::circle`.
 pub mod circle;
+pub mod circle_api;
 pub mod circle_mls;
 pub mod client_core;
 pub(crate) mod clock;
@@ -128,6 +128,7 @@ pub mod perf;
 pub mod projection;
 pub mod projection_views;
 pub mod push;
+pub(crate) mod random;
 pub mod rank;
 pub mod realm_defaults;
 pub mod realm_events_engine;

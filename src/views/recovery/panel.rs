@@ -396,10 +396,10 @@ pub fn RecoveryPanel(
                             // reverts after a moment so repeat copies read clearly.
                             copied_feedback.set(true);
                             spawn(async move {
-                                #[cfg(target_arch = "wasm32")]
-                                gloo_timers::future::TimeoutFuture::new(2_000).await;
-                                #[cfg(not(target_arch = "wasm32"))]
-                                tokio::time::sleep(std::time::Duration::from_millis(2_000)).await;
+                                crate::runtime_helpers::sleep_for(std::time::Duration::from_millis(
+                                    2_000,
+                                ))
+                                .await;
                                 copied_feedback.set(false);
                             });
                         },
