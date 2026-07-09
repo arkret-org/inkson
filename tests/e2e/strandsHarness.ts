@@ -8,7 +8,6 @@ const DEFAULT_ACCOUNT_DID = "did:web:alice.example";
 const DEFAULT_DEVICE_ID = "ck:device:01964137-0000-7000-8000-0000000000a1";
 const DEFAULT_SESSION_CREDENTIAL = "sx:e2e-token";
 const TEST_SESSION_INJECTION_KEY = "inkson.test.session_injection.v1";
-const LOCALSTORAGE_SECRETS_FLAG = "inkson.security.allow_localstorage_secrets";
 const DEFAULT_DPOP_SEED_B64URL = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA";
 
 const defaultLocalConfig = {
@@ -165,8 +164,7 @@ export async function addSessionGrantInjection(
   }> = {},
 ) {
   await page.addInitScript(
-    ({ record, flagKey, injectionKey }) => {
-      localStorage.setItem(flagKey, "1");
+    ({ record, injectionKey }) => {
       if (localStorage.getItem(injectionKey)) {
         return;
       }
@@ -174,7 +172,6 @@ export async function addSessionGrantInjection(
     },
     {
       record: sessionInjectionRecord(overrides),
-      flagKey: LOCALSTORAGE_SECRETS_FLAG,
       injectionKey: TEST_SESSION_INJECTION_KEY,
     },
   );
@@ -191,13 +188,11 @@ export async function writeSessionGrantInjection(
 ) {
   await addSessionGrantInjection(page, overrides);
   await page.evaluate(
-    ({ record, flagKey, injectionKey }) => {
-      localStorage.setItem(flagKey, "1");
+    ({ record, injectionKey }) => {
       localStorage.setItem(injectionKey, JSON.stringify(record));
     },
     {
       record: sessionInjectionRecord(overrides),
-      flagKey: LOCALSTORAGE_SECRETS_FLAG,
       injectionKey: TEST_SESSION_INJECTION_KEY,
     },
   );

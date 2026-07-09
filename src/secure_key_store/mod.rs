@@ -100,40 +100,21 @@ const WASM_ED25519_SEED_INDEXEDDB_REQUIRED: &str = "wasm Ed25519 signing seeds r
 const WASM_SENSITIVE_SECRET_INDEXEDDB_REQUIRED: &str = "wasm account secrets and session credentials require IndexedDbSecureKeyStore with a \
      non-extractable SubtleCrypto AES-GCM wrapping key; localStorage read/write is disabled";
 
-/// localStorage flag that opts OUT of the wasm IndexedDB-only secure-secret
-/// hardening, allowing seeds / account secrets / session credentials to live in the
-/// AEAD-wrapped `localStorage` tier instead of requiring IndexedDB +
-/// non-extractable SubtleCrypto.
-///
-/// Default OFF (hardening enforced). Intended ONLY for (a) e2e/test harnesses
-/// that inject sessions into localStorage and (b) browsers without IndexedDB /
-/// SubtleCrypto. SECURITY NOTE: when ON, an attacker who can read localStorage
-/// (disk dump, same-origin XSS) recovers the AEAD wrapping seed alongside the
-/// ciphertext — the exact disk-dump protection the IndexedDB tier adds is lost.
-/// Production builds MUST leave this unset.
-#[cfg(target_arch = "wasm32")]
-pub(crate) const WASM_ALLOW_LOCALSTORAGE_SECRETS_FLAG: &str =
-    "inkson.security.allow_localstorage_secrets";
+/// Compile-time test escape hatch for wasm fixtures that must inject seed-grade
+/// material before the IndexedDB/SubtleCrypto tier is ready. Production builds
+/// keep the feature disabled, so localStorage cannot opt into sensitive secret
+/// reads/writes at runtime.
+#[cfg(all(target_arch = "wasm32", feature = "wasm-localstorage-secrets-test"))]
+pub(crate) const fn wasm_localstorage_secret_downgrade_enabled() -> bool {
+    true
+}
 
-/// `true` when [`WASM_ALLOW_LOCALSTORAGE_SECRETS_FLAG`] is set to a truthy value
-/// (`1`/`true`) in `localStorage`. Reading the flag itself from localStorage is
-/// safe (it carries no secret) and works even when IndexedDB/SubtleCrypto is
-/// unavailable.
-#[cfg(target_arch = "wasm32")]
-pub(crate) fn wasm_allow_localstorage_secrets() -> bool {
-    web_sys::window()
-        .and_then(|window| window.local_storage().ok().flatten())
-        .and_then(|storage| {
-            storage
-                .get_item(WASM_ALLOW_LOCALSTORAGE_SECRETS_FLAG)
-                .ok()
-                .flatten()
-        })
-        .map(|value| {
-            let value = value.trim();
-            value.eq_ignore_ascii_case("1") || value.eq_ignore_ascii_case("true")
-        })
-        .unwrap_or(false)
+#[cfg(all(
+    target_arch = "wasm32",
+    not(feature = "wasm-localstorage-secrets-test")
+))]
+pub(crate) const fn wasm_localstorage_secret_downgrade_enabled() -> bool {
+    false
 }
 
 /// Ensure wasm callers that need seed-grade material run on the upgraded
@@ -145,7 +126,7 @@ pub async fn ensure_wasm_secure_key_store_ready(
     if let Some(store) = WASM_UPGRADED_SECURE_KEY_STORE.get() {
         return Ok(store.clone());
     }
-    if wasm_allow_localstorage_secrets() {
+    if wasm_localstorage_secret_downgrade_enabled() {
         return Ok(default_secure_key_store(service_name));
     }
     upgrade_wasm_secure_key_store_async(service_name)
@@ -333,7 +314,7 @@ pub(crate) fn require_wasm_indexeddb_ed25519_seed_store(
     store: &dyn SecureKeyStore,
 ) -> Result<(), SecureKeyStoreError> {
     if store.backend_name() == WASM_INDEXEDDB_SECURE_KEY_STORE_BACKEND
-        || wasm_allow_localstorage_secrets()
+        || wasm_localstorage_secret_downgrade_enabled()
     {
         Ok(())
     } else {

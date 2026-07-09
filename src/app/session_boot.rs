@@ -146,10 +146,8 @@ pub(super) fn initial_session_credential_from_state(
 
 /// localStorage key the cotest joint-e2e harness uses to hand inkson a real
 /// `ck.session.grant` + the DPoP device seed it is bound to. Read ONCE at boot,
-/// only on wasm and only when `wasm_allow_localstorage_secrets()` is set — the
-/// same dev-only opt-in the harness already toggles. Production never sets
-/// either key, so this path is fully inert there.
-#[cfg(target_arch = "wasm32")]
+/// only in wasm builds compiled with `wasm-localstorage-secrets-test`.
+#[cfg(all(target_arch = "wasm32", feature = "wasm-localstorage-secrets-test"))]
 pub(super) const TEST_SESSION_INJECTION_KEY: &str = "inkson.test.session_injection.v1";
 
 /// Dev-only boot injection of a real grant + DPoP key (cotest joint e2e,
@@ -162,13 +160,13 @@ pub(super) const TEST_SESSION_INJECTION_KEY: &str = "inkson.test.session_injecti
 /// driven from a `use_hook` placed ahead of that block so it executes once,
 /// synchronously, on first render.
 ///
-/// On success it (1) writes the DPoP device key to the secure store via the
-/// localStorage tier (the harness sets `allow_localstorage_secrets`), with a
-/// thumbprint that equals the grant's `cnf.jkt` because both derive from the
-/// same seed, and (2) persists a `PersistedSessionGrant` whose
+/// On success it (1) writes the DPoP device key to the secure store through the
+/// compile-time test localStorage tier, with a thumbprint that equals the
+/// grant's `cnf.jkt` because both derive from the same seed, and (2) persists a
+/// `PersistedSessionGrant` whose
 /// `principal_server_url` is the active server so the bootstrap does not treat
 /// it as stale.
-#[cfg(target_arch = "wasm32")]
+#[cfg(all(target_arch = "wasm32", feature = "wasm-localstorage-secrets-test"))]
 pub(super) fn inject_test_session_grant(
     state_store: &mut Signal<LocalStateStore>,
     config_store: Signal<LocalConfigStore>,
@@ -176,13 +174,6 @@ pub(super) fn inject_test_session_grant(
     account_did: &str,
     device_id: &str,
 ) -> Option<String> {
-    if !crate::secure_key_store::wasm_allow_localstorage_secrets() {
-        tracing::warn!(
-            target: "mls_admission",
-            "test session injection skipped: allow_localstorage_secrets flag not set"
-        );
-        return None;
-    }
     let raw = match web_sys::window()
         .and_then(|window| window.local_storage().ok().flatten())
         .and_then(|storage| storage.get_item(TEST_SESSION_INJECTION_KEY).ok().flatten())

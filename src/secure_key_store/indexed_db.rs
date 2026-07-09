@@ -12,7 +12,7 @@ use base64::engine::general_purpose::STANDARD_NO_PAD;
 use super::{
     LocalStorageSecureKeyStore, SecureKeyStore, SecureKeyStoreError,
     WASM_UPGRADED_SECURE_KEY_STORE, is_wasm_ed25519_seed_key, is_wasm_no_localstorage_mirror_key,
-    unwrap_secret, wasm_allow_localstorage_secrets,
+    unwrap_secret, wasm_localstorage_secret_downgrade_enabled,
 };
 
 /// wasm32 IndexedDB-backed secret store that upgrades the wrapping-key
@@ -1116,11 +1116,10 @@ pub async fn upgrade_wasm_secure_key_store_async(
 /// the original localStorage key plus the wrapping seed itself.
 ///
 /// Ed25519 signing seeds are deleted instead of migrated in the production
-/// hardening path. The e2e/localStorage-secret opt-in is the exception: when
-/// `inkson.security.allow_localstorage_secrets` is set, first-paint device
-/// enrollment may already have generated a valid session-device seed in
-/// localStorage, so migration preserves it to keep later recovery-policy
-/// signatures bound to the same authorized device key.
+/// hardening path. The `wasm-localstorage-secrets-test` feature is the
+/// test-only exception: first-paint fixtures may already have generated a valid
+/// session-device seed in localStorage, so migration preserves it to keep later
+/// recovery-policy signatures bound to the same authorized device key.
 ///
 /// Returns the count of migrated entries. Silently skips entries
 /// that fail to decrypt — they're either corrupted or written by a
@@ -1189,7 +1188,7 @@ pub async fn migrate_localstorage_entries_to_indexeddb(
             .strip_prefix(&prefix)
             .unwrap_or(full_key.as_str())
             .to_owned();
-        if is_wasm_ed25519_seed_key(&entry_name) && !wasm_allow_localstorage_secrets() {
+        if is_wasm_ed25519_seed_key(&entry_name) && !wasm_localstorage_secret_downgrade_enabled() {
             let _ = storage.remove_item(full_key);
             removed_sensitive += 1;
             tracing::warn!(

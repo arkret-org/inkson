@@ -8,8 +8,8 @@ use base64::engine::general_purpose::STANDARD_NO_PAD;
 use super::{
     SecureKeyStore, SecureKeyStoreError, WASM_ED25519_SEED_INDEXEDDB_REQUIRED,
     WASM_SENSITIVE_SECRET_INDEXEDDB_REQUIRED, is_wasm_ed25519_seed_key,
-    is_wasm_indexeddb_required_secret_key, unwrap_secret, wasm_allow_localstorage_secrets,
-    wrap_secret,
+    is_wasm_indexeddb_required_secret_key, unwrap_secret,
+    wasm_localstorage_secret_downgrade_enabled, wrap_secret,
 };
 
 /// wasm32-only persistence-backed store
@@ -137,7 +137,9 @@ impl std::fmt::Debug for LocalStorageSecureKeyStore {
 
 impl SecureKeyStore for LocalStorageSecureKeyStore {
     fn store_secret(&self, key: &str, value: &str) -> Result<(), SecureKeyStoreError> {
-        if is_wasm_indexeddb_required_secret_key(key) && !wasm_allow_localstorage_secrets() {
+        if is_wasm_indexeddb_required_secret_key(key)
+            && !wasm_localstorage_secret_downgrade_enabled()
+        {
             return Err(SecureKeyStoreError::Unsupported(
                 if is_wasm_ed25519_seed_key(key) {
                     WASM_ED25519_SEED_INDEXEDDB_REQUIRED
@@ -154,7 +156,9 @@ impl SecureKeyStore for LocalStorageSecureKeyStore {
     }
 
     fn get_secret(&self, key: &str) -> Result<Option<String>, SecureKeyStoreError> {
-        if is_wasm_indexeddb_required_secret_key(key) && !wasm_allow_localstorage_secrets() {
+        if is_wasm_indexeddb_required_secret_key(key)
+            && !wasm_localstorage_secret_downgrade_enabled()
+        {
             return Err(SecureKeyStoreError::Unsupported(
                 if is_wasm_ed25519_seed_key(key) {
                     WASM_ED25519_SEED_INDEXEDDB_REQUIRED

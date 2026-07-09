@@ -25,7 +25,7 @@ export default defineConfig({
   webServer: shouldStartServer
     ? {
         command:
-          "dx serve --platform web --addr 127.0.0.1 --port 4527 --open false --hot-reload false --watch false",
+          "dx serve --platform web --features wasm-localstorage-secrets-test --addr 127.0.0.1 --port 4527 --open false --hot-reload false --watch false",
         url: baseURL,
         reuseExistingServer: !process.env.CI,
         timeout: 240_000,

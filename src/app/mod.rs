@@ -254,12 +254,11 @@ pub fn RouterView() -> Element {
         }));
     });
 
-    // Dev-only (wasm + `allow_localstorage_secrets`) real-grant injection for the
-    // cotest joint e2e harness. Runs once, synchronously, ahead of the bootstrap
-    // `connect()` below so the first `/_cokret/self/*` request already carries a
-    // valid grant + DPoP proof. Inert in production (neither localStorage
-    // key is set) and a no-op on native. See `inject_test_session_grant`.
-    #[cfg(target_arch = "wasm32")]
+    // Dev-only (wasm + `wasm-localstorage-secrets-test`) real-grant injection
+    // for the cotest joint e2e harness. Runs once, synchronously, ahead of the
+    // bootstrap `connect()` below so the first `/_cokret/self/*` request already
+    // carries a valid grant + DPoP proof. Not compiled into production builds.
+    #[cfg(all(target_arch = "wasm32", feature = "wasm-localstorage-secrets-test"))]
     {
         let mut state_store = state_store;
         let mut token = token;

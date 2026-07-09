@@ -117,9 +117,12 @@ ciphertext under the same origin, so an XSS, extension, or browser profile
 dump during that window can decrypt secrets offline. After the async upgrade succeeds,
 the seed and migrated ciphertext are removed from localStorage and
 new reads use IndexedDB plus a non-extractable SubtleCrypto key. Browsers
-that deny IndexedDB/SubtleCrypto keep the weaker localStorage fallback and
-must be treated as lower assurance than native OS keychain storage. There is
-no code path that writes signing material to a plain-text file on disk.
+that deny IndexedDB/SubtleCrypto keep the weaker localStorage fallback only
+for low-value first-paint secrets; signing seeds, account MLS secrets, and
+session credentials fail closed unless a test build explicitly enables the
+`wasm-localstorage-secrets-test` feature. There is no runtime localStorage
+switch that can opt production builds into sensitive localStorage writes, and
+no code path writes signing material to a plain-text file on disk.
 
 ### Device revocation boundary
 
