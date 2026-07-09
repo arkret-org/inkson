@@ -240,10 +240,43 @@ impl garth::SecureKeyStore for InksonSecureKeyStoreAdapter {
     }
 }
 
-pub type MemoryClientCore<E> =
-    garth::CokretClient<E, garth::MemoryStore, garth::MemoryStore, garth::MemorySecureKeyStore>;
+#[derive(Clone)]
+pub struct ClientCoreState<E, C, D, S> {
+    pub http: cokret_sdk::http_client::Client,
+    pub secure_key_store: S,
+    core: garth::CokretClient<E, C, D>,
+}
 
-pub type InksonClientCore<E> = garth::CokretClient<
+impl<E, C, D, S> ClientCoreState<E, C, D, S>
+where
+    E: garth::Executor,
+    C: garth::CursorStore,
+    D: garth::EventCacheStore,
+{
+    pub fn new(
+        http: cokret_sdk::http_client::Client,
+        secure_key_store: S,
+        core: garth::CokretClient<E, C, D>,
+    ) -> Self {
+        Self {
+            http,
+            secure_key_store,
+            core,
+        }
+    }
+
+    pub fn subscription_engine(&self) -> garth::SubscriptionEngine<E, C, D>
+    where
+        E: Clone,
+    {
+        self.core.subscription_engine()
+    }
+}
+
+pub type MemoryClientCore<E> =
+    ClientCoreState<E, garth::MemoryStore, garth::MemoryStore, garth::MemorySecureKeyStore>;
+
+pub type InksonClientCore<E> = ClientCoreState<
     E,
     InksonLocalStateStoreAdapter,
     InksonLocalStateStoreAdapter,
@@ -395,15 +428,16 @@ pub async fn account_subscribe_snapshot_outcome_with_options(
     after: Option<&str>,
     options: &cokret_sdk::http_client::ClientRequestOptions,
 ) -> anyhow::Result<AccountSubscribeSnapshotResult> {
-    if let Some(cursor) = after {
-        crate::wire_helpers::validate_cursor(cursor)?;
-    }
+    let after = after
+        .map(crate::wire_helpers::validate_cursor)
+        .transpose()?
+        .map(|cursor| cursor.into_string());
 
     let _subscribe_gate = crate::sync_parse::ACCOUNT_SUBSCRIBE_NETWORK_GATE
         .lock()
         .await;
     let request = cokret_sdk::SyncRequestBody {
-        after: after.map(str::to_owned),
+        after,
         catchup: Some(true),
         filter: None,
         subscriptions: None,
@@ -445,12 +479,15 @@ pub type DefaultClientCore = MemoryClientCore<garth::WasmExecutor>;
 
 #[cfg(not(target_arch = "wasm32"))]
 pub fn build_memory_client_core(http: cokret_sdk::http_client::Client) -> DefaultClientCore {
-    garth::CokretClient::new(
+    let secure_key_store = garth::MemorySecureKeyStore::new();
+    ClientCoreState::new(
         http,
-        garth::NativeExecutor,
-        garth::MemoryStore::new(),
-        garth::MemoryStore::new(),
-        garth::MemorySecureKeyStore::new(),
+        secure_key_store,
+        garth::CokretClient::new(
+            garth::NativeExecutor,
+            garth::MemoryStore::new(),
+            garth::MemoryStore::new(),
+        ),
     )
 }
 
@@ -461,12 +498,11 @@ pub fn build_client_core(
     secure_key_store: Arc<dyn crate::secure_key_store::SecureKeyStore>,
 ) -> InksonClientCore<garth::NativeExecutor> {
     let local_state = InksonLocalStateStoreAdapter::new(local_state);
-    garth::CokretClient::new(
+    let secure_key_store = InksonSecureKeyStoreAdapter::new(secure_key_store);
+    ClientCoreState::new(
         http,
-        garth::NativeExecutor,
-        local_state.clone(),
-        local_state,
-        InksonSecureKeyStoreAdapter::new(secure_key_store),
+        secure_key_store,
+        garth::CokretClient::new(garth::NativeExecutor, local_state.clone(), local_state),
     )
 }
 
@@ -477,23 +513,25 @@ pub fn build_client_core(
     secure_key_store: Arc<dyn crate::secure_key_store::SecureKeyStore>,
 ) -> InksonClientCore<garth::WasmExecutor> {
     let local_state = InksonLocalStateStoreAdapter::new(local_state);
-    garth::CokretClient::new(
+    let secure_key_store = InksonSecureKeyStoreAdapter::new(secure_key_store);
+    ClientCoreState::new(
         http,
-        garth::WasmExecutor,
-        local_state.clone(),
-        local_state,
-        InksonSecureKeyStoreAdapter::new(secure_key_store),
+        secure_key_store,
+        garth::CokretClient::new(garth::WasmExecutor, local_state.clone(), local_state),
     )
 }
 
 #[cfg(target_arch = "wasm32")]
 pub fn build_memory_client_core(http: cokret_sdk::http_client::Client) -> DefaultClientCore {
-    garth::CokretClient::new(
+    let secure_key_store = garth::MemorySecureKeyStore::new();
+    ClientCoreState::new(
         http,
-        garth::WasmExecutor,
-        garth::MemoryStore::new(),
-        garth::MemoryStore::new(),
-        garth::MemorySecureKeyStore::new(),
+        secure_key_store,
+        garth::CokretClient::new(
+            garth::WasmExecutor,
+            garth::MemoryStore::new(),
+            garth::MemoryStore::new(),
+        ),
     )
 }
 
@@ -502,12 +540,12 @@ mod tests {
     use garth::{CursorStore, EventCacheStore, SecureKeyStore};
 
     #[test]
-    fn memory_client_core_exposes_session_and_subscription_engines() {
+    fn memory_client_core_exposes_host_session_and_subscription_engines() {
         let http = cokret_sdk::http_client::Client::new("https://service.example".parse().unwrap())
             .unwrap();
-        let client = super::build_memory_client_core(http);
+        let client = super::build_memory_client_core(http.clone());
 
-        let _session = client.session_engine();
+        let _session = garth::SessionEngine::new(http);
         let _subscription = client.subscription_engine();
     }
 

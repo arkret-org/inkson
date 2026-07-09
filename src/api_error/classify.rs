@@ -265,20 +265,16 @@ pub fn normalize_wait_for_sync_token(sync_token: &str) -> Option<String> {
     if sync_token.is_empty() || sync_token == "-" {
         return None;
     }
-    let tokens = sync_token
-        .split(',')
-        .map(str::trim)
-        .filter(|candidate| !candidate.is_empty())
-        .collect::<Vec<_>>();
+    let mut tokens = Vec::new();
+    for candidate in sync_token.split(',').map(str::trim) {
+        if candidate.is_empty() {
+            continue;
+        }
+        let cursor = cokret_sdk::identifiers::Cursor::new(candidate.to_owned()).ok()?;
+        tokens.push(cursor.into_string());
+    }
     if tokens.is_empty() {
         return None;
     }
-    tokens
-        .iter()
-        .all(|candidate| {
-            candidate
-                .strip_prefix("ck:cursor:")
-                .is_some_and(|payload| !payload.is_empty())
-        })
-        .then(|| tokens.join(","))
+    Some(tokens.join(","))
 }

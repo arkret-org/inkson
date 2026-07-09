@@ -44,19 +44,10 @@ pub(crate) fn safe_blob_filename_header(filename: &str) -> Option<String> {
     (!sanitized.is_empty()).then_some(sanitized)
 }
 
-/// H3 — central guard for the `ck:cursor:*` prefix invariant. Every inkson
-/// entry point that takes a cursor / `next_cursor` / `after` query argument
-/// passes it through this helper before going on the wire. The nil-initial
-/// account subscribe case (`after: None`) is handled by callers using
-/// `Option::map` so this never runs against an `""` placeholder.
-pub(crate) fn validate_cursor(cursor: &str) -> anyhow::Result<()> {
-    if cursor.is_empty() {
-        return Ok(());
-    }
-    if !cursor.starts_with("ck:cursor:") {
-        anyhow::bail!("cursor must start with `ck:cursor:` (got `{}`)", cursor);
-    }
-    Ok(())
+/// Validate a wire cursor through the SDK-owned identifier type.
+pub(crate) fn validate_cursor(cursor: &str) -> anyhow::Result<cokret_sdk::identifiers::Cursor> {
+    cokret_sdk::identifiers::Cursor::new(cursor.to_owned())
+        .map_err(|err| anyhow::anyhow!("invalid cursor `{cursor}`: {err}"))
 }
 
 pub(crate) fn soland_path_allowed(normalized_path: &str) -> bool {

@@ -271,7 +271,7 @@ async fn run_realm_iteration(
     };
 
     let reason = match driver
-        .run_projected_stream(&transport, realm_id_typed, &projector)
+        .run_stream(&transport, realm_id_typed, &projector)
         .await
     {
         Ok(reason) => reason,

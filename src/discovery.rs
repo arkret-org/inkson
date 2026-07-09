@@ -94,96 +94,6 @@ pub struct PreviewSettings {
     pub preview_text: Option<String>,
 }
 
-/// Organization profile status.
-#[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct OrgProfileStatus {
-    /// Organization DID.
-    pub org_did: String,
-    /// Discoverability level.
-    pub discoverability: Discoverability,
-    /// Profile visibility.
-    pub profile_visibility: ProfileVisibility,
-    /// Directory services this org is registered with.
-    pub directory_services: Vec<String>,
-    /// Proofs of organization status.
-    pub proofs: Vec<OrgProof>,
-    /// When this profile was last updated.
-    pub updated_at: Hlc,
-}
-
-/// Profile visibility settings.
-#[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct ProfileVisibility {
-    /// Show organization name.
-    pub show_name: bool,
-    /// Show description.
-    pub show_description: bool,
-    /// Show member count.
-    pub show_member_count: bool,
-    /// Show domains.
-    pub show_domains: bool,
-    /// Show contact information.
-    pub show_contact: bool,
-}
-
-/// Proof of organization status.
-#[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct OrgProof {
-    /// Proof type (e.g., "dns_verification", "legal_entity").
-    pub proof_type: String,
-    /// Proof value.
-    pub value: String,
-    /// When the proof was verified.
-    pub verified_at: Hlc,
-    /// Who verified the proof.
-    pub verified_by: String,
-}
-
-/// Display metadata for actors.
-#[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct DisplayMetadata {
-    /// Actor DID. Wire field `actor_id` per the v1 naming rule (single
-    /// protocol subject uses `_id` even when the value is a DID). `alias` keeps
-    /// already-stored `actor_id` payloads readable.
-    #[serde(alias = "actor_id")]
-    pub actor_id: String,
-    /// Display name.
-    pub display_name: Option<String>,
-    /// Avatar URL.
-    pub avatar_url: Option<String>,
-    /// Status message.
-    pub status_message: Option<String>,
-    /// Status emoji.
-    pub status_emoji: Option<String>,
-    /// Bio/description.
-    pub bio: Option<String>,
-    /// Location.
-    pub location: Option<String>,
-    /// Website URL.
-    pub website: Option<String>,
-    /// Custom fields.
-    pub custom_fields: HashMap<String, String>,
-    /// When this metadata was last updated.
-    pub updated_at: Hlc,
-}
-
-impl DisplayMetadata {
-    pub fn new(actor_id: &str) -> Self {
-        Self {
-            actor_id: actor_id.to_owned(),
-            display_name: None,
-            avatar_url: None,
-            status_message: None,
-            status_emoji: None,
-            bio: None,
-            location: None,
-            website: None,
-            custom_fields: HashMap::new(),
-            updated_at: Hlc::now("inkson"),
-        }
-    }
-}
-
 /// Read marker for multi-device sync.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct ReadMarker {
@@ -377,10 +287,6 @@ pub struct DirectoryGrant {
 pub struct DiscoveryManager {
     /// Realm discovery configurations.
     realm_configs: HashMap<String, RealmDiscovery>,
-    /// Organization profiles.
-    org_profiles: HashMap<String, OrgProfileStatus>,
-    /// Display metadata cache.
-    display_metadata: HashMap<String, DisplayMetadata>,
     /// Marker merger.
     marker_merger: MarkerMerger,
 }
@@ -398,27 +304,6 @@ impl DiscoveryManager {
     /// Get Realm discovery configuration.
     pub fn get_realm_discovery(&self, realm_id: &str) -> Option<&RealmDiscovery> {
         self.realm_configs.get(realm_id)
-    }
-
-    /// Set organization profile.
-    pub fn set_org_profile(&mut self, profile: OrgProfileStatus) {
-        self.org_profiles.insert(profile.org_did.clone(), profile);
-    }
-
-    /// Get organization profile.
-    pub fn get_org_profile(&self, org_did: &str) -> Option<&OrgProfileStatus> {
-        self.org_profiles.get(org_did)
-    }
-
-    /// Set display metadata.
-    pub fn set_display_metadata(&mut self, metadata: DisplayMetadata) {
-        self.display_metadata
-            .insert(metadata.actor_id.clone(), metadata);
-    }
-
-    /// Get display metadata.
-    pub fn get_display_metadata(&self, actor_id: &str) -> Option<&DisplayMetadata> {
-        self.display_metadata.get(actor_id)
     }
 
     /// Get the marker merger.
@@ -455,13 +340,6 @@ mod tests {
         assert!(!Discoverability::Unlisted.allows_discovery(true, false));
         assert!(Discoverability::InviteOnly.allows_discovery(false, true));
         assert!(!Discoverability::Secret.allows_discovery(true, true));
-    }
-
-    #[test]
-    fn test_display_metadata() {
-        let metadata = DisplayMetadata::new("did:web:alice");
-        assert_eq!(metadata.actor_id, "did:web:alice");
-        assert!(metadata.display_name.is_none());
     }
 
     #[test]

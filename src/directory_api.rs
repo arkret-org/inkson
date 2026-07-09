@@ -21,9 +21,10 @@ pub async fn search_realms(
     query: &str,
     next_cursor: Option<&str>,
 ) -> anyhow::Result<cokret_sdk::models::DirectoryRealmSearchOutcome> {
-    if let Some(token) = next_cursor {
-        validate_cursor(token)?;
-    }
+    let cursor = next_cursor
+        .map(validate_cursor)
+        .transpose()?
+        .map(|cursor| cursor.into_string());
     let body = cokret_sdk::models::DirectorySearchRealmsRequestBody {
         query: Some(query.to_owned()),
         organization_did: None,
@@ -31,7 +32,7 @@ pub async fn search_realms(
         requester: None,
         proof_challenge: None,
         claim_presentations: Vec::new(),
-        cursor: next_cursor.map(ToOwned::to_owned),
+        cursor,
         limit: Some(20),
     };
     http.directory_search_realms(&body)
@@ -116,13 +117,14 @@ pub async fn search_organizations(
     query: &str,
     next_cursor: Option<&str>,
 ) -> anyhow::Result<SearchOrganizationsView> {
-    if let Some(token) = next_cursor {
-        validate_cursor(token)?;
-    }
+    let cursor = next_cursor
+        .map(validate_cursor)
+        .transpose()?
+        .map(|cursor| cursor.into_string());
     let body = cokret_sdk::models::DirectorySearchOrganizationsRequestBody {
         query: Some(query.to_owned()),
         claims: Value::Null,
-        cursor: next_cursor.map(ToOwned::to_owned),
+        cursor,
         limit: Some(20),
     };
     http.directory_search_organizations(&body)
@@ -135,14 +137,15 @@ pub async fn search_actors(
     query: &str,
     next_cursor: Option<&str>,
 ) -> anyhow::Result<SearchActorsView> {
-    if let Some(token) = next_cursor {
-        validate_cursor(token)?;
-    }
+    let cursor = next_cursor
+        .map(validate_cursor)
+        .transpose()?
+        .map(|cursor| cursor.into_string());
     let body = cokret_sdk::models::DirectorySearchActorsRequestBody {
         query: Some(query.to_owned()),
         realm_id: None,
         organization_did: None,
-        cursor: next_cursor.map(ToOwned::to_owned),
+        cursor,
         limit: Some(20),
     };
     http.directory_search_actors(&body)

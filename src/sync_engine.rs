@@ -30,12 +30,14 @@
 //! invalidation. This keeps refresh policy in one place without turning
 //! auth failures into a spawn/exit/render loop.
 
+#[cfg(test)]
 use std::cell::RefCell;
 use std::collections::BTreeSet;
 use std::time::Duration;
 
 use dioxus::prelude::*;
-use garth::{ClientEvent, ClientEventSink, DecodedInbound, InboundDecoder};
+#[cfg(test)]
+use garth::{ClientEvent, ClientProjector, DecodedInbound, InboundDecoder};
 use serde_json::{Value, json};
 
 use crate::api::CokretApi;
@@ -202,6 +204,7 @@ enum IterationOutcome {
     NotReady,
 }
 
+#[cfg(test)]
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 struct AccountClientEventReport {
     account_updates: usize,
@@ -213,19 +216,19 @@ struct AccountClientEventReport {
     malformed_realms: Vec<String>,
 }
 
+#[cfg(test)]
 #[derive(Debug, Default)]
-struct AccountClientEventSink {
+struct AccountClientEventProjector {
     report: RefCell<AccountClientEventReport>,
 }
 
-impl AccountClientEventSink {
+#[cfg(test)]
+impl AccountClientEventProjector {
     fn report(&self) -> AccountClientEventReport {
         self.report.borrow().clone()
     }
-}
 
-impl ClientEventSink for AccountClientEventSink {
-    fn emit(&self, event: ClientEvent) {
+    fn record(&self, event: ClientEvent) {
         let mut report = self.report.borrow_mut();
         match event {
             ClientEvent::AccountUpdates(updates) => {
@@ -252,25 +255,44 @@ impl ClientEventSink for AccountClientEventSink {
     }
 }
 
-fn emit_decoded_account_event<S>(decoder: &InboundDecoder, sink: &S, event: cokret_sdk::Event)
-where
-    S: ClientEventSink + ?Sized,
-{
-    match decoder.decode_event(event) {
-        DecodedInbound::Message(message) => sink.emit(ClientEvent::Message(message)),
-        DecodedInbound::Notification(notification) => {
-            sink.emit(ClientEvent::Event(notification.event));
+#[cfg(test)]
+impl ClientProjector for AccountClientEventProjector {
+    fn project(
+        &self,
+        batch: Vec<ClientEvent>,
+    ) -> impl std::future::Future<Output = cokret_sdk::Result<()>> + '_ {
+        async move {
+            for event in batch {
+                self.record(event);
+            }
+            Ok(())
         }
-        DecodedInbound::Event(event) => sink.emit(ClientEvent::Event(event)),
     }
 }
 
-fn emit_account_event_payload<S>(decoder: &InboundDecoder, sink: &S, payload: &Value)
-where
-    S: ClientEventSink + ?Sized,
-{
+#[cfg(test)]
+fn push_decoded_account_event(
+    decoder: &InboundDecoder,
+    batch: &mut Vec<ClientEvent>,
+    event: cokret_sdk::Event,
+) {
+    match decoder.decode_event(event) {
+        DecodedInbound::Message(message) => batch.push(ClientEvent::Message(message)),
+        DecodedInbound::Notification(notification) => {
+            batch.push(ClientEvent::Event(notification.event));
+        }
+        DecodedInbound::Event(event) => batch.push(ClientEvent::Event(event)),
+    }
+}
+
+#[cfg(test)]
+fn push_account_event_payload(
+    decoder: &InboundDecoder,
+    batch: &mut Vec<ClientEvent>,
+    payload: &Value,
+) {
     match serde_json::from_value::<cokret_sdk::Event>(payload.clone()) {
-        Ok(event) => emit_decoded_account_event(decoder, sink, event),
+        Ok(event) => push_decoded_account_event(decoder, batch, event),
         Err(error) => {
             tracing::debug!(
                 error = %error,
@@ -280,39 +302,40 @@ where
     }
 }
 
-fn emit_account_realm_update_events<S>(
+#[cfg(test)]
+fn push_account_realm_update_events(
     decoder: &InboundDecoder,
-    sink: &S,
+    batch: &mut Vec<ClientEvent>,
     update: &cokret_sdk::RealmUpdate,
-) where
-    S: ClientEventSink + ?Sized,
-{
+) {
     for payload in &update.state {
-        emit_account_event_payload(decoder, sink, payload);
+        push_account_event_payload(decoder, batch, payload);
     }
     if let Some(timeline) = &update.timeline {
         for payload in &timeline.events {
-            emit_account_event_payload(decoder, sink, payload);
+            push_account_event_payload(decoder, batch, payload);
         }
     }
 }
 
-fn emit_account_response_client_events<S>(
+#[cfg(test)]
+async fn project_account_response_client_events<P>(
     response: &ClientSyncOutcome,
     decoder: &InboundDecoder,
-    sink: &S,
+    projector: &P,
 ) -> anyhow::Result<()>
 where
-    S: ClientEventSink + ?Sized,
+    P: ClientProjector + ?Sized,
 {
     let mut processor = cokret_sdk::SyncResponseProcessor::new();
     let updates = processor.process(response.clone())?;
     let realm_updates = updates.realm_updates.clone();
+    let mut batch = garth::account_updates_to_events(updates);
 
-    garth::emit_account_updates(sink, updates);
     for update in &realm_updates {
-        emit_account_realm_update_events(decoder, sink, update);
+        push_account_realm_update_events(decoder, &mut batch, update);
     }
+    projector.project(batch).await?;
 
     Ok(())
 }
@@ -922,44 +945,6 @@ async fn run_iteration(
                 return IterationOutcome::Ok {
                     realm_ids: Vec::new(),
                 };
-            }
-            // Diagnostic-only shadow path: the garth sink adapter re-processes
-            // the full response (three deep clones on large windows) and its
-            // output feeds nothing but the trace below — skip the whole chain
-            // unless TRACE is actually enabled. Real ingest is `apply_response`.
-            if tracing::enabled!(tracing::Level::TRACE) {
-                let account_event_sink = AccountClientEventSink::default();
-                let account_event_decoder = InboundDecoder::new();
-                match emit_account_response_client_events(
-                    &response,
-                    &account_event_decoder,
-                    &account_event_sink,
-                ) {
-                    Ok(()) => {
-                        let report = account_event_sink.report();
-                        if !report.malformed_realms.is_empty() {
-                            tracing::warn!(
-                                malformed_realms = ?report.malformed_realms,
-                                "sync engine: account client-core adapter skipped malformed realm ids",
-                            );
-                        }
-                        tracing::trace!(
-                            account_updates = report.account_updates,
-                            realm_deltas = report.realm_deltas,
-                            decoded_messages = report.decoded_messages,
-                            decoded_events = report.decoded_events,
-                            to_device = report.to_device,
-                            notifications = report.notifications,
-                            "sync engine: account response emitted through client-core sink adapter",
-                        );
-                    }
-                    Err(error) => {
-                        tracing::debug!(
-                            error = %error,
-                            "sync engine: account client-core adapter skipped malformed typed projection",
-                        );
-                    }
-                }
             }
             apply_response(&response, is_full_sync, ctx, invite_notifications);
             // Receiver side of `ck.call.signal` (async, needs the directory):
@@ -2279,8 +2264,8 @@ mod tests {
         .unwrap()
     }
 
-    #[test]
-    fn account_response_emits_client_events_and_decodes_realm_payloads() {
+    #[tokio::test]
+    async fn account_response_projects_client_events_and_decodes_realm_payloads() {
         let message_event = sdk_event(
             cokret_sdk::events::kinds::MESSAGE_CREATE,
             json!({
@@ -2314,11 +2299,12 @@ mod tests {
             }),
         );
 
-        let sink = AccountClientEventSink::default();
-        emit_account_response_client_events(&response, &InboundDecoder::new(), &sink)
-            .expect("account response emits through client-core adapter");
+        let projector = AccountClientEventProjector::default();
+        project_account_response_client_events(&response, &InboundDecoder::new(), &projector)
+            .await
+            .expect("account response projects through client-core adapter");
 
-        let report = sink.report();
+        let report = projector.report();
         assert_eq!(report.account_updates, 1);
         assert_eq!(report.realm_deltas, 1);
         assert_eq!(report.decoded_messages, 1);
