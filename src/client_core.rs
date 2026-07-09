@@ -54,7 +54,13 @@ impl garth::CursorStore for InksonLocalStateStoreAdapter {
     ) -> cokret_sdk::Result<Option<garth::OpaqueCursor>> {
         let store = self.lock()?;
         match scope {
-            garth::CursorScope::Account { .. } => Ok(store.sync_cursor()),
+            // Normalize the legacy "-" reset sentinel (and empty strings) that
+            // inkson's own account loop writes/filters: garth-driven loops
+            // must never send it as an `after` cursor (the server would reject
+            // it as cursor_unrecognized).
+            garth::CursorScope::Account { .. } => Ok(store
+                .sync_cursor()
+                .filter(|cursor| !matches!(cursor.trim(), "" | "-"))),
             garth::CursorScope::RealmEvents { realm_id, .. } => {
                 Ok(store.realm_events_cursor(realm_id.as_str()))
             }
@@ -570,6 +576,40 @@ mod tests {
                 .await
                 .unwrap()
                 .is_none()
+        );
+    }
+
+    #[tokio::test]
+    async fn account_cursor_load_normalizes_reset_sentinel() {
+        let path = std::env::temp_dir().join(format!(
+            "inkson-client-core-sentinel-{}.json",
+            crate::operation::uuid_v7()
+        ));
+        let adapter = super::InksonLocalStateStoreAdapter::new(
+            crate::local_state::LocalStateStore::with_path(path),
+        );
+        let account_scope = garth::CursorScope::Account {
+            service_did: None,
+            actor_id: cokret_sdk::Did::new("did:webvh:z6mkfixture:alice.example").unwrap(),
+            device_id: cokret_sdk::DeviceId::new("ck:device:01904100-0000-7000-8000-000000000001")
+                .unwrap(),
+        };
+
+        // inkson's account loop writes "-" as an invalid-cursor reset marker;
+        // the adapter must surface it as "no cursor", never as an `after`.
+        adapter
+            .save(account_scope.clone(), "-".to_owned())
+            .await
+            .unwrap();
+        assert!(adapter.load(account_scope.clone()).await.unwrap().is_none());
+
+        adapter
+            .save(account_scope.clone(), "ck:cursor:real".to_owned())
+            .await
+            .unwrap();
+        assert_eq!(
+            adapter.load(account_scope).await.unwrap().as_deref(),
+            Some("ck:cursor:real")
         );
     }
 

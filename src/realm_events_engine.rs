@@ -194,8 +194,12 @@ pub async fn run_realm_events_engine(
                 sleep_for(std::time::Duration::from_millis(250)).await;
             }
             RealmIterationOutcome::Backoff { delay_ms } => {
+                // Honor the server's retry-after as a floor, escalating with
+                // the local exponential backoff on repeated failures
+                // (backoff_ms starts at MIN_BACKOFF_MS, so the old
+                // MIN_BACKOFF_MS floor is preserved).
                 sleep_for(std::time::Duration::from_millis(
-                    delay_ms.max(MIN_BACKOFF_MS),
+                    delay_ms.max(backoff_ms),
                 ))
                 .await;
                 backoff_ms = (backoff_ms.saturating_mul(2)).min(MAX_BACKOFF_MS);

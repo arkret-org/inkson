@@ -34,32 +34,13 @@ use crate::local_state::{LocalStateStore, PersistedSessionGrant};
 
 const SOFT_LOGOUT_RESTORE_OPERATION: &str = "resume_soft_logged_out_session";
 
-/// Window before the current grant expiry at which the background poller
-/// proactively rotates the grant.
-pub const REFRESH_SKEW_SECS: i64 = 60;
-
-/// Recommended polling interval for the dioxus `use_future` poll loop.
-/// 30s is chosen so that any token expiring within `REFRESH_SKEW_SECS`
-/// gets at least one refresh attempt before it dies mid-request.
-pub const POLL_INTERVAL_SECS: u64 = 30;
-
-/// Decision the polling tick / 401 retry path reaches after looking at
-/// the persisted grant.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub enum RefreshDecision {
-    /// No grant on disk. Caller may ask the user to sign in, but this is not
-    /// a refresh-endpoint terminal error and must not clear a live credential.
-    NoGrant,
-    /// Grant is on disk and still has plenty of runway — caller does nothing.
-    Fresh,
-    /// The grant is within `GRANT_ROTATION_SKEW_SECS` of its own expiry and
-    /// should be rotated onto a fresh grant. Caller should run [`run_refresh`].
-    Due,
-    /// The grant itself appears expired locally. The refresh path still
-    /// attempts rotation so only the refresh endpoint's terminal error code
-    /// decides whether local session material is cleared.
-    GrantExpired,
-}
+// The refresh decision layer (constants, `RefreshDecision`, the due/dead
+// predicates) is garth's — inkson only maps its persisted grant into
+// `garth::SessionGrantRefreshState` and supplies the wall clock. Semantics
+// notes that used to live on a local copy: `NoGrant` must not clear a live
+// credential; `GrantExpired` still attempts rotation so only the refresh
+// endpoint's terminal error decides whether session material is cleared.
+pub use garth::{POLL_INTERVAL_SECS, REFRESH_SKEW_SECS, RefreshDecision};
 
 /// Outcome the refresh harness returns to the caller.
 #[derive(Clone, Debug)]
@@ -84,47 +65,35 @@ pub enum RefreshOutcome {
     Transient { reason: String },
 }
 
-/// Rotate the session grant when it has less than this much runway left.
-/// The grant is the (minutes-to-hours) refresh credential; rotating it before
-/// it dies — onto a fresh grant via the grant-binding DPoP proof — is what slides the
-/// device session into multi-day territory without re-login. 30 min gives many
-/// poll ticks to land a rotation before the grant expires.
-pub const GRANT_ROTATION_SKEW_SECS: i64 = 30 * 60;
-
-/// True when the persisted grant is within `GRANT_ROTATION_SKEW_SECS` of its own
-/// expiry and should be rotated (grant-binding DPoP proof → fresh grant). `None` grant
-/// expiry is treated as "not due" — the 401 path handles unknown-expiry
-/// grants, and we must not rotate blindly without a deadline.
-pub fn grant_due_for_rotation(grant: &PersistedSessionGrant) -> bool {
-    match grant.grant_expires_at {
-        Some(expires_at) => {
-            expires_at.timestamp() - Utc::now().timestamp() <= GRANT_ROTATION_SKEW_SECS
-        }
-        None => false,
+fn grant_refresh_state(grant: &PersistedSessionGrant) -> garth::SessionGrantRefreshState {
+    garth::SessionGrantRefreshState {
+        grant_expires_at: grant.grant_expires_at,
     }
+}
+
+/// True when the persisted grant is within `garth::GRANT_ROTATION_SKEW_SECS` of
+/// its own expiry and should be rotated (grant-binding DPoP proof → fresh
+/// grant). `None` grant expiry is "not due" — the 401 path handles
+/// unknown-expiry grants, and we must not rotate blindly without a deadline.
+pub fn grant_due_for_rotation(grant: &PersistedSessionGrant) -> bool {
+    garth::grant_due_for_rotation(&grant_refresh_state(grant), Utc::now())
 }
 
 /// True when the grant itself has gone past its `grant_expires_at`.
 pub fn grant_is_dead(grant: &PersistedSessionGrant) -> bool {
-    matches!(grant.grant_expires_at, Some(expires_at) if expires_at <= Utc::now())
+    garth::grant_is_dead(&grant_refresh_state(grant), Utc::now())
 }
 
 /// Inspect the persisted grant and decide what the caller should do.
 ///
-/// ②(A+②): "Due" now means the grant itself is near its own expiry and should
-/// be rotated (grant-binding DPoP proof → fresh grant). There is no separate
-/// minted local session expiry to chase any more — the grant *is* the credential.
+/// ②(A+②): "Due" means the grant itself is near its own expiry and should be
+/// rotated (grant-binding DPoP proof → fresh grant). There is no separate
+/// minted local session expiry to chase — the grant *is* the credential.
 pub fn refresh_decision(store: &LocalStateStore) -> RefreshDecision {
-    let Some(grant) = store.session_grant() else {
-        return RefreshDecision::NoGrant;
-    };
-    if grant_is_dead(&grant) {
-        return RefreshDecision::GrantExpired;
-    }
-    if grant_due_for_rotation(&grant) {
-        return RefreshDecision::Due;
-    }
-    RefreshDecision::Fresh
+    let state = store
+        .session_grant()
+        .map(|grant| grant_refresh_state(&grant));
+    garth::refresh_decision(state.as_ref(), Utc::now())
 }
 
 fn normalized_server_key(server_url: &str) -> String {
@@ -843,27 +812,7 @@ mod tests {
         assert!(store.session_grant().is_some());
     }
 
-    #[test]
-    fn grant_due_for_rotation_fires_only_inside_skew() {
-        // Plenty of grant runway (2h) → not yet due to rotate.
-        let fresh = grant_with_expiry(7200);
-        assert!(!grant_due_for_rotation(&fresh));
-
-        // Grant within the rotation skew (10 min left) → rotate now, before it
-        // dies, so the session slides into multi-day territory.
-        let near = grant_with_expiry(600);
-        assert!(grant_due_for_rotation(&near));
-
-        // Unknown grant expiry → never blindly rotate (re-exchange handles it).
-        let mut unknown = grant_with_expiry(7200);
-        unknown.grant_expires_at = None;
-        assert!(!grant_due_for_rotation(&unknown));
-    }
-
-    #[test]
-    fn poll_constants_are_sane() {
-        const { assert!(POLL_INTERVAL_SECS > 0) };
-        const { assert!(POLL_INTERVAL_SECS <= 60) };
-        const { assert!(REFRESH_SKEW_SECS > POLL_INTERVAL_SECS as i64) };
-    }
+    // The pure decision predicates (due-for-rotation skew, poll constants) are
+    // garth's and covered by garth's own tests; the tests above exercise
+    // inkson's store-backed mapping on top of them.
 }

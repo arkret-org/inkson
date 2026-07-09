@@ -923,36 +923,42 @@ async fn run_iteration(
                     realm_ids: Vec::new(),
                 };
             }
-            let account_event_sink = AccountClientEventSink::default();
-            let account_event_decoder = InboundDecoder::new();
-            match emit_account_response_client_events(
-                &response,
-                &account_event_decoder,
-                &account_event_sink,
-            ) {
-                Ok(()) => {
-                    let report = account_event_sink.report();
-                    if !report.malformed_realms.is_empty() {
-                        tracing::warn!(
-                            malformed_realms = ?report.malformed_realms,
-                            "sync engine: account client-core adapter skipped malformed realm ids",
+            // Diagnostic-only shadow path: the garth sink adapter re-processes
+            // the full response (three deep clones on large windows) and its
+            // output feeds nothing but the trace below — skip the whole chain
+            // unless TRACE is actually enabled. Real ingest is `apply_response`.
+            if tracing::enabled!(tracing::Level::TRACE) {
+                let account_event_sink = AccountClientEventSink::default();
+                let account_event_decoder = InboundDecoder::new();
+                match emit_account_response_client_events(
+                    &response,
+                    &account_event_decoder,
+                    &account_event_sink,
+                ) {
+                    Ok(()) => {
+                        let report = account_event_sink.report();
+                        if !report.malformed_realms.is_empty() {
+                            tracing::warn!(
+                                malformed_realms = ?report.malformed_realms,
+                                "sync engine: account client-core adapter skipped malformed realm ids",
+                            );
+                        }
+                        tracing::trace!(
+                            account_updates = report.account_updates,
+                            realm_deltas = report.realm_deltas,
+                            decoded_messages = report.decoded_messages,
+                            decoded_events = report.decoded_events,
+                            to_device = report.to_device,
+                            notifications = report.notifications,
+                            "sync engine: account response emitted through client-core sink adapter",
                         );
                     }
-                    tracing::trace!(
-                        account_updates = report.account_updates,
-                        realm_deltas = report.realm_deltas,
-                        decoded_messages = report.decoded_messages,
-                        decoded_events = report.decoded_events,
-                        to_device = report.to_device,
-                        notifications = report.notifications,
-                        "sync engine: account response emitted through client-core sink adapter",
-                    );
-                }
-                Err(error) => {
-                    tracing::debug!(
-                        error = %error,
-                        "sync engine: account client-core adapter skipped malformed typed projection",
-                    );
+                    Err(error) => {
+                        tracing::debug!(
+                            error = %error,
+                            "sync engine: account client-core adapter skipped malformed typed projection",
+                        );
+                    }
                 }
             }
             apply_response(&response, is_full_sync, ctx, invite_notifications);
