@@ -10,10 +10,10 @@ fn resolve_handle_request_body_carries_lookup_context() {
         ResolveHandleContext {
             intent: Some("lookup"),
             requester: Some("did:web:alice.example"),
-            audience: Some("ck:realm:0196419b-0000-7000-8000-000000000001"),
-            realm_id: Some("ck:realm:0196419b-0000-7000-8000-000000000001"),
+            audience: Some("ak:realm:0196419b-0000-7000-8000-000000000001"),
+            realm_id: Some("ak:realm:0196419b-0000-7000-8000-000000000001"),
             expected_did: Some("did:web:bob.example"),
-            proof_challenge: Some("ck:challenge:test"),
+            proof_challenge: Some("ak:challenge:test"),
             proofs: &["proof-a", "  ", "proof-b"],
         },
     )
@@ -25,14 +25,14 @@ fn resolve_handle_request_body_carries_lookup_context() {
     assert_eq!(body["requester"], "did:web:alice.example");
     assert_eq!(
         body["audience"],
-        "ck:realm:0196419b-0000-7000-8000-000000000001"
+        "ak:realm:0196419b-0000-7000-8000-000000000001"
     );
     assert_eq!(
         body["realm_id"],
-        "ck:realm:0196419b-0000-7000-8000-000000000001"
+        "ak:realm:0196419b-0000-7000-8000-000000000001"
     );
     assert_eq!(body["expected_did"], "did:web:bob.example");
-    assert_eq!(body["proof_challenge"], "ck:challenge:test");
+    assert_eq!(body["proof_challenge"], "ak:challenge:test");
     assert_eq!(body["proofs"], json!(["proof-a", "proof-b"]));
 }
 
@@ -46,7 +46,7 @@ fn canonical_invitee_handle_accepts_display_alias() {
 
 #[test]
 fn handle_resolution_exposes_delivery_binding_without_requiring_it_for_invites() {
-    let realm_id = "ck:realm:0196419b-0000-7000-8000-000000000001";
+    let realm_id = "ak:realm:0196419b-0000-7000-8000-000000000001";
     let resolved: ResolveHandleView = serde_json::from_value(json!({
         "subject": "did:web:bob.example",
         "handle": "bob:local.host",

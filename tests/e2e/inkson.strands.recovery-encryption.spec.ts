@@ -62,7 +62,7 @@ test("first registered device opens 24-word recovery setup instead of existing-d
   page,
 }) => {
   const firstDid = "did:web:first.example";
-  const firstDevice = "ck:device:01964137-0000-7000-8000-0000000000f1";
+  const firstDevice = "ak:device:01964137-0000-7000-8000-0000000000f1";
 
   await page.unroute("**/*");
   await mockCokretApi(page, {
@@ -176,7 +176,7 @@ test("recovery key setup download filename includes account localpart", async ({
   const downloadPromise = page.waitForEvent("download");
   await latestTestId(page, "recovery-key-setup-download-key").click();
   const download = await downloadPromise;
-  expect(download.suggestedFilename()).toBe("cokret-recovery-key-alice.txt");
+  expect(download.suggestedFilename()).toBe("arkret-recovery-key-alice.txt");
 
   await latestTestId(page, "recovery-key-setup-confirm-key").fill(generatedRecoveryKey);
   await latestTestId(page, "recovery-key-setup-saved").click();
@@ -216,7 +216,7 @@ test("recovery key setup download filename stays bare without primary handle cla
   const downloadPromise = page.waitForEvent("download");
   await latestTestId(page, "recovery-key-setup-download-key").click();
   const download = await downloadPromise;
-  expect(download.suggestedFilename()).toBe("cokret-recovery-key.txt");
+  expect(download.suggestedFilename()).toBe("arkret-recovery-key.txt");
 
   await latestTestId(page, "recovery-key-setup-confirm-key").fill(generatedRecoveryKey);
   await latestTestId(page, "recovery-key-setup-saved").click();
@@ -409,7 +409,7 @@ test("mls recovery backup generates 24 recovery words", async ({ page }) => {
   const downloadPromise = page.waitForEvent("download");
   await latestTestId(page, "mls-backup-download-key").click();
   const download = await downloadPromise;
-  expect(download.suggestedFilename()).toBe("cokret-recovery-key-alice.txt");
+  expect(download.suggestedFilename()).toBe("arkret-recovery-key-alice.txt");
   await expect(latestTestId(page, "mls-backup-generated-key-warning")).toContainText("Store these words now");
   await latestTestId(page, "mls-backup-confirm-key").fill("not the saved key");
   await latestTestId(page, "mls-backup-saved").click();

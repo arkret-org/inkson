@@ -165,7 +165,7 @@ mod tests {
     fn typed_event(kind: &str, payload: Value) -> cokret_sdk::Event {
         let mut event = cokret_sdk::Event::new(
             kind,
-            cokret_sdk::RealmId::new("ck:realm:01904100-0000-7000-8000-000000000001").unwrap(),
+            cokret_sdk::RealmId::new("ak:realm:01904100-0000-7000-8000-000000000001").unwrap(),
             cokret_sdk::Did::new("did:webvh:z6mkfixture:alice.example").unwrap(),
             1,
             cokret_sdk::Hlc::new("01970e589d21-0004-a13f9c2e").unwrap(),
@@ -173,7 +173,7 @@ mod tests {
         )
         .unwrap();
         event.event_id =
-            cokret_sdk::EventId::new("ck:event:01904100-0000-7000-8000-000000000101").unwrap();
+            cokret_sdk::EventId::new("ak:event:01904100-0000-7000-8000-000000000101").unwrap();
         event.created_at = "2026-07-08T00:00:00Z".parse().unwrap();
         event
     }
@@ -183,7 +183,7 @@ mod tests {
         let event = typed_event(
             cokret_sdk::events::kinds::MESSAGE_CREATE,
             json!({
-                "strand_id": "ck:strand:01904100-0000-7000-8000-000000000201",
+                "strand_id": "ak:strand:01904100-0000-7000-8000-000000000201",
                 "track_name": "discussion",
                 "content": {"kind": "ck.content.text", "body": "hello"}
             }),
@@ -194,11 +194,11 @@ mod tests {
 
         assert_eq!(
             record.operation_id,
-            "ck:event:01904100-0000-7000-8000-000000000101"
+            "ak:event:01904100-0000-7000-8000-000000000101"
         );
         assert_eq!(
             record.realm_id.as_deref(),
-            Some("ck:realm:01904100-0000-7000-8000-000000000001")
+            Some("ak:realm:01904100-0000-7000-8000-000000000001")
         );
         assert_eq!(record.received_at, event.created_at);
         assert_eq!(record.payload, value);

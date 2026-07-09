@@ -1,4 +1,4 @@
-//! Cursor types are owned by the Cokret Rust SDK.
+//! Cursor types are owned by the Arkret Rust SDK.
 //!
 //! Round R2/R3 (T03): the SDK now exposes
 //! [`cokret_sdk::cursor::generate_cursor_handle`] which yields a
@@ -8,7 +8,7 @@
 //!
 //! P3B.9.2: re-export the SDK realm sync position and add the small UI-facing
 //! helpers ([`strand_position_label`], [`strand_position_hlc`]) that consume
-//! the new Strand position projection fields shipped on `cokret-service-api`.
+//! the new Strand position projection fields shipped on `arkret-service-api`.
 //! UI callers (kanban move arrow, message position chips) should
 //! prefer these over decoding the raw JSON.
 
@@ -50,7 +50,7 @@ pub fn strand_position_label(position: &RealmPosition, last_read_at: Option<&str
 /// subscribe Space-position JSON. Returns `None` when the field is
 /// absent or non-string (older soland builds / SDK projections).
 ///
-/// Spec field name registered on `cokret-service-api/openapi.yaml`.
+/// Spec field name registered on `arkret-service-api/openapi.yaml`.
 /// Once the SDK promotes it onto [`RealmPosition`] directly, replace the JSON
 /// lookup with a struct field read.
 pub fn last_read_at_from_projection(raw: &serde_json::Value) -> Option<String> {
@@ -76,7 +76,7 @@ mod tests {
 
     fn sample_position() -> RealmPosition {
         RealmPosition {
-            frontier: vec!["ck:event:tip-1".to_owned(), "ck:event:tip-2".to_owned()],
+            frontier: vec!["ak:event:tip-1".to_owned(), "ak:event:tip-2".to_owned()],
             timeline_order: "2026-05-26T00:00:00Z-0001".to_owned(),
             state_digest: "sha256:abcd".to_owned(),
         }

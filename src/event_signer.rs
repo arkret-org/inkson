@@ -3,7 +3,7 @@
 //!
 //! T5.2 (Round 22, 2026-05-20) — T5.1 landed `Ed25519DetachedJwsSigner`,
 //! `EventProofBuilder`, and `ProductionVerifier` in the SDK
-//! (`cokret-rust-sdk/crates/signatures/src/proof.rs`). Before T5.2
+//! (`arkret-rust-sdk/crates/signatures/src/proof.rs`). Before T5.2
 //! inkson's previous EventEnvelope signing helper hand-rolled
 //! the same canonical-bytes → JWS pipeline, which meant a bug fixed in
 //! the SDK had to be ported a second time into inkson. This module
@@ -840,8 +840,8 @@ mod tests {
     use crate::canonical::canonical_json_bytes;
     use crate::operation::{EventProofAudience, OperationBuilder, set_proof_mode};
 
-    const TEST_REALM_ID: &str = "ck:realm:01964137-0000-7000-8000-000000000001";
-    const TEST_DEVICE_ID: &str = "ck:device:01964137-0000-7000-8000-000000000001";
+    const TEST_REALM_ID: &str = "ak:realm:01964137-0000-7000-8000-000000000001";
+    const TEST_DEVICE_ID: &str = "ak:device:01964137-0000-7000-8000-000000000001";
 
     /// Same per-process guard pattern operation.rs uses — proof-mode
     /// and active-signer state is global so concurrent tests would
@@ -1119,7 +1119,7 @@ mod tests {
         set_proof_mode(prior_mode);
 
         let context = EventProofContext::new()
-            .with_domain("ck:trust_domain:server.example")
+            .with_domain("ak:trust_domain:server.example")
             .with_audience(EventProofAudience::Single(
                 "did:web:server.example".to_owned(),
             ));
@@ -1130,7 +1130,7 @@ mod tests {
         let proof = event.proofs.first().unwrap();
         assert_eq!(
             proof.domain.as_deref(),
-            Some("ck:trust_domain:server.example")
+            Some("ak:trust_domain:server.example")
         );
         assert_eq!(
             proof.audience,
@@ -1162,7 +1162,7 @@ mod tests {
         let _g = reset();
         let signer = build_ed25519_device_signer([10u8; 32], "did:web:sdk.example", TEST_DEVICE_ID);
         let mut event: cokret_sdk::Event = serde_json::from_value(json!({
-            "event_id": "ck:event:01904100-0000-7000-8000-000000000001",
+            "event_id": "ak:event:01904100-0000-7000-8000-000000000001",
             "kind": "ck.message.create",
             "realm_id": TEST_REALM_ID,
             "actor_id": "did:web:sdk.example",

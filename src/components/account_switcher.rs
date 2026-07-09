@@ -132,9 +132,9 @@ mod tests {
     #[test]
     fn display_label_falls_back_to_did_segment() {
         let profile = AccountProfile::new(
-            "https://cokret.example",
+            "https://arkret.example",
             "did:web:alice.example",
-            "ck:device:01964137-0000-7000-8000-000000000099",
+            "ak:device:01964137-0000-7000-8000-000000000099",
             "token",
         );
         assert_eq!(profile.display_label(), "alice.example");
@@ -143,9 +143,9 @@ mod tests {
     #[test]
     fn display_label_prefers_explicit_label() {
         let mut profile = AccountProfile::new(
-            "https://cokret.example",
+            "https://arkret.example",
             "did:web:alice.example",
-            "ck:device:01964137-0000-7000-8000-000000000098",
+            "ak:device:01964137-0000-7000-8000-000000000098",
             "token",
         );
         profile.label = "Work".to_owned();

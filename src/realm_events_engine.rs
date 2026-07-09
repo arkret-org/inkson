@@ -335,7 +335,7 @@ mod tests {
 
     use super::*;
 
-    const TEST_REALM: &str = "ck:realm:01904100-0000-7000-8000-000000000001";
+    const TEST_REALM: &str = "ak:realm:01904100-0000-7000-8000-000000000001";
 
     fn test_realm_id() -> cokret_sdk::RealmId {
         cokret_sdk::RealmId::new(TEST_REALM).unwrap()
@@ -362,7 +362,7 @@ mod tests {
         let event = test_event(
             cokret_sdk::events::kinds::MESSAGE_CREATE,
             json!({
-                "strand_id": "ck:strand:01904100-0000-7000-8000-000000000002",
+                "strand_id": "ak:strand:01904100-0000-7000-8000-000000000002",
                 "track_name": "discussion",
                 "content": {"kind": "ck.content.text", "body": "hello"}
             }),
@@ -389,7 +389,7 @@ mod tests {
     fn client_event_generic_event_converts_to_legacy_ingest_payload() {
         let event = test_event(
             cokret_sdk::events::kinds::STRAND_UPDATE,
-            json!({"target_ref": "ck:strand:01904100-0000-7000-8000-000000000002", "patch": {}}),
+            json!({"target_ref": "ak:strand:01904100-0000-7000-8000-000000000002", "patch": {}}),
         );
         let event_value = serde_json::to_value(&event).unwrap();
 

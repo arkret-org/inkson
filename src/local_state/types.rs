@@ -297,7 +297,7 @@ pub(crate) fn raw_operation_kind(payload: &Value) -> Option<&str> {
 /// builder prototypes. Fresh installs generate via
 /// `getrandom::fill` on first access; existing dev installs that still
 /// hold a `[42; 32]` cache are simply broken - they regenerate the next
-/// time the store is loaded with no record present (Cokret v1 protocol is
+/// time the store is loaded with no record present (Arkret v1 protocol is
 /// pre-release, with no migration path).
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct LocalIdentityRecord {

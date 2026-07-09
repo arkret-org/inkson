@@ -2,7 +2,7 @@
 //!
 //! A `Circle` is an intra-Realm cryptographic sub-boundary that hosts its
 //! own MLS group and a strict-subset of the parent Realm's membership. The
-//! spec is in `cokret-rust-sdk/crates/core/src/model/circle.rs`; this
+//! spec is in `arkret-rust-sdk/crates/core/src/model/circle.rs`; this
 //! module is the *client* surface that the rest of inkson consumes:
 //!
 //! - [`CircleScope`] is the active scope a composer / new-Strand form is writing into. `Realm` is
@@ -287,11 +287,11 @@ mod tests {
     #[test]
     fn circle_scope_carries_id_and_title() {
         let scope = CircleScope::Circle {
-            circle_id: "ck:circle:abc".to_owned(),
+            circle_id: "ak:circle:abc".to_owned(),
             title: "Ops".to_owned(),
             member_count: 4,
         };
-        assert_eq!(scope.circle_id(), Some("ck:circle:abc"));
+        assert_eq!(scope.circle_id(), Some("ak:circle:abc"));
         assert_eq!(scope.label(), "Ops");
         assert!(scope.is_circle());
     }
@@ -353,8 +353,8 @@ mod tests {
     #[test]
     fn summary_into_scope_round_trips() {
         let summary = CircleSummary {
-            id: "ck:circle:opsroom".to_owned(),
-            realm_id: "ck:realm:home".to_owned(),
+            id: "ak:circle:opsroom".to_owned(),
+            realm_id: "ak:realm:home".to_owned(),
             title: "Ops Room".to_owned(),
             short_name: "Ops".to_owned(),
             color_token: "indigo".to_owned(),
@@ -364,7 +364,7 @@ mod tests {
             viewer_is_member: true,
         };
         let scope = summary.into_scope();
-        assert_eq!(scope.circle_id(), Some("ck:circle:opsroom"));
+        assert_eq!(scope.circle_id(), Some("ak:circle:opsroom"));
         assert_eq!(scope.label(), "Ops Room");
     }
 

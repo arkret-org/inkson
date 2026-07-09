@@ -7,7 +7,7 @@
 //! - 6.3: open a recovery session, sign + submit a `principal_signing` proof, then complete with
 //!   client-supplied `ck.device.authorize` material.
 //!
-//! The wire shapes match `cokret-spec` `recovery-session.schema.json`
+//! The wire shapes match `arkret-spec` `recovery-session.schema.json`
 //! (`create_request` / `proof_submit_request` / `complete_request`).
 
 use base64::Engine as _;
@@ -283,7 +283,7 @@ fn build_signed_genesis_recovery_policy_with_raw_signer(
     let issued_at = chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Secs, true);
     let mut policy = json!({
         "schema": "ck.schema.recovery_policy.v1",
-        "policy_id": format!("ck:policy:{}", crate::operation::uuid_v7()),
+        "policy_id": format!("ak:policy:{}", crate::operation::uuid_v7()),
         "principal_id": principal_id,
         "version": 1,
         "supersedes": null,
@@ -395,7 +395,7 @@ pub async fn ensure_recovery_policy_and_did_recovery_backup(
 
     let (recovery_private_key, recovery_public_key) =
         crate::hpke_backup::derive_recovery_keypair_from_recovery_key(recovery_key)?;
-    let backup_id = format!("ck:backup:{}", crate::operation::uuid_v7());
+    let backup_id = format!("ak:backup:{}", crate::operation::uuid_v7());
     let recovery_key_ref = format!("{}#recovery", principal_id.trim());
     let created_at = chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Secs, true);
     let plaintext = crate::canonical::canonical_json_bytes(&json!({
@@ -630,7 +630,7 @@ mod tests {
             principal_id: Did::new("did:web:alice.example".to_owned()).unwrap(),
             version,
             recovery_policy_ref: None,
-            trust_domain: TypedTrustDomainId::new("ck:trust_domain:soland.local".to_owned())
+            trust_domain: TypedTrustDomainId::new("ak:trust_domain:soland.local".to_owned())
                 .unwrap(),
             allowed_proof_kinds: vec![RecoveryProofKind::RecoveryUnlock],
             supersedes: None,
@@ -645,8 +645,8 @@ mod tests {
     fn create_session_body_matches_schema_shape() {
         let body = create_session_body(
             "did:web:alice.example",
-            "ck:device:019a6aa0-0000-7000-8000-000000000099",
-            "ck:trust_domain:soland.local",
+            "ak:device:019a6aa0-0000-7000-8000-000000000099",
+            "ak:trust_domain:soland.local",
             2,
             None,
         )
@@ -661,16 +661,16 @@ mod tests {
     fn create_session_body_includes_cas_hint() {
         let body = create_session_body(
             "did:web:alice.example",
-            "ck:device:019a6aa0-0000-7000-8000-000000000099",
-            "ck:trust_domain:soland.local",
+            "ak:device:019a6aa0-0000-7000-8000-000000000099",
+            "ak:trust_domain:soland.local",
             1,
-            Some(("ck:policy:019a6aa0-0000-7000-8000-0000000000bb", 1)),
+            Some(("ak:policy:019a6aa0-0000-7000-8000-0000000000bb", 1)),
         )
         .unwrap();
         let body = serde_json::to_value(body).unwrap();
         assert_eq!(
             body["expected_recovery_policy_ref"]["policy_id"],
-            "ck:policy:019a6aa0-0000-7000-8000-0000000000bb"
+            "ak:policy:019a6aa0-0000-7000-8000-0000000000bb"
         );
         assert_eq!(body["expected_recovery_policy_ref"]["policy_version"], 1);
     }
@@ -684,7 +684,7 @@ mod tests {
                     "policy_id": "",
                     "principal_id": "did:web:alice.example",
                     "version": 1,
-                    "trust_domain": "ck:trust_domain:soland.local",
+                    "trust_domain": "ak:trust_domain:soland.local",
                     "allowed_proof_kinds": [],
                     "issued_at": "2026-01-01T00:00:00Z",
                     "accepted_at": "2026-01-01T00:00:01Z"
@@ -694,10 +694,10 @@ mod tests {
         );
         let parsed = parse_active_recovery_policy(&json!({
             "active_policy": {
-                "policy_id": "ck:policy:019a6aa0-0000-7000-8000-0000000000bb",
+                "policy_id": "ak:policy:019a6aa0-0000-7000-8000-0000000000bb",
                 "principal_id": "did:web:alice.example",
                 "version": 3,
-                "trust_domain": "ck:trust_domain:soland.local",
+                "trust_domain": "ak:trust_domain:soland.local",
                 "allowed_proof_kinds": ["principal_signing", "recovery_unlock"],
                 "issued_at": "2026-01-01T00:00:00Z",
                 "accepted_at": "2026-01-01T00:00:01Z"
@@ -719,7 +719,7 @@ mod tests {
         let signer = crate::event_signer::build_ed25519_signer([7u8; 32], "did:key:zlocal");
         let err = build_signed_genesis_recovery_policy_with_signer(
             "did:webvh:zQmExample:local.host:webvh:01kv0q5a7cfrxa69d5vmtyz72f",
-            "ck:trust_domain:local.host",
+            "ak:trust_domain:local.host",
             &signer,
         )
         .expect_err("did:key device signer must not publish a did:webvh policy");
@@ -738,7 +738,7 @@ mod tests {
         );
         let policy = build_signed_genesis_recovery_policy_with_signer(
             "did:webvh:zQmExample:local.host:webvh:01kv0q5a7cfrxa69d5vmtyz72f",
-            "ck:trust_domain:local.host",
+            "ak:trust_domain:local.host",
             &signer,
         )
         .expect("principal-scoped signer should build policy");
@@ -764,7 +764,7 @@ mod tests {
         );
         let policy = build_signed_genesis_recovery_policy_with_signer(
             principal_id,
-            "ck:trust_domain:local.host",
+            "ak:trust_domain:local.host",
             &signer,
         )
         .expect("principal signing key should build policy");
@@ -789,7 +789,7 @@ mod tests {
         let _previous = crate::event_signer::replace_active_signer(None);
 
         let principal_id = "did:webvh:zQmExample:local.host:webvh:01kv0q5a7cfrxa69d5vmtyz72f";
-        let device_id = "ck:device:01964137-0000-7000-8000-000000000001";
+        let device_id = "ak:device:01964137-0000-7000-8000-000000000001";
         let seed = [42u8; 32];
         let device_signer = std::sync::Arc::new(crate::event_signer::build_ed25519_device_signer(
             seed,
@@ -800,7 +800,7 @@ mod tests {
 
         let policy = build_signed_genesis_recovery_policy_for_session_device(
             principal_id,
-            "ck:trust_domain:local.host",
+            "ak:trust_domain:local.host",
             device_id,
         )
         .expect("active device signer should sign principal-scoped recovery policy");
@@ -834,10 +834,10 @@ mod tests {
     fn account_recovery_state_requires_policy_and_did_recovery_backup() {
         let policy = json!({
             "active_policy": {
-                "policy_id": "ck:policy:019a6aa0-0000-7000-8000-0000000000bb",
+                "policy_id": "ak:policy:019a6aa0-0000-7000-8000-0000000000bb",
                 "principal_id": "did:web:alice.example",
                 "version": 1,
-                "trust_domain": "ck:trust_domain:soland.local",
+                "trust_domain": "ak:trust_domain:soland.local",
                 "allowed_proof_kinds": ["principal_signing"],
                 "issued_at": "2026-01-01T00:00:00Z",
                 "accepted_at": "2026-01-01T00:00:01Z"
@@ -866,7 +866,7 @@ mod tests {
                     "backup_class": "did_recovery",
                     "encryption": { "recipient_method": "recovery_public_key" },
                     "recovery_policy_ref": {
-                        "policy_id": "ck:policy:019a6aa0-0000-7000-8000-0000000000bb",
+                        "policy_id": "ak:policy:019a6aa0-0000-7000-8000-0000000000bb",
                         "policy_version": 1
                     },
                     "series_seq": 0
@@ -883,7 +883,7 @@ mod tests {
                     "backup_class": "did_recovery",
                     "encryption": { "recipient_method": "recovery_public_key" },
                     "recovery_policy_ref": {
-                        "policy_id": "ck:policy:019a6aa0-0000-7000-8000-000000000000",
+                        "policy_id": "ak:policy:019a6aa0-0000-7000-8000-000000000000",
                         "policy_version": 1
                     },
                     "series_seq": 0
@@ -896,24 +896,24 @@ mod tests {
 
     #[test]
     fn matching_did_recovery_backup_requires_active_policy_ref() {
-        let policy = test_active_policy("ck:policy:019a6aa0-0000-7000-8000-0000000000bb", 2);
+        let policy = test_active_policy("ak:policy:019a6aa0-0000-7000-8000-0000000000bb", 2);
         let payload = json!({
             "backups": [
                 {
-                    "backup_id": "ck:backup:019a6aa0-0000-7000-8000-000000000001",
+                    "backup_id": "ak:backup:019a6aa0-0000-7000-8000-000000000001",
                     "backup_class": "did_recovery",
                     "encryption": { "recipient_method": "recovery_public_key" },
                     "recovery_policy_ref": {
-                        "policy_id": "ck:policy:019a6aa0-0000-7000-8000-000000000000",
+                        "policy_id": "ak:policy:019a6aa0-0000-7000-8000-000000000000",
                         "policy_version": 2
                     }
                 },
                 {
-                    "backup_id": "ck:backup:019a6aa0-0000-7000-8000-000000000002",
+                    "backup_id": "ak:backup:019a6aa0-0000-7000-8000-000000000002",
                     "backup_class": "did_recovery",
                     "encryption": { "recipient_method": "recovery_public_key" },
                     "recovery_policy_ref": {
-                        "policy_id": "ck:policy:019a6aa0-0000-7000-8000-0000000000bb",
+                        "policy_id": "ak:policy:019a6aa0-0000-7000-8000-0000000000bb",
                         "policy_version": 2
                     },
                     "series_seq": 0
@@ -922,20 +922,20 @@ mod tests {
         });
         assert_eq!(
             matching_did_recovery_first_backup_id(&payload, &policy).as_deref(),
-            Some("ck:backup:019a6aa0-0000-7000-8000-000000000002")
+            Some("ak:backup:019a6aa0-0000-7000-8000-000000000002")
         );
     }
 
     #[test]
     fn matching_did_recovery_backup_rejects_non_first_series_seq_when_present() {
-        let policy = test_active_policy("ck:policy:019a6aa0-0000-7000-8000-0000000000bb", 2);
+        let policy = test_active_policy("ak:policy:019a6aa0-0000-7000-8000-0000000000bb", 2);
         let payload = json!({
             "backups": [{
-                "backup_id": "ck:backup:019a6aa0-0000-7000-8000-000000000002",
+                "backup_id": "ak:backup:019a6aa0-0000-7000-8000-000000000002",
                 "backup_class": "did_recovery",
                 "encryption": { "recipient_method": "recovery_public_key" },
                 "recovery_policy_ref": {
-                    "policy_id": "ck:policy:019a6aa0-0000-7000-8000-0000000000bb",
+                    "policy_id": "ak:policy:019a6aa0-0000-7000-8000-0000000000bb",
                     "policy_version": 2
                 },
                 "series_seq": 1
@@ -951,10 +951,10 @@ mod tests {
     fn first_backup_gate_status_requires_active_policy_and_matching_backup() {
         let policy = json!({
             "active_policy": {
-                "policy_id": "ck:policy:019a6aa0-0000-7000-8000-0000000000bb",
+                "policy_id": "ak:policy:019a6aa0-0000-7000-8000-0000000000bb",
                 "principal_id": "did:web:alice.example",
                 "version": 1,
-                "trust_domain": "ck:trust_domain:soland.local",
+                "trust_domain": "ak:trust_domain:soland.local",
                 "allowed_proof_kinds": ["principal_signing"],
                 "issued_at": "2026-01-01T00:00:00Z",
                 "accepted_at": "2026-01-01T00:00:01Z"
@@ -971,7 +971,7 @@ mod tests {
             first_backup_gate_status_from_payloads(&policy, &json!({ "backups": [] })),
             FirstBackupGateStatus::Blocked(
                 FirstBackupGateBlockReason::NoMatchingDidRecoveryBackup {
-                    policy_id: "ck:policy:019a6aa0-0000-7000-8000-0000000000bb".to_owned(),
+                    policy_id: "ak:policy:019a6aa0-0000-7000-8000-0000000000bb".to_owned(),
                     policy_version: 1,
                 },
             )
@@ -981,11 +981,11 @@ mod tests {
                 &policy,
                 &json!({
                     "backups": [{
-                        "backup_id": "ck:backup:019a6aa0-0000-7000-8000-000000000002",
+                        "backup_id": "ak:backup:019a6aa0-0000-7000-8000-000000000002",
                         "backup_class": "did_recovery",
                         "encryption": { "recipient_method": "recovery_public_key" },
                         "recovery_policy_ref": {
-                            "policy_id": "ck:policy:019a6aa0-0000-7000-8000-0000000000bb",
+                            "policy_id": "ak:policy:019a6aa0-0000-7000-8000-0000000000bb",
                             "policy_version": 1
                         },
                         "series_seq": 0
@@ -993,7 +993,7 @@ mod tests {
                 })
             ),
             FirstBackupGateStatus::Satisfied {
-                backup_id: "ck:backup:019a6aa0-0000-7000-8000-000000000002".to_owned(),
+                backup_id: "ak:backup:019a6aa0-0000-7000-8000-000000000002".to_owned(),
             }
         );
     }

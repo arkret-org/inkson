@@ -190,8 +190,8 @@ mod tests {
         let verifying = signing_key.verifying_key();
         let body = cokret_sdk::InviteSubjectProofBody::from_wire_parts(
             "did:web:alice.example",
-            "ck:invite:0196419b-0000-7000-8000-000000000001",
-            "ck:realm:0196419b-0000-7000-8000-000000000010",
+            "ak:invite:0196419b-0000-7000-8000-000000000001",
+            "ak:realm:0196419b-0000-7000-8000-000000000010",
             "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
             "nonce-claim-proof-1",
             "did:web:verify.example",
@@ -210,15 +210,15 @@ mod tests {
             "verification_service_did": "did:web:verify.example",
             "verification_method": "did:web:verify.example#invite-key",
             "subject_id": "did:web:alice.example",
-            "realm_id": "ck:realm:0196419b-0000-7000-8000-000000000010",
-            "audience": "cokret.invite.claim",
+            "realm_id": "ak:realm:0196419b-0000-7000-8000-000000000010",
+            "audience": "arkret.invite.claim",
             "claim_nonce": "nonce-claim-proof-1",
             "expires_at": "2099-01-01T00:00:00Z",
             "signature": "binding-signature"
         });
         let body = build_invite_claim_body(
-            "ck:invite:0196419b-0000-7000-8000-000000000001",
-            "ck:realm:0196419b-0000-7000-8000-000000000010",
+            "ak:invite:0196419b-0000-7000-8000-000000000001",
+            "ak:realm:0196419b-0000-7000-8000-000000000010",
             "did:web:alice.example",
             "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
             "nonce-claim-proof-1",
@@ -232,8 +232,8 @@ mod tests {
             cokret_sdk::canonical::canonical_sha256(&binding_proof).unwrap();
         let expected_transcript_digest = cokret_sdk::invite_subject_proof_transcript_digest(
             "did:web:alice.example",
-            "ck:invite:0196419b-0000-7000-8000-000000000001",
-            "ck:realm:0196419b-0000-7000-8000-000000000010",
+            "ak:invite:0196419b-0000-7000-8000-000000000001",
+            "ak:realm:0196419b-0000-7000-8000-000000000010",
             "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
             "nonce-claim-proof-1",
             "did:web:verify.example",
@@ -255,6 +255,6 @@ mod tests {
                 .map(|s| !s.is_empty())
                 .unwrap_or(false)
         );
-        assert_eq!(body["binding_proof"]["audience"], "cokret.invite.claim");
+        assert_eq!(body["binding_proof"]["audience"], "arkret.invite.claim");
     }
 }

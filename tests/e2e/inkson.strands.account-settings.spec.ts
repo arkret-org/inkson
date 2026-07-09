@@ -17,12 +17,12 @@ test("topbar account menu shows identity and sync state", async ({ page }) => {
   await dismissBlockingRecoveryModal(page);
   await page.getByTestId("account-menu-button").click();
   await expect(page.getByTestId("account-menu")).toContainText("did:web:alice.example");
-  await expect(page.getByTestId("account-menu")).toContainText("ck:device:");
+  await expect(page.getByTestId("account-menu")).toContainText("ak:device:");
   await expect(page.getByTestId("account-menu-copy-did")).toBeVisible();
   await expect(page.getByTestId("account-menu-copy-device")).toBeVisible();
   await page.getByTestId("account-menu-copy-did").click();
   await expect(page.getByTestId("account-menu-session-state")).toHaveText("DID copied");
-  await expect(page.getByTestId("account-menu-frontier")).toContainText("ck:event:e2e");
+  await expect(page.getByTestId("account-menu-frontier")).toContainText("ak:event:e2e");
   await expect(page.getByTestId("account-menu-settings-qr")).toBeVisible();
   await expect(page.getByTestId("account-menu-settings")).toBeVisible();
   const menuBox = await page.getByTestId("account-menu").boundingBox();
@@ -151,7 +151,7 @@ test("settings avatar upload crops local image before publishing profile URL", a
 
   const profileBody = await profileRequest.then((request) => request.postDataJSON());
   expect(profileBody.patch.avatar_blob_ref).toBe(
-    "ck:blob:sha256:01015dc8af66d01f557ea63f13538f1964848840a350c5311d1efc8ad138bb91",
+    "ak:blob:sha256:01015dc8af66d01f557ea63f13538f1964848840a350c5311d1efc8ad138bb91",
   );
   await expect(page.getByTestId("settings-avatar-crop-editor")).toHaveCount(0);
 });

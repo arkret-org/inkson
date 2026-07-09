@@ -140,11 +140,11 @@ mod tests {
     use super::*;
 
     fn realm_id() -> RealmId {
-        RealmId::new("ck:realm:01964137-0000-7000-8000-000000000000".to_owned()).unwrap()
+        RealmId::new("ak:realm:01964137-0000-7000-8000-000000000000".to_owned()).unwrap()
     }
 
     fn seal() -> SealId {
-        SealId::new(format!("ck:seal:sha256:{}", "a".repeat(64))).unwrap()
+        SealId::new(format!("ak:seal:sha256:{}", "a".repeat(64))).unwrap()
     }
 
     fn schedule_hash() -> Hash {

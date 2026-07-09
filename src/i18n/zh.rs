@@ -65,11 +65,11 @@ fn add_r3_error_keys_zh(dict: &mut TranslationDict) {
     );
     dict.set(
         "error.call.recording_artifact_pipeline_bypassed",
-        "录制目标不是 Cokret 认证 blob — 拒绝录制。",
+        "录制目标不是 Arkret 认证 blob — 拒绝录制。",
     );
     dict.set(
         "error.call.transcription_artifact_pipeline_bypassed",
-        "转写目标不是 Cokret 认证 blob — 拒绝转写。",
+        "转写目标不是 Arkret 认证 blob — 拒绝转写。",
     );
     dict.set(
         "error.call.media_service_binding_uncovered",
@@ -127,7 +127,7 @@ fn add_r3_error_keys_zh(dict: &mut TranslationDict) {
     dict.set("object_link.open", "Open shared link");
     dict.set(
         "object_link.open_placeholder",
-        "Paste a web+cokret: or https share link",
+        "Paste a web+arkret: or https share link",
     );
     dict.set("object_link.opening", "Opening link\u{2026}");
     dict.set(
@@ -601,7 +601,7 @@ pub fn chinese_translations() -> TranslationDict {
     dict.set("mls_unlock.subtitle", "优先使用已授权设备确认");
     dict.set(
         "mls_unlock.description",
-        "此浏览器已经登录，但还不是可读取加密历史的已授权设备。Cokret v1 要求已有授权设备先批准新设备，然后才共享 MLS 历史密钥。",
+        "此浏览器已经登录，但还不是可读取加密历史的已授权设备。Arkret v1 要求已有授权设备先批准新设备，然后才共享 MLS 历史密钥。",
     );
     dict.set("mls_unlock.approve_step_existing_title", "在已有设备上");
     dict.set(
@@ -672,7 +672,7 @@ pub fn chinese_translations() -> TranslationDict {
     );
     dict.set(
         "mls_backup.warning.passphrase_loss",
-        "24 个恢复词出现后请立即保存。Cokret 不会保存它们；遗失后，已设置好的设备仍可继续使用，但新设备无法恢复这份加密历史。",
+        "24 个恢复词出现后请立即保存。Arkret 不会保存它们；遗失后，已设置好的设备仍可继续使用，但新设备无法恢复这份加密历史。",
     );
     dict.set(
         "mls_backup.warning.existing_key",

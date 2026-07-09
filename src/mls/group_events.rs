@@ -22,7 +22,7 @@ pub(crate) fn mls_sha256_hash_from_ref(value: &str) -> Option<String> {
     if value.starts_with("sha256:") && cokret_sdk::Hash::new(value).is_ok() {
         return Some(value.to_owned());
     }
-    for prefix in ["ck:seal:", "ck:state:"] {
+    for prefix in ["ak:seal:", "ak:state:"] {
         if let Some(rest) = value.strip_prefix(prefix) {
             return mls_sha256_hash_from_ref(rest);
         }
@@ -44,12 +44,12 @@ fn json_path_string(value: &Value, path: &[&str]) -> Option<String> {
 }
 
 fn object_ref_from_seal_ref(value: &str) -> Option<String> {
-    if value.starts_with("ck:event:") && cokret_sdk::EventId::new(value.to_owned()).is_ok() {
+    if value.starts_with("ak:event:") && cokret_sdk::EventId::new(value.to_owned()).is_ok() {
         return Some(value.to_owned());
     }
-    if value.starts_with("ck:blob:sha256:")
+    if value.starts_with("ak:blob:sha256:")
         && value
-            .strip_prefix("ck:blob:")
+            .strip_prefix("ak:blob:")
             .and_then(mls_sha256_hash_from_ref)
             .is_some()
     {
@@ -286,7 +286,7 @@ pub(crate) fn build_creator_mls_genesis_event_for_effective_scope(
         return Ok(None);
     }
     let seal_view = state_store.seal_view_for_realm(realm_id);
-    let event_id = format!("ck:event:{}", uuid_v7());
+    let event_id = format!("ak:event:{}", uuid_v7());
     let event_id_typed = cokret_sdk::EventId::new(event_id.clone())
         .map_err(|err| format!("invalid MLS genesis event id: {err:?}"))?;
     let typed_realm_id = cokret_sdk::RealmId::new(trim_realm_id(realm_id))
@@ -457,7 +457,7 @@ fn mls_commit_event_from_store_for_effective_scope_with_membership_frontier(
     // snapshot has advanced past the last server-confirmed epoch, which is what
     // tripped `mls_commit_payload.next_epoch must equal base_epoch + 1`.
     let prev_epoch = commit_envelope.epoch.saturating_sub(1);
-    let event_id = format!("ck:event:{}", uuid_v7());
+    let event_id = format!("ak:event:{}", uuid_v7());
     let event_id_typed = cokret_sdk::EventId::new(event_id.clone())
         .map_err(|err| format!("invalid MLS commit event id: {err:?}"))?;
     let typed_realm_id = cokret_sdk::RealmId::new(trim_realm_id(realm_id))

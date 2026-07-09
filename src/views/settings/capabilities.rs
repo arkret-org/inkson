@@ -267,14 +267,14 @@ mod tests {
 
     fn sample_grant(subject: serde_json::Value) -> Capability {
         serde_json::from_value(json!({
-            "id": "ck:grant:0196419b-0000-7000-8000-000000000000",
+            "id": "ak:grant:0196419b-0000-7000-8000-000000000000",
             "schema": "ck.schema.capability.v1",
-            "realm_id": "ck:realm:0196419b-0000-7000-8000-000000000001",
+            "realm_id": "ak:realm:0196419b-0000-7000-8000-000000000001",
             "issuer": "did:web:alice.example",
             "subject": subject,
             "actions": ["ck.message.create"],
             "resources": [
-                {"kind": "realm", "realm_id": "ck:realm:0196419b-0000-7000-8000-000000000001"}
+                {"kind": "realm", "realm_id": "ak:realm:0196419b-0000-7000-8000-000000000001"}
             ],
             "issued_at": "2026-01-01T00:00:00Z",
             "expires_at": "2026-12-31T00:00:00Z",
@@ -288,7 +288,7 @@ mod tests {
         let row = decode_capability_row(&sample_grant(json!("did:web:bob.example")));
         assert_eq!(
             row.capability_id,
-            "ck:grant:0196419b-0000-7000-8000-000000000000"
+            "ak:grant:0196419b-0000-7000-8000-000000000000"
         );
         assert_eq!(row.action, "ck.message.create");
         assert_eq!(row.issuer_did, "did:web:alice.example");

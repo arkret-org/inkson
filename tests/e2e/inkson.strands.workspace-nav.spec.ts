@@ -13,7 +13,7 @@ registerStrandsBeforeEach();
 
 test("workspace sidebar separates contact-based direct chats", async ({ page }) => {
   const shell = latestTestId(page, "client-shell");
-  await expect(shell.getByTestId("realm-tree-list")).toContainText("Cokret Demo Realm");
+  await expect(shell.getByTestId("realm-tree-list")).toContainText("Arkret Demo Realm");
   await expect(shell.getByTestId("realm-sidebar-toolbar")).toBeVisible();
   await expect(shell.getByTestId("realm-sidebar-search-input")).toBeVisible();
   await expect(shell.getByTestId("sidebar-new-realm-cta")).toBeVisible();
@@ -22,7 +22,7 @@ test("workspace sidebar separates contact-based direct chats", async ({ page }) 
   await shell.getByTestId("realm-sidebar-manage-home-button").click();
   await expect(page).toHaveURL(/\/realms\/manage$/);
   await expect(shell.getByTestId("realms-manage-page")).toBeVisible();
-  await expect(shell.getByTestId("realms-manage-page")).toContainText("Cokret Demo Realm");
+  await expect(shell.getByTestId("realms-manage-page")).toContainText("Arkret Demo Realm");
 
   await shell.getByTestId("realm-sidebar-tab-direct").click();
 
@@ -44,10 +44,10 @@ test("workspace sidebar separates contact-based direct chats", async ({ page }) 
 test("new space strand uses sidebar realm context without home realm picker", async ({ page }) => {
   await refreshServer(page);
   const shell = latestTestId(page, "client-shell");
-  await expect(shell.getByTestId("realm-tree-list")).toContainText("Cokret Demo Realm");
+  await expect(shell.getByTestId("realm-tree-list")).toContainText("Arkret Demo Realm");
   await dismissBlockingRecoveryModal(page);
 
-  const demoRealmRow = shell.locator(".sidebar-row").filter({ hasText: "Cokret Demo Realm" }).first();
+  const demoRealmRow = shell.locator(".sidebar-row").filter({ hasText: "Arkret Demo Realm" }).first();
   await expect(demoRealmRow).toBeVisible();
   await demoRealmRow.hover();
   await demoRealmRow.getByTestId("realm-tree-row-menu-button").click();

@@ -48,7 +48,7 @@ fn decodes_plain_error_envelope_and_falls_back() {
 fn decodes_canonical_error_envelope_with_request_id() {
     let decoded = decode_cokret_error(
         StatusCode::FORBIDDEN,
-        br#"{"ok":false,"error":{"code":"capability_denied","message":"actor is not a member of the event Space"},"request_id":"ck:request:01964137-0000-7000-8000-000000000010"}"#,
+        br#"{"ok":false,"error":{"code":"capability_denied","message":"actor is not a member of the event Space"},"request_id":"ak:request:01964137-0000-7000-8000-000000000010"}"#,
     );
 
     assert_eq!(decoded.code(), "capability_denied");
@@ -58,7 +58,7 @@ fn decodes_canonical_error_envelope_with_request_id() {
     );
     assert_eq!(
         decoded.request_id,
-        "ck:request:01964137-0000-7000-8000-000000000010"
+        "ak:request:01964137-0000-7000-8000-000000000010"
     );
 }
 
@@ -66,14 +66,14 @@ fn decodes_canonical_error_envelope_with_request_id() {
 fn decodes_wrapped_error_envelope_without_inner_request_id() {
     let decoded = decode_cokret_error(
         StatusCode::UNAUTHORIZED,
-        br#"{"ok":false,"error":{"ok":false,"error":{"code":"auth_expired","message":"session expired"}},"request_id":"ck:request:01964137-0000-7000-8000-000000000011"}"#,
+        br#"{"ok":false,"error":{"ok":false,"error":{"code":"auth_expired","message":"session expired"}},"request_id":"ak:request:01964137-0000-7000-8000-000000000011"}"#,
     );
 
     assert_eq!(decoded.code(), "auth_expired");
     assert_eq!(decoded.message(), "session expired");
     assert_eq!(
         decoded.request_id,
-        "ck:request:01964137-0000-7000-8000-000000000011"
+        "ak:request:01964137-0000-7000-8000-000000000011"
     );
 }
 
@@ -319,7 +319,7 @@ fn recognizes_space_membership_denied_errors() {
         status: StatusCode::FORBIDDEN,
         error: decode_cokret_error(
             StatusCode::FORBIDDEN,
-            br#"{"ok":false,"error":{"code":"capability_denied","message":"actor is not a member of the event Space"},"request_id":"ck:request:01964137-0000-7000-8000-000000000010"}"#,
+            br#"{"ok":false,"error":{"code":"capability_denied","message":"actor is not a member of the event Space"},"request_id":"ak:request:01964137-0000-7000-8000-000000000010"}"#,
         ),
     }
     .into();

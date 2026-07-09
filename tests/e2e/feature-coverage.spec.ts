@@ -1,7 +1,7 @@
 /**
  * Feature coverage seals — pin the visible protocol surface that
  * the checked-in protocol specs describe, end-to-end against the
- * mocked Cokret server.
+ * mocked Arkret server.
  *
  * Each test makes a single concrete claim about a stable UI surface
  * (panel data-testid + key control). The deeper protocol strand (full
@@ -52,7 +52,7 @@ test.describe("feature coverage placeholders", () => {
         JSON.stringify({
           server_url: "https://local.host",
           account_did: "did:web:alice.example",
-          device_id: "ck:device:01964137-0000-7000-8000-0000000000a1",
+          device_id: "ak:device:01964137-0000-7000-8000-0000000000a1",
           session_credential: "sx:e2e-token",
         }),
       );
@@ -127,7 +127,7 @@ test.describe("feature coverage placeholders", () => {
     await page.goto("/verify-device", { waitUntil: "domcontentloaded", timeout: 120_000 });
     await page.getByTestId("sas-verify-button").click();
     await expect(page.getByTestId("sas-verify-strand")).toBeVisible({ timeout: 30_000 });
-    await page.getByTestId("sas-target-device").fill("ck:device:01904100-0000-7000-8000-d0d0d0d0d0d0");
+    await page.getByTestId("sas-target-device").fill("ak:device:01904100-0000-7000-8000-d0d0d0d0d0d0");
     await page.getByTestId("start-sas-button").click();
     await expect(page.getByTestId("sas-display")).toBeVisible({ timeout: 30_000 });
     await expect(page.getByTestId("sas-emoji-row")).toBeVisible();
@@ -195,7 +195,7 @@ test.describe("feature coverage placeholders", () => {
         JSON.stringify({
           server_url: "https://local.host",
           account_did: "did:web:alice.example",
-          device_id: "ck:device:01964137-0000-7000-8000-0000000000a1",
+          device_id: "ak:device:01964137-0000-7000-8000-0000000000a1",
           session_credential: "sx:e2e-token",
         }),
       );
@@ -227,7 +227,7 @@ test.describe("feature coverage placeholders", () => {
     // The envelope MUST target the principal control Realm (spec
     // key-management.md §4.1).
     expect(typeof body.realm_id).toBe("string");
-    expect((body.realm_id as string).startsWith("ck:realm:")).toBe(true);
+    expect((body.realm_id as string).startsWith("ak:realm:")).toBe(true);
     expect(body.space_id).toBeUndefined();
 
     // Drill into the publish content payload: the executor MUST emit a
@@ -363,17 +363,17 @@ test.describe("feature coverage placeholders", () => {
         body: JSON.stringify({
           backups: [
             {
-              backup_id: "ck:backup:019eca5c-2fcb-7592-9000-000000000001",
+              backup_id: "ak:backup:019eca5c-2fcb-7592-9000-000000000001",
               backup_class: "did_recovery",
               created_at: "2026-06-15T08:00:00Z",
             },
             {
-              backup_id: "ck:backup:019eca5c-2fcb-7592-9000-000000000002",
+              backup_id: "ak:backup:019eca5c-2fcb-7592-9000-000000000002",
               backup_class: "secret_storage",
               created_at: "2026-06-14T06:30:00Z",
             },
             {
-              backup_id: "ck:backup:019eca5c-2fcb-7592-9000-000000000003",
+              backup_id: "ak:backup:019eca5c-2fcb-7592-9000-000000000003",
               backup_class: "mls_history",
               created_at: "2026-06-10T22:15:00Z",
             },
@@ -395,7 +395,7 @@ test.describe("feature coverage placeholders", () => {
     await expect(recoveryPanel.getByTestId("restore-backup-time")).toHaveCount(3);
     await expect(recoveryPanel.getByTestId("restore-select-button")).toHaveCount(0);
     await expect(recoveryPanel.getByTestId("restore-delete-button")).toHaveCount(0);
-    await expect(recoveryPanel).not.toContainText("ck:backup:");
+    await expect(recoveryPanel).not.toContainText("ak:backup:");
     await expect(recoveryPanel).not.toContainText("did_recovery");
   });
 

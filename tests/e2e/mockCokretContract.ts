@@ -3,7 +3,7 @@
 // `cotest/tests/fixtures/inkson_mock_parity.json` and gets compared
 // against a real soland process. When adding a branch, also add the
 // matching fixture case — unmatched branches are silently dead code.
-const DEMO_REALM = "ck:realm:0196419b-0000-7000-8000-000000000000";
+const DEMO_REALM = "ak:realm:0196419b-0000-7000-8000-000000000000";
 
 export function mockCokretContract(req) {
   const method = (req.method ?? "GET").toUpperCase();
@@ -14,7 +14,7 @@ export function mockCokretContract(req) {
   if (method === "GET" && path === "/_cokret/describe") {
     return json({
       service_did: "did:web:server.local",
-      trust_domain: "ck:trust_domain:server.local",
+      trust_domain: "ak:trust_domain:server.local",
       service_type: "principal_server",
       protocol_version: "1.0",
       supported_profiles: [
@@ -40,7 +40,7 @@ export function mockCokretContract(req) {
   if (method === "POST" && path === "/_cokret/self/events") {
     // Canonical EventsSubmitOutcome wire shape (soland head 37ce729):
     // {status, accepted[], cursor} — no top-level event_id/sync_token.
-    const acceptedId = body.event_id ?? firstEventId(body.events) ?? "ck:event:e2e";
+    const acceptedId = body.event_id ?? firstEventId(body.events) ?? "ak:event:e2e";
     // soland's EventsSubmitOutcome skips empty/null fields (duplicate, rejected,
     // actor_frontier, realm_frontier) via serde skip_serializing_if, so a clean
     // accept serializes to exactly {status, accepted, cursor}. Match that shape.
@@ -66,7 +66,7 @@ export function mockCokretContract(req) {
         subject: "did:web:alice.example",
       },
       profile: {
-        id: "ck:actor_profile:01964137-0000-7000-8000-0000000000a1",
+        id: "ak:actor_profile:01964137-0000-7000-8000-0000000000a1",
         schema: "ck.schema.actor_profile.v1",
         principal_id: "did:web:alice.example",
         actor_kind: "user",
@@ -79,7 +79,7 @@ export function mockCokretContract(req) {
   if (method === "GET" && path === "/_cokret/find/directory/describe") {
     return json({
       service_did: "did:web:server.local",
-      trust_domain: "ck:trust_domain:server.local",
+      trust_domain: "ak:trust_domain:server.local",
       service_type: "directory_service",
       protocol_version: "1.0",
       supported_profiles: ["ck.profile.directory_service.v1"],
@@ -136,10 +136,10 @@ export function mockCokretContract(req) {
   }
 
   if (method === "POST" && path === "/_cokret/gate/account/device-pair") {
-    const deviceId = body.new_device_pubkey?.kid ?? "ck:device:01964137-0000-7000-8000-0000000000b2";
+    const deviceId = body.new_device_pubkey?.kid ?? "ak:device:01964137-0000-7000-8000-0000000000b2";
     return json({
       device_id: deviceId,
-      authorized_event_ref: "ck:event:01964137-0000-7000-8000-00000000d001",
+      authorized_event_ref: "ak:event:01964137-0000-7000-8000-00000000d001",
       device_grant: {
         status: "active",
         authorized_by_device_id: req.account?.device_id,
@@ -207,13 +207,13 @@ function json(body, status = 200) {
 function realmPreview() {
   return {
     realm_id: DEMO_REALM,
-    title: "Cokret Demo Realm",
+    title: "Arkret Demo Realm",
     summary: "Shared demo Realm served by mocked server",
     discoverability: "public",
     join_rule: "public",
     member_count_bucket: "1-10",
     as_of: "2026-06-13T00:00:00Z",
-    source_refs: ["ck:event:0196419b-0000-7000-8000-000000000001"],
+    source_refs: ["ak:event:0196419b-0000-7000-8000-000000000001"],
     policy_revision: "mock-policy-rev",
   };
 }

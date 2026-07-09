@@ -100,7 +100,7 @@ impl LocalSealView {
     /// SHA-256 of empty bytes — used as the "no Seal seen yet" sentinel
     /// the Move builders historically defaulted to.
     pub const EMPTY_ANCHOR_REF: &'static str =
-        "ck:seal:sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855";
+        "ak:seal:sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855";
 
     /// Pick the single Seal ref to feed into a Move builder. Returns the
     /// first frontier head if any, otherwise the empty-bytes sentinel.
@@ -149,7 +149,7 @@ impl LocalSealView {
         }
         let head_a = &info.heads[0];
         let head_b = &info.heads[1];
-        let safer = if cell_ref.starts_with("ck:cell:ck.component.realm.organization.v1") {
+        let safer = if cell_ref.starts_with("ak:cell:ck.component.realm.organization.v1") {
             head_a.value.clone()
         } else {
             safer_value_for_cell(cell_ref, &head_a.value, &head_b.value)?
@@ -164,9 +164,9 @@ impl LocalSealView {
 /// is intentional: ban-vs-ban or revoke-vs-revoke is a content conflict,
 /// not a safety call, so we surface no preference and the operator picks.
 fn safer_value_for_cell(cell_ref: &str, a: &Value, b: &Value) -> Option<Value> {
-    let rank: fn(&Value) -> u8 = if cell_ref.starts_with("ck:cell:ck.component.member.state.v1") {
+    let rank: fn(&Value) -> u8 = if cell_ref.starts_with("ak:cell:ck.component.member.state.v1") {
         member_state_safety_rank
-    } else if cell_ref.starts_with("ck:cell:ck.component.capability.grant.v1") {
+    } else if cell_ref.starts_with("ak:cell:ck.component.capability.grant.v1") {
         capability_grant_safety_rank
     } else {
         return None;
@@ -216,11 +216,11 @@ impl LocalSealView {
     /// ```jsonc
     /// {
     ///   "seal_view": {
-    ///     "frontier": ["ck:seal:sha256:..."],
+    ///     "frontier": ["ak:seal:sha256:..."],
     ///     "leaves":   ["sha256:..."],
-    ///     "state_root": "ck:state:sha256:...",
+    ///     "state_root": "ak:state:sha256:...",
     ///     "cells": {
-    ///       "ck:cell:ck.component.member.state.v1:did:web:alice": {
+    ///       "ak:cell:ck.component.member.state.v1:did:web:alice": {
     ///         "bottom": "expose"
     ///       }
     ///     }
@@ -299,14 +299,14 @@ impl LocalSealView {
                         .cloned()
                         .or_else(|| status.get("register").and_then(|r| r.get("value")).cloned())
                 };
-                if cell_ref.starts_with("ck:cell:ck.component.mls.epoch.v1")
+                if cell_ref.starts_with("ak:cell:ck.component.mls.epoch.v1")
                     && let Some(value) = value_for(status)
                 {
                     view.mls_epoch = value
                         .as_u64()
                         .or_else(|| value.get("epoch").and_then(|v| v.as_u64()));
                 }
-                if cell_ref.starts_with("ck:cell:ck.component.governance.covered_seals.v1")
+                if cell_ref.starts_with("ak:cell:ck.component.governance.covered_seals.v1")
                     && let Some(value) = value_for(status)
                 {
                     view.covered_seals = value.as_str().map(str::to_owned).or_else(|| {
@@ -319,7 +319,7 @@ impl LocalSealView {
                 // B3c: surface the MLS key schedule hash so the next
                 // commit's SDK MLS governance binding can carry the
                 // SDK-canonical "advance schedule" effect on it.
-                if cell_ref.starts_with("ck:cell:ck.component.key_schedule.v1")
+                if cell_ref.starts_with("ak:cell:ck.component.key_schedule.v1")
                     && let Some(value) = value_for(status)
                 {
                     view.key_schedule_hash = value.as_str().map(str::to_owned).or_else(|| {

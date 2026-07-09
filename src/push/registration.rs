@@ -76,7 +76,7 @@ pub enum PushRegistrationError {
     #[error("chime transport failure: {0}")]
     Transport(String),
     /// No coauth session grant is available to populate
-    /// `X-Cokret-Session-Grant`.
+    /// `X-Arkret-Session-Grant`.
     #[error("no coauth session grant available for chime registration")]
     MissingSessionGrant,
     /// The persisted grant is not usable for this registration.
@@ -113,7 +113,7 @@ pub struct RegisterContext {
     /// API authorization credential (chime client posts it in the standard
     /// `Authorization: Bearer ...` HTTP scheme).
     pub authorization_credential: Option<String>,
-    /// X-Cokret-Session-Grant header (coauth-issued grant). `None`
+    /// X-Arkret-Session-Grant header (coauth-issued grant). `None`
     /// means inkson loads the persisted coauth session grant from
     /// `LocalStateStore`, mints the matching introspection proof headers,
     /// and fails closed if no grant is available.
@@ -235,8 +235,8 @@ fn chime_client(
         session_grant.proof_jwt.as_deref(),
     ) {
         client = client
-            .with_header("X-Cokret-Session-Grant-Challenge", challenge)
-            .and_then(|client| client.with_header("X-Cokret-Session-Grant-Proof", proof_jwt))
+            .with_header("X-Arkret-Session-Grant-Challenge", challenge)
+            .and_then(|client| client.with_header("X-Arkret-Session-Grant-Proof", proof_jwt))
             .map_err(|err| PushRegistrationError::Transport(err.to_string()))?;
     }
     Ok(client)
@@ -487,7 +487,7 @@ mod tests {
         PersistedSessionGrant {
             grant_jwt: "header.payload.signature".to_owned(),
             session_private_key_pem: pem,
-            grant_id: "ck:grant:push-local".to_owned(),
+            grant_id: "ak:grant:push-local".to_owned(),
             audience: "https://principal.example/".to_owned(),
             principal_id: "did:web:alice.example".to_owned(),
             device_id: device.to_owned(),
@@ -521,10 +521,10 @@ mod tests {
     #[test]
     fn build_request_stamps_active_circle_into_idempotency_key() {
         let mut c = ctx("dev_inkson");
-        c.active_circle_id = Some("ck:circle:opsroom".to_owned());
+        c.active_circle_id = Some("ak:circle:opsroom".to_owned());
         let request = build_request(&c, "apns:01234567890abcdef").expect("build");
         let key = request.idempotency_key.as_deref().expect("idempotency_key");
-        assert!(key.contains("ck:circle:opsroom"), "idempotency_key={key}");
+        assert!(key.contains("ak:circle:opsroom"), "idempotency_key={key}");
     }
 
     #[test]

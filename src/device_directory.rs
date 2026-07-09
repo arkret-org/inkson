@@ -733,7 +733,7 @@ mod tests {
     #[test]
     fn cache_hit_then_miss_after_invalidate() {
         let actor = "did:web:cache-test-alice";
-        let device = "ck:device:cache-1";
+        let device = "ak:device:cache-1";
         let key = public_key_from_directory_value(&test_did_key(22)).unwrap();
         store_entry(actor, device, Some(key.clone()));
         match cached_device_signing_key(actor, device) {
@@ -752,7 +752,7 @@ mod tests {
     #[test]
     fn negative_entry_resolves_to_negative_hit() {
         let actor = "did:web:cache-test-bob";
-        let device = "ck:device:cache-neg";
+        let device = "ak:device:cache-neg";
         store_entry(actor, device, None);
         assert!(matches!(
             cached_device_signing_key(actor, device),
@@ -761,7 +761,7 @@ mod tests {
         invalidate(actor, device);
     }
 
-    const TEST_DEVICE_ID: &str = "ck:device:01904100-0000-7000-8000-000000000001";
+    const TEST_DEVICE_ID: &str = "ak:device:01904100-0000-7000-8000-000000000001";
 
     #[test]
     fn directory_verdict_revoked_is_negative_even_with_key() {
@@ -841,7 +841,7 @@ mod tests {
                                 "authority_did": "did:web:auth.example",
                                 "authorization_ref": "did:web:managed-alice.example#device-enrollment"
                             },
-                            "device_authorize_event_id": "ck:event:01904100-0000-7000-8000-000000000011"
+                            "device_authorize_event_id": "ak:event:01904100-0000-7000-8000-000000000011"
                         }
                     }
                 }
@@ -896,7 +896,7 @@ mod tests {
     };
     use ed25519_dalek::Signer;
 
-    const TIER2_TRUST_DOMAIN: &str = "ck:trust_domain:example.net";
+    const TIER2_TRUST_DOMAIN: &str = "ak:trust_domain:example.net";
 
     /// In-memory [`DidAnchor`] backed by a fixed actor→document map.
     struct TestAnchor {
@@ -1071,7 +1071,7 @@ mod tests {
     }
 
     const TIER2_ACTOR: &str = "did:web:tier2-alice.example";
-    const TIER2_DEVICE: &str = "ck:device:01904100-0000-7000-8000-0000000000a1";
+    const TIER2_DEVICE: &str = "ak:device:01904100-0000-7000-8000-0000000000a1";
 
     #[test]
     fn tier2_well_formed_chain_is_cross_signed() {

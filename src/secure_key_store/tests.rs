@@ -49,8 +49,8 @@ fn login_adopt_preserves_returning_account_device_identity() {
     set_active_device_seed_scope(None);
     let store = MemorySecureKeyStore::new();
     let account = "did:web:alice.example";
-    let old_device = "ck:device:01964137-0000-7000-8000-000000000001";
-    let bootstrap_device = "ck:device:01964137-0000-7000-8000-000000000002";
+    let old_device = "ak:device:01964137-0000-7000-8000-000000000001";
+    let bootstrap_device = "ak:device:01964137-0000-7000-8000-000000000002";
     let old_seed = [1u8; 32];
     let bootstrap_seed = [2u8; 32];
 
@@ -89,7 +89,7 @@ fn login_adopt_rehomes_bootstrap_material_for_first_time_account() {
     set_active_device_seed_scope(None);
     let store = MemorySecureKeyStore::new();
     let account = "did:web:alice.example";
-    let bootstrap_device = "ck:device:01964137-0000-7000-8000-000000000002";
+    let bootstrap_device = "ak:device:01964137-0000-7000-8000-000000000002";
     let bootstrap_seed = [2u8; 32];
 
     store_signing_seed_scoped(&store, None, &bootstrap_seed).expect("bootstrap seed");
@@ -124,10 +124,10 @@ fn signin_reset_preserves_account_identity_and_rotates_grant_binding() {
     let _reset = SeedScopeReset;
     let store = MemorySecureKeyStore::new();
     let account = "did:web:alice.example";
-    let account_device = "ck:device:01964137-0000-7000-8000-000000000001";
+    let account_device = "ak:device:01964137-0000-7000-8000-000000000001";
     let account_seed = [1u8; 32];
     let bootstrap_seed = [2u8; 32];
-    let bootstrap_device = "ck:device:01964137-0000-7000-8000-000000000002";
+    let bootstrap_device = "ak:device:01964137-0000-7000-8000-000000000002";
     let old_grant_binding = [3u8; 32];
 
     set_active_device_seed_scope(Some(account));
@@ -661,11 +661,11 @@ fn history_secrets_json_drops_malformed_entries() {
 /// the IndexedDB-required and no-localStorage-mirror tiers (key material).
 #[test]
 fn history_secret_store_key_is_classified_indexeddb_only() {
-    let key = mls_history_secret_store_key("ck:realm:abc123");
+    let key = mls_history_secret_store_key("ak:realm:abc123");
     assert!(key.starts_with(MLS_HISTORY_SECRET_KEY_PREFIX));
     assert!(is_wasm_indexeddb_required_secret_key(&key));
     assert!(is_wasm_no_localstorage_mirror_key(&key));
     // Stable across calls (no nonce / randomness in the key derivation).
-    assert_eq!(key, mls_history_secret_store_key("ck:realm:abc123"));
-    assert_ne!(key, mls_history_secret_store_key("ck:realm:other"));
+    assert_eq!(key, mls_history_secret_store_key("ak:realm:abc123"));
+    assert_ne!(key, mls_history_secret_store_key("ak:realm:other"));
 }

@@ -194,7 +194,7 @@ test("card detail embeds discussion directly without discussion chrome", async (
   const chatBody = await chatSend.then((request) => request.postDataJSON());
   expect(chatBody.kind).toBe("ck.message.create");
   expect(chatBody.payload.message_id).toMatch(/^ck:message:/);
-  expect(chatBody.payload.strand_id).toContain("ck:strand:");
+  expect(chatBody.payload.strand_id).toContain("ak:strand:");
   expect(chatBody.payload.track_name).toBe("discussion");
   expect(chatBody.payload.content.kind).toBe("ck.content.text");
   expect(chatBody.payload.content.body).toBe("hello @did:web:bob.example about #ck:task:123");

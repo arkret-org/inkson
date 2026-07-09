@@ -9,7 +9,7 @@ use super::{
 };
 
 /// Build a `ck.strand.watch.set` operation. Spec:
-/// `cokret-spec/spec/v1/zh/models/strand-and-message.md §8.3` —
+/// `arkret-spec/spec/v1/zh/models/strand-and-message.md §8.3` —
 /// writes the cas-register cell `ck.component.strand.watch.v1` keyed by
 /// `(strand_id, watcher_actor_id)`.
 ///
@@ -45,7 +45,7 @@ pub fn strand_watch_set(
 }
 
 /// Build a `ck.strand.tracks.update` operation. Spec:
-/// `cokret-spec/spec/v1/zh/models/strand-and-message.md §3` (post dc01ad7).
+/// `arkret-spec/spec/v1/zh/models/strand-and-message.md §3` (post dc01ad7).
 ///
 /// This is the single unified track-mutation event that replaces
 /// `ck.strand.track.{enable,disable,update,set_primary}`.

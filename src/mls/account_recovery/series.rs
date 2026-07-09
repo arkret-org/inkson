@@ -54,7 +54,7 @@ pub(super) fn series_supersedes_digest(previous: &Value) -> Result<String> {
 
 /// Generate a fresh protocol `backup_id` for a new envelope in a series.
 pub(super) fn fresh_backup_id() -> String {
-    format!("ck:backup:{}", crate::operation::uuid_v7())
+    format!("ak:backup:{}", crate::operation::uuid_v7())
 }
 
 /// Verify the `supersedes` chain of a key-backup series back to genesis.

@@ -276,7 +276,7 @@ pub fn LoginPanel(
                 div { class: "auth-logo", "C" }
                 div {
                     h1 { if auto_capture_callback { "Completing sign in" } else { "Sign in" } }
-                    p { "Cokret" }
+                    p { "Arkret" }
                 }
             }
 
@@ -581,7 +581,7 @@ pub(crate) async fn start_oidc_strand(
     let discovery_url = oidc_discovery_url(&method).ok_or_else(|| {
         "OIDC method published neither openid_configuration nor an issuer.".to_owned()
     })?;
-    // Standard OpenID Connect Discovery 1.0 — no Cokret-private OAuth family.
+    // Standard OpenID Connect Discovery 1.0 — no Arkret-private OAuth family.
     let discovery = fetch_oidc_discovery(&discovery_url)
         .await
         .map_err(|error| format!("OIDC discovery failed: {error}"))?;
@@ -831,7 +831,7 @@ async fn finish_oidc_callback(
         // carried over an older bootstrap/pending id for a first-time account;
         // overwrite it immediately so the next secure-store bootstrap does not
         // bind the durable signer to a device id different from the bearer
-        // grant's `urn:cokret:client:device:*` scope.
+        // grant's `urn:arkret:client:device:*` scope.
         if let Err(error) = crate::secure_key_store::store_device_id_scoped(
             secure_store.as_ref(),
             Some(&canonical_actor),
@@ -985,18 +985,18 @@ mod tests {
         let _reset = SeedScopeReset;
         crate::secure_key_store::set_active_device_seed_scope(Some("did:web:old.example"));
 
-        restore_oidc_callback_device_seed_scope("ck:device:01964137-0000-7000-8000-000000000001");
+        restore_oidc_callback_device_seed_scope("ak:device:01964137-0000-7000-8000-000000000001");
 
         assert_eq!(crate::secure_key_store::active_device_seed_scope(), None);
         assert_eq!(
             crate::secure_key_store::pending_login_device_id().as_deref(),
-            Some("ck:device:01964137-0000-7000-8000-000000000001")
+            Some("ak:device:01964137-0000-7000-8000-000000000001")
         );
     }
 
     #[test]
     fn interactive_sign_in_reuses_known_account_device_id() {
-        let existing = "ck:device:01964137-0000-7000-8000-000000000001";
+        let existing = "ak:device:01964137-0000-7000-8000-000000000001";
         assert_eq!(
             interactive_sign_in_device_id("did:web:alice.example", existing),
             existing
@@ -1020,7 +1020,7 @@ mod tests {
         let mut store = crate::local_state::isolated_store_for_tests("completed-login-dpop-key");
         let secure_store = crate::secure_key_store::MemorySecureKeyStore::default();
         let actor = "did:web:alice.example";
-        let device = "ck:device:01964137-0000-7000-8000-000000000001";
+        let device = "ak:device:01964137-0000-7000-8000-000000000001";
         let old_seed = [3_u8; 32];
         let new_record = dpop_record_for_seed([7_u8; 32]);
 
@@ -1052,8 +1052,8 @@ mod tests {
 
     #[test]
     fn persisted_session_grant_from_login_carries_refresh_material() {
-        let device_id = "ck:device:01964137-0000-7000-8000-000000000001";
-        let grant_id = "ck:grant:01964137-0000-7000-8000-000000000001";
+        let device_id = "ak:device:01964137-0000-7000-8000-000000000001";
+        let grant_id = "ak:grant:01964137-0000-7000-8000-000000000001";
         let grant = SessionGrantState {
             principal_id: cokret_sdk::Did::new("did:web:alice.example".to_owned()).unwrap(),
             device_id: Some(cokret_sdk::DeviceId::new(device_id.to_owned()).unwrap()),
@@ -1061,7 +1061,7 @@ mod tests {
             grant_jwt: "grant.jwt".to_owned(),
             expires_at: "2026-05-29T12:00:00Z".parse().unwrap(),
             audience: "https://local.host/api".to_owned(),
-            granted_scope: vec!["urn:cokret:principal-server:session.bind".to_owned()],
+            granted_scope: vec!["urn:arkret:principal-server:session.bind".to_owned()],
             session_public_key: "public-key".to_owned(),
             dpop_jkt: Some("dpop-jkt".to_owned()),
         };

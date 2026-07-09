@@ -14,7 +14,7 @@ fn events_batch_response_rejects_partial_acceptance() {
         "status": "partial",
         "rejected": [
             {
-                "id": "ck:event:2",
+                "id": "ak:event:2",
                 "reason_code": "capability_denied",
                 "detail": "actor is not a member"
             }

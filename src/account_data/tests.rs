@@ -123,7 +123,7 @@ fn set_recomputes_digest() {
 
 #[test]
 fn realm_remark_key_round_trip() {
-    let realm_id = "ck:realm:0196419b-0000-7000-8000-000000000000";
+    let realm_id = "ak:realm:0196419b-0000-7000-8000-000000000000";
     let key = realm_remark_account_data_key(realm_id);
     assert_eq!(key, format!("ck.contacts.realm.{realm_id}"));
     assert_eq!(realm_id_from_realm_remark_key(&key), Some(realm_id));
@@ -150,7 +150,7 @@ fn realm_remark_serialises_minimal_payload() {
     // Empty fields MUST NOT appear on the wire — keeps the payload
     // tombstone-friendly and avoids leaking placeholder data.
     let remark = RealmRemark::new(
-        "ck:realm:0196419b-0000-7000-8000-000000000000",
+        "ak:realm:0196419b-0000-7000-8000-000000000000",
         "Acme · Eng",
     );
     let wire = serde_json::to_value(&remark).unwrap();
@@ -158,7 +158,7 @@ fn realm_remark_serialises_minimal_payload() {
         wire["subject"],
         serde_json::json!({
             "kind": "realm",
-            "id": "ck:realm:0196419b-0000-7000-8000-000000000000"
+            "id": "ak:realm:0196419b-0000-7000-8000-000000000000"
         })
     );
     assert_eq!(wire["local_name"], "Acme · Eng");
@@ -170,7 +170,7 @@ fn realm_remark_serialises_minimal_payload() {
 
 #[test]
 fn realm_remark_display_name_prefers_local_name() {
-    let r = RealmRemark::new("ck:realm:abc", "Acme · Eng");
+    let r = RealmRemark::new("ak:realm:abc", "Acme · Eng");
     assert_eq!(r.display_name("Engineering"), "Acme · Eng");
     let empty = RealmRemark {
         local_name: "   ".into(),
@@ -196,7 +196,7 @@ fn realm_remark_is_empty_treats_whitespace_as_tombstone() {
 
 #[test]
 fn realm_remark_pinned_builder_preserves_private_fields() {
-    let realm_id = "ck:realm:0196419b-0000-7000-8000-000000000000";
+    let realm_id = "ak:realm:0196419b-0000-7000-8000-000000000000";
     let existing = RealmRemark {
         version: 1,
         subject: RemarkSubject {
@@ -235,7 +235,7 @@ fn realm_remark_pinned_builder_preserves_private_fields() {
 
 #[test]
 fn realm_remark_unpin_builder_can_tombstone_empty_remark() {
-    let realm_id = "ck:realm:0196419b-0000-7000-8000-000000000000";
+    let realm_id = "ak:realm:0196419b-0000-7000-8000-000000000000";
     let existing = RealmRemark::with_pinned_preserving_fields(
         realm_id,
         None,
@@ -394,7 +394,7 @@ fn block_target_in_dedupes_per_kind_and_value_and_stamps_entry_id() {
         list[0]
             .entry_id
             .as_deref()
-            .is_some_and(|id| id.starts_with("ck:block:"))
+            .is_some_and(|id| id.starts_with("ak:block:"))
     );
     // Same (kind, value) is a no-op even with different metadata.
     assert!(!block_target_in(
@@ -489,7 +489,7 @@ fn build_blocklist_account_data_body_emits_domain_and_expiry_fields() {
     assert_eq!(entry["mode"], "block");
     assert_eq!(entry["applies_to"], json!(["dm"]));
     assert_eq!(entry["expires_at"], "2026-08-01T00:00:00Z");
-    assert!(entry["entry_id"].as_str().unwrap().starts_with("ck:block:"));
+    assert!(entry["entry_id"].as_str().unwrap().starts_with("ak:block:"));
 }
 
 #[test]
@@ -579,11 +579,11 @@ fn build_client_ui_body_only_emits_present_fields() {
     assert!(body.get("avatar_blob_ref").is_none());
 
     let mut per_realm = BTreeMap::new();
-    per_realm.insert("ck:realm:abc".to_owned(), "kanban".to_owned());
+    per_realm.insert("ak:realm:abc".to_owned(), "kanban".to_owned());
     let body = build_client_ui_body(Some("night"), Some(true), &per_realm, None);
     assert_eq!(body["theme"], "night");
     assert_eq!(body["sidebar_collapsed"], true);
-    assert_eq!(body["per_realm_view"]["ck:realm:abc"], "kanban");
+    assert_eq!(body["per_realm_view"]["ak:realm:abc"], "kanban");
 
     // Empty theme string is dropped (treated as unset).
     let body = build_client_ui_body(Some(""), Some(false), &BTreeMap::new(), None);
@@ -594,7 +594,7 @@ fn build_client_ui_body_only_emits_present_fields() {
 // ── A4b — avatar_blob_ref round-trip through client.ui ─────────────
 #[test]
 fn avatar_blob_ref_round_trips_through_client_ui() {
-    let blob_ref = "ck:blob:sha256:0123456789abcdef";
+    let blob_ref = "ak:blob:sha256:0123456789abcdef";
     let body = build_client_ui_body(Some("light"), None, &BTreeMap::new(), Some(blob_ref));
     assert_eq!(body["avatar_blob_ref"], blob_ref);
     assert_eq!(
@@ -664,7 +664,7 @@ fn merge_client_ui_theme_prefers_remote_when_different() {
 #[test]
 fn build_account_data_set_emits_canonical_kind() {
     let op = build_account_data_set(
-        "ck:realm:0196419b-0000-7000-8000-000000000001",
+        "ak:realm:0196419b-0000-7000-8000-000000000001",
         "did:web:alice",
         &AccountDataKey::ClientReadReceipts,
         json!({"send": false}),
@@ -680,7 +680,7 @@ fn build_account_data_set_emits_canonical_kind() {
 #[test]
 fn productivity_account_data_keys_use_sdk_private_derivation() {
     let ns = b"inkson-account-data-test-key";
-    let target_ref = "ck:strand:01904100-0000-7000-8000-000000000001";
+    let target_ref = "ak:strand:01904100-0000-7000-8000-000000000001";
     let snooze = snooze_account_data_key(ns, target_ref).unwrap();
     let saved = saved_account_data_key(ns, "Focus", target_ref).unwrap();
     let draft = draft_account_data_key(
@@ -691,13 +691,13 @@ fn productivity_account_data_keys_use_sdk_private_derivation() {
     )
     .unwrap();
     let manifest =
-        search_index_manifest_account_data_key(ns, "ck:realm:01904100-0000-7000-8000-000000000001")
+        search_index_manifest_account_data_key(ns, "ak:realm:01904100-0000-7000-8000-000000000001")
             .unwrap();
     let transfer = file_transfer_account_data_key(ns, "0123456789abcdefghijkl").unwrap();
 
     for key in [&snooze, &saved, &draft, &manifest, &transfer] {
         assert!(validate_private_account_data_key(key).is_ok());
-        assert!(!key.contains("ck:strand:"));
+        assert!(!key.contains("ak:strand:"));
         assert!(!key.contains("Focus"));
     }
 }
@@ -705,14 +705,14 @@ fn productivity_account_data_keys_use_sdk_private_derivation() {
 #[test]
 fn scheduled_send_key_requires_message_typed_id() {
     assert!(
-        scheduled_send_account_data_key("ck:message:01904100-0000-7000-8000-000000000001").is_ok()
+        scheduled_send_account_data_key("ak:message:01904100-0000-7000-8000-000000000001").is_ok()
     );
     assert!(scheduled_send_account_data_key("not-a-message-id").is_err());
 }
 
 #[test]
 fn contact_and_realm_remarks_are_encrypted_account_data() {
-    let realm_id = "ck:realm:01904100-0000-7000-8000-000000000001";
+    let realm_id = "ak:realm:01904100-0000-7000-8000-000000000001";
     let realm_key = realm_remark_account_data_key(realm_id);
     let actor_key = contact_remark_account_data_key("did:web:alice.example");
 
@@ -742,7 +742,7 @@ fn contact_and_realm_remarks_are_encrypted_account_data() {
 fn private_account_data_builders_emit_encrypted_payload() {
     let key = "ck.scheduled_send.v1:ck:message:01904100-0000-7000-8000-000000000001";
     let op = build_private_account_data_set(
-        "ck:realm:0196419b-0000-7000-8000-000000000001",
+        "ak:realm:0196419b-0000-7000-8000-000000000001",
         "did:web:alice",
         key,
         json!({"ciphertext": "opaque"}),
@@ -755,7 +755,7 @@ fn private_account_data_builders_emit_encrypted_payload() {
     assert_eq!(op.payload["encrypted_payload"]["ciphertext"], "opaque");
 
     let tombstone = build_private_account_data_tombstone(
-        "ck:realm:0196419b-0000-7000-8000-000000000001",
+        "ak:realm:0196419b-0000-7000-8000-000000000001",
         "did:web:alice",
         key,
     )
@@ -769,13 +769,13 @@ fn private_account_data_builder_can_emit_cas_guard() {
     let key = draft_account_data_key(
         b"inkson-account-data-test-key",
         cokret_sdk::DraftKind::Message,
-        "ck:realm:01904100-0000-7000-8000-000000000001",
+        "ak:realm:01904100-0000-7000-8000-000000000001",
         DRAFT_MESSAGE_SLOT,
     )
     .unwrap();
     let expected = format!("sha256:{}", "12".repeat(32));
     let op = build_private_account_data_set_with_cas(
-        "ck:realm:0196419b-0000-7000-8000-000000000001",
+        "ak:realm:0196419b-0000-7000-8000-000000000001",
         "did:web:alice",
         &key,
         json!({"ciphertext": "opaque"}),
@@ -790,7 +790,7 @@ fn private_account_data_builder_can_emit_cas_guard() {
 
     assert!(
         build_private_account_data_set_with_cas(
-            "ck:realm:0196419b-0000-7000-8000-000000000001",
+            "ak:realm:0196419b-0000-7000-8000-000000000001",
             "did:web:alice",
             &key,
             json!({"ciphertext": "opaque"}),
@@ -806,7 +806,7 @@ fn generic_builder_does_not_put_private_values_under_body() {
         "ck.scheduled_send.v1:ck:message:01904100-0000-7000-8000-000000000001".to_owned(),
     );
     let op = build_account_data_set(
-        "ck:realm:0196419b-0000-7000-8000-000000000001",
+        "ak:realm:0196419b-0000-7000-8000-000000000001",
         "did:web:alice",
         &key,
         json!({"ciphertext": "opaque"}),
@@ -819,7 +819,7 @@ fn generic_builder_does_not_put_private_values_under_body() {
 #[test]
 fn build_account_data_tombstone_emits_canonical_payload() {
     let op = build_account_data_tombstone(
-        "ck:realm:0196419b-0000-7000-8000-000000000001",
+        "ak:realm:0196419b-0000-7000-8000-000000000001",
         "did:web:alice",
         &AccountDataKey::ClientReadReceipts,
     )
@@ -834,7 +834,7 @@ fn build_account_data_tombstone_emits_canonical_payload() {
 #[test]
 fn draft_sync_value_requires_origin_device_id_and_current_slot_shape() {
     let missing_origin = json!({
-        "target_ref": "ck:realm:01904100-0000-7000-8000-000000000001",
+        "target_ref": "ak:realm:01904100-0000-7000-8000-000000000001",
         "kind": "message",
         "draft_slot": "compose",
         "content": {"body": "draft"},
@@ -844,10 +844,10 @@ fn draft_sync_value_requires_origin_device_id_and_current_slot_shape() {
     assert!(draft_sync_value_from_account_data(&missing_origin).is_err());
 
     let bad_slot = build_message_draft_sync_value(
-        "ck:realm:01904100-0000-7000-8000-000000000001",
+        "ak:realm:01904100-0000-7000-8000-000000000001",
         json!({"body": "draft"}),
         "01970e589d21-0000-a13f9c2e",
-        "ck:device:01904100-0000-7000-8000-000000000001",
+        "ak:device:01904100-0000-7000-8000-000000000001",
         "2026-06-07T00:00:00Z",
     )
     .map(|mut value| {
@@ -866,18 +866,18 @@ fn draft_sync_value_requires_origin_device_id_and_current_slot_shape() {
 #[test]
 fn draft_merge_uses_hlc_then_origin_device_tiebreaker() {
     let local = build_message_draft_sync_value(
-        "ck:realm:01904100-0000-7000-8000-000000000001",
+        "ak:realm:01904100-0000-7000-8000-000000000001",
         json!({"body": "local"}),
         "01970e589d21-0000-a13f9c2e",
-        "ck:device:01904100-0000-7000-8000-000000000001",
+        "ak:device:01904100-0000-7000-8000-000000000001",
         "2026-06-07T00:00:00Z",
     )
     .unwrap();
     let newer_remote = build_message_draft_sync_value(
-        "ck:realm:01904100-0000-7000-8000-000000000001",
+        "ak:realm:01904100-0000-7000-8000-000000000001",
         json!({"body": "remote"}),
         "01970e589d22-0000-a13f9c2e",
-        "ck:device:01904100-0000-7000-8000-000000000002",
+        "ak:device:01904100-0000-7000-8000-000000000002",
         "2026-06-07T00:00:00Z",
     )
     .unwrap();
@@ -887,10 +887,10 @@ fn draft_merge_uses_hlc_then_origin_device_tiebreaker() {
     assert_eq!(merged.conflict_copy.unwrap().content["body"], "local");
 
     let same_hlc_higher_device = build_message_draft_sync_value(
-        "ck:realm:01904100-0000-7000-8000-000000000001",
+        "ak:realm:01904100-0000-7000-8000-000000000001",
         json!({"body": "device wins"}),
         "01970e589d21-0000-a13f9c2e",
-        "ck:device:01904100-0000-7000-8000-000000000002",
+        "ak:device:01904100-0000-7000-8000-000000000002",
         "2026-06-07T00:00:00Z",
     )
     .unwrap();
@@ -902,18 +902,18 @@ fn draft_merge_uses_hlc_then_origin_device_tiebreaker() {
 #[test]
 fn draft_merge_fails_closed_for_same_hlc_and_device_with_different_content() {
     let local = build_message_draft_sync_value(
-        "ck:realm:01904100-0000-7000-8000-000000000001",
+        "ak:realm:01904100-0000-7000-8000-000000000001",
         json!({"body": "a"}),
         "01970e589d21-0000-a13f9c2e",
-        "ck:device:01904100-0000-7000-8000-000000000001",
+        "ak:device:01904100-0000-7000-8000-000000000001",
         "2026-06-07T00:00:00Z",
     )
     .unwrap();
     let remote = build_message_draft_sync_value(
-        "ck:realm:01904100-0000-7000-8000-000000000001",
+        "ak:realm:01904100-0000-7000-8000-000000000001",
         json!({"body": "b"}),
         "01970e589d21-0000-a13f9c2e",
-        "ck:device:01904100-0000-7000-8000-000000000001",
+        "ak:device:01904100-0000-7000-8000-000000000001",
         "2026-06-07T00:00:00Z",
     )
     .unwrap();
@@ -924,17 +924,17 @@ fn draft_merge_fails_closed_for_same_hlc_and_device_with_different_content() {
 fn legacy_local_drafts_migrate_to_private_draft_account_data() {
     let mut drafts = BTreeMap::new();
     drafts.insert(
-        "ck:realm:01904100-0000-7000-8000-000000000001".to_owned(),
+        "ak:realm:01904100-0000-7000-8000-000000000001".to_owned(),
         " draft text ".to_owned(),
     );
     drafts.insert(
-        "ck:realm:01904100-0000-7000-8000-000000000002".to_owned(),
+        "ak:realm:01904100-0000-7000-8000-000000000002".to_owned(),
         "   ".to_owned(),
     );
     let migrated = migrate_legacy_local_drafts(
         b"inkson-account-data-test-key",
         &drafts,
-        "ck:device:01904100-0000-7000-8000-000000000001",
+        "ak:device:01904100-0000-7000-8000-000000000001",
         "01970e589d21-0000-a13f9c2e",
         "2026-06-07T00:00:00Z",
     )
@@ -943,11 +943,11 @@ fn legacy_local_drafts_migrate_to_private_draft_account_data() {
     let item = &migrated[0];
     assert!(item.account_data_key.starts_with("ck.draft.v1:message:"));
     assert!(item.account_data_key.ends_with(":compose"));
-    assert!(!item.account_data_key.contains("ck:realm:"));
+    assert!(!item.account_data_key.contains("ak:realm:"));
     assert_eq!(item.value.content["body"], "draft text");
     assert_eq!(
         item.value.origin_device_id.to_string(),
-        "ck:device:01904100-0000-7000-8000-000000000001"
+        "ak:device:01904100-0000-7000-8000-000000000001"
     );
     assert!(item.state_digest.starts_with("sha256:"));
 }
@@ -958,7 +958,7 @@ fn legacy_saved_items_migrate_to_independent_private_values() {
         b"inkson-account-data-test-key",
         &[LegacySavedItem {
             collection_title: "Focus".to_owned(),
-            target_ref: "ck:message:01904100-0000-7000-8000-000000000001".to_owned(),
+            target_ref: "ak:message:01904100-0000-7000-8000-000000000001".to_owned(),
             note: Some(" read later ".to_owned()),
         }],
         "01970e589d21-0000-a13f9c2e",
@@ -967,7 +967,7 @@ fn legacy_saved_items_migrate_to_independent_private_values() {
     assert_eq!(migrated.len(), 1);
     assert!(migrated[0].account_data_key.starts_with("ck.saved.v1:"));
     assert!(!migrated[0].account_data_key.contains("Focus"));
-    assert!(!migrated[0].account_data_key.contains("ck:message:"));
+    assert!(!migrated[0].account_data_key.contains("ak:message:"));
     assert_eq!(migrated[0].value.collection_title, "Focus");
     assert_eq!(migrated[0].value.note.as_deref(), Some("read later"));
 

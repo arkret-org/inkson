@@ -540,7 +540,7 @@ pub fn english_translations() -> TranslationDict {
     dict.set("mls_unlock.subtitle", "Existing device approval");
     dict.set(
         "mls_unlock.description",
-        "This browser is signed in, but it is not an authorized device for encrypted history yet. Cokret v1 requires an already-authorized device to approve a new device before MLS history keys are shared.",
+        "This browser is signed in, but it is not an authorized device for encrypted history yet. Arkret v1 requires an already-authorized device to approve a new device before MLS history keys are shared.",
     );
     dict.set(
         "mls_unlock.approve_step_existing_title",
@@ -623,7 +623,7 @@ pub fn english_translations() -> TranslationDict {
     );
     dict.set(
         "mls_backup.warning.passphrase_loss",
-        "Save the 24 recovery words when they appear. They are shown once and are not stored by Cokret; existing devices keep working if you lose them, but new devices cannot restore this history.",
+        "Save the 24 recovery words when they appear. They are shown once and are not stored by Arkret; existing devices keep working if you lose them, but new devices cannot restore this history.",
     );
     dict.set(
         "mls_backup.warning.existing_key",
@@ -1247,7 +1247,7 @@ pub fn english_translations() -> TranslationDict {
     );
 
     // R3 spec sync (b47ff6ec) — new error toast strings surfaced by the
-    // cokret-spec error code expansion (CKP-0010 media binding,
+    // arkret-spec error code expansion (CKP-0010 media binding,
     // agent FSM, handle homograph wire-level enforce, recovery
     // policy). The HTTP error reply carries a stable
     // `code` / `reason` field that the toast layer maps via these
@@ -1731,11 +1731,11 @@ fn add_r3_error_keys(dict: &mut TranslationDict) {
     );
     dict.set(
         "error.call.recording_artifact_pipeline_bypassed",
-        "Recording destination is not a Cokret authenticated blob — refusing to record.",
+        "Recording destination is not a Arkret authenticated blob — refusing to record.",
     );
     dict.set(
         "error.call.transcription_artifact_pipeline_bypassed",
-        "Transcript destination is not a Cokret authenticated blob — refusing transcription.",
+        "Transcript destination is not a Arkret authenticated blob — refusing transcription.",
     );
     dict.set(
         "error.call.media_service_binding_uncovered",
@@ -1844,7 +1844,7 @@ fn add_circle_error_keys(dict: &mut TranslationDict) {
     dict.set("object_link.open", "打开分享链接");
     dict.set(
         "object_link.open_placeholder",
-        "粘贴 web+cokret: 或 https 分享链接",
+        "粘贴 web+arkret: 或 https 分享链接",
     );
     dict.set("object_link.opening", "正在打开链接…");
     dict.set("object_link.error.unavailable", "链接不可用或已过期。");

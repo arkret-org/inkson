@@ -17,17 +17,17 @@
 /// Identifies the cas-register cell that holds a Strand's position inside
 /// a given Board. Per
 /// [`spec/v1/zh/models/realm-and-space.md`
-/// §3.6](../../cokret-spec/spec/v1/zh/models/realm-and-space.md) the cell key is
+/// §3.6](../../arkret-spec/spec/v1/zh/models/realm-and-space.md) the cell key is
 /// `ck:cell:ck.component.strand.position.v1:<board_space_id>:<strand_id>` — a Strand can appear on
 /// multiple Boards with **independent** position cells, so the Board id is part of the subject.
 pub fn strand_position_cell_id(board_space_id: &str, strand_id: &str) -> String {
-    format!("ck:cell:ck.component.strand.position.v1:{board_space_id}:{strand_id}")
+    format!("ak:cell:ck.component.strand.position.v1:{board_space_id}:{strand_id}")
 }
 
 /// CAS pre-state that the caller expects to find on the position cell
 /// before the write applies. Compiled into a `head_eq` precondition per
 /// [`spec/v1/zh/sync/operations-sync.md`
-/// §9.1](../../cokret-spec/spec/v1/zh/sync/operations-sync.md).
+/// §9.1](../../arkret-spec/spec/v1/zh/sync/operations-sync.md).
 ///
 /// - `Initial` ⇒ `head_eq null` — the Strand is not yet on this Board.
 /// - `At { list_space_id, rank }` ⇒ `head_eq { list_space_id, rank }` — the write expects the
@@ -48,7 +48,7 @@ pub enum StrandPositionExpectation {
 
 /// Effect value for a `ck.strand.move` / `ck.strand.reorder` write. Compiles
 /// to a cas-register `set` with `{"list_space_id", "rank"}` per
-/// [`operations-sync.md` §9.1-9.2](../../cokret-spec/spec/v1/zh/sync/operations-sync.md).
+/// [`operations-sync.md` §9.1-9.2](../../arkret-spec/spec/v1/zh/sync/operations-sync.md).
 ///
 /// `Remove` is the "Strand leaves the Board" effect — compiles to
 /// `set null`. Reducer side this also retires the derived
@@ -72,12 +72,12 @@ mod tests {
     #[test]
     fn strand_position_cell_id_is_composite_board_strand() {
         let cell = strand_position_cell_id(
-            "ck:space:0196419b-0000-7000-8000-000000000010",
-            "ck:strand:01abcd",
+            "ak:space:0196419b-0000-7000-8000-000000000010",
+            "ak:strand:01abcd",
         );
         assert_eq!(
             cell,
-            "ck:cell:ck.component.strand.position.v1:ck:space:0196419b-0000-7000-8000-000000000010:ck:strand:01abcd"
+            "ak:cell:ck.component.strand.position.v1:ck:space:0196419b-0000-7000-8000-000000000010:ck:strand:01abcd"
         );
     }
 }

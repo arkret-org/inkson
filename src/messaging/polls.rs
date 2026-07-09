@@ -357,7 +357,7 @@ pub fn build_poll_create_op(
     let message_ref = event
         .event_id
         .as_str()
-        .replacen("ck:event:", "ck:message:", 1);
+        .replacen("ak:event:", "ak:message:", 1);
     event.payload["message_id"] = json!(message_ref);
     Ok(event)
 }
@@ -495,9 +495,9 @@ mod tests {
         draft.set_option(0, "yes".into());
         draft.set_option(1, "no".into());
         let op = build_poll_create_op(
-            "ck:realm:01904100-0000-7000-8000-000000000010",
+            "ak:realm:01904100-0000-7000-8000-000000000010",
             "did:web:alice.example",
-            "ck:strand:01904100-0000-7000-8000-000000000011",
+            "ak:strand:01904100-0000-7000-8000-000000000011",
             &draft,
         )
         .expect("builds");
@@ -519,7 +519,7 @@ mod tests {
         assert_eq!(answers[0]["text"]["body"], "yes");
         // The stamped wire message id is readable back for poll_ref use.
         let message_ref = poll_message_ref(&op).unwrap();
-        assert!(message_ref.starts_with("ck:message:"));
+        assert!(message_ref.starts_with("ak:message:"));
         cokret_sdk::schema::event_payload_validator_catalog()
             .unwrap()
             .validate_payload(op.kind.as_str(), &op.payload)
@@ -529,10 +529,10 @@ mod tests {
     #[test]
     fn build_poll_vote_op_emits_canonical_poll_response_block() {
         let op = build_poll_vote_op(
-            "ck:realm:01904100-0000-7000-8000-000000000010",
+            "ak:realm:01904100-0000-7000-8000-000000000010",
             "did:web:alice.example",
-            "ck:strand:01904100-0000-7000-8000-000000000011",
-            "ck:message:01904100-0000-7000-8000-000000000012",
+            "ak:strand:01904100-0000-7000-8000-000000000011",
+            "ak:message:01904100-0000-7000-8000-000000000012",
             &["opt-1".to_owned()],
         )
         .expect("builds");
@@ -542,7 +542,7 @@ mod tests {
         assert!(block.get("choice").is_none());
         assert_eq!(
             block["poll_response"]["poll_ref"],
-            "ck:message:01904100-0000-7000-8000-000000000012"
+            "ak:message:01904100-0000-7000-8000-000000000012"
         );
         assert_eq!(block["poll_response"]["selections"], json!(["opt-1"]));
         cokret_sdk::schema::event_payload_validator_catalog()
@@ -557,9 +557,9 @@ mod tests {
         // poll_ref (schema requires ck:message:<uuid7>).
         assert!(
             build_poll_vote_op(
-                "ck:realm:01904100-0000-7000-8000-000000000010",
+                "ak:realm:01904100-0000-7000-8000-000000000010",
                 "did:web:alice.example",
-                "ck:strand:01904100-0000-7000-8000-000000000011",
+                "ak:strand:01904100-0000-7000-8000-000000000011",
                 &new_poll_id(),
                 &["opt-0".to_owned()],
             )
@@ -582,16 +582,16 @@ mod tests {
             }
         });
         let card = PollCard::from_content(
-            "ck:event:1".to_owned(),
-            Some("ck:message:01904100-0000-7000-8000-000000000012"),
+            "ak:event:1".to_owned(),
+            Some("ak:message:01904100-0000-7000-8000-000000000012"),
             &content,
         )
         .unwrap();
         assert_eq!(
             card.poll_id,
-            "ck:message:01904100-0000-7000-8000-000000000012"
+            "ak:message:01904100-0000-7000-8000-000000000012"
         );
-        assert_eq!(card.message_id, "ck:event:1");
+        assert_eq!(card.message_id, "ak:event:1");
         assert_eq!(card.question, "ship?");
         assert_eq!(card.max_selections, 2);
         assert_eq!(card.options[0].id, "yes");
@@ -608,7 +608,7 @@ mod tests {
             "question": "ship?",
             "options": [{"id": "yes", "label": "Yes"}, {"id": "no", "label": "No"}]
         });
-        assert!(PollCard::from_content("ck:event:1".to_owned(), None, &flat).is_none());
+        assert!(PollCard::from_content("ak:event:1".to_owned(), None, &flat).is_none());
         // Unknown tally-disclosure mode.
         let undisclosed = json!({
             "kind": "ck.content.poll",
@@ -619,7 +619,7 @@ mod tests {
                 "answers": [{"id": "yes", "text": {"kind": "ck.content.text", "body": "Yes"}}]
             }
         });
-        assert!(PollCard::from_content("ck:event:1".to_owned(), None, &undisclosed).is_none());
+        assert!(PollCard::from_content("ak:event:1".to_owned(), None, &undisclosed).is_none());
     }
 
     #[test]
@@ -628,12 +628,12 @@ mod tests {
             "kind": "ck.content.poll.response",
             "body": "poll response",
             "poll_response": {
-                "poll_ref": "ck:message:01904100-0000-7000-8000-000000000012",
+                "poll_ref": "ak:message:01904100-0000-7000-8000-000000000012",
                 "selections": ["opt-0", "opt-2"]
             }
         });
         let (poll_ref, selections) = poll_response_from_content(&canonical).unwrap();
-        assert_eq!(poll_ref, "ck:message:01904100-0000-7000-8000-000000000012");
+        assert_eq!(poll_ref, "ak:message:01904100-0000-7000-8000-000000000012");
         assert_eq!(selections, vec!["opt-0".to_owned(), "opt-2".to_owned()]);
         // Legacy flat shape fails closed.
         let flat = json!({

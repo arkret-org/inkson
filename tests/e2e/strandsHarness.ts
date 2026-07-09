@@ -1,11 +1,11 @@
 import { expect, test } from "@playwright/test";
 import { mockCokretApi } from "./mockCokretApi";
 
-export const DEMO_REALM = "ck:realm:0196419b-0000-7000-8000-000000000000";
-export const CHILD_REALM = "ck:realm:01launchchild0000000000000";
+export const DEMO_REALM = "ak:realm:0196419b-0000-7000-8000-000000000000";
+export const CHILD_REALM = "ak:realm:01launchchild0000000000000";
 const DEFAULT_SERVER_URL = "https://local.host";
 const DEFAULT_ACCOUNT_DID = "did:web:alice.example";
-const DEFAULT_DEVICE_ID = "ck:device:01964137-0000-7000-8000-0000000000a1";
+const DEFAULT_DEVICE_ID = "ak:device:01964137-0000-7000-8000-0000000000a1";
 const DEFAULT_SESSION_CREDENTIAL = "sx:e2e-token";
 const TEST_SESSION_INJECTION_KEY = "inkson.test.session_injection.v1";
 const DEFAULT_DPOP_SEED_B64URL = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA";
@@ -147,7 +147,7 @@ function sessionInjectionRecord(
 ) {
   return {
     grant_jwt: DEFAULT_SESSION_CREDENTIAL,
-    grant_id: "ck:grant:0196419b-0000-7000-8000-00000000e2e1",
+    grant_id: "ak:grant:0196419b-0000-7000-8000-00000000e2e1",
     audience: DEFAULT_SERVER_URL,
     dpop_seed_b64url: DEFAULT_DPOP_SEED_B64URL,
     ...overrides,
@@ -257,7 +257,7 @@ export async function seedLocalRecoveryKeyMetadata(page: import("@playwright/tes
     // mls.recovery_backup.v1 — presence of a backup_id makes
     // mls_recovery_backup_configured() true, which both bypasses the S6 create
     // gate and drives the backup prompt's "use existing key" branch.
-    const backupState = JSON.stringify({ backup_id: "ck:backup:e2e-existing-0000" });
+    const backupState = JSON.stringify({ backup_id: "ak:backup:e2e-existing-0000" });
     const state = JSON.parse(localStorage.getItem("inkson.local_state.v1") ?? "{}");
     state.private_data = {
       ...(state.private_data ?? {}),
@@ -288,7 +288,7 @@ export async function dismissMlsBackupModal(page: import("@playwright/test").Pag
 export function registerStrandsBeforeEach() {
   test.beforeEach(async ({ page }, testInfo) => {
     const initialDeviceId = testInfo.title.startsWith("fresh browser requires device authorization")
-      ? "ck:device:01964137-0000-7000-8000-0000000000b2"
+      ? "ak:device:01964137-0000-7000-8000-0000000000b2"
       : DEFAULT_DEVICE_ID;
     await mockCokretApi(page, {
       currentDeviceId: initialDeviceId,

@@ -28,10 +28,10 @@ fn builds_persistable_registration_state() {
     let request = build_register_request("dev_inkson").unwrap();
     let mut response = ChimePushRegisterDeviceOutcome::default();
     response.ok = true;
-    response.registration_id = Some("ck:push:test".to_owned());
+    response.registration_id = Some("ak:push:test".to_owned());
     let state = registration_state_from_response(&request, &response);
 
-    assert_eq!(state.registration_id.as_deref(), Some("ck:push:test"));
+    assert_eq!(state.registration_id.as_deref(), Some("ak:push:test"));
     assert_eq!(state.device_id, "dev_inkson");
     assert!(state.push_key_hash.starts_with("sha256:"));
     assert!(!state.push_key_hash.contains("placeholder"));
@@ -42,12 +42,12 @@ fn builds_unregister_request_from_existing_state() {
     let request = build_register_request("dev_inkson").unwrap();
     let mut response = ChimePushRegisterDeviceOutcome::default();
     response.ok = true;
-    response.registration_id = Some("ck:push:test".to_owned());
+    response.registration_id = Some("ak:push:test".to_owned());
     let state = registration_state_from_response(&request, &response);
     let unregister = build_unregister_request("dev_inkson", Some(&state)).unwrap();
 
     assert_eq!(unregister.device_id, "dev_inkson");
-    assert_eq!(unregister.registration_id.as_deref(), Some("ck:push:test"));
+    assert_eq!(unregister.registration_id.as_deref(), Some("ak:push:test"));
     assert_eq!(unregister.app_id.as_deref(), Some("inkson"));
 }
 
@@ -120,10 +120,10 @@ fn blind_wakeup_payload_lint_rejects_stable_identifiers() {
     validate_blind_wakeup_payload(&ok).expect("redacted wakeup is allowed");
 
     for payload in [
-        serde_json::json!({"realm_id": "ck:realm:demo"}),
-        serde_json::json!({"event": {"event_id": "ck:event:1"}}),
+        serde_json::json!({"realm_id": "ak:realm:demo"}),
+        serde_json::json!({"event": {"event_id": "ak:event:1"}}),
         serde_json::json!({"sender": "did:web:alice.example"}),
-        serde_json::json!({"items": [{"strand_id": "ck:strand:demo"}]}),
+        serde_json::json!({"items": [{"strand_id": "ak:strand:demo"}]}),
         serde_json::json!({"local_name": "Alice from Ops"}),
         serde_json::json!({"remark": "private label"}),
         serde_json::json!({"opaque": "did:web:alice.example"}),

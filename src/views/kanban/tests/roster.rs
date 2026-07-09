@@ -2,7 +2,7 @@ use super::*;
 
 #[test]
 fn realm_member_roster_reads_r32_wire_shape() {
-    // R3.2 (cokret-spec @ b56cab1): roster entries carry
+    // R3.2 (arkret-spec @ b56cab1): roster entries carry
     // `actor_id` + `membership` + optional `subject_id` /
     // `identity_event_ids` / `member_display_state_digest`. Handle
     // strings only appear inside signed handle_claim evidence.
@@ -12,7 +12,7 @@ fn realm_member_roster_reads_r32_wire_shape() {
                 "actor_id": "did:web:acme.example:users:alice",
                 "membership": "join",
                 "subject_id": "did:web:acme.example:principals:alice",
-                "identity_event_ids": ["ck:event:01904100-0000-7000-8000-00000000000a"],
+                "identity_event_ids": ["ak:event:01904100-0000-7000-8000-00000000000a"],
                 "member_display_state_digest": "sha256:abababababababababababababababababababababababababababababababab",
                 "handle_claims": [{
                     "subject": "did:web:acme.example:principals:alice",
@@ -36,7 +36,7 @@ fn realm_member_roster_reads_r32_wire_shape() {
     assert_eq!(alice.membership.as_deref(), Some("join"));
     assert_eq!(
         alice.identity_event_ids,
-        vec!["ck:event:01904100-0000-7000-8000-00000000000a".to_owned()]
+        vec!["ak:event:01904100-0000-7000-8000-00000000000a".to_owned()]
     );
     assert!(alice.member_display_state_digest.is_some());
     assert_eq!(
@@ -108,7 +108,7 @@ fn member_display_label_prefers_handle_shaped_user_label() {
     // roster handle evidence or a materialized subject DID exposes one.
     let identity = MemberIdentity {
         schema: cokret_sdk::MEMBER_IDENTITY_SCHEMA.to_owned(),
-        realm_id: cokret_sdk::RealmId::new("ck:realm:01904100-0000-7000-8000-000000000001")
+        realm_id: cokret_sdk::RealmId::new("ak:realm:01904100-0000-7000-8000-000000000001")
             .unwrap(),
         actor_id: cokret_sdk::Did::new("did:web:acme.example:users:alice".to_owned()).unwrap(),
         subject_id: cokret_sdk::Did::new("did:web:acme.example:users:alice".to_owned()).unwrap(),
@@ -226,19 +226,19 @@ fn member_handle_lookup_subject_falls_back_to_actor_id() {
 fn member_roster_realm_context_prefers_projection_realm_id() {
     assert_eq!(
         member_roster_realm_context(
-            "ck:space:board",
-            "ck:realm:prop",
-            Some(&json!({"realm_id": "ck:realm:projection"})),
+            "ak:space:board",
+            "ak:realm:prop",
+            Some(&json!({"realm_id": "ak:realm:projection"})),
         ),
-        "ck:realm:projection"
+        "ak:realm:projection"
     );
     assert_eq!(
-        member_roster_realm_context("ck:realm:board", "ck:realm:projection-fallback", None),
-        "ck:realm:projection-fallback"
+        member_roster_realm_context("ak:realm:board", "ak:realm:projection-fallback", None),
+        "ak:realm:projection-fallback"
     );
     assert_eq!(
-        member_roster_realm_context("ck:realm:selected", "", None),
-        "ck:realm:selected"
+        member_roster_realm_context("ak:realm:selected", "", None),
+        "ak:realm:selected"
     );
 }
 

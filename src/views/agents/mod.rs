@@ -1,6 +1,6 @@
 //! Agents - endpoint registry + interop_session monitor.
 //!
-//! Spec: `cokret-spec/spec/v1/zh/extensions/agent-integration.md`.
+//! Spec: `arkret-spec/spec/v1/zh/extensions/agent-integration.md`.
 //!
 //! Mirror of [`crate::views::applets::AppletsPanel`] but at the agent
 //! layer:

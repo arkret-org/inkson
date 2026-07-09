@@ -182,7 +182,7 @@ pub(crate) struct LockedStrand {
 }
 
 /// Snapshot of the card-being-dragged's pre-move state. The cas-register
-/// model in [`operations-sync.md` §9.1](../../cokret-spec/spec/v1/zh/sync/operations-sync.md)
+/// model in [`operations-sync.md` §9.1](../../arkret-spec/spec/v1/zh/sync/operations-sync.md)
 /// requires the source `(list_space_id, rank)` to seed `head_eq` on the
 /// resulting `ck.strand.move` / `ck.strand.reorder` Move. We capture it on
 /// `ondragstart` so the drop handler doesn't have to re-derive it from

@@ -105,7 +105,7 @@ fn derive_blocklist_entry_id(kind: &str, value: &str, blocked_at: &str) -> Strin
     kind.hash(&mut hasher);
     value.hash(&mut hasher);
     blocked_at.hash(&mut hasher);
-    format!("ck:block:{:016x}", hasher.finish())
+    format!("ak:block:{:016x}", hasher.finish())
 }
 
 impl BlocklistEntry {

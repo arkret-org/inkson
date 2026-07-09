@@ -1,6 +1,6 @@
 //! SDK-backed v1 Event Envelope builder used by inkson's active write paths.
 //!
-//! Spec source of truth: `cokret-spec/spec/v1/artifacts/schemas/event-envelope.schema.json`.
+//! Spec source of truth: `arkret-spec/spec/v1/artifacts/schemas/event-envelope.schema.json`.
 //!
 //! # Signing
 //!
@@ -263,7 +263,7 @@ impl OperationBuilder {
             .map_err(|err| anyhow::anyhow!("event timestamp is not canonical RFC3339: {err}"))?
             .with_timezone(&chrono::Utc);
         Ok(cokret_sdk::Event {
-            event_id: cokret_sdk::EventId::new(format!("ck:event:{}", uuid_v7()))
+            event_id: cokret_sdk::EventId::new(format!("ak:event:{}", uuid_v7()))
                 .map_err(|err| anyhow::anyhow!("generated event_id is invalid: {err}"))?,
             kind: self.op_type,
             realm_id: cokret_sdk::RealmId::new(realm_id)
@@ -392,10 +392,10 @@ impl EventEnvelopeExt for EventEnvelope {
 }
 
 fn typed_operation_id(operation_id: &str) -> String {
-    if operation_id.starts_with("ck:operation:") {
+    if operation_id.starts_with("ak:operation:") {
         operation_id.to_owned()
     } else {
-        format!("ck:operation:{operation_id}")
+        format!("ak:operation:{operation_id}")
     }
 }
 

@@ -19,13 +19,13 @@
 Clone the workspace and the sibling SDK:
 
 ```powershell
-git clone <cokret> cokret
-cd cokret
+git clone <arkret> arkret
+cd arkret
 ls
-# inkson/ chime/ soland/ floria/ cokret-rust-sdk/ ...
+# inkson/ chime/ soland/ floria/ arkret-rust-sdk/ ...
 ```
 
-All commands below run from `cokret/inkson/`.
+All commands below run from `arkret/inkson/`.
 
 The `justfile` mirrors the same build plan for local use:
 

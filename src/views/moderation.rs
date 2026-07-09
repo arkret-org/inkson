@@ -590,17 +590,17 @@ mod tests {
     #[test]
     fn lift_removes_the_standing_decision_it_targets() {
         let ops = vec![
-            decision_op("ck:event:1", "ck:event:a", "quarantine"),
-            decision_op("ck:event:2", "ck:event:b", "hard_deny"),
+            decision_op("ak:event:1", "ak:event:a", "quarantine"),
+            decision_op("ak:event:2", "ak:event:b", "hard_deny"),
             json!({
                 "kind": "ck.moderation.decision.lift",
-                "body": { "target_ref": "ck:event:a", "decision_ref": "ck:event:1" }
+                "body": { "target_ref": "ak:event:a", "decision_ref": "ak:event:1" }
             }),
         ];
         let (decisions, _) = project_moderation_queues(&ops);
         assert_eq!(decisions.len(), 1);
-        assert_eq!(decisions[0].target_ref, "ck:event:b");
-        assert_eq!(decisions[0].decision_ref, "ck:event:2");
+        assert_eq!(decisions[0].target_ref, "ak:event:b");
+        assert_eq!(decisions[0].decision_ref, "ak:event:2");
         assert_eq!(decisions[0].decision, "hard_deny");
     }
 
@@ -622,20 +622,20 @@ mod tests {
             json!({
                 "kind": "ck.moderation.appeal.submit",
                 "body": {
-                    "appeal_id": "ck:appeal:1",
-                    "decision_ref": "ck:decision:1",
-                    "target_ref": "ck:event:a",
+                    "appeal_id": "ak:appeal:1",
+                    "decision_ref": "ak:decision:1",
+                    "target_ref": "ak:event:a",
                 }
             }),
             json!({
                 "kind": "ck.moderation.appeal.review",
-                "body": { "appeal_id": "ck:appeal:1" }
+                "body": { "appeal_id": "ak:appeal:1" }
             }),
         ];
         let (_, appeals) = project_moderation_queues(&open);
         assert_eq!(appeals.len(), 1);
         assert_eq!(appeals[0].state, "under_review");
-        assert_eq!(appeals[0].decision_ref, "ck:decision:1");
+        assert_eq!(appeals[0].decision_ref, "ak:decision:1");
 
         // A terminal decision/close removes it from the open queue.
         for terminal in [
@@ -643,7 +643,7 @@ mod tests {
             "ck.moderation.appeal.close",
         ] {
             let mut ops = open.clone();
-            ops.push(json!({ "kind": terminal, "body": { "appeal_id": "ck:appeal:1" } }));
+            ops.push(json!({ "kind": terminal, "body": { "appeal_id": "ak:appeal:1" } }));
             let (_, appeals) = project_moderation_queues(&ops);
             assert!(
                 appeals.is_empty(),

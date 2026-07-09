@@ -348,7 +348,7 @@ mod tests {
         let scope = strand_discussion_scope();
 
         merger.set_marker(ReadMarker {
-            realm_id: "ck:realm:test".to_owned(),
+            realm_id: "ak:realm:test".to_owned(),
             actor_id: "did:web:alice".to_owned(),
             device_id: "device-1".to_owned(),
             read_scope: scope.clone(),
@@ -360,7 +360,7 @@ mod tests {
             set_at: Hlc::now("inkson"),
         });
 
-        let merged = merger.get_merged_marker("ck:realm:test", "did:web:alice", &scope);
+        let merged = merger.get_merged_marker("ak:realm:test", "did:web:alice", &scope);
         assert!(merged.is_some());
         assert_eq!(merged.unwrap().position.event_id, "event-5");
     }
@@ -371,7 +371,7 @@ mod tests {
         let scope = strand_discussion_scope();
 
         merger.set_marker(ReadMarker {
-            realm_id: "ck:realm:test".to_owned(),
+            realm_id: "ak:realm:test".to_owned(),
             actor_id: "did:web:alice".to_owned(),
             device_id: "device-1".to_owned(),
             read_scope: scope.clone(),
@@ -384,7 +384,7 @@ mod tests {
         });
 
         merger.set_marker(ReadMarker {
-            realm_id: "ck:realm:test".to_owned(),
+            realm_id: "ak:realm:test".to_owned(),
             actor_id: "did:web:alice".to_owned(),
             device_id: "device-2".to_owned(),
             read_scope: scope.clone(),
@@ -397,13 +397,13 @@ mod tests {
         });
 
         let merged = merger
-            .get_merged_marker("ck:realm:test", "did:web:alice", &scope)
+            .get_merged_marker("ak:realm:test", "did:web:alice", &scope)
             .unwrap();
         // Should use the device with the highest HLC (device-2)
         assert_eq!(merged.position.event_id, "event-8");
         assert_eq!(merged.device_id, "device-2");
 
-        let devices = merger.get_device_markers("ck:realm:test", "did:web:alice", &scope);
+        let devices = merger.get_device_markers("ak:realm:test", "did:web:alice", &scope);
         assert_eq!(devices.len(), 2);
     }
 
@@ -413,7 +413,7 @@ mod tests {
         let scope = strand_discussion_scope();
 
         merger.set_marker(ReadMarker {
-            realm_id: "ck:realm:test".to_owned(),
+            realm_id: "ak:realm:test".to_owned(),
             actor_id: "did:web:alice".to_owned(),
             device_id: "device-1".to_owned(),
             read_scope: scope.clone(),
@@ -425,13 +425,13 @@ mod tests {
             set_at: Hlc::now("inkson"),
         });
 
-        let marker = merger.get_device_marker("ck:realm:test", "did:web:alice", &scope, "device-1");
+        let marker = merger.get_device_marker("ak:realm:test", "did:web:alice", &scope, "device-1");
         assert!(marker.is_some());
         assert_eq!(marker.unwrap().position.event_id, "event-5");
 
         assert!(
             merger
-                .get_device_marker("ck:realm:test", "did:web:alice", &scope, "device-99")
+                .get_device_marker("ak:realm:test", "did:web:alice", &scope, "device-99")
                 .is_none()
         );
     }
@@ -439,7 +439,7 @@ mod tests {
     fn strand_discussion_scope() -> ReadMarkerScope {
         ReadMarkerScope {
             kind: "strand".to_owned(),
-            object_ref: Some("ck:strand:test".to_owned()),
+            object_ref: Some("ak:strand:test".to_owned()),
             track_name: Some("discussion".to_owned()),
             track_scope: None,
         }
@@ -448,14 +448,14 @@ mod tests {
     #[test]
     fn test_authorization_filter() {
         let grant = DirectoryGrant {
-            resource_selectors: vec!["ck:realm:public".to_owned()],
+            resource_selectors: vec!["ak:realm:public".to_owned()],
         };
 
         let filter = AuthorizationFilter::new(vec![grant]);
 
         let results = vec![
-            ("Realm A", "ck:realm:public"),
-            ("Realm B", "ck:realm:private"),
+            ("Realm A", "ak:realm:public"),
+            ("Realm B", "ak:realm:private"),
         ];
 
         let filtered = filter.filter_results(results, |r| r.1);
@@ -468,7 +468,7 @@ mod tests {
         let mut manager = DiscoveryManager::new();
 
         manager.set_realm_discovery(RealmDiscovery {
-            realm_id: "ck:realm:test".to_owned(),
+            realm_id: "ak:realm:test".to_owned(),
             discoverability: Discoverability::Public,
             directory_visibility: DirectoryVisibility {
                 show_in_directory: true,
@@ -488,7 +488,7 @@ mod tests {
             updated_at: Hlc::now("inkson"),
         });
 
-        let config = manager.get_realm_discovery("ck:realm:test");
+        let config = manager.get_realm_discovery("ak:realm:test");
         assert!(config.is_some());
         assert_eq!(config.unwrap().discoverability, Discoverability::Public);
     }
@@ -496,7 +496,7 @@ mod tests {
     #[test]
     fn test_push_e2ee_metadata() {
         let metadata = PushE2EEMetadata {
-            realm_id: "ck:realm:test".to_owned(),
+            realm_id: "ak:realm:test".to_owned(),
             is_encrypted: true,
             message_type: "message".to_owned(),
             sender_hint: Some("alice".to_owned()),
@@ -505,6 +505,6 @@ mod tests {
 
         let json = serde_json::to_string(&metadata).unwrap();
         assert!(json.contains("is_encrypted"));
-        assert!(json.contains("ck:realm:test"));
+        assert!(json.contains("ak:realm:test"));
     }
 }

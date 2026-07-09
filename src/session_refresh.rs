@@ -627,7 +627,7 @@ mod tests {
             status: reqwest::StatusCode::FORBIDDEN,
             error: crate::api_error::decode_cokret_error(
                 reqwest::StatusCode::FORBIDDEN,
-                br#"{"ok":false,"error":{"code":"capability_denied","message":"session grant is not active: revoked"},"request_id":"ck:request:01964137-0000-7000-8000-000000000012"}"#,
+                br#"{"ok":false,"error":{"code":"capability_denied","message":"session grant is not active: revoked"},"request_id":"ak:request:01964137-0000-7000-8000-000000000012"}"#,
             ),
         }
         .into();
@@ -684,7 +684,7 @@ mod tests {
             status: reqwest::StatusCode::FORBIDDEN,
             error: crate::api_error::decode_cokret_error(
                 reqwest::StatusCode::FORBIDDEN,
-                br#"{"ok":false,"error":{"code":"capability_denied","message":"actor is not a member of the event Space"},"request_id":"ck:request:01964137-0000-7000-8000-000000000012"}"#,
+                br#"{"ok":false,"error":{"code":"capability_denied","message":"actor is not a member of the event Space"},"request_id":"ak:request:01964137-0000-7000-8000-000000000012"}"#,
             ),
         }
         .into();

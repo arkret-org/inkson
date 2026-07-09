@@ -1,9 +1,9 @@
 # 用户密钥生命周期流程设计（设备验证 / Recovery Key / PCR 加密 / 备份）
 
 > 状态：设计文档（design，非 normative）。
-> 依据：`cokret-spec/spec/v1/zh/identity/key-management.md`（§3.3 / §5 / §7 / §8）、
-> `cokret-spec/spec/v1/zh/crypto-media/device-lifecycle.md`（§1.2 / §2 / §10 / §15）、
-> `cokret-spec/spec/v1/zh/models/realm-and-space.md`（§2.3 / §2.8.1）。
+> 依据：`arkret-spec/spec/v1/zh/identity/key-management.md`（§3.3 / §5 / §7 / §8）、
+> `arkret-spec/spec/v1/zh/crypto-media/device-lifecycle.md`（§1.2 / §2 / §10 / §15）、
+> `arkret-spec/spec/v1/zh/models/realm-and-space.md`（§2.3 / §2.8.1）。
 > 本文描述 inkson 客户端面向最终用户的完整流程编排；协议细节以 spec 为准。
 > 配套的 spec 缺口（F1–F6）已于 2026-06-12 全部修复，记录见 `_spec_review/2026-06-12-key-lifecycle-strand-review.md`。
 > 关键结论：**PCR 的两条加密 floor 已在协议层（`realm.schema.json` PCR 守卫）钉死为 `e2ee_required`**，

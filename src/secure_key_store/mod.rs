@@ -89,7 +89,7 @@ const WASM_LOCAL_IDENTITY_SEED_KEY: &str = "identity.local.primary.v1";
 /// seed, so it is classified as a seed-grade secret: IndexedDB-only on wasm
 /// (no localStorage tier) and excluded from the unload-race localStorage
 /// mirror, exactly like an Ed25519 signing seed.
-pub(crate) const PENDING_LOGOUT_SECRET_KEY: &str = "cokret.pending_logout.v1";
+pub(crate) const PENDING_LOGOUT_SECRET_KEY: &str = "arkret.pending_logout.v1";
 
 #[cfg(target_arch = "wasm32")]
 const WASM_ED25519_SEED_INDEXEDDB_REQUIRED: &str = "wasm Ed25519 signing seeds require IndexedDbSecureKeyStore with a non-extractable \

@@ -8,7 +8,7 @@ use super::util::{
     pkce_code_challenge_s256, preferred_pkce_method, random_url_safe_token,
 };
 use super::{
-    COKRET_DEVICE_SCOPE_PREFIX, INKSON_OIDC_CLIENT_ID, OidcDiscoveryDocument, OidcScaffoldBundle,
+    ARKRET_DEVICE_SCOPE_PREFIX, INKSON_OIDC_CLIENT_ID, OidcDiscoveryDocument, OidcScaffoldBundle,
     PersistedOidcScaffold,
 };
 
@@ -18,7 +18,7 @@ pub fn active_oidc_redirect_uri() -> String {
 
 /// T1.Y1 — build the authorize scaffold (PKCE state/nonce/verifier + the full
 /// `authorization_endpoint` URL) directly from standard OIDC discovery and the
-/// chosen `methods[].oidc`, without any Cokret-private bridge. `client_id` is
+/// chosen `methods[].oidc`, without any Arkret-private bridge. `client_id` is
 /// taken from the auth method when published, else falls back to the native
 /// inkson client id.
 pub fn build_oidc_authorize_scaffold(
@@ -68,9 +68,9 @@ pub fn build_oidc_authorize_scaffold(
 }
 
 /// Build a standard OpenID Connect authorization-code + PKCE authorize URL
-/// from a discovery document and auth method. No Cokret-private scopes are
+/// from a discovery document and auth method. No Arkret-private scopes are
 /// required: `scope` defaults to `openid` plus any `methods[].scopes`, and the
-/// stable device binding rides as a `urn:cokret:client:device:{id}` scope.
+/// stable device binding rides as a `urn:arkret:client:device:{id}` scope.
 #[allow(clippy::too_many_arguments)]
 fn build_standard_authorize_url(
     discovery: &OidcDiscoveryDocument,
@@ -107,12 +107,12 @@ fn build_standard_authorize_url(
         scope_tokens.push("offline_access".to_owned());
     }
     // Bind this OAuth session to the stable device id so introspection returns
-    // a stable `org.cokret.device_id` (avoids per-session device drift →
+    // a stable `org.arkret.device_id` (avoids per-session device drift →
     // cursor_integrity_invalid). This is a parameterized capability scope,
     // accepted verbatim by the issuer; not gated by discovery scopes_supported.
     let device_id = device_id.trim();
     if !device_id.is_empty() {
-        scope_tokens.push(format!("{COKRET_DEVICE_SCOPE_PREFIX}{device_id}"));
+        scope_tokens.push(format!("{ARKRET_DEVICE_SCOPE_PREFIX}{device_id}"));
     }
     let scope = scope_tokens.join(" ");
     let pkce_method = preferred_pkce_method(&discovery.code_challenge_methods_supported)

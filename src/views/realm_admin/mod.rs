@@ -33,4 +33,4 @@ pub use organization::{RealmOrganizationPanel, ServerAdminSignal, is_server_admi
 // helpers (and their tests) are preserved in git history.
 
 // (Move-strand test module removed; the wire shapes are now covered by soland's events.submit tests
-// and cokret-spec fixtures.)
+// and arkret-spec fixtures.)

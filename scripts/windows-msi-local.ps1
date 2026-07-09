@@ -54,7 +54,7 @@ try {
         @"
 <?xml version="1.0" encoding="UTF-8"?>
 <Wix xmlns="http://schemas.microsoft.com/wix/2006/wi">
-  <Product Id="*" Name="inkson" Language="1033" Version="$Version" Manufacturer="Cokret" UpgradeCode="00000000-0000-0000-0000-000000000000">
+  <Product Id="*" Name="inkson" Language="1033" Version="$Version" Manufacturer="Arkret" UpgradeCode="00000000-0000-0000-0000-000000000000">
     <Package InstallerVersion="500" Compressed="yes" InstallScope="perUser" />
     <MediaTemplate />
     <Directory Id="TARGETDIR" Name="SourceDir">

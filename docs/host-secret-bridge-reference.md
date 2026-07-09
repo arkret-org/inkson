@@ -8,7 +8,7 @@ implements that trait + registers it via
 
 Sprint Q1 第二十四增量 (H1-mobile-host) ships **reference
 implementations** for the host side that drop into a Dioxus mobile
-project. The inkson / cokret-rust-sdk / soland workspaces do NOT
+project. The inkson / arkret-rust-sdk / soland workspaces do NOT
 link the JNI / Objective-C code — they can't, because the mobile
 toolchain isn't wired into the regular `cargo build`. The host
 project pastes these in, swaps the module path / package, then
@@ -35,10 +35,10 @@ when the host wants step-up.
 
 ### 1.1 Java helper (`SecureKeyStoreBridge.java`)
 
-Drop in `app/src/main/java/com/cokret/inkson/SecureKeyStoreBridge.java`:
+Drop in `app/src/main/java/com/arkret/inkson/SecureKeyStoreBridge.java`:
 
 ```java
-package com.cokret.inkson;
+package com.arkret.inkson;
 
 import android.security.keystore.KeyGenParameterSpec;
 import android.security.keystore.KeyProperties;
@@ -168,7 +168,7 @@ impl HostSecretBridge for AndroidJniSecretBridge {
                 .map_err(|e| SecureKeyStoreError::Backend(format!("new_string val: {e}")))?
                 .into();
             env.call_static_method(
-                "com/cokret/inkson/SecureKeyStoreBridge",
+                "com/arkret/inkson/SecureKeyStoreBridge",
                 "put",
                 "(Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;)Ljava/lang/String;",
                 &[(&s_service).into(), (&s_key).into(), (&s_val).into()],
@@ -190,7 +190,7 @@ impl HostSecretBridge for AndroidJniSecretBridge {
                 .into();
             let ret = env
                 .call_static_method(
-                    "com/cokret/inkson/SecureKeyStoreBridge",
+                    "com/arkret/inkson/SecureKeyStoreBridge",
                     "get",
                     "(Ljava/lang/String;Ljava/lang/String;)Ljava/lang/String;",
                     &[(&s_service).into(), (&s_key).into()],
@@ -220,7 +220,7 @@ impl HostSecretBridge for AndroidJniSecretBridge {
                 .map_err(|e| SecureKeyStoreError::Backend(format!("new_string key: {e}")))?
                 .into();
             env.call_static_method(
-                "com/cokret/inkson/SecureKeyStoreBridge",
+                "com/arkret/inkson/SecureKeyStoreBridge",
                 "delete",
                 "(Ljava/lang/String;Ljava/lang/String;)V",
                 &[(&s_service).into(), (&s_key).into()],

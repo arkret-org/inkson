@@ -609,8 +609,8 @@ mod tests {
         NotificationEvalContext {
             event_kind: "ck.message.create".to_owned(),
             notification_type: "message".to_owned(),
-            realm_id: "ck:realm:demo".to_owned(),
-            strand_id: Some("ck:strand:demo".to_owned()),
+            realm_id: "ak:realm:demo".to_owned(),
+            strand_id: Some("ak:strand:demo".to_owned()),
             strand_track: Some("discussion".to_owned()),
             body: Some("urgent launch note".to_owned()),
             watch_level: Some(WatchLevel::All),
@@ -648,7 +648,7 @@ mod tests {
                     "rule_id": "override.mute-realm",
                     "kind": "override",
                     "conditions": [
-                        {"kind": "field_match", "field": "realm_id", "pattern": "ck:realm:demo"}
+                        {"kind": "field_match", "field": "realm_id", "pattern": "ak:realm:demo"}
                     ],
                     "actions": ["dont_notify"]
                 },

@@ -1114,7 +1114,7 @@ pub fn build_action_approve_payload(
         .unwrap_or("");
     let target = request.get("target").cloned().unwrap_or(Value::Null);
     let mut payload = json!({
-        "approval_id": format!("ck:agent_approval:{}", crate::operation::uuid_v7()),
+        "approval_id": format!("ak:agent_approval:{}", crate::operation::uuid_v7()),
         "agent_principal_id": agent_principal_id,
         "controller_principal_id": controller_principal_id,
         "proposed_action": proposed_action,
@@ -1147,7 +1147,7 @@ pub fn build_action_reject_payload(
     reason: Option<&str>,
 ) -> Value {
     let mut payload = json!({
-        "rejection_id": format!("ck:agent_rejection:{}", crate::operation::uuid_v7()),
+        "rejection_id": format!("ak:agent_rejection:{}", crate::operation::uuid_v7()),
         "agent_principal_id": request
             .get("agent_principal_id")
             .and_then(Value::as_str)

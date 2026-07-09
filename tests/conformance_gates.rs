@@ -1,12 +1,12 @@
 //! Conformance gate: every typed builder in inkson MUST produce an
-//! EventEnvelope that validates against cokret-spec event-envelope.schema.json.
+//! EventEnvelope that validates against arkret-spec event-envelope.schema.json.
 //!
 //! Stream J of `_claude_todos.md`: for each typed builder in
 //! `inkson::event_builders`,
 //! run build, stamp the wire-only fields a real submitter would attach
 //! (`seal_basis` when the kind is a Control Move, `proofs[0]` from a real
 //! Ed25519 signer), serialise, and validate
-//! against `cokret-spec/spec/v1/artifacts/schemas/event-envelope.schema.json`.
+//! against `arkret-spec/spec/v1/artifacts/schemas/event-envelope.schema.json`.
 //! Schema distinguishes Control Moves, DataEvents, and a few bootstrap/facet
 //! reducer kinds; the gate therefore covers both the builder output and the
 //! sign-and-stamp pipeline immediately downstream.
@@ -29,8 +29,8 @@ fn spec_artifact(path: &str) -> PathBuf {
     let manifest = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     manifest
         .parent()
-        .expect("inkson lives next to cokret-spec")
-        .join("cokret-spec")
+        .expect("inkson lives next to arkret-spec")
+        .join("arkret-spec")
         .join("spec")
         .join("v1")
         .join("artifacts")
@@ -57,7 +57,7 @@ fn event_schema_validator() -> &'static jsonschema::Validator {
         let event_schema_id = event_schema
             .get("$id")
             .and_then(Value::as_str)
-            .unwrap_or("https://cokret.org/v1/schemas/event-envelope.schema.json")
+            .unwrap_or("https://arkret.org/v1/schemas/event-envelope.schema.json")
             .to_owned();
 
         let mut registry = Registry::new();
@@ -117,12 +117,12 @@ fn test_signing_key() -> &'static SigningKey {
     })
 }
 
-const TEST_REALM_ID: &str = "ck:realm:0196419b-0000-7000-8000-000000000001";
-const TEST_SPACE_ID: &str = "ck:space:0196419b-0000-7000-8000-000000000002";
+const TEST_REALM_ID: &str = "ak:realm:0196419b-0000-7000-8000-000000000001";
+const TEST_SPACE_ID: &str = "ak:space:0196419b-0000-7000-8000-000000000002";
 const TEST_ACTOR_ID: &str = "did:web:alice.example";
 const TEST_INVITEE_DID: &str = "did:web:bob.example";
 const TEST_ANCHOR_REF: &str =
-    "ck:seal:sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+    "ak:seal:sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
 const TEST_ROOT_HASH: &str =
     "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
 
@@ -186,9 +186,9 @@ fn schema_validator_rejects_obviously_invalid_envelope() {
     // Correct shape but wrong event_id pattern (should reject — uuid7
     // pattern requires `7<...>` in time-hi field).
     let bogus = serde_json::json!({
-        "event_id": "ck:event:not-a-uuid",
+        "event_id": "ak:event:not-a-uuid",
         "kind": "ck.realm.create",
-        "realm_id": "ck:realm:0196419b-0000-7000-8000-000000000001",
+        "realm_id": "ak:realm:0196419b-0000-7000-8000-000000000001",
         "actor_id": "did:web:alice.example",
         "actor_seq": 1,
         "created_at": "2026-05-21T13:00:00Z",
@@ -207,9 +207,9 @@ fn schema_validator_rejects_obviously_invalid_envelope() {
     // branch of the top-level `allOf`. If this slips through, the
     // schema validator is silently degraded to a syntax-only checker.
     let reducer_missing_required = serde_json::json!({
-        "event_id": "ck:event:0196419b-0000-7777-8000-000000000003",
+        "event_id": "ak:event:0196419b-0000-7777-8000-000000000003",
         "kind": "ck.realm.create",
-        "realm_id": "ck:realm:0196419b-0000-7000-8000-000000000001",
+        "realm_id": "ak:realm:0196419b-0000-7000-8000-000000000001",
         "actor_id": "did:web:alice.example",
         "actor_seq": 1,
         "created_at": "2026-05-21T13:00:00Z",
@@ -272,7 +272,7 @@ fn build_realm_create_event_matches_event_schema() {
         "restricted",
         "single_did",
         "sha256",
-        "ck:trust_domain:server.example",
+        "ak:trust_domain:server.example",
         &[],
         None,
         None,
@@ -426,7 +426,7 @@ fn build_member_state_event_matches_event_schema() {
         "restricted",
         "single_did",
         "sha256",
-        "ck:trust_domain:server.example",
+        "ak:trust_domain:server.example",
         &[TEST_INVITEE_DID.to_owned()],
         &[],
         None,

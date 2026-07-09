@@ -197,12 +197,12 @@ pub(crate) fn chat_message_redact_operation(
         reason: Some(reason.to_owned()),
         preserve: None,
     };
-    if target_id.starts_with("ck:event:") {
+    if target_id.starts_with("ak:event:") {
         payload.target_event_id = Some(
             cokret_sdk::EventId::new(target_id.to_owned())
                 .map_err(|err| anyhow::anyhow!("invalid redaction event target: {err}"))?,
         );
-    } else if target_id.starts_with("ck:message:") {
+    } else if target_id.starts_with("ak:message:") {
         payload.message_id = Some(
             cokret_sdk::MessageId::new(target_id.to_owned())
                 .map_err(|err| anyhow::anyhow!("invalid redaction message target: {err}"))?,
@@ -309,7 +309,7 @@ pub(crate) fn build_chat_reaction_add_operation(
 }
 
 pub(crate) fn is_schema_message_id(value: &str) -> bool {
-    let Some(suffix) = value.trim().strip_prefix("ck:message:") else {
+    let Some(suffix) = value.trim().strip_prefix("ak:message:") else {
         return false;
     };
     !suffix.is_empty()
@@ -319,7 +319,7 @@ pub(crate) fn is_schema_message_id(value: &str) -> bool {
 }
 
 pub(crate) fn new_chat_message_id() -> String {
-    format!("ck:message:{}", uuid_v7())
+    format!("ak:message:{}", uuid_v7())
 }
 
 pub(crate) fn schema_message_id_or_new(value: &str) -> String {

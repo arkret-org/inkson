@@ -18,14 +18,14 @@ fn mls_remove_membership_frontier_requires_revocation_evidence() {
 
 #[test]
 fn mls_remove_membership_frontier_is_canonicalized_without_seal_fallback() {
-    let b = event_id("ck:event:0196419b-0000-7000-8000-000000000002");
-    let a = event_id("ck:event:0196419b-0000-7000-8000-000000000001");
+    let b = event_id("ak:event:0196419b-0000-7000-8000-000000000002");
+    let a = event_id("ak:event:0196419b-0000-7000-8000-000000000001");
 
     let frontier = canonical_mls_remove_membership_frontier(&[b.clone(), a.clone(), b]).unwrap();
 
     assert_eq!(
         frontier,
-        vec![a, event_id("ck:event:0196419b-0000-7000-8000-000000000002")]
+        vec![a, event_id("ak:event:0196419b-0000-7000-8000-000000000002")]
     );
 }
 
@@ -135,7 +135,7 @@ fn idle_self_update_jitter_is_deterministic_and_bounded() {
     // YOU-02-004R — §5.6 deterministic member-order jitter (SHOULD).
     use chrono::{Duration, Utc};
     let started = Utc::now();
-    let group = "ck:mls:group:g1";
+    let group = "ak:mls:group:g1";
     let epoch = 7u64;
 
     // A given (group, epoch, member) slot is stable: same inputs ⇒ same

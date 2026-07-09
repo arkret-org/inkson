@@ -1,4 +1,4 @@
-//! Inkson-side wrappers for the Cokret object model objects.
+//! Inkson-side wrappers for the Arkret object model objects.
 //!
 //! Re-exports the SDK's canonical types and provides minimal builders that
 //! turn them into SDK event write actions. The
@@ -170,9 +170,9 @@ mod tests {
     #[test]
     fn morph_update_emits_canonical_kind() {
         let op = build_morph_update(
-            "ck:realm:0196419b-0000-7000-8000-0000000000ac",
+            "ak:realm:0196419b-0000-7000-8000-0000000000ac",
             "did:web:alice",
-            "ck:morph:0196419b-0000-7000-8000-000000000001",
+            "ak:morph:0196419b-0000-7000-8000-000000000001",
             json!({"metadata.title": "Roadmap"}),
         )
         .expect("builds")
@@ -180,7 +180,7 @@ mod tests {
         assert_eq!(op.kind.as_str(), "ck.morph.update");
         assert_eq!(
             op.payload["target_ref"],
-            "ck:morph:0196419b-0000-7000-8000-000000000001"
+            "ak:morph:0196419b-0000-7000-8000-000000000001"
         );
         assert!(
             op.payload.get("morph_id").is_none(),
@@ -192,9 +192,9 @@ mod tests {
     #[test]
     fn morph_update_rejects_create_locked_morph_type() {
         let err = build_morph_update(
-            "ck:realm:0196419b-0000-7000-8000-0000000000ac",
+            "ak:realm:0196419b-0000-7000-8000-0000000000ac",
             "did:web:alice",
-            "ck:morph:0196419b-0000-7000-8000-000000000001",
+            "ak:morph:0196419b-0000-7000-8000-000000000001",
             json!({"morph_type": "task"}),
         )
         .unwrap_err();
@@ -204,35 +204,35 @@ mod tests {
     #[test]
     fn relation_create_carries_kind_and_endpoints() {
         let op = build_relation_create(
-            "ck:realm:0196419b-0000-7000-8000-0000000000ac",
+            "ak:realm:0196419b-0000-7000-8000-0000000000ac",
             "did:web:alice",
-            "ck:relation:r1",
+            "ak:relation:r1",
             "contains",
-            "ck:strand:f1",
-            "ck:strand:f2",
+            "ak:strand:f1",
+            "ak:strand:f2",
         )
         .expect("builds")
         .build("node");
         assert_eq!(op.kind.as_str(), "ck.relation.create");
         // relation id is routed via target_ref, not a payload field.
-        assert_eq!(op.local_target_ref(), Some("ck:relation:r1"));
+        assert_eq!(op.local_target_ref(), Some("ak:relation:r1"));
         assert!(
             op.payload.get("relation_id").is_none(),
             "relation_id is not a relation_create_payload field"
         );
         assert_eq!(op.payload["kind"], "contains");
-        assert_eq!(op.payload["from_ref"], "ck:strand:f1");
-        assert_eq!(op.payload["to_ref"], "ck:strand:f2");
+        assert_eq!(op.payload["from_ref"], "ak:strand:f1");
+        assert_eq!(op.payload["to_ref"], "ak:strand:f2");
     }
 
     #[test]
     fn container_move_item_uses_spec_position_payload() {
         let op = build_container_move_item(
-            "ck:realm:0196419b-0000-7000-8000-0000000000ac",
+            "ak:realm:0196419b-0000-7000-8000-0000000000ac",
             "did:web:alice",
-            "ck:space:0196419b-0000-7000-8000-000000000001",
-            "ck:strand:f1",
-            "ck:strand:f1",
+            "ak:space:0196419b-0000-7000-8000-000000000001",
+            "ak:strand:f1",
+            "ak:strand:f1",
             "r0",
         )
         .expect("builds")
@@ -240,40 +240,40 @@ mod tests {
         assert_eq!(op.kind.as_str(), "ck.container.move_item");
         assert_eq!(
             op.local_target_ref(),
-            Some("ck:space:0196419b-0000-7000-8000-000000000001")
+            Some("ak:space:0196419b-0000-7000-8000-000000000001")
         );
         assert_eq!(
             op.payload["container_ref"],
-            "ck:space:0196419b-0000-7000-8000-000000000001"
+            "ak:space:0196419b-0000-7000-8000-000000000001"
         );
-        assert_eq!(op.payload["source_ref"], "ck:strand:f1");
-        assert_eq!(op.payload["target_ref"], "ck:strand:f1");
+        assert_eq!(op.payload["source_ref"], "ak:strand:f1");
+        assert_eq!(op.payload["target_ref"], "ak:strand:f1");
         assert_eq!(op.payload["rank"], "r0");
     }
 
     #[test]
     fn container_rebalance_flattens_items() {
         let op = build_container_rebalance(
-            "ck:realm:0196419b-0000-7000-8000-0000000000ac",
+            "ak:realm:0196419b-0000-7000-8000-0000000000ac",
             "did:web:alice",
-            "ck:space:0196419b-0000-7000-8000-000000000001",
-            "ck:strand:f1",
-            "ck:strand:f2",
+            "ak:space:0196419b-0000-7000-8000-000000000001",
+            "ak:strand:f1",
+            "ak:strand:f2",
             "r1",
             vec![
-                ("ck:strand:f1".to_owned(), "r0".to_owned()),
-                ("ck:strand:f2".to_owned(), "r1".to_owned()),
+                ("ak:strand:f1".to_owned(), "r0".to_owned()),
+                ("ak:strand:f2".to_owned(), "r1".to_owned()),
             ],
         )
         .build("node");
         assert_eq!(op.kind.as_str(), "ck.container.rebalance");
         assert_eq!(
             op.payload["container_ref"],
-            "ck:space:0196419b-0000-7000-8000-000000000001"
+            "ak:space:0196419b-0000-7000-8000-000000000001"
         );
-        assert_eq!(op.payload["target_ref"], "ck:strand:f2");
+        assert_eq!(op.payload["target_ref"], "ak:strand:f2");
         assert_eq!(op.payload["rank"], "r1");
-        assert_eq!(op.payload["items"][0]["item_ref"], "ck:strand:f1");
+        assert_eq!(op.payload["items"][0]["item_ref"], "ak:strand:f1");
         assert_eq!(op.payload["items"][1]["rank"], "r1");
     }
 }

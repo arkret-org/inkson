@@ -25,7 +25,7 @@ fn mls_snapshot_persists_and_round_trips_through_store() {
     // record.
     use crate::mls::persistence::encrypt_state;
     let path = temp_state_path("mls-snapshot-persist");
-    let realm = "ck:realm:round28-mls";
+    let realm = "ak:realm:round28-mls";
     let envelope = encrypt_state(
         realm,
         "deadbeef",
@@ -52,7 +52,7 @@ fn mls_snapshot_drop_clears_persisted_record() {
     use crate::mls::persistence::encrypt_state;
     let path = temp_state_path("mls-snapshot-drop");
     let mut store = LocalStateStore::with_path(path);
-    let realm = "ck:realm:drop-me";
+    let realm = "ak:realm:drop-me";
     store.save_mls_snapshot(realm, encrypt_state(realm, "abcd", 1, b"x", "p", b"salt"));
     assert!(store.mls_snapshot_for(realm).is_some());
     store.drop_mls_snapshot(realm);
@@ -64,7 +64,7 @@ fn logout_session_clear_preserves_account_e2ee_state() {
     use crate::mls::persistence::encrypt_state;
 
     let path = temp_state_path("logout-preserves-mls");
-    let realm = "ck:realm:logout-preserves";
+    let realm = "ak:realm:logout-preserves";
     let actor = "did:web:alice.example";
     let grant = PersistedSessionGrant {
         grant_jwt: "alice.grant".to_owned(),
@@ -72,7 +72,7 @@ fn logout_session_clear_preserves_account_e2ee_state() {
         grant_id: "g-alice".to_owned(),
         audience: "https://principal.example/api".to_owned(),
         principal_id: actor.to_owned(),
-        device_id: "ck:device:01904100-0000-7000-8000-000000000001".to_owned(),
+        device_id: "ak:device:01904100-0000-7000-8000-000000000001".to_owned(),
         principal_server_url: "https://principal.example".to_owned(),
         grant_expires_at: None,
         stored_at: chrono::Utc::now(),

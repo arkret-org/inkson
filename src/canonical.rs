@@ -139,7 +139,7 @@ mod tests {
 
     #[test]
     fn canonical_event_digest_round_trip() {
-        let body = json!({"strand_id": "ck:strand:abc", "title": "Ops"});
+        let body = json!({"strand_id": "ak:strand:abc", "title": "Ops"});
         let d = canonical_event_digest(&body).unwrap();
         assert!(d.starts_with("sha256:"));
         assert_eq!(d, canonical_sha256(&body).unwrap());
@@ -166,8 +166,8 @@ mod tests {
         // Two semantically identical move payloads with different
         // serialization orders MUST produce the same canonical bytes,
         // otherwise downstream signatures diverge.
-        let a = json!({"strand_id": "ck:strand:1", "patch": {"title": "x"}});
-        let b = json!({"patch": {"title": "x"}, "strand_id": "ck:strand:1"});
+        let a = json!({"strand_id": "ak:strand:1", "patch": {"title": "x"}});
+        let b = json!({"patch": {"title": "x"}, "strand_id": "ak:strand:1"});
         assert_eq!(
             canonical_move_bytes(&a).unwrap(),
             canonical_move_bytes(&b).unwrap()
@@ -177,9 +177,9 @@ mod tests {
     #[test]
     fn canonical_event_envelope_bytes_use_sdk_digest_payload() {
         let event: cokret_sdk::Event = serde_json::from_value(json!({
-            "event_id": "ck:event:01904100-0000-7000-8000-000000000001",
+            "event_id": "ak:event:01904100-0000-7000-8000-000000000001",
             "kind": "ck.message.create",
-            "realm_id": "ck:realm:01904100-0000-7000-8000-000000000001",
+            "realm_id": "ak:realm:01904100-0000-7000-8000-000000000001",
             "actor_id": "did:web:alice.example",
             "actor_seq": 1,
             "created_at": "2026-05-19T00:00:00Z",

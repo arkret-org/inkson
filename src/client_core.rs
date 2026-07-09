@@ -561,23 +561,23 @@ mod tests {
         let account_scope = garth::CursorScope::Account {
             service_did: None,
             actor_id: cokret_sdk::Did::new("did:webvh:z6mkfixture:alice.example").unwrap(),
-            device_id: cokret_sdk::DeviceId::new("ck:device:01904100-0000-7000-8000-000000000001")
+            device_id: cokret_sdk::DeviceId::new("ak:device:01904100-0000-7000-8000-000000000001")
                 .unwrap(),
         };
         let realm_scope = garth::CursorScope::RealmEvents {
             service_did: None,
-            realm_id: cokret_sdk::RealmId::new("ck:realm:01904100-0000-7000-8000-000000000001")
+            realm_id: cokret_sdk::RealmId::new("ak:realm:01904100-0000-7000-8000-000000000001")
                 .unwrap(),
         };
         let event_id =
-            cokret_sdk::EventId::new("ck:event:01904100-0000-7000-8000-000000000001").unwrap();
+            cokret_sdk::EventId::new("ak:event:01904100-0000-7000-8000-000000000001").unwrap();
 
         adapter
-            .save(account_scope.clone(), "ck:cursor:account".to_owned())
+            .save(account_scope.clone(), "ak:cursor:account".to_owned())
             .await
             .unwrap();
         adapter
-            .save(realm_scope.clone(), "ck:cursor:realm".to_owned())
+            .save(realm_scope.clone(), "ak:cursor:realm".to_owned())
             .await
             .unwrap();
         adapter.remember(event_id.clone()).await.unwrap();
@@ -588,11 +588,11 @@ mod tests {
                 .await
                 .unwrap()
                 .as_deref(),
-            Some("ck:cursor:account")
+            Some("ak:cursor:account")
         );
         assert_eq!(
             adapter.load(realm_scope.clone()).await.unwrap().as_deref(),
-            Some("ck:cursor:realm")
+            Some("ak:cursor:realm")
         );
         assert!(adapter.seen(event_id).await.unwrap());
 
@@ -604,7 +604,7 @@ mod tests {
                     service_did: None,
                     actor_id: cokret_sdk::Did::new("did:webvh:z6mkfixture:alice.example").unwrap(),
                     device_id: cokret_sdk::DeviceId::new(
-                        "ck:device:01904100-0000-7000-8000-000000000001",
+                        "ak:device:01904100-0000-7000-8000-000000000001",
                     )
                     .unwrap(),
                 })
@@ -626,7 +626,7 @@ mod tests {
         let account_scope = garth::CursorScope::Account {
             service_did: None,
             actor_id: cokret_sdk::Did::new("did:webvh:z6mkfixture:alice.example").unwrap(),
-            device_id: cokret_sdk::DeviceId::new("ck:device:01904100-0000-7000-8000-000000000001")
+            device_id: cokret_sdk::DeviceId::new("ak:device:01904100-0000-7000-8000-000000000001")
                 .unwrap(),
         };
 
@@ -639,12 +639,12 @@ mod tests {
         assert!(adapter.load(account_scope.clone()).await.unwrap().is_none());
 
         adapter
-            .save(account_scope.clone(), "ck:cursor:real".to_owned())
+            .save(account_scope.clone(), "ak:cursor:real".to_owned())
             .await
             .unwrap();
         assert_eq!(
             adapter.load(account_scope).await.unwrap().as_deref(),
-            Some("ck:cursor:real")
+            Some("ak:cursor:real")
         );
     }
 

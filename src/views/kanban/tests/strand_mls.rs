@@ -94,9 +94,9 @@ fn private_strand_display_text_blanks_undecryptable_envelope() {
     let store = temp_state_store("private-strand-blank");
     let ctx = MlsDecryptCtx {
         state_store: &store,
-        realm_id: "ck:realm:01904100-0000-7000-8000-000000000001",
+        realm_id: "ak:realm:01904100-0000-7000-8000-000000000001",
         actor_id: "did:web:alice.example",
-        device_id: "ck:device:01904100-0000-7000-8000-000000000001",
+        device_id: "ak:device:01904100-0000-7000-8000-000000000001",
     };
     // Envelope + ctx but no local snapshot → soft failure → blank.
     assert_eq!(private_strand_display_text(Some(&ctx), Some(&envelope)), "");
@@ -108,8 +108,8 @@ fn private_strand_field_text_prefers_local_sidecar_plaintext() {
     // (OpenMLS refuses the author's own ciphertext). The local sidecar
     // is the only source. With a sidecar hit and NO MLS group at all,
     // the builder must still render the plaintext.
-    let realm = "ck:realm:01904100-0000-7000-8000-000000000001";
-    let strand = "ck:strand:01904100-0000-7000-8000-0000000000ab";
+    let realm = "ak:realm:01904100-0000-7000-8000-000000000001";
+    let strand = "ak:strand:01904100-0000-7000-8000-0000000000ab";
     let mut store = temp_state_store("private-strand-sidecar");
     // The writer stores the JSON-serialized patch value (a bare string).
     store.save_private_plaintext(realm, strand, "body", "\"author body\"");
@@ -117,7 +117,7 @@ fn private_strand_field_text_prefers_local_sidecar_plaintext() {
         state_store: &store,
         realm_id: realm,
         actor_id: "did:web:alice.example",
-        device_id: "ck:device:01904100-0000-7000-8000-000000000001",
+        device_id: "ak:device:01904100-0000-7000-8000-000000000001",
     };
     // Even when the projection value is an un-decryptable envelope, the
     // sidecar wins (tier 1) with zero decryption.
@@ -135,7 +135,7 @@ fn private_strand_field_text_prefers_local_sidecar_plaintext() {
     assert_eq!(
         private_strand_field_text(
             Some(&ctx),
-            "ck:strand:01904100-0000-7000-8000-0000000000cd",
+            "ak:strand:01904100-0000-7000-8000-0000000000cd",
             "body",
             Some(&envelope)
         ),
@@ -145,15 +145,15 @@ fn private_strand_field_text_prefers_local_sidecar_plaintext() {
 
 #[test]
 fn private_strand_empty_sidecar_does_not_mask_encrypted_locked_state() {
-    let realm = "ck:realm:01904100-0000-7000-8000-000000000001";
-    let strand = "ck:strand:01904100-0000-7000-8000-0000000000ab";
+    let realm = "ak:realm:01904100-0000-7000-8000-000000000001";
+    let strand = "ak:strand:01904100-0000-7000-8000-0000000000ab";
     let mut store = temp_state_store("private-strand-empty-sidecar");
     store.save_private_plaintext(realm, strand, "synthesis", "\"\"");
     let ctx = MlsDecryptCtx {
         state_store: &store,
         realm_id: realm,
         actor_id: "did:web:alice.example",
-        device_id: "ck:device:01904100-0000-7000-8000-000000000001",
+        device_id: "ak:device:01904100-0000-7000-8000-000000000001",
     };
     let envelope = json!({
         "scheme": "mls-rfc9420",
@@ -180,15 +180,15 @@ fn card_builder_reads_author_plaintext_from_sidecar_without_mls_group() {
     // un-decryptable MLS envelope, with NO MLS snapshot present. The
     // card must show the author's plaintext (proving the author sees
     // own content with zero decryption).
-    let realm = "ck:realm:01904100-0000-7000-8000-000000000000";
-    let strand = "ck:strand:01904100-0000-7000-8000-0000000000ab";
+    let realm = "ak:realm:01904100-0000-7000-8000-000000000000";
+    let strand = "ak:strand:01904100-0000-7000-8000-0000000000ab";
     let mut store = temp_state_store("card-builder-sidecar");
     store.save_private_plaintext(realm, strand, "body", "\"recovered body\"");
     let ctx = MlsDecryptCtx {
         state_store: &store,
         realm_id: realm,
         actor_id: "did:web:alice.example",
-        device_id: "ck:device:01904100-0000-7000-8000-000000000001",
+        device_id: "ak:device:01904100-0000-7000-8000-000000000001",
     };
     let strand_view = crate::projection_views::StrandProjectionView {
         strand_id: strand.to_owned(),

@@ -59,7 +59,7 @@ pub async fn resolve_principal_gate_account_base(
 
 /// T1.Y4 — Account Authority resolver. The Principal Server's root
 /// `/_cokret/describe` (service-surface §2.5.1) publishes a strongly-typed
-/// `auth_metadata.account_authority.gate_account_base`; every Cokret
+/// `auth_metadata.account_authority.gate_account_base`; every Arkret
 /// `/_cokret/gate/account/*` request MUST be derived from that single base,
 /// and the available authentication methods come from
 /// `auth_metadata.methods[]`.

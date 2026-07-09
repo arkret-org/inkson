@@ -1,7 +1,7 @@
 //! D2D root-secret direct share (`ck.secret.*` to-device).
 //!
 //! Implements the device-to-device branch of the passwordless recovery path
-//! described in `cokret-spec/.../crypto-media/device-lifecycle.md` §10.7: a
+//! described in `arkret-spec/.../crypto-media/device-lifecycle.md` §10.7: a
 //! newly authorized device that has completed SAS verification (§10.3) with an
 //! existing authorized device can pull the account-scoped MLS secret
 //! (`inkson_mls_account_secret`, see [`crate::mls::account_recovery`] /
@@ -420,8 +420,8 @@ mod tests {
     use crate::secure_key_store::MemorySecureKeyStore;
 
     const ACCOUNT_DID: &str = "did:web:alice.example";
-    const OLD_DEVICE: &str = "ck:device:01904100-0000-7000-8000-00000000000a";
-    const NEW_DEVICE: &str = "ck:device:01904100-0000-7000-8000-00000000000b";
+    const OLD_DEVICE: &str = "ak:device:01904100-0000-7000-8000-00000000000a";
+    const NEW_DEVICE: &str = "ak:device:01904100-0000-7000-8000-00000000000b";
     const EXPIRES: &str = "2026-06-10T00:30:00Z";
 
     fn stored_secret() -> StoredAccountMlsSecret {
@@ -488,7 +488,7 @@ mod tests {
             &requester,
             &send,
             ACCOUNT_DID,
-            "ck:device:01904100-0000-7000-8000-00000000000c",
+            "ak:device:01904100-0000-7000-8000-00000000000c",
             NEW_DEVICE,
             EXPIRES,
         )

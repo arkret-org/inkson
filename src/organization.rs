@@ -325,7 +325,7 @@ mod tests {
         let org_did = "did:webvh:example.test:webvh:org1";
         let input = OrganizationStatementInput {
             statement_id: "org-stmt-1".to_owned(),
-            realm_id: "ck:realm:0196419b-0000-7000-8000-000000000010".to_owned(),
+            realm_id: "ak:realm:0196419b-0000-7000-8000-000000000010".to_owned(),
             organization_did: org_did.to_owned(),
             verification_method: format!("{org_did}#did-key-1"),
             relationship: RealmOrganizationRelationship::Owner,
@@ -361,7 +361,7 @@ mod tests {
         let org_did = "did:webvh:example.test:webvh:org1";
         let input = OrganizationStatementInput {
             statement_id: "org-stmt-2".to_owned(),
-            realm_id: "ck:realm:0196419b-0000-7000-8000-000000000010".to_owned(),
+            realm_id: "ak:realm:0196419b-0000-7000-8000-000000000010".to_owned(),
             organization_did: org_did.to_owned(),
             verification_method: format!("{org_did}#did-key-1"),
             relationship: RealmOrganizationRelationship::Owner,

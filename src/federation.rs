@@ -1,7 +1,7 @@
 //! Federation trust bundle helpers.
 //!
 //! Spec: `sync/federation.md`. Cross-domain Event exchange requires:
-//! - Each domain advertises `.well-known/cokret/server` with its service DID.
+//! - Each domain advertises `.well-known/arkret/server` with its service DID.
 //! - Trust seals are pinned per peer domain (DID + public key).
 //!
 //! This module owns the local trust-anchor set and verifies the well-known
@@ -77,7 +77,7 @@ impl TrustBundle {
         self.seals.is_empty()
     }
 
-    /// Verify a `.well-known/cokret/server` record against this bundle:
+    /// Verify a `.well-known/arkret/server` record against this bundle:
     /// the record's service DID must be pinned for `expected_domain`.
     pub fn verify_well_known(
         &self,
@@ -116,11 +116,11 @@ pub enum WellKnownFetchError {
     Decode(String),
 }
 
-/// F-WELLKNOWN-1: derive the `.well-known/cokret/server` URL from a
+/// F-WELLKNOWN-1: derive the `.well-known/arkret/server` URL from a
 /// service base URL.
 ///
 /// Per `discovery/server-discovery.md`, the well-known record lives at
-/// `https://<host>/.well-known/cokret/server` relative to the origin
+/// `https://<host>/.well-known/arkret/server` relative to the origin
 /// — not under the service's `/_cokret` namespace. This helper trims a
 /// trailing slash and concatenates the well-known path, returning an
 /// error when `base_url` is empty or doesn't carry a scheme.
@@ -153,11 +153,11 @@ pub fn well_known_cokret_server_url(base_url: &str) -> Result<String, WellKnownF
             "missing host: {trimmed}"
         )));
     }
-    Ok(format!("{scheme}{host_only}/.well-known/cokret/server"))
+    Ok(format!("{scheme}{host_only}/.well-known/arkret/server"))
 }
 
 /// F-WELLKNOWN-1: fetch + parse the peer domain's
-/// `.well-known/cokret/server` record.
+/// `.well-known/arkret/server` record.
 ///
 /// Spec `discovery/server-discovery.md` mandates clients call this on
 /// first contact with a new domain so they can pre-flight the service
@@ -255,23 +255,23 @@ mod tests {
         // Plain origin.
         assert_eq!(
             well_known_cokret_server_url("https://bob.example").unwrap(),
-            "https://bob.example/.well-known/cokret/server"
+            "https://bob.example/.well-known/arkret/server"
         );
         // Origin + trailing slash.
         assert_eq!(
             well_known_cokret_server_url("https://bob.example/").unwrap(),
-            "https://bob.example/.well-known/cokret/server"
+            "https://bob.example/.well-known/arkret/server"
         );
         // Origin + API prefix gets stripped — well-known lives at the
         // top of the host, not nested under /_cokret.
         assert_eq!(
             well_known_cokret_server_url("https://bob.example/_cokret").unwrap(),
-            "https://bob.example/.well-known/cokret/server"
+            "https://bob.example/.well-known/arkret/server"
         );
         // Loopback dev URLs are allowed.
         assert_eq!(
             well_known_cokret_server_url("http://127.0.0.1:8080").unwrap(),
-            "http://127.0.0.1:8080/.well-known/cokret/server"
+            "http://127.0.0.1:8080/.well-known/arkret/server"
         );
     }
 

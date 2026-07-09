@@ -68,7 +68,7 @@ fn event_frontier_selectors_preserve_did_percent_escapes() {
 
     let realm_selector = format!(
         "_cokret/self/events/frontier?realm_id={}",
-        query_component("ck:realm:0196419b-0000-7000-8000-000000000000")
+        query_component("ak:realm:0196419b-0000-7000-8000-000000000000")
     );
     assert_eq!(
         realm_selector,
@@ -78,7 +78,7 @@ fn event_frontier_selectors_preserve_did_percent_escapes() {
 
 #[test]
 fn insecure_remote_http_is_rejected() {
-    let error = CokretApi::new("http://cokret.example").unwrap_err();
+    let error = CokretApi::new("http://arkret.example").unwrap_err();
     assert!(
         error
             .to_string()

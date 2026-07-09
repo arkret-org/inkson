@@ -291,7 +291,7 @@ pub(super) fn submit_kanban_move(
         .get("board_space_id")
         .and_then(Value::as_str)
         .map(|board_space_id| strand_position_cell_id(board_space_id, &subject))
-        .unwrap_or_else(|| format!("ck:cell:ck.component.strand.position.v1:{subject}"));
+        .unwrap_or_else(|| format!("ak:cell:ck.component.strand.position.v1:{subject}"));
     let effect_summary = if kind == "ck.strand.create" {
         serde_json::to_string(&event.payload).unwrap_or_else(|_| "{}".to_owned())
     } else {
@@ -408,7 +408,7 @@ pub(super) struct ColumnNeighbours {
 /// decides cross-list move vs in-list reorder, updates the local
 /// pending state, and submits the spec-compliant CAS Move.
 ///
-/// Spec mapping ([views.md §2.6](../../cokret-spec/spec/v1/zh/models/views.md)):
+/// Spec mapping ([views.md §2.6](../../arkret-spec/spec/v1/zh/models/views.md)):
 ///
 /// - Cross-column drop ⇒ `ck.strand.move` Event kind.
 /// - Same-column drop ⇒ `ck.strand.reorder`.
@@ -1217,7 +1217,7 @@ pub(super) fn submit_strand_position_cas_move_with_attempt(
 /// user's drop intent doesn't change just because someone else moved
 /// the card concurrently.
 ///
-/// Spec ([operations-sync.md §8](../../cokret-spec/spec/v1/zh/sync/operations-sync.md)):
+/// Spec ([operations-sync.md §8](../../arkret-spec/spec/v1/zh/sync/operations-sync.md)):
 /// the conflict-recovery path takes a snapshot + state witness +
 /// inclusion proof; this MVP approximation just refetches the
 /// collection projection (which the soland reducer derives from the

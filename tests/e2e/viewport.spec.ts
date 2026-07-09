@@ -7,7 +7,7 @@
 import { expect, test, type Page } from "@playwright/test";
 import { mockCokretApi } from "./mockCokretApi";
 
-const DEMO_REALM = "ck:realm:0196419b-0000-7000-8000-000000000000";
+const DEMO_REALM = "ak:realm:0196419b-0000-7000-8000-000000000000";
 const MOBILE_VIEWPORT = { width: 390, height: 844 }; // iPhone 13
 const TABLET_VIEWPORT = { width: 820, height: 1180 }; // iPad Air narrow layout
 
@@ -20,7 +20,7 @@ async function bootAuthenticatedShell(page: Page, viewport = MOBILE_VIEWPORT) {
       JSON.stringify({
         server_url: "https://local.host",
         account_did: "did:web:alice.example",
-        device_id: "ck:device:01964137-0000-7000-8000-0000000000a1",
+        device_id: "ak:device:01964137-0000-7000-8000-0000000000a1",
         session_credential: "sx:e2e-token",
       }),
     );

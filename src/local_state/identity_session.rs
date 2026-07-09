@@ -55,7 +55,7 @@ impl LocalStateStore {
     /// `did:key`, and writes the record to disk. Subsequent calls return
     /// the persisted identity. If the persisted record is malformed (e.g.
     /// hand-edited or truncated) this regenerates and overwrites — the
-    /// alternative is bricking the client, and Cokret v1 is pre-release
+    /// alternative is bricking the client, and Arkret v1 is pre-release
     /// so there is no user-facing key recovery story to preserve.
     pub fn ensure_local_identity(&mut self) -> anyhow::Result<LocalIdentity> {
         #[cfg(not(test))]

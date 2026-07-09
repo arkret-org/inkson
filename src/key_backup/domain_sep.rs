@@ -64,7 +64,7 @@ pub fn attach_key_backup_genesis_series(body: &mut Value) {
     if let Some(object) = body.as_object_mut() {
         object
             .entry("series_id")
-            .or_insert_with(|| json!(format!("ck:backup_series:{}", crate::operation::uuid_v7())));
+            .or_insert_with(|| json!(format!("ak:backup_series:{}", crate::operation::uuid_v7())));
         object.entry("series_seq").or_insert_with(|| json!(0));
         object.remove("supersedes");
         object.remove("supersedes_digest");

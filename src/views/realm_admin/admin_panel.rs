@@ -77,7 +77,7 @@ pub fn RealmAdminPanel(
     // `DEFAULT_LAG_WARN_THRESHOLD`); user can override via the numeric
     // input next to the banner.
     let mut covered_seals_threshold = use_signal(|| DEFAULT_COVERED_SEALS_LAG_THRESHOLD);
-    // Read-only notary cell value. The Cokret HTTP catalog does not expose
+    // Read-only notary cell value. The Arkret HTTP catalog does not expose
     // this as a spec endpoint yet, so surface that inline rather than
     // pretending a private path exists.
     let mut notary_cell_status = use_signal(String::new);
@@ -599,7 +599,7 @@ pub fn RealmAdminPanel(
                     }
                 }
                 // Notary cell (read-only, P0 M4). This remains disabled until
-                // the Cokret HTTP catalog exposes a spec endpoint for the
+                // the Arkret HTTP catalog exposes a spec endpoint for the
                 // recovery-notary mode.
                 div { class: "event", "data-testid": "notary-cell-card",
                     div { class: "event-head",
@@ -643,7 +643,7 @@ pub fn RealmAdminPanel(
                                                 // knows it's a missing endpoint, not bad
                                                 // data.
                                                 notary_cell_status.set(format!(
-                                                    "notary endpoint unavailable ({}); no spec-defined Cokret HTTP endpoint",
+                                                    "notary endpoint unavailable ({}); no spec-defined Arkret HTTP endpoint",
                                                     err.display()
                                                 ));
                                             }
@@ -754,7 +754,7 @@ pub fn RealmAdminPanel(
                                             return;
                                         }
                                         if !avatar_blob_ref.is_empty()
-                                            && !avatar_blob_ref.starts_with("ck:blob:")
+                                            && !avatar_blob_ref.starts_with("ak:blob:")
                                         {
                                             status_msg.set(
                                                 "profile update failed: avatar_blob_ref must be a ck:blob:* reference".to_owned(),
@@ -1515,7 +1515,7 @@ pub fn RealmAdminPanel(
                     id: "realm-admin-grant-id-input",
                     "data-testid": "realm-admin-grant-id-input",
                     value: "{admin_grant_id}",
-                    placeholder: "ck:grant:… (auto on grant, paste on revoke)",
+                    placeholder: "ak:grant:… (auto on grant, paste on revoke)",
                     oninput: move |event: FormEvent| admin_grant_id.set(event.value()),
                 }
                 div { class: "actions",
@@ -1540,7 +1540,7 @@ pub fn RealmAdminPanel(
                                     status_msg.set("set admin failed: account is not connected".to_owned());
                                     return;
                                 }
-                                let grant_id = format!("ck:grant:{}", crate::operation::uuid_v7());
+                                let grant_id = format!("ak:grant:{}", crate::operation::uuid_v7());
                                 admin_grant_id.set(grant_id.clone());
                                 spawn(async move {
                                     match crate::views::helpers::with_event_submitter(

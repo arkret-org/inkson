@@ -2130,7 +2130,7 @@ pub fn RouterView() -> Element {
                         .realm_tree_projections
                         .keys()
                         .filter(|realm_id| {
-                            realm_id.starts_with("ck:realm:")
+                            realm_id.starts_with("ak:realm:")
                                 && store.realm_projection_is_mls_encrypted(realm_id)
                         })
                         .count();
@@ -2141,7 +2141,7 @@ pub fn RouterView() -> Element {
                             .mls_snapshots()
                             .keys()
                             .filter(|realm_id| {
-                                realm_id.starts_with("ck:realm:")
+                                realm_id.starts_with("ak:realm:")
                                     && store.realm_projection_is_mls_encrypted(realm_id)
                             })
                             .count();
@@ -3060,9 +3060,9 @@ pub fn RouterView() -> Element {
     let topbar_unread_notifications = unread_notification_count(&state_store.read().load());
     let has_topbar_unread_notifications = topbar_unread_notifications > 0;
     let document_title = if matches!(&route, Route::Dashboard) {
-        "Inkson | Cokret".to_owned()
+        "Inkson | Arkret".to_owned()
     } else {
-        format!("{route_title} | Inkson | Cokret")
+        format!("{route_title} | Inkson | Arkret")
     };
     let shell_class = format!(
         "shell app{}{}{}",
@@ -3145,7 +3145,7 @@ pub fn RouterView() -> Element {
                                     div { class: "auth-logo", "C" }
                                     div {
                                         h1 { "Restoring session" }
-                                        p { "Cokret" }
+                                        p { "Arkret" }
                                     }
                                 }
                                 div { class: "auth-restore-indicator", "aria-hidden": "true" }
@@ -3412,7 +3412,7 @@ pub fn RouterView() -> Element {
                         span { class: "muted", "first-time setup" }
                     }
                     div { class: "muted",
-                        "Generate your Recovery Key (24 words) before relying on this account. Backups are stored server-side as ciphertext only; Cokret cannot recover the 24 words for you."
+                        "Generate your Recovery Key (24 words) before relying on this account. Backups are stored server-side as ciphertext only; Arkret cannot recover the 24 words for you."
                     }
                     div { class: "actions",
                         Button {
@@ -3491,7 +3491,7 @@ pub fn RouterView() -> Element {
                         UiIcon { name: "menu" }
                     }
                 }
-                div { class: "brand", "Cokret" }
+                div { class: "brand", "Arkret" }
                 Button {
                     variant: ButtonVariant::Ghost,
                     size: ButtonSize::Sm,
@@ -3679,10 +3679,10 @@ pub fn RouterView() -> Element {
                     },
                 }
                 div { class: "sidebar-header",
-                    Link { class: "brand", to: Route::Dashboard, "aria-label": "Inkson | Cokret Home",
+                    Link { class: "brand", to: Route::Dashboard, "aria-label": "Inkson | Arkret Home",
                         span { class: "logo", "⌘" }
                         span { class: "product-meta",
-                            span { class: "product-name", "Inkson | Cokret" }
+                            span { class: "product-name", "Inkson | Arkret" }
                         }
                     }
                 }

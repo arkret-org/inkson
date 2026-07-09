@@ -5,10 +5,10 @@ use serde_json::{Value, json};
 use super::*;
 use crate::recovery_crypto::{VAULT_SALT_LEN, VaultKek, derive_vault_kek_with_salt};
 
-const BACKUP_ID: &str = "ck:backup:01964137-0000-7000-8000-00000000beef";
+const BACKUP_ID: &str = "ak:backup:01964137-0000-7000-8000-00000000beef";
 const ACTOR: &str = "did:web:alice.example";
-const DEVICE: &str = "ck:device:01964137-0000-7000-8000-000000000001";
-const DEVICE_AUTHORIZE_EVENT: &str = "ck:event:01964137-0000-7000-8000-000000000123";
+const DEVICE: &str = "ak:device:01964137-0000-7000-8000-000000000001";
+const DEVICE_AUTHORIZE_EVENT: &str = "ak:event:01964137-0000-7000-8000-000000000123";
 
 fn test_root() -> VaultKek {
     derive_vault_kek_with_salt(b"correct horse battery staple", &[7u8; VAULT_SALT_LEN]).unwrap()
@@ -86,7 +86,7 @@ fn build_recovery_vault_backup_body_seals_per_spec() {
     assert_eq!(body["device_id"], DEVICE);
     assert_eq!(
         body["domain_separation"]["hkdf_info"],
-        "cokret-key-backup/secret_storage/recovery_vault/v1"
+        "arkret-key-backup/secret_storage/recovery_vault/v1"
     );
     validate_key_backup_put_request(BACKUP_ID, &body)
         .expect("secret_storage recovery vault envelope should validate");
@@ -174,7 +174,7 @@ fn recovery_policy_ref_is_covered_by_signed_fields_when_present() {
     let mut body =
         build_recovery_vault_backup_body(BACKUP_ID, ACTOR, DEVICE, &root, b"payload").unwrap();
     body["recovery_policy_ref"] = json!({
-        "policy_id": "ck:policy:01964137-0000-7000-8000-0000000000aa",
+        "policy_id": "ak:policy:01964137-0000-7000-8000-0000000000aa",
         "policy_version": 3,
     });
     let signing_key = SigningKey::from_bytes(&[43u8; 32]);
@@ -298,13 +298,13 @@ fn open_refuses_tampered_ciphertext_via_digest_mismatch() {
 fn did_recovery_backup_uses_separate_domain_and_hpke() {
     let (sk, pk) = crate::hpke_backup::generate_recovery_keypair().unwrap();
     let body = build_did_recovery_backup_body(
-        "ck:backup:01964137-0000-7000-8000-00000000d1d0",
+        "ak:backup:01964137-0000-7000-8000-00000000d1d0",
         ACTOR,
         DEVICE,
         &pk,
         "did:web:alice.example#recovery",
         b"recovery share",
-        "ck:policy:01964137-0000-7000-8000-0000000000aa",
+        "ak:policy:01964137-0000-7000-8000-0000000000aa",
         1,
     )
     .unwrap();
@@ -317,7 +317,7 @@ fn did_recovery_backup_uses_separate_domain_and_hpke() {
     // 6.2 — did_recovery MUST carry recovery_policy_ref (top-level).
     assert_eq!(
         body["recovery_policy_ref"]["policy_id"],
-        "ck:policy:01964137-0000-7000-8000-0000000000aa"
+        "ak:policy:01964137-0000-7000-8000-0000000000aa"
     );
     assert_eq!(body["recovery_policy_ref"]["policy_version"], 1);
     assert!(
@@ -329,7 +329,7 @@ fn did_recovery_backup_uses_separate_domain_and_hpke() {
     assert_eq!(body["contents"][0]["item_type"], "recovery_key_share");
     assert_eq!(
         body["domain_separation"]["hkdf_info"],
-        "cokret-key-backup/did_recovery/recovery_policy/v1"
+        "arkret-key-backup/did_recovery/recovery_policy/v1"
     );
     validate_key_backup_envelope(&body, Some(KeyBackupClass::DidRecovery))
         .expect("did_recovery HPKE envelope should validate");
@@ -426,7 +426,7 @@ fn mls_history_rejects_passphrase_kdf() {
 #[test]
 fn mls_history_accepts_secret_storage_key() {
     let envelope = crate::mls::persistence::encrypt_state(
-        "ck:realm:demo",
+        "ak:realm:demo",
         "group-a",
         3,
         b"opaque sdk state",
@@ -434,7 +434,7 @@ fn mls_history_accepts_secret_storage_key() {
         b"salt",
     );
     let body = envelope.to_key_backup_body(
-        "ck:backup:01964137-0000-7000-8000-00000000feed",
+        "ak:backup:01964137-0000-7000-8000-00000000feed",
         ACTOR,
         DEVICE,
     );
@@ -494,7 +494,7 @@ fn recovery_public_key_backup_round_trips_and_validates() {
 #[test]
 fn mls_history_rejects_obvious_plaintext_fields() {
     let envelope = crate::mls::persistence::encrypt_state(
-        "ck:realm:demo",
+        "ak:realm:demo",
         "group-a",
         3,
         b"not real sdk state",
@@ -502,9 +502,9 @@ fn mls_history_rejects_obvious_plaintext_fields() {
         b"salt",
     );
     let mut body = envelope.to_key_backup_body(
-        "ck:backup:01964137-0000-7000-8000-00000000beef",
+        "ak:backup:01964137-0000-7000-8000-00000000beef",
         "did:web:alice.example",
-        "ck:device:01964137-0000-7000-8000-000000000001",
+        "ak:device:01964137-0000-7000-8000-000000000001",
     );
     body["serialized_state"] = json!("plaintext sdk bytes");
 
@@ -534,7 +534,7 @@ fn key_backup_put_request_rejects_path_body_mismatch() {
     let body = build_recovery_vault_backup_body(BACKUP_ID, ACTOR, DEVICE, &root, b"x").unwrap();
 
     let err =
-        validate_key_backup_put_request("ck:backup:01964137-0000-7000-8000-00000000badd", &body)
+        validate_key_backup_put_request("ak:backup:01964137-0000-7000-8000-00000000badd", &body)
             .expect_err("path/body backup id mismatch must be rejected");
     assert!(err.contains("mismatch"));
 }
@@ -544,7 +544,7 @@ fn delete_ownership_proof_binds_actor_and_backup() {
     assert_eq!(
         key_backup_delete_ownership_proof(
             "did:web:alice.example",
-            "ck:backup:01964137-0000-7000-8000-00000000beef"
+            "ak:backup:01964137-0000-7000-8000-00000000beef"
         ),
         "dev-ssk-delete:v1:did:web:alice.example:ck:backup:01964137-0000-7000-8000-00000000beef"
     );

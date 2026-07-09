@@ -114,7 +114,7 @@ pub(crate) fn notification_value_read_by_cursor(
     let strand_id = value_string_with_prefix(
         value,
         &["strand_id", "target_strand_id", "space_id"],
-        "ck:strand:",
+        "ak:strand:",
     );
     read_cursor_covers_notification(
         local_state,
@@ -221,7 +221,7 @@ fn notification_from_value(
     let strand_id = value_string_with_prefix(
         &value,
         &["strand_id", "target_strand_id", "space_id"],
-        "ck:strand:",
+        "ak:strand:",
     );
     let client_state = local_state.notification_client_state.get(&id).cloned();
     let kind = value_string(
@@ -323,9 +323,9 @@ fn notification_source_event_id_from_value(value: &Value, id: &str) -> Option<St
             "message_event_id",
             "timeline_event_id",
         ],
-        "ck:event:",
+        "ak:event:",
     )
-    .or_else(|| id.strip_prefix("ck:event:").map(|_| id.to_owned()))
+    .or_else(|| id.strip_prefix("ak:event:").map(|_| id.to_owned()))
 }
 
 fn read_cursor_covers_notification(

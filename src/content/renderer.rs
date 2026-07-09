@@ -174,7 +174,7 @@ fn parse_markdown_blob_image_line(line: &str) -> Option<ContentBlock> {
     let split = line.find("](")?;
     let alt = line[2..split].trim().to_owned();
     let blob_ref = line[split + 2..line.len() - 1].trim();
-    if !blob_ref.starts_with("ck:blob:") {
+    if !blob_ref.starts_with("ak:blob:") {
         return None;
     }
     match classify_blob_ref(blob_ref) {
@@ -851,7 +851,7 @@ mod tests {
         assert_eq!(blocks.len(), 2, "blocks: {blocks:?}");
         match &blocks[1] {
             ContentBlock::Image { blob_ref, .. } => {
-                assert_eq!(blob_ref, "ck:blob:abcdef.png");
+                assert_eq!(blob_ref, "ak:blob:abcdef.png");
             }
             other => panic!("expected Image, got {other:?}"),
         }
@@ -866,7 +866,7 @@ mod tests {
                 blob_ref,
                 media_type,
             } => {
-                assert_eq!(blob_ref, "ck:blob:cafefade.mp4");
+                assert_eq!(blob_ref, "ak:blob:cafefade.mp4");
                 assert_eq!(media_type, "video/mp4");
             }
             other => panic!("expected Video, got {other:?}"),
@@ -891,7 +891,7 @@ mod tests {
         assert_eq!(blocks.len(), 1);
         match &blocks[0] {
             ContentBlock::Image { blob_ref, .. } => {
-                assert_eq!(blob_ref, "ck:blob:abc#image/png");
+                assert_eq!(blob_ref, "ak:blob:abc#image/png");
             }
             other => panic!("expected Image (from media-type hint), got {other:?}"),
         }
@@ -903,7 +903,7 @@ mod tests {
         assert_eq!(blocks.len(), 1);
         match &blocks[0] {
             ContentBlock::Image { blob_ref, alt } => {
-                assert_eq!(blob_ref, "ck:blob:abc#image/png");
+                assert_eq!(blob_ref, "ak:blob:abc#image/png");
                 assert_eq!(alt.as_deref(), Some("Launch image"));
             }
             other => panic!("expected Image (from markdown blob image), got {other:?}"),
@@ -938,7 +938,7 @@ mod tests {
                 blob_ref,
                 media_type,
             } => {
-                assert_eq!(blob_ref, "ck:blob:opaque-no-extension");
+                assert_eq!(blob_ref, "ak:blob:opaque-no-extension");
                 assert!(media_type.is_none());
             }
             other => panic!("expected Attachment, got {other:?}"),

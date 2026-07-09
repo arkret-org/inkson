@@ -34,7 +34,7 @@ pub async fn admin_notary_describe(
     realm_id: &str,
 ) -> anyhow::Result<serde_json::Value> {
     let _ = (http, realm_id);
-    anyhow::bail!("admin notary describe has no spec-defined Cokret HTTP endpoint")
+    anyhow::bail!("admin notary describe has no spec-defined Arkret HTTP endpoint")
 }
 
 pub async fn authz_check_resource(

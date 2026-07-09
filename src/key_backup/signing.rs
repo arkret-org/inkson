@@ -272,7 +272,7 @@ pub fn build_key_backup_unlock_proof_active(
         // device-signed unlock MUST declare `principal_signing`; declaring
         // `recovery_unlock` here made the server reject every unlock and left
         // shared-history cards permanently locked.
-        let session_id = format!("ck:recovery_session:{}", crate::operation::uuid_v7());
+        let session_id = format!("ak:recovery_session:{}", crate::operation::uuid_v7());
         let local_digest = crate::canonical::canonical_sha256(&json!({
             "type": "ck.key_backup.local_unlock_proof.v1",
             "principal_id": principal_id,
@@ -490,16 +490,16 @@ mod tests {
         let signer = Arc::new(build_ed25519_signer([11u8; 32], "did:web:alice.example"));
         let _ = replace_active_signer(Some(signer));
         let backup = json!({
-            "backup_id": "ck:backup:0196419b-0000-7000-8000-000000000001",
+            "backup_id": "ak:backup:0196419b-0000-7000-8000-000000000001",
             "backup_class": "mls_history",
-            "series_id": "ck:backup_series:0196419b-0000-7000-8000-000000000002",
+            "series_id": "ak:backup_series:0196419b-0000-7000-8000-000000000002",
             "ciphertext_digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
         });
 
         let proof = build_key_backup_unlock_proof_active(
             &backup,
             "did:web:alice.example",
-            "ck:device:0196419b-0000-7000-8000-000000000003",
+            "ak:device:0196419b-0000-7000-8000-000000000003",
             None,
         )
         .expect("unlock proof builds");
@@ -520,7 +520,7 @@ mod tests {
         clear_key_backup_unlock_memory();
         let key = "server|principal=alice|device=dev|backup=one|digest=sha256:a";
         let backup = json!({
-            "backup_id": "ck:backup:one",
+            "backup_id": "ak:backup:one",
             "ciphertext": "ciphertext-a"
         });
 
@@ -539,7 +539,7 @@ mod tests {
             unlocked_key_backup_cache_put(
                 format!("server|principal=alice|device=dev|backup={index}|digest=sha256:{index}"),
                 &json!({
-                    "backup_id": format!("ck:backup:{index}"),
+                    "backup_id": format!("ak:backup:{index}"),
                     "ciphertext": format!("ciphertext-{index}")
                 }),
             );

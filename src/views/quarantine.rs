@@ -2,7 +2,7 @@
 //!
 //! Lists quarantined invites when a public SDK-backed invite-quarantine
 //! transport is available. The previous coauth-local admin endpoints are not
-//! client-visible Cokret surfaces, so this UI currently fails closed instead of
+//! client-visible Arkret surfaces, so this UI currently fails closed instead of
 //! constructing a private coauth transport client.
 //!
 //! Wire shape (coauth side):
@@ -14,7 +14,7 @@
 //!       "invite_id": "inv-01abc",
 //!       "target": "did:web:bob.example",
 //!       "issuer": "did:web:alice.example",
-//!       "realm_id": "ck:realm:01...",
+//!       "realm_id": "ak:realm:01...",
 //!       "reason": "rate_limited",
 //!       "created_at": "2026-05-09T00:00:00Z",
 //!       "state": "pending_review"
@@ -340,7 +340,7 @@ mod tests {
                     "invite_id": "inv-01abc",
                     "target": "did:web:bob.example",
                     "issuer": "did:web:alice.example",
-                    "realm_id": "ck:realm:0196419b-0000-7000-8000-000000000000",
+                    "realm_id": "ak:realm:0196419b-0000-7000-8000-000000000000",
                     "reason": "rate_limited",
                     "state": "pending_review"
                 }

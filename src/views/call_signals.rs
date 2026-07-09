@@ -676,7 +676,7 @@ mod tests {
     ) -> Value {
         json!({
             "kind": "ck.call.signal",
-            "realm_id": "ck:realm:r",
+            "realm_id": "ak:realm:r",
             "actor_id": actor,
             "device_id": device,
             "sent_at": 1,
@@ -696,7 +696,7 @@ mod tests {
             "ephemeral": [
                 {
                     "type": "ck.call.signal",
-                    "realm_id": "ck:realm:r",
+                    "realm_id": "ak:realm:r",
                     "call_signals": envelopes,
                 }
             ]
@@ -708,15 +708,15 @@ mod tests {
         let body = body_with(vec![envelope(
             "did:web:bob",
             "dev-b",
-            "ck:call:1",
+            "ak:call:1",
             "invite",
             1,
             json!({ "video": true, "participants": ["did:web:alice"] }),
         )]);
-        let decoded = decode_realm_call_signals("ck:realm:r", &body);
+        let decoded = decode_realm_call_signals("ak:realm:r", &body);
         assert_eq!(decoded.len(), 1);
         assert_eq!(decoded[0].signal_type, "invite");
-        assert_eq!(decoded[0].call_id, "ck:call:1");
+        assert_eq!(decoded[0].call_id, "ak:call:1");
         assert_eq!(decoded[0].sender_actor, "did:web:bob");
         assert_eq!(decoded[0].sender_device, "dev-b");
         assert!(decoded[0].video);
@@ -735,13 +735,13 @@ mod tests {
                 }
             ]
         });
-        assert!(decode_realm_call_signals("ck:realm:r", &body).is_empty());
+        assert!(decode_realm_call_signals("ak:realm:r", &body).is_empty());
     }
 
     fn decoded(signal_type: &str, seq: u64, data: Value) -> DecodedCallSignal {
         DecodedCallSignal {
-            realm_id: "ck:realm:r".into(),
-            call_id: "ck:call:1".into(),
+            realm_id: "ak:realm:r".into(),
+            call_id: "ak:call:1".into(),
             signal_type: signal_type.into(),
             seq,
             sender_actor: "did:web:bob".into(),
@@ -758,7 +758,7 @@ mod tests {
         let fresh = RouteState::default();
         match decide_route(&d, "did:web:alice", false, &fresh) {
             RouteDecision::Ring(info) => {
-                assert_eq!(info.call_id, "ck:call:1");
+                assert_eq!(info.call_id, "ak:call:1");
                 assert_eq!(info.peer_actor, "did:web:bob");
                 assert!(info.video);
             }
@@ -777,7 +777,7 @@ mod tests {
         match decide_route(&d, "did:web:alice", false, &RouteState::default()) {
             RouteDecision::Enqueue(item) => {
                 assert_eq!(item.signal_type, "candidate");
-                assert_eq!(item.call_id, "ck:call:1");
+                assert_eq!(item.call_id, "ak:call:1");
             }
             other => panic!("expected Enqueue, got {other:?}"),
         }
@@ -792,7 +792,7 @@ mod tests {
                 "data": {
                     "action": "kick",
                     "target_actor_id": "did:web:carol",
-                    "target_device_id": "ck:device:01904100-0000-7000-8000-00000000000c"
+                    "target_device_id": "ak:device:01904100-0000-7000-8000-00000000000c"
                 }
             }),
         );
@@ -816,7 +816,7 @@ mod tests {
                 "audio_muted": true,
                 "by": "moderator",
                 "target_actor_id": "did:web:carol",
-                "target_device_id": "ck:device:01904100-0000-7000-8000-00000000000c"
+                "target_device_id": "ak:device:01904100-0000-7000-8000-00000000000c"
             }),
         );
         assert!(requires_call_moderate(&force_mute));
@@ -884,7 +884,7 @@ mod tests {
     fn answer_while_ringing_clears_ring() {
         let d = decoded("answer", 5, json!({ "accepted": true }));
         let state = RouteState {
-            ringing_call: Some("ck:call:1".into()),
+            ringing_call: Some("ak:call:1".into()),
             ringing_answered_here: false,
         };
         assert_eq!(
@@ -907,13 +907,13 @@ mod tests {
     ) -> Value {
         let mut envelope = json!({
             "kind": "ck.call.signal",
-            "realm_id": "ck:realm:r",
+            "realm_id": "ak:realm:r",
             "actor_id": actor_id,
             "device_id": device_id,
             "sent_at": "2026-06-16T00:00:00Z",
             "expires_at": "2026-06-16T00:01:00Z",
             "payload": {
-                "call_id": "ck:call:verify-1",
+                "call_id": "ak:call:verify-1",
                 "signal_type": "invite",
                 "seq": 1,
                 "data": { "video": true }
@@ -956,7 +956,7 @@ mod tests {
     #[test]
     fn valid_call_proof_verifies_and_routes_to_ring() {
         let actor = "did:web:caller.example";
-        let device = "ck:device:caller-1";
+        let device = "ak:device:caller-1";
         let seed = 71u8;
         let signer = crate::event_signer::build_ed25519_signer([seed; 32], actor);
         let envelope = signed_call_signal_envelope(&signer, actor, device);
@@ -968,7 +968,7 @@ mod tests {
         ));
 
         // And a verified invite produces a Ring decision.
-        let decoded = decode_call_signal_envelope("ck:realm:r", &envelope).expect("decodes");
+        let decoded = decode_call_signal_envelope("ak:realm:r", &envelope).expect("decodes");
         assert!(verify_decoded_proof(&decoded, &key));
         match decide_route(&decoded, "did:web:me", false, &RouteState::default()) {
             RouteDecision::Ring(info) => assert_eq!(info.peer_actor, actor),
@@ -979,7 +979,7 @@ mod tests {
     #[test]
     fn call_proof_fails_closed_under_wrong_key() {
         let actor = "did:web:caller.example";
-        let device = "ck:device:caller-1";
+        let device = "ak:device:caller-1";
         let signer = crate::event_signer::build_ed25519_signer([71u8; 32], actor);
         let envelope = signed_call_signal_envelope(&signer, actor, device);
         // A different device's key MUST NOT verify the proof.
@@ -992,7 +992,7 @@ mod tests {
     #[test]
     fn call_proof_fails_closed_under_tampered_signature() {
         let actor = "did:web:caller.example";
-        let device = "ck:device:caller-1";
+        let device = "ak:device:caller-1";
         let seed = 71u8;
         let signer = crate::event_signer::build_ed25519_signer([seed; 32], actor);
         let mut envelope = signed_call_signal_envelope(&signer, actor, device);
@@ -1017,7 +1017,7 @@ mod tests {
         // long after its `created_at` MUST be dropped by the ephemeral replay
         // window, even though the signature still verifies.
         let actor = "did:web:caller.example";
-        let device = "ck:device:caller-1";
+        let device = "ak:device:caller-1";
         let seed = 71u8;
         let signer = crate::event_signer::build_ed25519_signer([seed; 32], actor);
         let envelope = signed_call_signal_envelope(&signer, actor, device);
@@ -1038,7 +1038,7 @@ mod tests {
         // verification_method controller != envelope actor_id → reject, even if
         // the signature itself is valid for the embedded method.
         let actor = "did:web:caller.example";
-        let device = "ck:device:caller-1";
+        let device = "ak:device:caller-1";
         let seed = 71u8;
         let signer = crate::event_signer::build_ed25519_signer([seed; 32], actor);
         let mut envelope = signed_call_signal_envelope(&signer, actor, device);
@@ -1055,7 +1055,7 @@ mod tests {
         // (SDP path) must reach the inbox, not clear a ring.
         let d = decoded("answer", 5, json!({}));
         let state = RouteState {
-            ringing_call: Some("ck:call:1".into()),
+            ringing_call: Some("ak:call:1".into()),
             ringing_answered_here: true,
         };
         assert!(matches!(

@@ -10,7 +10,7 @@ import {
 
 registerStrandsBeforeEach();
 
-const DEMO_REALM = "ck:realm:0196419b-0000-7000-8000-000000000000";
+const DEMO_REALM = "ak:realm:0196419b-0000-7000-8000-000000000000";
 
 test("chat reloads sent messages and keeps actor sequence increasing", async ({ page }) => {
   await refreshServer(page);
@@ -98,7 +98,7 @@ test("chat send failures mark the message and keep actions quiet until hover", a
             message: "transient send failure",
           },
         },
-        request_id: "ck:request:e2e-send-failed",
+        request_id: "ak:request:e2e-send-failed",
       }),
     });
   });
@@ -137,7 +137,7 @@ test("chat membership denial restores draft without panicking", async ({ page })
           code: "capability_denied",
           message: "actor is not a member of the event Space",
         },
-        request_id: "ck:request:01964137-0000-7000-8000-000000000013",
+        request_id: "ak:request:01964137-0000-7000-8000-000000000013",
       }),
     });
   });
@@ -182,7 +182,7 @@ test("chat retries plaintext sends after granting current service visibility", a
               "private plaintext message operations require this service in plaintext_visible_services",
           },
         },
-        request_id: "ck:request:e2e-policy-denied",
+        request_id: "ak:request:e2e-policy-denied",
       }),
     });
   });

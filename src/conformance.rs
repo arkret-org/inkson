@@ -1,5 +1,5 @@
 //! Conformance profiles, JSON schema validation, and security checks
-//! per cokret-spec sections 12-13.
+//! per arkret-spec sections 12-13.
 
 use std::sync::LazyLock;
 
@@ -35,7 +35,7 @@ pub const PROFILE_PUSH_GATEWAY: &str = "ck.profile.push_gateway.v1";
 /// [`crate::api::Api::events_describe`] before the profile reports `ready`.
 pub const PROFILE_MLS_GOVERNANCE_BINDING_FULL: &str = "ck.profile.mls_governance_binding.full.v1";
 
-/// Conformance profile declarations per cokret-spec section 13.1.
+/// Conformance profile declarations per arkret-spec section 13.1.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ConformanceProfile {
     pub profile_id: String,
@@ -390,7 +390,7 @@ pub fn profile_ready(server: Option<&ServerDescription>, profile_id: &str) -> bo
 
 /// Diff a profile's `required_operations` (per the SDK's canonical
 /// `profile_requirements` table — itself generated from
-/// `cokret-spec/artifacts/profiles/`) against what the server
+/// `arkret-spec/artifacts/profiles/`) against what the server
 /// advertises in `supported_operations`. Profiles unknown to the SDK
 /// table return a single sentinel so the UI surfaces "this profile id
 /// isn't in the spec" rather than silently passing.
@@ -411,7 +411,7 @@ fn missing_requirements(profile_id: &str, server: &ServerDescription) -> Vec<Str
         .collect()
 }
 
-/// Plaintext boundary check per cokret-spec section 12.1.
+/// Plaintext boundary check per arkret-spec section 12.1.
 /// Verifies that non-E2EE private content does not reach undelegated services.
 pub struct PlaintextBoundary {
     /// Services that may receive plaintext.
@@ -535,7 +535,7 @@ pub enum ValidationError {
     UnknownEventKind(String),
 }
 
-/// Realm discovery state per cokret-spec section 9.2.
+/// Realm discovery state per arkret-spec section 9.2.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct RealmDiscovery {
     pub discoverability: Discoverability,
@@ -584,7 +584,7 @@ mod tests {
         // the readiness gate flags it as missing.
         let server: ServerDescription = serde_json::from_value(json!({
             "service_did": "did:web:server.example",
-            "trust_domain": "ck:trust_domain:server.example",
+            "trust_domain": "ak:trust_domain:server.example",
             "service_type": "principal_server",
             "protocol_version": "1.0",
             "supported_profiles": [PROFILE_MINIMAL_CLIENT],
@@ -671,9 +671,9 @@ mod tests {
     #[test]
     fn validate_event_schema_ok() {
         let event = json!({
-            "event_id": "ck:event:01904100-0000-7000-8000-000000000001",
+            "event_id": "ak:event:01904100-0000-7000-8000-000000000001",
             "kind": "ck.message.create",
-            "realm_id": "ck:realm:01904100-0000-7000-8000-000000000001",
+            "realm_id": "ak:realm:01904100-0000-7000-8000-000000000001",
             "actor_id": "did:web:alice",
             "actor_seq": 1,
             "created_at": "2026-01-01T00:00:00Z",
@@ -691,9 +691,9 @@ mod tests {
     #[test]
     fn validate_event_schema_rejects_unknown_kind() {
         let event = json!({
-            "event_id": "ck:event:01904100-0000-7000-8000-000000000001",
+            "event_id": "ak:event:01904100-0000-7000-8000-000000000001",
             "kind": "ck.bogus.kind",
-            "realm_id": "ck:realm:01904100-0000-7000-8000-000000000001",
+            "realm_id": "ak:realm:01904100-0000-7000-8000-000000000001",
             "actor_id": "did:web:alice",
             "actor_seq": 1,
             "created_at": "2026-01-01T00:00:00Z",
@@ -730,12 +730,12 @@ mod tests {
             "ciphertext": "Y2lwaGVydGV4dA",
             "aad_visibility_event_id": "hidden",
             "aad": {
-                "realm_id": "ck:realm:01904100-0000-7000-8000-000000000001",
+                "realm_id": "ak:realm:01904100-0000-7000-8000-000000000001",
                 "event_kind": "ck.message.create"
             },
             "key_ref": {
                 "algorithm": "MLS",
-                "group_state_ref": "ck:event:01904100-0000-7000-8000-000000000001"
+                "group_state_ref": "ak:event:01904100-0000-7000-8000-000000000001"
             },
             "aad_digest": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
             "payload_digest": "sha256:2222222222222222222222222222222222222222222222222222222222222222"
@@ -751,12 +751,12 @@ mod tests {
             "ciphertext": "Y2lwaGVydGV4dA",
             "aad_visibility_event_id": "hidden",
             "aad": {
-                "realm_id": "ck:realm:01904100-0000-7000-8000-000000000001",
+                "realm_id": "ak:realm:01904100-0000-7000-8000-000000000001",
                 "event_kind": "ck.message.create"
             },
             "key_ref": {
                 "algorithm": "MLS-EXPORTER-AEAD",
-                "group_state_ref": "ck:event:01904100-0000-7000-8000-000000000001"
+                "group_state_ref": "ak:event:01904100-0000-7000-8000-000000000001"
             },
             "aad_digest": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
             "payload_digest": "sha256:2222222222222222222222222222222222222222222222222222222222222222"

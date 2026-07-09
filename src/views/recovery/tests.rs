@@ -12,7 +12,7 @@ use super::types::{PasskeyRecoveryWrap, RecoveryState};
 #[test]
 fn parse_backup_summary_extracts_visible_metadata() {
     let row = parse_backup_summary(&json!({
-        "backup_id": "ck:backup:01964137-0000-7000-8000-000000000000",
+        "backup_id": "ak:backup:01964137-0000-7000-8000-000000000000",
         "backup_class": "secret_storage",
         "backup_version": "kb_1",
         "created_at": "2026-05-15T00:00:00Z",
@@ -27,7 +27,7 @@ fn parse_backup_summary_extracts_visible_metadata() {
     .unwrap();
     assert_eq!(
         row.backup_id,
-        "ck:backup:01964137-0000-7000-8000-000000000000"
+        "ak:backup:01964137-0000-7000-8000-000000000000"
     );
     assert_eq!(row.backup_class, "secret_storage");
     assert_eq!(row.created_at, "2026-05-15T00:00:00Z");
@@ -35,9 +35,9 @@ fn parse_backup_summary_extracts_visible_metadata() {
 
 #[test]
 fn parse_backup_list_handles_envelope() {
-    let enveloped = json!({"backups": [{"backup_id": "ck:backup:x"}]});
+    let enveloped = json!({"backups": [{"backup_id": "ak:backup:x"}]});
     assert_eq!(parse_backup_list(&enveloped).len(), 1);
-    assert!(parse_backup_list(&json!([{"backup_id": "ck:backup:y"}])).is_empty());
+    assert!(parse_backup_list(&json!([{"backup_id": "ak:backup:y"}])).is_empty());
 }
 
 #[test]
@@ -55,17 +55,17 @@ fn backup_inventory_status_counts_classes() {
     let rows = parse_backup_list(&json!({
         "backups": [
             {
-                "backup_id": "ck:backup:a",
+                "backup_id": "ak:backup:a",
                 "backup_class": "did_recovery",
                 "encryption": {"recipient_method": "recovery_public_key"}
             },
             {
-                "backup_id": "ck:backup:b",
+                "backup_id": "ak:backup:b",
                 "backup_class": "secret_storage",
                 "encryption": {"recipient_method": "recovery_public_key"}
             },
             {
-                "backup_id": "ck:backup:c",
+                "backup_id": "ak:backup:c",
                 "backup_class": "mls_history",
                 "encryption": {"recipient_method": "secret_storage_key"}
             }
@@ -83,17 +83,17 @@ fn sorted_backups_latest_first_orders_by_created_at() {
     let rows = parse_backup_list(&json!({
         "backups": [
             {
-                "backup_id": "ck:backup:older",
+                "backup_id": "ak:backup:older",
                 "created_at": "2026-05-15T00:00:00Z"
             },
             {
-                "backup_id": "ck:backup:newer",
+                "backup_id": "ak:backup:newer",
                 "created_at": "2026-05-16T00:00:00Z"
             }
         ]
     }));
     let sorted = sorted_backups_latest_first(&rows);
-    assert_eq!(sorted.first().unwrap().backup_id, "ck:backup:newer");
+    assert_eq!(sorted.first().unwrap().backup_id, "ak:backup:newer");
 }
 
 #[test]
@@ -112,7 +112,7 @@ fn recovery_state_with_key_is_configured() {
 fn recovery_state_with_only_passkey_wrapper_is_not_configured() {
     let mut state = RecoveryState::default();
     state.passkey_wraps.push(PasskeyRecoveryWrap {
-        wrap_id: "ck:recovery-wrap:test".to_owned(),
+        wrap_id: "ak:recovery-wrap:test".to_owned(),
         credential_id_b64: "Y3JlZA".to_owned(),
         recovery_key_fingerprint: "sha256:abc".to_owned(),
         ..PasskeyRecoveryWrap::default()

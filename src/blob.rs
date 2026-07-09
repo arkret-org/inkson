@@ -78,7 +78,7 @@ pub struct EncryptedAttachmentBundle {
 /// Content-address a blob payload as `ck:blob:sha256:<hex>`.
 pub fn blob_typed_id(bytes: &[u8]) -> String {
     let digest = Sha256::digest(bytes);
-    format!("ck:blob:sha256:{}", crate::canonical::hex_encode(&digest))
+    format!("ak:blob:sha256:{}", crate::canonical::hex_encode(&digest))
 }
 
 /// Finish an SDK encrypt: content-address the ciphertext and stamp the
@@ -138,7 +138,7 @@ fn derive_thumbnail_content_key(
     thumbnail_media_type: &str,
 ) -> [u8; MLS_ATTACHMENT_KEY_LEN] {
     let mut hasher = Sha256::new();
-    hasher.update(b"cokret-thumbnail-content-key-v1\0");
+    hasher.update(b"arkret-thumbnail-content-key-v1\0");
     hasher.update(mls_exported_secret);
     hasher.update(b"\0source_blob_ref\0");
     hasher.update(source_blob_ref.as_bytes());
@@ -257,15 +257,15 @@ mod tests {
         let c = blob_typed_id(b"world");
         assert_eq!(a, b);
         assert_ne!(a, c);
-        assert!(a.starts_with("ck:blob:sha256:"));
+        assert!(a.starts_with("ak:blob:sha256:"));
         // sha256 hex length is 64.
-        assert_eq!(a.len(), "ck:blob:sha256:".len() + 64);
+        assert_eq!(a.len(), "ak:blob:sha256:".len() + 64);
     }
 
     fn test_key_ref() -> KeyRefObject {
         KeyRefObject {
             algorithm: "MLS".to_owned(),
-            group_state_ref: "ck:event:01964148-0000-7000-8000-000000000000".to_owned(),
+            group_state_ref: "ak:event:01964148-0000-7000-8000-000000000000".to_owned(),
         }
     }
 

@@ -532,7 +532,7 @@ async fn run_circle_scope_rotate_pass(
     let realm_ids: BTreeSet<String> = realm_ids
         .iter()
         .map(|realm_id| realm_id.trim())
-        .filter(|realm_id| realm_id.starts_with("ck:realm:"))
+        .filter(|realm_id| realm_id.starts_with("ak:realm:"))
         .map(str::to_owned)
         .collect();
     if realm_ids.is_empty() {
@@ -1356,7 +1356,7 @@ fn proof_sender_device_from_verification_method(
                 .map(|(head, _)| head)
                 .unwrap_or(method);
             let (controller, fragment) = no_query.split_once('#')?;
-            (controller == actor && fragment.starts_with("ck:device:")).then(|| fragment.to_owned())
+            (controller == actor && fragment.starts_with("ak:device:")).then(|| fragment.to_owned())
         })
 }
 
@@ -2245,7 +2245,7 @@ mod tests {
     }
 
     fn sdk_realm_id() -> cokret_sdk::RealmId {
-        cokret_sdk::RealmId::new("ck:realm:0196419b-0000-7000-8000-000000000000").unwrap()
+        cokret_sdk::RealmId::new("ak:realm:0196419b-0000-7000-8000-000000000000").unwrap()
     }
 
     fn sdk_actor_id() -> cokret_sdk::Did {
@@ -2269,7 +2269,7 @@ mod tests {
         let message_event = sdk_event(
             cokret_sdk::events::kinds::MESSAGE_CREATE,
             json!({
-                "strand_id": "ck:strand:0196419b-0000-7000-8000-000000000011",
+                "strand_id": "ak:strand:0196419b-0000-7000-8000-000000000011",
                 "track_name": "discussion",
                 "content": {"kind": "ck.content.text", "body": "hello"}
             }),
@@ -2278,7 +2278,7 @@ mod tests {
             "ck.space.create",
             json!({
                 "object": {
-                    "id": "ck:space:0196419b-0000-7000-8000-000000000001",
+                    "id": "ak:space:0196419b-0000-7000-8000-000000000001",
                     "schema": "ck.schema.space.v1",
                     "realm_id": sdk_realm_id().as_str(),
                     "kind": "board",
@@ -2286,7 +2286,7 @@ mod tests {
                 }
             }),
         );
-        let mut response = empty_response("ck:cursor:account-adapter");
+        let mut response = empty_response("ak:cursor:account-adapter");
         response.realms.insert(
             sdk_realm_id().as_str().to_owned(),
             json!({
@@ -2333,8 +2333,8 @@ mod tests {
     fn realm_subscribe_frames_ingest_into_raw_operations_and_dedupe() {
         use cokret_sdk::EventsSubscribeFrameKind;
 
-        let realm_id = "ck:realm:0196419b-0000-7000-8000-000000000000";
-        let board_id = "ck:space:0196419b-0000-7000-8000-000000000001";
+        let realm_id = "ak:realm:0196419b-0000-7000-8000-000000000000";
+        let board_id = "ak:space:0196419b-0000-7000-8000-000000000001";
         // Mirrors the server's `events/subscribe` framing: one `event` frame
         // carrying the projection-event JSON, a `catchup_complete`, a heartbeat.
         let ndjson = format!(
@@ -2342,9 +2342,9 @@ mod tests {
             json!({
                 "kind": "event",
                 "seq": 1,
-                "cursor": "ck:cursor:realmframe1",
+                "cursor": "ak:cursor:realmframe1",
                 "payload": {
-                    "event_id": "ck:event:0196419b-0000-7000-8000-000000000101",
+                    "event_id": "ak:event:0196419b-0000-7000-8000-000000000101",
                     "event_kind": "ck.space.create",
                     "realm_id": realm_id,
                     "actor_id": "did:web:bob.example",
@@ -2361,7 +2361,7 @@ mod tests {
                     }
                 }
             }),
-            json!({ "kind": "catchup_complete", "cursor": "ck:cursor:realmframe1" }),
+            json!({ "kind": "catchup_complete", "cursor": "ak:cursor:realmframe1" }),
             json!({ "kind": "heartbeat", "ts": "2026-06-29T00:00:01Z" }),
         );
 
@@ -2391,14 +2391,14 @@ mod tests {
 
     #[test]
     fn membership_events_ingest_into_raw_operations() {
-        let realm_id = "ck:realm:0196419b-0000-7000-8000-000000000000";
+        let realm_id = "ak:realm:0196419b-0000-7000-8000-000000000000";
         let mut store = temp_store("membership-events");
         let changed = ingest_membership_events(
             &mut store,
             realm_id,
             &[
                 json!({
-                    "event_id": "ck:event:0196419b-0000-7000-8000-000000000201",
+                    "event_id": "ak:event:0196419b-0000-7000-8000-000000000201",
                     "event_kind": "ck.member.state",
                     "realm_id": realm_id,
                     "actor_id": "did:web:alice.example",
@@ -2409,17 +2409,17 @@ mod tests {
                     }
                 }),
                 json!({
-                    "event_id": "ck:event:0196419b-0000-7000-8000-000000000202",
+                    "event_id": "ak:event:0196419b-0000-7000-8000-000000000202",
                     "kind": "ck.invite.accept",
                     "realm_id": realm_id,
                     "actor_id": "did:web:carol.example",
                     "created_at": "2026-06-29T00:00:01Z",
                     "payload": {
-                        "invite_ref": "ck:invite:0196419b-0000-7000-8000-000000000301"
+                        "invite_ref": "ak:invite:0196419b-0000-7000-8000-000000000301"
                     }
                 }),
                 json!({
-                    "event_id": "ck:event:0196419b-0000-7000-8000-000000000203",
+                    "event_id": "ak:event:0196419b-0000-7000-8000-000000000203",
                     "kind": "ck.mls.commit",
                     "realm_id": realm_id,
                     "payload": {}
@@ -2448,7 +2448,7 @@ mod tests {
         assert_eq!(state.raw_operations[1].payload["kind"], "ck.invite.accept");
         assert_eq!(
             state.raw_operations[1].payload["body"]["invite_ref"],
-            "ck:invite:0196419b-0000-7000-8000-000000000301"
+            "ak:invite:0196419b-0000-7000-8000-000000000301"
         );
     }
 
@@ -2500,14 +2500,14 @@ mod tests {
         let body = json!({
             "state": {
                 "events": [{
-                    "event_id": "ck:event:01904100-0000-7000-8000-0000000000a1",
-                    "operation_id": "ck:operation:01904100-0000-7000-8000-0000000000a1",
+                    "event_id": "ak:event:01904100-0000-7000-8000-0000000000a1",
+                    "operation_id": "ak:operation:01904100-0000-7000-8000-0000000000a1",
                     "event_kind": "ck.strand.update",
                     "actor_id": "did:web:bob.example",
                     "created_at": "2026-06-24T10:00:00Z",
-                    "realm_id": "ck:realm:01904100-0000-7000-8000-000000000001",
+                    "realm_id": "ak:realm:01904100-0000-7000-8000-000000000001",
                     "payload": {
-                        "strand_id": "ck:strand:01904100-0000-7000-8000-000000000002",
+                        "strand_id": "ak:strand:01904100-0000-7000-8000-000000000002",
                         "patch": {
                             "synthesis": {"$op": "set", "value": "bob synthesis"}
                         }
@@ -2518,7 +2518,7 @@ mod tests {
 
         let changed = ingest_kanban_state_events_from_projection(
             &mut store,
-            "ck:realm:01904100-0000-7000-8000-000000000001",
+            "ak:realm:01904100-0000-7000-8000-000000000001",
             &body,
         );
 
@@ -2538,20 +2538,20 @@ mod tests {
 
     #[test]
     fn sync_state_events_ingest_discussion_pin_controls_as_raw_operations() {
-        let realm_id = "ck:realm:01904100-0000-7000-8000-000000000001";
-        let strand_id = "ck:strand:01904100-0000-7000-8000-000000000002";
+        let realm_id = "ak:realm:01904100-0000-7000-8000-000000000001";
+        let strand_id = "ak:strand:01904100-0000-7000-8000-000000000002";
         let mut store = temp_store("discussion-pin-state-events");
         let body = json!({
             "state": {
                 "events": [{
-                    "event_id": "ck:event:01904100-0000-7000-8000-0000000000b1",
+                    "event_id": "ak:event:01904100-0000-7000-8000-0000000000b1",
                     "event_kind": "ck.pin.add",
                     "actor_id": "did:web:mei.example",
                     "created_at": "2026-06-24T10:00:00Z",
                     "realm_id": realm_id,
                     "payload": {
                         "pin_scope": {"kind": "strand", "id": strand_id},
-                        "target_ref": "ck:message:01904100-0000-7000-8000-000000000101",
+                        "target_ref": "ak:message:01904100-0000-7000-8000-000000000101",
                         "rank": "r001"
                     }
                 }]
@@ -2565,7 +2565,7 @@ mod tests {
         assert_eq!(state.raw_operations.len(), 1);
         assert_eq!(
             state.raw_operations[0].operation_id,
-            "ck:event:01904100-0000-7000-8000-0000000000b1"
+            "ak:event:01904100-0000-7000-8000-0000000000b1"
         );
         assert_eq!(state.raw_operations[0].payload["event_kind"], "ck.pin.add");
         assert_eq!(
@@ -2576,21 +2576,21 @@ mod tests {
 
     #[test]
     fn sync_state_events_skip_message_lifecycle_rows_for_discussion_raw_operations() {
-        let realm_id = "ck:realm:01904100-0000-7000-8000-000000000001";
-        let strand_id = "ck:strand:01904100-0000-7000-8000-000000000002";
+        let realm_id = "ak:realm:01904100-0000-7000-8000-000000000001";
+        let strand_id = "ak:strand:01904100-0000-7000-8000-000000000002";
         let mut store = temp_store("discussion-message-state-events");
         let body = json!({
             "state": {
                 "events": [
                     {
-                        "event_id": "ck:event:01904100-0000-7000-8000-0000000000c1",
+                        "event_id": "ak:event:01904100-0000-7000-8000-0000000000c1",
                         "event_kind": "ck.message.revise",
                         "actor_id": "did:web:bob.example",
                         "created_at": "2026-06-24T10:00:00Z",
                         "realm_id": realm_id,
                         "payload": {
-                            "event_id": "ck:event:01904100-0000-7000-8000-0000000000c1",
-                            "target_ref": "ck:message:01904100-0000-7000-8000-000000000101",
+                            "event_id": "ak:event:01904100-0000-7000-8000-0000000000c1",
+                            "target_ref": "ak:message:01904100-0000-7000-8000-000000000101",
                             "strand_id": strand_id,
                             "content": {
                                 "kind": "ck.content.text",
@@ -2599,14 +2599,14 @@ mod tests {
                         }
                     },
                     {
-                        "event_id": "ck:event:01904100-0000-7000-8000-0000000000c2",
+                        "event_id": "ak:event:01904100-0000-7000-8000-0000000000c2",
                         "event_kind": "ck.message.redact",
                         "actor_id": "did:web:bob.example",
                         "created_at": "2026-06-24T10:01:00Z",
                         "realm_id": realm_id,
                         "payload": {
-                            "event_id": "ck:event:01904100-0000-7000-8000-0000000000c2",
-                            "message_id": "ck:message:01904100-0000-7000-8000-000000000101",
+                            "event_id": "ak:event:01904100-0000-7000-8000-0000000000c2",
+                            "message_id": "ak:message:01904100-0000-7000-8000-000000000101",
                             "reason": "user requested tombstone"
                         }
                     }
@@ -2627,20 +2627,20 @@ mod tests {
     fn persistent_proof_sender_device_collection_dedupes_nested_events() {
         let mut response = empty_response("cursor-1");
         response.realms.insert(
-            "ck:realm:01904100-0000-7000-8000-000000000001".to_owned(),
+            "ak:realm:01904100-0000-7000-8000-000000000001".to_owned(),
             json!({
                 "timeline": {
                     "events": [
                         {
                             "event": {
                                 "actor_id": "did:web:alice.example",
-                                "device_id": "ck:device:01904100-0000-7000-8000-000000000001",
+                                "device_id": "ak:device:01904100-0000-7000-8000-000000000001",
                                 "proofs": [{"verification_method": "did:web:alice.example#ck:device:01904100-0000-7000-8000-000000000001"}]
                             }
                         },
                         {
                             "actor_id": "did:web:alice.example",
-                            "device_id": "ck:device:01904100-0000-7000-8000-000000000001",
+                            "device_id": "ak:device:01904100-0000-7000-8000-000000000001",
                             "proofs": [{"verification_method": "did:web:alice.example#ck:device:01904100-0000-7000-8000-000000000001"}]
                         },
                         {
@@ -2660,11 +2660,11 @@ mod tests {
             vec![
                 (
                     "did:web:alice.example".to_owned(),
-                    "ck:device:01904100-0000-7000-8000-000000000001".to_owned()
+                    "ak:device:01904100-0000-7000-8000-000000000001".to_owned()
                 ),
                 (
                     "did:web:carol.example".to_owned(),
-                    "ck:device:01904100-0000-7000-8000-000000000002".to_owned()
+                    "ak:device:01904100-0000-7000-8000-000000000002".to_owned()
                 )
             ]
         );
@@ -2676,7 +2676,7 @@ mod tests {
         store.save_notification_projection(vec![json!({
             "notification_id": "message-1",
             "notification_kind": "message",
-            "realm_id": "ck:realm:existing",
+            "realm_id": "ak:realm:existing",
             "timestamp": "2026-06-01T00:00:00Z"
         })]);
         let response = empty_response("sx:invite");
@@ -2685,8 +2685,8 @@ mod tests {
             &mut store,
             &response,
             Some(vec![json!({
-                "invite_id": "ck:invite:0196419b-0000-7000-8000-000000000010",
-                "realm_id": "ck:realm:0196419b-0000-7000-8000-000000000011",
+                "invite_id": "ak:invite:0196419b-0000-7000-8000-000000000010",
+                "realm_id": "ak:realm:0196419b-0000-7000-8000-000000000011",
                 "created_at": "2026-06-01T00:00:01Z"
             })]),
         );
@@ -2713,22 +2713,22 @@ mod tests {
         // remain, plus nested Space containers under still-joined
         // Realms".
         let mut store = temp_store("prune");
-        store.save_realm_tree_projection("ck:realm:a", json!({"summary": {"title": "A"}}));
+        store.save_realm_tree_projection("ak:realm:a", json!({"summary": {"title": "A"}}));
         store.save_realm_tree_projection(
-            "ck:space:child",
+            "ak:space:child",
             json!({
                 "__kind": "space",
-                "realm_id": "ck:realm:a",
+                "realm_id": "ak:realm:a",
                 "summary": {"title": "Child"}
             }),
         );
-        store.save_realm_tree_projection("ck:space:b", json!({"summary": {"title": "B"}}));
-        store.save_draft("ck:space:b", "draft-b");
+        store.save_realm_tree_projection("ak:space:b", json!({"summary": {"title": "B"}}));
+        store.save_draft("ak:space:b", "draft-b");
 
         let mut response = empty_response("sx:42");
         response
             .realms
-            .insert("ck:realm:a".to_owned(), json!({"summary": {"title": "A"}}));
+            .insert("ak:realm:a".to_owned(), json!({"summary": {"title": "A"}}));
 
         // Mirror the engine's full-sync prune step.
         let server_set: BTreeSet<String> = response.realms.keys().cloned().collect();
@@ -2737,28 +2737,28 @@ mod tests {
             &store.load().realm_tree_projections,
         );
         let pruned = store.retain_realm_tree_projections(|id| keep_set.contains(id));
-        assert_eq!(pruned, vec!["ck:space:b".to_owned()]);
+        assert_eq!(pruned, vec!["ak:space:b".to_owned()]);
 
         let state = store.load();
-        assert!(state.realm_tree_projections.contains_key("ck:realm:a"));
-        assert!(state.realm_tree_projections.contains_key("ck:space:child"));
-        assert!(!state.realm_tree_projections.contains_key("ck:space:b"));
-        assert!(!state.drafts.contains_key("ck:space:b"));
+        assert!(state.realm_tree_projections.contains_key("ak:realm:a"));
+        assert!(state.realm_tree_projections.contains_key("ak:space:child"));
+        assert!(!state.realm_tree_projections.contains_key("ak:space:b"));
+        assert!(!state.drafts.contains_key("ak:space:b"));
     }
 
     #[test]
     fn incremental_response_forgets_left_realms() {
         let mut store = temp_store("left");
-        store.save_realm_tree_projection("ck:space:a", json!({"name": "A"}));
-        store.save_realm_tree_projection("ck:space:b", json!({"name": "B"}));
-        store.save_draft("ck:space:b", "draft-b");
+        store.save_realm_tree_projection("ak:space:a", json!({"name": "A"}));
+        store.save_realm_tree_projection("ak:space:b", json!({"name": "B"}));
+        store.save_draft("ak:space:b", "draft-b");
 
         let mut response = empty_response("sx:43");
         // Fixture typo fix: the forgotten projection id must match the
         // `ck:space:b` saved above. `forget_realm_tree_projection` deletes by
         // exact id, without prefix normalization, so otherwise the
-        // `!contains_key("ck:space:b")` assertion would always be false.
-        response.left_realms = vec!["ck:space:b".to_owned()];
+        // `!contains_key("ak:space:b")` assertion would always be false.
+        response.left_realms = vec!["ak:space:b".to_owned()];
 
         // Mirror the engine's left_realms step.
         for id in &response.left_realms {
@@ -2766,9 +2766,9 @@ mod tests {
         }
 
         let state = store.load();
-        assert!(state.realm_tree_projections.contains_key("ck:space:a"));
-        assert!(!state.realm_tree_projections.contains_key("ck:space:b"));
-        assert!(!state.drafts.contains_key("ck:space:b"));
+        assert!(state.realm_tree_projections.contains_key("ak:space:a"));
+        assert!(!state.realm_tree_projections.contains_key("ak:space:b"));
+        assert!(!state.drafts.contains_key("ak:space:b"));
     }
 
     // ── Y2 invalidation hook ──────────────────────────────────────────

@@ -1299,7 +1299,7 @@ mod tests {
         let request_payload = json!({
             "pairing_code": "pairing-code",
             "new_device_pubkey": {
-                "kid": "ck:device:new",
+                "kid": "ak:device:new",
                 "alg": "EdDSA",
                 "public_key": "abc-123"
             },
@@ -1310,12 +1310,12 @@ mod tests {
         });
         let content = build_pairing_verification_content(
             &request_payload,
-            "ck:device:new",
+            "ak:device:new",
             "https://server.example",
             "2026-06-12T12:00:00Z",
         );
         assert_eq!(content["purpose"], "same_principal_device_authorization");
-        assert_eq!(content["from_device"], "ck:device:new");
+        assert_eq!(content["from_device"], "ak:device:new");
         assert_eq!(content["pairing_code"], "pairing-code");
         assert_eq!(content["challenge_signature"], "challenge-signature");
         assert_eq!(

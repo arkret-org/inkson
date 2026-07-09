@@ -51,7 +51,7 @@ pub fn message_revise_content(
         encrypted_metadata: None,
         reason: None,
     };
-    if target_ref.starts_with("ck:message:") {
+    if target_ref.starts_with("ak:message:") {
         payload.message_id = Some(
             cokret_sdk::MessageId::new(target_ref.to_owned())
                 .map_err(|err| anyhow::anyhow!("invalid message_id {target_ref:?}: {err}"))?,

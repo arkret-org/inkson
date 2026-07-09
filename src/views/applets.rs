@@ -1,6 +1,6 @@
 //! Applets — registry + interop_session controls.
 //!
-//! Spec: `cokret-spec/spec/v1/zh/extensions/applet-integration.md`.
+//! Spec: `arkret-spec/spec/v1/zh/extensions/applet-integration.md`.
 //!
 //! What the panel does today:
 //!   * Reads `ck.applet.registration` / `ck.applet.discovery` events out of the local raw-operation
@@ -969,7 +969,7 @@ mod tests {
     #[test]
     fn applet_registration_body_keys_pin_canonical_wire() {
         let op = crate::operation::ck_ops::applet_registration(
-            "ck:realm:0196419b-0000-7000-8000-000000000001",
+            "ak:realm:0196419b-0000-7000-8000-000000000001",
             "did:web:alice.example",
             "did:web:applet.example",
             "extensions",
@@ -1037,30 +1037,30 @@ mod tests {
     #[test]
     fn effective_scope_trims_realm_prefix_consistently() {
         let scope =
-            applet_effective_scope("ck:realm:01904100-0000-7000-8000-000000000010", None).unwrap();
+            applet_effective_scope("ak:realm:01904100-0000-7000-8000-000000000010", None).unwrap();
         assert!(matches!(
             scope,
             cokret_sdk::models::EffectiveScope::Realm { ref realm_id }
-                if realm_id.as_str() == "ck:realm:01904100-0000-7000-8000-000000000010"
+                if realm_id.as_str() == "ak:realm:01904100-0000-7000-8000-000000000010"
         ));
     }
 
     #[test]
     fn effective_scope_circle_id_targets_circle() {
         let scope = applet_effective_scope(
-            "ck:realm:01904100-0000-7000-8000-000000000010",
-            Some("ck:circle:01904100-0000-7000-8000-0000000000c1"),
+            "ak:realm:01904100-0000-7000-8000-000000000010",
+            Some("ak:circle:01904100-0000-7000-8000-0000000000c1"),
         )
         .unwrap();
         assert!(matches!(
             scope,
             cokret_sdk::models::EffectiveScope::Circle { ref realm_id, ref circle_id }
-                if realm_id.as_str() == "ck:realm:01904100-0000-7000-8000-000000000010"
-                    && circle_id.as_str() == "ck:circle:01904100-0000-7000-8000-0000000000c1"
+                if realm_id.as_str() == "ak:realm:01904100-0000-7000-8000-000000000010"
+                    && circle_id.as_str() == "ak:circle:01904100-0000-7000-8000-0000000000c1"
         ));
         // Blank circle falls back to a Realm-wide install.
         assert!(matches!(
-            applet_effective_scope("ck:realm:01904100-0000-7000-8000-000000000010", Some("  "))
+            applet_effective_scope("ak:realm:01904100-0000-7000-8000-000000000010", Some("  "))
                 .unwrap(),
             cokret_sdk::models::EffectiveScope::Realm { .. }
         ));
@@ -1072,7 +1072,7 @@ mod tests {
             "plan_digest": "sha256:deadbeef",
             "approved_scopes": [{
                 "actions": ["ck.message.create", "ck.applet.ghost.provision"],
-                "realm_ids": ["ck:realm:01904100-0000-7000-8000-000000000010"],
+                "realm_ids": ["ak:realm:01904100-0000-7000-8000-000000000010"],
                 "constraints": []
             }],
         });

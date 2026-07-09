@@ -82,7 +82,7 @@ pub async fn resolve_realm(
 /// Message) to a directory preview via `ck.find.directory.query.resolve_target`
 /// (`POST /_cokret/find/directory/resolve-target`).
 ///
-/// `address` is the canonical `web+cokret:` (or HTTPS-fragment) string
+/// `address` is the canonical `web+arkret:` (or HTTPS-fragment) string
 /// derived from [`cokret_sdk::models::parse_address`]; `token` is present
 /// iff the address carried `lt=invite` or `lt=preview`. The server binds
 /// an invite or preview token to the resolved object via the SDK's
@@ -171,7 +171,7 @@ pub async fn resolve_handle(
     Ok(outcome.into())
 }
 
-/// R3.2 (cokret-spec @ b56cab1) — `ck.find.directory.query.list_handles_for_subject`.
+/// R3.2 (arkret-spec @ b56cab1) — `ck.find.directory.query.list_handles_for_subject`.
 ///
 /// Inverse of [`resolve_handle`]: given a known holder/principal
 /// DID, return the current context-visible signed handle claims +

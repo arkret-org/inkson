@@ -9,7 +9,7 @@
 //!
 //! ## SDK gap
 //!
-//! cokret-rust-sdk currently only exposes `PlatformKeyStoreDescriptor` /
+//! arkret-rust-sdk currently only exposes `PlatformKeyStoreDescriptor` /
 //! `PlatformKeyStoreKind` (a *descriptor* type — no trait, no actual
 //! key-loading surface). When the SDK trait lands, this module's
 //! [`KeyStore`] will become a thin re-export and the platform stubs here

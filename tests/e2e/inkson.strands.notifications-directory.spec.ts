@@ -66,7 +66,7 @@ test("notifications are derived from index projections and respect per-realm mut
   );
   expect(acceptBody.kind).toBe("ck.member.state");
   expect(acceptBody.payload.invite_ref).toBe(
-    "ck:invite:01904100-0000-7000-8000-000000000099",
+    "ak:invite:01904100-0000-7000-8000-000000000099",
   );
   expect(acceptBody.payload).not.toHaveProperty("invite_id");
   await expect(page.getByTestId("notifications-status")).toContainText(
@@ -158,10 +158,10 @@ test("directory search resolve and space selection strand works", async ({
   await page.getByTestId("directory-search-input").fill("demo");
   await page.getByTestId("directory-search-button").click();
   await expect(page.getByTestId("directory-result")).toContainText(
-    "Cokret Demo Realm",
+    "Arkret Demo Realm",
   );
   await expect(page.getByTestId("index-query-results")).toContainText(
-    "Cokret Demo Realm",
+    "Arkret Demo Realm",
   );
   await expect(page.getByTestId("generic-entity-card")).toHaveAttribute(
     "data-render-kind",
@@ -183,7 +183,7 @@ test("directory search resolve and space selection strand works", async ({
     page.locator('[data-testid="toast-item"][data-i18n-key="feedback.realm_resolved"]'),
   ).toContainText("public");
   await expect(page.getByTestId("directory-result").first()).toContainText(
-    "Cokret Demo Realm",
+    "Arkret Demo Realm",
   );
 
   await page.getByTestId("directory-advanced-diagnostics-toggle").click();
@@ -201,14 +201,14 @@ test("directory search resolve and space selection strand works", async ({
   );
 
   await page.getByTestId("tab-organizations").click();
-  await page.getByTestId("directory-search-input").fill("cokret");
+  await page.getByTestId("directory-search-input").fill("arkret");
   await page.getByTestId("directory-search-button").click();
-  await expect(page.getByTestId("org-result")).toContainText("Cokret Labs");
-  await expect(page.getByTestId("org-result")).toContainText("cokret.example");
+  await expect(page.getByTestId("org-result")).toContainText("Arkret Labs");
+  await expect(page.getByTestId("org-result")).toContainText("arkret.example");
   await page.getByTestId("org-search-members").click();
   await expect(page.getByTestId("tab-actors")).toHaveClass(/primary/);
   await expect(page.getByTestId("directory-search-input")).toHaveValue(
-    "cokret.example",
+    "arkret.example",
   );
 });
 

@@ -1634,7 +1634,7 @@ fn PendingInviteRow(
                                         Ok(resp) => {
                                             frontier_state.set(resp.event_id.clone());
                                             state_store.write().append_raw_operation(
-                                                format!("ck:operation:{}", crate::operation::uuid_v7()),
+                                                format!("ak:operation:{}", crate::operation::uuid_v7()),
                                                 Some(realm.clone()),
                                                 json!({
                                                     "kind": "ck.invite.cancel",
@@ -2609,12 +2609,12 @@ pub(crate) fn mls_admission_candidate_realms_for_actor(
     let state = store.load();
     let mut realm_ids = BTreeSet::<String>::new();
     for realm_id in state.realm_tree_projections.keys() {
-        if realm_id.starts_with("ck:realm:") {
+        if realm_id.starts_with("ak:realm:") {
             realm_ids.insert(realm_id.clone());
         }
     }
     for realm_id in store.mls_snapshots().keys() {
-        if realm_id.starts_with("ck:realm:") {
+        if realm_id.starts_with("ak:realm:") {
             realm_ids.insert(realm_id.clone());
         }
     }
@@ -3570,7 +3570,7 @@ pub fn RealmMembersPanel(
                                             }
                                             let wait_for = active_sync_token(sync_cursor());
                                             let invite_id = format!(
-                                                "ck:invite:{}",
+                                                "ak:invite:{}",
                                                 crate::operation::uuid_v7()
                                             );
                                             spawn(async move {
@@ -4538,7 +4538,7 @@ mod tests {
 
     #[test]
     fn projected_member_profiles_read_display_handles_and_roles() {
-        let realm_id = "ck:realm:test";
+        let realm_id = "ak:realm:test";
         let mut store = temp_store("projected-profiles");
         store.save_realm_tree_projection(
             realm_id.to_owned(),
@@ -4553,7 +4553,7 @@ mod tests {
                         "handle": "alice:acme.example"
                     }],
                     "display_profile": {
-                        "avatar_blob_ref": "ck:blob:sha256:abc"
+                        "avatar_blob_ref": "ak:blob:sha256:abc"
                     }
                 }],
                 "admins": ["did:web:alice.example"]
@@ -4567,13 +4567,13 @@ mod tests {
             .expect("alice profile exists");
         assert_eq!(alice.display_name.as_deref(), Some("Alice"));
         assert_eq!(alice.handles, vec!["alice:acme.example"]);
-        assert_eq!(alice.avatar_blob_ref.as_deref(), Some("ck:blob:sha256:abc"));
+        assert_eq!(alice.avatar_blob_ref.as_deref(), Some("ak:blob:sha256:abc"));
         assert!(alice.is_admin);
     }
 
     #[test]
     fn projected_member_profiles_preserve_pending_invite_membership() {
-        let realm_id = "ck:realm:test";
+        let realm_id = "ak:realm:test";
         let mut store = temp_store("pending-membership");
         store.save_realm_tree_projection(
             realm_id.to_owned(),
@@ -4603,7 +4603,7 @@ mod tests {
 
     #[test]
     fn joined_member_signature_lists_only_joined_members_sorted() {
-        let realm_id = "ck:realm:test";
+        let realm_id = "ak:realm:test";
         let mut store = temp_store("joined-signature");
         store.save_realm_tree_projection(
             realm_id.to_owned(),
@@ -4627,10 +4627,10 @@ mod tests {
 
     #[test]
     fn joined_member_signature_reads_raw_member_state_join() {
-        let realm_id = "ck:realm:test";
+        let realm_id = "ak:realm:test";
         let mut store = temp_store("raw-member-state-join");
         store.append_raw_operation(
-            "ck:event:member-join".to_owned(),
+            "ak:event:member-join".to_owned(),
             Some(realm_id.to_owned()),
             serde_json::json!({
                 "kind": "ck.member.state",
@@ -4650,7 +4650,7 @@ mod tests {
 
     #[test]
     fn projected_join_membership_overrides_earlier_pending_projection() {
-        let realm_id = "ck:realm:test";
+        let realm_id = "ak:realm:test";
         let mut store = temp_store("pending-then-joined-membership");
         store.save_realm_tree_projection(
             realm_id.to_owned(),
@@ -4679,10 +4679,10 @@ mod tests {
 
     #[test]
     fn projected_member_profiles_restore_pending_invites_from_raw_operations() {
-        let realm_id = "ck:realm:test";
+        let realm_id = "ak:realm:test";
         let mut store = temp_store("raw-pending-invite");
         store.append_raw_operation(
-            "ck:event:invite-local".to_owned(),
+            "ak:event:invite-local".to_owned(),
             Some(realm_id.to_owned()),
             serde_json::json!({
                 "kind": "ck.invite.create",
@@ -4703,11 +4703,11 @@ mod tests {
 
     #[test]
     fn projected_member_profiles_promote_invite_accept_to_join_from_raw_operations() {
-        let realm_id = "ck:realm:test";
-        let invite_id = "ck:invite:01904100-0000-7000-8000-000000000001";
+        let realm_id = "ak:realm:test";
+        let invite_id = "ak:invite:01904100-0000-7000-8000-000000000001";
         let mut store = temp_store("raw-invite-accept-join");
         store.append_raw_operation(
-            "ck:event:invite-local".to_owned(),
+            "ak:event:invite-local".to_owned(),
             Some(realm_id.to_owned()),
             serde_json::json!({
                 "kind": "ck.invite.create",
@@ -4718,7 +4718,7 @@ mod tests {
             }),
         );
         store.append_raw_operation(
-            "ck:event:invite-accept".to_owned(),
+            "ak:event:invite-accept".to_owned(),
             Some(realm_id.to_owned()),
             serde_json::json!({
                 "kind": "ck.invite.accept",
@@ -4740,8 +4740,8 @@ mod tests {
 
     #[test]
     fn queued_invite_accept_does_not_promote_join_or_trigger_admission() {
-        let realm_id = "ck:realm:test";
-        let invite_id = "ck:invite:01904100-0000-7000-8000-000000000001";
+        let realm_id = "ak:realm:test";
+        let invite_id = "ak:invite:01904100-0000-7000-8000-000000000001";
         let mut store = temp_store("queued-invite-accept-no-admission");
         store.save_realm_tree_projection(
             realm_id.to_owned(),
@@ -4755,7 +4755,7 @@ mod tests {
         );
         store.save_mls_snapshot(realm_id.to_owned(), dummy_mls_snapshot(realm_id));
         store.append_raw_operation(
-            "ck:event:invite-local".to_owned(),
+            "ak:event:invite-local".to_owned(),
             Some(realm_id.to_owned()),
             serde_json::json!({
                 "kind": "ck.invite.create",
@@ -4796,11 +4796,11 @@ mod tests {
 
     #[test]
     fn projected_member_profiles_drop_locally_cancelled_pending_invites() {
-        let realm_id = "ck:realm:test";
-        let invite_id = "ck:invite:01904100-0000-7000-8000-000000000001";
+        let realm_id = "ak:realm:test";
+        let invite_id = "ak:invite:01904100-0000-7000-8000-000000000001";
         let mut store = temp_store("raw-cancelled-pending-invite");
         store.append_raw_operation(
-            "ck:event:invite-local".to_owned(),
+            "ak:event:invite-local".to_owned(),
             Some(realm_id.to_owned()),
             serde_json::json!({
                 "kind": "ck.invite.create",
@@ -4811,7 +4811,7 @@ mod tests {
             }),
         );
         store.append_raw_operation(
-            "ck:event:invite-cancel".to_owned(),
+            "ak:event:invite-cancel".to_owned(),
             Some(realm_id.to_owned()),
             serde_json::json!({
                 "kind": "ck.invite.cancel",
@@ -4829,7 +4829,7 @@ mod tests {
 
     #[test]
     fn raw_pending_invite_does_not_override_join_projection() {
-        let realm_id = "ck:realm:test";
+        let realm_id = "ak:realm:test";
         let mut store = temp_store("raw-pending-joined");
         store.save_realm_tree_projection(
             realm_id.to_owned(),
@@ -4841,7 +4841,7 @@ mod tests {
             }),
         );
         store.append_raw_operation(
-            "ck:event:invite-local".to_owned(),
+            "ak:event:invite-local".to_owned(),
             Some(realm_id.to_owned()),
             serde_json::json!({
                 "kind": "ck.invite.create",
@@ -4861,7 +4861,7 @@ mod tests {
 
     #[test]
     fn admission_candidate_realms_include_encrypted_snapshot_with_raw_join() {
-        let realm_id = "ck:realm:test";
+        let realm_id = "ak:realm:test";
         let mut store = temp_store("admission-candidate-raw-join");
         store.save_realm_tree_projection(
             realm_id.to_owned(),
@@ -4879,7 +4879,7 @@ mod tests {
         );
 
         store.append_raw_operation(
-            "ck:event:member-join".to_owned(),
+            "ak:event:member-join".to_owned(),
             Some(realm_id.to_owned()),
             serde_json::json!({
                 "kind": "ck.member.state",
@@ -4899,7 +4899,7 @@ mod tests {
 
     #[test]
     fn admission_candidate_realms_follow_latest_accepted_membership_state() {
-        let realm_id = "ck:realm:test";
+        let realm_id = "ak:realm:test";
         let mut store = temp_store("admission-candidate-latest-membership");
         store.save_realm_tree_projection(
             realm_id.to_owned(),
@@ -4913,7 +4913,7 @@ mod tests {
         );
         store.save_mls_snapshot(realm_id.to_owned(), dummy_mls_snapshot(realm_id));
         store.append_raw_operation(
-            "ck:event:member-join-1".to_owned(),
+            "ak:event:member-join-1".to_owned(),
             Some(realm_id.to_owned()),
             serde_json::json!({
                 "kind": "ck.member.state",
@@ -4926,7 +4926,7 @@ mod tests {
             }),
         );
         store.append_raw_operation(
-            "ck:event:member-leave".to_owned(),
+            "ak:event:member-leave".to_owned(),
             Some(realm_id.to_owned()),
             serde_json::json!({
                 "kind": "ck.member.state",
@@ -4944,7 +4944,7 @@ mod tests {
         );
 
         store.append_raw_operation(
-            "ck:event:member-join-2".to_owned(),
+            "ak:event:member-join-2".to_owned(),
             Some(realm_id.to_owned()),
             serde_json::json!({
                 "kind": "ck.member.state",
@@ -4964,7 +4964,7 @@ mod tests {
 
     #[test]
     fn admission_candidate_realms_ignore_roster_only_join_hint() {
-        let realm_id = "ck:realm:test";
+        let realm_id = "ak:realm:test";
         let mut store = temp_store("admission-candidate-roster-only-join");
         store.save_realm_tree_projection(
             realm_id.to_owned(),
@@ -4986,7 +4986,7 @@ mod tests {
     #[test]
     fn mention_policy_reads_realm_effective_bit() {
         let realm_id =
-            cokret_sdk::RealmId::new("ck:realm:01904100-0000-7000-8000-000000000001".to_owned())
+            cokret_sdk::RealmId::new("ak:realm:01904100-0000-7000-8000-000000000001".to_owned())
                 .unwrap();
         let entries = vec![AgentParticipationEntry {
             scope: AgentParticipationScope::Realm { realm_id },
@@ -5008,7 +5008,7 @@ mod tests {
         }];
 
         let (policy, selection) =
-            mention_state_from_entries(&entries, "ck:realm:01904100-0000-7000-8000-000000000001");
+            mention_state_from_entries(&entries, "ak:realm:01904100-0000-7000-8000-000000000001");
         assert_eq!(policy, AgentMentionPolicy::Allowed);
         assert!(selection.accept_third_party_mention);
     }
@@ -5017,7 +5017,7 @@ mod tests {
 
     const PROVIDER_DID: &str = "did:web:provider.example";
     const SELF_DID: &str = "did:web:self.example";
-    const PROVIDER_DEVICE: &str = "ck:device:01904100-0000-7000-8000-0000000000aa";
+    const PROVIDER_DEVICE: &str = "ak:device:01904100-0000-7000-8000-0000000000aa";
 
     #[test]
     fn plans_request_when_prejoin_gap_and_provider_exist() {
@@ -5082,31 +5082,31 @@ mod tests {
                 "kind": "ck.mls.welcome",
                 "sender": PROVIDER_DID,
                 "sender_device_id": PROVIDER_DEVICE,
-                "content": { "realm_id": "ck:realm:abc" },
+                "content": { "realm_id": "ak:realm:abc" },
             }),
             // A self-authored message must never name ourselves as provider.
             json!({
                 "kind": "ck.mls.commit",
                 "sender": SELF_DID,
-                "sender_device_id": "ck:device:self",
-                "realm_id": "ck:realm:abc",
+                "sender_device_id": "ak:device:self",
+                "realm_id": "ak:realm:abc",
             }),
             // Unrelated kind is ignored.
             json!({
                 "kind": "ck.typing",
                 "sender": "did:web:noise.example",
-                "sender_device_id": "ck:device:noise",
-                "realm_id": "ck:realm:abc",
+                "sender_device_id": "ak:device:noise",
+                "realm_id": "ak:realm:abc",
             }),
             // A message for a different realm is filtered out.
             json!({
                 "kind": "ck.mls.welcome",
                 "sender": "did:web:other.example",
-                "sender_device_id": "ck:device:other",
-                "realm_id": "ck:realm:zzz",
+                "sender_device_id": "ak:device:other",
+                "realm_id": "ak:realm:zzz",
             }),
         ];
-        let candidates = provider_candidates_from_inbox(&inbox, "ck:realm:abc", SELF_DID);
+        let candidates = provider_candidates_from_inbox(&inbox, "ak:realm:abc", SELF_DID);
         assert_eq!(
             candidates,
             vec![(PROVIDER_DID.to_owned(), PROVIDER_DEVICE.to_owned())]
@@ -5120,16 +5120,16 @@ mod tests {
                 "kind": "ck.mls.welcome",
                 "sender": PROVIDER_DID,
                 "sender_device_id": PROVIDER_DEVICE,
-                "realm_id": "ck:realm:abc",
+                "realm_id": "ak:realm:abc",
             }),
             json!({
                 "kind": "ck.realm_key.share",
                 "sender": PROVIDER_DID,
                 "sender_device_id": PROVIDER_DEVICE,
-                "realm_id": "ck:realm:abc",
+                "realm_id": "ak:realm:abc",
             }),
         ];
-        let candidates = provider_candidates_from_inbox(&inbox, "ck:realm:abc", SELF_DID);
+        let candidates = provider_candidates_from_inbox(&inbox, "ak:realm:abc", SELF_DID);
         assert_eq!(candidates.len(), 1);
     }
 
@@ -5140,25 +5140,25 @@ mod tests {
             "sender_principal_id": PROVIDER_DID,
             "sender_device_id": PROVIDER_DEVICE,
             "recipient_principal_id": SELF_DID,
-            "recipient_device_id": "ck:device:self",
+            "recipient_device_id": "ak:device:self",
             "sent_at": "2026-07-05T00:00:00Z",
             "expires_at": "2099-07-05T00:01:00Z",
             "content": {
                 "group_id": "test-group",
                 "epoch": 1,
                 "recipient_principal_id": SELF_DID,
-                "recipient_device_id": "ck:device:self",
+                "recipient_device_id": "ak:device:self",
                 "welcome": "b3BhcXVl",
                 "welcome_hash": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
             },
             "unsigned": {
-                "source_event_id": "ck:event:welcome",
-                "mls_welcome_id": "ck:mls_welcome:welcome",
-                "key_package_id": "ck:mls_keypackage:key"
+                "source_event_id": "ak:event:welcome",
+                "mls_welcome_id": "ak:mls_welcome:welcome",
+                "key_package_id": "ak:mls_keypackage:key"
             }
         })];
 
-        let candidates = provider_candidates_from_inbox(&inbox, "ck:realm:abc", SELF_DID);
+        let candidates = provider_candidates_from_inbox(&inbox, "ak:realm:abc", SELF_DID);
 
         assert_eq!(
             candidates,
@@ -5168,7 +5168,7 @@ mod tests {
 
     #[test]
     fn pending_history_key_request_uses_projected_shared_realm_and_welcome_provider() {
-        let realm = "ck:realm:abc";
+        let realm = "ak:realm:abc";
         let mut store = temp_store("pending-history-key-request");
         store.save_realm_tree_projection(
             realm,
@@ -5189,14 +5189,14 @@ mod tests {
             "sender_principal_id": PROVIDER_DID,
             "sender_device_id": PROVIDER_DEVICE,
             "recipient_principal_id": SELF_DID,
-            "recipient_device_id": "ck:device:self",
+            "recipient_device_id": "ak:device:self",
             "sent_at": "2026-07-05T00:00:00Z",
             "expires_at": "2099-07-05T00:01:00Z",
             "content": {
                 "group_id": "test-group",
                 "epoch": 1,
                 "recipient_principal_id": SELF_DID,
-                "recipient_device_id": "ck:device:self",
+                "recipient_device_id": "ak:device:self",
                 "welcome": "b3BhcXVl",
                 "welcome_hash": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
             }
@@ -5205,12 +5205,12 @@ mod tests {
         let key = pending_history_request_dedup_key(&store, realm, SELF_DID)
             .expect("shared pre-join gap with a Welcome provider should request history keys");
 
-        assert!(key.contains("ck:realm:abc|0|0|"), "{key}");
+        assert!(key.contains("ak:realm:abc|0|0|"), "{key}");
     }
 
     #[test]
     fn parses_projected_realm_key_request_payload_envelope() {
-        let realm = "ck:realm:abc";
+        let realm = "ak:realm:abc";
         let request = cokret_sdk::RealmKeyRequestPayload {
             key_scope: cokret_sdk::RealmKeyRequestScope {
                 effective_scope: json!({ "kind": "realm", "realm_id": realm }),
@@ -5221,7 +5221,7 @@ mod tests {
                 history_visibility: None,
             },
             recipient_principal_id: cokret_sdk::Did::new(SELF_DID.to_owned()).unwrap(),
-            recipient_device_id: "ck:device:self".to_owned(),
+            recipient_device_id: "ak:device:self".to_owned(),
             recipient_hpke_public_key: "Ikuf_h0tiOTpwnUEEZZeY4p_OIaixaYHYcT6GnmJOmE".to_owned(),
             requested_source_class: cokret_sdk::HistoryKeySource::VerifiedMemberDevice,
             target_source_ref: PROVIDER_DEVICE.to_owned(),
@@ -5234,7 +5234,7 @@ mod tests {
             "kind": "ck.realm_key.request",
             "realm_id": realm,
             "request_id": "sha256:5e54ee81d9debde1e0a09f20e0c7bc282f511e5ccb6c1e41d75f07018db835e9",
-            "sender_device_id": "ck:device:self",
+            "sender_device_id": "ak:device:self",
             "payload": request,
         });
 
@@ -5250,7 +5250,7 @@ mod tests {
 
     #[test]
     fn realm_key_request_answer_dedup_key_prefers_request_id() {
-        let realm = "ck:realm:abc";
+        let realm = "ak:realm:abc";
         let request = cokret_sdk::RealmKeyRequestPayload {
             key_scope: cokret_sdk::RealmKeyRequestScope {
                 effective_scope: json!({ "kind": "realm", "realm_id": realm }),
@@ -5261,7 +5261,7 @@ mod tests {
                 history_visibility: None,
             },
             recipient_principal_id: cokret_sdk::Did::new(SELF_DID.to_owned()).unwrap(),
-            recipient_device_id: "ck:device:self".to_owned(),
+            recipient_device_id: "ak:device:self".to_owned(),
             recipient_hpke_public_key: "Ikuf_h0tiOTpwnUEEZZeY4p_OIaixaYHYcT6GnmJOmE".to_owned(),
             requested_source_class: cokret_sdk::HistoryKeySource::VerifiedMemberDevice,
             target_source_ref: PROVIDER_DEVICE.to_owned(),
@@ -5286,7 +5286,7 @@ mod tests {
 
     #[test]
     fn realm_key_request_answer_dedup_key_falls_back_to_payload() {
-        let realm = "ck:realm:abc";
+        let realm = "ak:realm:abc";
         let request = cokret_sdk::RealmKeyRequestPayload {
             key_scope: cokret_sdk::RealmKeyRequestScope {
                 effective_scope: json!({ "kind": "realm", "realm_id": realm }),
@@ -5297,7 +5297,7 @@ mod tests {
                 history_visibility: None,
             },
             recipient_principal_id: cokret_sdk::Did::new(SELF_DID.to_owned()).unwrap(),
-            recipient_device_id: "ck:device:self".to_owned(),
+            recipient_device_id: "ak:device:self".to_owned(),
             recipient_hpke_public_key: "Ikuf_h0tiOTpwnUEEZZeY4p_OIaixaYHYcT6GnmJOmE".to_owned(),
             requested_source_class: cokret_sdk::HistoryKeySource::VerifiedMemberDevice,
             target_source_ref: PROVIDER_DEVICE.to_owned(),
@@ -5323,7 +5323,7 @@ mod tests {
     fn rejects_realm_key_request_when_envelope_realm_mismatches_payload() {
         let request = cokret_sdk::RealmKeyRequestPayload {
             key_scope: cokret_sdk::RealmKeyRequestScope {
-                effective_scope: json!({ "kind": "realm", "realm_id": "ck:realm:abc" }),
+                effective_scope: json!({ "kind": "realm", "realm_id": "ak:realm:abc" }),
                 policy_digest: None,
                 membership_frontier_digest: None,
                 from_epoch: 0,
@@ -5331,7 +5331,7 @@ mod tests {
                 history_visibility: None,
             },
             recipient_principal_id: cokret_sdk::Did::new(SELF_DID.to_owned()).unwrap(),
-            recipient_device_id: "ck:device:self".to_owned(),
+            recipient_device_id: "ak:device:self".to_owned(),
             recipient_hpke_public_key: "Ikuf_h0tiOTpwnUEEZZeY4p_OIaixaYHYcT6GnmJOmE".to_owned(),
             requested_source_class: cokret_sdk::HistoryKeySource::VerifiedMemberDevice,
             target_source_ref: PROVIDER_DEVICE.to_owned(),
@@ -5342,7 +5342,7 @@ mod tests {
         };
         let envelope = json!({
             "kind": "ck.realm_key.request",
-            "realm_id": "ck:realm:other",
+            "realm_id": "ak:realm:other",
             "payload": request,
         });
 
@@ -5351,7 +5351,7 @@ mod tests {
 
     #[test]
     fn mention_state_uses_realm_participation_entry() {
-        let realm = "ck:realm:0196419b-0000-7000-8000-000000000000";
+        let realm = "ak:realm:0196419b-0000-7000-8000-000000000000";
         let realm_id = cokret_sdk::RealmId::new(realm.to_owned()).unwrap();
         let entry = AgentParticipationEntry {
             scope: AgentParticipationScope::Realm { realm_id },

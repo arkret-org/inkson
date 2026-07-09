@@ -1,6 +1,6 @@
 use super::*;
 
-const TEST_CALENDAR_STRAND_ID: &str = "ck:strand:0196419b-0000-7000-8000-000000000901";
+const TEST_CALENDAR_STRAND_ID: &str = "ak:strand:0196419b-0000-7000-8000-000000000901";
 
 #[test]
 fn calendar_patch_sets_schedule_recurrence_profile_and_private_location_path() {
@@ -153,7 +153,7 @@ fn calendar_overlay_merges_partial_direct_schedule_patch() {
         ..CalendarCardFields::default()
     };
     let columns = vec![KanbanColumn {
-        id: "ck:space:list-a".to_owned(),
+        id: "ak:space:list-a".to_owned(),
         title: "A".to_owned(),
         rank: "U".to_owned(),
         cards: vec![card],

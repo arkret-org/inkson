@@ -480,12 +480,12 @@ mod tests {
 
     fn inbox_item(data: serde_json::Value) -> CallSignalInboxItem {
         CallSignalInboxItem {
-            realm_id: "ck:realm:01904100-0000-7000-8000-000000000001".to_owned(),
-            call_id: "ck:call:01904100-0000-7000-8000-000000000002".to_owned(),
+            realm_id: "ak:realm:01904100-0000-7000-8000-000000000001".to_owned(),
+            call_id: "ak:call:01904100-0000-7000-8000-000000000002".to_owned(),
             signal_type: "mute_state".to_owned(),
             seq: 1,
             sender_actor: "did:web:moderator.example".to_owned(),
-            sender_device: "ck:device:01904100-0000-7000-8000-000000000003".to_owned(),
+            sender_device: "ak:device:01904100-0000-7000-8000-000000000003".to_owned(),
             data,
         }
     }
@@ -496,17 +496,17 @@ mod tests {
             "audio_muted": true,
             "by": "moderator",
             "target_actor_id": "did:web:alice.example",
-            "target_device_id": "ck:device:01904100-0000-7000-8000-000000000004"
+            "target_device_id": "ak:device:01904100-0000-7000-8000-000000000004"
         }));
         assert!(moderator_mute_targets_this_device(
             &item,
             "did:web:alice.example",
-            "ck:device:01904100-0000-7000-8000-000000000004"
+            "ak:device:01904100-0000-7000-8000-000000000004"
         ));
         assert!(!moderator_mute_targets_this_device(
             &item,
             "did:web:alice.example",
-            "ck:device:01904100-0000-7000-8000-000000000005"
+            "ak:device:01904100-0000-7000-8000-000000000005"
         ));
     }
 }

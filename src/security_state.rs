@@ -248,14 +248,14 @@ mod tests {
     fn security_projection_follows_space_home_realm() {
         let mut projections = BTreeMap::new();
         projections.insert(
-            "ck:realm:r1".to_owned(),
+            "ak:realm:r1".to_owned(),
             json!({"summary": {"encryption_profile": "mls_rfc9420"}}),
         );
         projections.insert(
-            "ck:space:s1".to_owned(),
-            json!({"schema": "ck.schema.space.v1", "realm_id": "ck:realm:r1"}),
+            "ak:space:s1".to_owned(),
+            json!({"schema": "ck.schema.space.v1", "realm_id": "ak:realm:r1"}),
         );
-        let body = security_projection_for_scope_id(&projections, "ck:space:s1")
+        let body = security_projection_for_scope_id(&projections, "ak:space:s1")
             .expect("realm projection for space");
         assert!(realm_projection_is_encrypted(body));
     }

@@ -154,15 +154,15 @@ mod tests {
             "op-1",
             &json!({
                 "kind": "ck.audit.accessed",
-                "realm_id": "ck:realm:s1",
-                "target_event_id": "ck:event:abc",
+                "realm_id": "ak:realm:s1",
+                "target_event_id": "ak:event:abc",
                 "reader_device": "did:key:zDevice",
             }),
         )
         .expect("should classify");
         assert_eq!(row.kind, "ck.audit.accessed");
-        assert_eq!(row.realm_id.as_deref(), Some("ck:realm:s1"));
-        assert_eq!(row.target_event_id.as_deref(), Some("ck:event:abc"));
+        assert_eq!(row.realm_id.as_deref(), Some("ak:realm:s1"));
+        assert_eq!(row.target_event_id.as_deref(), Some("ak:event:abc"));
     }
 
     #[test]
@@ -171,12 +171,12 @@ mod tests {
             "op-2",
             &json!({
                 "kind": "ck.audit.ryw_receipt",
-                "source_event_id": "ck:event:xyz",
+                "source_event_id": "ak:event:xyz",
             }),
         )
         .expect("should classify");
         assert_eq!(row.kind, "ck.audit.ryw_receipt");
-        assert_eq!(row.target_event_id.as_deref(), Some("ck:event:xyz"));
+        assert_eq!(row.target_event_id.as_deref(), Some("ak:event:xyz"));
     }
 
     #[test]
@@ -185,7 +185,7 @@ mod tests {
             "op-3",
             &json!({
                 "kind": "ck.message.create",
-                "realm_id": "ck:realm:s1",
+                "realm_id": "ak:realm:s1",
             }),
         );
         assert!(none.is_none());

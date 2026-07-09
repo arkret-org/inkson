@@ -89,12 +89,12 @@ fn redact_prefixed_identifiers(line: &str) -> String {
         let rest = &line[index..];
         let replacement = if rest.starts_with("did:") {
             Some("<redacted:did>")
-        } else if rest.starts_with("ck:") {
-            Some("<redacted:cokret-id>")
+        } else if rest.starts_with("ak:") {
+            Some("<redacted:arkret-id>")
         } else if rest.starts_with("acct:") {
             Some("<redacted:handle>")
-        } else if rest.starts_with("web+cokret:") {
-            Some("<redacted:cokret-link>")
+        } else if rest.starts_with("web+arkret:") {
+            Some("<redacted:arkret-link>")
         } else {
             None
         };
@@ -239,19 +239,19 @@ mod tests {
             &[
                 "actor=did:web:alice.example realm=ck:realm:01964137-0000-7000-8000-000000000001"
                     .to_owned(),
-                "handle alice@example.com opened web+cokret:realm/demo".to_owned(),
+                "handle alice@example.com opened web+arkret:realm/demo".to_owned(),
             ],
             "0.1.0",
             "web",
         );
 
         assert!(body.contains("<redacted:did>"));
-        assert!(body.contains("<redacted:cokret-id>"));
+        assert!(body.contains("<redacted:arkret-id>"));
         assert!(body.contains("<redacted:handle>"));
-        assert!(body.contains("<redacted:cokret-link>"));
+        assert!(body.contains("<redacted:arkret-link>"));
         assert!(!body.contains("did:web:alice.example"));
         assert!(!body.contains("alice@example.com"));
-        assert!(!body.contains("ck:realm:01964137"));
+        assert!(!body.contains("ak:realm:01964137"));
     }
 
     #[cfg(not(target_arch = "wasm32"))]

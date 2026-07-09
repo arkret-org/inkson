@@ -8,7 +8,7 @@
     - text: C
     - navigation "Main navigation" [ref=e15]:
       - generic [ref=e16]:
-        - generic [ref=e17]: C Cokret
+        - generic [ref=e17]: C Arkret
         - generic [ref=e18]: Protocol client
       - generic [ref=e19]:
         - generic [ref=e20]:

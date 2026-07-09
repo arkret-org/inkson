@@ -27,21 +27,21 @@
 // out of `Connected`), never a fake success.
 //
 // The bridge is bootstrapped by native.rs, which substitutes the leading
-// `__COKRET_DRIVER_CONFIG__` token with a JSON object carrying the connect
+// `__ARKRET_DRIVER_CONFIG__` token with a JSON object carrying the connect
 // URL, backend token, desired media flags, and the MLS-exporter-derived
 // 32-byte frame key (as a number array). The whole body is wrapped by the
 // Dioxus query engine in `(async function(dioxus){ ... })`, so top-level
 // `await` and the `dioxus` channel are in scope.
 
-const config = __COKRET_DRIVER_CONFIG__;
+const config = __ARKRET_DRIVER_CONFIG__;
 
 // Vendored livekit-client UMD source (pinned 2.19.2). native.rs substitutes the
-// `__COKRET_LIVEKIT_UMD_SOURCE__` token with the bundled UMD body (read via
+// `__ARKRET_LIVEKIT_UMD_SOURCE__` token with the bundled UMD body (read via
 // `include_str!`), so it ships inside the desktop binary — no runtime CDN
 // fetch, works fully offline. Evaluating the UMD against the webview `window`
 // registers the global `window.LivekitClient`, matching the wasm shim's
 // vendored ES-module import.
-const LIVEKIT_UMD_SOURCE = __COKRET_LIVEKIT_UMD_SOURCE__;
+const LIVEKIT_UMD_SOURCE = __ARKRET_LIVEKIT_UMD_SOURCE__;
 
 function ensureLivekitVendored() {
   if (typeof window === "undefined" || typeof document === "undefined") {

@@ -39,7 +39,7 @@ pub(super) fn temp_state_path(name: &str) -> PathBuf {
 }
 
 pub(super) fn snapshot_event_id(suffix: &str) -> cokret_sdk::EventId {
-    cokret_sdk::EventId::new(format!("ck:event:01904100-0000-7000-8000-{suffix}")).unwrap()
+    cokret_sdk::EventId::new(format!("ak:event:01904100-0000-7000-8000-{suffix}")).unwrap()
 }
 
 pub(super) fn snapshot_hash(seed: u8) -> cokret_sdk::Hash {
@@ -53,9 +53,9 @@ pub(super) fn snapshot_manifest_for_items(
     Vec<cokret_sdk::SnapshotChunkPayload>,
 ) {
     let snapshot_id =
-        cokret_sdk::SnapshotId::new("ck:snapshot:01904100-0000-7000-8000-0000000000aa").unwrap();
+        cokret_sdk::SnapshotId::new("ak:snapshot:01904100-0000-7000-8000-0000000000aa").unwrap();
     let realm_id =
-        cokret_sdk::RealmId::new("ck:realm:01904100-0000-7000-8000-0000000000aa").unwrap();
+        cokret_sdk::RealmId::new("ak:realm:01904100-0000-7000-8000-0000000000aa").unwrap();
     let service_did = cokret_sdk::Did::new("did:web:server.example").unwrap();
     let state_digest = cokret_sdk::state_digest_from_items(&items).unwrap();
     let built = cokret_sdk::build_snapshot_chunks(

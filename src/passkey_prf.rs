@@ -1,6 +1,6 @@
 //! Browser WebAuthn PRF bridge for local Recovery Key quick unlock.
 //!
-//! This module intentionally does not register a new Cokret key-backup
+//! This module intentionally does not register a new Arkret key-backup
 //! recipient method. The PRF output wraps the user's existing 24-word Recovery
 //! Key for the current browser/RP context only; fresh-device recovery remains
 //! the recovery-policy + key-backup strand.
@@ -90,7 +90,7 @@ pub async fn create_recovery_passkey_prf(
     set(&public_key, "challenge", bytes_js(&challenge).as_ref())?;
 
     let rp = Object::new();
-    set(&rp, "name", &JsValue::from_str("Cokret"))?;
+    set(&rp, "name", &JsValue::from_str("Arkret"))?;
     if explicit_rp_id(rp_id) {
         set(&rp, "id", &JsValue::from_str(rp_id))?;
     }

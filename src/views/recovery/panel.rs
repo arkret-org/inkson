@@ -132,7 +132,7 @@ pub fn RecoveryPanel(
                 div { class: "event-head",
                     span { "Recovery options" }
                     span { "Recovery Key (24 words)" }
-                    HelpTip { text: "The Recovery Key (24 words) is the only recovery credential. Cokret never stores it on the server; backups are encrypted on-device before upload. A recovery credential may unlock backup material; a fresh device is authorized only after the active recovery_policy accepts a bound recovery_session proof." }
+                    HelpTip { text: "The Recovery Key (24 words) is the only recovery credential. Arkret never stores it on the server; backups are encrypted on-device before upload. A recovery credential may unlock backup material; a fresh device is authorized only after the active recovery_policy accepts a bound recovery_session proof." }
                 }
                 div { class: "metric-grid", "data-testid": "recovery-overview",
                     div { class: "metric", "data-testid": "recovery-status-card",
@@ -195,7 +195,7 @@ pub fn RecoveryPanel(
                         synced_label: Some("Backed up".to_owned()),
                         test_id: Some("recovery-key-sync-badge".to_owned()),
                     }
-                    HelpTip { text: "This is your account's only recovery credential. Generating it wraps your account MLS secret behind these 24 words and uploads that encrypted backup; your own content sidecar is then backed up automatically after encrypted writes. The words themselves never leave this device (only a SHA-256 fingerprint is kept locally); Cokret cannot recover them for you, so write them down. Losing them means your encrypted history cannot be restored." }
+                    HelpTip { text: "This is your account's only recovery credential. Generating it wraps your account MLS secret behind these 24 words and uploads that encrypted backup; your own content sidecar is then backed up automatically after encrypted writes. The words themselves never leave this device (only a SHA-256 fingerprint is kept locally); Arkret cannot recover them for you, so write them down. Losing them means your encrypted history cannot be restored." }
                 }
 
                 // The key itself — promoted to a full-width hero so it reads as
@@ -587,7 +587,7 @@ pub fn RecoveryPanel(
                                 let actor = actor_key.clone();
                                 let rp_id = crate::passkey_prf::default_rp_id()
                                     .unwrap_or_else(|| "origin-default".to_owned());
-                                let label = format!("Cokret Recovery {}", short_protocol_id(&actor));
+                                let label = format!("Arkret Recovery {}", short_protocol_id(&actor));
                                 passkey_status.set("Waiting for passkey user verification…".to_owned());
                                 spawn(async move {
                                     let salt = match generate_passkey_wrap_salt() {
@@ -613,7 +613,7 @@ pub fn RecoveryPanel(
                                     };
                                     let created_at = chrono::Utc::now().to_rfc3339();
                                     let mut wrap = PasskeyRecoveryWrap {
-                                        wrap_id: format!("ck:recovery-wrap:{}", uuid_v7()),
+                                        wrap_id: format!("ak:recovery-wrap:{}", uuid_v7()),
                                         credential_id_b64: material.credential_id_b64.clone(),
                                         credential_label: label.clone(),
                                         rp_id: rp_id.clone(),

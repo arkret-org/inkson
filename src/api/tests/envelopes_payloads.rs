@@ -43,11 +43,11 @@ fn realm_metadata_patch_rejects_create_locked_encryption_profile() {
 fn lifecycle_projection_response_accepts_spec_keys() {
     let canonical_spaces: LifecycleProjectionView<SpaceContainerProjectionView> =
         serde_json::from_value(json!({
-            "realm_id": "ck:realm:0196419b-0000-7000-8000-000000000000",
+            "realm_id": "ak:realm:0196419b-0000-7000-8000-000000000000",
             "total": 1,
             "spaces": [{
-                "space_id": "ck:space:01904100-0000-7000-8000-f10dc0000001",
-                "realm_id": "ck:realm:0196419b-0000-7000-8000-000000000000",
+                "space_id": "ak:space:01904100-0000-7000-8000-f10dc0000001",
+                "realm_id": "ak:realm:0196419b-0000-7000-8000-000000000000",
                 "kind": "board",
                 "title": "Launch board",
                 "state": "active"
@@ -56,18 +56,18 @@ fn lifecycle_projection_response_accepts_spec_keys() {
         .unwrap();
     assert_eq!(
         canonical_spaces.items[0].space_id,
-        "ck:space:01904100-0000-7000-8000-f10dc0000001"
+        "ak:space:01904100-0000-7000-8000-f10dc0000001"
     );
 
     let strands: LifecycleProjectionView<StrandProjectionView> = serde_json::from_value(json!({
-        "realm_id": "ck:realm:0196419b-0000-7000-8000-000000000000",
+        "realm_id": "ak:realm:0196419b-0000-7000-8000-000000000000",
         "strands": [{
-            "strand_id": "ck:strand:01904100-0000-7000-8000-f20dc0000001",
-            "realm_id": "ck:realm:0196419b-0000-7000-8000-000000000000",
+            "strand_id": "ak:strand:01904100-0000-7000-8000-f20dc0000001",
+            "realm_id": "ak:realm:0196419b-0000-7000-8000-000000000000",
             "title": "Card",
             "summary": "Projection-backed card",
-            "board_space_id": "ck:space:01904100-0000-7000-8000-b0ard0000001",
-            "list_space_id": "ck:space:01904100-0000-7000-8000-l15t00000001",
+            "board_space_id": "ak:space:01904100-0000-7000-8000-b0ard0000001",
+            "list_space_id": "ak:space:01904100-0000-7000-8000-l15t00000001",
             "rank": "U",
             "fields": { "labels": ["demo"] },
             "state": "archived"
@@ -78,17 +78,17 @@ fn lifecycle_projection_response_accepts_spec_keys() {
     assert_eq!(strands.items[0].state, "archived");
     assert_eq!(
         strands.items[0].board_space_id.as_deref(),
-        Some("ck:space:01904100-0000-7000-8000-b0ard0000001")
+        Some("ak:space:01904100-0000-7000-8000-b0ard0000001")
     );
 }
 
 #[test]
 fn typing_envelope_uses_spec_ephemeral_shape() {
     let envelope = build_typing_envelope(
-        "ck:realm:0196419b-0000-7000-8000-000000000000",
+        "ak:realm:0196419b-0000-7000-8000-000000000000",
         "did:web:alice.example",
-        "ck:device:01904100-0000-7000-8000-a11ce0000001",
-        "ck:strand:01964200-0000-7000-8000-000000000001",
+        "ak:device:01904100-0000-7000-8000-a11ce0000001",
+        "ak:strand:01964200-0000-7000-8000-000000000001",
         true,
     )
     .unwrap();
@@ -96,16 +96,16 @@ fn typing_envelope_uses_spec_ephemeral_shape() {
     assert_eq!(envelope.kind, "ck.typing");
     assert_eq!(
         envelope.realm_id.to_string(),
-        "ck:realm:0196419b-0000-7000-8000-000000000000"
+        "ak:realm:0196419b-0000-7000-8000-000000000000"
     );
     assert_eq!(
         envelope.payload["strand_id"],
-        "ck:strand:01964200-0000-7000-8000-000000000001"
+        "ak:strand:01964200-0000-7000-8000-000000000001"
     );
     assert!(envelope.payload.get("scope_id").is_none());
     assert_eq!(
         envelope.payload["realm_id"],
-        "ck:realm:0196419b-0000-7000-8000-000000000000"
+        "ak:realm:0196419b-0000-7000-8000-000000000000"
     );
     assert_eq!(envelope.payload["actor_id"], "did:web:alice.example");
     assert_eq!(envelope.payload["track_name"], "discussion");
@@ -122,11 +122,11 @@ fn typing_envelope_uses_spec_ephemeral_shape() {
 #[test]
 fn read_receipt_envelope_uses_actor_not_event_as_sender() {
     let envelope = build_receipt_read_envelope(
-        "ck:realm:0196419b-0000-7000-8000-000000000000",
+        "ak:realm:0196419b-0000-7000-8000-000000000000",
         "did:web:alice.example",
-        "ck:device:01904100-0000-7000-8000-a11ce0000001",
-        "ck:strand:01964200-0000-7000-8000-000000000001",
-        "ck:event:01904100-0000-7000-8000-4a4116cba4e8",
+        "ak:device:01904100-0000-7000-8000-a11ce0000001",
+        "ak:strand:01964200-0000-7000-8000-000000000001",
+        "ak:event:01904100-0000-7000-8000-4a4116cba4e8",
     )
     .unwrap();
 
@@ -134,20 +134,20 @@ fn read_receipt_envelope_uses_actor_not_event_as_sender() {
     assert_eq!(envelope.actor_id.to_string(), "did:web:alice.example");
     assert_eq!(
         envelope.realm_id.to_string(),
-        "ck:realm:0196419b-0000-7000-8000-000000000000"
+        "ak:realm:0196419b-0000-7000-8000-000000000000"
     );
     assert_eq!(envelope.payload["actor_id"], "did:web:alice.example");
     assert_eq!(
         envelope.payload["read_scope"],
         json!({
             "kind": "strand",
-            "ref": "ck:strand:01964200-0000-7000-8000-000000000001",
+            "ref": "ak:strand:01964200-0000-7000-8000-000000000001",
             "track_name": "discussion"
         })
     );
     assert_eq!(
         envelope.payload["event_id"],
-        "ck:event:01904100-0000-7000-8000-4a4116cba4e8"
+        "ak:event:01904100-0000-7000-8000-4a4116cba4e8"
     );
     assert_eq!(envelope.payload["schema"], "ck.schema.read_receipt.v1");
     assert!(
@@ -165,9 +165,9 @@ fn presence_envelope_buckets_last_active_at_to_hour() {
         .unwrap()
         .with_timezone(&chrono::Utc);
     let envelope = build_presence_envelope(
-        "ck:realm:0196419b-0000-7000-8000-000000000000",
+        "ak:realm:0196419b-0000-7000-8000-000000000000",
         "did:web:alice.example",
-        "ck:device:01904100-0000-7000-8000-a11ce0000001",
+        "ak:device:01904100-0000-7000-8000-a11ce0000001",
         "online",
         Some("On vacation until May 5"),
         Some(last_active_at),
@@ -177,7 +177,7 @@ fn presence_envelope_buckets_last_active_at_to_hour() {
     assert_eq!(envelope.kind, "ck.presence");
     assert_eq!(
         envelope.payload["realm_id"],
-        "ck:realm:0196419b-0000-7000-8000-000000000000"
+        "ak:realm:0196419b-0000-7000-8000-000000000000"
     );
     assert_eq!(envelope.payload["actor_id"], "did:web:alice.example");
     assert_eq!(envelope.payload["state"], "online");
@@ -197,9 +197,9 @@ fn presence_envelope_rejects_non_canonical_state_and_bad_status_message() {
     // Matrix-legacy `unavailable` is not a closed-set v1 state.
     assert!(
         build_presence_envelope(
-            "ck:realm:0196419b-0000-7000-8000-000000000000",
+            "ak:realm:0196419b-0000-7000-8000-000000000000",
             "did:web:alice.example",
-            "ck:device:01904100-0000-7000-8000-a11ce0000001",
+            "ak:device:01904100-0000-7000-8000-a11ce0000001",
             "unavailable",
             None,
             None,
@@ -210,9 +210,9 @@ fn presence_envelope_rejects_non_canonical_state_and_bad_status_message() {
     let long = "字".repeat(257);
     assert!(
         build_presence_envelope(
-            "ck:realm:0196419b-0000-7000-8000-000000000000",
+            "ak:realm:0196419b-0000-7000-8000-000000000000",
             "did:web:alice.example",
-            "ck:device:01904100-0000-7000-8000-a11ce0000001",
+            "ak:device:01904100-0000-7000-8000-a11ce0000001",
             "dnd",
             Some(long.as_str()),
             None,
@@ -232,7 +232,7 @@ fn canonical_space_join_rule_keeps_v1_invite_value() {
 #[test]
 fn space_bootstrap_events_use_canonical_create_and_facet_kinds() {
     let events = build_realm_bootstrap_events(
-        "ck:realm:0196419b-0000-7000-8000-000000000001",
+        "ak:realm:0196419b-0000-7000-8000-000000000001",
         "did:web:alice.example",
         "Engineering",
         Some("Roadmap work"),
@@ -244,7 +244,7 @@ fn space_bootstrap_events_use_canonical_create_and_facet_kinds() {
         "restricted",
         "single_did",
         "sha256",
-        "ck:trust_domain:server.example",
+        "ak:trust_domain:server.example",
         &["did:web:bob.example".to_owned()],
         &["did:web:server.example".to_owned()],
         None,
@@ -311,7 +311,7 @@ fn space_bootstrap_events_use_canonical_create_and_facet_kinds() {
     );
     assert_eq!(
         create.effects[0].cell.to_string(),
-        "ck:cell:ck.component.realm.create.v1:ck:realm:0196419b-0000-7000-8000-000000000001"
+        "ak:cell:ck.component.realm.create.v1:ck:realm:0196419b-0000-7000-8000-000000000001"
     );
     assert_eq!(create.effects[0].op.op_type, cokret_sdk::LatticeOpType::Set);
     // seal_ref starts unset on the typed envelope. Realm genesis
@@ -383,7 +383,7 @@ fn space_bootstrap_events_use_canonical_create_and_facet_kinds() {
 #[test]
 fn plaintext_realm_create_does_not_claim_e2ee_floors() {
     let envelope = build_realm_create_event(
-        "ck:realm:0196419b-0000-7000-8000-000000000001",
+        "ak:realm:0196419b-0000-7000-8000-000000000001",
         "did:web:alice.example",
         "Public updates",
         None,
@@ -395,7 +395,7 @@ fn plaintext_realm_create_does_not_claim_e2ee_floors() {
         "open",
         "single_did",
         "sha256",
-        "ck:trust_domain:server.example",
+        "ak:trust_domain:server.example",
         &[],
         None,
         None,
@@ -410,7 +410,7 @@ fn plaintext_realm_create_does_not_claim_e2ee_floors() {
 #[test]
 fn realm_bootstrap_rejects_prejoin_history_with_strict_mls_scheme() {
     let err = build_realm_bootstrap_events(
-        "ck:realm:0196419b-0000-7000-8000-000000000011",
+        "ak:realm:0196419b-0000-7000-8000-000000000011",
         "did:web:alice.example",
         "Strict history",
         None,
@@ -422,7 +422,7 @@ fn realm_bootstrap_rejects_prejoin_history_with_strict_mls_scheme() {
         "restricted",
         "single_did",
         "sha256",
-        "ck:trust_domain:server.example",
+        "ak:trust_domain:server.example",
         &[],
         &[],
         None,
@@ -439,7 +439,7 @@ fn realm_bootstrap_rejects_prejoin_history_with_strict_mls_scheme() {
 #[test]
 fn realm_bootstrap_allows_joined_history_with_strict_mls_scheme() {
     let events = build_realm_bootstrap_events(
-        "ck:realm:0196419b-0000-7000-8000-000000000012",
+        "ak:realm:0196419b-0000-7000-8000-000000000012",
         "did:web:alice.example",
         "Strict history",
         None,
@@ -451,7 +451,7 @@ fn realm_bootstrap_allows_joined_history_with_strict_mls_scheme() {
         "restricted",
         "single_did",
         "sha256",
-        "ck:trust_domain:server.example",
+        "ak:trust_domain:server.example",
         &[],
         &[],
         None,
@@ -498,7 +498,7 @@ fn default_history_sharing_policy_matches_prejoin_visibility() {
 #[test]
 fn bootstrap_envelopes_have_no_sdk_digest_drift() {
     let events = build_realm_bootstrap_events(
-        "ck:realm:0196419b-0000-7000-8000-000000000001",
+        "ak:realm:0196419b-0000-7000-8000-000000000001",
         "did:web:alice.example",
         "Engineering",
         None,
@@ -510,7 +510,7 @@ fn bootstrap_envelopes_have_no_sdk_digest_drift() {
         "restricted",
         "single_did",
         "sha256",
-        "ck:trust_domain:server.example",
+        "ak:trust_domain:server.example",
         // an invitee exercises the `ck.member.state` `from: null → invite`
         // transition (LatticeOp.from carries an explicit null). Bootstrap
         // accepts only authoritative DID input; handle strings require
@@ -541,7 +541,7 @@ fn bootstrap_envelopes_have_no_sdk_digest_drift() {
 #[test]
 fn realm_bootstrap_rejects_handle_seed_without_directory_evidence() {
     let err = build_realm_bootstrap_events(
-        "ck:realm:0196419b-0000-7000-8000-000000000001",
+        "ak:realm:0196419b-0000-7000-8000-000000000001",
         "did:web:alice.example",
         "Engineering",
         None,
@@ -553,7 +553,7 @@ fn realm_bootstrap_rejects_handle_seed_without_directory_evidence() {
         "restricted",
         "single_did",
         "sha256",
-        "ck:trust_domain:server.example",
+        "ak:trust_domain:server.example",
         &["bob:example.com".to_owned()],
         &[],
         None,
@@ -569,7 +569,7 @@ fn realm_bootstrap_rejects_handle_seed_without_directory_evidence() {
 #[test]
 fn member_state_ban_event_uses_realm_scoped_member_cell() {
     let event = build_member_state_transition_event(
-        "ck:realm:0196419b-0000-7000-8000-000000000010",
+        "ak:realm:0196419b-0000-7000-8000-000000000010",
         "did:web:alice.example",
         "did:web:bob.example",
         Some("join"),
@@ -581,20 +581,20 @@ fn member_state_ban_event_uses_realm_scoped_member_cell() {
     assert_eq!(event.kind.as_str(), "ck.member.state");
     assert_eq!(
         event.payload["realm_id"],
-        "ck:realm:0196419b-0000-7000-8000-000000000010"
+        "ak:realm:0196419b-0000-7000-8000-000000000010"
     );
     assert_eq!(event.payload["actor_id"], "did:web:bob.example");
     assert_eq!(event.payload["membership"], "ban");
     assert_eq!(event.preconditions.len(), 1);
     assert_eq!(
         event.preconditions[0].cell.as_str(),
-        "ck:cell:ck.component.member.state.v1:did:web:bob.example"
+        "ak:cell:ck.component.member.state.v1:did:web:bob.example"
     );
     assert_eq!(event.preconditions[0].predicate.value, Some(json!("join")));
     assert_eq!(event.effects.len(), 1);
     assert_eq!(
         event.effects[0].cell.as_str(),
-        "ck:cell:ck.component.member.state.v1:did:web:bob.example"
+        "ak:cell:ck.component.member.state.v1:did:web:bob.example"
     );
     assert_eq!(event.effects[0].op.from, Some(json!("join")));
     assert_eq!(event.effects[0].op.to, Some(json!("ban")));
@@ -602,7 +602,7 @@ fn member_state_ban_event_uses_realm_scoped_member_cell() {
 
 #[test]
 fn outgoing_payload_schema_gate_accepts_sdk_object_patch_payload() {
-    let strand_id = "ck:strand:0196419b-0000-7000-8000-000000000002";
+    let strand_id = "ak:strand:0196419b-0000-7000-8000-000000000002";
     let mut patch = cokret_sdk::Patch::new();
     patch
         .insert_op(
@@ -615,7 +615,7 @@ fn outgoing_payload_schema_gate_accepts_sdk_object_patch_payload() {
         .to_value()
         .unwrap();
     let event = OperationBuilder::new(
-        "ck:realm:0196419b-0000-7000-8000-000000000010",
+        "ak:realm:0196419b-0000-7000-8000-000000000010",
         "did:web:alice.example",
         cokret_sdk::events::kinds::EventKind::StrandUpdate,
     )
@@ -634,8 +634,8 @@ fn space_create_payload_matches_spec_schema() {
     // `^ck:realm:UUID7` pattern; the product Space id remains a
     // separate `ck:space:*` object id.
     let event = build_space_create_event(
-        "ck:space:0196419b-0000-7000-8000-000000000010",
-        "ck:realm:0196419b-0000-7000-8000-000000000001",
+        "ak:space:0196419b-0000-7000-8000-000000000010",
+        "ak:realm:0196419b-0000-7000-8000-000000000001",
         "did:web:alice.example",
         "Roadmap",
         Some("Q3 planning"),
@@ -665,7 +665,7 @@ fn space_create_payload_matches_spec_schema() {
 #[test]
 fn realm_bootstrap_payloads_match_spec_schema() {
     let events = build_realm_bootstrap_events(
-        "ck:realm:0196419b-0000-7000-8000-000000000001",
+        "ak:realm:0196419b-0000-7000-8000-000000000001",
         "did:web:alice.example",
         "Engineering",
         Some("Roadmap work"),
@@ -677,7 +677,7 @@ fn realm_bootstrap_payloads_match_spec_schema() {
         "restricted",
         "single_did",
         "sha256",
-        "ck:trust_domain:server.example",
+        "ak:trust_domain:server.example",
         &["did:web:bob.example".to_owned()],
         &["did:web:server.example".to_owned()],
         None,
@@ -714,7 +714,7 @@ fn realm_bootstrap_payloads_match_spec_schema() {
 fn device_message_envelope_matches_schema_v1() {
     let envelope = build_device_message_envelope(
         "did:web:alice.example",
-        "ck:device:01904100-0000-7000-8000-0000000000aa",
+        "ak:device:01904100-0000-7000-8000-0000000000aa",
         "ck.key.verification.request",
         "2026-04-26T00:10:00Z",
         json!({
@@ -729,7 +729,7 @@ fn device_message_envelope_matches_schema_v1() {
         json!({
             "messages": {
                 "did:web:alice.example": {
-                    "ck:device:01904100-0000-7000-8000-0000000000aa": {
+                    "ak:device:01904100-0000-7000-8000-0000000000aa": {
                         "kind": "ck.key.verification.request",
                         "expires_at": "2026-04-26T00:10:00Z",
                         "content": {
@@ -751,14 +751,14 @@ fn device_message_envelope_matches_schema_v1() {
 fn device_message_envelope_accepts_minimal_content() {
     let envelope = build_device_message_envelope(
         "did:web:bob.example",
-        "ck:device:01904100-0000-7000-8000-0000000000bb",
+        "ak:device:01904100-0000-7000-8000-0000000000bb",
         "ck.key.verification.done",
         "2026-04-26T00:10:00Z",
         json!({"transaction_id": "verify-done-001"}),
     )
     .expect("device message envelope builds");
     let envelope = serde_json::to_value(envelope).expect("device message envelope serializes");
-    let inner = &envelope["messages"]["did:web:bob.example"]["ck:device:01904100-0000-7000-8000-0000000000bb"];
+    let inner = &envelope["messages"]["did:web:bob.example"]["ak:device:01904100-0000-7000-8000-0000000000bb"];
     assert_eq!(inner["kind"], "ck.key.verification.done");
     assert_eq!(inner["expires_at"], "2026-04-26T00:10:00Z");
     assert_eq!(inner["content"]["transaction_id"], "verify-done-001");
@@ -770,8 +770,8 @@ fn device_verification_proof_requires_signed_envelope() {
     let signing = ed25519_dalek::SigningKey::from_bytes(&[7u8; 32]);
     let proof = build_signed_device_verification_proof(
         "did:web:alice.example",
-        "ck:device:alice",
-        "ck:device:bob",
+        "ak:device:alice",
+        "ak:device:bob",
         "sas",
         Some([1234, 5678, 9012]),
         Some("alice-x25519"),

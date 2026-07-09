@@ -626,7 +626,7 @@ pub fn AgentsPanel(
                                         ));
                                         spawn(async move {
                                             let session_id = format!(
-                                                "ck:agent_interop_session:{}",
+                                                "ak:agent_interop_session:{}",
                                                 crate::operation::uuid_v7()
                                             );
                                             let op = crate::operation::ck_ops::agent_interop_session_start(
@@ -636,7 +636,7 @@ pub fn AgentsPanel(
                                                 &session_id,
                                                 "http_custom",
                                                 serde_json::json!({ "handoff_intent": "controller_initiated" }),
-                                                "ck:grant:01904100-0000-7000-8000-000000000099",
+                                                "ak:grant:01904100-0000-7000-8000-000000000099",
                                             )
                                             .and_then(|builder| builder.build_sdk_event("inkson"));
                                             let op = match op {
@@ -858,7 +858,7 @@ pub fn AgentsPanel(
                                             interop_status_text.set("submitting capability grant".to_owned());
                                             spawn(async move {
                                                 let grant_id = format!(
-                                                    "ck:grant:{}",
+                                                    "ak:grant:{}",
                                                     crate::operation::uuid_v7()
                                                 );
                                                 let constraint = crate::operation::ck_ops::interop_capability_constraint(
@@ -1052,7 +1052,7 @@ pub fn AgentsPanel(
                                         publish_status_text.set("publishing synthesis Strand".to_owned());
                                         spawn(async move {
                                             let strand_id = format!(
-                                                "ck:strand:{}",
+                                                "ak:strand:{}",
                                                 crate::operation::uuid_v7()
                                             );
                                             let op = crate::operation::ck_ops::agent_publish_attribution_strand(

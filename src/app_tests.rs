@@ -131,7 +131,7 @@ fn session_grant(grant_expires_in: i64) -> PersistedSessionGrant {
         grant_id: "grant-1".to_owned(),
         audience: "https://local.host/api".to_owned(),
         principal_id: "did:web:alice.example".to_owned(),
-        device_id: "ck:device:01964137-0000-7000-8000-000000000001".to_owned(),
+        device_id: "ak:device:01964137-0000-7000-8000-000000000001".to_owned(),
         principal_server_url: "https://local.host".to_owned(),
         grant_expires_at: Some(now + chrono::Duration::seconds(grant_expires_in)),
         stored_at: now,
@@ -153,7 +153,7 @@ fn account_scope_owner_alone_is_not_bootstrap_refresh_material() {
 
 #[test]
 fn current_device_authorization_detects_verified_current_device() {
-    let device = "ck:device:01964137-0000-7000-8000-000000000001";
+    let device = "ak:device:01964137-0000-7000-8000-000000000001";
     let viewer = serde_json::json!({
         "current_device_id": device,
         "devices": [{
@@ -170,7 +170,7 @@ fn current_device_authorization_detects_verified_current_device() {
 
 #[test]
 fn current_device_authorization_detects_unverified_new_device() {
-    let device = "ck:device:01964137-0000-7000-8000-000000000002";
+    let device = "ak:device:01964137-0000-7000-8000-000000000002";
     let viewer = serde_json::json!({
         "current_device_id": device,
         "devices": [{
@@ -187,10 +187,10 @@ fn current_device_authorization_detects_unverified_new_device() {
 
 #[test]
 fn current_device_authorization_treats_missing_current_device_as_unauthorized() {
-    let device = "ck:device:01964137-0000-7000-8000-000000000002";
+    let device = "ak:device:01964137-0000-7000-8000-000000000002";
     let viewer = serde_json::json!({
         "devices": [{
-            "device_id": "ck:device:01964137-0000-7000-8000-000000000001",
+            "device_id": "ak:device:01964137-0000-7000-8000-000000000001",
             "status": "active"
         }]
     });
@@ -203,7 +203,7 @@ fn current_device_authorization_treats_missing_current_device_as_unauthorized() 
 
 #[test]
 fn current_device_authorization_rejects_active_status_without_trust_evidence() {
-    let device = "ck:device:01964137-0000-7000-8000-000000000001";
+    let device = "ak:device:01964137-0000-7000-8000-000000000001";
     let viewer = serde_json::json!({
         "devices": [{
             "device_id": device,
@@ -219,7 +219,7 @@ fn current_device_authorization_rejects_active_status_without_trust_evidence() {
 
 #[test]
 fn current_device_authorization_accepts_verified_status_even_when_sdk_status_is_active() {
-    let device = "ck:device:01964137-0000-7000-8000-000000000001";
+    let device = "ak:device:01964137-0000-7000-8000-000000000001";
     let viewer = serde_json::json!({
         "devices": [{
             "device_id": device,
@@ -236,7 +236,7 @@ fn current_device_authorization_accepts_verified_status_even_when_sdk_status_is_
 
 #[test]
 fn current_device_authorization_accepts_explicit_authorized_status() {
-    let device = "ck:device:01964137-0000-7000-8000-000000000001";
+    let device = "ak:device:01964137-0000-7000-8000-000000000001";
     let viewer = serde_json::json!({
         "devices": [{
             "device_id": device,
@@ -252,7 +252,7 @@ fn current_device_authorization_accepts_explicit_authorized_status() {
 
 #[test]
 fn current_device_authorization_rejects_revoked_status() {
-    let device = "ck:device:01964137-0000-7000-8000-000000000001";
+    let device = "ak:device:01964137-0000-7000-8000-000000000001";
     let viewer = serde_json::json!({
         "devices": [{
             "device_id": device,
@@ -268,8 +268,8 @@ fn current_device_authorization_rejects_revoked_status() {
 
 #[test]
 fn account_has_other_active_devices_detects_prior_device() {
-    let current = "ck:device:01964137-0000-7000-8000-000000000002";
-    let prior = "ck:device:01964137-0000-7000-8000-000000000001";
+    let current = "ak:device:01964137-0000-7000-8000-000000000002";
+    let prior = "ak:device:01964137-0000-7000-8000-000000000001";
     let viewer = serde_json::json!({
         "current_device_id": current,
         "devices": [
@@ -291,8 +291,8 @@ fn account_has_other_active_devices_detects_prior_device() {
 
 #[test]
 fn account_has_other_active_devices_ignores_revoked_prior_device() {
-    let current = "ck:device:01964137-0000-7000-8000-000000000002";
-    let prior = "ck:device:01964137-0000-7000-8000-000000000001";
+    let current = "ak:device:01964137-0000-7000-8000-000000000002";
+    let prior = "ak:device:01964137-0000-7000-8000-000000000001";
     let viewer = serde_json::json!({
         "current_device_id": current,
         "devices": [
@@ -315,7 +315,7 @@ fn account_has_other_active_devices_ignores_revoked_prior_device() {
 
 #[test]
 fn current_device_authorization_accepts_authorized_at_without_status() {
-    let device = "ck:device:01964137-0000-7000-8000-000000000001";
+    let device = "ak:device:01964137-0000-7000-8000-000000000001";
     let viewer = serde_json::json!({
         "devices": [{
             "device_id": device,
@@ -331,7 +331,7 @@ fn current_device_authorization_accepts_authorized_at_without_status() {
 
 #[test]
 fn current_device_authorization_rejects_current_record_without_authorization_evidence() {
-    let device = "ck:device:01964137-0000-7000-8000-000000000001";
+    let device = "ak:device:01964137-0000-7000-8000-000000000001";
     let viewer = serde_json::json!({
         "devices": [{
             "device_id": device
@@ -346,7 +346,7 @@ fn current_device_authorization_rejects_current_record_without_authorization_evi
 
 #[test]
 fn device_authorization_required_fails_closed_without_device_inventory() {
-    let device = "ck:device:01964137-0000-7000-8000-000000000001";
+    let device = "ak:device:01964137-0000-7000-8000-000000000001";
     assert!(device_authorization_required_from_account_viewer(
         &serde_json::json!({}),
         device
@@ -359,7 +359,7 @@ fn device_authorization_required_fails_closed_without_device_inventory() {
 
 #[test]
 fn device_authorization_required_allows_only_verified_device() {
-    let device = "ck:device:01964137-0000-7000-8000-000000000001";
+    let device = "ak:device:01964137-0000-7000-8000-000000000001";
     assert!(!device_authorization_required_from_account_viewer(
         &serde_json::json!({
             "devices": [{
@@ -473,7 +473,7 @@ fn boot_session_credential_ignores_config_token_without_boot_material() {
     let config = ClientConfig::from_fields(
         "https://local.host",
         "did:web:alice.example",
-        "ck:device:01964137-0000-7000-8000-000000000001",
+        "ak:device:01964137-0000-7000-8000-000000000001",
         "config-token",
     );
 
@@ -493,7 +493,7 @@ fn boot_session_credential_uses_fresh_session_grant() {
     let config = ClientConfig::from_fields(
         "https://local.host",
         "did:web:alice.example",
-        "ck:device:01964137-0000-7000-8000-000000000001",
+        "ak:device:01964137-0000-7000-8000-000000000001",
         "bridge-token",
     );
 
@@ -513,7 +513,7 @@ fn boot_session_credential_ignores_expired_session_grant() {
     let config = ClientConfig::from_fields(
         "https://local.host",
         "did:web:alice.example",
-        "ck:device:01964137-0000-7000-8000-000000000001",
+        "ak:device:01964137-0000-7000-8000-000000000001",
         "bridge-token",
     );
 
@@ -535,7 +535,7 @@ fn boot_session_credential_ignores_session_grant_for_other_server() {
     let config = ClientConfig::from_fields(
         "https://local.host",
         "did:web:alice.example",
-        "ck:device:01964137-0000-7000-8000-000000000001",
+        "ak:device:01964137-0000-7000-8000-000000000001",
         "bridge-token",
     );
 
@@ -619,7 +619,7 @@ fn rehydrated_session_credential_only_matches_active_config() {
     let config = ClientConfig::from_fields(
         "https://local.host",
         "did:web:alice.example",
-        "ck:device:01964137-0000-7000-8000-000000000001",
+        "ak:device:01964137-0000-7000-8000-000000000001",
         "sx-live",
     );
 
@@ -628,7 +628,7 @@ fn rehydrated_session_credential_only_matches_active_config() {
             &config,
             "https://local.host",
             "did:web:alice.example",
-            "ck:device:01964137-0000-7000-8000-000000000001",
+            "ak:device:01964137-0000-7000-8000-000000000001",
         )
         .as_deref(),
         Some("sx-live")
@@ -638,7 +638,7 @@ fn rehydrated_session_credential_only_matches_active_config() {
             &config,
             "https://other.local.host",
             "did:web:alice.example",
-            "ck:device:01964137-0000-7000-8000-000000000001",
+            "ak:device:01964137-0000-7000-8000-000000000001",
         )
         .is_none()
     );
@@ -647,7 +647,7 @@ fn rehydrated_session_credential_only_matches_active_config() {
             &config,
             "https://local.host",
             "did:web:bob.example",
-            "ck:device:01964137-0000-7000-8000-000000000001",
+            "ak:device:01964137-0000-7000-8000-000000000001",
         )
         .is_none()
     );
@@ -750,37 +750,37 @@ fn setup_section_route_labels_match_realm_and_space_forms() {
 #[test]
 fn kanban_board_route_uses_realm_context_for_mls_bootstrap() {
     let route = Route::KanbanBoard {
-        realm_id: "ck:realm:019e67a5-8edc-7347-9ca1-a0b880987bdc".to_owned(),
-        board_id: "ck:space:019e67ae-e633-7ef4-8a64-1f736d75d8ad".to_owned(),
+        realm_id: "ak:realm:019e67a5-8edc-7347-9ca1-a0b880987bdc".to_owned(),
+        board_id: "ak:space:019e67ae-e633-7ef4-8a64-1f736d75d8ad".to_owned(),
     };
 
     assert!(route_uses_realm_context(&route));
     assert_eq!(
         route.realm_id(),
-        Some("ck:realm:019e67a5-8edc-7347-9ca1-a0b880987bdc")
+        Some("ak:realm:019e67a5-8edc-7347-9ca1-a0b880987bdc")
     );
 }
 
 #[test]
 fn kanban_board_task_route_uses_realm_context_for_mls_bootstrap() {
     let route = Route::KanbanBoardTask {
-        realm_id: "ck:realm:019e67a5-8edc-7347-9ca1-a0b880987bdc".to_owned(),
-        board_id: "ck:space:019e67ae-e633-7ef4-8a64-1f736d75d8ad".to_owned(),
-        task_id: "ck:strand:019e67b1-0000-7000-8000-000000000001".to_owned(),
+        realm_id: "ak:realm:019e67a5-8edc-7347-9ca1-a0b880987bdc".to_owned(),
+        board_id: "ak:space:019e67ae-e633-7ef4-8a64-1f736d75d8ad".to_owned(),
+        task_id: "ak:strand:019e67b1-0000-7000-8000-000000000001".to_owned(),
     };
 
     assert!(route_uses_realm_context(&route));
     assert_eq!(
         route.realm_id(),
-        Some("ck:realm:019e67a5-8edc-7347-9ca1-a0b880987bdc")
+        Some("ak:realm:019e67a5-8edc-7347-9ca1-a0b880987bdc")
     );
 }
 
 #[test]
 fn board_first_mls_bootstrap_key_never_prompts_for_passphrase() {
     let route = Route::KanbanBoard {
-        realm_id: "ck:realm:019e67a5-8edc-7347-9ca1-a0b880987bdc".to_owned(),
-        board_id: "ck:space:019e67ae-e633-7ef4-8a64-1f736d75d8ad".to_owned(),
+        realm_id: "ak:realm:019e67a5-8edc-7347-9ca1-a0b880987bdc".to_owned(),
+        board_id: "ak:space:019e67ae-e633-7ef4-8a64-1f736d75d8ad".to_owned(),
     };
     let realm_id = route.realm_id().expect("board route carries a realm id");
 
@@ -788,7 +788,7 @@ fn board_first_mls_bootstrap_key_never_prompts_for_passphrase() {
         "http://localhost:8080",
         "secret-session-token",
         "did:web:inkson.example",
-        "ck:device:01964137-0000-7000-8000-000000000001",
+        "ak:device:01964137-0000-7000-8000-000000000001",
         realm_id,
         true,
         true,
@@ -807,7 +807,7 @@ fn board_first_mls_bootstrap_key_never_prompts_for_passphrase() {
 fn mls_recovery_setup_missing_flags_encrypted_realm_without_account_backup() {
     let mut store = isolated_store("mls-recovery-missing");
     store.save_realm_tree_projection(
-        "ck:realm:encrypted".to_owned(),
+        "ak:realm:encrypted".to_owned(),
         serde_json::json!({
             "summary": {
                 "title": "Encrypted",
@@ -832,7 +832,7 @@ fn mls_recovery_setup_missing_flags_encrypted_realm_without_account_backup() {
 fn mls_recovery_setup_missing_stays_false_when_account_backup_exists() {
     let mut store = isolated_store("mls-recovery-backed-up");
     store.save_realm_tree_projection(
-        "ck:realm:encrypted".to_owned(),
+        "ak:realm:encrypted".to_owned(),
         serde_json::json!({
             "summary": {
                 "title": "Encrypted",
@@ -843,7 +843,7 @@ fn mls_recovery_setup_missing_stays_false_when_account_backup_exists() {
     let secure = crate::secure_key_store::MemorySecureKeyStore::new();
     let payload = serde_json::json!({
         "backups": [{
-            "backup_id": "ck:backup:passphrase",
+            "backup_id": "ak:backup:passphrase",
             "encryption": { "recipient_method": "passphrase_kdf" },
             "contents": [{
                 "item_type": crate::mls::account_recovery::MLS_ACCOUNT_SECRET_ITEM_TYPE,
@@ -866,7 +866,7 @@ fn mls_recovery_setup_missing_stays_false_when_account_backup_exists() {
 fn mls_recovery_setup_missing_stays_false_when_account_recovery_is_configured() {
     let mut store = isolated_store("mls-recovery-account-configured");
     store.save_realm_tree_projection(
-        "ck:realm:encrypted".to_owned(),
+        "ak:realm:encrypted".to_owned(),
         serde_json::json!({
             "summary": {
                 "title": "Encrypted",
@@ -892,7 +892,7 @@ fn mls_recovery_setup_missing_stays_false_for_local_recovery_key_and_did_backup(
     let actor = "did:web:alice.example";
     let mut store = isolated_store("mls-recovery-local-did-backup");
     store.save_realm_tree_projection(
-        "ck:realm:encrypted".to_owned(),
+        "ak:realm:encrypted".to_owned(),
         serde_json::json!({
             "summary": {
                 "title": "Encrypted",
@@ -912,7 +912,7 @@ fn mls_recovery_setup_missing_stays_false_for_local_recovery_key_and_did_backup(
     let secure = crate::secure_key_store::MemorySecureKeyStore::new();
     let payload = serde_json::json!({
         "backups": [{
-            "backup_id": "ck:backup:did-recovery",
+            "backup_id": "ak:backup:did-recovery",
             "backup_class": "did_recovery",
             "encryption": { "recipient_method": "recovery_public_key" },
         }]
@@ -928,8 +928,8 @@ fn mls_welcome_bootstrap_key_waits_for_e2ee_profile_and_sync() {
     let base = "https://local.host/";
     let session = "session-token";
     let actor = "did:web:inkson.example";
-    let device = "ck:device:01964137-0000-7000-8000-000000000001";
-    let realm = "ck:realm:019e67a5-8edc-7347-9ca1-a0b880987bdc";
+    let device = "ak:device:01964137-0000-7000-8000-000000000001";
+    let realm = "ak:realm:019e67a5-8edc-7347-9ca1-a0b880987bdc";
 
     assert_eq!(
         mls_welcome_bootstrap_key(base, session, actor, device, realm, false, true),
@@ -951,7 +951,7 @@ fn mls_key_package_publish_key_waits_for_e2ee_profile_and_sync() {
     let base = "https://local.host/";
     let session = "session-token";
     let actor = "did:web:inkson.example";
-    let device = "ck:device:01964137-0000-7000-8000-000000000001";
+    let device = "ak:device:01964137-0000-7000-8000-000000000001";
 
     assert_eq!(
         mls_key_package_publish_key(base, session, actor, device, false, true),
@@ -973,16 +973,16 @@ fn mls_key_package_publish_key_waits_for_e2ee_profile_and_sync() {
 #[test]
 fn merge_projection_events_keeps_existing_messages_on_summary_only_delta() {
     let mut summary = ProjectionEvent::system_notice("summary-ck:realm:test", "server", "old");
-    summary.realm_id = Some("ck:realm:test".to_owned());
+    summary.realm_id = Some("ak:realm:test".to_owned());
     let message = ProjectionEvent {
-        id: "ck:event:message".to_owned(),
-        realm_id: Some("ck:realm:test".to_owned()),
+        id: "ak:event:message".to_owned(),
+        realm_id: Some("ak:realm:test".to_owned()),
         body: "welcome".to_owned(),
         ..ProjectionEvent::default()
     };
     let mut updated_summary =
         ProjectionEvent::system_notice("summary-ck:realm:test", "server", "new");
-    updated_summary.realm_id = Some("ck:realm:test".to_owned());
+    updated_summary.realm_id = Some("ak:realm:test".to_owned());
 
     let merged = merge_projection_events(&[summary, message], vec![updated_summary]);
 

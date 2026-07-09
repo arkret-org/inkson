@@ -173,7 +173,7 @@ fn message_redaction_marker_from_event(event: &Value) -> Option<MessageRedaction
     })
     .map(str::trim)
     .filter(|value| {
-        !value.is_empty() && (value.starts_with("ck:event:") || value.starts_with("ck:message:"))
+        !value.is_empty() && (value.starts_with("ak:event:") || value.starts_with("ak:message:"))
     })?
     .to_owned();
     let redaction_ref = value_string_at(event, &["event_id", "id"])
@@ -439,17 +439,17 @@ fn message_revision_target_ref_from_candidates(candidates: &[&Value]) -> Option<
         .map(str::trim)
         .filter(|value| {
             !value.is_empty()
-                && (value.starts_with("ck:event:") || value.starts_with("ck:message:"))
+                && (value.starts_with("ak:event:") || value.starts_with("ak:message:"))
         })
         .map(ToOwned::to_owned)
 }
 
 fn message_ref_equivalents(value: &str) -> [String; 2] {
     let trimmed = value.trim();
-    let alternate = if let Some(suffix) = trimmed.strip_prefix("ck:event:") {
-        format!("ck:message:{suffix}")
-    } else if let Some(suffix) = trimmed.strip_prefix("ck:message:") {
-        format!("ck:event:{suffix}")
+    let alternate = if let Some(suffix) = trimmed.strip_prefix("ak:event:") {
+        format!("ak:message:{suffix}")
+    } else if let Some(suffix) = trimmed.strip_prefix("ak:message:") {
+        format!("ak:event:{suffix}")
     } else {
         trimmed.to_owned()
     };
@@ -900,7 +900,7 @@ fn verification_method_device_fragment<'a>(
         .map(|(head, _)| head)
         .unwrap_or(verification_method);
     let (controller, fragment) = no_query.split_once('#')?;
-    (controller == actor && fragment.starts_with("ck:device:")).then_some(fragment)
+    (controller == actor && fragment.starts_with("ak:device:")).then_some(fragment)
 }
 
 fn persistent_proof_controllers_match_actor(envelope: &Value, actor: &str) -> bool {
@@ -1054,8 +1054,8 @@ pub(crate) fn chat_message_from_event_with_sidecar(
                 .and_then(|unsigned| unsigned.get("local_target_ref"))
                 .and_then(Value::as_str)
         })
-        .filter(|value| value.starts_with("ck:strand:"))
-        .unwrap_or("ck:strand:general")
+        .filter(|value| value.starts_with("ak:strand:"))
+        .unwrap_or("ak:strand:general")
         .to_owned();
     // CKP-0007 P3B.2.7 — compare the envelope's `effective_scope`
     // against the payload `scope_circle_id`. When they disagree we

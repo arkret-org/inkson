@@ -168,7 +168,7 @@ fn projection_has_explicit_low_encryption_floor(value: &Value) -> bool {
 }
 
 fn projection_is_realm(id: &str, body: &Value) -> bool {
-    id.starts_with("ck:realm:")
+    id.starts_with("ak:realm:")
         || string_field(body, &["__kind"]).as_deref() == Some("realm")
         || string_field(body, &["schema"]).as_deref() == Some("ck.schema.realm.v1")
 }
@@ -216,7 +216,7 @@ mod tests {
         );
         let mut projections = BTreeMap::new();
         projections.insert(
-            "ck:realm:0196419b-0000-7000-8000-000000000001".to_owned(),
+            "ak:realm:0196419b-0000-7000-8000-000000000001".to_owned(),
             json!({
                 "encryption_profile": "mls_rfc9420",
                 "content_encryption_floor": "e2ee_required",
@@ -250,7 +250,7 @@ mod tests {
     fn non_realm_projection_only_is_inconclusive() {
         let mut projections = BTreeMap::new();
         projections.insert(
-            "ck:notification:0196419b-0000-7000-8000-000000000001".to_owned(),
+            "ak:notification:0196419b-0000-7000-8000-000000000001".to_owned(),
             json!({
                 "__kind": "notification",
                 "message": "hello"
@@ -269,7 +269,7 @@ mod tests {
     fn visible_low_floor_realm_prompts_without_pcr_projection() {
         let mut projections = BTreeMap::new();
         projections.insert(
-            "ck:realm:0196419b-0000-7000-8000-000000000001".to_owned(),
+            "ak:realm:0196419b-0000-7000-8000-000000000001".to_owned(),
             json!({
                 "summary": {
                     "encryption_profile": "none"
@@ -287,7 +287,7 @@ mod tests {
     fn mls_realm_with_missing_floor_fields_is_inconclusive_without_pcr_projection() {
         let mut projections = BTreeMap::new();
         projections.insert(
-            "ck:realm:0196419b-0000-7000-8000-000000000001".to_owned(),
+            "ak:realm:0196419b-0000-7000-8000-000000000001".to_owned(),
             json!({
                 "summary": {
                     "encryption_profile": "mls_rfc9420"
@@ -307,7 +307,7 @@ mod tests {
     fn explicit_allow_plaintext_floor_prompts_without_pcr_projection() {
         let mut projections = BTreeMap::new();
         projections.insert(
-            "ck:realm:0196419b-0000-7000-8000-000000000001".to_owned(),
+            "ak:realm:0196419b-0000-7000-8000-000000000001".to_owned(),
             json!({
                 "summary": {
                     "encryption_profile": "mls_rfc9420",
@@ -327,7 +327,7 @@ mod tests {
     fn recommended_collaboration_realm_suppresses_prompt_without_pcr_projection() {
         let mut projections = BTreeMap::new();
         projections.insert(
-            "ck:realm:0196419b-0000-7000-8000-000000000001".to_owned(),
+            "ak:realm:0196419b-0000-7000-8000-000000000001".to_owned(),
             json!({
                 "summary": {
                     "encryption_profile": "mls_rfc9420",

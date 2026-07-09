@@ -37,7 +37,7 @@ test.describe("SubtleCrypto AES-GCM round-trip", () => {
     const result = await page.evaluate(async () => {
       const enc = new TextEncoder();
       const dec = new TextDecoder();
-      const plaintext = enc.encode("cokret-cross-platform-2026");
+      const plaintext = enc.encode("arkret-cross-platform-2026");
       // Fixed key bytes so any engine-specific endian / length issue
       // surfaces deterministically.
       const rawKey = new Uint8Array(32);
@@ -71,7 +71,7 @@ test.describe("SubtleCrypto AES-GCM round-trip", () => {
       };
     });
 
-    expect(result.recoveredText).toBe("cokret-cross-platform-2026");
+    expect(result.recoveredText).toBe("arkret-cross-platform-2026");
     // AES-GCM appends a 16-byte tag.
     expect(result.cipherLen).toBe(result.plainLen + 16);
   });

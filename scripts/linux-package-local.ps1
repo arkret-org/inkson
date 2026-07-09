@@ -43,8 +43,8 @@ Version: $Version
 Section: utils
 Priority: optional
 Architecture: amd64
-Maintainer: Cokret Local Release <local-release@example.invalid>
-Description: Cokret cross-platform client local package
+Maintainer: Arkret Local Release <local-release@example.invalid>
+Description: Arkret cross-platform client local package
 "@ | Set-Content -Encoding ASCII -Path (Join-Path $controlDir "control")
 
         $debPath = Join-Path $DistDir "inkson_${Version}_amd64.deb"

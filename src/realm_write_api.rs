@@ -74,7 +74,7 @@ pub async fn create_realm(
         return Err(anyhow::anyhow!("title is required for ck.realm.create"));
     }
 
-    let realm_id = format!("ck:realm:{}", uuid_v7());
+    let realm_id = format!("ak:realm:{}", uuid_v7());
     let join_rule = canonical_space_join_rule_v1(join_rule);
     let mut events = build_realm_bootstrap_events(
         &realm_id,
@@ -110,7 +110,7 @@ pub async fn create_realm(
                 )
             })?;
     }
-    let idempotency_key = format!("ck:operation:{}", uuid_v7());
+    let idempotency_key = format!("ak:operation:{}", uuid_v7());
     submitter
         .submit_signed_sdk_events_batch(&events, Some(&idempotency_key))
         .await?;
@@ -162,7 +162,7 @@ pub async fn create_space_under_realm(
             "realm_id is required for ck.space.create — Space must live inside a Realm"
         ));
     }
-    let space_id = format!("ck:space:{}", uuid_v7());
+    let space_id = format!("ak:space:{}", uuid_v7());
     let event = build_space_create_event(
         &space_id,
         realm_id,
@@ -676,7 +676,7 @@ pub async fn appeal_modify_atomic(
     new_reason_code: &str,
     appeal_reason_text_ref: &str,
 ) -> anyhow::Result<(String, cokret_sdk::EventsSubmitOutcome)> {
-    let new_decision_id = format!("ck:event:{}", crate::operation::uuid_v7());
+    let new_decision_id = format!("ak:event:{}", crate::operation::uuid_v7());
     let mut new_decision =
         ck_ops::moderation_decision(realm_id, actor_id, target_ref, new_verdict, new_reason_code)?
             .build_sdk_event("inkson")?;

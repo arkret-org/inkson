@@ -69,13 +69,13 @@ pub(crate) fn to_device_message_expired(message: &Value, now: DateTime<Utc>) -> 
 
 pub(crate) fn read_scope_for_cursor(realm_id: &str, topic_id: Option<&str>) -> ReadScope {
     match topic_id.map(str::trim).filter(|topic| !topic.is_empty()) {
-        Some(topic) if topic.starts_with("ck:thread:") => ReadScope {
+        Some(topic) if topic.starts_with("ak:thread:") => ReadScope {
             kind: "thread".to_owned(),
             object_ref: Some(topic.to_owned()),
             track_name: None,
             track_scope: None,
         },
-        Some(topic) if topic.starts_with("ck:strand:") => ReadScope {
+        Some(topic) if topic.starts_with("ak:strand:") => ReadScope {
             kind: "strand".to_owned(),
             object_ref: Some(topic.to_owned()),
             track_name: Some("discussion".to_owned()),
@@ -96,8 +96,8 @@ pub(crate) fn read_scope_for_cursor(realm_id: &str, topic_id: Option<&str>) -> R
 /// locally; a divergent copy writes events to the wrong strand.
 pub(crate) fn default_strand_id_for_realm(realm_id: &str) -> String {
     realm_id
-        .strip_prefix("ck:realm:")
-        .map(|suffix| format!("ck:strand:{suffix}"))
+        .strip_prefix("ak:realm:")
+        .map(|suffix| format!("ak:strand:{suffix}"))
         .unwrap_or_else(|| realm_id.to_owned())
 }
 
@@ -125,7 +125,7 @@ pub(crate) fn isolated_store_for_tests(tag: &str) -> LocalStateStore {
 }
 
 pub(crate) fn new_read_cursor_id() -> String {
-    format!("ck:read_cursor:{}", crate::operation::uuid_v7())
+    format!("ak:read_cursor:{}", crate::operation::uuid_v7())
 }
 
 pub(crate) fn read_cursor_key(realm_id: &str, read_scope: &ReadScope) -> String {

@@ -6,7 +6,7 @@ the most likely cause from the user's perspective, and the recommended
 next step.
 
 For the protocol-level definitions see
-`cokret-rust-sdk/docs/architecture.md`. For the operator-side narrative
+`arkret-rust-sdk/docs/architecture.md`. For the operator-side narrative
 (why the error fires) see the soland and coauth runbooks. **This page is
 deliberately user-first**: it does not require protocol knowledge to
 read.

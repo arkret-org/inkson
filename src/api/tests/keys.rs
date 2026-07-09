@@ -21,7 +21,7 @@ fn keys_upload_device_signature_is_raw_signature_tuple() {
     );
     let signature = keys::sign_keys_upload_batch_with_signer(
         &signer,
-        "ck:device:0196419b-0000-7000-8000-000000000001",
+        "ak:device:0196419b-0000-7000-8000-000000000001",
         &one_time_keys,
         &BTreeMap::new(),
     )

@@ -441,7 +441,7 @@ fn raw_payload_is_message_create(payload: &Value) -> bool {
     raw_operation_kind(payload) == Some("ck.message.create")
         && raw_payload_string(payload, "message_id")
             .as_deref()
-            .is_some_and(|message_id| message_id.starts_with("ck:message:"))
+            .is_some_and(|message_id| message_id.starts_with("ak:message:"))
 }
 
 fn merge_synced_raw_operation_payload(existing: &Value, mut incoming: Value) -> Value {
@@ -482,7 +482,7 @@ fn raw_payload_is_redaction_tombstone(payload: &Value) -> bool {
 mod client_core_sync_overlay_tests {
     use super::super::storage_util::isolated_store_for_tests;
 
-    const REALM: &str = "ck:realm:01904100-0000-7000-8000-000000000001";
+    const REALM: &str = "ak:realm:01904100-0000-7000-8000-000000000001";
 
     // E7: cursor writes through one clone (e.g. garth's Send+Sync CursorStore
     // adapter) MUST be visible to a different clone (the Dioxus Signal), because
@@ -493,15 +493,15 @@ mod client_core_sync_overlay_tests {
         let mut adapter_clone = base.clone();
         let ui_clone = base.clone();
 
-        adapter_clone.save_realm_events_cursor(REALM, Some("ck:cursor:realm-1".to_owned()));
-        adapter_clone.save_sync_cursor("ck:cursor:acct-1");
+        adapter_clone.save_realm_events_cursor(REALM, Some("ak:cursor:realm-1".to_owned()));
+        adapter_clone.save_sync_cursor("ak:cursor:acct-1");
 
         // A DISTINCT clone observes both writes via the shared overlay.
         assert_eq!(
             ui_clone.realm_events_cursor(REALM).as_deref(),
-            Some("ck:cursor:realm-1")
+            Some("ak:cursor:realm-1")
         );
-        assert_eq!(ui_clone.sync_cursor().as_deref(), Some("ck:cursor:acct-1"));
+        assert_eq!(ui_clone.sync_cursor().as_deref(), Some("ak:cursor:acct-1"));
     }
 
     // A clear on one clone is likewise visible to another (rebuild-from-history).
@@ -511,10 +511,10 @@ mod client_core_sync_overlay_tests {
         let mut writer = base.clone();
         let reader = base.clone();
 
-        writer.save_realm_events_cursor(REALM, Some("ck:cursor:realm-1".to_owned()));
+        writer.save_realm_events_cursor(REALM, Some("ak:cursor:realm-1".to_owned()));
         assert_eq!(
             reader.realm_events_cursor(REALM).as_deref(),
-            Some("ck:cursor:realm-1")
+            Some("ak:cursor:realm-1")
         );
 
         writer.save_realm_events_cursor(REALM, None);
@@ -529,8 +529,8 @@ mod client_core_sync_overlay_tests {
         let mut adapter_clone = base.clone();
         let ui_clone = base.clone();
 
-        assert!(!ui_clone.client_core_event_seen("ck:event:01904100-0000-7000-8000-0000000000aa"));
-        adapter_clone.remember_client_core_event("ck:event:01904100-0000-7000-8000-0000000000aa");
-        assert!(ui_clone.client_core_event_seen("ck:event:01904100-0000-7000-8000-0000000000aa"));
+        assert!(!ui_clone.client_core_event_seen("ak:event:01904100-0000-7000-8000-0000000000aa"));
+        adapter_clone.remember_client_core_event("ak:event:01904100-0000-7000-8000-0000000000aa");
+        assert!(ui_clone.client_core_event_seen("ak:event:01904100-0000-7000-8000-0000000000aa"));
     }
 }

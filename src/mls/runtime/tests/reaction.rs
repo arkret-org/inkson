@@ -62,8 +62,8 @@ fn minimal_metadata_reaction_forces_commit_when_epoch_overdue() {
     let mut state = temp_state_store("minimal-reaction-force");
     let secure = MemorySecureKeyStore::new();
     let actor = "did:web:alice.example";
-    let device = "ck:device:01904100-0000-7000-8000-000000000001";
-    let realm = "ck:realm:01904100-0000-7000-8000-000000000002";
+    let device = "ak:device:01904100-0000-7000-8000-000000000001";
+    let realm = "ak:realm:01904100-0000-7000-8000-000000000002";
 
     // Declare the minimal-metadata profile on the cached projection.
     state.save_realm_tree_projection(
@@ -102,8 +102,8 @@ fn non_minimal_reaction_never_forces_commit_and_persists_in_place() {
     let mut state = temp_state_store("non-minimal-reaction");
     let secure = MemorySecureKeyStore::new();
     let actor = "did:web:alice.example";
-    let device = "ck:device:01904100-0000-7000-8000-000000000001";
-    let realm = "ck:realm:01904100-0000-7000-8000-000000000003";
+    let device = "ak:device:01904100-0000-7000-8000-000000000001";
+    let realm = "ak:realm:01904100-0000-7000-8000-000000000003";
 
     ensure_creator_mls_snapshot(&mut state, &secure, realm, actor, device).unwrap();
     let base_epoch = state.mls_snapshot_for(realm).unwrap().epoch;

@@ -142,7 +142,7 @@ mod native {
             let encrypted = MessageCrypto::encrypt(
                 group,
                 message_id,
-                "application/vnd.cokret.message+json",
+                "application/vnd.arkret.message+json",
                 plaintext,
             )?;
             Ok(ClientEncryptedMessage {
@@ -205,7 +205,7 @@ fn compose_local_encrypted_message_inner(
 ) -> anyhow::Result<ClientEncryptedMessage> {
     let mut device = LocalMlsDevice::new(principal_id, device_id)?;
     device.create_group(realm_id.as_bytes())?;
-    // Cokret canonical content shape (models/content-types.md §2.2 / §4.1):
+    // Arkret canonical content shape (models/content-types.md §2.2 / §4.1):
     // the E2EE plaintext is the same `payload.content` Content Block the
     // active-write path emits, so a decrypting client parses it with the
     // identical `ck.content.text` schema. (Matrix `msgtype`/`m.text` is
@@ -252,22 +252,22 @@ mod tests {
         // forms are accepted; `dev_alice_1` style ids no longer pass.
         let mut alice = LocalMlsDevice::new(
             "did:web:alice.example",
-            "ck:device:01904100-0000-7000-8000-000000000001",
+            "ak:device:01904100-0000-7000-8000-000000000001",
         )
         .unwrap();
         let mut bob = LocalMlsDevice::new(
             "did:web:bob.example",
-            "ck:device:01904100-0000-7000-8000-000000000002",
+            "ak:device:01904100-0000-7000-8000-000000000002",
         )
         .unwrap();
         let bob_keys = bob.key_package_record().unwrap();
 
-        alice.create_group(b"ck:realm:local-e2ee").unwrap();
+        alice.create_group(b"ak:realm:local-e2ee").unwrap();
         let welcome = alice.add_member(&bob_keys).unwrap().welcome;
         bob.join_from_welcome(&welcome).unwrap();
 
         let encrypted = alice
-            .encrypt_message("ck:message:local-1", br#"{"body":"hello secure client"}"#)
+            .encrypt_message("ak:message:local-1", br#"{"body":"hello secure client"}"#)
             .unwrap();
         let ciphertext = encrypted.payload.ciphertext.clone();
         let digest = encrypted.payload.payload_digest.clone();
@@ -280,7 +280,7 @@ mod tests {
 
         let mut offline = LocalMlsDevice::new(
             "did:web:carol.example",
-            "ck:device:01904100-0000-7000-8000-000000000003",
+            "ak:device:01904100-0000-7000-8000-000000000003",
         )
         .unwrap();
         let pending = offline.decrypt_or_preserve(encrypted).unwrap();
@@ -300,24 +300,24 @@ mod tests {
     fn removed_mls_member_cannot_decrypt_post_remove_ciphertext() {
         let mut alice = LocalMlsDevice::new(
             "did:web:alice.example",
-            "ck:device:01904100-0000-7000-8000-000000000001",
+            "ak:device:01904100-0000-7000-8000-000000000001",
         )
         .unwrap();
         let mut bob = LocalMlsDevice::new(
             "did:web:bob.example",
-            "ck:device:01904100-0000-7000-8000-000000000002",
+            "ak:device:01904100-0000-7000-8000-000000000002",
         )
         .unwrap();
         let mut carol = LocalMlsDevice::new(
             "did:web:carol.example",
-            "ck:device:01904100-0000-7000-8000-000000000003",
+            "ak:device:01904100-0000-7000-8000-000000000003",
         )
         .unwrap();
 
         let bob_keys = bob.key_package_record().unwrap();
         let carol_keys = carol.key_package_record().unwrap();
 
-        alice.create_group(b"ck:realm:local-e2ee-remove").unwrap();
+        alice.create_group(b"ak:realm:local-e2ee-remove").unwrap();
         let bob_add = alice.add_member(&bob_keys).unwrap();
         bob.join_from_welcome(&bob_add.welcome).unwrap();
 
@@ -326,7 +326,7 @@ mod tests {
         carol.join_from_welcome(&carol_add.welcome).unwrap();
 
         let before_remove = alice
-            .encrypt_message("ck:message:pre-remove", br#"{"body":"before remove"}"#)
+            .encrypt_message("ak:message:pre-remove", br#"{"body":"before remove"}"#)
             .unwrap();
         let before_epoch = before_remove.payload.epoch;
         let bob_before = bob.decrypt_or_preserve(before_remove.clone()).unwrap();
@@ -362,7 +362,7 @@ mod tests {
         carol.apply_commit(&remove.commit).unwrap();
 
         let after_remove = alice
-            .encrypt_message("ck:message:post-remove", br#"{"body":"after remove"}"#)
+            .encrypt_message("ak:message:post-remove", br#"{"body":"after remove"}"#)
             .unwrap();
         assert!(
             after_remove.payload.epoch > before_epoch,
@@ -387,18 +387,18 @@ mod tests {
     fn local_compose_creates_protocol_mls_envelope() {
         let encrypted = compose_local_encrypted_message(
             "did:web:alice.example",
-            "ck:device:01904100-0000-7000-8000-000000000001",
-            "ck:realm:0196419b-0000-7000-8000-000000000000",
-            "ck:message:local-2",
+            "ak:device:01904100-0000-7000-8000-000000000001",
+            "ak:realm:0196419b-0000-7000-8000-000000000000",
+            "ak:message:local-2",
             "encrypted hello",
         )
         .unwrap();
 
-        assert_eq!(encrypted.message_id, "ck:message:local-2");
+        assert_eq!(encrypted.message_id, "ak:message:local-2");
         assert_eq!(encrypted.payload.scheme.as_str(), "mls-rfc9420");
         assert_eq!(
             encrypted.payload.content_type,
-            "application/vnd.cokret.message+json"
+            "application/vnd.arkret.message+json"
         );
     }
 }

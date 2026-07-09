@@ -10,13 +10,13 @@ fn device_snapshot_secret_is_created_and_reused() {
     let first = load_or_create_device_snapshot_secret(
         &store,
         "did:web:alice.example",
-        "ck:device:01904100-0000-7000-8000-000000000001",
+        "ak:device:01904100-0000-7000-8000-000000000001",
     )
     .unwrap();
     let second = load_or_create_device_snapshot_secret(
         &store,
         "did:web:alice.example",
-        "ck:device:01904100-0000-7000-8000-000000000001",
+        "ak:device:01904100-0000-7000-8000-000000000001",
     )
     .unwrap();
     assert_eq!(first, second);
@@ -29,7 +29,7 @@ fn device_snapshot_secret_load_does_not_create() {
     let missing = load_device_snapshot_secret(
         &store,
         "did:web:alice.example",
-        "ck:device:01904100-0000-7000-8000-000000000001",
+        "ak:device:01904100-0000-7000-8000-000000000001",
     )
     .unwrap_err();
     assert!(matches!(missing, SecureKeyStoreError::NotFound));
@@ -40,9 +40,9 @@ fn device_snapshot_secret_load_does_not_create() {
 fn account_secret_is_shared_across_devices() {
     let store = MemorySecureKeyStore::new();
     let actor = "did:web:alice.example";
-    let from_a = load_or_create_device_snapshot_secret(&store, actor, "ck:device:a").unwrap();
+    let from_a = load_or_create_device_snapshot_secret(&store, actor, "ak:device:a").unwrap();
     // A different device of the SAME account must resolve the SAME secret.
-    let from_b = load_or_create_device_snapshot_secret(&store, actor, "ck:device:b").unwrap();
+    let from_b = load_or_create_device_snapshot_secret(&store, actor, "ak:device:b").unwrap();
     assert_eq!(from_a, from_b);
     // It is stored under the account key, not a device key.
     assert!(
@@ -58,7 +58,7 @@ fn store_account_mls_secret_round_trips() {
     let store = MemorySecureKeyStore::new();
     let actor = "did:web:alice.example";
     store_account_mls_secret(&store, actor, "recovered-secret").unwrap();
-    let loaded = load_device_snapshot_secret(&store, actor, "ck:device:fresh").unwrap();
+    let loaded = load_device_snapshot_secret(&store, actor, "ak:device:fresh").unwrap();
     assert_eq!(loaded, "recovered-secret");
 }
 
@@ -76,7 +76,7 @@ fn account_secret_load_picks_highest_version() {
     assert_eq!(loaded.version, 3);
     assert_eq!(loaded.secret, "new-secret");
     assert_eq!(
-        load_device_snapshot_secret(&store, actor, "ck:device:any").unwrap(),
+        load_device_snapshot_secret(&store, actor, "ak:device:any").unwrap(),
         "new-secret"
     );
 }
@@ -124,8 +124,8 @@ fn account_secret_rotation_rewraps_backups_old_secret_cannot_decrypt() {
     use std::collections::BTreeMap;
 
     let actor = "did:web:alice.example";
-    let device = "ck:device:01904100-0000-7000-8000-000000000001";
-    let realm = "ck:realm:01904100-0000-7000-8000-000000000009";
+    let device = "ak:device:01904100-0000-7000-8000-000000000001";
+    let realm = "ak:realm:01904100-0000-7000-8000-000000000009";
     let old_secret = "old-account-secret";
     let plaintext = b"opaque sdk state before revoke";
     let store = MemorySecureKeyStore::new();
@@ -185,9 +185,9 @@ fn account_secret_rotation_skips_undecryptable_realm_and_records_failure() {
     use std::collections::BTreeMap;
 
     let actor = "did:web:alice.example";
-    let device = "ck:device:01904100-0000-7000-8000-000000000001";
-    let good_realm = "ck:realm:01904100-0000-7000-8000-00000000000a";
-    let bad_realm = "ck:realm:01904100-0000-7000-8000-00000000000b";
+    let device = "ak:device:01904100-0000-7000-8000-000000000001";
+    let good_realm = "ak:realm:01904100-0000-7000-8000-00000000000a";
+    let bad_realm = "ak:realm:01904100-0000-7000-8000-00000000000b";
     let old_secret = "old-account-secret";
     let store = MemorySecureKeyStore::new();
     store_account_mls_secret_version(&store, actor, 1, old_secret).unwrap();

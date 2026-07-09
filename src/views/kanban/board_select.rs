@@ -67,7 +67,7 @@ pub(super) fn write_state_samples() -> Vec<CardState> {
 pub(super) fn seed_columns() -> Vec<KanbanColumn> {
     vec![
         KanbanColumn {
-            id: "ck:space:01list-todo000000000000000000".to_owned(),
+            id: "ak:space:01list-todo000000000000000000".to_owned(),
             title: "To Do".to_owned(),
             rank: "U".to_owned(),
             cards: vec![KanbanCard {
@@ -107,7 +107,7 @@ pub(super) fn seed_columns() -> Vec<KanbanColumn> {
             state: SpaceContainerLifecycleState::Active,
         },
         KanbanColumn {
-            id: "ck:space:01list-progress00000000000000".to_owned(),
+            id: "ak:space:01list-progress00000000000000".to_owned(),
             title: "In Progress".to_owned(),
             rank: "f".to_owned(),
             cards: vec![KanbanCard {
@@ -139,7 +139,7 @@ pub(super) fn seed_columns() -> Vec<KanbanColumn> {
             state: SpaceContainerLifecycleState::Active,
         },
         KanbanColumn {
-            id: "ck:space:01list-done00000000000000000".to_owned(),
+            id: "ak:space:01list-done00000000000000000".to_owned(),
             title: "Done".to_owned(),
             rank: "p".to_owned(),
             cards: vec![KanbanCard {

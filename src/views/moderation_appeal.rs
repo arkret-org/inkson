@@ -132,7 +132,7 @@ pub fn build_appeal_submit_op(
 /// process clock entropy so two devices appealing the same decision
 /// don't collide.
 pub fn new_appeal_id() -> String {
-    format!("ck:appeal:{}", crate::operation::uuid_v7())
+    format!("ak:appeal:{}", crate::operation::uuid_v7())
 }
 
 /// Component: "Appeal this moderation decision" entrypoint. Renders near
@@ -300,11 +300,11 @@ mod tests {
     #[test]
     fn build_appeal_submit_op_emits_canonical_kind() {
         let op = build_appeal_submit_op(
-            "ck:realm:01904100-0000-7000-8000-000000000001",
+            "ak:realm:01904100-0000-7000-8000-000000000001",
             "did:web:alice.example",
-            "ck:appeal:01904100-0000-7000-8000-000000000002",
-            "ck:event:01904100-0000-7000-8000-000000000003",
-            "ck:event:01904100-0000-7000-8000-000000000003",
+            "ak:appeal:01904100-0000-7000-8000-000000000002",
+            "ak:event:01904100-0000-7000-8000-000000000003",
+            "ak:event:01904100-0000-7000-8000-000000000003",
             "inline:I was misidentified.",
         )
         .expect("build appeal op")
@@ -312,7 +312,7 @@ mod tests {
         assert_eq!(op.kind, "ck.moderation.appeal.submit");
         assert_eq!(
             op.payload["realm_id"],
-            "ck:realm:01904100-0000-7000-8000-000000000001"
+            "ak:realm:01904100-0000-7000-8000-000000000001"
         );
         assert!(op.payload["appeal_id"].is_string());
         assert!(op.payload.get("schema").is_none());
@@ -330,11 +330,11 @@ mod tests {
     #[test]
     fn build_appeal_submit_op_rejects_bad_appeal_id() {
         let err = build_appeal_submit_op(
-            "ck:realm:01904100-0000-7000-8000-000000000001",
+            "ak:realm:01904100-0000-7000-8000-000000000001",
             "did:web:alice.example",
             "appeal-1",
-            "ck:event:01904100-0000-7000-8000-000000000003",
-            "ck:event:01904100-0000-7000-8000-000000000003",
+            "ak:event:01904100-0000-7000-8000-000000000003",
+            "ak:event:01904100-0000-7000-8000-000000000003",
             "blob:reason",
         );
         assert!(err.is_err());

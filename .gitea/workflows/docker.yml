@@ -141,11 +141,11 @@ jobs:
         with:
           path: inkson
 
-      - name: Check out Cokret Rust SDK
+      - name: Check out Arkret Rust SDK
         uses: actions/checkout@v4
         with:
-          repository: ${{ gitea.repository_owner }}/cokret-rust-sdk
-          path: cokret-rust-sdk
+          repository: ${{ gitea.repository_owner }}/arkret-rust-sdk
+          path: arkret-rust-sdk
           ref: main
           token: ${{ secrets.CI_REPO_TOKEN }}
 

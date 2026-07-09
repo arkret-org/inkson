@@ -22,18 +22,18 @@ jobs:
         with:
           path: inkson
 
-      - name: Checkout cokret-spec
+      - name: Checkout arkret-spec
         uses: actions/checkout@v6
         with:
-          repository: ${{ github.repository_owner }}/cokret-spec
-          path: cokret-spec
+          repository: ${{ github.repository_owner }}/arkret-spec
+          path: arkret-spec
           token: ${{ secrets.CI_REPO_TOKEN || github.token }}
 
-      - name: Checkout cokret-rust-sdk
+      - name: Checkout arkret-rust-sdk
         uses: actions/checkout@v6
         with:
-          repository: ${{ github.repository_owner }}/cokret-rust-sdk
-          path: cokret-rust-sdk
+          repository: ${{ github.repository_owner }}/arkret-rust-sdk
+          path: arkret-rust-sdk
           token: ${{ secrets.CI_REPO_TOKEN || github.token }}
 
       - name: Checkout garth

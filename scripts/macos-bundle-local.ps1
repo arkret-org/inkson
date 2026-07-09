@@ -76,7 +76,7 @@ try {
 <plist version="1.0">
 <dict>
   <key>CFBundleExecutable</key><string>inkson</string>
-  <key>CFBundleIdentifier</key><string>com.cokret.inkson</string>
+  <key>CFBundleIdentifier</key><string>com.arkret.inkson</string>
   <key>CFBundleName</key><string>inkson</string>
   <key>CFBundleVersion</key><string>$Version</string>
   <key>CFBundleShortVersionString</key><string>$Version</string>

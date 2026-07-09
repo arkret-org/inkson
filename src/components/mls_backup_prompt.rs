@@ -81,7 +81,7 @@ pub(crate) fn recovery_localpart_from_handles(handles: &[String]) -> String {
 
 /// Build a per-account download filename for the recovery-key `.txt`, so that
 /// multiple accounts (or repeated generations for one account) don't all land
-/// as `cokret-recovery-key.txt` / `…(1).txt` in the Downloads folder, where the
+/// as `arkret-recovery-key.txt` / `…(1).txt` in the Downloads folder, where the
 /// 24 words become impossible to tell apart.
 ///
 /// `localpart` is the human handle localpart (see
@@ -105,9 +105,9 @@ pub(crate) fn recovery_key_filename(localpart: &str) -> String {
     // (`.foo.txt`) or a dangling dash.
     let sanitized = sanitized.trim_matches(|ch| ch == '-' || ch == '.');
     if sanitized.is_empty() {
-        "cokret-recovery-key.txt".to_owned()
+        "arkret-recovery-key.txt".to_owned()
     } else {
-        format!("cokret-recovery-key-{sanitized}.txt")
+        format!("arkret-recovery-key-{sanitized}.txt")
     }
 }
 
@@ -1154,11 +1154,11 @@ mod tests {
     fn filename_uses_localpart() {
         assert_eq!(
             recovery_key_filename("alice"),
-            "cokret-recovery-key-alice.txt"
+            "arkret-recovery-key-alice.txt"
         );
         assert_eq!(
             recovery_key_filename("bob.smith_1"),
-            "cokret-recovery-key-bob.smith_1.txt"
+            "arkret-recovery-key-bob.smith_1.txt"
         );
     }
 
@@ -1168,11 +1168,11 @@ mod tests {
         // separators are stripped so we never emit a dotfile or dangling dash.
         assert_eq!(
             recovery_key_filename("a+b~c"),
-            "cokret-recovery-key-a-b-c.txt"
+            "arkret-recovery-key-a-b-c.txt"
         );
         assert_eq!(
             recovery_key_filename(".hidden."),
-            "cokret-recovery-key-hidden.txt"
+            "arkret-recovery-key-hidden.txt"
         );
     }
 
@@ -1180,24 +1180,24 @@ mod tests {
     fn filename_from_handles_uses_primary_handle_localpart() {
         assert_eq!(
             recovery_key_filename_from_handles(&["alice:local.host".to_owned()]),
-            "cokret-recovery-key-alice.txt"
+            "arkret-recovery-key-alice.txt"
         );
         assert_eq!(
             recovery_key_filename_from_handles(&[
                 "did:web:local.host:users:01ABC".to_owned(),
                 "bob:local.host".to_owned(),
             ],),
-            "cokret-recovery-key-bob.txt"
+            "arkret-recovery-key-bob.txt"
         );
     }
 
     #[test]
     fn filename_falls_back_when_no_primary_handle() {
-        assert_eq!(recovery_key_filename(""), "cokret-recovery-key.txt");
-        assert_eq!(recovery_key_filename("   "), "cokret-recovery-key.txt");
+        assert_eq!(recovery_key_filename(""), "arkret-recovery-key.txt");
+        assert_eq!(recovery_key_filename("   "), "arkret-recovery-key.txt");
         assert_eq!(
             recovery_key_filename_from_handles(&[]),
-            "cokret-recovery-key.txt"
+            "arkret-recovery-key.txt"
         );
     }
 }

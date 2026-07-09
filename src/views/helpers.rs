@@ -264,7 +264,7 @@ pub fn handle_display_from_did(did: &str) -> Option<String> {
 /// labels, and message-author lines stay consistent.
 ///
 /// The `did` argument falls back to a handle-shaped display label when
-/// the DID is the materialized form of a Cokret user handle, then to a
+/// the DID is the materialized form of a Arkret user handle, then to a
 /// compact display-only protocol id. Use the original DID for inputs,
 /// copies, routes, and protocol payloads.
 pub fn display_name_for_did(
@@ -818,8 +818,8 @@ mod tests {
     #[test]
     fn short_protocol_id_compacts_typed_uuid_tail() {
         assert_eq!(
-            short_protocol_id("ck:space:0196419b-0000-7000-8000-000000000000"),
-            "ck:space:0196419b...000000"
+            short_protocol_id("ak:space:0196419b-0000-7000-8000-000000000000"),
+            "ak:space:0196419b...000000"
         );
     }
 

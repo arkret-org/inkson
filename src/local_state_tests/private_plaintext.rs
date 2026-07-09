@@ -9,14 +9,14 @@ fn private_plaintext_snapshot_json_round_trips_through_merge() {
     let path = temp_state_path("private-plaintext-snapshot");
     let mut store = LocalStateStore::with_path(path);
     assert!(store.private_plaintext_is_empty());
-    store.save_private_plaintext("ck:realm:s1", "ck:strand:f1", "body", "\"hello body\"");
+    store.save_private_plaintext("ak:realm:s1", "ak:strand:f1", "body", "\"hello body\"");
     store.save_private_plaintext(
-        "ck:realm:s1",
-        "ck:strand:f1",
+        "ak:realm:s1",
+        "ak:strand:f1",
         "synthesis",
         "\"hello synthesis\"",
     );
-    store.save_private_plaintext("ck:realm:s2", "ck:strand:f2", "body", "\"other body\"");
+    store.save_private_plaintext("ak:realm:s2", "ak:strand:f2", "body", "\"other body\"");
     assert!(!store.private_plaintext_is_empty());
 
     let json = store.private_plaintext_snapshot_json();
@@ -29,15 +29,15 @@ fn private_plaintext_snapshot_json_round_trips_through_merge() {
     assert!(fresh.private_plaintext_is_empty());
     fresh.merge_private_plaintext_map(map);
     assert_eq!(
-        fresh.private_plaintext_for("ck:realm:s1", "ck:strand:f1", "body"),
+        fresh.private_plaintext_for("ak:realm:s1", "ak:strand:f1", "body"),
         Some("\"hello body\"".to_owned())
     );
     assert_eq!(
-        fresh.private_plaintext_for("ck:realm:s1", "ck:strand:f1", "synthesis"),
+        fresh.private_plaintext_for("ak:realm:s1", "ak:strand:f1", "synthesis"),
         Some("\"hello synthesis\"".to_owned())
     );
     assert_eq!(
-        fresh.private_plaintext_for("ck:realm:s2", "ck:strand:f2", "body"),
+        fresh.private_plaintext_for("ak:realm:s2", "ak:strand:f2", "body"),
         Some("\"other body\"".to_owned())
     );
 }
@@ -48,25 +48,25 @@ fn merge_private_plaintext_map_keeps_local_value_on_conflict() {
     // local value wins on conflict.
     let path = temp_state_path("private-plaintext-conflict");
     let mut store = LocalStateStore::with_path(path);
-    store.save_private_plaintext("ck:realm:s1", "ck:strand:f1", "body", "\"local newer\"");
+    store.save_private_plaintext("ak:realm:s1", "ak:strand:f1", "body", "\"local newer\"");
 
     let mut fields = BTreeMap::new();
     fields.insert("body".to_owned(), "\"backup older\"".to_owned()); // conflict
     fields.insert("synthesis".to_owned(), "\"backup synthesis\"".to_owned()); // gap
     let mut strands = BTreeMap::new();
-    strands.insert("ck:strand:f1".to_owned(), fields);
+    strands.insert("ak:strand:f1".to_owned(), fields);
     let mut incoming = BTreeMap::new();
-    incoming.insert("ck:realm:s1".to_owned(), strands);
+    incoming.insert("ak:realm:s1".to_owned(), strands);
     store.merge_private_plaintext_map(incoming);
 
     // Conflict: local value kept.
     assert_eq!(
-        store.private_plaintext_for("ck:realm:s1", "ck:strand:f1", "body"),
+        store.private_plaintext_for("ak:realm:s1", "ak:strand:f1", "body"),
         Some("\"local newer\"".to_owned())
     );
     // Gap: backup fills it.
     assert_eq!(
-        store.private_plaintext_for("ck:realm:s1", "ck:strand:f1", "synthesis"),
+        store.private_plaintext_for("ak:realm:s1", "ak:strand:f1", "synthesis"),
         Some("\"backup synthesis\"".to_owned())
     );
 }
@@ -76,8 +76,8 @@ fn private_plaintext_sidecar_stays_memory_only_in_account_state() {
     // X5.1: save into the current process cache, but never serialize the
     // plaintext sidecar into account-state JSON.
     let path = temp_state_path("private-plaintext-sidecar");
-    let realm = "ck:realm:0196419b-0000-7000-8000-000000000001";
-    let strand = "ck:strand:0196419b-0000-7000-8000-0000000000aa";
+    let realm = "ak:realm:0196419b-0000-7000-8000-000000000001";
+    let strand = "ak:strand:0196419b-0000-7000-8000-0000000000aa";
     {
         let mut store = LocalStateStore::with_path(path.clone());
         store.save_private_plaintext(realm, strand, "body", "\"author body\"");
@@ -125,7 +125,7 @@ fn private_plaintext_sidecar_stays_memory_only_in_account_state() {
     );
     assert!(
         reader
-            .private_plaintext_for("ck:realm:other", strand, "body")
+            .private_plaintext_for("ak:realm:other", strand, "body")
             .is_none()
     );
 
@@ -152,13 +152,13 @@ fn history_secret_inline_copy_survives_until_secure_store_persist_succeeds() {
     let mut state = ClientLocalState::default();
     state
         .history_secrets
-        .insert("ck:realm:history".to_owned(), by_epoch);
+        .insert("ak:realm:history".to_owned(), by_epoch);
 
     let not_migrated = e2ee_safe_persist_state_after_history_migration(&state, false);
     assert!(
         not_migrated
             .history_secrets
-            .contains_key("ck:realm:history"),
+            .contains_key("ak:realm:history"),
         "history_secret stays durable until IndexedDB persist succeeds"
     );
 
@@ -174,9 +174,9 @@ fn disappearing_message_plaintext_drop_clears_sidecar_and_decrypt_cache() {
     use crate::mls::persistence::encrypt_state;
 
     let path = temp_state_path("disappearing-shred");
-    let realm = "ck:realm:0196419b-0000-7000-8000-000000000001";
-    let strand = "ck:strand:0196419b-0000-7000-8000-0000000000aa";
-    let message = "ck:message:0196419b-0000-7000-8000-0000000000bb";
+    let realm = "ak:realm:0196419b-0000-7000-8000-000000000001";
+    let strand = "ak:strand:0196419b-0000-7000-8000-0000000000aa";
+    let message = "ak:message:0196419b-0000-7000-8000-0000000000bb";
     let digest = "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
     let mut store = LocalStateStore::with_path(path.clone());
     store.save_private_plaintext(realm, strand, &format!("message:{message}"), "secret body");

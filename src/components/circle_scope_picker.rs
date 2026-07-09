@@ -173,7 +173,7 @@ mod tests {
     fn sample(id: &str) -> CircleSummary {
         CircleSummary {
             id: id.to_owned(),
-            realm_id: "ck:realm:home".to_owned(),
+            realm_id: "ak:realm:home".to_owned(),
             title: format!("Title {id}"),
             short_name: "T".to_owned(),
             color_token: "indigo".to_owned(),
@@ -195,9 +195,9 @@ mod tests {
 
     #[test]
     fn picker_circle_list_round_trips() {
-        let one = sample("ck:circle:one");
-        let two = sample("ck:circle:two");
-        assert_eq!(one.into_scope().circle_id(), Some("ck:circle:one"));
-        assert_eq!(two.into_scope().circle_id(), Some("ck:circle:two"));
+        let one = sample("ak:circle:one");
+        let two = sample("ak:circle:two");
+        assert_eq!(one.into_scope().circle_id(), Some("ak:circle:one"));
+        assert_eq!(two.into_scope().circle_id(), Some("ak:circle:two"));
     }
 }

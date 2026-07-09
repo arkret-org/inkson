@@ -1,4 +1,4 @@
-pub(crate) const DEMO_BOARD_SPACE_ID: &str = "ck:space:0196419b-0000-7000-8000-00000000b0a0";
+pub(crate) const DEMO_BOARD_SPACE_ID: &str = "ak:space:0196419b-0000-7000-8000-00000000b0a0";
 
 /// Maximum number of times a CAS-conflicted Move is automatically
 /// rebased + re-submitted before the UI surfaces it as Quarantined and
@@ -83,17 +83,17 @@ pub(crate) fn actor_is_current_account(actor_id: &str, account_did: &str) -> boo
 }
 
 pub(crate) const DEMO_STRAND_LEGAL_REVIEW_ID: &str =
-    "ck:strand:0196419b-0000-7000-8000-000000000101";
+    "ak:strand:0196419b-0000-7000-8000-000000000101";
 pub(crate) const DEMO_STRAND_ONBOARDING_COPY_ID: &str =
-    "ck:strand:0196419b-0000-7000-8000-000000000102";
+    "ak:strand:0196419b-0000-7000-8000-000000000102";
 pub(crate) const DEMO_STRAND_SECURITY_SIGNOFF_ID: &str =
-    "ck:strand:0196419b-0000-7000-8000-000000000103";
+    "ak:strand:0196419b-0000-7000-8000-000000000103";
 pub(crate) const DEMO_STRAND_REVIEW_DISCUSSION_ID: &str =
-    "ck:strand:0196419b-0000-7000-8000-000000000201";
+    "ak:strand:0196419b-0000-7000-8000-000000000201";
 pub(crate) const DEMO_STRAND_SUPPORT_DISCUSSION_ID: &str =
-    "ck:strand:0196419b-0000-7000-8000-000000000202";
+    "ak:strand:0196419b-0000-7000-8000-000000000202";
 pub(crate) const DEMO_STRAND_SECURITY_REVIEW_ID: &str =
-    "ck:strand:0196419b-0000-7000-8000-000000000203";
+    "ak:strand:0196419b-0000-7000-8000-000000000203";
 pub(crate) const KANBAN_PRIVATE_STRAND_PATCH_PATHS: &[&str] = &[
     "body",
     "synthesis",
@@ -110,7 +110,7 @@ pub(crate) const KANBAN_BODY_PRIVATE_FIELD_PATHS: &[&str] = &["body", "fields.bo
 pub(crate) const KANBAN_SYNTHESIS_PRIVATE_FIELD_PATHS: &[&str] =
     &["synthesis", "fields.synthesis", "tracks.synthesis.body"];
 pub(crate) const KANBAN_STRAND_PATCH_VALUE_CONTENT_TYPE: &str =
-    "application/vnd.cokret.strand.patch-value+json";
+    "application/vnd.arkret.strand.patch-value+json";
 
 /// X10.2 — shown for an encrypted private field (body/synthesis) that this
 /// device cannot read yet: no local plaintext sidecar, no suitable MLS
@@ -140,27 +140,27 @@ mod tests {
         let first_key = kanban_projection_refresh_key(" ck:realm:r1 ", "", " ck:cursor:1 ", 0, "");
 
         assert_eq!(
-            next_kanban_projection_refresh_key(&first_key, "ck:realm:r1", "", "ck:cursor:1", 0, ""),
+            next_kanban_projection_refresh_key(&first_key, "ak:realm:r1", "", "ak:cursor:1", 0, ""),
             None
         );
         assert_eq!(
-            next_kanban_projection_refresh_key(&first_key, "ck:realm:r1", "", "ck:cursor:2", 0, ""),
-            Some("ck:realm:r1||ck:cursor:2|0|".to_owned())
+            next_kanban_projection_refresh_key(&first_key, "ak:realm:r1", "", "ak:cursor:2", 0, ""),
+            Some("ak:realm:r1||ck:cursor:2|0|".to_owned())
         );
     }
 
     #[test]
     fn kanban_projection_refresh_ignores_empty_or_bootstrap_cursor() {
         assert_eq!(
-            next_kanban_projection_refresh_key("", "ck:realm:r1", "", "", 0, ""),
+            next_kanban_projection_refresh_key("", "ak:realm:r1", "", "", 0, ""),
             None
         );
         assert_eq!(
-            next_kanban_projection_refresh_key("", "ck:realm:r1", "", "-", 0, ""),
+            next_kanban_projection_refresh_key("", "ak:realm:r1", "", "-", 0, ""),
             None
         );
         assert_eq!(
-            next_kanban_projection_refresh_key("", "", "", "ck:cursor:1", 0, ""),
+            next_kanban_projection_refresh_key("", "", "", "ak:cursor:1", 0, ""),
             None
         );
     }
@@ -170,19 +170,19 @@ mod tests {
         // Account cursor is still the bootstrap sentinel (the cross-member
         // bug case), but the realm events engine bumped its epoch: the panel
         // must still refresh off that second freshness axis.
-        let key = next_kanban_projection_refresh_key("", "ck:realm:r1", "", "-", 1, "");
-        assert_eq!(key, Some("ck:realm:r1||-|1|".to_owned()));
+        let key = next_kanban_projection_refresh_key("", "ak:realm:r1", "", "-", 1, "");
+        assert_eq!(key, Some("ak:realm:r1||-|1|".to_owned()));
 
         // Same epoch + same inputs → no churn.
         assert_eq!(
-            next_kanban_projection_refresh_key("ck:realm:r1||-|1|", "ck:realm:r1", "", "-", 1, ""),
+            next_kanban_projection_refresh_key("ak:realm:r1||-|1|", "ak:realm:r1", "", "-", 1, ""),
             None
         );
 
         // A later epoch advances the key again.
         assert_eq!(
-            next_kanban_projection_refresh_key("ck:realm:r1||-|1|", "ck:realm:r1", "", "-", 2, ""),
-            Some("ck:realm:r1||-|2|".to_owned())
+            next_kanban_projection_refresh_key("ak:realm:r1||-|1|", "ak:realm:r1", "", "-", 2, ""),
+            Some("ak:realm:r1||-|2|".to_owned())
         );
 
         // Still no realm/view selector → no refresh even with an epoch.
@@ -213,23 +213,23 @@ mod tests {
         // the pre-join history can decrypt, instead of waiting for a manual
         // page refresh.
         let before = kanban_mls_unlock_signature(false, 0);
-        let boot_key = kanban_projection_refresh_key("ck:realm:r1", "", "-", 0, &before);
+        let boot_key = kanban_projection_refresh_key("ak:realm:r1", "", "-", 0, &before);
         assert_eq!(
-            next_kanban_projection_refresh_key(&boot_key, "ck:realm:r1", "", "-", 0, &before),
+            next_kanban_projection_refresh_key(&boot_key, "ak:realm:r1", "", "-", 0, &before),
             None,
             "no cursor, no live epoch, no snapshot → still idle"
         );
 
         let after = kanban_mls_unlock_signature(true, 1);
         let unlocked =
-            next_kanban_projection_refresh_key(&boot_key, "ck:realm:r1", "", "-", 0, &after);
-        assert_eq!(unlocked, Some("ck:realm:r1||-|0|snap:1|ep:1".to_owned()));
+            next_kanban_projection_refresh_key(&boot_key, "ak:realm:r1", "", "-", 0, &after);
+        assert_eq!(unlocked, Some("ak:realm:r1||-|0|snap:1|ep:1".to_owned()));
 
         // Same snapshot signature again → no churn.
         assert_eq!(
             next_kanban_projection_refresh_key(
-                "ck:realm:r1||-|0|snap:1|ep:1",
-                "ck:realm:r1",
+                "ak:realm:r1||-|0|snap:1|ep:1",
+                "ak:realm:r1",
                 "",
                 "-",
                 0,

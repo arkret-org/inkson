@@ -10,27 +10,27 @@ fn local_state_store_tracks_cursor_operations_projections_and_drafts() {
     let mut store = LocalStateStore::with_path(path);
     store.save_sync_cursor("sx:next");
     store.append_raw_operation(
-        "ck:operation:local-01",
-        Some("ck:realm:demo".to_owned()),
+        "ak:operation:local-01",
+        Some("ak:realm:demo".to_owned()),
         serde_json::json!({"type": "ck.message.create"}),
     );
-    store.save_realm_tree_projection("ck:realm:demo", serde_json::json!({"name": "Demo"}));
-    store.save_draft("ck:realm:demo", "hello");
+    store.save_realm_tree_projection("ak:realm:demo", serde_json::json!({"name": "Demo"}));
+    store.save_draft("ak:realm:demo", "hello");
 
     let state = store.load();
     assert_eq!(state.sync_cursor.as_deref(), Some("sx:next"));
     assert_eq!(
         state.raw_operations[0].operation_id,
-        "ck:operation:local-01"
+        "ak:operation:local-01"
     );
     assert_eq!(
-        state.realm_tree_projections["ck:realm:demo"]["name"],
+        state.realm_tree_projections["ak:realm:demo"]["name"],
         "Demo"
     );
-    assert_eq!(store.draft_for("ck:realm:demo"), "hello");
+    assert_eq!(store.draft_for("ak:realm:demo"), "hello");
 
-    store.save_draft("ck:realm:demo", " ");
-    assert!(store.draft_for("ck:realm:demo").is_empty());
+    store.save_draft("ak:realm:demo", " ");
+    assert!(store.draft_for("ak:realm:demo").is_empty());
 }
 
 #[test]
@@ -39,12 +39,12 @@ fn raw_operation_upsert_is_noop_for_identical_payload() {
     let mut store = LocalStateStore::with_path(path);
     let payload = serde_json::json!({
         "kind": "ck.strand.create",
-        "event_id": "ck:event:upsert-1",
+        "event_id": "ak:event:upsert-1",
         "operation_id": "op-upsert-1",
         "write_state": "synced",
         "body": {
             "object": {
-                "id": "ck:strand:upsert-1",
+                "id": "ak:strand:upsert-1",
                 "metadata": { "title": "Card" }
             }
         }
@@ -52,14 +52,14 @@ fn raw_operation_upsert_is_noop_for_identical_payload() {
 
     assert!(store.upsert_raw_operation(
         "op-upsert-1",
-        Some("ck:realm:upsert".to_owned()),
+        Some("ak:realm:upsert".to_owned()),
         payload.clone()
     ));
     let first = store.load().raw_operations[0].clone();
 
     assert!(!store.upsert_raw_operation(
         "op-upsert-1",
-        Some("ck:realm:upsert".to_owned()),
+        Some("ak:realm:upsert".to_owned()),
         payload
     ));
     let state = store.load();
@@ -74,31 +74,31 @@ fn raw_operation_upsert_reports_real_payload_changes() {
     let mut store = LocalStateStore::with_path(path);
     let base = serde_json::json!({
         "kind": "ck.strand.update",
-        "event_id": "ck:event:upsert-2",
+        "event_id": "ak:event:upsert-2",
         "operation_id": "op-upsert-2",
         "write_state": "synced",
         "body": { "patch": { "title": { "$op": "set", "value": "Before" } } }
     });
     let enriched = serde_json::json!({
         "kind": "ck.strand.update",
-        "event_id": "ck:event:upsert-2",
+        "event_id": "ak:event:upsert-2",
         "operation_id": "op-upsert-2",
         "write_state": "synced",
-        "synthesis_entry_id": "ck:synthesis:entry-1",
+        "synthesis_entry_id": "ak:synthesis:entry-1",
         "body": { "patch": { "title": { "$op": "set", "value": "After" } } }
     });
 
-    assert!(store.upsert_raw_operation("op-upsert-2", Some("ck:realm:upsert".to_owned()), base));
+    assert!(store.upsert_raw_operation("op-upsert-2", Some("ak:realm:upsert".to_owned()), base));
     assert!(store.upsert_raw_operation(
         "op-upsert-2",
-        Some("ck:realm:upsert".to_owned()),
+        Some("ak:realm:upsert".to_owned()),
         enriched
     ));
     let state = store.load();
     assert_eq!(state.raw_operations.len(), 1);
     assert_eq!(
         state.raw_operations[0].payload["synthesis_entry_id"],
-        "ck:synthesis:entry-1"
+        "ak:synthesis:entry-1"
     );
     assert_eq!(
         state.raw_operations[0].payload["body"]["patch"]["title"]["value"],
@@ -112,27 +112,27 @@ fn raw_operation_upsert_keeps_redaction_tombstone_over_plaintext_create() {
     let mut store = LocalStateStore::with_path(path);
     let tombstone = serde_json::json!({
         "kind": "ck.message.create",
-        "event_id": "ck:event:upsert-redacted",
-        "message_id": "ck:message:upsert-redacted",
+        "event_id": "ak:event:upsert-redacted",
+        "message_id": "ak:message:upsert-redacted",
         "redacted": true,
         "state": "redacted",
         "content": {"kind": "ck.content.text", "body": "[redacted]"}
     });
     let plaintext = serde_json::json!({
         "kind": "ck.message.create",
-        "event_id": "ck:event:upsert-redacted",
-        "message_id": "ck:message:upsert-redacted",
+        "event_id": "ak:event:upsert-redacted",
+        "message_id": "ak:message:upsert-redacted",
         "content": {"kind": "ck.content.text", "body": "secret"}
     });
 
     assert!(store.upsert_raw_operation(
-        "ck:event:upsert-redacted",
-        Some("ck:realm:upsert".to_owned()),
+        "ak:event:upsert-redacted",
+        Some("ak:realm:upsert".to_owned()),
         tombstone
     ));
     assert!(!store.upsert_raw_operation(
-        "ck:event:upsert-redacted",
-        Some("ck:realm:upsert".to_owned()),
+        "ak:event:upsert-redacted",
+        Some("ak:realm:upsert".to_owned()),
         plaintext
     ));
     let state = store.load();
@@ -148,23 +148,23 @@ fn raw_operation_upsert_keeps_redaction_tombstone_over_plaintext_create() {
 fn raw_operation_upsert_replaces_message_timeline_projection_by_message_id() {
     let path = temp_state_path("raw-op-upsert-message-id");
     let mut store = LocalStateStore::with_path(path);
-    let realm_id = Some("ck:realm:upsert".to_owned());
-    let message_id = "ck:message:upsert-message-id";
+    let realm_id = Some("ak:realm:upsert".to_owned());
+    let message_id = "ak:message:upsert-message-id";
     let original = serde_json::json!({
         "kind": "ck.message.create",
-        "event_id": "ck:event:upsert-message-original",
+        "event_id": "ak:event:upsert-message-original",
         "message_id": message_id,
         "content": {"kind": "ck.content.text", "body": "original"}
     });
     let revised_projection = serde_json::json!({
         "kind": "ck.message.create",
-        "event_id": "ck:event:upsert-message-revision",
+        "event_id": "ak:event:upsert-message-revision",
         "message_id": message_id,
         "content": {"kind": "ck.content.text", "body": "edited"}
     });
     let redacted_projection = serde_json::json!({
         "kind": "ck.message.create",
-        "event_id": "ck:event:upsert-message-revision",
+        "event_id": "ak:event:upsert-message-revision",
         "message_id": message_id,
         "redacted": true,
         "state": "redacted",
@@ -172,17 +172,17 @@ fn raw_operation_upsert_replaces_message_timeline_projection_by_message_id() {
     });
 
     assert!(store.upsert_raw_operation(
-        "ck:event:upsert-message-original",
+        "ak:event:upsert-message-original",
         realm_id.clone(),
         original,
     ));
     assert!(store.upsert_raw_operation(
-        "ck:event:upsert-message-revision",
+        "ak:event:upsert-message-revision",
         realm_id.clone(),
         revised_projection,
     ));
     assert!(store.upsert_raw_operation(
-        "ck:event:upsert-message-revision",
+        "ak:event:upsert-message-revision",
         realm_id,
         redacted_projection,
     ));
@@ -191,7 +191,7 @@ fn raw_operation_upsert_replaces_message_timeline_projection_by_message_id() {
     assert_eq!(state.raw_operations.len(), 1);
     assert_eq!(
         state.raw_operations[0].payload["event_id"],
-        "ck:event:upsert-message-revision"
+        "ak:event:upsert-message-revision"
     );
     assert_eq!(
         state.raw_operations[0].payload["content"]["body"],
@@ -204,11 +204,11 @@ fn raw_operation_upsert_replaces_message_timeline_projection_by_message_id() {
 fn realm_lifecycle_state_tracks_destroy_without_raw_operation_scan() {
     let path = temp_state_path("realm-lifecycle");
     let mut store = LocalStateStore::with_path(path.clone());
-    let realm_id = "ck:realm:destroyed";
+    let realm_id = "ak:realm:destroyed";
 
     assert!(!store.realm_is_destroyed(realm_id));
     store.append_raw_operation(
-        "ck:operation:destroy",
+        "ak:operation:destroy",
         Some(realm_id.to_owned()),
         serde_json::json!({"kind": "ck.realm.destroy"}),
     );
@@ -218,7 +218,7 @@ fn realm_lifecycle_state_tracks_destroy_without_raw_operation_scan() {
     assert!(lifecycle[realm_id].destroyed);
     assert_eq!(
         lifecycle[realm_id].destroyed_operation_id.as_deref(),
-        Some("ck:operation:destroy")
+        Some("ak:operation:destroy")
     );
 
     let reader = LocalStateStore::with_path(path);
@@ -233,12 +233,12 @@ fn local_state_store_persists_to_disk_between_instances() {
     let path = temp_state_path("persisted");
     let mut writer = LocalStateStore::with_path(path.clone());
     writer.save_sync_cursor("sx:persisted");
-    writer.save_draft("ck:realm:persisted", "draft survives restart");
+    writer.save_draft("ak:realm:persisted", "draft survives restart");
 
     let reader = LocalStateStore::with_path(path);
     let state = reader.load();
     assert_eq!(state.sync_cursor.as_deref(), Some("sx:persisted"));
-    assert_eq!(state.drafts["ck:realm:persisted"], "draft survives restart");
+    assert_eq!(state.drafts["ak:realm:persisted"], "draft survives restart");
 }
 
 #[test]
@@ -246,20 +246,20 @@ fn local_state_migrates_local_only_drafts_to_account_data_staging() {
     let path = temp_state_path("draft-account-data-migration");
     let mut store = LocalStateStore::with_path(path.clone());
     store.save_draft(
-        "ck:realm:01904100-0000-7000-8000-000000000001",
+        "ak:realm:01904100-0000-7000-8000-000000000001",
         "draft survives migration",
     );
 
     let migrated = store
         .migrate_local_only_drafts_to_account_data(
             b"inkson-account-data-test-key",
-            "ck:device:01904100-0000-7000-8000-000000000001",
+            "ak:device:01904100-0000-7000-8000-000000000001",
             "01970e589d21-0000-a13f9c2e",
             "2026-06-07T00:00:00Z",
         )
         .unwrap();
     assert_eq!(migrated.len(), 1);
-    assert!(!migrated[0].account_data_key.contains("ck:realm:"));
+    assert!(!migrated[0].account_data_key.contains("ak:realm:"));
 
     let reader = LocalStateStore::with_path(path);
     let entries = reader.draft_account_data_entries();
@@ -269,13 +269,13 @@ fn local_state_migrates_local_only_drafts_to_account_data_staging() {
     assert_eq!(value["content"]["body"], "draft survives migration");
     assert_eq!(
         value["origin_device_id"],
-        "ck:device:01904100-0000-7000-8000-000000000001"
+        "ak:device:01904100-0000-7000-8000-000000000001"
     );
     assert_eq!(
         reader
             .load()
             .drafts
-            .get("ck:realm:01904100-0000-7000-8000-000000000001")
+            .get("ak:realm:01904100-0000-7000-8000-000000000001")
             .map(String::as_str),
         Some("draft survives migration")
     );
@@ -290,7 +290,7 @@ fn local_state_stages_saved_items_as_private_account_data() {
             b"inkson-account-data-test-key",
             &[crate::account_data::LegacySavedItem {
                 collection_title: "Focus".to_owned(),
-                target_ref: "ck:message:01904100-0000-7000-8000-000000000001".to_owned(),
+                target_ref: "ak:message:01904100-0000-7000-8000-000000000001".to_owned(),
                 note: Some("read later".to_owned()),
             }],
             "01970e589d21-0000-a13f9c2e",
@@ -298,7 +298,7 @@ fn local_state_stages_saved_items_as_private_account_data() {
         .unwrap();
     assert_eq!(migrated.len(), 1);
     assert!(!migrated[0].account_data_key.contains("Focus"));
-    assert!(!migrated[0].account_data_key.contains("ck:message:"));
+    assert!(!migrated[0].account_data_key.contains("ak:message:"));
 
     let reader = LocalStateStore::with_path(path);
     let entries = reader.saved_account_data_entries();
@@ -309,7 +309,7 @@ fn local_state_stages_saved_items_as_private_account_data() {
     assert_eq!(value["collection_title"], "Focus");
     assert_eq!(
         value["target_ref"],
-        "ck:message:01904100-0000-7000-8000-000000000001"
+        "ak:message:01904100-0000-7000-8000-000000000001"
     );
 }
 
@@ -319,20 +319,20 @@ fn local_state_store_persists_notifications_and_mute_preferences() {
     let mut store = LocalStateStore::with_path(path.clone());
     store.save_notification_projection(vec![serde_json::json!({
         "notification_id": "notif-1",
-        "realm_id": "ck:realm:demo",
+        "realm_id": "ak:realm:demo",
         "kind": "message",
         "body": "Hello"
     })]);
     store.set_notification_read("notif-1", true);
     store.set_notification_archived("notif-1", true);
-    store.set_realm_muted("ck:realm:demo", true);
+    store.set_realm_muted("ak:realm:demo", true);
     store.set_notification_kind_enabled("message", false);
 
     let reader = LocalStateStore::with_path(path);
     assert_eq!(reader.notification_projection().len(), 1);
     assert!(reader.notification_state_for("notif-1").read);
     assert!(reader.notification_state_for("notif-1").archived);
-    assert!(reader.is_realm_muted("ck:realm:demo"));
+    assert!(reader.is_realm_muted("ak:realm:demo"));
     assert!(!reader.notification_kind_enabled("message"));
 }
 
@@ -340,24 +340,24 @@ fn local_state_store_persists_notifications_and_mute_preferences() {
 fn realm_watch_level_set_get_roundtrip() {
     let path = temp_state_path("watch-level-roundtrip");
     let mut store = LocalStateStore::with_path(path.clone());
-    store.set_realm_watch_level("ck:realm:a", WatchLevel::All);
-    store.set_realm_watch_level("ck:realm:b", WatchLevel::Muted);
+    store.set_realm_watch_level("ak:realm:a", WatchLevel::All);
+    store.set_realm_watch_level("ak:realm:b", WatchLevel::Muted);
     // Setting the protocol default clears the override.
-    store.set_realm_watch_level("ck:realm:c", WatchLevel::Participating);
-    store.set_realm_watch_level("ck:realm:c", WatchLevel::MentionsOnly);
+    store.set_realm_watch_level("ak:realm:c", WatchLevel::Participating);
+    store.set_realm_watch_level("ak:realm:c", WatchLevel::MentionsOnly);
 
     let reader = LocalStateStore::with_path(path);
-    assert_eq!(reader.realm_watch_level("ck:realm:a"), WatchLevel::All);
-    assert_eq!(reader.realm_watch_level("ck:realm:b"), WatchLevel::Muted);
+    assert_eq!(reader.realm_watch_level("ak:realm:a"), WatchLevel::All);
+    assert_eq!(reader.realm_watch_level("ak:realm:b"), WatchLevel::Muted);
     assert_eq!(
-        reader.realm_watch_level("ck:realm:c"),
+        reader.realm_watch_level("ak:realm:c"),
         WatchLevel::MentionsOnly
     );
-    assert!(!reader.realm_watch_levels().contains_key("ck:realm:c"));
+    assert!(!reader.realm_watch_levels().contains_key("ak:realm:c"));
     // The binary-mute helper only reports `Muted` realms.
-    assert_eq!(reader.muted_realms(), vec!["ck:realm:b".to_owned()]);
-    assert!(reader.is_realm_muted("ck:realm:b"));
-    assert!(!reader.is_realm_muted("ck:realm:a"));
+    assert_eq!(reader.muted_realms(), vec!["ak:realm:b".to_owned()]);
+    assert!(reader.is_realm_muted("ak:realm:b"));
+    assert!(!reader.is_realm_muted("ak:realm:a"));
 }
 
 #[test]
@@ -367,14 +367,14 @@ fn local_state_store_persists_private_read_cursors() {
     let marker = store.save_read_cursor(
         "did:web:alice.example",
         "device-1",
-        "ck:realm:demo",
+        "ak:realm:demo",
         None,
-        "ck:event:read-1",
+        "ak:event:read-1",
     );
 
     assert_eq!(marker.marker_type, "ck.read_cursor.advance");
-    assert_eq!(marker.body.realm_id, "ck:realm:demo");
-    assert_eq!(marker.body.position.event_id, "ck:event:read-1");
+    assert_eq!(marker.body.realm_id, "ak:realm:demo");
+    assert_eq!(marker.body.position.event_id, "ak:event:read-1");
     assert_eq!(marker.body.read_scope.kind, "strand");
     assert_eq!(
         marker.body.read_scope.track_name.as_deref(),
@@ -389,14 +389,14 @@ fn local_state_store_persists_private_read_cursors() {
                 "schema": "ck.schema.read_cursor.v1",
                 "actor_id": "did:web:alice.example",
                 "device_id": "device-1",
-                "realm_id": "ck:realm:demo",
+                "realm_id": "ak:realm:demo",
                 "read_scope": {
                     "kind": "strand",
-                    "ref": "ck:strand:demo",
+                    "ref": "ak:strand:demo",
                     "track_name": "discussion"
                 },
                 "position": {
-                    "event_id": "ck:event:read-1",
+                    "event_id": "ak:event:read-1",
                     "hlc": &marker.body.position.hlc
                 },
                 "updated_at": marker.updated_at.to_rfc3339_opts(chrono::SecondsFormat::Secs, true),
@@ -406,12 +406,12 @@ fn local_state_store_persists_private_read_cursors() {
 
     let reader = LocalStateStore::with_path(path);
     let persisted = reader
-        .read_cursor_for("ck:realm:demo", None)
+        .read_cursor_for("ak:realm:demo", None)
         .expect("read marker persisted");
     assert_eq!(persisted.body.id, marker.body.id);
     assert_eq!(persisted.actor, "did:web:alice.example");
     assert_eq!(persisted.device_id, "device-1");
-    assert_eq!(persisted.body.position.event_id, "ck:event:read-1");
+    assert_eq!(persisted.body.position.event_id, "ak:event:read-1");
 }
 
 #[test]
@@ -420,19 +420,19 @@ fn local_state_store_ingests_read_cursor_update_to_device() {
     let mut store = LocalStateStore::with_path(path.clone());
     store.ingest_to_device_messages(&[serde_json::json!({
         "kind": "ck.read_cursor.update",
-        "sender_device_id": "ck:device:01904100-0000-7000-8000-000000000001",
+        "sender_device_id": "ak:device:01904100-0000-7000-8000-000000000001",
         "content": {
             "schema": "ck.schema.read_cursor.v1",
             "actor_id": "did:web:alice.example",
-            "device_id": "ck:device:01904100-0000-7000-8000-000000000001",
-            "realm_id": "ck:realm:01904100-0000-7000-8000-000000000002",
+            "device_id": "ak:device:01904100-0000-7000-8000-000000000001",
+            "realm_id": "ak:realm:01904100-0000-7000-8000-000000000002",
             "read_scope": {
                 "kind": "strand",
-                "ref": "ck:strand:01904100-0000-7000-8000-000000000003",
+                "ref": "ak:strand:01904100-0000-7000-8000-000000000003",
                 "track_name": "discussion"
             },
             "position": {
-                "event_id": "ck:event:01904100-0000-7000-8000-000000000004",
+                "event_id": "ak:event:01904100-0000-7000-8000-000000000004",
                 "hlc": "019041000000-0001-device"
             },
             "updated_at": "2026-06-24T00:00:00Z"
@@ -442,14 +442,14 @@ fn local_state_store_ingests_read_cursor_update_to_device() {
     let reader = LocalStateStore::with_path(path);
     let marker = reader
         .read_cursor_for(
-            "ck:realm:01904100-0000-7000-8000-000000000002",
-            Some("ck:strand:01904100-0000-7000-8000-000000000003"),
+            "ak:realm:01904100-0000-7000-8000-000000000002",
+            Some("ak:strand:01904100-0000-7000-8000-000000000003"),
         )
         .expect("read cursor update persisted");
     assert_eq!(marker.actor, "did:web:alice.example");
     assert_eq!(
         marker.body.position.event_id,
-        "ck:event:01904100-0000-7000-8000-000000000004"
+        "ak:event:01904100-0000-7000-8000-000000000004"
     );
 }
 
@@ -460,35 +460,35 @@ fn local_state_store_keeps_thread_read_cursors_separate() {
     store.save_read_cursor(
         "did:web:alice.example",
         "desktop",
-        "ck:realm:demo",
+        "ak:realm:demo",
         None,
-        "ck:event:topic",
+        "ak:event:topic",
     );
     store.save_read_cursor(
         "did:web:alice.example",
         "desktop",
-        "ck:realm:demo",
-        Some("ck:thread:reply-1".to_owned()),
-        "ck:event:thread",
+        "ak:realm:demo",
+        Some("ak:thread:reply-1".to_owned()),
+        "ak:event:thread",
     );
 
     assert_eq!(
         store
-            .read_cursor_for("ck:realm:demo", None)
+            .read_cursor_for("ak:realm:demo", None)
             .expect("topic marker")
             .body
             .position
             .event_id,
-        "ck:event:topic"
+        "ak:event:topic"
     );
     assert_eq!(
         store
-            .read_cursor_for("ck:realm:demo", Some("ck:thread:reply-1"))
+            .read_cursor_for("ak:realm:demo", Some("ak:thread:reply-1"))
             .expect("thread marker")
             .body
             .position
             .event_id,
-        "ck:event:thread"
+        "ak:event:thread"
     );
 }
 
@@ -499,7 +499,7 @@ fn local_state_store_persists_push_registration_state() {
     store.save_push_registration(PushRegistrationState {
         schema_version: chime::PUSH_REGISTRATION_STATE_SCHEMA_VERSION,
         principal_id: None,
-        registration_id: Some("ck:push:local".to_owned()),
+        registration_id: Some("ak:push:local".to_owned()),
         device_id: "dev_inkson".to_owned(),
         platform: Some("desktop".to_owned()),
         app_id: Some("inkson".to_owned()),
@@ -515,7 +515,7 @@ fn local_state_store_persists_push_registration_state() {
 
     let mut reader = LocalStateStore::with_path(path);
     let state = reader.push_registration().expect("push registration");
-    assert_eq!(state.registration_id.as_deref(), Some("ck:push:local"));
+    assert_eq!(state.registration_id.as_deref(), Some("ak:push:local"));
     assert_eq!(state.device_id, "dev_inkson");
 
     reader.clear_push_registration();
@@ -572,13 +572,13 @@ fn clear_account_scoped_preserves_device_level_and_session_grant_state() {
     let mut store = LocalStateStore::with_path(path);
     // Account-scoped projections.
     store.save_sync_cursor("sx:before");
-    store.save_realm_tree_projection("ck:space:a", serde_json::json!({}));
-    store.save_draft("ck:space:a", "draft");
+    store.save_realm_tree_projection("ak:space:a", serde_json::json!({}));
+    store.save_draft("ak:space:a", "draft");
     store.save_private_data("did:web:tester.example", "theme", "night");
     store
         .migrate_local_only_drafts_to_account_data(
             b"inkson-account-data-test-key",
-            "ck:device:01904100-0000-7000-8000-000000000001",
+            "ak:device:01904100-0000-7000-8000-000000000001",
             "01970e589d21-0000-a13f9c2e",
             "2026-06-07T00:00:00Z",
         )
@@ -588,7 +588,7 @@ fn clear_account_scoped_preserves_device_level_and_session_grant_state() {
             b"inkson-account-data-test-key",
             &[crate::account_data::LegacySavedItem {
                 collection_title: "Focus".to_owned(),
-                target_ref: "ck:message:01904100-0000-7000-8000-000000000001".to_owned(),
+                target_ref: "ak:message:01904100-0000-7000-8000-000000000001".to_owned(),
                 note: None,
             }],
             "01970e589d21-0000-a13f9c2e",
@@ -661,7 +661,7 @@ fn adopt_account_scope_isolates_accounts_per_did() {
         Some("did:web:alice.example")
     );
     store.save_sync_cursor("sx:alice");
-    store.save_realm_tree_projection("ck:space:a", serde_json::json!({}));
+    store.save_realm_tree_projection("ak:space:a", serde_json::json!({}));
     store.set_session_grant(Some(PersistedSessionGrant {
         grant_jwt: "alice.grant".to_owned(),
         session_private_key_pem: "pem".to_owned(),
@@ -814,7 +814,7 @@ fn known_accounts_lists_each_account_with_its_handle_and_device() {
         grant_id: "g-alice".to_owned(),
         audience: "https://alice.example/api".to_owned(),
         principal_id: "did:webvh:zA:alice.example".to_owned(),
-        device_id: "ck:device:alice-1".to_owned(),
+        device_id: "ak:device:alice-1".to_owned(),
         principal_server_url: "https://alice.example".to_owned(),
         grant_expires_at: None,
         stored_at: chrono::Utc::now(),
@@ -833,7 +833,7 @@ fn known_accounts_lists_each_account_with_its_handle_and_device() {
     assert_eq!(alice.handle, "alice");
     // device_id / server_url come from alice's OWN persisted grant, read by DID
     // (not the active account, which is currently david).
-    assert_eq!(alice.device_id, "ck:device:alice-1");
+    assert_eq!(alice.device_id, "ak:device:alice-1");
     assert_eq!(alice.server_url, "https://alice.example");
     let david = accounts
         .iter()
@@ -894,10 +894,10 @@ fn root_index_is_shared_across_clones_not_cached_per_clone() {
     let b = a.clone();
 
     // `a` starts a pending sign-in...
-    a.begin_pending_login("ck:device:clone-race-1", Some("jkt-1"));
+    a.begin_pending_login("ak:device:clone-race-1", Some("jkt-1"));
     // ...and `b` (a different clone) must observe it through storage.
     let pending = b.pending_login().expect("clone b sees pending login");
-    assert_eq!(pending.device_id, "ck:device:clone-race-1");
+    assert_eq!(pending.device_id, "ak:device:clone-race-1");
 
     // `b` adopts onto a resolved DID...
     let mut b = b;
@@ -919,7 +919,7 @@ fn root_index_is_shared_across_clones_not_cached_per_clone() {
 
     // A later flush on the stale clone must NOT rewrite the root index back to
     // null (write_persisted_state no longer co-writes the root).
-    a.save_draft("ck:realm:demo", "scratch");
+    a.save_draft("ak:realm:demo", "scratch");
     let reader = LocalStateStore::with_path(path);
     assert_eq!(
         reader.active_account_did().as_deref(),
@@ -932,7 +932,7 @@ fn root_index_is_shared_across_clones_not_cached_per_clone() {
 fn adopt_pending_login_keeps_pending_device_for_new_account() {
     let path = temp_state_path("pending-new");
     let mut store = LocalStateStore::with_path(path);
-    store.begin_pending_login("ck:device:new-1", Some("jkt-new"));
+    store.begin_pending_login("ak:device:new-1", Some("jkt-new"));
     assert!(store.pending_login().is_some());
 
     // A DID never seen on this browser is a new account.
@@ -953,7 +953,7 @@ fn adopt_pending_login_preserves_returning_account_entry() {
     store.adopt_account_scope("did:web:alice.example");
     store.save_sync_cursor("sx:alice");
     // Sign out, then a fresh sign-in kicks off pending device material.
-    store.begin_pending_login("ck:device:fresh-2", Some("jkt-fresh"));
+    store.begin_pending_login("ak:device:fresh-2", Some("jkt-fresh"));
     let is_new = store.adopt_pending_login("did:web:alice.example");
     assert!(!is_new, "a returning DID is not a new account");
     assert!(store.pending_login().is_none());

@@ -11,9 +11,9 @@ fn keypackage_upload_device_signature_is_raw_signature_tuple() {
     );
     let signature = mls_api_helpers::sign_keypackage_upload_batch_with_signer(
         &signer,
-        "ck:device:0196419b-0000-7000-8000-000000000001",
+        "ak:device:0196419b-0000-7000-8000-000000000001",
         &[json!({
-            "keypackage_id": "ck:mls:kp:0196419b-0000-7000-8000-000000000001",
+            "keypackage_id": "ak:mls:kp:0196419b-0000-7000-8000-000000000001",
             "keypackage_ref": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
         })],
     )
@@ -30,10 +30,10 @@ fn keypackage_upload_device_signature_is_raw_signature_tuple() {
 fn keypackage_claim_request_carries_required_capabilities() {
     let body = mls_api_helpers::build_mls_keypackage_claim_request(
         "did:web:alice.example",
-        "ck:realm:0196419b-0000-7000-8000-000000000000",
+        "ak:realm:0196419b-0000-7000-8000-000000000000",
         "did:web:bob.example",
         "claim-nonce-1",
-        Some("ck:device:0196419b-0000-7000-8000-000000000001"),
+        Some("ak:device:0196419b-0000-7000-8000-000000000001"),
         Some("mls-group-1"),
     )
     .expect("claim request builds");
@@ -44,6 +44,6 @@ fn keypackage_claim_request_carries_required_capabilities() {
     let wire = serde_json::to_value(&body).expect("claim request serializes");
     assert_eq!(
         wire["required_capabilities"],
-        json!(cokret_sdk::COKRET_MLS_KEY_PACKAGE_CAPABILITIES)
+        json!(cokret_sdk::ARKRET_MLS_KEY_PACKAGE_CAPABILITIES)
     );
 }

@@ -49,13 +49,13 @@ fn is_likely_valid_did_accepts_canonical_shapes_and_rejects_garbage() {
 #[test]
 fn build_read_receipt_preferences_body_has_canonical_field_shape() {
     let mut realms = BTreeMap::new();
-    realms.insert("ck:realm:demo".to_owned(), false);
+    realms.insert("ak:realm:demo".to_owned(), false);
     let mut realm_display = BTreeMap::new();
-    realm_display.insert("ck:realm:display-only".to_owned(), false);
+    realm_display.insert("ak:realm:display-only".to_owned(), false);
     let mut strands = BTreeMap::new();
-    strands.insert("ck:strand:demo".to_owned(), true);
+    strands.insert("ak:strand:demo".to_owned(), true);
     let mut strand_display = BTreeMap::new();
-    strand_display.insert("ck:strand:demo".to_owned(), false);
+    strand_display.insert("ak:strand:demo".to_owned(), false);
     let body = build_read_receipt_preferences_body(
         true,
         false,
@@ -66,10 +66,10 @@ fn build_read_receipt_preferences_body_has_canonical_field_shape() {
     );
     assert_eq!(body["default"]["send"], serde_json::Value::Bool(true));
     assert_eq!(body["default"]["display"], serde_json::Value::Bool(false));
-    assert_eq!(body["realms"]["ck:realm:demo"]["send"], false);
-    assert_eq!(body["realms"]["ck:realm:display-only"]["display"], false);
-    assert_eq!(body["strands"]["ck:strand:demo"]["send"], true);
-    assert_eq!(body["strands"]["ck:strand:demo"]["display"], false);
+    assert_eq!(body["realms"]["ak:realm:demo"]["send"], false);
+    assert_eq!(body["realms"]["ak:realm:display-only"]["display"], false);
+    assert_eq!(body["strands"]["ak:strand:demo"]["send"], true);
+    assert_eq!(body["strands"]["ak:strand:demo"]["display"], false);
     // Guard removed flat keys so devices don't drift back to the old shape.
     assert!(body.get("default_send").is_none());
     assert!(body.get("realm_overrides").is_none());

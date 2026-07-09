@@ -63,7 +63,7 @@ fn move_submission_state_maps_failure_reasons() {
 fn move_submission_record_round_trips_through_store() {
     let path = temp_state_path("move-submission");
     let mut store = LocalStateStore::with_path(path.clone());
-    let realm = "ck:realm:0196419b-0000-7000-8000-000000000001";
+    let realm = "ak:realm:0196419b-0000-7000-8000-000000000001";
     let mid = "sha256:111";
     store.record_move_submission(
         mid,
@@ -71,7 +71,7 @@ fn move_submission_record_round_trips_through_store() {
         "ck.consent.grant",
         MoveSubmissionState::PendingSeal,
         None,
-        Some("ck:seal:sha256:abc".to_owned()),
+        Some("ak:seal:sha256:abc".to_owned()),
     );
     let listed = store.move_submissions_for_realm(realm);
     assert_eq!(listed.len(), 1);
@@ -107,7 +107,7 @@ fn move_submission_record_round_trips_through_store() {
 fn move_submission_pending_mls_binding_drives_toast() {
     let path = temp_state_path("move-mls-binding");
     let mut store = LocalStateStore::with_path(path);
-    let realm = "ck:realm:0196419b-0000-7000-8000-000000000002";
+    let realm = "ak:realm:0196419b-0000-7000-8000-000000000002";
     store.record_move_submission(
         "sha256:222",
         realm,

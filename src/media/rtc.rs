@@ -43,7 +43,7 @@ use crate::api::CokretApi;
 pub const MEDIA_TOKEN_TTL_MAX_SECS: u64 = cokret_sdk::MEDIA_TOKEN_TTL_MAX_SECS;
 
 /// Error reasons surfaced by the RTC client integration. These map 1:1
-/// to the error code enum landed in cokret-spec round R3 (§0.7).
+/// to the error code enum landed in arkret-spec round R3 (§0.7).
 ///
 /// Toast layer copy is keyed by `error.call.<wire>` (see `i18n.rs`).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -55,7 +55,7 @@ pub enum RtcClientError {
     /// Server-reported focus disagrees with the call-state commit.
     FocusMismatch,
     /// `ck.realm.media_service.foci[].type` not one of the five
-    /// canonical enums (`livekit | mediasoup | janus | cokret-native
+    /// canonical enums (`livekit | mediasoup | janus | arkret-native
     /// | moq-relay`).
     UnknownFocusType,
     /// Token issuer kid does not resolve to the current
@@ -69,10 +69,10 @@ pub enum RtcClientError {
     /// Frame key source was not the MLS Exporter. Any backend-supplied
     /// key (e.g. LiveKit-side key vault) is rejected.
     E2eeKeySourceUnauthorised,
-    /// Egress destination is not a Cokret-authenticated blob upload.
+    /// Egress destination is not a Arkret-authenticated blob upload.
     /// Recording is refused.
     RecordingArtifactPipelineBypassed,
-    /// Transcription artifact was produced outside the Cokret blob pipeline.
+    /// Transcription artifact was produced outside the Arkret blob pipeline.
     TranscriptionArtifactPipelineBypassed,
     /// `ck.realm.media_service` is not covered by the current epoch's MLS
     /// governance binding, so issuer anchoring must not proceed.
@@ -184,7 +184,7 @@ pub const ALLOWED_FOCUS_TYPES: &[&str] = &[
     "livekit",
     "mediasoup",
     "janus",
-    "cokret-native",
+    "arkret-native",
     "moq-relay",
 ];
 
@@ -439,7 +439,7 @@ fn recompute_media_policy_root(
 }
 
 fn media_policy_cell(family: &str, realm_id: &str) -> Result<cokret_sdk::CellRef, RtcClientError> {
-    cokret_sdk::CellRef::new(format!("ck:cell:{family}:{realm_id}"))
+    cokret_sdk::CellRef::new(format!("ak:cell:{family}:{realm_id}"))
         .map_err(|_| RtcClientError::MlsGovernanceBindingStale)
 }
 
@@ -877,7 +877,7 @@ mod tests {
         assert!(is_known_focus_type("livekit"));
         assert!(is_known_focus_type("mediasoup"));
         assert!(is_known_focus_type("janus"));
-        assert!(is_known_focus_type("cokret-native"));
+        assert!(is_known_focus_type("arkret-native"));
         assert!(is_known_focus_type("moq-relay"));
         assert!(!is_known_focus_type("LiveKit")); // case-sensitive
         assert!(!is_known_focus_type("zoom"));
@@ -886,16 +886,16 @@ mod tests {
     #[test]
     fn participant_identity_cross_check_fails_closed_on_unknown() {
         let mut known = BTreeSet::new();
-        known.insert("ck:rtc_participant:00000000-0000-0000-0000-000000000001".to_owned());
+        known.insert("ak:rtc_participant:00000000-0000-0000-0000-000000000001".to_owned());
         assert!(
             cross_check_participant_identity(
-                "ck:rtc_participant:00000000-0000-0000-0000-000000000001",
+                "ak:rtc_participant:00000000-0000-0000-0000-000000000001",
                 &known
             )
             .is_ok()
         );
         assert_eq!(
-            cross_check_participant_identity("ck:rtc_participant:unknown", &known),
+            cross_check_participant_identity("ak:rtc_participant:unknown", &known),
             Err(RtcClientError::ParticipantIdentityUnrecognised)
         );
     }
@@ -925,10 +925,10 @@ mod tests {
     #[test]
     fn empty_anchor_set_fails_closed() {
         let request = MediaJoinRequest {
-            realm_id: "ck:realm:01904100-0000-7000-8000-9b64700c6ee8".to_owned(),
-            call_id: "ck:call:0196441c-0000-7000-8000-000000000000".to_owned(),
+            realm_id: "ak:realm:01904100-0000-7000-8000-9b64700c6ee8".to_owned(),
+            call_id: "ak:call:0196441c-0000-7000-8000-000000000000".to_owned(),
             actor_id: "did:web:alice.example".to_owned(),
-            device_id: "ck:device:01904100-0000-7000-8000-000000000005".to_owned(),
+            device_id: "ak:device:01904100-0000-7000-8000-000000000005".to_owned(),
             focus_id: "fra-1".to_owned(),
             epoch_id: 7,
             desired_media: DesiredMedia::audio_video(),
@@ -975,10 +975,10 @@ mod tests {
         governance_evidence: Option<MediaGovernanceEvidence>,
     ) -> MediaJoinRequest {
         MediaJoinRequest {
-            realm_id: "ck:realm:01904100-0000-7000-8000-9b64700c6ee8".to_owned(),
-            call_id: "ck:call:0196441c-0000-7000-8000-000000000000".to_owned(),
+            realm_id: "ak:realm:01904100-0000-7000-8000-9b64700c6ee8".to_owned(),
+            call_id: "ak:call:0196441c-0000-7000-8000-000000000000".to_owned(),
             actor_id: "did:web:alice.example".to_owned(),
-            device_id: "ck:device:01904100-0000-7000-8000-000000000005".to_owned(),
+            device_id: "ak:device:01904100-0000-7000-8000-000000000005".to_owned(),
             focus_id: "fra-1".to_owned(),
             epoch_id: 7,
             desired_media: DesiredMedia::audio_video(),
@@ -1018,20 +1018,20 @@ mod tests {
             )])
         });
         let policy_root = recompute_media_policy_root(
-            "ck:realm:01904100-0000-7000-8000-9b64700c6ee8",
+            "ak:realm:01904100-0000-7000-8000-9b64700c6ee8",
             &media_service_payload,
             policy_components_payload.as_ref(),
             plaintext_visible_services_payload.as_ref(),
         )
         .unwrap();
         let governance_binding = MlsGovernanceBindingPayload::realm(
-            RealmId::new("ck:realm:01904100-0000-7000-8000-9b64700c6ee8".to_owned()).unwrap(),
+            RealmId::new("ak:realm:01904100-0000-7000-8000-9b64700c6ee8".to_owned()).unwrap(),
             "Z3JvdXA",
             6,
             7,
             vec![
                 cokret_sdk::EventId::new(
-                    "ck:event:01904100-0000-7000-8000-000000000001".to_owned(),
+                    "ak:event:01904100-0000-7000-8000-000000000001".to_owned(),
                 )
                 .unwrap(),
             ],
@@ -1101,8 +1101,8 @@ mod tests {
     // placeholder — while every no-key path still fails closed.
 
     const EXPORTER_ACTOR: &str = "did:web:alice.example";
-    const EXPORTER_DEVICE: &str = "ck:device:01904100-0000-7000-8000-000000000001";
-    const EXPORTER_REALM: &str = "ck:realm:01904100-0000-7000-8000-000000000003";
+    const EXPORTER_DEVICE: &str = "ak:device:01904100-0000-7000-8000-000000000001";
+    const EXPORTER_REALM: &str = "ak:realm:01904100-0000-7000-8000-000000000003";
 
     /// Build a real MLS group for `EXPORTER_REALM`, store its account snapshot
     /// secret in `store`, and return the encrypted snapshot envelope — the same
@@ -1149,11 +1149,11 @@ mod tests {
         // a real RFC 9420 §8 MLS-Exporter output, not a placeholder.
         let ctx = FrameKeyContext {
             realm_id: RealmId::new(EXPORTER_REALM.to_owned()).unwrap(),
-            call_id: CallId::new("ck:call:0196441c-0000-7000-8000-000000000000".to_owned())
+            call_id: CallId::new("ak:call:0196441c-0000-7000-8000-000000000000".to_owned())
                 .unwrap(),
             focus_id: "fra-1".to_owned(),
             epoch_id: exporter.epoch(),
-            participant_identity: "ck:rtc_participant:00000000-0000-0000-0000-000000000001"
+            participant_identity: "ak:rtc_participant:00000000-0000-0000-0000-000000000001"
                 .to_owned(),
             device_id: cokret_sdk::DeviceId::new(EXPORTER_DEVICE.to_owned()).unwrap(),
         };
@@ -1224,13 +1224,13 @@ mod tests {
     // different groups, same exporter secret.
 
     const ALICE_ACTOR: &str = "did:web:alice.example";
-    const ALICE_DEVICE: &str = "ck:device:01904100-0000-7000-8000-00000000000a";
-    const ALICE_IDENTITY: &str = "ck:rtc_participant:0198c2f4-0000-7000-8000-00000000000a";
+    const ALICE_DEVICE: &str = "ak:device:01904100-0000-7000-8000-00000000000a";
+    const ALICE_IDENTITY: &str = "ak:rtc_participant:0198c2f4-0000-7000-8000-00000000000a";
     const BOB_ACTOR: &str = "did:web:bob.example";
-    const BOB_DEVICE: &str = "ck:device:01904100-0000-7000-8000-00000000000b";
-    const BOB_IDENTITY: &str = "ck:rtc_participant:0198c2f4-0000-7000-8000-00000000000b";
-    const INTEROP_REALM: &str = "ck:realm:01904100-0000-7000-8000-1ad6479d4a41";
-    const INTEROP_CALL: &str = "ck:call:0196441c-0000-7000-8000-000000000000";
+    const BOB_DEVICE: &str = "ak:device:01904100-0000-7000-8000-00000000000b";
+    const BOB_IDENTITY: &str = "ak:rtc_participant:0198c2f4-0000-7000-8000-00000000000b";
+    const INTEROP_REALM: &str = "ak:realm:01904100-0000-7000-8000-1ad6479d4a41";
+    const INTEROP_CALL: &str = "ak:call:0196441c-0000-7000-8000-000000000000";
 
     /// Snapshot a live MLS `group` under `(actor, device)`'s account secret in
     /// `store` and restore it through the exact production `RealmMlsExporter`

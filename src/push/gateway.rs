@@ -140,10 +140,10 @@ fn validate_blind_wakeup_payload_at(payload: &Value, path: &str) -> anyhow::Resu
         }
         Value::String(value)
             if value.starts_with("did:")
-                || value.starts_with("ck:space:")
-                || value.starts_with("ck:realm:")
-                || value.starts_with("ck:strand:")
-                || value.starts_with("ck:event:") =>
+                || value.starts_with("ak:space:")
+                || value.starts_with("ak:realm:")
+                || value.starts_with("ak:strand:")
+                || value.starts_with("ak:event:") =>
         {
             anyhow::bail!("blind push payload leaks stable id at {path}");
         }

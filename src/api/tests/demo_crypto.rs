@@ -14,9 +14,9 @@ async fn publish_mls_key_package_fails_closed_without_active_signer() {
     // argument well-formed so a future refactor that touches the
     // record before bailing surfaces here.
     let record: cokret_sdk::MlsKeyPackageRecord = serde_json::from_value(serde_json::json!({
-        "keypackage_id": "ck:mls:kp:01904100-0000-7000-8000-000000000001",
+        "keypackage_id": "ak:mls:kp:01904100-0000-7000-8000-000000000001",
         "principal_id": "did:web:alice.example",
-        "device_id": "ck:device:01904100-0000-7000-8000-000000000001",
+        "device_id": "ak:device:01904100-0000-7000-8000-000000000001",
         "key_package": "AAAA",
         "keypackage_ref": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
         "cipher_suites": ["MLS_128_DHKEMX25519_AES128GCM_SHA256_Ed25519"],
@@ -26,7 +26,7 @@ async fn publish_mls_key_package_fails_closed_without_active_signer() {
 
     let api = CokretApi::new("http://127.0.0.1:8787").unwrap();
     let err = api
-        .publish_mls_key_package("ck:device:test-prod-guard", &record)
+        .publish_mls_key_package("ak:device:test-prod-guard", &record)
         .await
         .expect_err("MUST refuse to publish without an active event-signer");
     let msg = format!("{err}");
@@ -41,7 +41,7 @@ async fn publish_mls_key_package_fails_closed_without_active_signer() {
 fn mls_key_package_upload_entry_carries_digest_and_ref() {
     let identity = cokret_sdk::CokretMlsIdentity::new_basic(
         cokret_sdk::Did::new("did:web:alice.example".to_owned()).unwrap(),
-        cokret_sdk::DeviceId::new("ck:device:01904100-0000-7000-8000-000000000001".to_owned())
+        cokret_sdk::DeviceId::new("ak:device:01904100-0000-7000-8000-000000000001".to_owned())
             .unwrap(),
     )
     .unwrap();

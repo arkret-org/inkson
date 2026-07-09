@@ -22,14 +22,14 @@ mod tests {
             "notification_id": "n1",
             "schema": "ck.schema.notification.v1",
             "notification_type": "message",
-            "realm_id": "ck:realm:quiet",
+            "realm_id": "ak:realm:quiet",
             "body": "hello"
         })];
         let rules = crate::notification_rules::parse_push_rules(&json!({
             "rules": [{
                 "rule_id": "override.quiet",
                 "conditions": [
-                    {"kind": "field_match", "field": "realm_id", "pattern": "ck:realm:quiet"}
+                    {"kind": "field_match", "field": "realm_id", "pattern": "ak:realm:quiet"}
                 ],
                 "actions": ["dont_notify"]
             }]
@@ -44,17 +44,17 @@ mod tests {
     #[test]
     fn pending_invites_are_hydrated_as_notifications() {
         let invite = json!({
-            "id": "ck:invite:01904100-0000-7000-8000-000000000001",
+            "id": "ak:invite:01904100-0000-7000-8000-000000000001",
             "schema": "ck.schema.invite.v1",
-            "realm_id": "ck:realm:01904100-0000-7000-8000-000000000002",
+            "realm_id": "ak:realm:01904100-0000-7000-8000-000000000002",
             "inviter": "did:web:alice.example",
             "state": "pending",
             "created_at": "2026-05-29T00:00:00Z",
         });
         let duplicate_invite = json!({
-            "id": "ck:invite:01904100-0000-7000-8000-000000000099",
+            "id": "ak:invite:01904100-0000-7000-8000-000000000099",
             "schema": "ck.schema.invite.v1",
-            "realm_id": "ck:realm:01904100-0000-7000-8000-000000000002",
+            "realm_id": "ak:realm:01904100-0000-7000-8000-000000000002",
             "inviter": "did:web:alice.example",
             "state": "pending",
             "created_at": "2026-05-29T00:00:01Z",
@@ -73,7 +73,7 @@ mod tests {
         assert_eq!(notifications[0].title, "notifications.default_title.invite");
         assert_eq!(
             notifications[0].realm_id,
-            "ck:realm:01904100-0000-7000-8000-000000000002"
+            "ak:realm:01904100-0000-7000-8000-000000000002"
         );
         assert_eq!(notifications[0].body, "You were invited to join a Realm.");
         assert_eq!(
@@ -86,7 +86,7 @@ mod tests {
         ));
 
         let joined_realms =
-            BTreeSet::from(["ck:realm:01904100-0000-7000-8000-000000000002".to_owned()]);
+            BTreeSet::from(["ak:realm:01904100-0000-7000-8000-000000000002".to_owned()]);
         append_invite_notifications(&mut raw, vec![invite], &joined_realms);
         drop_joined_invite_notifications(&mut raw, &joined_realms);
         assert!(raw.is_empty(), "joined Realm invites should be hidden");
@@ -107,7 +107,7 @@ mod tests {
                 "notification_id": "n1",
                 "schema": "ck.schema.notification.v1",
                 "notification_type": "mention",
-                "realm_id": "ck:realm:quiet",
+                "realm_id": "ak:realm:quiet",
                 "body": "hello",
                 "read": false
             })],
@@ -122,10 +122,10 @@ mod tests {
 
     #[test]
     fn hydrate_notifications_applies_synced_read_cursor() {
-        let realm_id = "ck:realm:01904100-0000-7000-8000-000000000002";
-        let strand_id = "ck:strand:01904100-0000-7000-8000-000000000003";
-        let old_event = "ck:event:01904100-0000-7000-8000-000000000004";
-        let cursor_event = "ck:event:01904100-0000-7000-8000-000000000005";
+        let realm_id = "ak:realm:01904100-0000-7000-8000-000000000002";
+        let strand_id = "ak:strand:01904100-0000-7000-8000-000000000003";
+        let old_event = "ak:event:01904100-0000-7000-8000-000000000004";
+        let cursor_event = "ak:event:01904100-0000-7000-8000-000000000005";
         let read_scope = read_scope_for_cursor(realm_id, Some(strand_id));
         let mut local_state = ClientLocalState::default();
         local_state.read_cursors.insert(
@@ -133,7 +133,7 @@ mod tests {
             ReadMarkerRecord {
                 marker_type: "ck.read_cursor.advance".to_owned(),
                 body: ReadMarkerBody {
-                    id: "ck:read_cursor:01904100-0000-7000-8000-000000000006".to_owned(),
+                    id: "ak:read_cursor:01904100-0000-7000-8000-000000000006".to_owned(),
                     schema: "ck.schema.read_cursor.v1".to_owned(),
                     realm_id: realm_id.to_owned(),
                     read_scope,
@@ -143,7 +143,7 @@ mod tests {
                     },
                 },
                 actor: "did:web:bob.example".to_owned(),
-                device_id: "ck:device:01904100-0000-7000-8000-000000000007".to_owned(),
+                device_id: "ak:device:01904100-0000-7000-8000-000000000007".to_owned(),
                 updated_at: chrono::Utc::now(),
             },
         );
@@ -182,7 +182,7 @@ mod tests {
 
     #[test]
     fn fresh_invite_to_same_realm_survives_stale_archive_and_realm_mute() {
-        let realm_id = "ck:realm:01904100-0000-7000-8000-000000000002";
+        let realm_id = "ak:realm:01904100-0000-7000-8000-000000000002";
         // Local state left over from an earlier invite to this realm: the
         // previous invite notification was archived, and the realm itself is
         // muted (e.g. a prior membership the receiver left). Both are keyed on
@@ -199,7 +199,7 @@ mod tests {
 
         // A brand-new invitation (distinct invite id) to the same realm.
         let invite = json!({
-            "id": "ck:invite:00000000-0000-7000-8000-0000000000bb",
+            "id": "ak:invite:00000000-0000-7000-8000-0000000000bb",
             "schema": "ck.schema.invite.v1",
             "realm_id": realm_id,
             "state": "pending",
@@ -226,7 +226,7 @@ mod tests {
 
     #[test]
     fn mention_notification_respects_realm_mute_hydration() {
-        let realm_id = "ck:realm:01904100-0000-7000-8000-0000000000aa";
+        let realm_id = "ak:realm:01904100-0000-7000-8000-0000000000aa";
         let mut local_state = ClientLocalState::default();
         local_state
             .realm_watch_levels
@@ -257,7 +257,7 @@ mod tests {
 
     #[test]
     fn assignment_and_schedule_notifications_respect_realm_mute_hydration() {
-        let realm_id = "ck:realm:01904100-0000-7000-8000-0000000000ab";
+        let realm_id = "ak:realm:01904100-0000-7000-8000-0000000000ab";
         let mut local_state = ClientLocalState::default();
         local_state
             .realm_watch_levels
@@ -289,9 +289,9 @@ mod tests {
 
     #[test]
     fn invite_title_is_preserved_for_accept_projection_hint() {
-        let realm_id = "ck:realm:01904100-0000-7000-8000-000000000010";
+        let realm_id = "ak:realm:01904100-0000-7000-8000-000000000010";
         let invite = json!({
-            "id": "ck:invite:01904100-0000-7000-8000-000000000011",
+            "id": "ak:invite:01904100-0000-7000-8000-000000000011",
             "schema": "ck.schema.invite.v1",
             "realm_id": realm_id,
             "realm_title": "Partner Launch",
@@ -328,8 +328,8 @@ mod tests {
             "event_kind": "ck.message.create",
             "notification_type": "mention",
             "actor_id": "did:web:alice.example",
-            "realm_id": "ck:realm:e2ee",
-            "strand_id": "ck:strand:1",
+            "realm_id": "ak:realm:e2ee",
+            "strand_id": "ak:strand:1",
             "track_name": "discussion",
             "watch_state": "participating",
             "encrypted": true,
@@ -376,16 +376,16 @@ mod tests {
 
     #[test]
     fn read_cursor_targets_pick_latest_event_per_realm() {
-        let realm_a = "ck:realm:01904100-0000-7000-8000-000000000002";
-        let strand_a = "ck:strand:01904100-0000-7000-8000-000000000003";
-        let realm_b = "ck:realm:01904100-0000-7000-8000-000000000004";
+        let realm_a = "ak:realm:01904100-0000-7000-8000-000000000002";
+        let strand_a = "ak:strand:01904100-0000-7000-8000-000000000003";
+        let realm_b = "ak:realm:01904100-0000-7000-8000-000000000004";
         let raw = vec![
             json!({
                 "notification_id": "old-a",
                 "notification_type": "message",
                 "realm_id": realm_a,
                 "strand_id": strand_a,
-                "source_event_id": "ck:event:01904100-0000-7000-8000-000000000005",
+                "source_event_id": "ak:event:01904100-0000-7000-8000-000000000005",
                 "timestamp": "2026-05-29T00:00:00Z",
             }),
             json!({
@@ -393,7 +393,7 @@ mod tests {
                 "notification_type": "message",
                 "realm_id": realm_a,
                 "strand_id": strand_a,
-                "event_id": "ck:event:01904100-0000-7000-8000-000000000006",
+                "event_id": "ak:event:01904100-0000-7000-8000-000000000006",
                 "timestamp": "2026-05-29T00:00:01Z",
             }),
             json!({
@@ -406,7 +406,7 @@ mod tests {
                 "notification_id": "new-b",
                 "notification_type": "mention",
                 "realm_id": realm_b,
-                "source_event_id": "ck:event:01904100-0000-7000-8000-000000000007",
+                "source_event_id": "ak:event:01904100-0000-7000-8000-000000000007",
                 "timestamp": "2026-05-29T00:00:03Z",
             }),
         ];
@@ -421,7 +421,7 @@ mod tests {
             .expect("realm A target");
         assert_eq!(
             target_a.event_id,
-            "ck:event:01904100-0000-7000-8000-000000000006"
+            "ak:event:01904100-0000-7000-8000-000000000006"
         );
         assert_eq!(target_a.strand_id.as_deref(), Some(strand_a));
         let target_b = targets
@@ -430,7 +430,7 @@ mod tests {
             .expect("realm B target");
         assert_eq!(
             target_b.event_id,
-            "ck:event:01904100-0000-7000-8000-000000000007"
+            "ak:event:01904100-0000-7000-8000-000000000007"
         );
         assert!(target_b.strand_id.is_none());
     }

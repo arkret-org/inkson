@@ -1557,7 +1557,7 @@ pub fn SettingsPanel(
                                             Ok(response) => {
                                                 // R20: `room_id` is the MIMI-draft wire term
                                                 // (interop-exempt from Room → Realm). On the
-                                                // Cokret app side it identifies a Strand, so we
+                                                // Arkret app side it identifies a Strand, so we
                                                 // bind it to a `strand_id`-named local to keep
                                                 // the "Room" term confined to the interop layer.
                                                 mimi_receipt.set(format!(
@@ -1708,7 +1708,7 @@ pub fn SettingsPanel(
                                     spawn(async move {
                                         match with_authed_sdk_client(&base, api_token, |http| async move {
                                             let request = cokret_sdk::MimiProxyDownloadRequestBody {
-                                                asset_ref: "ck:blob:sha256:01015dc8af66d01f557ea63f13538f1964848840a350c5311d1efc8ad138bb91".to_owned(),
+                                                asset_ref: "ak:blob:sha256:01015dc8af66d01f557ea63f13538f1964848840a350c5311d1efc8ad138bb91".to_owned(),
                                                 requester: cokret_sdk::Did::new(actor.trim().to_owned())?,
                                                 strand_id: None,
                                                 ohttp_context: serde_json::Value::Null,
@@ -2395,7 +2395,7 @@ pub fn SettingsPanel(
                     div { class: "actions", "data-testid": "read-receipt-add-override",
                         Input {
                             r#type: "text",
-                            placeholder: "ck:realm:...",
+                            placeholder: "ak:realm:...",
                             value: "{read_receipt_override_input()}",
                             oninput: move |event: FormEvent| read_receipt_override_input.set(event.value()),
                         }
@@ -2642,7 +2642,7 @@ pub fn SettingsPanel(
                         Input {
                             r#type: "text",
                             "data-testid": "realm-remark-add-id",
-                            placeholder: "ck:realm:...",
+                            placeholder: "ak:realm:...",
                             value: "{new_realm_remark_id()}",
                             oninput: move |event: FormEvent| new_realm_remark_id.set(event.value()),
                         }
@@ -2663,7 +2663,7 @@ pub fn SettingsPanel(
                                     crate::components::feedback::toast_info("feedback.enter_realm_and_name", vec![]);
                                     return;
                                 }
-                                if !realm_id.starts_with("ck:realm:") {
+                                if !realm_id.starts_with("ak:realm:") {
                                     crate::components::feedback::toast_error("feedback.invalid_realm_id", vec![], None);
                                     return;
                                 }

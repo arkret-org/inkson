@@ -482,7 +482,7 @@ mod tests {
 
     fn snapshot(epoch: u64) -> crate::mls::persistence::MlsSnapshotEnvelope {
         crate::mls::persistence::encrypt_state(
-            "ck:realm:01964137-0000-7000-8000-000000000001",
+            "ak:realm:01964137-0000-7000-8000-000000000001",
             "group-1",
             epoch,
             b"state bytes",
@@ -504,8 +504,8 @@ mod tests {
             "https://soland.example".into(),
             "token".into(),
             "did:web:alice.example".into(),
-            "ck:device:01964137-0000-7000-8000-000000000001".into(),
-            "ck:realm:01964137-0000-7000-8000-000000000001".into(),
+            "ak:device:01964137-0000-7000-8000-000000000001".into(),
+            "ak:realm:01964137-0000-7000-8000-000000000001".into(),
             snap,
             digest.clone(),
         );
@@ -536,8 +536,8 @@ mod tests {
             "https://soland.example".into(),
             "token".into(),
             "did:web:alice.example".into(),
-            "ck:device:01964137-0000-7000-8000-000000000001".into(),
-            "ck:realm:01964137-0000-7000-8000-000000000001".into(),
+            "ak:device:01964137-0000-7000-8000-000000000001".into(),
+            "ak:realm:01964137-0000-7000-8000-000000000001".into(),
             snap,
             latest,
         );

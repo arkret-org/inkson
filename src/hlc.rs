@@ -1,4 +1,4 @@
-//! Hybrid Logical Clock (HLC) per cokret-spec section 6.4 — thin wrapper
+//! Hybrid Logical Clock (HLC) per arkret-spec section 6.4 — thin wrapper
 //! over `cokret_sdk::hlc`.
 //!
 //! Format: `<physical_hex_12>-<logical_hex_4>-<node_hex_8>`
@@ -9,7 +9,7 @@
 //! All HLC kernel responsibilities are delegated to the SDK:
 //! - format validation / parsing: `validate_hlc_format` / `parse_hlc`,
 //! - encode + overflow semantics: `cokret_sdk::Hlc::new`,
-//! - node-id derivation: `HlcGenerator::compute_node_id` (`encoding.md` §7, `SHA256("cokret-hlc-v1"
+//! - node-id derivation: `HlcGenerator::compute_node_id` (`encoding.md` §7, `SHA256("arkret-hlc-v1"
 //!   || realm_id || device_id || secret)[0:4]`), reached through generator construction because the
 //!   helper is private.
 //!

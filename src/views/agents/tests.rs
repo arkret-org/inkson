@@ -173,7 +173,7 @@ mod personal_agent_tests {
         let grant = expand_preset_grant(
             AgentGrantPreset::ReplyAsAgent,
             "did:web:agents.example:summary",
-            Some("ck:realm:01"),
+            Some("ak:realm:01"),
             "2026-06-26T00:00:00Z",
         );
         assert_eq!(
@@ -182,7 +182,7 @@ mod personal_agent_tests {
         );
         assert_eq!(grant["subject"], "did:web:agents.example:summary");
         assert_eq!(grant["resources"][0]["kind"], "realm");
-        assert_eq!(grant["resources"][0]["realm_id"], "ck:realm:01");
+        assert_eq!(grant["resources"][0]["realm_id"], "ak:realm:01");
         assert_eq!(grant["effective_after_first_authorized_key"], true);
         assert_eq!(grant["expires_at"], "2026-06-26T00:00:00Z");
         // Non-aob presets carry no controller-approval constraint.
@@ -233,16 +233,16 @@ mod personal_agent_tests {
         };
 
         let raw = build_agent_pairing_bootstrap_json(
-            "https://cokret.example/",
-            "did:web:cokret.example",
+            "https://arkret.example/",
+            "did:web:arkret.example",
             &outcome,
         )
         .unwrap();
         let value: serde_json::Value = serde_json::from_str(&raw).unwrap();
 
         // CKP-0008 §4.4: exactly the six pairing fields, no scope payload.
-        assert_eq!(value["cokret_base_url"], "https://cokret.example");
-        assert_eq!(value["service_did"], "did:web:cokret.example");
+        assert_eq!(value["cokret_base_url"], "https://arkret.example");
+        assert_eq!(value["service_did"], "did:web:arkret.example");
         assert_eq!(
             value["agent_principal_id"],
             "did:web:agents.example:summary"
@@ -269,16 +269,16 @@ mod personal_agent_tests {
                 .with_timezone(&chrono::Utc),
         };
         let raw = build_agent_pairing_bootstrap_json(
-            "https://cokret.example/",
-            "did:web:cokret.example",
+            "https://arkret.example/",
+            "did:web:arkret.example",
             &outcome,
         )
         .unwrap();
 
         let token = build_agent_pairing_handoff_token("0197-req", "123456");
-        let deep_link = build_agent_pairing_deep_link("https://cokret.example/", &token);
+        let deep_link = build_agent_pairing_deep_link("https://arkret.example/", &token);
         let encoded = deep_link
-            .strip_prefix("https://cokret.example/_cokret/open/agent-pairing/resolve#token=")
+            .strip_prefix("https://arkret.example/_cokret/open/agent-pairing/resolve#token=")
             .expect("deep link is an https universal link with the token in the fragment");
         let decoded: serde_json::Value =
             serde_json::from_slice(&cokret_sdk::base64url_decode(encoded).unwrap()).unwrap();
@@ -296,7 +296,7 @@ mod personal_agent_tests {
     #[test]
     fn pairing_qr_renders_deep_link_svg() {
         let svg = render_agent_pairing_qr_svg(
-            "https://cokret.example/_cokret/open/agent-pairing/resolve#token=abc",
+            "https://arkret.example/_cokret/open/agent-pairing/resolve#token=abc",
         );
 
         assert!(svg.contains("<svg"));
@@ -318,7 +318,7 @@ mod personal_agent_tests {
             },
             "proof_of_possession": {
                 "challenge": "agent_pairing_request:01999999-0000-7000-8000-00000000feed",
-                "audience": "did:web:cokret.example",
+                "audience": "did:web:arkret.example",
                 "request_canonical_digest": format!("sha256:{}", "0".repeat(64)),
                 "expires_at": "2026-07-06T00:15:00.000Z",
                 "signature": cokret_sdk::base64url_encode([1u8; 64]),
@@ -361,7 +361,7 @@ mod personal_agent_tests {
     #[test]
     fn runtime_key_authorize_event_binds_request_and_scope() {
         let controller = "did:web:controller.example";
-        let service_did = "did:web:cokret.example";
+        let service_did = "did:web:arkret.example";
         let agent = "did:web:agents.example:summary";
         let verification_method = "did:web:agents.example:summary#runtime-key-1";
         let scope = requested_scope_for_presets(&AgentServiceScopePreset::DEFAULTS).unwrap();
@@ -431,7 +431,7 @@ mod personal_agent_tests {
             "draft_id": "0197-draft",
             "agent_principal_id": "did:web:agents.example:summary",
             "proposed_action": "ck.message.create",
-            "target": {"kind": "realm", "realm_id": "ck:realm:01"},
+            "target": {"kind": "realm", "realm_id": "ak:realm:01"},
             "content": {"body": "draft text"},
         });
         let payload = build_action_approve_payload(
@@ -460,10 +460,10 @@ mod personal_agent_tests {
     #[test]
     fn build_action_approve_payload_prefers_action_request_digest() {
         let request = serde_json::json!({
-            "request_id": "ck:agent-action-request:0197",
+            "request_id": "ak:agent-action-request:0197",
             "agent_principal_id": "did:web:agents.example:summary",
             "proposed_action": "ck.message.create",
-            "target": {"kind": "realm", "realm_id": "ck:realm:01"},
+            "target": {"kind": "realm", "realm_id": "ak:realm:01"},
             "request_canonical_digest": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
         });
         let payload = build_action_approve_payload(
@@ -472,7 +472,7 @@ mod personal_agent_tests {
             "2026-06-26T00:00:00Z",
             "2026-06-26T01:00:00Z",
         );
-        assert_eq!(payload["request_id"], "ck:agent-action-request:0197");
+        assert_eq!(payload["request_id"], "ak:agent-action-request:0197");
         assert_eq!(
             payload["approved_payload_digest"],
             "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
@@ -483,7 +483,7 @@ mod personal_agent_tests {
     #[test]
     fn build_action_reject_payload_carries_reason_and_controller() {
         let request = serde_json::json!({
-            "request_id": "ck:agent-action-request:0198",
+            "request_id": "ak:agent-action-request:0198",
             "agent_principal_id": "did:web:agents.example:summary",
         });
         let payload = build_action_reject_payload(
@@ -492,7 +492,7 @@ mod personal_agent_tests {
             "2026-06-26T00:00:00Z",
             Some("needs review"),
         );
-        assert_eq!(payload["request_id"], "ck:agent-action-request:0198");
+        assert_eq!(payload["request_id"], "ak:agent-action-request:0198");
         assert_eq!(payload["controller_principal_id"], "did:web:alice.example");
         assert_eq!(payload["rejected_at"], "2026-06-26T00:00:00Z");
         assert_eq!(payload["reason"], "needs review");
@@ -502,13 +502,13 @@ mod personal_agent_tests {
     #[test]
     fn act_on_behalf_message_operation_carries_dual_identity_and_approval() {
         let operation = build_act_on_behalf_message_operation(
-            "ck:realm:01904100-0000-7000-8000-000000000001",
+            "ak:realm:01904100-0000-7000-8000-000000000001",
             "did:web:alice.example",
             "did:web:agents.example:summary",
-            "ck:grant:01904100-0000-7000-8000-000000000002",
-            "ck:agent-action-request:01904100-0000-7000-8000-000000000003",
+            "ak:grant:01904100-0000-7000-8000-000000000002",
+            "ak:agent-action-request:01904100-0000-7000-8000-000000000003",
             "nonce-01904100",
-            "ck:strand:01904100-0000-7000-8000-000000000004",
+            "ak:strand:01904100-0000-7000-8000-000000000004",
             "approved message",
         )
         .unwrap();
@@ -521,11 +521,11 @@ mod personal_agent_tests {
         );
         assert_eq!(
             operation.authorization_ref.as_deref(),
-            Some("ck:grant:01904100-0000-7000-8000-000000000002")
+            Some("ak:grant:01904100-0000-7000-8000-000000000002")
         );
         assert_eq!(
             operation.payload["approval_request_id"],
-            "ck:agent-action-request:01904100-0000-7000-8000-000000000003"
+            "ak:agent-action-request:01904100-0000-7000-8000-000000000003"
         );
         assert_eq!(operation.payload["approval_nonce"], "nonce-01904100");
     }
@@ -555,7 +555,7 @@ mod tests {
     #[test]
     fn agent_endpoint_body_keys_pin_canonical_wire() {
         let op = crate::operation::ck_ops::agent_endpoint(
-            "ck:realm:0196419b-0000-7000-8000-000000000001",
+            "ak:realm:0196419b-0000-7000-8000-000000000001",
             "did:web:alice.example",
             "did:web:agent.example",
             "ck.agent.v1",
@@ -573,9 +573,9 @@ mod tests {
     #[test]
     fn agent_result_body_carries_audit_binding_artifact() {
         let op = crate::operation::ck_ops::agent_interop_session_result(
-            "ck:realm:0196419b-0000-7000-8000-000000000001",
+            "ak:realm:0196419b-0000-7000-8000-000000000001",
             "did:web:alice.example",
-            "ck:agent_interop_session:0196419b-0000-7000-8000-000000000002",
+            "ak:agent_interop_session:0196419b-0000-7000-8000-000000000002",
             serde_json::json!({"summary": "ok"}),
             serde_json::json!({"merkle_root": "sha256:abc"}),
         )
@@ -626,7 +626,7 @@ mod tests {
     fn verify_helper_marks_valid_ed25519_binding_as_valid() {
         let seed = [11u8; 32];
         let payload = build_ed25519_result_payload(
-            "ck:session:v1",
+            "ak:session:v1",
             "did:web:agent.example",
             json!({"op": "ping"}),
             "did:web:alice.example",
@@ -642,7 +642,7 @@ mod tests {
     fn verify_helper_detects_tampered_echo_via_subject_mismatch() {
         let seed = [12u8; 32];
         let mut payload = build_ed25519_result_payload(
-            "ck:session:v2",
+            "ak:session:v2",
             "did:web:agent.example",
             json!({"op": "ping"}),
             "did:web:alice.example",
@@ -658,7 +658,7 @@ mod tests {
     #[test]
     fn verify_helper_returns_absent_when_no_binding_block() {
         let payload = json!({
-            "session_id": "ck:session:v3",
+            "session_id": "ak:session:v3",
             "status": "failed",
             "result": Value::Null,
             "error": {"code": "unknown_agent"},
@@ -672,7 +672,7 @@ mod tests {
     #[test]
     fn verify_helper_returns_unsupported_for_unknown_binding_kind() {
         let payload = json!({
-            "session_id": "ck:session:v4",
+            "session_id": "ak:session:v4",
             "status": "completed",
             "result": {"echo": null, "agent_principal_id": "did:web:agent.example"},
             "audit_binding": {
@@ -693,7 +693,7 @@ mod tests {
     #[test]
     fn verify_helper_returns_unsupported_for_hmac_binding() {
         let payload = json!({
-            "session_id": "ck:session:hmac",
+            "session_id": "ak:session:hmac",
             "status": "completed",
             "result": {"echo": {"op": "ping"}, "agent_principal_id": "did:web:agent.example"},
             "audit_binding": {
@@ -714,7 +714,7 @@ mod tests {
     fn verify_helper_returns_malformed_when_ed25519_signature_is_not_base64() {
         let seed = [13u8; 32];
         let mut payload = build_ed25519_result_payload(
-            "ck:session:v5",
+            "ak:session:v5",
             "did:web:agent.example",
             json!({}),
             "did:web:alice.example",
@@ -876,7 +876,7 @@ mod tests {
 
     #[test]
     fn live_session_rows_fold_latest_status_in_order() {
-        let session = "ck:agent_interop_session:0197-aaa";
+        let session = "ak:agent_interop_session:0197-aaa";
         let events = vec![
             json!({
                 "event_kind": "ck.agent.interop_session.start",
@@ -909,7 +909,7 @@ mod tests {
 
     #[test]
     fn live_session_rows_seed_start_as_negotiating_and_ignore_other_kinds() {
-        let session = "ck:agent_interop_session:0197-bbb";
+        let session = "ak:agent_interop_session:0197-bbb";
         let events = vec![
             json!({"event_kind": "ck.message.create", "payload": {"body": "x"}}),
             json!({
@@ -928,7 +928,7 @@ mod tests {
         // The terminal result lives in the results panel; the session row
         // keeps the latest STREAMING status so a later completed result
         // does not collapse a `working` transcript.
-        let session = "ck:agent_interop_session:0197-ccc";
+        let session = "ak:agent_interop_session:0197-ccc";
         let events = vec![
             json!({
                 "event_kind": "ck.agent.interop_session.start",
@@ -972,13 +972,13 @@ mod tests {
     #[test]
     fn agent_publish_attribution_strand_preserves_agent_attribution() {
         let op = crate::operation::ck_ops::agent_publish_attribution_strand(
-            "ck:realm:01904100-0000-7000-8000-000000000001",
+            "ak:realm:01904100-0000-7000-8000-000000000001",
             "did:web:alice.example",
-            "ck:strand:01904100-0000-7000-8000-000000000004",
+            "ak:strand:01904100-0000-7000-8000-000000000004",
             "Agent synthesis result",
             "did:web:remote-agent.example",
-            "ck:strand:01904100-0000-7000-8000-00000000aaaa",
-            "ck:morph:01904100-0000-7000-8000-00000000bbbb",
+            "ak:strand:01904100-0000-7000-8000-00000000aaaa",
+            "ak:morph:01904100-0000-7000-8000-00000000bbbb",
         )
         .unwrap()
         .build("inkson");
@@ -1000,7 +1000,7 @@ mod tests {
         // Build a real Ed25519 binding via the SDK helper that the
         // soland in-process echo bridge uses.
         let seed = [21u8; 32];
-        let session_id = "ck:session:chain";
+        let session_id = "ak:session:chain";
         let agent_id = "did:web:agent.example";
         let echo = json!({"op": "ping"});
         let actor = "did:web:alice.example";

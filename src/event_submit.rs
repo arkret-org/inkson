@@ -660,7 +660,7 @@ fn cba_effect_plane_for_event(event: &cokret_sdk::Event) -> anyhow::Result<CbaEf
 
 fn cba_cell_family(cell: &str) -> anyhow::Result<&str> {
     let rest = cell
-        .strip_prefix("ck:cell:")
+        .strip_prefix("ak:cell:")
         .ok_or_else(|| anyhow::anyhow!("effects[].cell must use ck:cell: prefix"))?;
     let (family, subject) = rest
         .split_once(':')
@@ -678,7 +678,7 @@ fn data_event_auth_context(event: &cokret_sdk::Event) -> anyhow::Result<cokret_s
             event.event_id
         );
     };
-    if !authorization_ref.starts_with("ck:grant:") {
+    if !authorization_ref.starts_with("ak:grant:") {
         anyhow::bail!(
             "DataEvent {} authorization_ref must be a ck:grant:* capability ref for auth_context",
             event.event_id
@@ -744,9 +744,9 @@ mod tests {
 
     fn sdk_event_without_proof(actor_id: &str) -> cokret_sdk::Event {
         serde_json::from_value(json!({
-            "event_id": "ck:event:01904100-0000-7000-8000-000000000001",
+            "event_id": "ak:event:01904100-0000-7000-8000-000000000001",
             "kind": "ck.presence",
-            "realm_id": "ck:realm:01904100-0000-7000-8000-000000000001",
+            "realm_id": "ak:realm:01904100-0000-7000-8000-000000000001",
             "actor_id": actor_id,
             "actor_seq": 1,
             "created_at": "2026-05-19T00:00:00Z",
@@ -788,7 +788,7 @@ mod tests {
         let frontier = cokret_sdk::ActorFrontierView {
             actor_id: cokret_sdk::Did::new("did:web:alice.example").unwrap(),
             actor_seq: 7,
-            event_id: cokret_sdk::EventId::new("ck:event:01904100-0000-7000-8000-000000000002")
+            event_id: cokret_sdk::EventId::new("ak:event:01904100-0000-7000-8000-000000000002")
                 .unwrap(),
         };
 
@@ -804,7 +804,7 @@ mod tests {
         let frontier = cokret_sdk::ActorFrontierView {
             actor_id: cokret_sdk::Did::new("did:web:bob.example").unwrap(),
             actor_seq: 7,
-            event_id: cokret_sdk::EventId::new("ck:event:01904100-0000-7000-8000-000000000002")
+            event_id: cokret_sdk::EventId::new("ak:event:01904100-0000-7000-8000-000000000002")
                 .unwrap(),
         };
 
@@ -839,20 +839,20 @@ mod tests {
 
     #[test]
     fn mls_genesis_event_lookup_filters_kind_and_realm() {
-        let realm = "ck:realm:01904100-0000-7000-8000-000000000001";
-        let other_realm = "ck:realm:01904100-0000-7000-8000-000000000099";
+        let realm = "ak:realm:01904100-0000-7000-8000-000000000001";
+        let other_realm = "ak:realm:01904100-0000-7000-8000-000000000099";
         let expected =
-            cokret_sdk::EventId::new("ck:event:01904100-0000-7000-8000-000000000003").unwrap();
+            cokret_sdk::EventId::new("ak:event:01904100-0000-7000-8000-000000000003").unwrap();
         let outcome = cokret_sdk::EventsQueryOutcome {
             events: vec![
                 sdk_event_with_kind(
-                    "ck:event:01904100-0000-7000-8000-000000000001",
+                    "ak:event:01904100-0000-7000-8000-000000000001",
                     realm,
                     "ck.message.create",
                     "did:web:alice.example",
                 ),
                 sdk_event_with_kind(
-                    "ck:event:01904100-0000-7000-8000-000000000002",
+                    "ak:event:01904100-0000-7000-8000-000000000002",
                     other_realm,
                     "ck.mls.genesis",
                     "did:web:alice.example",
@@ -878,7 +878,7 @@ mod tests {
         assert_eq!(
             mls_genesis_event_id_from_events(
                 &outcome,
-                "ck:realm:01904100-0000-7000-8000-000000000123"
+                "ak:realm:01904100-0000-7000-8000-000000000123"
             ),
             None
         );
@@ -888,7 +888,7 @@ mod tests {
     fn event_proof_context_binds_domain_and_audience_to_service_did() {
         let describe = parse_server_description(json!({
             "service_did": "did:web:local.host",
-            "trust_domain": "ck:trust_domain:local.host",
+            "trust_domain": "ak:trust_domain:local.host",
             "service_type": "principal_server",
             "protocol_version": "1.0",
             "supported_profiles": [
@@ -940,9 +940,9 @@ mod tests {
             proof["audience"] = json!(audience);
         }
         serde_json::from_value(json!({
-            "event_id": "ck:event:01904100-0000-7000-8000-000000000001",
+            "event_id": "ak:event:01904100-0000-7000-8000-000000000001",
             "kind": "ck.presence",
-            "realm_id": "ck:realm:01904100-0000-7000-8000-000000000001",
+            "realm_id": "ak:realm:01904100-0000-7000-8000-000000000001",
             "actor_id": "did:web:alice.example",
             "actor_seq": 1,
             "created_at": "2026-05-19T00:00:00Z",

@@ -1841,7 +1841,7 @@ pub fn KanbanPanel(
                                             }
                                             let col_count = columns().len();
                                             let rank = format!("r{:03}", col_count + 1);
-                                            let list_space_id = format!("ck:space:{}", uuid_v7());
+                                            let list_space_id = format!("ak:space:{}", uuid_v7());
                                             let op = match crate::operation::ck_ops::space_create(
                                                 &realm,
                                                 &actor,
@@ -1950,7 +1950,7 @@ pub fn KanbanPanel(
                                                     board_status.set("sign in before creating a Board".to_owned());
                                                     return;
                                                 }
-                                                let board_space_id = format!("ck:space:{}", uuid_v7());
+                                                let board_space_id = format!("ak:space:{}", uuid_v7());
                                                 let op = match crate::operation::ck_ops::space_create(
                                                     &realm,
                                                     &actor,
@@ -2034,7 +2034,7 @@ pub fn KanbanPanel(
                                             id: "board-view-id-input-input",
                                             "data-testid": "board-view-id-input",
                                             value: "{board_view_id}",
-                                            placeholder: "ck:view:...",
+                                            placeholder: "ak:view:...",
                                             oninput: move |event: FormEvent| board_view_id.set(event.value()),
                                         }
                                     }
@@ -2404,9 +2404,9 @@ pub fn KanbanPanel(
                                     let dragged = dragging_column().or_else(|| {
                                         event
                                             .data_transfer()
-                                            .get_data("application/x-cokret-column-id")
+                                            .get_data("application/x-arkret-column-id")
                                             .or_else(|| event.data_transfer().get_data("text/plain"))
-                                            .filter(|id| id.starts_with("ck:space:"))
+                                            .filter(|id| id.starts_with("ak:space:"))
                                             .map(|column_id| DraggedColumn { column_id })
                                     });
                                     let Some(dragged) = dragged else {
@@ -2454,7 +2454,7 @@ pub fn KanbanPanel(
                                         move |event| {
                                             let _ = event
                                                 .data_transfer()
-                                                .set_data("application/x-cokret-column-id", &column_id);
+                                                .set_data("application/x-arkret-column-id", &column_id);
                                             let _ = event.data_transfer().set_data("text/plain", &column_id);
                                             dragging_column.set(Some(DraggedColumn {
                                                 column_id: column_id.clone(),
@@ -2882,7 +2882,7 @@ pub fn KanbanPanel(
                                                     board_status.set("select or create a Board Space before adding cards".to_owned());
                                                     return;
                                                 }
-                                                let strand_id = format!("ck:strand:{}", uuid_v7());
+                                                let strand_id = format!("ak:strand:{}", uuid_v7());
                                                 // Insert the new card at the end of the column.
                                                 // Look up the column's current tail rank and ask
                                                 // `rank_between` for a strictly-greater rank. If

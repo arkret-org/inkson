@@ -10,11 +10,11 @@ use crate::secure_key_store::SecureKeyStore;
 /// (`encryption-and-audit.md` §2.9). Bound, together with `context =
 /// realm_id` and the current group epoch's exporter secret, into the
 /// keyed-HMAC routing tag.
-pub const REACTION_ROUTING_LABEL_V1: &str = "cokret-reaction-routing-v1";
+pub const REACTION_ROUTING_LABEL_V1: &str = "arkret-reaction-routing-v1";
 /// Length (bytes) of the MLS exporter output used as the HMAC key.
 pub const REACTION_ROUTING_EXPORT_LEN: usize = 32;
 /// Content type for the encrypted real-emoji payload of a reaction.
-pub const REACTION_ENCRYPTED_CONTENT_TYPE: &str = "application/vnd.cokret.reaction+json";
+pub const REACTION_ENCRYPTED_CONTENT_TYPE: &str = "application/vnd.arkret.reaction+json";
 
 /// Result of sealing an E2EE reaction: the plaintext routing tag for the
 /// wire `reaction_payload.key`, plus the structured encrypted payload that

@@ -653,7 +653,7 @@ pub fn DirectoryPanel(
             }
 
             // R3.3 (CKP-0011) — "Open shared link" entry point. Accepts a
-            // pasted `web+cokret:` or HTTPS-fragment link, resolves it via
+            // pasted `web+arkret:` or HTTPS-fragment link, resolves it via
             // `directory_resolve_target`, and routes to the local UI by
             // `target_kind`. Failures collapse to one friendly message
             // (never distinguish not_found vs unauthorized).
@@ -664,7 +664,7 @@ pub fn DirectoryPanel(
             div { class: "event", "data-testid": "open-shared-link",
                 div { class: "event-head",
                     span { {crate::i18n::tr("object_link.open")} }
-                    HelpTip { text: "Paste a Cokret share link to open the Realm, Strand, or Message it points at." }
+                    HelpTip { text: "Paste a Arkret share link to open the Realm, Strand, or Message it points at." }
                 }
                 div { class: "actions",
                     Input {

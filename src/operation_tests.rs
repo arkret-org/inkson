@@ -68,7 +68,7 @@ fn proof_mode_labels_are_distinct() {
 #[test]
 fn operation_builder_generates_valid_envelope() {
     let op = OperationBuilder::new(
-        "ck:realm:0196419b-0000-7000-8000-0000000000aa",
+        "ak:realm:0196419b-0000-7000-8000-0000000000aa",
         "did:web:alice",
         cokret_sdk::events::kinds::EventKind::MessageCreate,
     )
@@ -78,7 +78,7 @@ fn operation_builder_generates_valid_envelope() {
     assert!(!op.local_operation_id().is_empty());
     assert_eq!(
         op.realm_id.as_str(),
-        "ck:realm:0196419b-0000-7000-8000-0000000000aa"
+        "ak:realm:0196419b-0000-7000-8000-0000000000aa"
     );
     assert_eq!(op.actor_id.as_str(), "did:web:alice");
     assert_eq!(op.kind.as_str(), "ck.message.create");
@@ -92,7 +92,7 @@ fn operation_builder_generates_valid_envelope() {
 #[test]
 fn operation_round_trip_serde() {
     let op = OperationBuilder::new(
-        "ck:realm:0196419b-0000-7000-8000-0000000000ab",
+        "ak:realm:0196419b-0000-7000-8000-0000000000ab",
         "did:web:bob",
         cokret_sdk::events::kinds::EventKind::MessageCreate,
     )
@@ -106,13 +106,13 @@ fn operation_round_trip_serde() {
 #[test]
 fn operation_builder_can_emit_signed_authorization_binding() {
     let op = OperationBuilder::new(
-        "ck:realm:0196419b-0000-7000-8000-0000000000ab",
+        "ak:realm:0196419b-0000-7000-8000-0000000000ab",
         "did:web:bob",
         cokret_sdk::events::kinds::EventKind::MessageCreate,
     )
     .body(json!({"content": {"kind": "ck.content.text", "body": "hello world"}}))
     .executed_by("did:web:agent.example")
-    .authorization_ref("ck:grant:0196419b-0000-7000-8000-000000000001")
+    .authorization_ref("ak:grant:0196419b-0000-7000-8000-000000000001")
     .build("node");
 
     assert_eq!(
@@ -121,7 +121,7 @@ fn operation_builder_can_emit_signed_authorization_binding() {
     );
     assert_eq!(
         op.authorization_ref.as_deref(),
-        Some("ck:grant:0196419b-0000-7000-8000-000000000001")
+        Some("ak:grant:0196419b-0000-7000-8000-000000000001")
     );
     assert!(op.unsigned.get("local_authz_ref").is_none());
 
@@ -133,14 +133,14 @@ fn operation_builder_can_emit_signed_authorization_binding() {
     assert_eq!(canonical["executed_by"], "did:web:agent.example");
     assert_eq!(
         canonical["authorization_ref"],
-        "ck:grant:0196419b-0000-7000-8000-000000000001"
+        "ak:grant:0196419b-0000-7000-8000-000000000001"
     );
 }
 
 #[test]
 fn event_envelope_accepts_current_optional_top_level_fields() {
     let op = OperationBuilder::new(
-        "ck:realm:0196419b-0000-7000-8000-0000000000ab",
+        "ak:realm:0196419b-0000-7000-8000-0000000000ab",
         "did:web:bob",
         cokret_sdk::events::kinds::EventKind::MessageCreate,
     )
@@ -150,12 +150,12 @@ fn event_envelope_accepts_current_optional_top_level_fields() {
     let object = value.as_object_mut().unwrap();
     object.insert(
         "effective_scope".to_owned(),
-        json!({"kind": "realm", "realm_id": "ck:realm:0196419b-0000-7000-8000-0000000000ab"}),
+        json!({"kind": "realm", "realm_id": "ak:realm:0196419b-0000-7000-8000-0000000000ab"}),
     );
     object.insert("executed_by".to_owned(), json!("did:web:agent.example"));
     object.insert(
         "authorization_ref".to_owned(),
-        json!("ck:grant:0196419b-0000-7000-8000-000000000001"),
+        json!("ak:grant:0196419b-0000-7000-8000-000000000001"),
     );
     object.insert("actor_kind".to_owned(), json!("agent"));
 
@@ -164,7 +164,7 @@ fn event_envelope_accepts_current_optional_top_level_fields() {
         parsed.effective_scope,
         Some(cokret_sdk::models::EffectiveScope::Realm {
             realm_id: cokret_sdk::RealmId::new(
-                "ck:realm:0196419b-0000-7000-8000-0000000000ab".to_owned()
+                "ak:realm:0196419b-0000-7000-8000-0000000000ab".to_owned()
             )
             .unwrap(),
         })
@@ -175,7 +175,7 @@ fn event_envelope_accepts_current_optional_top_level_fields() {
     );
     assert_eq!(
         parsed.authorization_ref.as_deref(),
-        Some("ck:grant:0196419b-0000-7000-8000-000000000001")
+        Some("ak:grant:0196419b-0000-7000-8000-000000000001")
     );
     assert_eq!(
         parsed.actor_kind,
@@ -186,7 +186,7 @@ fn event_envelope_accepts_current_optional_top_level_fields() {
 #[test]
 fn event_envelope_rejects_unknown_top_level_fields() {
     let op = OperationBuilder::new(
-        "ck:realm:0196419b-0000-7000-8000-0000000000ab",
+        "ak:realm:0196419b-0000-7000-8000-0000000000ab",
         "did:web:bob",
         cokret_sdk::events::kinds::EventKind::MessageCreate,
     )
@@ -207,11 +207,11 @@ fn event_envelope_rejects_unknown_top_level_fields() {
 #[test]
 fn kanban_card_strand_create_carries_position_in_metadata_fields() {
     let op = ck_ops::kanban_card_strand_create(
-        "ck:realm:0196419b-0000-7000-8000-000000000001",
+        "ak:realm:0196419b-0000-7000-8000-000000000001",
         "did:web:alice.example",
-        "ck:strand:0196419b-0000-7000-8000-000000000004",
-        "ck:space:0196419b-0000-7000-8000-000000000002",
-        "ck:space:0196419b-0000-7000-8000-000000000003",
+        "ak:strand:0196419b-0000-7000-8000-000000000004",
+        "ak:space:0196419b-0000-7000-8000-000000000002",
+        "ak:space:0196419b-0000-7000-8000-000000000003",
         "Move-backed card",
         "h1",
     )
@@ -221,11 +221,11 @@ fn kanban_card_strand_create_carries_position_in_metadata_fields() {
     assert_eq!(op.kind.as_str(), "ck.strand.create");
     assert_eq!(
         op.realm_id.as_str(),
-        "ck:realm:0196419b-0000-7000-8000-000000000001"
+        "ak:realm:0196419b-0000-7000-8000-000000000001"
     );
     assert_eq!(
         op.payload["object"]["realm_id"],
-        "ck:realm:0196419b-0000-7000-8000-000000000001"
+        "ak:realm:0196419b-0000-7000-8000-000000000001"
     );
     assert_eq!(
         op.payload["object"]["tracks"]["synthesis"]["profile"],
@@ -233,11 +233,11 @@ fn kanban_card_strand_create_carries_position_in_metadata_fields() {
     );
     assert_eq!(
         op.payload["object"]["metadata"]["fields"]["board_space_id"],
-        "ck:space:0196419b-0000-7000-8000-000000000002"
+        "ak:space:0196419b-0000-7000-8000-000000000002"
     );
     assert_eq!(
         op.payload["object"]["metadata"]["fields"]["list_space_id"],
-        "ck:space:0196419b-0000-7000-8000-000000000003"
+        "ak:space:0196419b-0000-7000-8000-000000000003"
     );
     assert_eq!(
         op.payload["object"]["metadata"]["title"],
@@ -254,15 +254,15 @@ fn kanban_card_strand_create_carries_position_in_metadata_fields() {
 
 #[test]
 fn mls_commit_builder_matches_registered_payload_schema() {
-    let realm_id = "ck:realm:0196419b-0000-7000-8000-000000000001";
-    let group_id = "ck:mls_group:kanban-test";
+    let realm_id = "ak:realm:0196419b-0000-7000-8000-000000000001";
+    let group_id = "ak:mls_group:kanban-test";
     let governance_binding = cokret_sdk::MlsGovernanceBindingPayload::realm(
         cokret_sdk::RealmId::new(realm_id.to_owned()).unwrap(),
         group_id,
         0,
         1,
         vec![
-            cokret_sdk::EventId::new("ck:event:0196419b-0000-7000-8000-000000000002".to_owned())
+            cokret_sdk::EventId::new("ak:event:0196419b-0000-7000-8000-000000000002".to_owned())
                 .unwrap(),
         ],
         cokret_sdk::Hash::new(
@@ -276,7 +276,7 @@ fn mls_commit_builder_matches_registered_payload_schema() {
     let payload = cokret_sdk::MlsCommitPayload::new(
         group_id,
         0,
-        "ck:event:0196419b-0000-7000-8000-000000000001",
+        "ak:event:0196419b-0000-7000-8000-000000000001",
         Vec::new(),
         1,
         cokret_sdk::Hash::new(
@@ -300,9 +300,9 @@ fn mls_commit_builder_matches_registered_payload_schema() {
 
 #[test]
 fn incident_status_update_uses_schema_safe_fields_patch() {
-    let strand_id = "ck:strand:0196419b-0000-7000-8000-000000000002";
+    let strand_id = "ak:strand:0196419b-0000-7000-8000-000000000002";
     let op = ck_ops::incident_status_update(
-        "ck:realm:0196419b-0000-7000-8000-000000000010",
+        "ak:realm:0196419b-0000-7000-8000-000000000010",
         "did:web:alice.example",
         strand_id,
         "mitigated",
@@ -325,9 +325,9 @@ fn incident_status_update_uses_schema_safe_fields_patch() {
 #[test]
 fn discussion_strand_create_emits_discussion_track() {
     let op = ck_ops::discussion_strand_create(
-        "ck:realm:0196419b-0000-7000-8000-000000000000",
+        "ak:realm:0196419b-0000-7000-8000-000000000000",
         "did:web:alice.example",
-        "ck:strand:0196419b-0000-7000-8000-000000000001",
+        "ak:strand:0196419b-0000-7000-8000-000000000001",
         "Ops",
     )
     .unwrap()
@@ -335,7 +335,7 @@ fn discussion_strand_create_emits_discussion_track() {
     assert_eq!(op.kind.as_str(), "ck.strand.create");
     assert_eq!(
         op.payload["object"]["id"],
-        "ck:strand:0196419b-0000-7000-8000-000000000001"
+        "ak:strand:0196419b-0000-7000-8000-000000000001"
     );
     assert!(op.payload.get("strand_id").is_none());
     assert_eq!(
@@ -354,9 +354,9 @@ fn discussion_strand_create_emits_discussion_track() {
 
 #[test]
 fn strand_tracks_update_primary_uses_is_primary_patch_key() {
-    let strand_id = "ck:strand:0196419b-0000-7000-8000-000000000001";
+    let strand_id = "ak:strand:0196419b-0000-7000-8000-000000000001";
     let op = ck_ops::strand_tracks_update_set_primary(
-        "ck:realm:0196419b-0000-7000-8000-000000000010",
+        "ak:realm:0196419b-0000-7000-8000-000000000010",
         "did:web:alice.example",
         strand_id,
         "discussion",
@@ -377,9 +377,9 @@ fn strand_tracks_update_primary_uses_is_primary_patch_key() {
 
 #[test]
 fn strand_update_patch_uses_canonical_payload_patch() {
-    let strand_id = "ck:strand:0196419b-0000-7000-8000-000000000002";
+    let strand_id = "ak:strand:0196419b-0000-7000-8000-000000000002";
     let op = ck_ops::strand_update_patch(
-        "ck:realm:0196419b-0000-7000-8000-000000000010",
+        "ak:realm:0196419b-0000-7000-8000-000000000010",
         "did:web:alice.example",
         strand_id,
         json!({
@@ -399,11 +399,11 @@ fn strand_update_patch_uses_canonical_payload_patch() {
 
 #[test]
 fn strand_update_builders_match_registered_object_patch_schema() {
-    let realm_id = "ck:realm:0196419b-0000-7000-8000-000000000001";
+    let realm_id = "ak:realm:0196419b-0000-7000-8000-000000000001";
     let actor = "did:web:alice.example";
-    let strand_id = "ck:strand:0196419b-0000-7000-8000-000000000002";
-    let board_space_id = "ck:space:0196419b-0000-7000-8000-000000000010";
-    let list_space_id = "ck:space:0196419b-0000-7000-8000-000000000011";
+    let strand_id = "ak:strand:0196419b-0000-7000-8000-000000000002";
+    let board_space_id = "ak:space:0196419b-0000-7000-8000-000000000010";
+    let list_space_id = "ak:space:0196419b-0000-7000-8000-000000000011";
 
     let events = [
         ck_ops::strand_update_patch(
@@ -448,13 +448,13 @@ fn strand_update_builders_match_registered_object_patch_schema() {
 #[test]
 fn strand_position_cas_update_rejects_incomplete_effect_position() {
     let error = ck_ops::strand_position_cas_update(
-        "ck:realm:0196419b-0000-7000-8000-000000000001",
+        "ak:realm:0196419b-0000-7000-8000-000000000001",
         "did:web:alice",
         "ck.strand.move",
-        "ck:space:0196419b-0000-7000-8000-000000000010",
-        "ck:strand:0196419b-0000-7000-8000-000000000020",
+        "ak:space:0196419b-0000-7000-8000-000000000010",
+        "ak:strand:0196419b-0000-7000-8000-000000000020",
         json!({
-            "list_space_id": "ck:space:0196419b-0000-7000-8000-000000000030",
+            "list_space_id": "ak:space:0196419b-0000-7000-8000-000000000030",
             "rank": "a1"
         }),
         Value::Null,
@@ -471,11 +471,11 @@ fn strand_position_cas_update_rejects_incomplete_effect_position() {
 
 #[test]
 fn object_patch_family_builders_match_registered_payload_schema() {
-    let realm_id = "ck:realm:0196419b-0000-7000-8000-000000000001";
+    let realm_id = "ak:realm:0196419b-0000-7000-8000-000000000001";
     let actor = "did:web:alice.example";
-    let strand_id = "ck:strand:0196419b-0000-7000-8000-000000000002";
-    let morph_id = "ck:morph:0196419b-0000-7000-8000-000000000003";
-    let space_id = "ck:space:0196419b-0000-7000-8000-000000000004";
+    let strand_id = "ak:strand:0196419b-0000-7000-8000-000000000002";
+    let morph_id = "ak:morph:0196419b-0000-7000-8000-000000000003";
+    let space_id = "ak:space:0196419b-0000-7000-8000-000000000004";
 
     let events = [
         ck_ops::strand_tracks_update_set_primary(realm_id, actor, strand_id, "discussion")
@@ -525,17 +525,17 @@ fn object_patch_family_builders_match_registered_payload_schema() {
 #[test]
 fn strand_position_cas_update_emits_canonical_move_payload() {
     let op = ck_ops::strand_position_cas_update(
-        "ck:realm:0196419b-0000-7000-8000-000000000001",
+        "ak:realm:0196419b-0000-7000-8000-000000000001",
         "did:web:alice",
         "ck.strand.move",
-        "ck:space:0196419b-0000-7000-8000-000000000010",
-        "ck:strand:0196419b-0000-7000-8000-000000000020",
+        "ak:space:0196419b-0000-7000-8000-000000000010",
+        "ak:strand:0196419b-0000-7000-8000-000000000020",
         json!({
-            "list_space_id": "ck:space:0196419b-0000-7000-8000-000000000030",
+            "list_space_id": "ak:space:0196419b-0000-7000-8000-000000000030",
             "rank": "a1"
         }),
         json!({
-            "list_space_id": "ck:space:0196419b-0000-7000-8000-000000000040",
+            "list_space_id": "ak:space:0196419b-0000-7000-8000-000000000040",
             "rank": "b1"
         }),
     )
@@ -545,16 +545,16 @@ fn strand_position_cas_update_emits_canonical_move_payload() {
     assert_eq!(op.kind.as_str(), "ck.strand.move");
     assert_eq!(
         op.payload["board_space_id"],
-        "ck:space:0196419b-0000-7000-8000-000000000010"
+        "ak:space:0196419b-0000-7000-8000-000000000010"
     );
     assert_eq!(
         op.payload["target_space_id"],
-        "ck:space:0196419b-0000-7000-8000-000000000040"
+        "ak:space:0196419b-0000-7000-8000-000000000040"
     );
     assert_eq!(op.payload["rank"], "b1");
     assert_eq!(
         op.payload["expected_position"]["space_id"],
-        "ck:space:0196419b-0000-7000-8000-000000000030"
+        "ak:space:0196419b-0000-7000-8000-000000000030"
     );
     assert_eq!(op.payload["expected_position"]["rank"], "a1");
     assert!(op.payload.get("position").is_none());
@@ -563,17 +563,17 @@ fn strand_position_cas_update_emits_canonical_move_payload() {
 #[test]
 fn strand_position_cas_update_emits_canonical_reorder_payload() {
     let op = ck_ops::strand_position_cas_update(
-        "ck:realm:0196419b-0000-7000-8000-000000000001",
+        "ak:realm:0196419b-0000-7000-8000-000000000001",
         "did:web:alice",
         "ck.strand.reorder",
-        "ck:space:0196419b-0000-7000-8000-000000000010",
-        "ck:strand:0196419b-0000-7000-8000-000000000020",
+        "ak:space:0196419b-0000-7000-8000-000000000010",
+        "ak:strand:0196419b-0000-7000-8000-000000000020",
         json!({
-            "list_space_id": "ck:space:0196419b-0000-7000-8000-000000000030",
+            "list_space_id": "ak:space:0196419b-0000-7000-8000-000000000030",
             "rank": "a1"
         }),
         json!({
-            "list_space_id": "ck:space:0196419b-0000-7000-8000-000000000030",
+            "list_space_id": "ak:space:0196419b-0000-7000-8000-000000000030",
             "rank": "a2"
         }),
     )
@@ -583,11 +583,11 @@ fn strand_position_cas_update_emits_canonical_reorder_payload() {
     assert_eq!(op.kind.as_str(), "ck.strand.reorder");
     assert_eq!(
         op.payload["board_space_id"],
-        "ck:space:0196419b-0000-7000-8000-000000000010"
+        "ak:space:0196419b-0000-7000-8000-000000000010"
     );
     assert_eq!(
         op.payload["space_id"],
-        "ck:space:0196419b-0000-7000-8000-000000000030"
+        "ak:space:0196419b-0000-7000-8000-000000000030"
     );
     assert_eq!(op.payload["rank"], "a2");
     assert_eq!(op.payload["expected_position"]["rank"], "a1");
@@ -599,12 +599,12 @@ fn strand_position_cas_update_emits_canonical_reorder_payload() {
 #[test]
 fn space_create_emits_canonical_space_object() {
     let op = ck_ops::space_create(
-        "ck:realm:0196419b-0000-7000-8000-000000000001",
+        "ak:realm:0196419b-0000-7000-8000-000000000001",
         "did:web:alice",
-        "ck:space:0196419b-0000-7000-8000-000000000002",
+        "ak:space:0196419b-0000-7000-8000-000000000002",
         "list",
         "To Do",
-        Some("ck:space:0196419b-0000-7000-8000-000000000003"),
+        Some("ak:space:0196419b-0000-7000-8000-000000000003"),
         Some("U"),
     )
     .expect("builds")
@@ -612,22 +612,22 @@ fn space_create_emits_canonical_space_object() {
     assert_eq!(op.kind.as_str(), "ck.space.create");
     assert_eq!(
         op.local_target_ref(),
-        Some("ck:space:0196419b-0000-7000-8000-000000000002")
+        Some("ak:space:0196419b-0000-7000-8000-000000000002")
     );
     assert_eq!(op.payload["object"]["schema"], "ck.schema.space.v1");
     assert_eq!(
         op.payload["object"]["id"],
-        "ck:space:0196419b-0000-7000-8000-000000000002"
+        "ak:space:0196419b-0000-7000-8000-000000000002"
     );
     assert_eq!(
         op.payload["object"]["realm_id"],
-        "ck:realm:0196419b-0000-7000-8000-000000000001"
+        "ak:realm:0196419b-0000-7000-8000-000000000001"
     );
     assert!(op.payload["object"].get("space_id").is_none());
     assert_eq!(op.payload["object"]["kind"], "list");
     assert_eq!(
         op.payload["object"]["parent_space_id"],
-        "ck:space:0196419b-0000-7000-8000-000000000003"
+        "ak:space:0196419b-0000-7000-8000-000000000003"
     );
     assert_eq!(op.payload["object"]["rank"], "U");
     assert_eq!(op.payload["object"]["created_by"], "did:web:alice");
@@ -640,14 +640,14 @@ fn space_create_emits_canonical_space_object() {
 #[test]
 fn canonical_digest_is_stable_across_key_order() {
     let mut op_a = OperationBuilder::new(
-        "ck:realm:0196419b-0000-7000-8000-0000000000ab",
+        "ak:realm:0196419b-0000-7000-8000-0000000000ab",
         "did:web:alice",
         cokret_sdk::events::kinds::EventKind::MessageCreate,
     )
     .body(json!({"b": 2, "a": 1}))
     .build("node");
     op_a.event_id =
-        cokret_sdk::EventId::new("ck:event:0196419b-0000-7000-8000-0000000000ff").unwrap();
+        cokret_sdk::EventId::new("ak:event:0196419b-0000-7000-8000-0000000000ff").unwrap();
     op_a.hlc = cokret_sdk::Hlc::new("000000000000-0000-00000000".to_owned()).unwrap();
     op_a.actor_seq = 1;
 
@@ -664,7 +664,7 @@ fn canonical_digest_is_stable_across_key_order() {
 fn sign_ed25519_attaches_typed_proof() {
     use ed25519_dalek::SigningKey;
     let mut op = OperationBuilder::new(
-        "ck:realm:01904100-0000-7000-8000-000000000001",
+        "ak:realm:01904100-0000-7000-8000-000000000001",
         "did:web:alice",
         cokret_sdk::events::kinds::EventKind::MessageCreate,
     )
@@ -685,7 +685,7 @@ fn sign_ed25519_attaches_typed_proof() {
 #[test]
 fn sdk_event_conversion_accepts_unsigned_builder_for_signing() {
     let op = OperationBuilder::new(
-        "ck:realm:01904100-0000-7000-8000-000000000001",
+        "ak:realm:01904100-0000-7000-8000-000000000001",
         "did:web:alice.example",
         cokret_sdk::events::kinds::EventKind::MessageCreate,
     )
@@ -704,7 +704,7 @@ fn sdk_submit_event_conversion_preserves_signed_digest() {
     use ed25519_dalek::SigningKey;
 
     let mut op = OperationBuilder::new(
-        "ck:realm:01904100-0000-7000-8000-000000000001",
+        "ak:realm:01904100-0000-7000-8000-000000000001",
         "did:web:alice.example",
         cokret_sdk::events::kinds::EventKind::MessageCreate,
     )
@@ -728,7 +728,7 @@ fn sdk_submit_event_conversion_preserves_signed_digest() {
 #[test]
 fn require_proof_fails_when_unsigned() {
     let mut op = OperationBuilder::new(
-        "ck:realm:0196419b-0000-7000-8000-0000000000ab",
+        "ak:realm:0196419b-0000-7000-8000-0000000000ab",
         "did:web:alice",
         cokret_sdk::events::kinds::EventKind::MessageCreate,
     )
@@ -740,7 +740,7 @@ fn require_proof_fails_when_unsigned() {
 
 #[test]
 fn invite_helpers_emit_canonical_kinds() {
-    let invite_id = "ck:invite:01904100-0000-7000-8000-000000000001";
+    let invite_id = "ak:invite:01904100-0000-7000-8000-000000000001";
     let invite_delivery_target = cokret_sdk::InviteDeliveryTarget {
         recipient_service_did: cokret_sdk::Did::new("did:web:server.example").unwrap(),
         recipient_service_type: Some("principal_server".to_owned()),
@@ -748,7 +748,7 @@ fn invite_helpers_emit_canonical_kinds() {
     let introduction_evidence_digest =
         crate::canonical::canonical_sha256(&json!({"kind": "explicit_address"})).unwrap();
     let create = ck_ops::invite_create_structured(
-        "ck:realm:01904100-0000-7000-8000-000000000010",
+        "ak:realm:01904100-0000-7000-8000-000000000010",
         "did:web:alice.example",
         invite_id,
         "did:web:bob.example",
@@ -790,7 +790,7 @@ fn invite_helpers_emit_canonical_kinds() {
     assert_registered_payload_valid(&create);
 
     let accept = ck_ops::invite_accept(
-        "ck:realm:01904100-0000-7000-8000-000000000010",
+        "ak:realm:01904100-0000-7000-8000-000000000010",
         "did:web:bob.example",
         invite_id,
     )
@@ -802,7 +802,7 @@ fn invite_helpers_emit_canonical_kinds() {
     assert_registered_payload_valid(&accept);
 
     let cancel = ck_ops::invite_cancel(
-        "ck:realm:01904100-0000-7000-8000-000000000010",
+        "ak:realm:01904100-0000-7000-8000-000000000010",
         "did:web:alice.example",
         invite_id,
         Some("expired"),
@@ -818,9 +818,9 @@ fn invite_helpers_emit_canonical_kinds() {
 
 #[test]
 fn space_lifecycle_helpers_emit_canonical_kinds() {
-    let container_space_id = "ck:space:01904100-0000-7000-8000-1fb50799ad42";
+    let container_space_id = "ak:space:01904100-0000-7000-8000-1fb50799ad42";
     let archive = ck_ops::realm_archive(
-        "ck:realm:01904100-0000-7000-8000-1fb50799ad40",
+        "ak:realm:01904100-0000-7000-8000-1fb50799ad40",
         "did:web:alice.example",
         container_space_id,
     )
@@ -831,7 +831,7 @@ fn space_lifecycle_helpers_emit_canonical_kinds() {
     assert_eq!(archive.local_target_ref(), Some(container_space_id));
 
     let restore = ck_ops::space_restore(
-        "ck:realm:01904100-0000-7000-8000-1fb50799ad40",
+        "ak:realm:01904100-0000-7000-8000-1fb50799ad40",
         "did:web:alice.example",
         container_space_id,
     )
@@ -844,9 +844,9 @@ fn space_lifecycle_helpers_emit_canonical_kinds() {
 
 #[test]
 fn strand_lifecycle_helpers_emit_canonical_kinds() {
-    let strand_id = "ck:strand:01904100-0000-7000-8000-1fb50799ad50";
+    let strand_id = "ak:strand:01904100-0000-7000-8000-1fb50799ad50";
     let archive = ck_ops::strand_archive(
-        "ck:realm:0196419b-0000-7000-8000-0000000000aa",
+        "ak:realm:0196419b-0000-7000-8000-0000000000aa",
         "did:web:alice.example",
         strand_id,
     )
@@ -859,7 +859,7 @@ fn strand_lifecycle_helpers_emit_canonical_kinds() {
     assert_registered_payload_valid(&archive);
 
     let restore = ck_ops::strand_restore(
-        "ck:realm:0196419b-0000-7000-8000-0000000000aa",
+        "ak:realm:0196419b-0000-7000-8000-0000000000aa",
         "did:web:alice.example",
         strand_id,
     )
@@ -878,9 +878,9 @@ fn strand_lifecycle_helpers_emit_canonical_kinds() {
 #[test]
 fn applet_helpers_emit_canonical_kinds_and_target_refs() {
     let service_did = "did:web:applet.example";
-    let session_id = "ck:session:01904100-0000-7000-8000-aa55aa55aa55";
+    let session_id = "ak:session:01904100-0000-7000-8000-aa55aa55aa55";
     let applet_id = "did:web:applet.example";
-    let realm = "ck:realm:0196419b-0000-7000-8000-0000000000aa";
+    let realm = "ak:realm:0196419b-0000-7000-8000-0000000000aa";
     let actor = "did:web:alice.example";
 
     let reg = ck_ops::applet_registration(realm, actor, service_did, "extensions", &["read"])
@@ -932,7 +932,7 @@ fn applet_helpers_emit_canonical_kinds_and_target_refs() {
         realm,
         actor,
         applet_id,
-        "ck:event:01904100-0000-7000-8000-aa55aa55aa56",
+        "ak:event:01904100-0000-7000-8000-aa55aa55aa56",
         "external_network",
         "applet_unavailable",
         true,
@@ -945,7 +945,7 @@ fn applet_helpers_emit_canonical_kinds_and_target_refs() {
     assert_eq!(err.payload["applet_id"], applet_id);
     assert_eq!(
         err.payload["failed_transaction_ref"],
-        "ck:event:01904100-0000-7000-8000-aa55aa55aa56"
+        "ak:event:01904100-0000-7000-8000-aa55aa55aa56"
     );
     assert_eq!(err.payload["error_class"], "external_network");
     assert_eq!(err.payload["error_code"], "applet_unavailable");
@@ -957,8 +957,8 @@ fn applet_helpers_emit_canonical_kinds_and_target_refs() {
 #[test]
 fn agent_helpers_emit_canonical_kinds_and_target_refs() {
     let agent = "did:web:researcher.agent.example";
-    let session_id = "ck:agent_interop_session:01904100-0000-7000-8000-bb66bb66bb66";
-    let realm = "ck:realm:0196419b-0000-7000-8000-0000000000aa";
+    let session_id = "ak:agent_interop_session:01904100-0000-7000-8000-bb66bb66bb66";
+    let realm = "ak:realm:0196419b-0000-7000-8000-0000000000aa";
     let actor = "did:web:alice.example";
 
     let endpoint = ck_ops::agent_endpoint(realm, actor, agent, "ck.agent.v1", &["strand.read"])
@@ -975,7 +975,7 @@ fn agent_helpers_emit_canonical_kinds_and_target_refs() {
         session_id,
         "http_custom",
         json!({"query": "summarize"}),
-        "ck:grant:01904100-0000-7000-8000-000000000099",
+        "ak:grant:01904100-0000-7000-8000-000000000099",
     )
     .expect("builds")
     .build("node");
@@ -983,7 +983,7 @@ fn agent_helpers_emit_canonical_kinds_and_target_refs() {
     assert_eq!(start.payload["counterparty_agent"], agent);
     assert_eq!(
         start.payload["capability_grant"],
-        "ck:grant:01904100-0000-7000-8000-000000000099"
+        "ak:grant:01904100-0000-7000-8000-000000000099"
     );
     assert!(start.payload.get("params").is_none());
     assert_registered_payload_valid(&start);
@@ -1017,9 +1017,9 @@ fn agent_helpers_emit_canonical_kinds_and_target_refs() {
 
 #[test]
 fn message_revise_builder_uses_content_payload_schema() {
-    let message_id = "ck:message:01904100-0000-7000-8000-000000000123";
+    let message_id = "ak:message:01904100-0000-7000-8000-000000000123";
     let event = ck_ops::message_revise_content(
-        "ck:realm:0196419b-0000-7000-8000-0000000000aa",
+        "ak:realm:0196419b-0000-7000-8000-0000000000aa",
         "did:web:alice.example",
         message_id,
         cokret_sdk::ContentBlock::text("updated body"),
@@ -1052,7 +1052,7 @@ mod realm_organization_builder_tests {
     use super::*;
     use crate::operation::ck_ops::RealmOrganizationAuthorizationInput;
 
-    const REALM_ID: &str = "ck:realm:0196419b-0000-7000-8000-000000000010";
+    const REALM_ID: &str = "ak:realm:0196419b-0000-7000-8000-000000000010";
     const ACTOR: &str = "did:web:alice.example";
     const ORG_DID: &str = "did:webvh:example.test:orgs:org1";
     const ORG_VM: &str = "did:webvh:example.test:orgs:org1#k1";
@@ -1079,7 +1079,7 @@ mod realm_organization_builder_tests {
             issuer: "did:web:gov.example".to_owned(),
             issuer_role: RealmOrganizationIssuerRole::GovernanceService,
             verification_method: "did:web:gov.example#k1".to_owned(),
-            delegation_ref: Some("ck:grant:01904100-0000-7000-8000-000000000001".to_owned()),
+            delegation_ref: Some("ak:grant:01904100-0000-7000-8000-000000000001".to_owned()),
             executed_by: None,
             signed_at: signed_at(),
             proof: SignatureMaterial::NonEmptyString("c2ln".to_owned()),
@@ -1148,7 +1148,7 @@ mod realm_organization_builder_tests {
         );
         assert_eq!(
             event.payload["authorization"]["delegation_ref"],
-            "ck:grant:01904100-0000-7000-8000-000000000001"
+            "ak:grant:01904100-0000-7000-8000-000000000001"
         );
         assert_registered_payload_valid(&event);
     }
@@ -1240,7 +1240,7 @@ mod realm_organization_builder_tests {
     #[test]
     fn non_delegated_role_with_delegation_ref_is_rejected() {
         let mut auth = direct_org_auth();
-        auth.delegation_ref = Some("ck:grant:01904100-0000-7000-8000-000000000001".to_owned());
+        auth.delegation_ref = Some("ak:grant:01904100-0000-7000-8000-000000000001".to_owned());
         let error = ck_ops::realm_organization_statement(
             REALM_ID,
             ACTOR,

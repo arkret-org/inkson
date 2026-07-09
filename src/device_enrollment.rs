@@ -168,9 +168,9 @@ mod tests {
 
     fn signed_device_authorize(device_id: &str) -> serde_json::Value {
         json!({
-            "event_id": "ck:event:01964137-0000-7000-8000-000000000000",
+            "event_id": "ak:event:01964137-0000-7000-8000-000000000000",
             "kind": "ck.device.authorize",
-            "realm_id": "ck:realm:01964137-0000-7000-8000-000000000001",
+            "realm_id": "ak:realm:01964137-0000-7000-8000-000000000001",
             "actor_id": "did:webvh:example:users:alice",
             "executed_by": "did:webvh:example:auth-server",
             "authorization_ref": "did:webvh:example:users:alice#device-enrollment",
@@ -205,7 +205,7 @@ mod tests {
 
     #[test]
     fn accepts_matching_signed_device_authorize() {
-        let device_id = "ck:device:01964137-0000-7000-8000-000000000002";
+        let device_id = "ak:device:01964137-0000-7000-8000-000000000002";
         let event = signed_device_authorize(device_id);
         let parsed = parse_signed_device_authorize(&event, device_id).expect("parse");
         assert_eq!(parsed.kind.as_str(), "ck.device.authorize");
@@ -214,11 +214,11 @@ mod tests {
 
     #[test]
     fn accepts_e2e_service_attested_device_authorize() {
-        let device_id = "ck:device:01964137-0000-7000-8000-0000000000f1";
+        let device_id = "ak:device:01964137-0000-7000-8000-0000000000f1";
         let event = json!({
-            "event_id": "ck:event:01964137-0000-7000-8000-00000000d0e1",
+            "event_id": "ak:event:01964137-0000-7000-8000-00000000d0e1",
             "kind": "ck.device.authorize",
-            "realm_id": "ck:realm:01964137-0000-7000-8000-00000000c0de",
+            "realm_id": "ak:realm:01964137-0000-7000-8000-00000000c0de",
             "actor_id": "did:web:first.example",
             "executed_by": "did:web:auth.local.host",
             "authorization_ref": "did:web:first.example#device-enrollment",
@@ -257,9 +257,9 @@ mod tests {
 
     #[test]
     fn rejects_device_id_mismatch() {
-        let event = signed_device_authorize("ck:device:01964137-0000-7000-8000-000000000002");
+        let event = signed_device_authorize("ak:device:01964137-0000-7000-8000-000000000002");
         let err =
-            parse_signed_device_authorize(&event, "ck:device:01964137-0000-7000-8000-0000000000ff")
+            parse_signed_device_authorize(&event, "ak:device:01964137-0000-7000-8000-0000000000ff")
                 .expect_err("mismatch must fail closed");
         assert!(
             err.to_string()
@@ -269,7 +269,7 @@ mod tests {
 
     #[test]
     fn rejects_unsigned_event() {
-        let device_id = "ck:device:01964137-0000-7000-8000-000000000002";
+        let device_id = "ak:device:01964137-0000-7000-8000-000000000002";
         let mut event = signed_device_authorize(device_id);
         event["proofs"] = json!([]);
         let err = parse_signed_device_authorize(&event, device_id)
@@ -279,7 +279,7 @@ mod tests {
 
     #[test]
     fn rejects_wrong_kind() {
-        let device_id = "ck:device:01964137-0000-7000-8000-000000000002";
+        let device_id = "ak:device:01964137-0000-7000-8000-000000000002";
         let mut event = signed_device_authorize(device_id);
         event["kind"] = json!("ck.device.revoke");
         let err = parse_signed_device_authorize(&event, device_id)

@@ -114,9 +114,9 @@ mod tests {
             "inkson-disappearing-shred-{}.json",
             crate::operation::uuid_v7()
         ));
-        let realm = "ck:realm:019e4fd4-4e26-7cc9-af7e-d7102d6f4a22";
-        let strand = "ck:strand:019e4fd4-4e26-7cc9-af7e-d7102d6f4a22";
-        let message = "ck:message:019e4fd4-4e26-7cc9-af7e-d7102d6f4a24";
+        let realm = "ak:realm:019e4fd4-4e26-7cc9-af7e-d7102d6f4a22";
+        let strand = "ak:strand:019e4fd4-4e26-7cc9-af7e-d7102d6f4a22";
+        let message = "ak:message:019e4fd4-4e26-7cc9-af7e-d7102d6f4a24";
         let mut store = crate::local_state::LocalStateStore::with_path(path);
         store.save_private_plaintext(realm, strand, &format!("message:{message}"), "secret body");
         let realms = BTreeMap::from([(

@@ -87,7 +87,7 @@ pub fn parse_applet_identifier(applet_id: &str) -> Result<cokret_sdk::AppletIden
         cokret_sdk::Did::new(applet_id)
             .map(cokret_sdk::AppletIdentifier::Did)
             .map_err(|e| format!("invalid applet DID: {e}"))
-    } else if applet_id.starts_with("ck:applet:") {
+    } else if applet_id.starts_with("ak:applet:") {
         cokret_sdk::AppletId::new(applet_id)
             .map(cokret_sdk::AppletIdentifier::Cx)
             .map_err(|e| format!("invalid ck:applet:<uuidv7>: {e}"))

@@ -9,9 +9,9 @@ use crate::secure_key_store::{MemorySecureKeyStore, SecureKeyStoreError};
 
 fn genesis_governance_binding(group_id: &str) -> cokret_sdk::MlsGovernanceBindingPayload {
     let realm_id =
-        cokret_sdk::RealmId::new("ck:realm:01904100-0000-7000-8000-000000000001").unwrap();
+        cokret_sdk::RealmId::new("ak:realm:01904100-0000-7000-8000-000000000001").unwrap();
     let frontier =
-        vec![cokret_sdk::EventId::new("ck:event:01904100-0000-7000-8000-0000000000aa").unwrap()];
+        vec![cokret_sdk::EventId::new("ak:event:01904100-0000-7000-8000-0000000000aa").unwrap()];
     let policy_root = cokret_sdk::Hash::new(
         "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
     )
@@ -35,8 +35,8 @@ fn build_mls_genesis_payload_has_required_fields() {
     let mut state = temp_state_store("genesis-payload");
     let secure = MemorySecureKeyStore::new();
     let actor = "did:web:alice.example";
-    let device = "ck:device:01904100-0000-7000-8000-000000000001";
-    let realm = "ck:realm:01904100-0000-7000-8000-000000000001";
+    let device = "ak:device:01904100-0000-7000-8000-000000000001";
+    let realm = "ak:realm:01904100-0000-7000-8000-000000000001";
 
     let summary = ensure_creator_mls_snapshot(&mut state, &secure, realm, actor, device)
         .unwrap()
@@ -96,8 +96,8 @@ fn existing_epoch_zero_snapshot_restores_genesis_summary() {
     let mut state = temp_state_store("genesis-summary-restore");
     let secure = MemorySecureKeyStore::new();
     let actor = "did:web:alice.example";
-    let device = "ck:device:01904100-0000-7000-8000-000000000001";
-    let realm = "ck:realm:01904100-0000-7000-8000-000000000001";
+    let device = "ak:device:01904100-0000-7000-8000-000000000001";
+    let realm = "ak:realm:01904100-0000-7000-8000-000000000001";
 
     let fresh = ensure_creator_mls_snapshot(&mut state, &secure, realm, actor, device)
         .unwrap()
@@ -117,7 +117,7 @@ fn existing_epoch_zero_snapshot_restores_genesis_summary() {
 #[test]
 fn mls_genesis_emitted_flag_is_idempotent() {
     let mut state = temp_state_store("genesis-idempotent");
-    let realm = "ck:realm:01904100-0000-7000-8000-000000000001";
+    let realm = "ak:realm:01904100-0000-7000-8000-000000000001";
     assert!(!state.mls_genesis_emitted_for(realm));
     state.mark_mls_genesis_emitted(realm);
     assert!(state.mls_genesis_emitted_for(realm));
@@ -129,7 +129,7 @@ fn mls_genesis_emitted_flag_is_idempotent() {
 #[test]
 fn mls_history_backup_body_decodes_to_snapshot_envelope() {
     let envelope = crate::mls::persistence::encrypt_state(
-        "ck:realm:01904100-0000-7000-8000-000000000001",
+        "ak:realm:01904100-0000-7000-8000-000000000001",
         "group-a",
         8,
         b"opaque sdk state",
@@ -137,9 +137,9 @@ fn mls_history_backup_body_decodes_to_snapshot_envelope() {
         b"deterministic-salt",
     );
     let body = envelope.to_key_backup_body(
-        "ck:backup:01904100-0000-7000-8000-000000000002",
+        "ak:backup:01904100-0000-7000-8000-000000000002",
         "did:web:alice.example",
-        "ck:device:01904100-0000-7000-8000-000000000001",
+        "ak:device:01904100-0000-7000-8000-000000000001",
     );
 
     let decoded = decode_mls_history_backup_envelope(&body).unwrap();
@@ -157,7 +157,7 @@ fn mls_history_backup_body_decodes_to_snapshot_envelope() {
 #[test]
 fn mls_history_backup_decode_rejects_metadata_mismatch() {
     let envelope = crate::mls::persistence::encrypt_state(
-        "ck:realm:01904100-0000-7000-8000-000000000001",
+        "ak:realm:01904100-0000-7000-8000-000000000001",
         "group-a",
         8,
         b"opaque sdk state",
@@ -165,9 +165,9 @@ fn mls_history_backup_decode_rejects_metadata_mismatch() {
         b"deterministic-salt",
     );
     let mut body = envelope.to_key_backup_body(
-        "ck:backup:01904100-0000-7000-8000-000000000002",
+        "ak:backup:01904100-0000-7000-8000-000000000002",
         "did:web:alice.example",
-        "ck:device:01904100-0000-7000-8000-000000000001",
+        "ak:device:01904100-0000-7000-8000-000000000001",
     );
     body["contents"][0]["epoch"] = json!(7);
 
@@ -183,8 +183,8 @@ fn restore_mls_history_backup_saves_snapshot_when_fresh() {
     use cokret_sdk::{CokretMlsIdentity, DeviceId, Did};
 
     let actor = "did:web:alice.example";
-    let device = "ck:device:01904100-0000-7000-8000-000000000001";
-    let realm = "ck:realm:01904100-0000-7000-8000-000000000004";
+    let device = "ak:device:01904100-0000-7000-8000-000000000001";
+    let realm = "ak:realm:01904100-0000-7000-8000-000000000004";
     let store = MemorySecureKeyStore::new();
     let secret = load_or_create_device_snapshot_secret(&store, actor, device).unwrap();
     let identity = CokretMlsIdentity::new_basic(
@@ -203,7 +203,7 @@ fn restore_mls_history_backup_saves_snapshot_when_fresh() {
         b"deterministic-salt",
     );
     let body = envelope.to_key_backup_body(
-        "ck:backup:01904100-0000-7000-8000-000000000002",
+        "ak:backup:01904100-0000-7000-8000-000000000002",
         actor,
         device,
     );
@@ -225,8 +225,8 @@ fn restore_mls_history_backup_rejects_epoch_rollback() {
     use cokret_sdk::{CokretMlsIdentity, DeviceId, Did};
 
     let actor = "did:web:alice.example";
-    let device = "ck:device:01904100-0000-7000-8000-000000000001";
-    let realm = "ck:realm:01904100-0000-7000-8000-000000000002";
+    let device = "ak:device:01904100-0000-7000-8000-000000000001";
+    let realm = "ak:realm:01904100-0000-7000-8000-000000000002";
     let store = MemorySecureKeyStore::new();
     let secret = load_or_create_device_snapshot_secret(&store, actor, device).unwrap();
     let identity = CokretMlsIdentity::new_basic(
@@ -245,7 +245,7 @@ fn restore_mls_history_backup_rejects_epoch_rollback() {
         b"deterministic-salt",
     );
     let body = envelope.to_key_backup_body(
-        "ck:backup:01904100-0000-7000-8000-000000000002",
+        "ak:backup:01904100-0000-7000-8000-000000000002",
         actor,
         device,
     );
@@ -281,9 +281,9 @@ fn cross_device_recovery_restores_history_without_local_secret() {
     use crate::recovery_crypto::derive_vault_kek;
 
     let actor = "did:web:alice.example";
-    let device_a = "ck:device:01904100-0000-7000-8000-00000000000a";
-    let device_b = "ck:device:01904100-0000-7000-8000-00000000000b";
-    let realm = "ck:realm:01904100-0000-7000-8000-0000000000ab";
+    let device_a = "ak:device:01904100-0000-7000-8000-00000000000a";
+    let device_b = "ak:device:01904100-0000-7000-8000-00000000000b";
+    let realm = "ak:realm:01904100-0000-7000-8000-0000000000ab";
     let passphrase: &[u8] = b"correct horse battery staple";
 
     // --- Device A: account secret + a real MLS group + history backup body.
@@ -313,7 +313,7 @@ fn cross_device_recovery_restores_history_without_local_secret() {
     // path), so a sibling device can later unwrap it with that passphrase.
     let setup_kek = derive_vault_kek(passphrase).unwrap();
     let account_secret_body = build_mls_account_secret_backup_body_with_kek(
-        "ck:backup:01904100-0000-7000-8000-0000000000ac",
+        "ak:backup:01904100-0000-7000-8000-0000000000ac",
         actor,
         device_a,
         &setup_kek,

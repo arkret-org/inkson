@@ -2,12 +2,12 @@ use super::*;
 
 pub(crate) fn default_discussion_strand_id(realm_id: &str) -> String {
     let trimmed = realm_id.trim();
-    if trimmed.starts_with("ck:strand:") {
+    if trimmed.starts_with("ak:strand:") {
         trimmed.to_owned()
-    } else if let Some(suffix) = trimmed.strip_prefix("ck:realm:") {
-        format!("ck:strand:{suffix}")
+    } else if let Some(suffix) = trimmed.strip_prefix("ak:realm:") {
+        format!("ak:strand:{suffix}")
     } else {
-        format!("ck:strand:{}", trimmed.trim_start_matches("ck:"))
+        format!("ak:strand:{}", trimmed.trim_start_matches("ak:"))
     }
 }
 
@@ -60,7 +60,7 @@ pub(crate) fn channel_from_strand_projection(
 
     let strand_id = first_string_in_candidate_paths(&[strand], &[&["strand_id"], &["id"]])
         .map(str::trim)
-        .filter(|id| id.starts_with("ck:strand:"))
+        .filter(|id| id.starts_with("ak:strand:"))
         .map(ToOwned::to_owned)
         .unwrap_or_else(|| default_discussion_strand_id(realm_id));
     let name = first_string_in_candidate_paths(&[strand], &[&["title"], &["name"]])
@@ -145,7 +145,7 @@ pub(crate) fn strand_scope_circle_from_projection(strand: &Value) -> Option<Stra
         ],
     )
     .map(str::trim)
-    .filter(|value| value.starts_with("ck:circle:"))
+    .filter(|value| value.starts_with("ak:circle:"))
     .map(ToOwned::to_owned)?;
 
     let title = first_string_in_candidate_paths(
@@ -260,7 +260,7 @@ pub(crate) fn channel_from_strand_event(realm_id: &str, event: &Value) -> Option
         ],
     )?
     .trim();
-    if !strand_id.starts_with("ck:strand:") {
+    if !strand_id.starts_with("ak:strand:") {
         return None;
     }
 

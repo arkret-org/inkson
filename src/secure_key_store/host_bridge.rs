@@ -35,7 +35,7 @@ use super::{SecureKeyStore, SecureKeyStoreError};
 ///
 /// The host implementation contract:
 ///
-/// * **Android** — bridge methods call into a Java class (`com.cokret.inkson.SecureKeyStoreBridge`
+/// * **Android** — bridge methods call into a Java class (`com.arkret.inkson.SecureKeyStoreBridge`
 ///   or similar) via JNI. That class proxies to `java.security.KeyStore` with provider
 ///   `"AndroidKeyStore"`, aliasing entries as `"<service_name>:<key>"`. AES-256-GCM is the
 ///   recommended cipher; the platform Keystore can be configured to require user authentication /

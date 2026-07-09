@@ -7,7 +7,7 @@ use super::OidcDiscoveryDocument;
 /// Standard OIDC discovery (`/.well-known/openid-configuration`) for the
 /// chosen `methods[].oidc`. `openid_configuration` is taken verbatim from
 /// the auth method when present; otherwise it is derived from the issuer.
-/// No Cokret-private OAuth endpoint family is involved.
+/// No Arkret-private OAuth endpoint family is involved.
 pub async fn fetch_oidc_discovery(discovery_url: &str) -> anyhow::Result<OidcDiscoveryDocument> {
     let url = Url::parse(discovery_url)
         .with_context(|| format!("invalid OIDC discovery URL: {discovery_url}"))?;

@@ -201,7 +201,7 @@ pub fn RecoveryKeySetupPrompt(
                         }
                     } else {
                         div { class: "muted",
-                            "Generate the 24 words here, write them down offline, then continue with encrypted Realms. Cokret cannot recover these words for you."
+                            "Generate the 24 words here, write them down offline, then continue with encrypted Realms. Arkret cannot recover these words for you."
                         }
                     }
                     if !generated_now.trim().is_empty() {

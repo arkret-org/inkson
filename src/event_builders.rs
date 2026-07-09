@@ -91,7 +91,7 @@ fn event_requirements_with_schema(schema_ref: &str) -> EventRequirements {
 }
 
 /// R3.1: `handle` is the canonical `<localpart>:<domain>` wire form
-/// (renamed from `handle_uri` @ cokret-spec 7157ee8 — the `cokret://`
+/// (renamed from `handle_uri` @ arkret-spec 7157ee8 — the `arkret://`
 /// URI handle form has been retired).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct RealmBootstrapMember {
@@ -987,7 +987,7 @@ fn build_member_state_transition_event_with_binding(
         membership_payload = membership_payload.with_delivery_binding(delivery_binding);
     }
     let payload = membership_payload.to_value()?;
-    let cell = format!("ck:cell:ck.component.member.state.v1:{member_actor_id}");
+    let cell = format!("ak:cell:ck.component.member.state.v1:{member_actor_id}");
     let preconditions = if let Some(prior) = from_state {
         vec![head_eq_precondition(
             &cell,
@@ -1018,7 +1018,7 @@ fn build_member_state_transition_event_with_binding(
 }
 
 fn space_cell(cell_family: &str, space_id: &str) -> String {
-    format!("ck:cell:{cell_family}:{space_id}")
+    format!("ak:cell:{cell_family}:{space_id}")
 }
 
 /// Build the canonical `ck.schema.device_message.v1` send envelope:

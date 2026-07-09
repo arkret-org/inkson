@@ -23,13 +23,13 @@ const INKSON_OIDC_REDIRECT_URI_NATIVE: &str = "urn:inkson:oauth:callback";
 /// absent. Public (PKCE, no secret) client.
 const INKSON_OIDC_CLIENT_ID: &str = "inkson";
 // Device-binding scope prefix (see coauth docs/zh/reference/scopes.md).
-// Requesting `urn:cokret:client:device:{device_id}` at authorize time binds
+// Requesting `urn:arkret:client:device:{device_id}` at authorize time binds
 // the OAuth session to our stable, persisted device id so coauth introspection
-// returns a stable `org.cokret.device_id`. Without it, soland derives a
+// returns a stable `org.arkret.device_id`. Without it, soland derives a
 // per-OAuth-session device id (hash of session_id), which drifts on every
 // re-authentication and invalidates the globally-shared sync cursor
 // (`cursor_integrity_invalid` / "cursor device does not match request device").
-const COKRET_DEVICE_SCOPE_PREFIX: &str = "urn:cokret:client:device:";
+const ARKRET_DEVICE_SCOPE_PREFIX: &str = "urn:arkret:client:device:";
 
 #[derive(Clone, Debug, Deserialize)]
 pub struct OidcDiscoveryDocument {

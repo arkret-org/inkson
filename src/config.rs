@@ -15,7 +15,7 @@ const DEFAULT_PRINCIPAL_SERVERS: &[&str] = &[DEFAULT_SERVER_URL];
 const LOCAL_PROXY_SERVER_URL: &str = "https://local.host";
 const LOCAL_PROXY_SERVER_PORT: u16 = 8787;
 const DEFAULT_ACCOUNT_DID: &str = "";
-const DEVICE_ID_PREFIX: &str = "ck:device:";
+const DEVICE_ID_PREFIX: &str = "ak:device:";
 #[cfg(target_arch = "wasm32")]
 const CONFIG_STORAGE_KEY: &str = "inkson.config.v1";
 /// P3B.4: localStorage key for the multi-profile config holding the
@@ -181,7 +181,7 @@ impl AccountProfile {
         session_credential: impl Into<String>,
     ) -> Self {
         Self {
-            profile_id: format!("ck:profile:{}", uuid_v7()),
+            profile_id: format!("ak:profile:{}", uuid_v7()),
             label: String::new(),
             server_url: server_url.into(),
             account_did: account_did.into(),
@@ -890,7 +890,7 @@ mod tests {
         assert_eq!(config.server_url, "https://local.host");
         assert_eq!(config.principal_servers, vec!["https://local.host"]);
         assert!(config.account_did.is_empty());
-        assert!(config.device_id.starts_with("ck:device:"));
+        assert!(config.device_id.starts_with("ak:device:"));
         assert!(is_valid_device_id(&config.device_id));
         assert!(config.session_credential.is_empty());
     }
@@ -898,10 +898,10 @@ mod tests {
     #[test]
     fn validate_server_url_allows_https_and_loopback_http() {
         assert_eq!(
-            validate_server_url("https://cokret.example")
+            validate_server_url("https://arkret.example")
                 .unwrap()
                 .as_str(),
-            "https://cokret.example/"
+            "https://arkret.example/"
         );
         assert_eq!(
             validate_server_url("http://127.0.0.1:8787")
@@ -919,7 +919,7 @@ mod tests {
 
     #[test]
     fn validate_server_url_rejects_insecure_remote_http() {
-        let error = validate_server_url("http://cokret.example").unwrap_err();
+        let error = validate_server_url("http://arkret.example").unwrap_err();
         assert!(
             error
                 .to_string()
@@ -934,7 +934,7 @@ mod tests {
         store.save_fields(
             "http://server.local".to_owned(),
             "did:web:bob.example".to_owned(),
-            "ck:device:01964137-0000-7000-8000-000000000001".to_owned(),
+            "ak:device:01964137-0000-7000-8000-000000000001".to_owned(),
             "sx_token".to_owned(),
         );
 
@@ -943,7 +943,7 @@ mod tests {
             ClientConfig::from_fields(
                 "http://server.local",
                 "did:web:bob.example",
-                "ck:device:01964137-0000-7000-8000-000000000001",
+                "ak:device:01964137-0000-7000-8000-000000000001",
                 "sx_token",
             )
         );
@@ -957,7 +957,7 @@ mod tests {
         writer.save_fields(
             "http://persisted.local".to_owned(),
             "did:web:persisted.example".to_owned(),
-            "ck:device:01964137-0000-7000-8000-000000000002".to_owned(),
+            "ak:device:01964137-0000-7000-8000-000000000002".to_owned(),
             "sx_persisted".to_owned(),
         );
 
@@ -967,7 +967,7 @@ mod tests {
             ClientConfig::from_fields(
                 "http://persisted.local",
                 "did:web:persisted.example",
-                "ck:device:01964137-0000-7000-8000-000000000002",
+                "ak:device:01964137-0000-7000-8000-000000000002",
                 "sx_persisted",
             )
         );
@@ -1011,7 +1011,7 @@ mod tests {
             r#"{
                 "server_url": "https://legacy.example",
                 "account_did": "",
-                "device_id": "ck:device:01964137-0000-7000-8000-000000000003",
+                "device_id": "ak:device:01964137-0000-7000-8000-000000000003",
                 "session_credential": ""
             }"#,
         )
@@ -1048,7 +1048,7 @@ mod tests {
                 "https://stage.example".to_owned(),
             ],
             account_did: String::new(),
-            device_id: "ck:device:01964137-0000-7000-8000-000000000004".to_owned(),
+            device_id: "ak:device:01964137-0000-7000-8000-000000000004".to_owned(),
             session_credential: String::new(),
         };
         let writer = LocalConfigStore::with_path(path.clone());
@@ -1058,7 +1058,7 @@ mod tests {
         updater.save_fields(
             "https://stage.example".to_owned(),
             "did:web:stage.example:users:alice".to_owned(),
-            "ck:device:01964137-0000-7000-8000-000000000005".to_owned(),
+            "ak:device:01964137-0000-7000-8000-000000000005".to_owned(),
             String::new(),
         );
 
@@ -1078,9 +1078,9 @@ mod tests {
     fn upsert_and_activate_replaces_matching_profile() {
         let mut multi = MultiProfileConfig::default();
         let first = AccountProfile::new(
-            "https://cokret.example",
+            "https://arkret.example",
             "did:web:alice.example",
-            "ck:device:01964137-0000-7000-8000-000000000005",
+            "ak:device:01964137-0000-7000-8000-000000000005",
             "token-a",
         );
         let first_id = multi.upsert_and_activate(first);
@@ -1088,9 +1088,9 @@ mod tests {
         // Same (server_url, account_did) — should overwrite rather
         // than append a new row.
         let updated = AccountProfile::new(
-            "https://cokret.example",
+            "https://arkret.example",
             "did:web:alice.example",
-            "ck:device:01964137-0000-7000-8000-000000000006",
+            "ak:device:01964137-0000-7000-8000-000000000006",
             "token-b",
         );
         let updated_id = multi.upsert_and_activate(updated);
@@ -1104,29 +1104,29 @@ mod tests {
     fn activate_rejects_unknown_profile_id() {
         let mut multi = MultiProfileConfig::default();
         let profile = AccountProfile::new(
-            "https://cokret.example",
+            "https://arkret.example",
             "did:web:alice.example",
-            "ck:device:01964137-0000-7000-8000-000000000007",
+            "ak:device:01964137-0000-7000-8000-000000000007",
             "token",
         );
         multi.upsert_and_activate(profile);
-        assert!(!multi.activate("ck:profile:nonexistent"));
+        assert!(!multi.activate("ak:profile:nonexistent"));
     }
 
     #[test]
     fn remove_resets_active_pointer_when_active_removed() {
         let mut multi = MultiProfileConfig::default();
         let first = AccountProfile::new(
-            "https://cokret.example",
+            "https://arkret.example",
             "did:web:alice.example",
-            "ck:device:01964137-0000-7000-8000-000000000008",
+            "ak:device:01964137-0000-7000-8000-000000000008",
             "token-a",
         );
         let first_id = multi.upsert_and_activate(first);
         let second = AccountProfile::new(
-            "https://cokret.example",
+            "https://arkret.example",
             "did:web:bob.example",
-            "ck:device:01964137-0000-7000-8000-000000000009",
+            "ak:device:01964137-0000-7000-8000-000000000009",
             "token-b",
         );
         let second_id = multi.upsert_and_activate(second);
@@ -1146,9 +1146,9 @@ mod tests {
     fn active_as_client_config_round_trips_active_profile() {
         let mut multi = MultiProfileConfig::default();
         let profile = AccountProfile::new(
-            "https://cokret.example",
+            "https://arkret.example",
             "did:web:alice.example",
-            "ck:device:01964137-0000-7000-8000-00000000000a",
+            "ak:device:01964137-0000-7000-8000-00000000000a",
             "token",
         );
         multi.upsert_and_activate(profile);
@@ -1164,9 +1164,9 @@ mod tests {
 
         let mut multi = MultiProfileConfig::default();
         multi.upsert_and_activate(AccountProfile::new(
-            "https://cokret.example",
+            "https://arkret.example",
             "did:web:alice.example",
-            "ck:device:01964137-0000-7000-8000-00000000000b",
+            "ak:device:01964137-0000-7000-8000-00000000000b",
             "tok",
         ));
         store.save_profiles(&multi).expect("write profiles");
@@ -1186,7 +1186,7 @@ mod tests {
         store.save_fields(
             "https://redacted.example".to_owned(),
             "did:web:redacted.example".to_owned(),
-            "ck:device:01964137-0000-7000-8000-00000000000c".to_owned(),
+            "ak:device:01964137-0000-7000-8000-00000000000c".to_owned(),
             "sx_secret_credential".to_owned(),
         );
 
@@ -1209,7 +1209,7 @@ mod tests {
         let redacted = ClientConfig::from_fields(
             "https://explicit-secure-store.example",
             account_did,
-            "ck:device:01964137-0000-7000-8000-0000000000aa",
+            "ak:device:01964137-0000-7000-8000-0000000000aa",
             "",
         );
         let writer = LocalConfigStore::with_path(path.clone());
@@ -1249,9 +1249,9 @@ mod tests {
 
         let mut multi = MultiProfileConfig::default();
         multi.upsert_and_activate(AccountProfile::new(
-            "https://cokret.example",
+            "https://arkret.example",
             "did:web:profile-redacted.example",
-            "ck:device:01964137-0000-7000-8000-00000000000e",
+            "ak:device:01964137-0000-7000-8000-00000000000e",
             "sx_profile_credential",
         ));
         store.save_profiles(&multi).expect("write profiles");

@@ -112,7 +112,7 @@ pub(crate) fn keypackage_claim_record_to_mls_record(
 }
 
 pub(crate) fn mls_keypackage_claim_required_capabilities() -> Vec<String> {
-    cokret_sdk::COKRET_MLS_KEY_PACKAGE_CAPABILITIES
+    cokret_sdk::ARKRET_MLS_KEY_PACKAGE_CAPABILITIES
         .iter()
         .map(|capability| (*capability).to_owned())
         .collect()

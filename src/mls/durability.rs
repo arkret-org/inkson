@@ -144,7 +144,7 @@ pub fn seal_history_secrets(
 /// in `crate::hpke_backup` so the RRK domain is isolated
 /// (identity-did.md §8.3 / realm-and-space.md §2.3.1: the same key MUST NOT serve
 /// both `did_recovery` and `CokretRealmHistoryRecoveryKey`).
-const RRK_DERIVE_INFO: &[u8] = b"cokret-realm-history-recovery-key-x25519-v1";
+const RRK_DERIVE_INFO: &[u8] = b"arkret-realm-history-recovery-key-x25519-v1";
 
 /// Derive the offline RRK X25519 keypair (raw 32-byte `(private, public)`) from
 /// the canonical 24-word recovery credential, in the history-recovery domain.
@@ -408,7 +408,7 @@ mod tests {
         let document = did_document(&recipient, &pk32);
 
         let resolved = resolve_recovery_recipient(&recipient, &document).unwrap();
-        let realm = "ck:realm:01904100-0000-7000-8000-e2eeae0d0001";
+        let realm = "ak:realm:01904100-0000-7000-8000-e2eeae0d0001";
         let rows = vec![(7u64, vec![7u8; 32]), (8u64, vec![8u8; 32])];
         let payload = seal_history_secrets(
             &resolved,
@@ -417,7 +417,7 @@ mod tests {
             7,
             8,
             json!("sha256:policy"),
-            "ck:device:01904100-0000-7000-8000-00000000ae01",
+            "ak:device:01904100-0000-7000-8000-00000000ae01",
             json!({}),
         )
         .unwrap();

@@ -26,7 +26,7 @@ pub struct RetryableErrorProps {
     /// User-facing error message. Should already be localized /
     /// human-readable; this component does not transform the string.
     pub message: String,
-    /// Optional soland `x-cokret-request-id` for cross-log lookup.
+    /// Optional soland `x-arkret-request-id` for cross-log lookup.
     /// When present a "Copy ID" button is rendered alongside the
     /// message.
     #[props(default)]
@@ -157,14 +157,14 @@ mod tests {
 
     #[test]
     fn long_request_id_is_shortened() {
-        let long = "ck:request:01964137-0000-7000-8000-000000000010";
+        let long = "ak:request:01964137-0000-7000-8000-000000000010";
         let formatted = if long.len() > 12 {
             format!("{}…{}", &long[..6], &long[long.len() - 4..])
         } else {
             long.to_owned()
         };
         assert!(formatted.contains('…'));
-        assert!(formatted.starts_with("ck:req"));
+        assert!(formatted.starts_with("ak:req"));
         assert!(formatted.ends_with("0010"));
     }
 }

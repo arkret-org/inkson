@@ -4,30 +4,30 @@ import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { mockCokretContract } from "./mockCokretContract";
 
-const DEMO_REALM = "ck:realm:0196419b-0000-7000-8000-000000000000";
-const SETUP_REALM = "ck:realm:01js0setupflow000000000000";
-const LOW_FLOOR_REALM = "ck:realm:01lowfloor0000000000000000";
-const CHILD_REALM = "ck:realm:01launchchild0000000000000";
-const GRANDCHILD_REALM = "ck:realm:01launchdeep00000000000000";
-const DIRECT_BOB_REALM = "ck:realm:01directbob000000000000000";
-const DIRECT_BOB_STRAND = "ck:strand:01directbob0000000000000000";
-const DEMO_CIRCLE = "ck:circle:0196419b-0000-7000-8000-00000000c1c1";
-const DEMO_BOARD_SPACE = "ck:space:0196419b-0000-7000-8000-00000000b0a0";
-const DEMO_SECOND_BOARD_SPACE = "ck:space:0196419b-0000-7000-8000-00000000b0b0";
-const DEMO_TODO_LIST = "ck:space:01list-todo000000000000000000";
-const DEMO_PROGRESS_LIST = "ck:space:01list-progress00000000000000";
-const DEMO_DONE_LIST = "ck:space:01list-done00000000000000000";
-const DEMO_SECOND_LIST = "ck:space:01list-secondary000000000000";
+const DEMO_REALM = "ak:realm:0196419b-0000-7000-8000-000000000000";
+const SETUP_REALM = "ak:realm:01js0setupflow000000000000";
+const LOW_FLOOR_REALM = "ak:realm:01lowfloor0000000000000000";
+const CHILD_REALM = "ak:realm:01launchchild0000000000000";
+const GRANDCHILD_REALM = "ak:realm:01launchdeep00000000000000";
+const DIRECT_BOB_REALM = "ak:realm:01directbob000000000000000";
+const DIRECT_BOB_STRAND = "ak:strand:01directbob0000000000000000";
+const DEMO_CIRCLE = "ak:circle:0196419b-0000-7000-8000-00000000c1c1";
+const DEMO_BOARD_SPACE = "ak:space:0196419b-0000-7000-8000-00000000b0a0";
+const DEMO_SECOND_BOARD_SPACE = "ak:space:0196419b-0000-7000-8000-00000000b0b0";
+const DEMO_TODO_LIST = "ak:space:01list-todo000000000000000000";
+const DEMO_PROGRESS_LIST = "ak:space:01list-progress00000000000000";
+const DEMO_DONE_LIST = "ak:space:01list-done00000000000000000";
+const DEMO_SECOND_LIST = "ak:space:01list-secondary000000000000";
 const DEMO_STRAND_LEGAL_REVIEW =
-  "ck:strand:0196419b-0000-7000-8000-000000000101";
+  "ak:strand:0196419b-0000-7000-8000-000000000101";
 const DEMO_STRAND_ONBOARDING_COPY =
-  "ck:strand:0196419b-0000-7000-8000-000000000102";
+  "ak:strand:0196419b-0000-7000-8000-000000000102";
 const DEMO_STRAND_SECURITY_SIGNOFF =
-  "ck:strand:0196419b-0000-7000-8000-000000000103";
+  "ak:strand:0196419b-0000-7000-8000-000000000103";
 const DEMO_STRAND_SECONDARY_CARD =
-  "ck:strand:0196419b-0000-7000-8000-000000000104";
+  "ak:strand:0196419b-0000-7000-8000-000000000104";
 const DEMO_BLOB_REF =
-  "ck:blob:sha256:01015dc8af66d01f557ea63f13538f1964848840a350c5311d1efc8ad138bb91";
+  "ak:blob:sha256:01015dc8af66d01f557ea63f13538f1964848840a350c5311d1efc8ad138bb91";
 const ENROLLMENT_AUTHORITY_DID =
   "did:key:z6MknBuwKMPAzbhp6EwCnaxsEDk4G2KFeWRu273gYVuTY5jw";
 const ENROLLMENT_AUTHORITY_VM = `${ENROLLMENT_AUTHORITY_DID}#z6MknBuwKMPAzbhp6EwCnaxsEDk4G2KFeWRu273gYVuTY5jw`;
@@ -226,7 +226,7 @@ export async function mockCokretApi(
     return null;
   };
   const currentDeviceId =
-    options.currentDeviceId ?? "ck:device:01964137-0000-7000-8000-0000000000a1";
+    options.currentDeviceId ?? "ak:device:01964137-0000-7000-8000-0000000000a1";
   const includeDemoRealms = options.includeDemoRealms ?? true;
   const includeLowFloorRealm = options.includeLowFloorRealm ?? false;
   const personalAgentPairingExpiresAt =
@@ -234,7 +234,7 @@ export async function mockCokretApi(
   const accountDevices = new Map<string, MockAccountDevice>();
   for (const device of options.accountDevices ?? [
     {
-      device_id: "ck:device:01964137-0000-7000-8000-0000000000a1",
+      device_id: "ak:device:01964137-0000-7000-8000-0000000000a1",
       status: "active",
       display_name: "Current device",
       authorized_at: "2026-04-28T12:00:00Z",
@@ -447,7 +447,7 @@ export async function mockCokretApi(
         scopes_supported: [
           "openid",
           "profile",
-          "urn:cokret:principal-server:session.bind",
+          "urn:arkret:principal-server:session.bind",
         ],
       });
     }
@@ -471,9 +471,9 @@ export async function mockCokretApi(
       const deviceId =
         typeof body.device_id === "string" ? body.device_id : currentDeviceId;
       const authorizedEvent: Record<string, unknown> = {
-        event_id: "ck:event:01964137-0000-7000-8000-00000000d0e1",
+        event_id: "ak:event:01964137-0000-7000-8000-00000000d0e1",
         kind: "ck.device.authorize",
-        realm_id: "ck:realm:01964137-0000-7000-8000-00000000c0de",
+        realm_id: "ak:realm:01964137-0000-7000-8000-00000000c0de",
         actor_id: accountPrincipalId,
         executed_by: ENROLLMENT_AUTHORITY_DID,
         authorization_ref: `${accountPrincipalId}#enrollment-authority`,
@@ -545,7 +545,7 @@ export async function mockCokretApi(
                 scopes: [
                   "openid",
                   "profile",
-                  "urn:cokret:principal-server:session.bind",
+                  "urn:arkret:principal-server:session.bind",
                 ],
                 grant_exchange: { proof_kind: "oidc_code_exchange" },
               },
@@ -556,7 +556,7 @@ export async function mockCokretApi(
       }
       return json(route, {
         service_did: "did:web:server.local",
-        trust_domain: "ck:trust_domain:server.local",
+        trust_domain: "ak:trust_domain:server.local",
         service_type: "principal_server",
         protocol_version: "1.0",
         supported_profiles: [
@@ -687,7 +687,7 @@ export async function mockCokretApi(
               scopes: [
                 "openid",
                 "profile",
-                "urn:cokret:principal-server:session.bind",
+                "urn:arkret:principal-server:session.bind",
               ],
               grant_exchange: { proof_kind: "oidc_code_exchange" },
             },
@@ -781,7 +781,7 @@ export async function mockCokretApi(
       // (17 required fields; inkson decodes the SDK ServerDescription).
       return json(route, {
         service_did: "did:web:server.local",
-        trust_domain: "ck:trust_domain:server.local",
+        trust_domain: "ak:trust_domain:server.local",
         service_type: "principal_server",
         protocol_version: "1.0",
         supported_profiles: ["ck.profile.core_event_store.v1"],
@@ -807,7 +807,7 @@ export async function mockCokretApi(
               scopes: [
                 "openid",
                 "profile",
-                "urn:cokret:principal-server:session.bind",
+                "urn:arkret:principal-server:session.bind",
               ],
               grant_exchange: { proof_kind: "oidc_code_exchange" },
             },
@@ -826,7 +826,7 @@ export async function mockCokretApi(
         compat_surfaces: [],
         development_mode: true,
         // Strict typed EventId — must be a canonical ck:event:<uuidv7>.
-        frontier: ["ck:event:0196419b-0000-7000-8000-00000000e2e0"],
+        frontier: ["ak:event:0196419b-0000-7000-8000-00000000e2e0"],
       });
     }
 
@@ -835,14 +835,14 @@ export async function mockCokretApi(
       route.request().method() === "POST"
     ) {
       const body = await route.request().postDataJSON();
-      if (!route.request().headers()["x-cokret-request-id"]) {
+      if (!route.request().headers()["x-arkret-request-id"]) {
         return json(
           route,
           {
             ok: false,
             error: {
               code: "missing_request_id",
-              message: "missing x-cokret-request-id",
+              message: "missing x-arkret-request-id",
             },
           },
           428,
@@ -1053,7 +1053,7 @@ export async function mockCokretApi(
         room_id: roomId,
         receipt: {
           kind: "ck.open.mimi.command.update_room",
-          operation_id: "ck:operation:mimi-room-update",
+          operation_id: "ak:operation:mimi-room-update",
         },
       });
     }
@@ -1067,7 +1067,7 @@ export async function mockCokretApi(
         accepted: ["did:web:remote.example"],
         receipt: {
           kind: "ck.open.mimi.command.notify",
-          notification_id: "ck:mimi:notify:e2e",
+          notification_id: "ak:mimi:notify:e2e",
         },
       });
     }
@@ -1077,7 +1077,7 @@ export async function mockCokretApi(
       route.request().method() === "POST"
     ) {
       return json(route, {
-        event_ref: "ck:event:01964137-0000-7000-8000-00000000d0aa",
+        event_ref: "ak:event:01964137-0000-7000-8000-00000000d0aa",
         delivery: {
           kind: "ck.mimi.mapping_receipt",
           profile: "ck.profile.mimi_interop.v1",
@@ -1085,7 +1085,7 @@ export async function mockCokretApi(
           source_format: "text/markdown;variant=GFM-MIMI",
           target_format: "ck.message.create",
           original_envelope_hash: "sha256:e2e-mimi-envelope",
-          mapped_operation_id: "ck:operation:mimi-submit-e2e",
+          mapped_operation_id: "ak:operation:mimi-submit-e2e",
           mimi_message_id: "mimi-msg-e2e",
         },
         rejected: [],
@@ -1104,7 +1104,7 @@ export async function mockCokretApi(
           mls_group_id: "mls-group-01",
           policy_root: "sha256:e2e-policy-root",
         },
-        room_binding_ref: "ck:event:01964137-0000-7000-8000-00000000d0ab",
+        room_binding_ref: "ak:event:01964137-0000-7000-8000-00000000d0ab",
         proofs: [
           {
             kind: "ck.open.mimi.query.group_info",
@@ -1120,7 +1120,7 @@ export async function mockCokretApi(
     ) {
       return json(route, {
         ok: true,
-        consent_id: "ck:mimi-consent:e2e",
+        consent_id: "ak:mimi-consent:e2e",
         state: "requested",
         receipt: { kind: "ck.open.mimi.command.request_consent" },
       });
@@ -1132,7 +1132,7 @@ export async function mockCokretApi(
     ) {
       return json(route, {
         ok: true,
-        consent_id: "ck:mimi-consent:e2e",
+        consent_id: "ak:mimi-consent:e2e",
         state: "accepted",
         receipt: { kind: "ck.open.mimi.command.update_consent" },
       });
@@ -1169,7 +1169,7 @@ export async function mockCokretApi(
     ) {
       return json(route, {
         ok: true,
-        report_id: "ck:report:mimi-e2e",
+        report_id: "ak:report:mimi-e2e",
         status: "queued",
         receipt: { kind: "ck.open.mimi.command.report_abuse" },
       });
@@ -1206,7 +1206,7 @@ export async function mockCokretApi(
           state: "active",
           devices: accountDeviceSummaries(),
           profile: {
-            id: "ck:actor_profile:01964137-0000-7000-8000-0000000000a1",
+            id: "ak:actor_profile:01964137-0000-7000-8000-0000000000a1",
             schema: "ck.schema.actor_profile.v1",
             principal_id: body.principal_id,
             actor_kind: "user",
@@ -1238,7 +1238,7 @@ export async function mockCokretApi(
           : undefined;
       return json(route, {
         profile: {
-          id: "ck:actor_profile:01964137-0000-7000-8000-0000000000a1",
+          id: "ak:actor_profile:01964137-0000-7000-8000-0000000000a1",
           schema: "ck.schema.actor_profile.v1",
           principal_id: "did:web:alice.example",
           actor_kind: "user",
@@ -1283,7 +1283,7 @@ export async function mockCokretApi(
             {
               kind: "ck.notification",
               notification_id: "notif-invite-1",
-              invite_id: "ck:invite:01904100-0000-7000-8000-000000000099",
+              invite_id: "ak:invite:01904100-0000-7000-8000-000000000099",
               title: "New invite",
               body: "You were invited to review Demo Realm",
               realm_id: DEMO_REALM,
@@ -1296,7 +1296,7 @@ export async function mockCokretApi(
         : [];
       const frame = {
         kind: "delta",
-        cursor: "ck:cursor:e2e-2",
+        cursor: "ak:cursor:e2e-2",
         realms: {
           ...Object.fromEntries(
             createdRealms.map((realm) => [
@@ -1323,7 +1323,7 @@ export async function mockCokretApi(
             ? {
                 [DEMO_REALM]: {
                   summary: {
-                    title: "Cokret Demo Realm",
+                    title: "Arkret Demo Realm",
                     summary: "Shared demo Realm served by mocked server",
                     encryption_profile: "mls_rfc9420",
                   },
@@ -1389,7 +1389,7 @@ export async function mockCokretApi(
       return route.fulfill({
         status: 200,
         contentType: "application/x-ndjson",
-        body: `${JSON.stringify(frame)}\n${JSON.stringify({ kind: "catchup_complete", cursor: "ck:cursor:e2e-2" })}\n`,
+        body: `${JSON.stringify(frame)}\n${JSON.stringify({ kind: "catchup_complete", cursor: "ak:cursor:e2e-2" })}\n`,
       });
     }
 
@@ -1411,11 +1411,11 @@ export async function mockCokretApi(
       return json(route, {
         organizations: [
           {
-            organization_did: "did:web:org.cokret.example",
-            handle: "cokret.example",
-            display_name: "Cokret Labs",
+            organization_did: "did:web:org.arkret.example",
+            handle: "arkret.example",
+            display_name: "Arkret Labs",
             as_of: "2026-06-19T00:00:00Z",
-            source_refs: ["ck:event:0196419b-0000-7000-8000-0000000000d1"],
+            source_refs: ["ak:event:0196419b-0000-7000-8000-0000000000d1"],
             policy_revision: "local",
           },
         ],
@@ -1568,7 +1568,7 @@ export async function mockCokretApi(
     ) {
       return json(route, {
         service_did: "did:web:server.local",
-        trust_domain: "ck:trust_domain:server.local",
+        trust_domain: "ak:trust_domain:server.local",
         service_type: "directory_service",
         protocol_version: "1.0",
         supported_profiles: ["ck.profile.directory_service.v1"],
@@ -1667,7 +1667,7 @@ export async function mockCokretApi(
       return json(route, {
         allowed: true,
         reason_code: "frontier_current",
-        grants: ["ck:grant:0196419b-0000-7000-8000-00000000e2e1"],
+        grants: ["ak:grant:0196419b-0000-7000-8000-00000000e2e1"],
         obligations: [{ type: "audit", reason_required: false }],
       });
     }
@@ -1679,7 +1679,7 @@ export async function mockCokretApi(
       return json(route, {
         grants: [
           {
-            grant_id: "ck:grant:0196419b-0000-7000-8000-00000000e2e1",
+            grant_id: "ak:grant:0196419b-0000-7000-8000-00000000e2e1",
             issuer: "did:web:admin.example",
             subject: url.searchParams.get("subject"),
             actions: ["space.read", "message.create"],
@@ -1695,8 +1695,8 @@ export async function mockCokretApi(
               },
             ],
             delegation_chain: [
-              "ck:grant:0196419b-0000-7000-8000-00000000e2e0",
-              "ck:grant:0196419b-0000-7000-8000-00000000e2e1",
+              "ak:grant:0196419b-0000-7000-8000-00000000e2e0",
+              "ak:grant:0196419b-0000-7000-8000-00000000e2e1",
             ],
           },
         ],
@@ -1722,27 +1722,27 @@ export async function mockCokretApi(
           {
             peer: "did:web:bob.example",
             state: "accepted",
-            request_event_ref: "ck:event:0196419b-0000-7000-8000-000000000101",
-            response_event_ref: "ck:event:0196419b-0000-7000-8000-000000000102",
+            request_event_ref: "ak:event:0196419b-0000-7000-8000-000000000101",
+            response_event_ref: "ak:event:0196419b-0000-7000-8000-000000000102",
             granted_by_me: ["direct_message", "invite"],
             granted_to_me: ["direct_message", "invite"],
             bidirectional_scopes: ["direct_message", "invite"],
             effective_scopes: ["direct_message", "invite"],
             // U3 — consent grant the peer gave me for the invite scope.
             invite_consent_grant_ref:
-              "ck:event:0196419b-0000-7000-8000-000000000102",
+              "ak:event:0196419b-0000-7000-8000-000000000102",
             direct_conversation: {
               realm_id: DIRECT_BOB_REALM,
               main_strand_id: DIRECT_BOB_STRAND,
               binding_event_ref:
-                "ck:event:0196419b-0000-7000-8000-000000000103",
+                "ak:event:0196419b-0000-7000-8000-000000000103",
               state: "active",
             },
           },
           {
             peer: "did:web:carol.example",
             state: "pending_outgoing",
-            request_event_ref: "ck:event:0196419b-0000-7000-8000-000000000104",
+            request_event_ref: "ak:event:0196419b-0000-7000-8000-000000000104",
             granted_by_me: ["invite"],
             granted_to_me: [],
             bidirectional_scopes: [],
@@ -1751,7 +1751,7 @@ export async function mockCokretApi(
           {
             peer: "did:web:dave.example",
             state: "pending_incoming",
-            request_event_ref: "ck:event:0196419b-0000-7000-8000-000000000105",
+            request_event_ref: "ak:event:0196419b-0000-7000-8000-000000000105",
             granted_by_me: [],
             granted_to_me: ["direct_message"],
             bidirectional_scopes: [],
@@ -1765,8 +1765,8 @@ export async function mockCokretApi(
             // the realm-invite-from-contacts picker (no fallback ref).
             peer: "did:web:erin.example",
             state: "accepted",
-            request_event_ref: "ck:event:0196419b-0000-7000-8000-000000000106",
-            response_event_ref: "ck:event:0196419b-0000-7000-8000-000000000107",
+            request_event_ref: "ak:event:0196419b-0000-7000-8000-000000000106",
+            response_event_ref: "ak:event:0196419b-0000-7000-8000-000000000107",
             granted_by_me: ["direct_message", "invite"],
             granted_to_me: ["direct_message", "invite"],
             bidirectional_scopes: ["direct_message", "invite"],
@@ -1784,7 +1784,7 @@ export async function mockCokretApi(
       route.request().method() === "POST"
     ) {
       return json(route, {
-        request_event_ref: "ck:event:0196419b-0000-7000-8000-000000000108",
+        request_event_ref: "ak:event:0196419b-0000-7000-8000-000000000108",
         requester_consent_refs: [],
         state: "pending_outgoing",
       });
@@ -1797,10 +1797,10 @@ export async function mockCokretApi(
     ) {
       const body = await route.request().postDataJSON();
       return json(route, {
-        response_event_ref: "ck:event:0196419b-0000-7000-8000-000000000109",
+        response_event_ref: "ak:event:0196419b-0000-7000-8000-000000000109",
         consent_grant_refs:
           body.action === "accept"
-            ? ["ck:event:0196419b-0000-7000-8000-000000000110"]
+            ? ["ak:event:0196419b-0000-7000-8000-000000000110"]
             : [],
         state: body.action === "accept" ? "accepted" : "rejected",
       });
@@ -1812,7 +1812,7 @@ export async function mockCokretApi(
       route.request().method() === "POST"
     ) {
       return json(route, {
-        tombstone_event_ref: "ck:event:0196419b-0000-7000-8000-000000000111",
+        tombstone_event_ref: "ak:event:0196419b-0000-7000-8000-000000000111",
         consent_revoke_refs: [],
         state: "tombstoned",
         partial_revoke: false,
@@ -1858,7 +1858,7 @@ export async function mockCokretApi(
         state: "found",
         realm_id: DIRECT_BOB_REALM,
         main_strand_id: DIRECT_BOB_STRAND,
-        binding_event_ref: "ck:event:0196419b-0000-7000-8000-000000000103",
+        binding_event_ref: "ak:event:0196419b-0000-7000-8000-000000000103",
         created: false,
       });
     }
@@ -1895,7 +1895,7 @@ export async function mockCokretApi(
         principal_id: accountPrincipalId,
         state: "active",
         profile: {
-          id: "ck:actor_profile:01964137-0000-7000-8000-0000000000a1",
+          id: "ak:actor_profile:01964137-0000-7000-8000-0000000000a1",
           schema: "ck.schema.actor_profile.v1",
           principal_id: accountPrincipalId,
           actor_kind: "user",
@@ -2035,7 +2035,7 @@ export async function mockCokretApi(
         );
       }
       const authorizedEventRef =
-        "ck:event:01964137-0000-7000-8000-00000000a601";
+        "ak:event:01964137-0000-7000-8000-00000000a601";
       agent.status = "active";
       agent.updated_at = "2026-07-06T00:05:00Z";
       const previousKeyState = personalAgentKeyStates.get(agentPrincipalId) ?? {};
@@ -2062,10 +2062,10 @@ export async function mockCokretApi(
       const body = await route.request().postDataJSON();
       const deviceId =
         body.new_device_pubkey?.kid ??
-        "ck:device:01964137-0000-7000-8000-0000000000b2";
+        "ak:device:01964137-0000-7000-8000-0000000000b2";
       return json(route, {
         device_id: deviceId,
-        authorized_event_ref: "ck:event:01964137-0000-7000-8000-00000000d001",
+        authorized_event_ref: "ak:event:01964137-0000-7000-8000-00000000d001",
         device_grant: { status: "active" },
         key_backup_hint: {},
       });
@@ -2078,7 +2078,7 @@ export async function mockCokretApi(
       return json(route, {
         messages: [],
         ack_token: "mock-device-messages-ack",
-        next_cursor: "ck:cursor:devmsg-1",
+        next_cursor: "ak:cursor:devmsg-1",
         has_more: false,
         limited: false,
       });
@@ -2141,7 +2141,7 @@ export async function mockCokretApi(
     ) {
       return json(route, {
         ok: true,
-        registration_id: "ck:push:e2e",
+        registration_id: "ak:push:e2e",
         expires_at: null,
       });
     }
@@ -2177,10 +2177,10 @@ export async function mockCokretApi(
       const body = await route.request().postDataJSON();
       return json(route, {
         realm_id: body.realm_id ?? DEMO_REALM,
-        call_id: body.call_id ?? "ck:call:01964137-0000-7000-8000-000000000001",
+        call_id: body.call_id ?? "ak:call:01964137-0000-7000-8000-000000000001",
         actor_id: body.actor_id ?? "did:web:alice.example",
         device_id:
-          body.device_id ?? "ck:device:01904100-0000-7000-8000-a11ce0000001",
+          body.device_id ?? "ak:device:01904100-0000-7000-8000-a11ce0000001",
         ice_servers: [
           { urls: ["stun:stun.server.local:3478"] },
           {
@@ -2216,7 +2216,7 @@ export async function mockCokretApi(
       route.request().method() === "POST"
     ) {
       return json(route, {
-        report_id: "ck:report:e2e",
+        report_id: "ak:report:e2e",
         status: "queued",
         routed_to: ["did:web:server.local#moderation"],
       });
@@ -2333,13 +2333,13 @@ async function contractRequestBody(route: Route) {
 function realmPreview() {
   return {
     realm_id: DEMO_REALM,
-    title: "Cokret Demo Realm",
+    title: "Arkret Demo Realm",
     summary: "Shared demo Realm served by mocked server",
     discoverability: "public",
     join_rule: "public",
     member_count_bucket: "1-10",
     as_of: "2026-06-13T00:00:00Z",
-    source_refs: ["ck:event:0196419b-0000-7000-8000-000000000001"],
+    source_refs: ["ak:event:0196419b-0000-7000-8000-000000000001"],
     policy_revision: "mock-policy-rev",
   };
 }
@@ -2357,7 +2357,7 @@ function joinCandidate() {
     source: "directory_ingest",
     seal_basis: {
       leaves: [
-        "ck:seal:sha256:1111111111111111111111111111111111111111111111111111111111111111",
+        "ak:seal:sha256:1111111111111111111111111111111111111111111111111111111111111111",
       ],
       control_event_set_root:
         "sha256:2222222222222222222222222222222222222222222222222222222222222222",
@@ -2399,7 +2399,7 @@ function mimiProviderDirectory() {
         "application/mimi-content",
         "text/plain;charset=utf-8",
         "text/markdown;variant=GFM-MIMI",
-        "application/vnd.cokret.content+json",
+        "application/vnd.arkret.content+json",
       ],
       room_policy_components: ["roles", "join_rules", "history_visibility"],
     },

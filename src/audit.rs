@@ -185,14 +185,14 @@ mod tests {
     #[test]
     fn audit_accessed_emits_canonical_kind() {
         let op = build_audit_accessed(
-            "ck:realm:0196419b-0000-7000-8000-0000000000ac",
+            "ak:realm:0196419b-0000-7000-8000-0000000000ac",
             "did:web:alice",
-            "ck:event:abc",
+            "ak:event:abc",
             "did:key:zDevice",
         )
         .build("node");
         assert_eq!(op.kind, "ck.audit.accessed");
-        assert_eq!(op.payload["target_ref"], "ck:event:abc");
+        assert_eq!(op.payload["target_ref"], "ak:event:abc");
         assert_eq!(op.payload["actor_id"], "did:web:alice");
         assert!(
             op.payload["purpose"]
@@ -208,14 +208,14 @@ mod tests {
     #[test]
     fn audit_ryw_receipt_lists_devices() {
         let op = build_audit_ryw_receipt(
-            "ck:realm:0196419b-0000-7000-8000-0000000000ac",
+            "ak:realm:0196419b-0000-7000-8000-0000000000ac",
             "did:web:alice",
-            "ck:event:abc",
+            "ak:event:abc",
             vec!["did:key:zA".into(), "did:key:zB".into()],
         )
         .build("node");
         assert_eq!(op.kind, "ck.audit.ryw_receipt");
-        assert_eq!(op.payload["target_ref"], "ck:event:abc");
+        assert_eq!(op.payload["target_ref"], "ak:event:abc");
         assert_eq!(op.payload["actor_id"], "did:web:alice");
         assert!(
             op.payload["purpose"]
@@ -231,7 +231,7 @@ mod tests {
     #[test]
     fn presentation_request_carries_claim_list() {
         let op = build_presentation_request(
-            "ck:realm:0196419b-0000-7000-8000-0000000000ac",
+            "ak:realm:0196419b-0000-7000-8000-0000000000ac",
             "did:web:alice",
             "did:web:bob",
             vec!["display_name".into(), "avatar".into()],
@@ -244,9 +244,9 @@ mod tests {
     #[test]
     fn disclosure_receipt_records_counterparty() {
         let op = build_disclosure_receipt(
-            "ck:realm:0196419b-0000-7000-8000-0000000000ac",
+            "ak:realm:0196419b-0000-7000-8000-0000000000ac",
             "did:web:alice",
-            "ck:event:req",
+            "ak:event:req",
             "did:web:bob",
             vec!["email".into()],
         )

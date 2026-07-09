@@ -131,7 +131,7 @@ pub fn OnboardingPanel(
     let mut step = use_signal(|| OnboardingStep::DidMethod);
     let mut did_method = use_signal(|| DEFAULT_PRINCIPAL_DID_METHOD.to_owned());
     let mut handle_local = use_signal(|| "alice".to_owned());
-    let mut handle_domain = use_signal(|| "users.cokret.social".to_owned());
+    let mut handle_domain = use_signal(|| "users.arkret.social".to_owned());
 
     let initial_choice = state_store
         .read()
@@ -701,7 +701,7 @@ pub fn FirstBackupGate(base_url: String, token: Signal<String>, account_did: Str
                 }
             }
             div { id: "first-backup-gate-help", class: "muted",
-                "The inception key MUST NOT retire until a backup_class=did_recovery envelope has been published. This is a hard gate (CKP B-C / device-lifecycle §10-§13) — without it the Cokret principal control state could become permanently unrecoverable."
+                "The inception key MUST NOT retire until a backup_class=did_recovery envelope has been published. This is a hard gate (CKP B-C / device-lifecycle §10-§13) — without it the Arkret principal control state could become permanently unrecoverable."
             }
             div {
                 class: "muted",

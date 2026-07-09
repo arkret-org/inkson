@@ -37,7 +37,7 @@ fn projection_string(body: &Value, paths: &[&[&str]]) -> Option<String> {
 }
 
 fn projection_kind_for_admin(subject_id: &str, body: Option<&Value>) -> RealmTreeNodeKind {
-    if subject_id.starts_with("ck:realm:") {
+    if subject_id.starts_with("ak:realm:") {
         return RealmTreeNodeKind::Realm;
     }
     let Some(body) = body else {
@@ -56,7 +56,7 @@ fn projection_kind_for_admin(subject_id: &str, body: Option<&Value>) -> RealmTre
                 &[&["parent_space_id"], &["summary", "parent_space_id"]],
             )
             .is_some();
-            if subject_id.starts_with("ck:realm:") && has_parent {
+            if subject_id.starts_with("ak:realm:") && has_parent {
                 RealmTreeNodeKind::Space
             } else {
                 RealmTreeNodeKind::Realm
@@ -196,7 +196,7 @@ mod tests {
 
     #[test]
     fn projected_members_reads_roster_actor_id_entries() {
-        let realm_id = "ck:realm:test";
+        let realm_id = "ak:realm:test";
         let mut store = LocalStateStore::default();
         store.save_realm_tree_projection(
             realm_id.to_owned(),
@@ -219,7 +219,7 @@ mod tests {
 
     #[test]
     fn projected_members_reads_owner_and_admin_projection_sources() {
-        let realm_id = "ck:realm:test";
+        let realm_id = "ak:realm:test";
         let mut store = LocalStateStore::default();
         store.save_realm_tree_projection(
             realm_id.to_owned(),

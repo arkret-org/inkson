@@ -85,7 +85,7 @@ pub(crate) fn required_u64(value: &Value, key: &str) -> Result<u64, String> {
 }
 
 pub(crate) fn is_protocol_device_id(value: &str) -> bool {
-    let Some(rest) = value.strip_prefix("ck:device:") else {
+    let Some(rest) = value.strip_prefix("ak:device:") else {
         return false;
     };
     rest.len() == 36
@@ -98,7 +98,7 @@ pub(crate) fn is_protocol_device_id(value: &str) -> bool {
 }
 
 pub(crate) fn is_protocol_backup_id(value: &str) -> bool {
-    let Some(rest) = value.strip_prefix("ck:backup:") else {
+    let Some(rest) = value.strip_prefix("ak:backup:") else {
         return false;
     };
     rest.len() == 36
@@ -111,7 +111,7 @@ pub(crate) fn is_protocol_backup_id(value: &str) -> bool {
 }
 
 pub(crate) fn is_protocol_backup_series_id(value: &str) -> bool {
-    let Some(rest) = value.strip_prefix("ck:backup_series:") else {
+    let Some(rest) = value.strip_prefix("ak:backup_series:") else {
         return false;
     };
     rest.len() == 36

@@ -1,6 +1,6 @@
 //! R3.2 — Realm-scoped `ck.member.identity.update` event store.
 //!
-//! Spec source: cokret-spec @ b56cab1 (2026-05-28)
+//! Spec source: arkret-spec @ b56cab1 (2026-05-28)
 //! `models/member-identity.md` + `artifacts/schemas/member-identity.schema.json`.
 //!
 //! Sync ingest pipeline (MID-2): when a `members[]` roster entry on an
@@ -329,8 +329,8 @@ mod tests {
 
     use super::*;
 
-    const TEST_REALM: &str = "ck:realm:01904100-0000-7000-8000-000000000001";
-    const TEST_DEVICE: &str = "ck:device:01904100-0000-7000-8000-00000000d001";
+    const TEST_REALM: &str = "ak:realm:01904100-0000-7000-8000-000000000001";
+    const TEST_DEVICE: &str = "ak:device:01904100-0000-7000-8000-00000000d001";
 
     /// Build a `ck.member.identity.update` payload whose `member_identity`
     /// proof is a real Ed25519 signature over the canonical payload bytes,
@@ -390,7 +390,7 @@ mod tests {
         let signer = SigningKey::from_bytes(&[7u8; 32]);
         seed_directory(actor, TEST_DEVICE, &signer);
         let event = json!({
-            "event_id": "ck:event:01904100-0000-7000-8000-00000000000a",
+            "event_id": "ak:event:01904100-0000-7000-8000-00000000000a",
             "kind": "ck.member.identity.update",
             "payload": signed_payload(actor, TEST_DEVICE, "Alice v1", &signer),
         });
@@ -417,7 +417,7 @@ mod tests {
         let real = SigningKey::from_bytes(&[1u8; 32]);
         seed_directory(actor, TEST_DEVICE, &real);
         let event = json!({
-            "event_id": "ck:event:01904100-0000-7000-8000-00000000000d",
+            "event_id": "ak:event:01904100-0000-7000-8000-00000000000d",
             "kind": "ck.member.identity.update",
             "payload": signed_payload(actor, TEST_DEVICE, "Impersonator", &attacker),
         });
@@ -438,7 +438,7 @@ mod tests {
         let actor = "did:web:nobody.example";
         let signer = SigningKey::from_bytes(&[3u8; 32]);
         let event = json!({
-            "event_id": "ck:event:01904100-0000-7000-8000-00000000000e",
+            "event_id": "ak:event:01904100-0000-7000-8000-00000000000e",
             "kind": "ck.member.identity.update",
             "payload": signed_payload(actor, TEST_DEVICE, "Unresolved", &signer),
         });
@@ -450,9 +450,9 @@ mod tests {
     fn encrypted_carrier_marks_decryption_pending() {
         let mut store = MemberIdentityStore::new();
         let actor = "did:web:alice.example";
-        let realm = "ck:realm:01904100-0000-7000-8000-000000000001";
+        let realm = "ak:realm:01904100-0000-7000-8000-000000000001";
         let event = json!({
-            "event_id": "ck:event:01904100-0000-7000-8000-00000000000b",
+            "event_id": "ak:event:01904100-0000-7000-8000-00000000000b",
             "kind": "ck.member.identity.update",
             "payload": {
                 "realm_id": realm,
@@ -481,7 +481,7 @@ mod tests {
         let actor = "did:web:alice.example";
         let signer = SigningKey::from_bytes(&[7u8; 32]);
         let event = json!({
-            "event_id": "ck:event:01904100-0000-7000-8000-00000000000c",
+            "event_id": "ak:event:01904100-0000-7000-8000-00000000000c",
             "kind": "ck.strand.move",
             "payload": signed_payload(actor, TEST_DEVICE, "Alice", &signer),
         });
@@ -498,7 +498,7 @@ mod tests {
         // keeps the SDK surface honest.
         let identity = MemberIdentity {
             schema: cokret_sdk::MEMBER_IDENTITY_SCHEMA.to_owned(),
-            realm_id: RealmId::new("ck:realm:01904100-0000-7000-8000-000000000001").unwrap(),
+            realm_id: RealmId::new("ak:realm:01904100-0000-7000-8000-000000000001").unwrap(),
             actor_id: Did::new("did:web:alice.example".to_owned()).unwrap(),
             subject_id: Did::new("did:web:alice.example".to_owned()).unwrap(),
             display_profile: DisplayProfile {

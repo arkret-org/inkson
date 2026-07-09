@@ -27,12 +27,12 @@ pub const FILE_TRANSFER_BLOB_SCHEME: &str = "ck.file_transfer.encrypted_blob.v1"
 pub const FILE_TRANSFER_SCHEMA: &str = "ck.schema.file_transfer.v1";
 pub const FILE_TRANSFER_AEAD_PROFILE: &str = "ck.aead.xchacha20_poly1305.v1";
 pub const FILE_TRANSFER_RETENTION_DAYS: i64 = 7;
-pub const FILE_TRANSFER_KEY_HPKE_INFO: &[u8] = b"cokret-file-transfer-key-hpke-x25519-v1";
+pub const FILE_TRANSFER_KEY_HPKE_INFO: &[u8] = b"arkret-file-transfer-key-hpke-x25519-v1";
 
 const CONTENT_KEY_LEN: usize = 32;
 const XCHACHA_NONCE_LEN: usize = 24;
-const NAMESPACE_KEY_INFO: &[u8] = b"cokret-file-transfer-account-data-key-v1";
-const RECORD_WRAP_KEY_INFO: &[u8] = b"cokret-file-transfer-record-wrap-v1";
+const NAMESPACE_KEY_INFO: &[u8] = b"arkret-file-transfer-account-data-key-v1";
+const RECORD_WRAP_KEY_INFO: &[u8] = b"arkret-file-transfer-record-wrap-v1";
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct FileTransferCryptoContext {
@@ -943,7 +943,7 @@ fn verify_content_addressed_blob_ref(blob_ref: &str, digest: &str) -> anyhow::Re
     let Some(hex) = digest.strip_prefix("sha256:") else {
         anyhow::bail!("file-transfer content_digest must be sha256");
     };
-    let expected = format!("ck:blob:sha256:{hex}");
+    let expected = format!("ak:blob:sha256:{hex}");
     if blob_ref != expected {
         anyhow::bail!("file-transfer blob_ref does not match ciphertext digest");
     }
@@ -1045,9 +1045,9 @@ mod tests {
     use super::*;
 
     const ACTOR: &str = "did:web:alice.example";
-    const DEVICE: &str = "ck:device:01904100-0000-7000-8000-000000000001";
-    const RECIPIENT_DEVICE: &str = "ck:device:01904100-0000-7000-8000-000000000002";
-    const OTHER_DEVICE: &str = "ck:device:01904100-0000-7000-8000-000000000003";
+    const DEVICE: &str = "ak:device:01904100-0000-7000-8000-000000000001";
+    const RECIPIENT_DEVICE: &str = "ak:device:01904100-0000-7000-8000-000000000002";
+    const OTHER_DEVICE: &str = "ak:device:01904100-0000-7000-8000-000000000003";
 
     fn device_bound_fixture() -> (FileTransferRecord, Vec<u8>, Vec<u8>, Value) {
         let crypto = FileTransferCryptoContext::from_account_secret("test-account-secret").unwrap();
@@ -1062,7 +1062,7 @@ mod tests {
         .unwrap();
         let ciphertext = prepared.ciphertext.clone();
         let blob_ref = format!(
-            "ck:blob:sha256:{}",
+            "ak:blob:sha256:{}",
             prepared.content_digest.trim_start_matches("sha256:")
         );
         let (recipient_sk, recipient_pk) = crate::hpke_backup::generate_recovery_keypair().unwrap();
@@ -1103,7 +1103,7 @@ mod tests {
         )
         .unwrap();
         let blob_ref = format!(
-            "ck:blob:sha256:{}",
+            "ak:blob:sha256:{}",
             prepared.content_digest.trim_start_matches("sha256:")
         );
         let ciphertext = prepared.ciphertext.clone();
@@ -1235,7 +1235,7 @@ mod tests {
         )
         .unwrap();
         let blob_ref = format!(
-            "ck:blob:sha256:{}",
+            "ak:blob:sha256:{}",
             prepared.content_digest.trim_start_matches("sha256:")
         );
         let blob_size_bytes = prepared.ciphertext.len() as u64;
@@ -1272,7 +1272,7 @@ mod tests {
         assert!(
             prepared
                 .into_record(
-                    "ck:blob:sha256:0000000000000000000000000000000000000000000000000000000000000000"
+                    "ak:blob:sha256:0000000000000000000000000000000000000000000000000000000000000000"
                         .to_owned(),
                     ciphertext.len() as u64,
                 )
@@ -1294,7 +1294,7 @@ mod tests {
         .unwrap();
         let ciphertext = prepared.ciphertext.clone();
         let blob_ref = format!(
-            "ck:blob:sha256:{}",
+            "ak:blob:sha256:{}",
             prepared.content_digest.trim_start_matches("sha256:")
         );
         let mut record = prepared

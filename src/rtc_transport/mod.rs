@@ -1,4 +1,4 @@
-//! Cross-platform WebRTC transport for Cokret calls.
+//! Cross-platform WebRTC transport for Arkret calls.
 //!
 //! Dioxus targets two platforms with completely different media stacks, so
 //! the transport is `cfg`-split behind a single [`MediaTransport`] trait:

@@ -911,7 +911,7 @@ fn verify_welcome_claim_envelope_signer(welcome_value: &serde_json::Value) -> Re
 /// `policy_root`.
 ///
 /// Boundary (full spec requirement at line 438): this sync receive path does not
-/// inject the Cokret Seal view, so it cannot yet replay a Control Move inclusion
+/// inject the Arkret Seal view, so it cannot yet replay a Control Move inclusion
 /// proof anchoring `policy_root` and `state_root` to an accepted Seal. This gate
 /// guarantees "embedded MLS binding equals the server declaration"; inclusion
 /// proof closure waits for the Seal view injection noted below.
@@ -974,7 +974,7 @@ fn verify_welcome_governance_binding(
 
     // TODO(YGN-SEC-01, encryption-and-audit.md:438): full closure still needs a
     // Control Move inclusion-proof check that anchors the declared policy_root /
-    // state_root to a Cokret Seal view accepted by this device. Failure should
+    // state_root to a Arkret Seal view accepted by this device. Failure should
     // mark the epoch decryption_pending / state_mismatch. The current sync
     // receive path does not inject a Seal view, so this layer relies on
     // claim-envelope gate (1) plus the server admission admin gate until Seal

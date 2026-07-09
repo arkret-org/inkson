@@ -45,7 +45,7 @@ pub(super) fn encrypted_account_data_marker(
             "profile_id": "ck.profile.e2ee_client.v1",
             "payload_digest": payload_digest
         },
-        "content_type": "application/vnd.cokret.account-data+json",
+        "content_type": "application/vnd.arkret.account-data+json",
         "ciphertext": format!("opaque-client-account-data:{digest_tail}")
     }))
 }

@@ -2,7 +2,7 @@
 //!
 //! Spec: inkson UX backlog (see `_claude_todos.md` lane A). Pressing
 //! `Cmd+F` (or `Ctrl+F` off-mac), the `topbar-search-button`, or
-//! navigating directly to `/search` opens this panel. The remote Cokret HTTP
+//! navigating directly to `/search` opens this panel. The remote Arkret HTTP
 //! catalog still has no spec-defined global plaintext search endpoint; this
 //! panel searches only the local client index material the device can already
 //! render from decrypted message projections.
@@ -494,16 +494,16 @@ mod tests {
     #[test]
     fn result_destination_prefers_message_anchor() {
         let row = json!({
-            "realm_id": "ck:realm:demo",
-            "event_id": "ck:event:message",
+            "realm_id": "ak:realm:demo",
+            "event_id": "ak:event:message",
             "content": {"body": "hit"}
         });
         let destination = result_destination(&row).expect("destination");
-        assert_eq!(destination.seal.as_deref(), Some("ck:event:message"));
+        assert_eq!(destination.seal.as_deref(), Some("ak:event:message"));
         match destination.route {
             Route::Chat { realm_id, message } => {
-                assert_eq!(realm_id, "ck:realm:demo");
-                assert_eq!(message, "ck:event:message");
+                assert_eq!(realm_id, "ak:realm:demo");
+                assert_eq!(message, "ak:event:message");
             }
             other => panic!("expected Chat, got {other:?}"),
         }
@@ -511,8 +511,8 @@ mod tests {
 
     #[test]
     fn local_index_search_returns_decrypted_projection_message() {
-        let realm_id = "ck:realm:01904100-0000-7000-8000-000000000901".to_owned();
-        let event_id = "ck:event:01904100-0000-7000-8000-000000000902";
+        let realm_id = "ak:realm:01904100-0000-7000-8000-000000000901".to_owned();
+        let event_id = "ak:event:01904100-0000-7000-8000-000000000902";
         let realms = std::collections::BTreeMap::from([(
             realm_id.clone(),
             json!({
@@ -524,7 +524,7 @@ mod tests {
                     "created_at": "2026-06-19T00:00:00Z",
                     "content": {
                         "realm_id": realm_id,
-                        "message_id": "ck:message:01904100-0000-7000-8000-000000000903",
+                        "message_id": "ak:message:01904100-0000-7000-8000-000000000903",
                         "body": "alpha local body"
                     }
                 }]}
@@ -536,7 +536,7 @@ mod tests {
             &realms,
             &store,
             "did:web:alice.example",
-            "ck:device:01904100-0000-7000-8000-000000000904",
+            "ak:device:01904100-0000-7000-8000-000000000904",
             "LOCAL",
             &[],
             Some(&["message"]),
@@ -563,19 +563,19 @@ mod tests {
 
     #[test]
     fn local_index_search_skips_encrypted_placeholders_without_plaintext() {
-        let realm_id = "ck:realm:01904100-0000-7000-8000-000000000911".to_owned();
+        let realm_id = "ak:realm:01904100-0000-7000-8000-000000000911".to_owned();
         let realms = std::collections::BTreeMap::from([(
             realm_id.clone(),
             json!({
                 "summary": {"summary": "Encrypted Realm"},
                 "timeline": {"events": [{
                     "kind": "ck.message.create",
-                    "event_id": "ck:event:01904100-0000-7000-8000-000000000912",
+                    "event_id": "ak:event:01904100-0000-7000-8000-000000000912",
                     "actor_id": "did:web:alice.example",
                     "created_at": "2026-06-19T00:00:00Z",
                     "content": {
                         "realm_id": realm_id,
-                        "message_id": "ck:message:01904100-0000-7000-8000-000000000913",
+                        "message_id": "ak:message:01904100-0000-7000-8000-000000000913",
                         "encrypted_content": {"schema": "ck.schema.encrypted_envelope.v1"}
                     }
                 }]}
@@ -587,7 +587,7 @@ mod tests {
             &realms,
             &store,
             "did:web:alice.example",
-            "ck:device:01904100-0000-7000-8000-000000000914",
+            "ak:device:01904100-0000-7000-8000-000000000914",
             "message",
             &[],
             Some(&["message"]),
@@ -599,8 +599,8 @@ mod tests {
 
     #[test]
     fn local_index_search_respects_realm_kind_and_limit_filters() {
-        let first_realm_id = "ck:realm:01904100-0000-7000-8000-000000000921".to_owned();
-        let second_realm_id = "ck:realm:01904100-0000-7000-8000-000000000922".to_owned();
+        let first_realm_id = "ak:realm:01904100-0000-7000-8000-000000000921".to_owned();
+        let second_realm_id = "ak:realm:01904100-0000-7000-8000-000000000922".to_owned();
         let realms = std::collections::BTreeMap::from([
             (
                 first_realm_id.clone(),
@@ -608,7 +608,7 @@ mod tests {
                     "summary": {"summary": "First Realm"},
                     "timeline": {"events": [{
                         "kind": "ck.message.create",
-                        "event_id": "ck:event:01904100-0000-7000-8000-000000000923",
+                        "event_id": "ak:event:01904100-0000-7000-8000-000000000923",
                         "actor_id": "did:web:alice.example",
                         "created_at": "2026-06-19T00:00:00Z",
                         "content": {"realm_id": first_realm_id, "body": "needle first"}
@@ -621,7 +621,7 @@ mod tests {
                     "summary": {"summary": "Second Realm"},
                     "timeline": {"events": [{
                         "kind": "ck.message.create",
-                        "event_id": "ck:event:01904100-0000-7000-8000-000000000924",
+                        "event_id": "ak:event:01904100-0000-7000-8000-000000000924",
                         "actor_id": "did:web:bob.example",
                         "created_at": "2026-06-19T00:00:00Z",
                         "content": {"realm_id": second_realm_id, "body": "needle second"}
@@ -635,7 +635,7 @@ mod tests {
             &realms,
             &store,
             "did:web:alice.example",
-            "ck:device:01904100-0000-7000-8000-000000000925",
+            "ak:device:01904100-0000-7000-8000-000000000925",
             "needle",
             &[],
             Some(&["realm"]),
@@ -647,7 +647,7 @@ mod tests {
             &realms,
             &store,
             "did:web:alice.example",
-            "ck:device:01904100-0000-7000-8000-000000000925",
+            "ak:device:01904100-0000-7000-8000-000000000925",
             "needle",
             std::slice::from_ref(&second_realm_id),
             Some(&["message"]),

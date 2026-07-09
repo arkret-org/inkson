@@ -81,7 +81,7 @@ pub(crate) fn run_local_mls_encrypt(
             realm_id,
             principal_id,
             device_id,
-            "application/vnd.cokret.message+json",
+            "application/vnd.arkret.message+json",
             aad_value,
             plaintext_bytes,
         )
@@ -113,7 +113,7 @@ pub(crate) fn mls_base_epoch_ref(seal_view: &LocalSealView, realm_id: &str) -> S
         .chain(seal_view.leaves.iter())
         .chain(seal_view.state_root.iter())
         .find_map(|value| {
-            if value.starts_with("ck:event:") && cokret_sdk::EventId::new(value.clone()).is_ok() {
+            if value.starts_with("ak:event:") && cokret_sdk::EventId::new(value.clone()).is_ok() {
                 Some(value.clone())
             } else {
                 mls_sha256_hash_from_ref(value)
@@ -244,7 +244,7 @@ pub(crate) fn build_secure_send(
             // next_epoch == base_epoch + 1 holds by construction.
             // `real_commit_envelope.epoch` is the POST-commit epoch.
             let prev_epoch = mls_commit_epoch.saturating_sub(1);
-            let commit_event_id = format!("ck:event:{}", uuid_v7());
+            let commit_event_id = format!("ak:event:{}", uuid_v7());
             let commit_event_id_typed = cokret_sdk::EventId::new(commit_event_id.clone())
                 .map_err(|err| format!("MLS commit event id invalid: {err:?}"))?;
             let realm_id_typed = cokret_sdk::RealmId::new(trim_realm_id(realm_id))

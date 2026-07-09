@@ -160,15 +160,15 @@ mod tests {
         json!({
             "kind": "ck.key.verification.request",
             "sender_principal_id": "did:web:alice",
-            "sender_device_id": "ck:device:existing",
+            "sender_device_id": "ak:device:existing",
             "expires_at": "2026-06-17T12:00:00Z",
             "content": {
                 "transaction_id": "txn-1",
-                "from_device": "ck:device:01904100-0000-7000-8000-000000000001",
+                "from_device": "ak:device:01904100-0000-7000-8000-000000000001",
                 "purpose": "same_principal_device_authorization",
                 "pairing_code": "384921",
                 "new_device_pubkey": {
-                    "kid": "ck:device:01904100-0000-7000-8000-000000000001",
+                    "kid": "ak:device:01904100-0000-7000-8000-000000000001",
                     "alg": "EdDSA",
                     "public_key": "abc-123"
                 },
@@ -190,7 +190,7 @@ mod tests {
         assert_eq!(row.request_key, "txn-1");
         assert_eq!(
             row.requesting_device_id,
-            "ck:device:01904100-0000-7000-8000-000000000001"
+            "ak:device:01904100-0000-7000-8000-000000000001"
         );
         assert_eq!(row.pairing_code, "384921");
         assert_eq!(row.display_name, "New browser");
@@ -227,7 +227,7 @@ mod tests {
         let rows = parse_pending_pairing_requests(&[no_txn]);
         assert_eq!(
             rows[0].request_key,
-            "ck:device:01904100-0000-7000-8000-000000000001:384921"
+            "ak:device:01904100-0000-7000-8000-000000000001:384921"
         );
     }
 
@@ -242,7 +242,7 @@ mod tests {
         assert_eq!(body.display_name.as_deref(), Some("New browser"));
         assert_eq!(
             body.new_device_pubkey["kid"],
-            "ck:device:01904100-0000-7000-8000-000000000001"
+            "ak:device:01904100-0000-7000-8000-000000000001"
         );
     }
 

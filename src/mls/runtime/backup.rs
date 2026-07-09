@@ -21,7 +21,7 @@ pub fn build_mls_history_backup_body(
     actor_id: &str,
     device_id: &str,
 ) -> (String, Value) {
-    let backup_id = format!("ck:backup:{}", crate::operation::uuid_v7());
+    let backup_id = format!("ak:backup:{}", crate::operation::uuid_v7());
     let body = snapshot.to_key_backup_body(&backup_id, actor_id, device_id);
     (backup_id, body)
 }

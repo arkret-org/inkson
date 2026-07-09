@@ -8,7 +8,7 @@ or upload Sigstore transparency-log entries.
 ## Inputs
 
 - A clean inkson worktree except for deliberate release changes.
-- Sibling `../cokret-rust-sdk` and `../chime` checkouts matching the local
+- Sibling `../arkret-rust-sdk` and `../chime` checkouts matching the local
   release plan.
 - Dioxus CLI `0.7.5`.
 - Docker for web image evidence.

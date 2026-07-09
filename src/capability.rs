@@ -50,7 +50,7 @@ impl ActionGroup {
             Self::SpaceStrand => &[
                 "ck.strand.move",
                 "ck.strand.reorder",
-                // Per cokret-spec dc01ad7 the four
+                // Per arkret-spec dc01ad7 the four
                 // `strand.track.{enable,disable,update,set_primary}`
                 // verbs were unified into a single `ck.strand.tracks.update`
                 // capability covering all track mutations via a
@@ -628,7 +628,7 @@ mod tests {
     ) -> UiCapabilityGrant {
         UiCapabilityGrant {
             subject: subject.to_owned(),
-            resource_selectors: vec![UiResourceSelector::Space("ck:space:test".to_owned())],
+            resource_selectors: vec![UiResourceSelector::Space("ak:space:test".to_owned())],
             actions: actions.iter().map(|s| (*s).to_owned()).collect(),
             constraints,
         }
@@ -681,7 +681,7 @@ mod tests {
         // hydrated capability state yet" path.
         let engine = CapabilityEngine::new();
         let resource = UiResourceRef {
-            space_id: Some("ck:space:test".to_owned()),
+            space_id: Some("ak:space:test".to_owned()),
             ..Default::default()
         };
         let ctx = UiCapabilityEvalContext::default();
@@ -703,7 +703,7 @@ mod tests {
             constraints: Vec::new(),
         });
         let resource = UiResourceRef {
-            space_id: Some("ck:space:test".to_owned()),
+            space_id: Some("ak:space:test".to_owned()),
             ..Default::default()
         };
         let ctx = UiCapabilityEvalContext::default();
@@ -722,7 +722,7 @@ mod tests {
             constraints: Vec::new(),
         });
         let resource = UiResourceRef {
-            space_id: Some("ck:space:test".to_owned()),
+            space_id: Some("ak:space:test".to_owned()),
             ..Default::default()
         };
         let ctx = UiCapabilityEvalContext::default();
@@ -733,15 +733,15 @@ mod tests {
 
     #[test]
     fn test_resource_selector() {
-        let selector = UiResourceSelector::Space("ck:space:test".to_owned());
+        let selector = UiResourceSelector::Space("ak:space:test".to_owned());
         let resource = UiResourceRef {
-            space_id: Some("ck:space:test".to_owned()),
+            space_id: Some("ak:space:test".to_owned()),
             ..Default::default()
         };
         assert!(selector.matches(&resource));
 
         let resource_no_match = UiResourceRef {
-            space_id: Some("ck:space:other".to_owned()),
+            space_id: Some("ak:space:other".to_owned()),
             ..Default::default()
         };
         assert!(!selector.matches(&resource_no_match));
@@ -757,15 +757,15 @@ mod tests {
     #[test]
     fn test_any_selector() {
         let selector = UiResourceSelector::Any(vec![
-            UiResourceSelector::Space("ck:space:a".to_owned()),
-            UiResourceSelector::Space("ck:space:b".to_owned()),
+            UiResourceSelector::Space("ak:space:a".to_owned()),
+            UiResourceSelector::Space("ak:space:b".to_owned()),
         ]);
         let resource_a = UiResourceRef {
-            space_id: Some("ck:space:a".to_owned()),
+            space_id: Some("ak:space:a".to_owned()),
             ..Default::default()
         };
         let resource_c = UiResourceRef {
-            space_id: Some("ck:space:c".to_owned()),
+            space_id: Some("ak:space:c".to_owned()),
             ..Default::default()
         };
         assert!(selector.matches(&resource_a));
@@ -776,14 +776,14 @@ mod tests {
     fn test_except_selector() {
         let selector = UiResourceSelector::Except(
             Box::new(UiResourceSelector::Wildcard),
-            vec![UiResourceSelector::Space("ck:space:secret".to_owned())],
+            vec![UiResourceSelector::Space("ak:space:secret".to_owned())],
         );
         let normal = UiResourceRef {
-            space_id: Some("ck:space:normal".to_owned()),
+            space_id: Some("ak:space:normal".to_owned()),
             ..Default::default()
         };
         let secret = UiResourceRef {
-            space_id: Some("ck:space:secret".to_owned()),
+            space_id: Some("ak:space:secret".to_owned()),
             ..Default::default()
         };
         assert!(selector.matches(&normal));
@@ -796,8 +796,8 @@ mod tests {
         engine.add_grant(test_grant());
 
         let resource = UiResourceRef {
-            space_id: Some("ck:space:test".to_owned()),
-            object_ref: Some("ck:strand:0196419b-0000-7000-8000-000000000001".to_owned()),
+            space_id: Some("ak:space:test".to_owned()),
+            object_ref: Some("ak:strand:0196419b-0000-7000-8000-000000000001".to_owned()),
             ..Default::default()
         };
         let ctx = UiCapabilityEvalContext {
@@ -825,7 +825,7 @@ mod tests {
         engine.add_grant(test_grant());
 
         let resource = UiResourceRef {
-            space_id: Some("ck:space:test".to_owned()),
+            space_id: Some("ak:space:test".to_owned()),
             ..Default::default()
         };
         let ctx = UiCapabilityEvalContext::default();
@@ -840,7 +840,7 @@ mod tests {
         engine.add_grant(test_grant());
 
         let resource = UiResourceRef {
-            space_id: Some("ck:space:other".to_owned()),
+            space_id: Some("ak:space:other".to_owned()),
             ..Default::default()
         };
         let ctx = UiCapabilityEvalContext::default();
@@ -857,7 +857,7 @@ mod tests {
         engine.add_grant(grant("did:web:bob", &["ck.strand.read"], Vec::new()));
 
         let resource = UiResourceRef {
-            space_id: Some("ck:space:test".to_owned()),
+            space_id: Some("ak:space:test".to_owned()),
             ..Default::default()
         };
         let ctx = UiCapabilityEvalContext::default();
@@ -880,7 +880,7 @@ mod tests {
         ));
 
         let resource = UiResourceRef {
-            space_id: Some("ck:space:test".to_owned()),
+            space_id: Some("ak:space:test".to_owned()),
             ..Default::default()
         };
         let ctx = UiCapabilityEvalContext::default();

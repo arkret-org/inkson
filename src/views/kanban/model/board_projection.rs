@@ -404,10 +404,10 @@ pub(crate) fn project_board(
 mod tests {
     use super::*;
 
-    const REALM: &str = "ck:realm:019f1071-0000-7000-8000-000000000000";
-    const BOARD: &str = "ck:space:019f1071-e3e3-75b1-be7e-bdfa1b8f73ff";
-    const LIST_A: &str = "ck:space:019f1071-f553-7410-a2c9-53028e995ed3";
-    const LIST_B: &str = "ck:space:019f1071-aaaa-7410-a2c9-53028e995ed3";
+    const REALM: &str = "ak:realm:019f1071-0000-7000-8000-000000000000";
+    const BOARD: &str = "ak:space:019f1071-e3e3-75b1-be7e-bdfa1b8f73ff";
+    const LIST_A: &str = "ak:space:019f1071-f553-7410-a2c9-53028e995ed3";
+    const LIST_B: &str = "ak:space:019f1071-aaaa-7410-a2c9-53028e995ed3";
 
     fn space_create_event(id: &str, kind: &str, title: &str, parent: Option<&str>) -> Value {
         let mut object = json!({
@@ -420,7 +420,7 @@ mod tests {
             object["parent_space_id"] = json!(parent);
         }
         json!({
-            "event_id": format!("ck:event:{id}"),
+            "event_id": format!("ak:event:{id}"),
             "kind": "ck.space.create",
             "realm_id": REALM,
             "actor_id": "did:web:creator.example",
@@ -441,7 +441,7 @@ mod tests {
         created_at: &str,
     ) -> Value {
         json!({
-            "event_id": format!("ck:event:{id}"),
+            "event_id": format!("ak:event:{id}"),
             "kind": "ck.strand.create",
             "realm_id": REALM,
             "actor_id": actor,
@@ -469,7 +469,7 @@ mod tests {
 
     fn strand_move_event(id: &str, board: &str, target_list: &str, rank: &str) -> Value {
         json!({
-            "event_id": format!("ck:event:move-{id}"),
+            "event_id": format!("ak:event:move-{id}"),
             "kind": "ck.strand.move",
             "realm_id": REALM,
             "actor_id": "did:web:mover.example",
@@ -485,7 +485,7 @@ mod tests {
 
     fn strand_archive_event(id: &str) -> Value {
         json!({
-            "event_id": format!("ck:event:archive-{id}"),
+            "event_id": format!("ak:event:archive-{id}"),
             "kind": "ck.strand.archive",
             "realm_id": REALM,
             "actor_id": "did:web:archiver.example",
@@ -560,7 +560,7 @@ mod tests {
     fn client_core_domain_projector_golden_matches_inkson_board_projection() {
         let events = vec![
             sdk_event(
-                "ck:event:01904100-0000-7000-8000-000000000111",
+                "ak:event:01904100-0000-7000-8000-000000000111",
                 "ck.space.create",
                 1,
                 "2026-07-08T00:00:00Z",
@@ -574,7 +574,7 @@ mod tests {
                 }),
             ),
             sdk_event(
-                "ck:event:01904100-0000-7000-8000-000000000112",
+                "ak:event:01904100-0000-7000-8000-000000000112",
                 "ck.space.create",
                 2,
                 "2026-07-08T00:00:01Z",
@@ -589,13 +589,13 @@ mod tests {
                 }),
             ),
             sdk_event(
-                "ck:event:01904100-0000-7000-8000-000000000113",
+                "ak:event:01904100-0000-7000-8000-000000000113",
                 "ck.strand.create",
                 3,
                 "2026-07-08T00:00:02Z",
                 json!({
                     "object": {
-                        "id": "ck:strand:01904100-0000-7000-8000-000000000301",
+                        "id": "ak:strand:01904100-0000-7000-8000-000000000301",
                         "schema": "ck.schema.strand.v1",
                         "realm_id": REALM,
                         "created_by": "did:webvh:z6mkfixture:alice.example",
@@ -645,7 +645,7 @@ mod tests {
             space_create_event(BOARD, "board", "Board1", None),
             space_create_event(LIST_A, "list", "Todos", Some(BOARD)),
             strand_create_event(
-                "ck:strand:019f1072-0001-73b2-9c7e-1bb33a924b5c",
+                "ak:strand:019f1072-0001-73b2-9c7e-1bb33a924b5c",
                 "did:web:alice.example",
                 "alice card",
                 BOARD,
@@ -654,7 +654,7 @@ mod tests {
                 "2026-06-28T00:01:00Z",
             ),
             strand_create_event(
-                "ck:strand:019f1072-0002-73b2-9c7e-1bb33a924b5c",
+                "ak:strand:019f1072-0002-73b2-9c7e-1bb33a924b5c",
                 "did:web:bob.example",
                 "bob card",
                 BOARD,
@@ -680,7 +680,7 @@ mod tests {
 
     #[test]
     fn strand_move_relocates_card_to_target_list() {
-        let strand = "ck:strand:019f1072-0003-73b2-9c7e-1bb33a924b5c";
+        let strand = "ak:strand:019f1072-0003-73b2-9c7e-1bb33a924b5c";
         let events = vec![
             space_create_event(BOARD, "board", "Board1", None),
             space_create_event(LIST_A, "list", "Todos", Some(BOARD)),
@@ -714,7 +714,7 @@ mod tests {
 
     #[test]
     fn strand_archive_marks_card_archived_for_maintenance_drawer() {
-        let strand = "ck:strand:019f1072-0004-73b2-9c7e-1bb33a924b5c";
+        let strand = "ak:strand:019f1072-0004-73b2-9c7e-1bb33a924b5c";
         let events = vec![
             space_create_event(BOARD, "board", "Board1", None),
             space_create_event(LIST_A, "list", "Todos", Some(BOARD)),
@@ -766,7 +766,7 @@ mod tests {
     /// `effect`; folding it must surface the card immediately (optimistic).
     #[test]
     fn local_optimistic_card_create_op_projects_into_its_list() {
-        let strand = "ck:strand:019f1072-1001-73b2-9c7e-1bb33a924b5c";
+        let strand = "ak:strand:019f1072-1001-73b2-9c7e-1bb33a924b5c";
         let ops = vec![
             kanban_operations_from_events(&[
                 space_create_event(BOARD, "board", "Board1", None),
@@ -827,7 +827,7 @@ mod tests {
     /// card without waiting for a server round-trip.
     #[test]
     fn local_optimistic_cas_move_op_relocates_card() {
-        let strand = "ck:strand:019f1072-1002-73b2-9c7e-1bb33a924b5c";
+        let strand = "ak:strand:019f1072-1002-73b2-9c7e-1bb33a924b5c";
         let mut ops = kanban_operations_from_events(&[
             space_create_event(BOARD, "board", "Board1", None),
             space_create_event(LIST_A, "list", "Todos", Some(BOARD)),
@@ -1015,7 +1015,7 @@ mod tests {
 
     #[test]
     fn real_cas_move_builder_relocates_card() {
-        let strand = "ck:strand:019f1072-2002-73b2-9c7e-1bb33a924b5c";
+        let strand = "ak:strand:019f1072-2002-73b2-9c7e-1bb33a924b5c";
         let move_body = crate::operation::ck_ops::strand_position_cas_update(
             REALM,
             "did:web:alice.example",

@@ -163,7 +163,7 @@ pub enum Route {
 
     /// A6.1 — global cross-Space message search. Triggered by Cmd+F
     /// (Ctrl+F on non-Mac), the topbar `topbar-search-button`, or by
-    /// directly navigating to `/search`. The current Cokret catalog has no
+    /// directly navigating to `/search`. The current Arkret catalog has no
     /// spec-defined HTTP endpoint for global index search, so the panel fails
     /// closed until a catalog entry lands.
     #[route("/search", RoutePage)]
@@ -406,7 +406,7 @@ mod tests {
             Route::Dashboard,
             Route::Login,
             Route::Realm {
-                realm_id: "ck:realm:roundtrip".to_owned(),
+                realm_id: "ak:realm:roundtrip".to_owned(),
             },
             Route::Directory,
             Route::FileTransfer,
@@ -418,11 +418,11 @@ mod tests {
             Route::Settings,
             Route::VerifyDevice,
             Route::RealmAdminSection {
-                realm_id: "ck:realm:roundtrip".to_owned(),
+                realm_id: "ak:realm:roundtrip".to_owned(),
                 section: "access".to_owned(),
             },
             Route::RealmMembers {
-                realm_id: "ck:realm:roundtrip".to_owned(),
+                realm_id: "ak:realm:roundtrip".to_owned(),
             },
             Route::Audit,
             Route::Developer,
@@ -458,25 +458,25 @@ mod tests {
     fn test_realm_id_extraction() {
         assert_eq!(
             Route::Realm {
-                realm_id: "ck:realm:home".to_owned()
+                realm_id: "ak:realm:home".to_owned()
             }
             .realm_id(),
-            Some("ck:realm:home")
+            Some("ak:realm:home")
         );
         assert_eq!(
             Route::RealmAdminSection {
-                realm_id: "ck:realm:admin".to_owned(),
+                realm_id: "ak:realm:admin".to_owned(),
                 section: "access".to_owned(),
             }
             .realm_id(),
-            Some("ck:realm:admin")
+            Some("ak:realm:admin")
         );
         assert_eq!(
             Route::RealmMembers {
-                realm_id: "ck:realm:members".to_owned()
+                realm_id: "ak:realm:members".to_owned()
             }
             .realm_id(),
-            Some("ck:realm:members")
+            Some("ak:realm:members")
         );
     }
 
@@ -512,7 +512,7 @@ mod tests {
     fn test_realm_admin_section_extraction() {
         assert_eq!(
             Route::RealmAdminSection {
-                realm_id: "ck:realm:ops".to_owned(),
+                realm_id: "ak:realm:ops".to_owned(),
                 section: "repair".to_owned(),
             }
             .realm_admin_section(),
@@ -520,7 +520,7 @@ mod tests {
         );
         assert_eq!(
             Route::RealmAdmin {
-                realm_id: "ck:realm:ops".to_owned()
+                realm_id: "ak:realm:ops".to_owned()
             }
             .realm_admin_section(),
             None

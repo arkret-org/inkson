@@ -45,7 +45,7 @@ pub const HPKE_SUITE: &str = "ck.hpke_x25519_aead_chacha20poly1305.v1";
 /// BIP-39 entropy (see [`derive_recovery_keypair_from_entropy`]). This is an
 /// opaque, stable domain tag — its byte value MUST NOT change or existing
 /// recovery keys would derive a different keypair.
-const HPKE_KEY_SCHEDULE_INFO: &[u8] = b"cokret-recovery-public-key-hpke-x25519-xchacha20-v1";
+const HPKE_KEY_SCHEDULE_INFO: &[u8] = b"arkret-recovery-public-key-hpke-x25519-xchacha20-v1";
 
 /// Output of [`hpke_seal`]: the RFC 9180 DHKEM encapsulated key (`enc`, the
 /// 32-byte ephemeral X25519 public key) and the AEAD ciphertext (`ct+tag`, no

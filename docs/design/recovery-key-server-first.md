@@ -73,7 +73,7 @@
 
 ## 5. 未决问题（已裁决，2026-07-03）
 
-1. **§3.1 pending 语义 vs 服务器 draft→confirm** → **采用本地 pending 语义，零 spec 变更**。依据 `cokret-spec key-management.md §7.6`：备份契约是单段 `PUT`（`ck.self.keys.backups.resource.replace`，响应 `accepted`/`duplicate`），无 draft/pending 字段，也不需要——同一 `(actor, backup_class)` 走 series 链（`series_seq` 递增 + `supersedes`/`supersedes_digest`），恢复流程 MUST 取链尾解密，所以"未复核的 enrollment"就是链尾一条普通密文，下次 Generate 以 `series_seq+1` 自然取代，无孤儿、无需撤销端点（撤销端点其实存在但要高风险 proof，不走）。实现落点：`upload.rs` 在 accept 时只落服务器事实标记（sync badge），`save_generated_recovery_key_metadata`（fingerprint/公钥/rotated_at）推迟到复核成功（panel 的 Confirm and clear / prompt 的 Confirm saved key）。
+1. **§3.1 pending 语义 vs 服务器 draft→confirm** → **采用本地 pending 语义，零 spec 变更**。依据 `arkret-spec key-management.md §7.6`：备份契约是单段 `PUT`（`ck.self.keys.backups.resource.replace`，响应 `accepted`/`duplicate`），无 draft/pending 字段，也不需要——同一 `(actor, backup_class)` 走 series 链（`series_seq` 递增 + `supersedes`/`supersedes_digest`），恢复流程 MUST 取链尾解密，所以"未复核的 enrollment"就是链尾一条普通密文，下次 Generate 以 `series_seq+1` 自然取代，无孤儿、无需撤销端点（撤销端点其实存在但要高风险 proof，不走）。实现落点：`upload.rs` 在 accept 时只落服务器事实标记（sync badge），`save_generated_recovery_key_metadata`（fingerprint/公钥/rotated_at）推迟到复核成功（panel 的 Confirm and clear / prompt 的 Confirm saved key）。
 2. **网络慢旁路** → **不允许**。accept 即服务端持久化（§7.6），"先看词、后台补备份"重新引入了本设计要消灭的时序；Registering 阶段屏幕给明确进度文案，失败回 Idle 可重试。
 3. **Passkey 推荐下一步** → **采纳轻量版**：复核成功的状态文案推荐前往"高级选项 · Passkey 快捷解锁"；Passkey 卡文案已解耦主流程（不再引用"上面正显示的词"），生成流程进行中自动使用内存中的 key。
 

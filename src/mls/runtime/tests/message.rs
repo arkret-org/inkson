@@ -33,8 +33,8 @@ fn creator_snapshot_bootstrap_makes_space_encryptable() {
     let mut state = temp_state_store("creator-bootstrap");
     let secure = MemorySecureKeyStore::new();
     let actor = "did:web:alice.example";
-    let device = "ck:device:01904100-0000-7000-8000-000000000001";
-    let realm = "ck:realm:01904100-0000-7000-8000-000000000001";
+    let device = "ak:device:01904100-0000-7000-8000-000000000001";
+    let realm = "ak:realm:01904100-0000-7000-8000-000000000001";
 
     let summary = ensure_creator_mls_snapshot(&mut state, &secure, realm, actor, device).unwrap();
 
@@ -50,7 +50,7 @@ fn creator_snapshot_bootstrap_makes_space_encryptable() {
         realm,
         actor,
         device,
-        "application/vnd.cokret.test+json",
+        "application/vnd.arkret.test+json",
         &[br#""private""#.to_vec()],
     )
     .unwrap();
@@ -64,7 +64,7 @@ fn creator_snapshot_bootstrap_makes_space_encryptable() {
         realm,
         actor,
         device,
-        "application/vnd.cokret.test+json",
+        "application/vnd.arkret.test+json",
         &[br#""private-again""#.to_vec()],
     )
     .unwrap();
@@ -86,12 +86,12 @@ fn authoring_exporter_aead_content_retains_history_secret() {
     let mut state = temp_state_store("author-retains-history-secret");
     let secure = MemorySecureKeyStore::new();
     let actor = "did:web:alice.example";
-    let device = "ck:device:01904100-0000-7000-8000-000000000001";
+    let device = "ak:device:01904100-0000-7000-8000-000000000001";
     // history_secret persistence is a PROCESS-GLOBAL secure store keyed only by
     // realm_id (see `save_history_secret` → `persist_realm_history_secrets`), so
     // this test MUST use a realm id no other test writes, or the `is_none()`
     // precondition below would observe another test's retained secret.
-    let realm = "ck:realm:01904100-0000-7000-8000-0000000000f7";
+    let realm = "ak:realm:01904100-0000-7000-8000-0000000000f7";
     let history_store = crate::secure_key_store::default_secure_key_store("inkson");
     let history_key = crate::secure_key_store::mls_history_secret_store_key(realm);
     let _ = history_store.delete_secret(&history_key);
@@ -112,7 +112,7 @@ fn authoring_exporter_aead_content_retains_history_secret() {
         realm,
         actor,
         device,
-        "application/vnd.cokret.test+json",
+        "application/vnd.arkret.test+json",
         &[br#""private""#.to_vec()],
     )
     .unwrap();
@@ -142,7 +142,7 @@ fn two_member_group_with_bob_snapshot(
 ) -> cokret_sdk::CokretMlsGroup {
     let alice = cokret_sdk::CokretMlsIdentity::new_basic(
         cokret_sdk::Did::new("did:web:alice.example".to_owned()).unwrap(),
-        cokret_sdk::DeviceId::new("ck:device:01904100-0000-7000-8000-0000000000a1".to_owned())
+        cokret_sdk::DeviceId::new("ak:device:01904100-0000-7000-8000-0000000000a1".to_owned())
             .unwrap(),
     )
     .unwrap();
@@ -191,9 +191,9 @@ fn receive_chain_persists_across_restart_and_plaintext_is_never_at_rest() {
     ));
     let mut state = crate::local_state::LocalStateStore::with_path(path.clone());
     let secure = MemorySecureKeyStore::new();
-    let realm = "ck:realm:01904100-0000-7000-8000-0000000000b1";
+    let realm = "ak:realm:01904100-0000-7000-8000-0000000000b1";
     let bob_actor = "did:web:bob.example";
-    let bob_device = "ck:device:01904100-0000-7000-8000-0000000000b2";
+    let bob_device = "ak:device:01904100-0000-7000-8000-0000000000b2";
 
     let mut alice_group =
         two_member_group_with_bob_snapshot(&mut state, &secure, realm, bob_actor, bob_device);
@@ -265,9 +265,9 @@ fn out_of_order_skipped_keys_survive_restart() {
     ));
     let mut state = crate::local_state::LocalStateStore::with_path(path.clone());
     let secure = MemorySecureKeyStore::new();
-    let realm = "ck:realm:01904100-0000-7000-8000-0000000000c1";
+    let realm = "ak:realm:01904100-0000-7000-8000-0000000000c1";
     let bob_actor = "did:web:bob.example";
-    let bob_device = "ck:device:01904100-0000-7000-8000-0000000000c2";
+    let bob_device = "ak:device:01904100-0000-7000-8000-0000000000c2";
 
     let mut alice_group =
         two_member_group_with_bob_snapshot(&mut state, &secure, realm, bob_actor, bob_device);
@@ -307,8 +307,8 @@ fn author_own_ciphertext_stays_soft_failure_without_state_regression() {
     let mut state = temp_state_store("own-ciphertext-soft-fail");
     let secure = MemorySecureKeyStore::new();
     let actor = "did:web:alice.example";
-    let device = "ck:device:01904100-0000-7000-8000-0000000000d1";
-    let realm = "ck:realm:01904100-0000-7000-8000-0000000000d2";
+    let device = "ak:device:01904100-0000-7000-8000-0000000000d1";
+    let realm = "ak:realm:01904100-0000-7000-8000-0000000000d2";
 
     ensure_creator_mls_snapshot(&mut state, &secure, realm, actor, device).unwrap();
     let (_, _, encrypted_values, ..) = encrypt_values_with_device_snapshot(
@@ -347,9 +347,9 @@ fn plaintext_cache_outlives_group_state() {
     // not a ratchet replay, is the §5.6-compliant re-render path.
     let mut state = temp_state_store("plaintext-cache-outlives");
     let secure = MemorySecureKeyStore::new();
-    let realm = "ck:realm:01904100-0000-7000-8000-0000000000e1";
+    let realm = "ak:realm:01904100-0000-7000-8000-0000000000e1";
     let bob_actor = "did:web:bob.example";
-    let bob_device = "ck:device:01904100-0000-7000-8000-0000000000e2";
+    let bob_device = "ak:device:01904100-0000-7000-8000-0000000000e2";
 
     let mut alice_group =
         two_member_group_with_bob_snapshot(&mut state, &secure, realm, bob_actor, bob_device);
@@ -373,21 +373,21 @@ fn encrypted_write_with_snapshot_requires_existing_device_secret() {
     let mut state = temp_state_store("missing-secret");
     let store = MemorySecureKeyStore::new();
     let envelope = crate::mls::persistence::encrypt_state(
-        "ck:realm:01904100-0000-7000-8000-000000000001",
+        "ak:realm:01904100-0000-7000-8000-000000000001",
         "group-for-missing-secret-test",
         1,
         b"not-a-real-group-state",
         "other-device-secret",
         b"deterministic-salt",
     );
-    state.save_mls_snapshot("ck:realm:01904100-0000-7000-8000-000000000001", envelope);
+    state.save_mls_snapshot("ak:realm:01904100-0000-7000-8000-000000000001", envelope);
 
     let error = encrypt_values_with_device_snapshot(
         &mut state,
         &store,
-        "ck:realm:01904100-0000-7000-8000-000000000001",
+        "ak:realm:01904100-0000-7000-8000-000000000001",
         "did:web:alice.example",
-        "ck:device:01904100-0000-7000-8000-000000000001",
+        "ak:device:01904100-0000-7000-8000-000000000001",
         "text/plain",
         &[b"secret".to_vec()],
     )
@@ -406,8 +406,8 @@ fn encrypted_write_uses_device_key_snapshot_when_ready() {
     use cokret_sdk::{CokretMlsIdentity, DeviceId, Did};
 
     let actor = "did:web:alice.example";
-    let device = "ck:device:01904100-0000-7000-8000-000000000001";
-    let realm = "ck:realm:01904100-0000-7000-8000-000000000003";
+    let device = "ak:device:01904100-0000-7000-8000-000000000001";
+    let realm = "ak:realm:01904100-0000-7000-8000-000000000003";
     let store = MemorySecureKeyStore::new();
     let secret = load_or_create_device_snapshot_secret(&store, actor, device).unwrap();
     let identity = CokretMlsIdentity::new_basic(
@@ -457,11 +457,11 @@ fn encrypted_write_uses_device_key_snapshot_when_ready() {
 #[test]
 fn encrypt_does_not_persist_snapshot_until_caller_saves_on_accept() {
     let actor = "did:web:alice.example";
-    let device = "ck:device:01904100-0000-7000-8000-000000000001";
+    let device = "ak:device:01904100-0000-7000-8000-000000000001";
     let secure = MemorySecureKeyStore::new();
     let _ = load_or_create_device_snapshot_secret(&secure, actor, device).unwrap();
     let mut state = temp_state_store("persist-on-accept");
-    let realm = "ck:realm:01904100-0000-7000-8000-000000000099";
+    let realm = "ak:realm:01904100-0000-7000-8000-000000000099";
 
     state.save_realm_tree_projection(
         realm,
@@ -486,7 +486,7 @@ fn encrypt_does_not_persist_snapshot_until_caller_saves_on_accept() {
         realm,
         actor,
         device,
-        "application/vnd.cokret.test+json",
+        "application/vnd.arkret.test+json",
         &[br#""private""#.to_vec()],
     )
     .unwrap();
@@ -518,9 +518,9 @@ fn empty_welcome_set_reports_no_work() {
     let outcome = apply_welcome_messages_with_device_snapshot(
         &mut state,
         &store,
-        "ck:realm:empty",
+        "ak:realm:empty",
         "did:web:alice.example",
-        "ck:device:01904100-0000-7000-8000-000000000001",
+        "ak:device:01904100-0000-7000-8000-000000000001",
         &json!({ "messages": [] }),
     )
     .unwrap();
@@ -545,9 +545,9 @@ fn malformed_welcome_is_counted_not_swallowed() {
     let outcome = apply_welcome_messages_with_device_snapshot(
         &mut state,
         &store,
-        "ck:realm:malformed",
+        "ak:realm:malformed",
         "did:web:alice.example",
-        "ck:device:01904100-0000-7000-8000-000000000001",
+        "ak:device:01904100-0000-7000-8000-000000000001",
         &messages,
     )
     .unwrap();
@@ -561,12 +561,12 @@ fn malformed_welcome_is_counted_not_swallowed() {
 fn welcome_apply_uses_key_package_identity_state() {
     let mut state = temp_state_store("welcome-keypackage-state");
     let store = MemorySecureKeyStore::new();
-    let realm = "ck:realm:01904100-0000-7000-8000-0000000000c1";
+    let realm = "ak:realm:01904100-0000-7000-8000-0000000000c1";
     let bob_actor = "did:web:bob.example";
-    let bob_device = "ck:device:01904100-0000-7000-8000-0000000000c2";
+    let bob_device = "ak:device:01904100-0000-7000-8000-0000000000c2";
     let alice = cokret_sdk::CokretMlsIdentity::new_basic(
         cokret_sdk::Did::new("did:web:alice.example".to_owned()).unwrap(),
-        cokret_sdk::DeviceId::new("ck:device:01904100-0000-7000-8000-0000000000a1".to_owned())
+        cokret_sdk::DeviceId::new("ak:device:01904100-0000-7000-8000-0000000000a1".to_owned())
             .unwrap(),
     )
     .unwrap();
@@ -637,7 +637,7 @@ fn durable_welcome_payload_without_claim_envelope_fails_closed() {
                     "mls_group_id": "mls-group-a",
                     "epoch": 1,
                     "recipient_principal_id": "did:web:alice.example",
-                    "recipient_device_id": "ck:device:01904100-0000-7000-8000-000000000001",
+                    "recipient_device_id": "ak:device:01904100-0000-7000-8000-000000000001",
                     "keypackage_ref": "sha256:2222222222222222222222222222222222222222222222222222222222222222",
                     "keypackage_digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
                     "claim_id": "claim-1",
@@ -657,9 +657,9 @@ fn durable_welcome_payload_without_claim_envelope_fails_closed() {
     let outcome = apply_welcome_messages_with_device_snapshot(
         &mut state,
         &store,
-        "ck:realm:welcome-claim-envelope",
+        "ak:realm:welcome-claim-envelope",
         "did:web:alice.example",
-        "ck:device:01904100-0000-7000-8000-000000000001",
+        "ak:device:01904100-0000-7000-8000-000000000001",
         &messages,
     )
     .unwrap();
@@ -676,8 +676,8 @@ fn durable_welcome_payload_without_claim_envelope_fails_closed() {
 
 #[test]
 fn local_welcome_hint_filters_by_realm_group_id() {
-    let realm = "ck:realm:01904100-0000-7000-8000-000000000001";
-    let other_realm = "ck:realm:01904100-0000-7000-8000-000000000002";
+    let realm = "ak:realm:01904100-0000-7000-8000-000000000001";
+    let other_realm = "ak:realm:01904100-0000-7000-8000-000000000002";
     let messages = vec![
         json!({
             "kind": "ck.mls.welcome",
@@ -686,7 +686,7 @@ fn local_welcome_hint_filters_by_realm_group_id() {
                 "welcome_hash": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
             },
             "unsigned": {
-                "mls_welcome_id": "ck:mls_welcome:01904100-0000-7000-8000-0000000000aa",
+                "mls_welcome_id": "ak:mls_welcome:01904100-0000-7000-8000-0000000000aa",
             },
         }),
         json!({
@@ -766,10 +766,10 @@ fn ingest_realm_key_share_installs_history_secrets() {
     // key; bob ingests the share and both secrets land in local state.
     let mut state = temp_state_store("history-share-ingest");
     let secure = MemorySecureKeyStore::new();
-    let realm = "ck:realm:01904100-0000-7000-8000-0000000000e1";
+    let realm = "ak:realm:01904100-0000-7000-8000-0000000000e1";
     let bob_actor = "did:web:bob.example";
-    let bob_device = "ck:device:01904100-0000-7000-8000-0000000000e2";
-    let alice_device = "ck:device:01904100-0000-7000-8000-0000000000a1";
+    let bob_device = "ak:device:01904100-0000-7000-8000-0000000000e2";
+    let alice_device = "ak:device:01904100-0000-7000-8000-0000000000a1";
 
     let (_priv, bob_pub) =
         load_or_create_device_hpke_keypair(&secure, bob_actor, bob_device).unwrap();
@@ -795,7 +795,7 @@ fn ingest_realm_key_share_installs_history_secrets() {
     assert_eq!(state.history_secrets_for(realm).len(), 2);
 
     // A share addressed to a different device installs nothing.
-    let other = "ck:device:01904100-0000-7000-8000-0000000000ff";
+    let other = "ak:device:01904100-0000-7000-8000-0000000000ff";
     let foreign =
         realm_key_share_envelope(realm, bob_actor, other, alice_device, &bob_pub, &secrets);
     assert_eq!(
@@ -813,11 +813,11 @@ fn ingest_realm_key_share_accepts_projected_payload_envelope() {
     // history key.
     let mut state = temp_state_store("history-share-projected-payload");
     let secure = MemorySecureKeyStore::new();
-    let realm = "ck:realm:01904100-0000-7000-8000-0000000000e8";
+    let realm = "ak:realm:01904100-0000-7000-8000-0000000000e8";
     let bob_actor = "did:web:bob.example";
-    let bob_device = "ck:device:01904100-0000-7000-8000-0000000000e9";
+    let bob_device = "ak:device:01904100-0000-7000-8000-0000000000e9";
     let alice_actor = "did:web:alice.example";
-    let alice_device = "ck:device:01904100-0000-7000-8000-0000000000a1";
+    let alice_device = "ak:device:01904100-0000-7000-8000-0000000000a1";
 
     let (_priv, bob_pub) =
         load_or_create_device_hpke_keypair(&secure, bob_actor, bob_device).unwrap();
@@ -835,7 +835,7 @@ fn ingest_realm_key_share_accepts_projected_payload_envelope() {
         "sender": alice_actor,
         "sender_device_id": alice_device,
         "realm_id": realm,
-        "operation_id": "ck:event:01904100-0000-7000-8000-0000000000ee",
+        "operation_id": "ak:event:01904100-0000-7000-8000-0000000000ee",
         "payload": local.get("payload").unwrap().clone(),
     });
 
@@ -853,7 +853,7 @@ fn ingest_realm_key_share_accepts_projected_payload_envelope() {
     );
     assert_eq!(
         realm_key_share_message_operation_id(&projected).as_deref(),
-        Some("ck:event:01904100-0000-7000-8000-0000000000ee")
+        Some("ak:event:01904100-0000-7000-8000-0000000000ee")
     );
     let mut ingestable = projected.clone();
     ingestable.as_object_mut().unwrap().remove("sender");
@@ -884,11 +884,11 @@ fn ingest_realm_key_share_accepts_soland_content_payload_envelope() {
     // pre-join history secret was never installed and the card stayed locked.
     let mut state = temp_state_store("history-share-content-payload");
     let secure = MemorySecureKeyStore::new();
-    let realm = "ck:realm:01904100-0000-7000-8000-0000000000f0";
+    let realm = "ak:realm:01904100-0000-7000-8000-0000000000f0";
     let bob_actor = "did:web:bob.example";
-    let bob_device = "ck:device:01904100-0000-7000-8000-0000000000f1";
+    let bob_device = "ak:device:01904100-0000-7000-8000-0000000000f1";
     let alice_actor = "did:web:alice.example";
-    let alice_device = "ck:device:01904100-0000-7000-8000-0000000000a2";
+    let alice_device = "ak:device:01904100-0000-7000-8000-0000000000a2";
 
     let (_priv, bob_pub) =
         load_or_create_device_hpke_keypair(&secure, bob_actor, bob_device).unwrap();
@@ -906,7 +906,7 @@ fn ingest_realm_key_share_accepts_soland_content_payload_envelope() {
         "sender_principal_id": alice_actor,
         "sender_device_id": alice_device,
         "content": {
-            "operation_id": "ck:event:01904100-0000-7000-8000-0000000000f2",
+            "operation_id": "ak:event:01904100-0000-7000-8000-0000000000f2",
             "realm_id": realm,
             "payload": local.get("payload").unwrap().clone(),
         },
@@ -926,7 +926,7 @@ fn ingest_realm_key_share_accepts_soland_content_payload_envelope() {
     );
     assert_eq!(
         realm_key_share_message_operation_id(&projected).as_deref(),
-        Some("ck:event:01904100-0000-7000-8000-0000000000f2")
+        Some("ak:event:01904100-0000-7000-8000-0000000000f2")
     );
     let mut ingestable = projected.clone();
     ingestable
@@ -956,7 +956,7 @@ fn history_secrets_do_not_land_in_account_state_json() {
         "inkson-test-history-secret-at-rest-{}.json",
         crate::operation::uuid_v7()
     ));
-    let realm = "ck:realm:01904100-0000-7000-8000-0000000000d9";
+    let realm = "ak:realm:01904100-0000-7000-8000-0000000000d9";
     let secret = vec![9u8; 32];
     let store = crate::secure_key_store::default_secure_key_store("inkson");
     let key = crate::secure_key_store::mls_history_secret_store_key(realm);
@@ -999,10 +999,10 @@ fn tier3_history_decrypt_reads_provider_exporter_aead_content() {
     // content the live receive ratchet cannot.
     let mut state = temp_state_store("history-share-tier3");
     let secure = MemorySecureKeyStore::new();
-    let realm = "ck:realm:01904100-0000-7000-8000-0000000000f1";
+    let realm = "ak:realm:01904100-0000-7000-8000-0000000000f1";
     let bob_actor = "did:web:bob.example";
-    let bob_device = "ck:device:01904100-0000-7000-8000-0000000000f2";
-    let alice_device = "ck:device:01904100-0000-7000-8000-0000000000a1";
+    let bob_device = "ak:device:01904100-0000-7000-8000-0000000000f2";
+    let alice_device = "ak:device:01904100-0000-7000-8000-0000000000a1";
 
     // Bob holds a join-epoch snapshot (so `decrypt_application_payload` can
     // instantiate a group), but cannot ratchet to alice's exporter-aead content.
@@ -1079,9 +1079,9 @@ fn tier3_history_decrypt_works_without_local_snapshot() {
     // SDK path. Regression guard for the "must have a snapshot first" relaxation.
     let mut state = temp_state_store("history-share-no-snapshot");
     let secure = MemorySecureKeyStore::new();
-    let realm = "ck:realm:01904100-0000-7000-8000-0000000000f3";
+    let realm = "ak:realm:01904100-0000-7000-8000-0000000000f3";
     let bob_actor = "did:web:bob.example";
-    let bob_device = "ck:device:01904100-0000-7000-8000-0000000000f4";
+    let bob_device = "ak:device:01904100-0000-7000-8000-0000000000f4";
     let history_store = crate::secure_key_store::default_secure_key_store("inkson");
     let history_key = crate::secure_key_store::mls_history_secret_store_key(realm);
     let _ = history_store.delete_secret(&history_key);
@@ -1089,7 +1089,7 @@ fn tier3_history_decrypt_works_without_local_snapshot() {
     // Build alice's group WITHOUT persisting any snapshot into `state`.
     let alice = cokret_sdk::CokretMlsIdentity::new_basic(
         cokret_sdk::Did::new("did:web:alice.example".to_owned()).unwrap(),
-        cokret_sdk::DeviceId::new("ck:device:01904100-0000-7000-8000-0000000000a1".to_owned())
+        cokret_sdk::DeviceId::new("ak:device:01904100-0000-7000-8000-0000000000a1".to_owned())
             .unwrap(),
     )
     .unwrap();
@@ -1152,10 +1152,10 @@ fn realm_key_share_sender_signature_round_trips() {
     let did = crate::did_key::did_key_from_verifying_key(&verifying);
     let _signer_guard = ActiveSignerGuard::install(seed, &did);
 
-    let realm = "ck:realm:01904100-0000-7000-8000-0000000000f5";
+    let realm = "ak:realm:01904100-0000-7000-8000-0000000000f5";
     let recipient_actor = "did:web:bob.example";
-    let recipient_device = "ck:device:01904100-0000-7000-8000-0000000000f6";
-    let sender_device = "ck:device:01904100-0000-7000-8000-0000000000a1";
+    let recipient_device = "ak:device:01904100-0000-7000-8000-0000000000f6";
+    let sender_device = "ak:device:01904100-0000-7000-8000-0000000000a1";
 
     let event = crate::mls::admission::build_realm_key_share_event(
         realm,

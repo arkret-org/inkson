@@ -111,13 +111,13 @@ pub(super) fn NewSpaceSection(
                     new_space_realm_id.set(realm);
                     new_space_parent_id.set(context_key);
                 }
-            } else if context_key.starts_with("ck:realm:") {
+            } else if context_key.starts_with("ak:realm:") {
                 new_space_context_seen.set(context_key.clone());
                 new_space_created_id.set(String::new());
                 new_space_state.set("Draft not created yet".to_owned());
                 new_space_realm_id.set(context_key);
                 new_space_parent_id.set(String::new());
-            } else if context_key.starts_with("ck:space:") && !selected_fallback.is_empty() {
+            } else if context_key.starts_with("ak:space:") && !selected_fallback.is_empty() {
                 new_space_context_seen.set(context_key.clone());
                 new_space_created_id.set(String::new());
                 new_space_state.set("Draft not created yet".to_owned());

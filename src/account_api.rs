@@ -623,7 +623,7 @@ mod tests {
                 "subject": "did:web:alice.example"
             },
             "profile": {
-                "id": "ck:actor_profile:01970000-0000-7000-8000-000000000001",
+                "id": "ak:actor_profile:01970000-0000-7000-8000-000000000001",
                 "schema": "ck.schema.actor_profile.v1",
                 "principal_id": "did:web:alice.example",
                 "actor_kind": "user",

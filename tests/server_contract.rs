@@ -17,7 +17,7 @@ use reqwest::StatusCode;
 use serde_json::json;
 
 fn snapshot_contract_event_id(suffix: &str) -> cokret_sdk::EventId {
-    cokret_sdk::EventId::new(format!("ck:event:01904100-0000-7000-8000-{suffix}")).unwrap()
+    cokret_sdk::EventId::new(format!("ak:event:01904100-0000-7000-8000-{suffix}")).unwrap()
 }
 
 fn snapshot_contract_hash(seed: u8) -> cokret_sdk::Hash {
@@ -26,9 +26,9 @@ fn snapshot_contract_hash(seed: u8) -> cokret_sdk::Hash {
 
 fn snapshot_contract_manifest_payload() -> serde_json::Value {
     let snapshot_id =
-        cokret_sdk::SnapshotId::new("ck:snapshot:01904100-0000-7000-8000-0000000000cc").unwrap();
+        cokret_sdk::SnapshotId::new("ak:snapshot:01904100-0000-7000-8000-0000000000cc").unwrap();
     let realm_id =
-        cokret_sdk::RealmId::new("ck:realm:01904100-0000-7000-8000-0000000000cc").unwrap();
+        cokret_sdk::RealmId::new("ak:realm:01904100-0000-7000-8000-0000000000cc").unwrap();
     let service_did = cokret_sdk::Did::new("did:web:server.local").unwrap();
     let items = vec![cokret_sdk::SnapshotMaterializedItem {
         kind: "realm".to_owned(),
@@ -93,7 +93,7 @@ fn snapshot_contract_manifest_payload() -> serde_json::Value {
 fn inkson_accepts_server_contract_payloads() {
     let describe = parse_server_description(json!({
         "service_did": "did:web:server.local",
-        "trust_domain": "ck:trust_domain:server.local",
+        "trust_domain": "ak:trust_domain:server.local",
         "service_type": "principal_server",
         "protocol_version": "1.0",
         "supported_profiles": ["ck.schema.core.v1"],
@@ -190,11 +190,11 @@ fn inkson_accepts_server_contract_payloads() {
     );
 
     let sync = parse_sync(json!({
-        "cursor": "ck:cursor:contract-sync",
+        "cursor": "ak:cursor:contract-sync",
         "realms": {
-            "ck:realm:0196419b-0000-7000-8000-000000000000": {
+            "ak:realm:0196419b-0000-7000-8000-000000000000": {
                 "summary": {
-                    "title": "Cokret Demo Realm",
+                    "title": "Arkret Demo Realm",
                     "summary": "Shared demo Realm served by server",
                     "tags": ["demo"],
                     "category": "collaboration"
@@ -213,12 +213,12 @@ fn inkson_accepts_server_contract_payloads() {
     .unwrap();
     assert!(
         sync.realms
-            .contains_key("ck:realm:0196419b-0000-7000-8000-000000000000")
+            .contains_key("ak:realm:0196419b-0000-7000-8000-000000000000")
     );
 
     let directory = parse_directory_describe(json!({
         "service_did": "did:web:server.local",
-        "trust_domain": "ck:trust_domain:server.local",
+        "trust_domain": "ak:trust_domain:server.local",
         "service_type": "directory_service",
         "protocol_version": "1.0",
         "supported_profiles": ["ck.profile.directory_service.v1"],
@@ -255,20 +255,20 @@ fn inkson_accepts_server_contract_payloads() {
 
     let resolved = parse_resolve_realm(json!({
         "realm_preview": {
-            "realm_id": "ck:realm:0196419b-0000-7000-8000-000000000000",
-            "title": "Cokret Demo Realm",
+            "realm_id": "ak:realm:0196419b-0000-7000-8000-000000000000",
+            "title": "Arkret Demo Realm",
             "summary": "Shared demo Realm served by server",
             "tags": ["demo"],
             "public": true,
             "category": "collaboration",
             "as_of": "2026-05-30T00:00:00Z",
-            "source_refs": ["ck:event:0196419b-0000-7000-8000-000000000001"],
+            "source_refs": ["ak:event:0196419b-0000-7000-8000-000000000001"],
             "policy_revision": "contract-rev"
         },
         "stripped_state": [],
         "join_rule": "public",
         "join_candidates": [{
-            "realm_id": "ck:realm:0196419b-0000-7000-8000-000000000000",
+            "realm_id": "ak:realm:0196419b-0000-7000-8000-000000000000",
             "service_did": "did:web:server.local",
             "service_type": "principal_server",
             "role": "primary",
@@ -278,7 +278,7 @@ fn inkson_accepts_server_contract_payloads() {
             "priority": 0,
             "source": "directory_ingest",
             "seal_basis": {
-                "leaves": ["ck:seal:sha256:1111111111111111111111111111111111111111111111111111111111111111"],
+                "leaves": ["ak:seal:sha256:1111111111111111111111111111111111111111111111111111111111111111"],
                 "control_event_set_root": "sha256:2222222222222222222222222222222222222222222222222222222222222222",
                 "state_root": "sha256:3333333333333333333333333333333333333333333333333333333333333333"
             },
@@ -295,7 +295,7 @@ fn inkson_accepts_server_contract_payloads() {
 
     let submit: inkson::models::SubmitEventResult = serde_json::from_value(json!({
         "status": "accepted",
-        "accepted": ["ck:event:019640ca-0000-7000-8000-000000000000"],
+        "accepted": ["ak:event:019640ca-0000-7000-8000-000000000000"],
         "duplicate": [],
         "rejected": [],
         "actor_frontier": {},
@@ -306,7 +306,7 @@ fn inkson_accepts_server_contract_payloads() {
     assert_eq!(submit.status, "accepted");
     assert_eq!(
         submit.event_id,
-        "ck:event:019640ca-0000-7000-8000-000000000000"
+        "ak:event:019640ca-0000-7000-8000-000000000000"
     );
     assert_eq!(submit.cursor, "sx:1760000000000");
 
@@ -326,7 +326,7 @@ fn inkson_accepts_server_contract_payloads() {
     );
     assert!(
         serde_json::from_value::<cokret_sdk::SnapshotManifest>(json!({
-            "seal": "ck:seal:sha256:00",
+            "seal": "ak:seal:sha256:00",
             "chunk_count": 1,
             "merkle_root": format!("sha256:{}", "00".repeat(32)),
             "generator_proof": {}
@@ -348,14 +348,14 @@ fn inkson_accepts_server_contract_payloads() {
     // grants rather than free-form objects.
     let grants: inkson::models::GrantList = serde_json::from_value(json!({
         "grants": [{
-            "id": "ck:grant:0196419b-0000-7000-8000-000000000000",
+            "id": "ak:grant:0196419b-0000-7000-8000-000000000000",
             "schema": "ck.schema.capability_grant.v1",
-            "realm_id": "ck:realm:0196419b-0000-7000-8000-000000000001",
+            "realm_id": "ak:realm:0196419b-0000-7000-8000-000000000001",
             "issuer": "did:web:server.local",
             "subject": "did:web:alice.example",
             "actions": ["ck.space.write_message"],
             "resources": [
-                {"kind": "realm", "realm_id": "ck:realm:0196419b-0000-7000-8000-000000000001"}
+                {"kind": "realm", "realm_id": "ak:realm:0196419b-0000-7000-8000-000000000001"}
             ],
             "issued_at": "2026-04-28T12:00:00Z",
             "proofs": []
@@ -382,7 +382,7 @@ fn inkson_accepts_server_contract_payloads() {
     assert_eq!(keys.one_time_key_counts["signed_curve25519"], 1);
 
     let claimed: inkson::models::KeysClaimOutcome = serde_json::from_value(json!({
-        "one_time_keys": {"did:web:alice.example": {"ck:device:0196419b-0000-7000-8000-000000000000": {"key_id": "alice-otk-1"}}},
+        "one_time_keys": {"did:web:alice.example": {"ak:device:0196419b-0000-7000-8000-000000000000": {"key_id": "alice-otk-1"}}},
         "failures": []
     }))
     .unwrap();
@@ -399,7 +399,7 @@ fn inkson_accepts_server_contract_payloads() {
     // SDK shape: the to-device queue field is `messages`, not the old `events`.
     let device_receive: inkson::models::DeviceMessagesGetOutcome = serde_json::from_value(json!({
         "messages": [],
-        "next_cursor": "ck:cursor:device-messages",
+        "next_cursor": "ak:cursor:device-messages",
         "limited": false
     }))
     .unwrap();
@@ -407,11 +407,11 @@ fn inkson_accepts_server_contract_payloads() {
 
     let push: inkson::models::PushRegisterView = serde_json::from_value(json!({
         "ok": true,
-        "registration_id": "ck:push:dev_alice",
+        "registration_id": "ak:push:dev_alice",
         "expires_at": null
     }))
     .unwrap();
-    assert_eq!(push.registration_id.as_deref(), Some("ck:push:dev_alice"));
+    assert_eq!(push.registration_id.as_deref(), Some("ak:push:dev_alice"));
 
     let ok: inkson::models::OkOutcome = serde_json::from_value(json!({"ok": true})).unwrap();
     assert!(ok.ok);
@@ -420,12 +420,12 @@ fn inkson_accepts_server_contract_payloads() {
     // `content_digest`; no serde aliases in aggressive migration mode.
     let blob_digest = format!("sha256:{}", "ab".repeat(32));
     let blob: inkson::models::BlobUploadOutcome = serde_json::from_value(json!({
-        "blob_ref": format!("ck:blob:{blob_digest}"),
+        "blob_ref": format!("ak:blob:{blob_digest}"),
         "size_bytes": 23,
         "media_type": "application/octet-stream",
         "content_digest": blob_digest,
         "upload_receipt": {
-            "blob_ref": format!("ck:blob:{blob_digest}"),
+            "blob_ref": format!("ak:blob:{blob_digest}"),
             "content_digest": blob_digest,
             "size_bytes": 23,
             "received_at": "2026-04-28T12:00:00Z",
@@ -447,7 +447,7 @@ fn inkson_accepts_server_contract_payloads() {
     // SDK spec shape: status is `submitted`, and routed_to is a pure DID array
     // without fragments.
     let report: inkson::models::ModerationReportOutcome = serde_json::from_value(json!({
-        "report_id": "ck:report:1760000000000",
+        "report_id": "ak:report:1760000000000",
         "status": "submitted",
         "routed_to": ["did:web:server.local"]
     }))
@@ -468,7 +468,7 @@ fn inkson_accepts_server_contract_payloads() {
 fn server_description_gates_event_envelope_write_plane() {
     let events_ready = parse_server_description(json!({
         "service_did": "did:web:soland.local",
-        "trust_domain": "ck:trust_domain:soland.local",
+        "trust_domain": "ak:trust_domain:soland.local",
         "service_type": "principal_server",
         "protocol_version": "1.0",
         "supported_profiles": [
@@ -510,7 +510,7 @@ fn server_description_gates_event_envelope_write_plane() {
     .unwrap();
     let described_with_external_compat_surface = parse_server_description(json!({
         "service_did": "did:web:local.host",
-        "trust_domain": "ck:trust_domain:local.host",
+        "trust_domain": "ak:trust_domain:local.host",
         "service_type": "principal_server",
         "protocol_version": "1.0",
         "supported_profiles": [
@@ -564,7 +564,7 @@ fn server_description_gates_event_envelope_write_plane() {
     // accepted by the SDK parser but flagged by the inkson helpers.
     let events_missing = parse_server_description(json!({
         "service_did": "did:web:minimal.local",
-        "trust_domain": "ck:trust_domain:minimal.local",
+        "trust_domain": "ak:trust_domain:minimal.local",
         "service_type": "principal_server",
         "protocol_version": "1.0",
         "supported_profiles": [],
@@ -605,7 +605,7 @@ fn server_description_gates_event_envelope_write_plane() {
 
 #[test]
 fn inkson_accepts_v1_sync_buckets_and_subscribe_ndjson_contract() {
-    // Spec-aligned wire shape per `cokret-spec/.../client-sync.md §2`:
+    // Spec-aligned wire shape per `arkret-spec/.../client-sync.md §2`:
     // flat `realms` keyed by realm id, explicit top-level
     // `left_realms`, flat arrays for `to_device` / `account_data` /
     // `presence`. The SDK's `SyncOutcome` is the single source of
@@ -613,7 +613,7 @@ fn inkson_accepts_v1_sync_buckets_and_subscribe_ndjson_contract() {
     let sync = parse_sync(json!({
         "cursor": "sx:v1-bucket",
         "realms": {
-            "ck:realm:joined": {
+            "ak:realm:joined": {
                 "summary": {"title": "Joined Realm"},
                 "timeline": {"events": [], "limited": false},
                 "state": [],
@@ -621,30 +621,30 @@ fn inkson_accepts_v1_sync_buckets_and_subscribe_ndjson_contract() {
                 "unread": {"notification_count": 0, "highlight_count": 0}
             }
         },
-        "left_realms": ["ck:realm:left"],
+        "left_realms": ["ak:realm:left"],
         "to_device": [{"type": "ck.mls.welcome"}],
         "account_data": [{
             "data_type": "ck.push_rules",
             "content": {"global": {"enabled": true}}
         }],
         "device_lists": {"changed": [], "left": []},
-        "notifications": {"rooms": {"ck:realm:joined": {"count": 1}}},
+        "notifications": {"rooms": {"ak:realm:joined": {"count": 1}}},
         "presence": [{"actor_id": "did:web:alice.example"}]
     }))
     .unwrap();
     assert_eq!(sync.cursor, "sx:v1-bucket");
-    assert!(sync.realms.contains_key("ck:realm:joined"));
-    assert_eq!(sync.left_realms, vec!["ck:realm:left".to_owned()]);
+    assert!(sync.realms.contains_key("ak:realm:joined"));
+    assert_eq!(sync.left_realms, vec!["ak:realm:left".to_owned()]);
     assert_eq!(sync.to_device.len(), 1);
     assert_eq!(sync.account_data.len(), 1);
-    assert_eq!(sync.notifications["rooms"]["ck:realm:joined"]["count"], 1);
+    assert_eq!(sync.notifications["rooms"]["ak:realm:joined"]["count"], 1);
     assert_eq!(sync.presence[0]["actor_id"], "did:web:alice.example");
     assert!(sync.presence[0].get("sender").is_none());
 
     let frames = parse_events_subscribe_ndjson_text(
         r#"{"kind":"heartbeat"}
-{"kind":"frontier","cursor":"ck:cursor:frontier"}
-{"kind":"catchup_complete","cursor":"ck:cursor:live"}
+{"kind":"frontier","cursor":"ak:cursor:frontier"}
+{"kind":"catchup_complete","cursor":"ak:cursor:live"}
 "#,
     )
     .unwrap();
@@ -665,7 +665,7 @@ fn inkson_accepts_v1_sync_buckets_and_subscribe_ndjson_contract() {
 #[test]
 fn account_data_canonical_contact_and_realm_remark_keys_contract() {
     assert_eq!(
-        realm_remark_account_data_key("ck:realm:contract"),
+        realm_remark_account_data_key("ak:realm:contract"),
         "ck.contacts.realm.ck:realm:contract"
     );
     assert_eq!(
@@ -698,7 +698,7 @@ fn local_remarks_do_not_leak_into_event_push_search_log_or_directory_surfaces() 
 
     let secret = "Alice from Ops Private";
     let contact_remark = ContactRemark::new("did:web:alice.example", secret);
-    let realm_id = "ck:realm:01904100-0000-7000-8000-0000000000cd";
+    let realm_id = "ak:realm:01904100-0000-7000-8000-0000000000cd";
     let _realm_remark = RealmRemark::new(realm_id, secret);
 
     let event = OperationBuilder::new(
@@ -729,7 +729,7 @@ fn local_remarks_do_not_leak_into_event_push_search_log_or_directory_surfaces() 
         query: "hello".to_owned(),
         results: vec![json!({
             "kind": "message",
-            "space_id": "ck:space:contract",
+            "space_id": "ak:space:contract",
             "actor_id": "did:web:alice.example",
             "content": {"body": "hello"}
         })],
@@ -755,7 +755,7 @@ fn local_remarks_do_not_leak_into_event_push_search_log_or_directory_surfaces() 
     let directory = cokret_sdk::models::DirectoryRealmSearchOutcome {
         realms: vec![cokret_sdk::models::RealmPreview {
             realm_id: cokret_sdk::RealmId::new(
-                "ck:realm:01904100-0000-7000-8000-000000000001".to_owned(),
+                "ak:realm:01904100-0000-7000-8000-000000000001".to_owned(),
             )
             .unwrap(),
             alias: None,
@@ -773,7 +773,7 @@ fn local_remarks_do_not_leak_into_event_push_search_log_or_directory_surfaces() 
             history_visibility: None,
             join_candidates: Vec::new(),
             as_of: Utc::now(),
-            source_refs: vec!["ck:event:01904100-0000-7000-8000-000000000002".to_owned()],
+            source_refs: vec!["ak:event:01904100-0000-7000-8000-000000000002".to_owned()],
             policy_revision: "contract-rev".to_owned(),
             stale: None,
             divergent: None,
@@ -803,32 +803,32 @@ fn inkson_config_store_preserves_server_actor_device_and_token() {
 fn inkson_e2ee_workflow_matches_protocol_mls_envelope_behavior() {
     let mut alice = inkson::crypto::LocalMlsDevice::new(
         "did:web:alice.example",
-        "ck:device:01904100-0000-7000-8000-000000000001",
+        "ak:device:01904100-0000-7000-8000-000000000001",
     )
     .unwrap();
     let mut bob = inkson::crypto::LocalMlsDevice::new(
         "did:web:bob.example",
-        "ck:device:01904100-0000-7000-8000-000000000002",
+        "ak:device:01904100-0000-7000-8000-000000000002",
     )
     .unwrap();
     let bob_keys = bob.key_package_record().unwrap();
 
     alice
-        .create_group(b"ck:realm:0196419b-0000-7000-8000-000000000000")
+        .create_group(b"ak:realm:0196419b-0000-7000-8000-000000000000")
         .unwrap();
     let add_result = alice.add_member(&bob_keys).unwrap();
     bob.join_from_welcome(&add_result.welcome).unwrap();
 
     let encrypted = alice
         .encrypt_message(
-            "ck:message:contract-1",
+            "ak:message:contract-1",
             br#"{"content":{"kind":"ck.content.text","body":"hello via MLS"}}"#,
         )
         .unwrap();
     assert_eq!(encrypted.payload.scheme.as_str(), "mls-rfc9420");
     assert_eq!(
         encrypted.payload.content_type,
-        "application/vnd.cokret.message+json"
+        "application/vnd.arkret.message+json"
     );
 
     let decrypted = bob.decrypt_or_preserve(encrypted).unwrap();
@@ -843,7 +843,7 @@ fn inkson_e2ee_workflow_matches_protocol_mls_envelope_behavior() {
 
 // (Move/Seal pipeline tests removed — all writes now go through
 // ck.self.events.command.submit; the SubmitEventResult decoder is exercised by
-// soland's own integration tests and the cokret-spec fixtures.)
+// soland's own integration tests and the arkret-spec fixtures.)
 
 /// Regression: `is_auth_expired_error` MUST treat a bare 401
 /// (server returned 401 with no parseable error envelope, e.g. a
@@ -901,13 +901,13 @@ fn decoder_handles_all_envelope_shapes() {
     //    surface them.
     let wrapped = decode_cokret_error(
         StatusCode::CONFLICT,
-        br#"{"ok":false,"error":{"code":"expected_head_mismatch","message":"head mismatch","retry_after_ms":250,"details":{"cell":"ck:cell:ck.component.strand.position.v1:demo"}}}"#,
+        br#"{"ok":false,"error":{"code":"expected_head_mismatch","message":"head mismatch","retry_after_ms":250,"details":{"cell":"ak:cell:ck.component.strand.position.v1:demo"}}}"#,
     );
     assert_eq!(wrapped.code(), "expected_head_mismatch");
     assert_eq!(wrapped.retry_after_ms(), Some(250));
     assert_eq!(
         wrapped.details()["cell"],
-        "ck:cell:ck.component.strand.position.v1:demo"
+        "ak:cell:ck.component.strand.position.v1:demo"
     );
 
     // 2. Plain envelope without `request_id`.

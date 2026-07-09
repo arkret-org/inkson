@@ -202,7 +202,7 @@ pub fn CallPanel(
             };
 
             let call = if active_call_id().is_empty() {
-                format!("ck:call:{}", crate::operation::uuid_v7())
+                format!("ak:call:{}", crate::operation::uuid_v7())
             } else {
                 active_call_id()
             };

@@ -1,6 +1,6 @@
 //! Core transport shell for [`CokretApi`]: constructor + builder methods,
 //! SDK http-client construction, network state, and the legacy URL guard.
-//! Endpoint traffic is being strangled through `cokret-http-client`; this
+//! Endpoint traffic is being strangled through `arkret-http-client`; this
 //! module now only holds the host-facing state needed to build that client.
 
 use super::*;
@@ -88,7 +88,7 @@ impl CokretApi {
         }
         builder
             .build()
-            .map_err(|error| anyhow::anyhow!("build SDK Cokret HTTP client: {error}"))
+            .map_err(|error| anyhow::anyhow!("build SDK Arkret HTTP client: {error}"))
     }
 
     /// Build a [`crate::event_submit::EventSubmitter`] from this client's

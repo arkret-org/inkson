@@ -1,8 +1,8 @@
 # inkson
 
-> **Spec target**: [cokret-spec @ 0b80cc78](../cokret-spec) (R3.4 sync 2026-06-13; includes §5.6 receive-chain persistence MUST from 58d68c89)
+> **Spec target**: [arkret-spec @ 0b80cc78](../arkret-spec) (R3.4 sync 2026-06-13; includes §5.6 receive-chain persistence MUST from 58d68c89)
 
-Cross-platform Cokret client built with Dioxus 0.7.
+Cross-platform Arkret client built with Dioxus 0.7.
 
 ## Pre-commit hook setup
 
@@ -16,7 +16,7 @@ The hook runs `cargo fmt --all -- --check` and `cargo clippy --all-targets
 --no-deps -- -D warnings` on staged Rust changes (matching CI's
 `--all-targets` clippy scope). If `.githooks/pre-commit` is missing on
 a branch, copy it from
-[`cokret-rust-sdk`](https://github.com/cokret/cokret-rust-sdk) and
+[`arkret-rust-sdk`](https://github.com/arkret/arkret-rust-sdk) and
 adapt to your local toolchain.
 
 ## Realm vs Space
@@ -34,9 +34,9 @@ i18n keys in `src/i18n/` (`en.rs` / `zh.rs`); protocol-level identifiers stay re
 
 ## Round R4 (protocol review closures)
 
-Spec round 4 (`cokret-spec` range `2a4d39b..a77b995`, 8 commits) brings
+Spec round 4 (`arkret-spec` range `2a4d39b..a77b995`, 8 commits) brings
 several client-visible changes. The canonical wire-breaking list is this
-section plus the protocol spec history in `../cokret-spec/spec/v1/`.
+section plus the protocol spec history in `../arkret-spec/spec/v1/`.
 
 - **`ck.call.signal` v2** — 13 signal types, required device `proof`,
   per-`(realm, call, actor, device)` monotonic `seq`. Seq rollback
@@ -58,7 +58,7 @@ section plus the protocol spec history in `../cokret-spec/spec/v1/`.
 ## Round R2/R3 user-facing surfaces
 
 Spec rounds 2+3 (2026-05-20) added a handful of end-user changes — see
-the protocol spec tree (`../cokret-spec/spec/v1/`) for the normative source.
+the protocol spec tree (`../arkret-spec/spec/v1/`) for the normative source.
 
 - **Ephemeral signal routing change** — typing / receipts / presence /
   call-signal no longer travel through the durable `ck.self.events.command.submit`
@@ -101,7 +101,7 @@ Platform notes:
 - Web builds use the Dioxus web renderer and must talk to `soland` through an HTTP(S) origin allowed by the Principal Server CORS configuration. Keep the settings panel pointed at the externally reachable server URL, not an internal desktop-only loopback address.
 - Windows and Linux desktop builds use the Dioxus desktop renderer. Local development defaults to `https://local.host` and stores the last server/account/device/session settings in the local config store.
 - iOS/mobile builds use the Dioxus mobile renderer. Device builds require the platform toolchain (`dx`, Xcode/iOS signing on macOS for iOS, platform SDKs for other mobile targets). Treat loopback URLs as emulator-local; use a LAN or tunneled server URL when testing against a desktop server process.
-- All platforms use the same typed API client, bounded retry/backoff policy, Cokret error envelope decoding, and encrypted-payload preservation path.
+- All platforms use the same typed API client, bounded retry/backoff policy, Arkret error envelope decoding, and encrypted-payload preservation path.
 
 Principal server presets can be added to the local config file with `principal_servers`. The login screen shows these values as selectable suggestions while still accepting a custom URL:
 
@@ -114,7 +114,7 @@ Principal server presets can be added to the local config file with `principal_s
     "https://prod.example"
   ],
   "account_did": "",
-  "device_id": "ck:device:01964137-0000-7000-8000-000000000000",
+  "device_id": "ak:device:01964137-0000-7000-8000-000000000000",
   "session_credential": ""
 }
 ```
@@ -125,7 +125,7 @@ The Rust crate also runs normal verification:
 cargo test
 ```
 
-Browser workflow verification uses Playwright with mocked Cokret HTTP endpoints:
+Browser workflow verification uses Playwright with mocked Arkret HTTP endpoints:
 
 ```powershell
 npm install
@@ -134,7 +134,7 @@ npm run e2e
 
 The Playwright runner starts `dx serve --platform web --port 4527 --open false` and exercises the web shell against mocked `/_cokret/*` responses. Use `INKSON_E2E_BASE_URL=http://127.0.0.1:<port>` when testing an already-running web build.
 
-The e2e suite under `tests/e2e/` is **mock-only**: it pins inkson's UI surface against the contract in `tests/e2e/mockCokretContract.ts` and never speaks to a real Cokret server. Full UI ↔ real-server integration lives in the sibling [`cotest`](../cotest) joint suite (`cotest/e2e/`), which boots both `inkson` and a real `soland` process. Any test that needs a live server should be added there, not here.
+The e2e suite under `tests/e2e/` is **mock-only**: it pins inkson's UI surface against the contract in `tests/e2e/mockCokretContract.ts` and never speaks to a real Arkret server. Full UI ↔ real-server integration lives in the sibling [`cotest`](../cotest) joint suite (`cotest/e2e/`), which boots both `inkson` and a real `soland` process. Any test that needs a live server should be added there, not here.
 
 The UI compile guard is included in `cargo test` and verifies the exported Dioxus root component signature used by `src/main.rs`.
 
@@ -157,11 +157,11 @@ The repository includes CI for:
 - `Docker`: local web image build, Trivy scan, SBOM evidence, and local cosign blob evidence when a local key is supplied. It does not push to GHCR or any registry.
 - `Dependabot`: weekly updates for GitHub Actions, Cargo, npm, and Docker.
 
-CI checks out `cokret-rust-sdk` and `chime` next to `inkson` because `Cargo.toml` uses sibling path dependencies. The expected GitHub repository names are `${OWNER}/cokret-rust-sdk` and `${OWNER}/chime`.
+CI checks out `arkret-rust-sdk` and `chime` next to `inkson` because `Cargo.toml` uses sibling path dependencies. The expected GitHub repository names are `${OWNER}/arkret-rust-sdk` and `${OWNER}/chime`.
 
 ### Gitea Actions
 
-The Gitea smoke workflow lives in `.gitea/workflows/smoke.yml`. It follows the lightweight Rust-check structure used by the related synpad workflows and checks out `inkson`, `cokret-rust-sdk`, and `chime` as sibling directories so the local path dependencies resolve.
+The Gitea smoke workflow lives in `.gitea/workflows/smoke.yml`. It follows the lightweight Rust-check structure used by the related synpad workflows and checks out `inkson`, `arkret-rust-sdk`, and `chime` as sibling directories so the local path dependencies resolve.
 
 The smoke job installs the Linux desktop build packages and runs:
 
@@ -171,9 +171,9 @@ cargo check --locked --all-targets
 cargo test --locked
 ```
 
-The expected Gitea repository names are `${OWNER}/cokret-rust-sdk` and `${OWNER}/chime`.
+The expected Gitea repository names are `${OWNER}/arkret-rust-sdk` and `${OWNER}/chime`.
 
-The Docker image serves the Dioxus web build with nginx. Build it from a clean context containing `inkson`, `cokret-rust-sdk`, and `chime`:
+The Docker image serves the Dioxus web build with nginx. Build it from a clean context containing `inkson`, `arkret-rust-sdk`, and `chime`:
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File scripts/prepare-docker-context.ps1
@@ -204,5 +204,5 @@ Unauthenticated users see only the login or registration entry screen. After a r
 
 <!-- circle-rollout milestone pointer -->
 > **Active milestone tracking** (local-only, gitignored): see
-> `_inkson_todos.md` in the parent `cokret/` directory for the
+> `_inkson_todos.md` in the parent `arkret/` directory for the
 > circle-rollout (CKP-0007) work item list and per-stage checkpoints.

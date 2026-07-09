@@ -3,11 +3,11 @@ use super::*;
 #[test]
 fn card_detail_deep_link_targets_kanban_task_route() {
     assert_eq!(
-        strand_detail_deep_link_path("ck:space:ops", "ck:strand:abc"),
+        strand_detail_deep_link_path("ak:space:ops", "ak:strand:abc"),
         "/kanban/ck:space:ops/task/ck:strand:abc"
     );
     assert_eq!(
-        strand_detail_deep_link_path("", "ck:strand:abc"),
+        strand_detail_deep_link_path("", "ak:strand:abc"),
         format!("/kanban/{DEMO_BOARD_SPACE_ID}/task/ck:strand:abc")
     );
 }
@@ -55,8 +55,8 @@ fn card_detail_tab_reads_url_query() {
 fn card_detail_share_link_carries_current_tab() {
     assert_eq!(
         strand_detail_deep_link_path_with_tab(
-            "ck:space:ops",
-            "ck:strand:abc",
+            "ak:space:ops",
+            "ak:strand:abc",
             CardDetailContentTab::Discussion
         ),
         "/kanban/ck:space:ops/task/ck:strand:abc?tab=discussion"
@@ -67,18 +67,18 @@ fn card_detail_share_link_carries_current_tab() {
 fn route_card_strand_id_reads_task_segment_only() {
     assert_eq!(
         route_card_strand_id(&Route::KanbanTask {
-            realm_id: "ck:realm:ops".to_owned(),
-            task_id: "ck:strand:abc".to_owned(),
+            realm_id: "ak:realm:ops".to_owned(),
+            task_id: "ak:strand:abc".to_owned(),
         }),
-        Some("ck:strand:abc".to_owned())
+        Some("ak:strand:abc".to_owned())
     );
     assert_eq!(
         route_card_strand_id(&Route::KanbanBoardTask {
-            realm_id: "ck:realm:ops".to_owned(),
-            board_id: "ck:space:board".to_owned(),
-            task_id: "ck:strand:abc".to_owned(),
+            realm_id: "ak:realm:ops".to_owned(),
+            board_id: "ak:space:board".to_owned(),
+            task_id: "ak:strand:abc".to_owned(),
         }),
-        Some("ck:strand:abc".to_owned())
+        Some("ak:strand:abc".to_owned())
     );
     assert_eq!(route_card_strand_id(&Route::Kanban), None);
 }
@@ -87,31 +87,31 @@ fn route_card_strand_id_reads_task_segment_only() {
 fn route_board_id_reads_board_segment_only() {
     assert_eq!(
         route_board_id(&Route::KanbanBoard {
-            realm_id: "ck:realm:ops".to_owned(),
-            board_id: "ck:space:board".to_owned(),
+            realm_id: "ak:realm:ops".to_owned(),
+            board_id: "ak:space:board".to_owned(),
         }),
-        Some("ck:space:board".to_owned())
+        Some("ak:space:board".to_owned())
     );
     assert_eq!(
         route_board_id(&Route::KanbanBoardTask {
-            realm_id: "ck:realm:ops".to_owned(),
-            board_id: "ck:space:board".to_owned(),
-            task_id: "ck:strand:abc".to_owned(),
+            realm_id: "ak:realm:ops".to_owned(),
+            board_id: "ak:space:board".to_owned(),
+            task_id: "ak:strand:abc".to_owned(),
         }),
-        Some("ck:space:board".to_owned())
+        Some("ak:space:board".to_owned())
     );
     // The board-less routes carry no board id — it is resolved from
     // the projection on arrival.
     assert_eq!(
         route_board_id(&Route::KanbanTask {
-            realm_id: "ck:realm:ops".to_owned(),
-            task_id: "ck:strand:abc".to_owned(),
+            realm_id: "ak:realm:ops".to_owned(),
+            task_id: "ak:strand:abc".to_owned(),
         }),
         None
     );
     assert_eq!(
         route_board_id(&Route::KanbanRealm {
-            realm_id: "ck:realm:ops".to_owned(),
+            realm_id: "ak:realm:ops".to_owned(),
         }),
         None
     );
@@ -120,16 +120,16 @@ fn route_board_id_reads_board_segment_only() {
 #[test]
 fn kanban_board_route_carries_board_or_falls_back() {
     assert_eq!(
-        kanban_board_route("ck:realm:ops", "ck:space:board"),
+        kanban_board_route("ak:realm:ops", "ak:space:board"),
         Route::KanbanBoard {
-            realm_id: "ck:realm:ops".to_owned(),
-            board_id: "ck:space:board".to_owned(),
+            realm_id: "ak:realm:ops".to_owned(),
+            board_id: "ak:space:board".to_owned(),
         }
     );
     assert_eq!(
-        kanban_board_route("ck:realm:ops", ""),
+        kanban_board_route("ak:realm:ops", ""),
         Route::KanbanRealm {
-            realm_id: "ck:realm:ops".to_owned(),
+            realm_id: "ak:realm:ops".to_owned(),
         }
     );
 }
@@ -137,18 +137,18 @@ fn kanban_board_route_carries_board_or_falls_back() {
 #[test]
 fn kanban_card_task_route_carries_board_or_falls_back() {
     assert_eq!(
-        kanban_card_task_route("ck:realm:ops", "ck:space:board", "ck:strand:abc"),
+        kanban_card_task_route("ak:realm:ops", "ak:space:board", "ak:strand:abc"),
         Route::KanbanBoardTask {
-            realm_id: "ck:realm:ops".to_owned(),
-            board_id: "ck:space:board".to_owned(),
-            task_id: "ck:strand:abc".to_owned(),
+            realm_id: "ak:realm:ops".to_owned(),
+            board_id: "ak:space:board".to_owned(),
+            task_id: "ak:strand:abc".to_owned(),
         }
     );
     assert_eq!(
-        kanban_card_task_route("ck:realm:ops", "", "ck:strand:abc"),
+        kanban_card_task_route("ak:realm:ops", "", "ak:strand:abc"),
         Route::KanbanTask {
-            realm_id: "ck:realm:ops".to_owned(),
-            task_id: "ck:strand:abc".to_owned(),
+            realm_id: "ak:realm:ops".to_owned(),
+            task_id: "ak:strand:abc".to_owned(),
         }
     );
 }

@@ -212,9 +212,9 @@ mod tests {
     #[test]
     fn call_state_emits_canonical_kind() {
         let op = build_call_state(
-            "ck:realm:0196419b-0000-7000-8000-0000000000ac",
+            "ak:realm:0196419b-0000-7000-8000-0000000000ac",
             "did:web:alice",
-            "ck:call:c1",
+            "ak:call:c1",
             CallState::Active,
             None,
         )
@@ -226,9 +226,9 @@ mod tests {
     #[test]
     fn call_recording_start_uses_current_schema() {
         let op = build_call_recording_start(
-            "ck:realm:0196419b-0000-7000-8000-0000000000ac",
+            "ak:realm:0196419b-0000-7000-8000-0000000000ac",
             "did:web:alice",
-            "ck:call:c1",
+            "ak:call:c1",
             "rtc-recording-r1",
             cokret_sdk::RecordingCaptureKind::Recording,
             cokret_sdk::RecordingMode::AudioVideo,
@@ -246,9 +246,9 @@ mod tests {
     #[test]
     fn call_recording_start_supports_transcript_capture_kind() {
         let op = build_call_recording_start(
-            "ck:realm:0196419b-0000-7000-8000-0000000000ac",
+            "ak:realm:0196419b-0000-7000-8000-0000000000ac",
             "did:web:alice",
-            "ck:call:c1",
+            "ak:call:c1",
             "rtc-transcript-t1",
             cokret_sdk::RecordingCaptureKind::Transcript,
             cokret_sdk::RecordingMode::AudioOnly,
@@ -262,10 +262,10 @@ mod tests {
 
     fn make_v1_envelope(seq: u64, signal_type: &str) -> cokret_sdk::EphemeralEnvelope {
         let mut env = crate::ephemeral::build_call_signal_envelope_v1(
-            "ck:realm:01904100-0000-7000-8000-000000000001",
+            "ak:realm:01904100-0000-7000-8000-000000000001",
             "did:web:alice.example",
-            "ck:device:01904100-0000-7000-8000-000000000002",
-            "ck:call:01904100-0000-7000-8000-000000000003",
+            "ak:device:01904100-0000-7000-8000-000000000002",
+            "ak:call:01904100-0000-7000-8000-000000000003",
             signal_type,
             seq,
             serde_json::json!({}),
@@ -290,10 +290,10 @@ mod tests {
     #[test]
     fn v1_builder_rejects_unknown_signal_type() {
         let err = crate::ephemeral::build_call_signal_envelope_v1(
-            "ck:realm:01904100-0000-7000-8000-000000000001",
+            "ak:realm:01904100-0000-7000-8000-000000000001",
             "did:web:alice.example",
-            "ck:device:01904100-0000-7000-8000-000000000002",
-            "ck:call:01904100-0000-7000-8000-000000000003",
+            "ak:device:01904100-0000-7000-8000-000000000002",
+            "ak:call:01904100-0000-7000-8000-000000000003",
             "sdp_offer",
             1,
             serde_json::json!({}),
@@ -324,16 +324,16 @@ mod tests {
         // rejects it (the Round 4 schema requires proof).
         let env = cokret_sdk::EphemeralEnvelope::new(
             "ck.call.signal",
-            cokret_sdk::RealmId::new("ck:realm:01904100-0000-7000-8000-000000000001").unwrap(),
+            cokret_sdk::RealmId::new("ak:realm:01904100-0000-7000-8000-000000000001").unwrap(),
             cokret_sdk::Did::new("did:web:alice.example").unwrap(),
             Some(
-                cokret_sdk::DeviceId::new("ck:device:01904100-0000-7000-8000-000000000002")
+                cokret_sdk::DeviceId::new("ak:device:01904100-0000-7000-8000-000000000002")
                     .unwrap(),
             ),
             chrono::Utc::now(),
             chrono::Utc::now() + chrono::Duration::seconds(60),
             serde_json::json!({
-                "call_id": "ck:call:01904100-0000-7000-8000-000000000003",
+                "call_id": "ak:call:01904100-0000-7000-8000-000000000003",
                 "signal_type": "invite",
                 "seq": 1u64,
                 "data": {},

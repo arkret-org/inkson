@@ -39,15 +39,15 @@ fn collect_welcome_entries_tolerates_missing_events_envelope() {
 #[test]
 fn parses_message_event_with_operation_body_shape() {
     let event = json!({
-        "id": "ck:event:body-shape",
+        "id": "ak:event:body-shape",
         "type": "ck.message.create",
         "actor": "did:web:alice.example",
-        "realm_id": "ck:realm:demo",
+        "realm_id": "ak:realm:demo",
         "created_at": "2026-05-14T01:23:45Z",
         "causal": {"actor_seq": 42},
         "body": {
             "body": "restored from durable history",
-            "strand_id": "ck:strand:announce",
+            "strand_id": "ak:strand:announce",
             "message_id": "chat-msg-local",
             "mentions": [{
                 "kind": "mention",
@@ -57,11 +57,11 @@ fn parses_message_event_with_operation_body_shape() {
         }
     });
 
-    let message = chat_message_from_event("ck:realm:fallback", &event).unwrap();
+    let message = chat_message_from_event("ak:realm:fallback", &event).unwrap();
 
-    assert_eq!(message.id, "ck:event:body-shape");
-    assert_eq!(message.realm_id, "ck:realm:demo");
-    assert_eq!(message.strand_id, "ck:strand:announce");
+    assert_eq!(message.id, "ak:event:body-shape");
+    assert_eq!(message.realm_id, "ak:realm:demo");
+    assert_eq!(message.strand_id, "ak:strand:announce");
     assert_eq!(message.body, "restored from durable history");
     assert_eq!(message.sender, "did:web:alice.example");
     assert_eq!(message.mentions[0].target_id(), "did:web:bob.example");
@@ -71,7 +71,7 @@ fn parses_message_event_with_operation_body_shape() {
 fn parses_message_event_with_nested_envelope_payload_shape() {
     let event = json!({
         "event": {
-            "event_id": "ck:event:nested",
+            "event_id": "ak:event:nested",
             "kind": "ck.message.create",
             "actor_id": "did:web:alice.example",
             "actor_seq": 43,
@@ -80,16 +80,16 @@ fn parses_message_event_with_nested_envelope_payload_shape() {
                     "kind": "ck.content.text",
                     "body": "nested payload message"
                 },
-                "strand_id": "ck:strand:support",
+                "strand_id": "ak:strand:support",
                 "message_id": "chat-msg-nested"
             }
         }
     });
 
-    let message = chat_message_from_event("ck:realm:demo", &event).unwrap();
+    let message = chat_message_from_event("ak:realm:demo", &event).unwrap();
 
-    assert_eq!(message.id, "ck:event:nested");
-    assert_eq!(message.strand_id, "ck:strand:support");
+    assert_eq!(message.id, "ak:event:nested");
+    assert_eq!(message.strand_id, "ak:strand:support");
     assert_eq!(message.body, "nested payload message");
 }
 
@@ -101,23 +101,23 @@ fn folds_received_redaction_tombstone_onto_message() {
     // though this is the only copy of the message the reader ever sees.
     let event = json!({
         "kind": "ck.message.create",
-        "event_id": "ck:event:tombstone",
-        "message_id": "ck:message:tombstone",
-        "realm_id": "ck:realm:demo",
-        "strand_id": "ck:strand:support",
+        "event_id": "ak:event:tombstone",
+        "message_id": "ak:message:tombstone",
+        "realm_id": "ak:realm:demo",
+        "strand_id": "ak:strand:support",
         "sender": "did:web:bob.example",
         "actor_id": "did:web:bob.example",
         "created_at": "2026-05-14T01:23:45Z",
         "redacted": true,
         "state": "redacted",
         "redacted_at": "2026-05-14T02:00:00Z",
-        "redaction_ref": "ck:event:redact-1",
+        "redaction_ref": "ak:event:redact-1",
         "content": {"kind": "ck.content.text", "body": "[redacted]"}
     });
 
-    let message = chat_message_from_event("ck:realm:demo", &event).unwrap();
+    let message = chat_message_from_event("ak:realm:demo", &event).unwrap();
 
-    assert_eq!(message.id, "ck:event:tombstone");
+    assert_eq!(message.id, "ak:event:tombstone");
     assert!(message.redacted);
     assert_eq!(message.body, "");
 }
@@ -128,33 +128,33 @@ fn chat_visible_read_receipt_send_respects_preferences() {
     let mut store = LocalStateStore::with_path(temp);
     assert!(chat_visible_read_receipt_should_send(
         &store,
-        "ck:strand:demo",
-        "ck:realm:demo",
+        "ak:strand:demo",
+        "ak:realm:demo",
     ));
 
     store.set_read_receipt_default_send(false);
     assert!(!chat_visible_read_receipt_should_send(
         &store,
-        "ck:strand:demo",
-        "ck:realm:demo",
+        "ak:strand:demo",
+        "ak:realm:demo",
     ));
 
-    store.set_read_receipt_realm_override("ck:realm:demo", Some(true));
+    store.set_read_receipt_realm_override("ak:realm:demo", Some(true));
     assert!(chat_visible_read_receipt_should_send(
         &store,
-        "ck:strand:other",
-        "ck:realm:demo",
+        "ak:strand:other",
+        "ak:realm:demo",
     ));
 
-    store.set_read_receipt_strand_override("ck:strand:demo", Some(false));
+    store.set_read_receipt_strand_override("ak:strand:demo", Some(false));
     assert!(!chat_visible_read_receipt_should_send(
         &store,
-        "ck:strand:demo",
-        "ck:realm:demo",
+        "ak:strand:demo",
+        "ak:realm:demo",
     ));
 
     store.set_read_receipt_policy_snapshot(
-        "ck:realm:demo",
+        "ak:realm:demo",
         Some(crate::local_state::ReadReceiptPolicySnapshot {
             disclosure: "required".to_owned(),
             visibility: Some("public".to_owned()),
@@ -162,12 +162,12 @@ fn chat_visible_read_receipt_send_respects_preferences() {
     );
     assert!(chat_visible_read_receipt_should_send(
         &store,
-        "ck:strand:demo",
-        "ck:realm:demo",
+        "ak:strand:demo",
+        "ak:realm:demo",
     ));
 
     store.set_read_receipt_policy_snapshot(
-        "ck:realm:demo",
+        "ak:realm:demo",
         Some(crate::local_state::ReadReceiptPolicySnapshot {
             disclosure: "disabled".to_owned(),
             visibility: Some("private".to_owned()),
@@ -175,8 +175,8 @@ fn chat_visible_read_receipt_send_respects_preferences() {
     );
     assert!(!chat_visible_read_receipt_should_send(
         &store,
-        "ck:strand:demo",
-        "ck:realm:demo",
+        "ak:strand:demo",
+        "ak:realm:demo",
     ));
 }
 
@@ -186,33 +186,33 @@ fn chat_visible_read_receipt_display_respects_local_preferences() {
     let mut store = LocalStateStore::with_path(temp);
     assert!(chat_visible_read_receipt_should_display(
         &store,
-        "ck:strand:demo",
-        "ck:realm:demo",
+        "ak:strand:demo",
+        "ak:realm:demo",
     ));
 
     store.set_read_receipt_default_display(false);
     assert!(!chat_visible_read_receipt_should_display(
         &store,
-        "ck:strand:demo",
-        "ck:realm:demo",
+        "ak:strand:demo",
+        "ak:realm:demo",
     ));
 
-    store.set_read_receipt_realm_display_override("ck:realm:demo", Some(true));
+    store.set_read_receipt_realm_display_override("ak:realm:demo", Some(true));
     assert!(chat_visible_read_receipt_should_display(
         &store,
-        "ck:strand:other",
-        "ck:realm:demo",
+        "ak:strand:other",
+        "ak:realm:demo",
     ));
 
-    store.set_read_receipt_strand_display_override("ck:strand:demo", Some(false));
+    store.set_read_receipt_strand_display_override("ak:strand:demo", Some(false));
     assert!(!chat_visible_read_receipt_should_display(
         &store,
-        "ck:strand:demo",
-        "ck:realm:demo",
+        "ak:strand:demo",
+        "ak:realm:demo",
     ));
 
     store.set_read_receipt_policy_snapshot(
-        "ck:realm:demo",
+        "ak:realm:demo",
         Some(crate::local_state::ReadReceiptPolicySnapshot {
             disclosure: "required".to_owned(),
             visibility: Some("public".to_owned()),
@@ -220,19 +220,19 @@ fn chat_visible_read_receipt_display_respects_local_preferences() {
     );
     assert!(!chat_visible_read_receipt_should_display(
         &store,
-        "ck:strand:demo",
-        "ck:realm:demo",
+        "ak:strand:demo",
+        "ak:realm:demo",
     ));
 }
 
 #[test]
 fn chat_message_create_operation_emits_schema_canonical_content() {
     let op = chat_message_create_operation(
-        "ck:realm:01904100-0000-7000-8000-000000000010",
+        "ak:realm:01904100-0000-7000-8000-000000000010",
         "did:web:alice.example",
-        "ck:strand:01904100-0000-7000-8000-000000000001",
+        "ak:strand:01904100-0000-7000-8000-000000000001",
         "discussion",
-        "ck:message:01904100-0000-7000-8000-000000000001",
+        "ak:message:01904100-0000-7000-8000-000000000001",
         "hello from chat",
         &[],
         None,
@@ -242,11 +242,11 @@ fn chat_message_create_operation_emits_schema_canonical_content() {
     assert_eq!(op.kind.as_str(), "ck.message.create");
     assert_eq!(
         op.payload["message_id"].as_str(),
-        Some("ck:message:01904100-0000-7000-8000-000000000001")
+        Some("ak:message:01904100-0000-7000-8000-000000000001")
     );
     assert_eq!(
         op.payload["strand_id"].as_str(),
-        Some("ck:strand:01904100-0000-7000-8000-000000000001")
+        Some("ak:strand:01904100-0000-7000-8000-000000000001")
     );
     assert_eq!(op.payload["track_name"].as_str(), Some("discussion"));
     assert_eq!(
@@ -275,11 +275,11 @@ fn chat_message_create_operation_emits_schema_canonical_content() {
 #[test]
 fn chat_message_create_operation_blocks_sensitive_public_update() {
     let err = chat_message_create_operation(
-        "ck:realm:01904100-0000-7000-8000-000000000010",
+        "ak:realm:01904100-0000-7000-8000-000000000010",
         "did:web:alice.example",
-        "ck:strand:01904100-0000-7000-8000-000000000001",
+        "ak:strand:01904100-0000-7000-8000-000000000001",
         "discussion",
-        "ck:message:01904100-0000-7000-8000-000000000001",
+        "ak:message:01904100-0000-7000-8000-000000000001",
         "Public update: root cause leaked token",
         &[],
         None,
@@ -292,11 +292,11 @@ fn chat_message_create_operation_blocks_sensitive_public_update() {
 #[test]
 fn chat_message_create_operation_keeps_public_update_notification_projection_out_of_content() {
     let op = chat_message_create_operation(
-        "ck:realm:01904100-0000-7000-8000-000000000010",
+        "ak:realm:01904100-0000-7000-8000-000000000010",
         "did:web:alice.example",
-        "ck:strand:01904100-0000-7000-8000-000000000001",
+        "ak:strand:01904100-0000-7000-8000-000000000001",
         "discussion",
-        "ck:message:01904100-0000-7000-8000-000000000001",
+        "ak:message:01904100-0000-7000-8000-000000000001",
         "SEV-1 public update: checkout latency is recovering",
         &[],
         None,
@@ -325,11 +325,11 @@ fn chat_message_create_operation_with_expiry_puts_contract_at_payload_top_level(
     .unwrap()
     .with_grace_ms(5_000);
     let op = chat_message_create_operation_with_expiry(
-        "ck:realm:01904100-0000-7000-8000-000000000010",
+        "ak:realm:01904100-0000-7000-8000-000000000010",
         "did:web:alice.example",
-        "ck:strand:01904100-0000-7000-8000-000000000001",
+        "ak:strand:01904100-0000-7000-8000-000000000001",
         "discussion",
-        "ck:message:01904100-0000-7000-8000-000000000005",
+        "ak:message:01904100-0000-7000-8000-000000000005",
         "short lived",
         &[],
         None,
@@ -351,11 +351,11 @@ fn chat_message_create_operation_with_expiry_puts_contract_at_payload_top_level(
 fn chat_message_create_operation_embeds_audience_mentions_in_content_only() {
     let mentions = parse_mention_nodes("ping @here and @carol:example.com");
     let op = chat_message_create_operation(
-        "ck:realm:01904100-0000-7000-8000-000000000010",
+        "ak:realm:01904100-0000-7000-8000-000000000010",
         "did:web:alice.example",
-        "ck:strand:01904100-0000-7000-8000-000000000001",
+        "ak:strand:01904100-0000-7000-8000-000000000001",
         "discussion",
-        "ck:message:01904100-0000-7000-8000-000000000002",
+        "ak:message:01904100-0000-7000-8000-000000000002",
         "ping @here and @carol:example.com",
         &mentions,
         None,
@@ -392,11 +392,11 @@ fn chat_message_create_operation_embeds_agent_selector_mention_metadata() {
             ),
     )];
     let op = chat_message_create_operation(
-        "ck:realm:01904100-0000-7000-8000-000000000010",
+        "ak:realm:01904100-0000-7000-8000-000000000010",
         "did:web:bob.example",
-        "ck:strand:01904100-0000-7000-8000-000000000001",
+        "ak:strand:01904100-0000-7000-8000-000000000001",
         "discussion",
-        "ck:message:01904100-0000-7000-8000-000000000003",
+        "ak:message:01904100-0000-7000-8000-000000000003",
         "ask @alice:example.com/summary",
         &mentions,
         None,
@@ -429,20 +429,20 @@ fn chat_message_create_operation_embeds_agent_selector_mention_metadata() {
 #[test]
 fn chat_message_create_operation_includes_reply_fields_only_when_present() {
     let op = chat_message_create_operation(
-        "ck:realm:01904100-0000-7000-8000-000000000010",
+        "ak:realm:01904100-0000-7000-8000-000000000010",
         "did:web:alice.example",
-        "ck:strand:01904100-0000-7000-8000-000000000001",
+        "ak:strand:01904100-0000-7000-8000-000000000001",
         "discussion",
-        "ck:message:01904100-0000-7000-8000-000000000003",
+        "ak:message:01904100-0000-7000-8000-000000000003",
         "reply body",
         &[],
-        Some("ck:message:01904100-0000-7000-8000-000000000004"),
+        Some("ak:message:01904100-0000-7000-8000-000000000004"),
     )
     .expect("builds");
 
     assert_eq!(
         op.payload["reply_to"].as_str(),
-        Some("ck:message:01904100-0000-7000-8000-000000000004")
+        Some("ak:message:01904100-0000-7000-8000-000000000004")
     );
     assert!(op.payload.get("thread_id").is_none());
     cokret_sdk::schema::event_payload_validator_catalog()
@@ -454,14 +454,14 @@ fn chat_message_create_operation_includes_reply_fields_only_when_present() {
 #[test]
 fn chat_message_create_operation_rejects_event_id_reply_target() {
     let err = chat_message_create_operation(
-        "ck:realm:01904100-0000-7000-8000-000000000010",
+        "ak:realm:01904100-0000-7000-8000-000000000010",
         "did:web:alice.example",
-        "ck:strand:01904100-0000-7000-8000-000000000001",
+        "ak:strand:01904100-0000-7000-8000-000000000001",
         "discussion",
-        "ck:message:01904100-0000-7000-8000-000000000003",
+        "ak:message:01904100-0000-7000-8000-000000000003",
         "reply body",
         &[],
-        Some("ck:event:01904100-0000-7000-8000-000000000004"),
+        Some("ak:event:01904100-0000-7000-8000-000000000004"),
     )
     .expect_err("event ids are not valid message reply targets");
 
@@ -471,15 +471,15 @@ fn chat_message_create_operation_rejects_event_id_reply_target() {
 #[test]
 fn chat_message_reply_target_prefers_protocol_message_id() {
     let message = ChatMessage {
-        realm_id: "ck:realm:demo".to_owned(),
-        id: "ck:event:01964137-0000-7000-8000-000000000001".to_owned(),
-        protocol_message_id: Some("ck:message:01964137-0000-7000-8000-000000000002".to_owned()),
+        realm_id: "ak:realm:demo".to_owned(),
+        id: "ak:event:01964137-0000-7000-8000-000000000001".to_owned(),
+        protocol_message_id: Some("ak:message:01964137-0000-7000-8000-000000000002".to_owned()),
         sender: "did:web:example.com:users:bob".to_owned(),
         executed_by: None,
         body: "hello".to_owned(),
         timestamp: "10:00".to_owned(),
         created_at: None,
-        strand_id: "ck:strand:demo".to_owned(),
+        strand_id: "ak:strand:demo".to_owned(),
         reply_to: None,
         reactions: Vec::new(),
         redacted: false,
@@ -494,22 +494,22 @@ fn chat_message_reply_target_prefers_protocol_message_id() {
 
     assert_eq!(
         message.reply_target_ref(),
-        Some("ck:message:01964137-0000-7000-8000-000000000002")
+        Some("ak:message:01964137-0000-7000-8000-000000000002")
     );
 }
 
 #[test]
 fn chat_message_mutation_target_prefers_protocol_message_id_after_revision() {
     let message = ChatMessage {
-        realm_id: "ck:realm:demo".to_owned(),
-        id: "ck:operation:01964137-0000-7000-8000-000000000001".to_owned(),
-        protocol_message_id: Some("ck:message:01964137-0000-7000-8000-000000000002".to_owned()),
+        realm_id: "ak:realm:demo".to_owned(),
+        id: "ak:operation:01964137-0000-7000-8000-000000000001".to_owned(),
+        protocol_message_id: Some("ak:message:01964137-0000-7000-8000-000000000002".to_owned()),
         sender: "did:web:example.com:users:bob".to_owned(),
         executed_by: None,
         body: "edited".to_owned(),
         timestamp: "10:00".to_owned(),
         created_at: None,
-        strand_id: "ck:strand:demo".to_owned(),
+        strand_id: "ak:strand:demo".to_owned(),
         reply_to: None,
         reactions: Vec::new(),
         redacted: false,
@@ -524,17 +524,17 @@ fn chat_message_mutation_target_prefers_protocol_message_id_after_revision() {
 
     assert_eq!(
         message.mutation_target_ref(),
-        "ck:message:01964137-0000-7000-8000-000000000002"
+        "ak:message:01964137-0000-7000-8000-000000000002"
     );
 }
 
 #[test]
 fn shared_pin_operations_use_pin_events_not_account_data() {
-    let strand_id = "ck:strand:01904100-0000-7000-8000-000000000001";
+    let strand_id = "ak:strand:01904100-0000-7000-8000-000000000001";
     let pin_scope = SharedPinScope::strand(strand_id);
-    let target_ref = "ck:message:01904100-0000-7000-8000-000000000002";
+    let target_ref = "ak:message:01904100-0000-7000-8000-000000000002";
     let add = shared_message_pin_add_operation(
-        "ck:realm:01904100-0000-7000-8000-000000000010",
+        "ak:realm:01904100-0000-7000-8000-000000000010",
         "did:web:alice.example",
         &pin_scope,
         target_ref,
@@ -552,7 +552,7 @@ fn shared_pin_operations_use_pin_events_not_account_data() {
     assert!(add.payload.get("body").is_none());
 
     let remove = shared_message_pin_remove_operation(
-        "ck:realm:01904100-0000-7000-8000-000000000010",
+        "ak:realm:01904100-0000-7000-8000-000000000010",
         "did:web:alice.example",
         &pin_scope,
         target_ref,
@@ -573,10 +573,10 @@ fn shared_pin_operations_use_pin_events_not_account_data() {
 
 #[test]
 fn default_discussion_shared_pin_uses_realm_scope() {
-    let realm_id = "ck:realm:01904100-0000-7000-8000-000000000010";
+    let realm_id = "ak:realm:01904100-0000-7000-8000-000000000010";
     let strand_id = default_discussion_strand_id(realm_id);
     let pin_scope = shared_pin_scope_for_message(realm_id, &strand_id);
-    let target_ref = "ck:message:01904100-0000-7000-8000-000000000002";
+    let target_ref = "ak:message:01904100-0000-7000-8000-000000000002";
     let add = shared_message_pin_add_operation(
         realm_id,
         "did:web:alice.example",
@@ -601,7 +601,7 @@ fn private_saved_item_uses_saved_account_data_not_pin_event() {
     let namespace_key =
         crate::account_data::productivity_account_data_namespace_key("test-account-secret")
             .expect("namespace key");
-    let target_ref = "ck:message:01904100-0000-7000-8000-000000000002";
+    let target_ref = "ak:message:01904100-0000-7000-8000-000000000002";
     let item =
         chat_saved_account_data_item(&namespace_key, target_ref, "01970e589d21-0000-a13f9c2e")
             .expect("saved item");
@@ -618,7 +618,7 @@ fn private_saved_item_uses_saved_account_data_not_pin_event() {
     assert_eq!(wire["kind"], "saved_item");
 
     let op = crate::account_data::build_private_account_data_set(
-        "ck:realm:01904100-0000-7000-8000-000000000010",
+        "ak:realm:01904100-0000-7000-8000-000000000010",
         "did:web:alice.example",
         &item.account_data_key,
         wire,
@@ -636,15 +636,15 @@ fn private_saved_item_uses_saved_account_data_not_pin_event() {
 fn shared_pin_projection_ignores_private_saved_account_data() {
     use chrono::Utc;
 
-    let strand_id = "ck:strand:01904100-0000-7000-8000-000000000001";
+    let strand_id = "ak:strand:01904100-0000-7000-8000-000000000001";
     let pin_scope = SharedPinScope::strand(strand_id);
-    let other_strand_id = "ck:strand:01904100-0000-7000-8000-000000000099";
-    let target_ref = "ck:message:01904100-0000-7000-8000-000000000002";
-    let other_target = "ck:message:01904100-0000-7000-8000-000000000003";
+    let other_strand_id = "ak:strand:01904100-0000-7000-8000-000000000099";
+    let target_ref = "ak:message:01904100-0000-7000-8000-000000000002";
+    let other_target = "ak:message:01904100-0000-7000-8000-000000000003";
     let records = vec![
         crate::local_state::RawOperationRecord {
-            operation_id: "ck:operation:pin-add".to_owned(),
-            realm_id: Some("ck:realm:demo".to_owned()),
+            operation_id: "ak:operation:pin-add".to_owned(),
+            realm_id: Some("ak:realm:demo".to_owned()),
             received_at: Utc::now(),
             payload: json!({
                 "kind": "ck.pin.add",
@@ -656,8 +656,8 @@ fn shared_pin_projection_ignores_private_saved_account_data() {
             }),
         },
         crate::local_state::RawOperationRecord {
-            operation_id: "ck:operation:saved-private".to_owned(),
-            realm_id: Some("ck:realm:demo".to_owned()),
+            operation_id: "ak:operation:saved-private".to_owned(),
+            realm_id: Some("ak:realm:demo".to_owned()),
             received_at: Utc::now(),
             payload: json!({
                 "kind": "ck.account_data.set",
@@ -673,8 +673,8 @@ fn shared_pin_projection_ignores_private_saved_account_data() {
             }),
         },
         crate::local_state::RawOperationRecord {
-            operation_id: "ck:operation:other-pin".to_owned(),
-            realm_id: Some("ck:realm:demo".to_owned()),
+            operation_id: "ak:operation:other-pin".to_owned(),
+            realm_id: Some("ak:realm:demo".to_owned()),
             received_at: Utc::now(),
             payload: json!({
                 "kind": "ck.pin.add",
@@ -686,8 +686,8 @@ fn shared_pin_projection_ignores_private_saved_account_data() {
             }),
         },
         crate::local_state::RawOperationRecord {
-            operation_id: "ck:operation:pin-reorder".to_owned(),
-            realm_id: Some("ck:realm:demo".to_owned()),
+            operation_id: "ak:operation:pin-reorder".to_owned(),
+            realm_id: Some("ak:realm:demo".to_owned()),
             received_at: Utc::now(),
             payload: json!({
                 "kind": "ck.pin.reorder",
@@ -715,26 +715,26 @@ fn shared_pin_projection_ignores_private_saved_account_data() {
 fn chat_message_ids_use_schema_prefix() {
     let id = new_chat_message_id();
 
-    assert!(id.starts_with("ck:message:"));
+    assert!(id.starts_with("ak:message:"));
     assert!(is_schema_message_id(&id));
-    assert!(is_schema_message_id("ck:message:local-1"));
+    assert!(is_schema_message_id("ak:message:local-1"));
     assert!(!is_schema_message_id("chat-msg-local"));
-    assert!(schema_message_id_or_new("chat-msg-local").starts_with("ck:message:"));
+    assert!(schema_message_id_or_new("chat-msg-local").starts_with("ak:message:"));
 }
 
 #[test]
 fn restores_messages_from_local_raw_operations() {
     let state = ClientLocalState {
         raw_operations: vec![crate::local_state::RawOperationRecord {
-            operation_id: "ck:operation:local".to_owned(),
-            realm_id: Some("ck:realm:local".to_owned()),
+            operation_id: "ak:operation:local".to_owned(),
+            realm_id: Some("ak:realm:local".to_owned()),
             received_at: chrono::Utc::now(),
             payload: json!({
-                "event_id": "ck:event:local",
+                "event_id": "ak:event:local",
                 "kind": "ck.message.create",
                 "actor": "did:web:alice.example",
                 "body": "local fallback message",
-                "strand_id": "ck:strand:announce",
+                "strand_id": "ak:strand:announce",
                 "message_id": "chat-msg-local"
             }),
         }],
@@ -744,8 +744,8 @@ fn restores_messages_from_local_raw_operations() {
     let messages = chat_messages_from_local_state_with_sidecar(&state, None, None);
 
     assert_eq!(messages.len(), 1);
-    assert_eq!(messages[0].realm_id, "ck:realm:local");
-    assert_eq!(messages[0].strand_id, "ck:strand:announce");
+    assert_eq!(messages[0].realm_id, "ak:realm:local");
+    assert_eq!(messages[0].strand_id, "ak:strand:announce");
     assert_eq!(messages[0].sender, "did:web:alice.example");
     assert_eq!(messages[0].body, "local fallback message");
 }
@@ -754,15 +754,15 @@ fn restores_messages_from_local_raw_operations() {
 fn restores_canonical_actor_id_from_local_raw_operations() {
     let state = ClientLocalState {
         raw_operations: vec![crate::local_state::RawOperationRecord {
-            operation_id: "ck:operation:local".to_owned(),
-            realm_id: Some("ck:realm:local".to_owned()),
+            operation_id: "ak:operation:local".to_owned(),
+            realm_id: Some("ak:realm:local".to_owned()),
             received_at: chrono::Utc::now(),
             payload: json!({
-                "event_id": "ck:event:local",
+                "event_id": "ak:event:local",
                 "kind": "ck.message.create",
                 "actor_id": "did:web:local.host:users:alice",
                 "body": "canonical local message",
-                "strand_id": "ck:strand:announce",
+                "strand_id": "ak:strand:announce",
                 "message_id": "chat-msg-local"
             }),
         }],
@@ -784,27 +784,27 @@ fn message_operations_from_events_folds_create_and_renders_local_first() {
     // renders WITHOUT any backfill — the event-sourced replacement for the
     // per-open realm refetch.
     let create = json!({
-        "event_id": "ck:event:msg-1",
+        "event_id": "ak:event:msg-1",
         "kind": "ck.message.create",
         "actor_id": "did:web:bob.example",
-        "realm_id": "ck:realm:r1",
+        "realm_id": "ak:realm:r1",
         "created_at": "2026-05-22T10:00:00Z",
-        "strand_id": "ck:strand:topic",
-        "message_id": "ck:message:m1",
+        "strand_id": "ak:strand:topic",
+        "message_id": "ak:message:m1",
         "body": "hello from bob"
     });
     // A non-message timeline event (e.g. a poll close) MUST be ignored.
     let poll = json!({
-        "event_id": "ck:event:poll-1",
+        "event_id": "ak:event:poll-1",
         "kind": "ck.content.poll.close",
-        "realm_id": "ck:realm:r1",
-        "strand_id": "ck:strand:topic"
+        "realm_id": "ak:realm:r1",
+        "strand_id": "ak:strand:topic"
     });
 
-    let records = message_operations_from_events("ck:realm:r1", &[create.clone(), poll]);
+    let records = message_operations_from_events("ak:realm:r1", &[create.clone(), poll]);
     assert_eq!(records.len(), 1, "only the message-create event is folded");
-    assert_eq!(records[0].operation_id, "ck:event:msg-1");
-    assert_eq!(records[0].realm_id.as_deref(), Some("ck:realm:r1"));
+    assert_eq!(records[0].operation_id, "ak:event:msg-1");
+    assert_eq!(records[0].realm_id.as_deref(), Some("ak:realm:r1"));
     assert_eq!(
         records[0].payload, create,
         "full event stored for proof/ciphertext"
@@ -816,7 +816,7 @@ fn message_operations_from_events_folds_create_and_renders_local_first() {
     };
     let messages = chat_messages_from_local_state_with_sidecar(&state, None, None);
     assert_eq!(messages.len(), 1);
-    assert_eq!(messages[0].strand_id, "ck:strand:topic");
+    assert_eq!(messages[0].strand_id, "ak:strand:topic");
     assert_eq!(messages[0].sender, "did:web:bob.example");
     assert_eq!(messages[0].body, "hello from bob");
 }
@@ -824,20 +824,20 @@ fn message_operations_from_events_folds_create_and_renders_local_first() {
 #[test]
 fn chat_messages_read_projected_reaction_summary() {
     let events = vec![json!({
-        "event_id": "ck:event:msg-1",
+        "event_id": "ak:event:msg-1",
         "kind": "ck.message.create",
         "actor_id": "did:web:alice.example",
-        "realm_id": "ck:realm:r1",
+        "realm_id": "ak:realm:r1",
         "created_at": "2026-05-22T10:00:00Z",
-        "strand_id": "ck:strand:topic",
-        "message_id": "ck:message:m1",
+        "strand_id": "ak:strand:topic",
+        "message_id": "ak:message:m1",
         "body": "hello from alice",
         "reaction_summary": {
             "+1": ["did:web:bob.example", "did:web:carol.example"]
         }
     })];
 
-    let messages = chat_messages_from_events_with_sidecar("ck:realm:r1", &events, None, None);
+    let messages = chat_messages_from_events_with_sidecar("ak:realm:r1", &events, None, None);
 
     assert_eq!(messages.len(), 1);
     assert_eq!(
@@ -856,42 +856,42 @@ fn chat_messages_read_projected_reaction_summary() {
 fn chat_messages_fold_reaction_events_by_target_ref() {
     let events = vec![
         json!({
-            "event_id": "ck:event:msg-1",
+            "event_id": "ak:event:msg-1",
             "kind": "ck.message.create",
             "actor_id": "did:web:alice.example",
-            "realm_id": "ck:realm:r1",
+            "realm_id": "ak:realm:r1",
             "created_at": "2026-05-22T10:00:00Z",
-            "strand_id": "ck:strand:topic",
-            "message_id": "ck:message:m1",
+            "strand_id": "ak:strand:topic",
+            "message_id": "ak:message:m1",
             "body": "hello from alice"
         }),
         json!({
-            "event_id": "ck:event:react-bob",
+            "event_id": "ak:event:react-bob",
             "kind": "ck.reaction.add",
             "actor_id": "did:web:bob.example",
-            "realm_id": "ck:realm:r1",
-            "target_ref": "ck:message:m1",
+            "realm_id": "ak:realm:r1",
+            "target_ref": "ak:message:m1",
             "key": "+1"
         }),
         json!({
-            "event_id": "ck:event:react-carol",
+            "event_id": "ak:event:react-carol",
             "kind": "ck.reaction.add",
             "actor_id": "did:web:carol.example",
-            "realm_id": "ck:realm:r1",
-            "target_ref": "ck:event:msg-1",
+            "realm_id": "ak:realm:r1",
+            "target_ref": "ak:event:msg-1",
             "key": "+1"
         }),
         json!({
-            "event_id": "ck:event:remove-bob",
+            "event_id": "ak:event:remove-bob",
             "kind": "ck.reaction.remove",
             "actor_id": "did:web:bob.example",
-            "realm_id": "ck:realm:r1",
-            "target_ref": "ck:message:m1",
+            "realm_id": "ak:realm:r1",
+            "target_ref": "ak:message:m1",
             "key": "+1"
         }),
     ];
 
-    let messages = chat_messages_from_events_with_sidecar("ck:realm:r1", &events, None, None);
+    let messages = chat_messages_from_events_with_sidecar("ak:realm:r1", &events, None, None);
 
     assert_eq!(messages.len(), 1);
     assert_eq!(
@@ -899,7 +899,7 @@ fn chat_messages_fold_reaction_events_by_target_ref() {
         vec![("+1".to_owned(), vec!["did:web:carol.example".to_owned()])]
     );
 
-    let records = message_operations_from_events("ck:realm:r1", &events);
+    let records = message_operations_from_events("ak:realm:r1", &events);
     assert_eq!(
         records.len(),
         4,
@@ -921,57 +921,57 @@ fn chat_messages_fold_reaction_events_by_target_ref() {
 fn chat_messages_fold_projection_reaction_target_ref_over_envelope_message_id() {
     let events = vec![
         json!({
-            "event_id": "ck:event:create-projection",
+            "event_id": "ak:event:create-projection",
             "event_kind": "ck.message.create",
             "actor_id": "did:web:alice.example",
             "sender_actor_id": "did:web:alice.example",
-            "realm_id": "ck:realm:r1",
+            "realm_id": "ak:realm:r1",
             "created_at": "2026-07-08T01:44:39Z",
-            "strand_id": "ck:strand:topic",
+            "strand_id": "ak:strand:topic",
             "track_name": "discussion",
-            "message_id": "ck:message:envelope-create",
+            "message_id": "ak:message:envelope-create",
             "payload": {
                 "content": {"kind": "ck.content.text", "body": "projection hello"},
-                "event_id": "ck:event:create-projection",
-                "message_id": "ck:message:canonical-target",
+                "event_id": "ak:event:create-projection",
+                "message_id": "ak:message:canonical-target",
                 "sender": "did:web:alice.example",
-                "strand_id": "ck:strand:topic",
-                "thread_id": "ck:strand:topic",
+                "strand_id": "ak:strand:topic",
+                "thread_id": "ak:strand:topic",
                 "track_name": "discussion"
             }
         }),
         json!({
-            "event_id": "ck:event:reaction-projection",
+            "event_id": "ak:event:reaction-projection",
             "event_kind": "ck.reaction.add",
             "actor_id": "did:web:bob.example",
             "sender_actor_id": "did:web:bob.example",
-            "realm_id": "ck:realm:r1",
+            "realm_id": "ak:realm:r1",
             "created_at": "2026-07-08T01:44:43Z",
-            "strand_id": "ck:strand:topic",
+            "strand_id": "ak:strand:topic",
             "track_name": "discussion",
-            "message_id": "ck:message:envelope-reaction",
+            "message_id": "ak:message:envelope-reaction",
             "payload": {
-                "event_id": "ck:event:reaction-projection",
+                "event_id": "ak:event:reaction-projection",
                 "key": "+1",
                 "sender": "did:web:bob.example",
-                "target_ref": "ck:message:canonical-target"
+                "target_ref": "ak:message:canonical-target"
             }
         }),
     ];
 
-    let messages = chat_messages_from_events_with_sidecar("ck:realm:r1", &events, None, None);
+    let messages = chat_messages_from_events_with_sidecar("ak:realm:r1", &events, None, None);
 
     assert_eq!(messages.len(), 1);
     assert_eq!(
         messages[0].protocol_message_id.as_deref(),
-        Some("ck:message:canonical-target")
+        Some("ak:message:canonical-target")
     );
     assert_eq!(
         messages[0].reactions,
         vec![("+1".to_owned(), vec!["did:web:bob.example".to_owned()])]
     );
 
-    let records = message_operations_from_events("ck:realm:r1", &events);
+    let records = message_operations_from_events("ak:realm:r1", &events);
     assert_eq!(
         records.len(),
         2,
@@ -985,7 +985,7 @@ fn chat_messages_fold_projection_reaction_target_ref_over_envelope_message_id() 
     assert_eq!(restored.len(), 1);
     assert_eq!(
         restored[0].protocol_message_id.as_deref(),
-        Some("ck:message:canonical-target")
+        Some("ak:message:canonical-target")
     );
     assert_eq!(
         restored[0].reactions,
@@ -997,41 +997,41 @@ fn chat_messages_fold_projection_reaction_target_ref_over_envelope_message_id() 
 fn chat_messages_fold_revision_chain_into_latest_message() {
     let events = vec![
         json!({
-            "event_id": "ck:event:msg-3",
+            "event_id": "ak:event:msg-3",
             "kind": "ck.message.create",
             "actor_id": "did:web:bob.example",
-            "realm_id": "ck:realm:r1",
+            "realm_id": "ak:realm:r1",
             "created_at": "2026-05-22T10:00:00Z",
-            "strand_id": "ck:strand:topic",
-            "message_id": "ck:message:m3",
+            "strand_id": "ak:strand:topic",
+            "message_id": "ak:message:m3",
             "content": {"kind": "ck.content.text", "body": "v1"}
         }),
         json!({
-            "event_id": "ck:event:msg-3-rev-1",
+            "event_id": "ak:event:msg-3-rev-1",
             "kind": "ck.message.revise",
             "actor_id": "did:web:bob.example",
-            "realm_id": "ck:realm:r1",
+            "realm_id": "ak:realm:r1",
             "created_at": "2026-05-22T10:01:00Z",
-            "strand_id": "ck:strand:topic",
-            "target_ref": "ck:message:m3",
+            "strand_id": "ak:strand:topic",
+            "target_ref": "ak:message:m3",
             "content": {"kind": "ck.content.text", "body": "v2"}
         }),
         json!({
-            "event_id": "ck:event:msg-3-rev-2",
+            "event_id": "ak:event:msg-3-rev-2",
             "kind": "ck.message.revise",
             "actor_id": "did:web:bob.example",
-            "realm_id": "ck:realm:r1",
+            "realm_id": "ak:realm:r1",
             "created_at": "2026-05-22T10:02:00Z",
-            "strand_id": "ck:strand:topic",
-            "target_ref": "ck:message:m3",
+            "strand_id": "ak:strand:topic",
+            "target_ref": "ak:message:m3",
             "content": {"kind": "ck.content.text", "body": "v3"}
         }),
     ];
 
-    let messages = chat_messages_from_events_with_sidecar("ck:realm:r1", &events, None, None);
+    let messages = chat_messages_from_events_with_sidecar("ak:realm:r1", &events, None, None);
 
     assert_eq!(messages.len(), 1);
-    assert_eq!(messages[0].id, "ck:event:msg-3");
+    assert_eq!(messages[0].id, "ak:event:msg-3");
     assert_eq!(messages[0].body, "v3");
     assert!(messages[0].edited);
     assert_eq!(
@@ -1039,7 +1039,7 @@ fn chat_messages_fold_revision_chain_into_latest_message() {
         vec!["v1".to_owned(), "v2".to_owned()]
     );
 
-    let records = message_operations_from_events("ck:realm:r1", &events);
+    let records = message_operations_from_events("ak:realm:r1", &events);
     assert_eq!(
         records.len(),
         3,
@@ -1057,38 +1057,38 @@ fn chat_messages_fold_revision_chain_into_latest_message() {
 
 #[test]
 fn chat_messages_keep_folded_timeline_revision_over_older_backfill_create() {
-    let message_id = "ck:message:019f3b27-f521-70f0-84f3-e06f95177dbf";
-    let reply_to = "ck:message:019f3b27-e366-7d70-9fe4-fb3e8442b449";
+    let message_id = "ak:message:019f3b27-f521-70f0-84f3-e06f95177dbf";
+    let reply_to = "ak:message:019f3b27-e366-7d70-9fe4-fb3e8442b449";
     let events = vec![
         json!({
-            "event_id": "ck:event:019f3b27-fb61-7ed3-af84-04cc68eac2f6",
+            "event_id": "ak:event:019f3b27-fb61-7ed3-af84-04cc68eac2f6",
             "kind": "ck.message.create",
             "actor_id": "did:web:bob.example",
-            "realm_id": "ck:realm:r1",
+            "realm_id": "ak:realm:r1",
             "created_at": "2026-07-07T05:58:23Z",
-            "strand_id": "ck:strand:topic",
+            "strand_id": "ak:strand:topic",
             "message_id": message_id,
             "content": {"kind": "ck.content.text", "body": "edited body"}
         }),
         json!({
-            "event_id": "ck:event:019f3b27-f523-7571-89cb-5e27479d5e6d",
+            "event_id": "ak:event:019f3b27-f523-7571-89cb-5e27479d5e6d",
             "kind": "ck.message.create",
             "actor_id": "did:web:bob.example",
-            "realm_id": "ck:realm:r1",
+            "realm_id": "ak:realm:r1",
             "created_at": "2026-07-07T05:58:22Z",
             "payload": {
                 "content": {"kind": "ck.content.text", "body": "original body"},
                 "message_id": message_id,
                 "reply_to": reply_to,
-                "strand_id": "ck:strand:topic",
+                "strand_id": "ak:strand:topic",
                 "track_name": "discussion"
             }
         }),
         json!({
-            "event_id": "ck:event:019f3b27-fb61-7ed3-af84-04cc68eac2f6",
+            "event_id": "ak:event:019f3b27-fb61-7ed3-af84-04cc68eac2f6",
             "kind": "ck.message.revise",
             "actor_id": "did:web:bob.example",
-            "realm_id": "ck:realm:r1",
+            "realm_id": "ak:realm:r1",
             "created_at": "2026-07-07T05:58:23Z",
             "payload": {
                 "content": {"kind": "ck.content.text", "body": "edited body"},
@@ -1097,7 +1097,7 @@ fn chat_messages_keep_folded_timeline_revision_over_older_backfill_create() {
         }),
     ];
 
-    let messages = chat_messages_from_events_with_sidecar("ck:realm:r1", &events, None, None);
+    let messages = chat_messages_from_events_with_sidecar("ak:realm:r1", &events, None, None);
 
     assert_eq!(messages.len(), 1);
     assert_eq!(messages[0].protocol_message_id.as_deref(), Some(message_id));
@@ -1111,32 +1111,32 @@ fn chat_messages_keep_folded_timeline_revision_over_older_backfill_create() {
 fn chat_messages_fold_redacted_revision_tombstone_into_root_tombstone() {
     let events = vec![
         json!({
-            "event_id": "ck:event:msg-4-rev-1",
+            "event_id": "ak:event:msg-4-rev-1",
             "kind": "ck.message.revise",
             "actor_id": "did:web:bob.example",
-            "realm_id": "ck:realm:r1",
+            "realm_id": "ak:realm:r1",
             "created_at": "2026-05-22T10:01:00Z",
-            "strand_id": "ck:strand:topic",
-            "target_ref": "ck:message:m4",
+            "strand_id": "ak:strand:topic",
+            "target_ref": "ak:message:m4",
             "redacted": true,
             "state": "redacted",
             "content": {"kind": "ck.content.text", "body": "[redacted]"}
         }),
         json!({
-            "event_id": "ck:event:msg-4",
+            "event_id": "ak:event:msg-4",
             "kind": "ck.message.create",
             "actor_id": "did:web:bob.example",
-            "realm_id": "ck:realm:r1",
+            "realm_id": "ak:realm:r1",
             "created_at": "2026-05-22T10:00:00Z",
-            "strand_id": "ck:strand:topic",
-            "message_id": "ck:message:m4",
+            "strand_id": "ak:strand:topic",
+            "message_id": "ak:message:m4",
             "redacted": true,
             "state": "redacted",
             "content": {"kind": "ck.content.text", "body": "[redacted]"}
         }),
     ];
 
-    let messages = chat_messages_from_events_with_sidecar("ck:realm:r1", &events, None, None);
+    let messages = chat_messages_from_events_with_sidecar("ak:realm:r1", &events, None, None);
 
     assert_eq!(messages.len(), 1);
     assert!(messages[0].redacted);
@@ -1146,48 +1146,48 @@ fn chat_messages_fold_redacted_revision_tombstone_into_root_tombstone() {
 fn chat_messages_fold_nested_server_redacted_revision_tombstone_into_root_tombstone() {
     let events = vec![
         json!({
-            "event_id": "ck:event:msg-5",
+            "event_id": "ak:event:msg-5",
             "kind": "ck.message.create",
-            "realm_id": "ck:realm:r1",
+            "realm_id": "ak:realm:r1",
             "actor_id": "did:web:bob.example",
             "created_at": "2026-05-22T10:00:00Z",
             "payload": {
                 "content": {"kind": "ck.content.text", "body": "[redacted]"},
-                "event_id": "ck:event:msg-5",
-                "message_id": "ck:message:m5",
+                "event_id": "ak:event:msg-5",
+                "message_id": "ak:message:m5",
                 "redacted": true,
                 "redacted_at": "2026-05-22T10:05:00Z",
-                "redaction_ref": "ck:event:redact-5",
+                "redaction_ref": "ak:event:redact-5",
                 "sender": "did:web:bob.example",
                 "state": "redacted",
-                "strand_id": "ck:strand:topic"
+                "strand_id": "ak:strand:topic"
             },
             "proofs": []
         }),
         json!({
-            "event_id": "ck:event:msg-5-rev-1",
+            "event_id": "ak:event:msg-5-rev-1",
             "kind": "ck.message.revise",
-            "realm_id": "ck:realm:r1",
+            "realm_id": "ak:realm:r1",
             "actor_id": "did:web:bob.example",
             "created_at": "2026-05-22T10:01:00Z",
             "payload": {
                 "content": {"kind": "ck.content.text", "body": "[redacted]"},
-                "event_id": "ck:event:msg-5-rev-1",
+                "event_id": "ak:event:msg-5-rev-1",
                 "redacted": true,
                 "redacted_at": "2026-05-22T10:05:00Z",
-                "redaction_ref": "ck:event:redact-5",
+                "redaction_ref": "ak:event:redact-5",
                 "sender": "did:web:bob.example",
                 "state": "redacted",
-                "target_ref": "ck:message:m5"
+                "target_ref": "ak:message:m5"
             },
             "proofs": []
         }),
     ];
 
-    let messages = chat_messages_from_events_with_sidecar("ck:realm:r1", &events, None, None);
+    let messages = chat_messages_from_events_with_sidecar("ak:realm:r1", &events, None, None);
 
     assert_eq!(messages.len(), 1);
-    assert_eq!(messages[0].id, "ck:event:msg-5");
+    assert_eq!(messages[0].id, "ak:event:msg-5");
     assert!(messages[0].redacted);
 }
 
@@ -1195,7 +1195,7 @@ fn chat_messages_fold_nested_server_redacted_revision_tombstone_into_root_tombst
 fn merge_chat_messages_dedupes_tombstones_by_protocol_message_id() {
     fn redacted_message(id: &str, protocol_message_id: &str) -> ChatMessage {
         ChatMessage {
-            realm_id: "ck:realm:r1".to_owned(),
+            realm_id: "ak:realm:r1".to_owned(),
             id: id.to_owned(),
             protocol_message_id: Some(protocol_message_id.to_owned()),
             sender: "did:web:bob.example".to_owned(),
@@ -1203,7 +1203,7 @@ fn merge_chat_messages_dedupes_tombstones_by_protocol_message_id() {
             body: String::new(),
             timestamp: "10:05".to_owned(),
             created_at: None,
-            strand_id: "ck:strand:topic".to_owned(),
+            strand_id: "ak:strand:topic".to_owned(),
             reply_to: None,
             reactions: Vec::new(),
             redacted: true,
@@ -1217,16 +1217,16 @@ fn merge_chat_messages_dedupes_tombstones_by_protocol_message_id() {
         }
     }
 
-    let protocol_message_id = "ck:message:m6";
+    let protocol_message_id = "ak:message:m6";
     let mut target = vec![
-        redacted_message("ck:event:msg-6", protocol_message_id),
-        redacted_message("ck:event:msg-6-rev-1", protocol_message_id),
+        redacted_message("ak:event:msg-6", protocol_message_id),
+        redacted_message("ak:event:msg-6-rev-1", protocol_message_id),
         ChatMessage {
             body: "unrelated".to_owned(),
             redacted: false,
-            protocol_message_id: Some("ck:message:other".to_owned()),
-            id: "ck:event:other".to_owned(),
-            ..redacted_message("ck:event:other", "ck:message:other")
+            protocol_message_id: Some("ak:message:other".to_owned()),
+            id: "ak:event:other".to_owned(),
+            ..redacted_message("ak:event:other", "ak:message:other")
         },
     ];
     target[0].edited = true;
@@ -1234,7 +1234,7 @@ fn merge_chat_messages_dedupes_tombstones_by_protocol_message_id() {
 
     merge_chat_messages(
         &mut target,
-        vec![redacted_message("ck:event:msg-6", protocol_message_id)],
+        vec![redacted_message("ak:event:msg-6", protocol_message_id)],
     );
 
     let matching = target
@@ -1242,11 +1242,11 @@ fn merge_chat_messages_dedupes_tombstones_by_protocol_message_id() {
         .filter(|message| message.protocol_message_id.as_deref() == Some(protocol_message_id))
         .collect::<Vec<_>>();
     assert_eq!(matching.len(), 1);
-    assert_eq!(matching[0].id, "ck:event:msg-6");
+    assert_eq!(matching[0].id, "ak:event:msg-6");
     assert!(matching[0].redacted);
     assert!(matching[0].edited);
     assert_eq!(matching[0].revisions, vec!["v1".to_owned()]);
-    assert!(target.iter().any(|message| message.id == "ck:event:other"));
+    assert!(target.iter().any(|message| message.id == "ak:event:other"));
 }
 
 #[test]
@@ -1261,7 +1261,7 @@ fn merge_chat_messages_keeps_newer_revision_when_older_create_arrives_late() {
 
     fn message(id: &str, protocol_message_id: &str, body: &str, created_at: &str) -> ChatMessage {
         ChatMessage {
-            realm_id: "ck:realm:r1".to_owned(),
+            realm_id: "ak:realm:r1".to_owned(),
             id: id.to_owned(),
             protocol_message_id: Some(protocol_message_id.to_owned()),
             sender: "did:web:bob.example".to_owned(),
@@ -1269,8 +1269,8 @@ fn merge_chat_messages_keeps_newer_revision_when_older_create_arrives_late() {
             body: body.to_owned(),
             timestamp: "10:00".to_owned(),
             created_at: at(created_at),
-            strand_id: "ck:strand:topic".to_owned(),
-            reply_to: Some("ck:message:m1".to_owned()),
+            strand_id: "ak:strand:topic".to_owned(),
+            reply_to: Some("ak:message:m1".to_owned()),
             reactions: Vec::new(),
             redacted: false,
             edited: false,
@@ -1283,9 +1283,9 @@ fn merge_chat_messages_keeps_newer_revision_when_older_create_arrives_late() {
         }
     }
 
-    let protocol_message_id = "ck:message:m2";
+    let protocol_message_id = "ak:message:m2";
     let mut target = vec![message(
-        "ck:event:msg-2-rev-1",
+        "ak:event:msg-2-rev-1",
         protocol_message_id,
         "edited body",
         "2026-07-07T06:19:22Z",
@@ -1293,7 +1293,7 @@ fn merge_chat_messages_keeps_newer_revision_when_older_create_arrives_late() {
     target[0].edited = true;
 
     let mut incoming = message(
-        "ck:event:msg-2",
+        "ak:event:msg-2",
         protocol_message_id,
         "original body",
         "2026-07-07T06:19:20Z",
@@ -1309,11 +1309,11 @@ fn merge_chat_messages_keeps_newer_revision_when_older_create_arrives_late() {
     merge_chat_messages(&mut target, vec![incoming]);
 
     assert_eq!(target.len(), 1);
-    assert_eq!(target[0].id, "ck:event:msg-2-rev-1");
+    assert_eq!(target[0].id, "ak:event:msg-2-rev-1");
     assert_eq!(target[0].body, "edited body");
     assert!(target[0].edited);
     assert_eq!(target[0].revisions, vec!["original body"]);
-    assert_eq!(target[0].reply_to.as_deref(), Some("ck:message:m1"));
+    assert_eq!(target[0].reply_to.as_deref(), Some("ak:message:m1"));
     assert_eq!(
         target[0].reactions,
         vec![(
@@ -1333,28 +1333,28 @@ fn message_operations_redaction_tombstone_dedupes_over_create_by_event_id() {
     // `operation_id`, so `upsert_raw_operation` replaces the create with the
     // tombstone and the local-first render shows the redacted marker.
     let create = json!({
-        "event_id": "ck:event:msg-2",
+        "event_id": "ak:event:msg-2",
         "kind": "ck.message.create",
         "actor_id": "did:web:bob.example",
-        "realm_id": "ck:realm:r1",
+        "realm_id": "ak:realm:r1",
         "created_at": "2026-05-22T10:00:00Z",
-        "strand_id": "ck:strand:topic",
-        "message_id": "ck:message:m2",
+        "strand_id": "ak:strand:topic",
+        "message_id": "ak:message:m2",
         "body": "secret"
     });
     let tombstone = json!({
-        "event_id": "ck:event:msg-2",
+        "event_id": "ak:event:msg-2",
         "kind": "ck.message.create",
         "actor_id": "did:web:bob.example",
-        "realm_id": "ck:realm:r1",
+        "realm_id": "ak:realm:r1",
         "created_at": "2026-05-22T10:05:00Z",
-        "strand_id": "ck:strand:topic",
-        "message_id": "ck:message:m2",
+        "strand_id": "ak:strand:topic",
+        "message_id": "ak:message:m2",
         "redacted": true
     });
 
-    let create_record = message_operations_from_events("ck:realm:r1", &[create]);
-    let tombstone_record = message_operations_from_events("ck:realm:r1", &[tombstone]);
+    let create_record = message_operations_from_events("ak:realm:r1", &[create]);
+    let tombstone_record = message_operations_from_events("ak:realm:r1", &[tombstone]);
     assert_eq!(
         create_record[0].operation_id,
         tombstone_record[0].operation_id
@@ -1364,24 +1364,24 @@ fn message_operations_redaction_tombstone_dedupes_over_create_by_event_id() {
 #[test]
 fn message_operations_fold_independent_redaction_event_by_message_id() {
     let create = json!({
-        "event_id": "ck:event:msg-3",
+        "event_id": "ak:event:msg-3",
         "kind": "ck.message.create",
         "actor_id": "did:web:bob.example",
-        "realm_id": "ck:realm:r1",
+        "realm_id": "ak:realm:r1",
         "created_at": "2026-05-22T10:00:00Z",
-        "strand_id": "ck:strand:topic",
-        "message_id": "ck:message:m3",
+        "strand_id": "ak:strand:topic",
+        "message_id": "ak:message:m3",
         "body": "secret"
     });
     let redaction = json!({
-        "event_id": "ck:event:redact-3",
+        "event_id": "ak:event:redact-3",
         "event_kind": "ck.message.redact",
         "actor_id": "did:web:bob.example",
-        "realm_id": "ck:realm:r1",
+        "realm_id": "ak:realm:r1",
         "created_at": "2026-05-22T10:05:00Z",
         "payload": {
-            "event_id": "ck:event:redact-3",
-            "message_id": "ck:message:m3",
+            "event_id": "ak:event:redact-3",
+            "message_id": "ak:message:m3",
             "reason": "user requested tombstone"
         }
     });
@@ -1390,7 +1390,7 @@ fn message_operations_fold_independent_redaction_event_by_message_id() {
         vec![create.clone(), redaction.clone()],
         vec![redaction, create],
     ] {
-        let records = message_operations_from_events("ck:realm:r1", &events);
+        let records = message_operations_from_events("ak:realm:r1", &events);
         assert_eq!(records.len(), 2);
         let state = ClientLocalState {
             raw_operations: records,
@@ -1405,14 +1405,14 @@ fn message_operations_fold_independent_redaction_event_by_message_id() {
 
 #[test]
 fn message_operations_from_events_folds_shared_pin_control_events() {
-    let strand_id = "ck:strand:topic";
+    let strand_id = "ak:strand:topic";
     let pin_scope = SharedPinScope::strand(strand_id);
-    let target_ref = "ck:message:pinned";
+    let target_ref = "ak:message:pinned";
     let pin = json!({
-        "event_id": "ck:event:pin-1",
+        "event_id": "ak:event:pin-1",
         "event_kind": "ck.pin.add",
         "actor_id": "did:web:mei.example",
-        "realm_id": "ck:realm:r1",
+        "realm_id": "ak:realm:r1",
         "created_at": "2026-05-22T10:10:00Z",
         "payload": {
             "pin_scope": {"kind": "strand", "id": strand_id},
@@ -1421,10 +1421,10 @@ fn message_operations_from_events_folds_shared_pin_control_events() {
         }
     });
 
-    let records = message_operations_from_events("ck:realm:r1", &[pin]);
+    let records = message_operations_from_events("ak:realm:r1", &[pin]);
     assert_eq!(records.len(), 1);
-    assert_eq!(records[0].operation_id, "ck:event:pin-1");
-    assert_eq!(records[0].realm_id.as_deref(), Some("ck:realm:r1"));
+    assert_eq!(records[0].operation_id, "ak:event:pin-1");
+    assert_eq!(records[0].realm_id.as_deref(), Some("ak:realm:r1"));
 
     let pins = shared_message_pins_from_raw_operations(&records, &pin_scope);
     assert_eq!(
@@ -1443,15 +1443,15 @@ fn local_redaction_tombstone_replaces_raw_message_without_plaintext() {
         .unwrap()
         .with_timezone(&chrono::Utc);
     let message = ChatMessage {
-        realm_id: "ck:realm:r1".to_owned(),
-        id: "ck:event:msg-3".to_owned(),
-        protocol_message_id: Some("ck:message:m3".to_owned()),
+        realm_id: "ak:realm:r1".to_owned(),
+        id: "ak:event:msg-3".to_owned(),
+        protocol_message_id: Some("ak:message:m3".to_owned()),
         sender: "did:web:bob.example".to_owned(),
         executed_by: None,
         body: "secret".to_owned(),
         timestamp: "10:00".to_owned(),
         created_at: None,
-        strand_id: "ck:strand:topic".to_owned(),
+        strand_id: "ak:strand:topic".to_owned(),
         reply_to: None,
         reactions: Vec::new(),
         redacted: false,
@@ -1465,12 +1465,12 @@ fn local_redaction_tombstone_replaces_raw_message_without_plaintext() {
     };
 
     let tombstone =
-        local_redaction_tombstone_for_message(&message, redacted_at, Some("ck:event:redact-1"));
+        local_redaction_tombstone_for_message(&message, redacted_at, Some("ak:event:redact-1"));
     assert_eq!(tombstone["event_id"], message.id);
-    assert_eq!(tombstone["message_id"], "ck:message:m3");
+    assert_eq!(tombstone["message_id"], "ak:message:m3");
     assert_eq!(tombstone["redacted"], true);
     assert_eq!(tombstone["state"], "redacted");
-    assert_eq!(tombstone["redaction_ref"], "ck:event:redact-1");
+    assert_eq!(tombstone["redaction_ref"], "ak:event:redact-1");
     assert_eq!(
         tombstone["content"]["body"],
         cokret_sdk::events::REDACTED_MESSAGE_PLACEHOLDER
@@ -1496,15 +1496,15 @@ fn local_redaction_tombstone_replaces_raw_message_without_plaintext() {
 
 #[test]
 fn moderation_appeal_prompts_fold_decision_and_current_appellant_state() {
-    let realm_id = "ck:realm:01904100-0000-7000-8000-000000000001";
+    let realm_id = "ak:realm:01904100-0000-7000-8000-000000000001";
     let appellant = "did:web:appellant.example";
     let events = vec![
         json!({
-            "event_id": "ck:event:01904100-0000-7000-8000-000000000101",
+            "event_id": "ak:event:01904100-0000-7000-8000-000000000101",
             "kind": "ck.moderation.decision",
             "realm_id": realm_id,
             "payload": {
-                "target_ref": "ck:message:01904100-0000-7000-8000-000000000201",
+                "target_ref": "ak:message:01904100-0000-7000-8000-000000000201",
                 "decision": "quarantine"
             }
         }),
@@ -1512,9 +1512,9 @@ fn moderation_appeal_prompts_fold_decision_and_current_appellant_state() {
             "kind": "ck.moderation.appeal.submit",
             "realm_id": realm_id,
             "payload": {
-                "appeal_id": "ck:appeal:01904100-0000-7000-8000-000000000301",
-                "decision_ref": "ck:event:01904100-0000-7000-8000-000000000101",
-                "target_ref": "ck:message:01904100-0000-7000-8000-000000000201",
+                "appeal_id": "ak:appeal:01904100-0000-7000-8000-000000000301",
+                "decision_ref": "ak:event:01904100-0000-7000-8000-000000000101",
+                "target_ref": "ak:message:01904100-0000-7000-8000-000000000201",
                 "appellant": appellant
             }
         }),
@@ -1522,7 +1522,7 @@ fn moderation_appeal_prompts_fold_decision_and_current_appellant_state() {
             "kind": "ck.moderation.appeal.decision",
             "realm_id": realm_id,
             "payload": {
-                "appeal_id": "ck:appeal:01904100-0000-7000-8000-000000000301",
+                "appeal_id": "ak:appeal:01904100-0000-7000-8000-000000000301",
                 "verdict": "uphold"
             }
         }),
@@ -1533,7 +1533,7 @@ fn moderation_appeal_prompts_fold_decision_and_current_appellant_state() {
     assert_eq!(prompts.len(), 1);
     assert_eq!(
         prompts[0].decision_ref,
-        "ck:event:01904100-0000-7000-8000-000000000101"
+        "ak:event:01904100-0000-7000-8000-000000000101"
     );
     assert_eq!(prompts[0].state, "decided");
     assert_eq!(prompts[0].verdict.as_deref(), Some("uphold"));
@@ -1544,7 +1544,7 @@ fn moderation_appeal_prompts_fold_decision_and_current_appellant_state() {
             "kind": "ck.moderation.decision.lift",
             "realm_id": realm_id,
             "payload": {
-                "decision_ref": "ck:event:01904100-0000-7000-8000-000000000101"
+                "decision_ref": "ak:event:01904100-0000-7000-8000-000000000101"
             }
         }),
     ];
@@ -1565,23 +1565,23 @@ fn rebuild_restores_authors_own_encrypted_message_from_sidecar() {
     let temp = std::env::temp_dir().join(format!("inkson-x10_6-rebuild-sidecar-{}", uuid_v7()));
     let mut store = LocalStateStore::with_path(temp);
     store.save_private_plaintext(
-        "ck:realm:local",
-        "ck:strand:announce",
+        "ak:realm:local",
+        "ak:strand:announce",
         "message:chat-msg-enc",
         "secret discussion body",
     );
 
     let state = ClientLocalState {
         raw_operations: vec![crate::local_state::RawOperationRecord {
-            operation_id: "ck:operation:enc".to_owned(),
-            realm_id: Some("ck:realm:local".to_owned()),
+            operation_id: "ak:operation:enc".to_owned(),
+            realm_id: Some("ak:realm:local".to_owned()),
             received_at: chrono::Utc::now(),
             // Encrypted stub: identity only, NO plaintext body.
             payload: json!({
-                "event_id": "ck:event:enc",
+                "event_id": "ak:event:enc",
                 "kind": "ck.message.create",
                 "actor_id": "did:web:alice.example",
-                "strand_id": "ck:strand:announce",
+                "strand_id": "ak:strand:announce",
                 "message_id": "chat-msg-enc",
                 "encrypted_content": true,
                 "status": "accepted"
@@ -1595,7 +1595,7 @@ fn rebuild_restores_authors_own_encrypted_message_from_sidecar() {
     // discussion does not look empty.
     let without_sidecar = chat_messages_from_local_state_with_sidecar(&state, None, None);
     assert_eq!(without_sidecar.len(), 1);
-    assert_eq!(without_sidecar[0].strand_id, "ck:strand:announce");
+    assert_eq!(without_sidecar[0].strand_id, "ak:strand:announce");
     assert_eq!(without_sidecar[0].sender, "did:web:alice.example");
     assert_eq!(without_sidecar[0].body, "");
     assert!(matches!(
@@ -1607,7 +1607,7 @@ fn rebuild_restores_authors_own_encrypted_message_from_sidecar() {
     // restored and the message is fully resolved (not stuck decrypting).
     let restored = chat_messages_from_local_state_with_sidecar(&state, Some(&store), None);
     assert_eq!(restored.len(), 1);
-    assert_eq!(restored[0].strand_id, "ck:strand:announce");
+    assert_eq!(restored[0].strand_id, "ak:strand:announce");
     assert_eq!(restored[0].sender, "did:web:alice.example");
     assert_eq!(restored[0].body, "secret discussion body");
     assert!(matches!(
@@ -1620,12 +1620,12 @@ fn rebuild_restores_authors_own_encrypted_message_from_sidecar() {
 fn pending_message_refreshes_from_restored_private_plaintext_sidecar() {
     let temp = std::env::temp_dir().join(format!("inkson-pending-sidecar-refresh-{}", uuid_v7()));
     let mut store = LocalStateStore::with_path(temp);
-    let realm = "ck:realm:local";
-    let strand = "ck:strand:announce";
-    let message_id = "ck:message:restored";
+    let realm = "ak:realm:local";
+    let strand = "ak:strand:announce";
+    let message_id = "ak:message:restored";
     let mut messages = vec![ChatMessage {
         realm_id: realm.to_owned(),
-        id: "ck:event:restored".to_owned(),
+        id: "ak:event:restored".to_owned(),
         protocol_message_id: Some(message_id.to_owned()),
         sender: "did:web:alice.example".to_owned(),
         executed_by: None,
@@ -1682,9 +1682,9 @@ fn pending_message_refreshes_from_restored_private_plaintext_sidecar() {
 fn expiry_stub_does_not_restore_authors_plaintext_sidecar() {
     let temp = std::env::temp_dir().join(format!("inkson-expiry-stub-sidecar-{}", uuid_v7()));
     let mut store = LocalStateStore::with_path(temp);
-    let realm = "ck:realm:local";
-    let strand = "ck:strand:announce";
-    let message_id = "ck:message:expiring";
+    let realm = "ak:realm:local";
+    let strand = "ak:strand:announce";
+    let message_id = "ak:message:expiring";
     store.save_private_plaintext(
         realm,
         strand,
@@ -1692,7 +1692,7 @@ fn expiry_stub_does_not_restore_authors_plaintext_sidecar() {
         "secret discussion body",
     );
     let event = json!({
-        "event_id": "ck:event:expired",
+        "event_id": "ak:event:expired",
         "kind": "ck.message.create",
         "actor_id": "did:web:alice.example",
         "realm_id": realm,
@@ -1717,9 +1717,9 @@ fn expiry_stub_does_not_restore_authors_plaintext_sidecar() {
 fn late_recovery_guards_block_sidecar_plaintext_before_timeline_entry() {
     let temp = std::env::temp_dir().join(format!("inkson-late-recovery-{}", uuid_v7()));
     let mut store = LocalStateStore::with_path(temp);
-    let realm = "ck:realm:local";
-    let strand = "ck:strand:announce";
-    let message_id = "ck:message:late";
+    let realm = "ak:realm:local";
+    let strand = "ak:strand:announce";
+    let message_id = "ak:message:late";
     store.save_private_plaintext(
         realm,
         strand,
@@ -1727,7 +1727,7 @@ fn late_recovery_guards_block_sidecar_plaintext_before_timeline_entry() {
         "late plaintext",
     );
     let rejected = json!({
-        "event_id": "ck:event:late",
+        "event_id": "ak:event:late",
         "kind": "ck.message.create",
         "actor_id": "did:web:alice.example",
         "realm_id": realm,
@@ -1762,9 +1762,9 @@ fn late_recovery_guards_block_sidecar_plaintext_before_timeline_entry() {
 fn late_recovery_guards_allow_sidecar_plaintext_when_all_pass() {
     let temp = std::env::temp_dir().join(format!("inkson-late-recovery-ok-{}", uuid_v7()));
     let mut store = LocalStateStore::with_path(temp);
-    let realm = "ck:realm:local";
-    let strand = "ck:strand:announce";
-    let message_id = "ck:message:late-ok";
+    let realm = "ak:realm:local";
+    let strand = "ak:strand:announce";
+    let message_id = "ak:message:late-ok";
     store.save_private_plaintext(
         realm,
         strand,
@@ -1772,7 +1772,7 @@ fn late_recovery_guards_allow_sidecar_plaintext_when_all_pass() {
         "late plaintext",
     );
     let accepted = json!({
-        "event_id": "ck:event:late-ok",
+        "event_id": "ak:event:late-ok",
         "kind": "ck.message.create",
         "actor_id": "did:web:alice.example",
         "realm_id": realm,
@@ -2182,7 +2182,7 @@ fn agent_ids_from_raw_operations_filters_by_realm_and_kind() {
     let records = vec![
         RawOperationRecord {
             operation_id: "op-1".to_owned(),
-            realm_id: Some("ck:realm:demo".to_owned()),
+            realm_id: Some("ak:realm:demo".to_owned()),
             received_at: Utc::now(),
             payload: json!({
                 "kind": "ck.agent.endpoint",
@@ -2191,7 +2191,7 @@ fn agent_ids_from_raw_operations_filters_by_realm_and_kind() {
         },
         RawOperationRecord {
             operation_id: "op-2".to_owned(),
-            realm_id: Some("ck:realm:other".to_owned()),
+            realm_id: Some("ak:realm:other".to_owned()),
             received_at: Utc::now(),
             payload: json!({
                 "kind": "ck.agent.endpoint",
@@ -2200,7 +2200,7 @@ fn agent_ids_from_raw_operations_filters_by_realm_and_kind() {
         },
         RawOperationRecord {
             operation_id: "op-3".to_owned(),
-            realm_id: Some("ck:realm:demo".to_owned()),
+            realm_id: Some("ak:realm:demo".to_owned()),
             received_at: Utc::now(),
             payload: json!({
                 "kind": "ck.message.create",
@@ -2209,7 +2209,7 @@ fn agent_ids_from_raw_operations_filters_by_realm_and_kind() {
         },
     ];
 
-    let agent_ids = agent_ids_from_raw_operations(&records, "ck:realm:demo");
+    let agent_ids = agent_ids_from_raw_operations(&records, "ak:realm:demo");
     assert_eq!(
         agent_ids,
         vec!["did:web:researcher-agent.example".to_owned()]
@@ -2224,7 +2224,7 @@ fn agent_metadata_from_raw_operations_reads_controller_scoped_selector_fields() 
 
     let records = vec![RawOperationRecord {
         operation_id: "op-1".to_owned(),
-        realm_id: Some("ck:realm:demo".to_owned()),
+        realm_id: Some("ak:realm:demo".to_owned()),
         received_at: Utc::now(),
         payload: json!({
             "kind": "ck.agent.endpoint",
@@ -2238,7 +2238,7 @@ fn agent_metadata_from_raw_operations_reads_controller_scoped_selector_fields() 
         }),
     }];
 
-    let metadata = agent_metadata_from_raw_operations(&records, "ck:realm:demo");
+    let metadata = agent_metadata_from_raw_operations(&records, "ak:realm:demo");
     let summary = metadata
         .get("did:web:agents.example:summary")
         .expect("agent metadata");
@@ -2251,15 +2251,15 @@ fn agent_metadata_from_raw_operations_reads_controller_scoped_selector_fields() 
 #[test]
 fn agent_metadata_from_mentions_recovers_selector_audit_metadata() {
     let messages = vec![ChatMessage {
-        realm_id: "ck:realm:demo".to_owned(),
-        id: "ck:event:1".to_owned(),
-        protocol_message_id: Some("ck:message:01964137-0000-7000-8000-000000000001".to_owned()),
+        realm_id: "ak:realm:demo".to_owned(),
+        id: "ak:event:1".to_owned(),
+        protocol_message_id: Some("ak:message:01964137-0000-7000-8000-000000000001".to_owned()),
         sender: "did:web:example.com:users:bob".to_owned(),
         executed_by: None,
         body: "@alice:example.com/summary".to_owned(),
         timestamp: "10:00".to_owned(),
         created_at: None,
-        strand_id: "ck:strand:demo".to_owned(),
+        strand_id: "ak:strand:demo".to_owned(),
         reply_to: None,
         reactions: Vec::new(),
         redacted: false,
@@ -2402,7 +2402,7 @@ fn mention_candidate_uses_cached_member_handle() {
     let mut store = LocalStateStore::with_path(temp);
     store.save_member_handle_lookup(
         "did:web:bob.example",
-        Some("ck:realm:demo".to_owned()),
+        Some("ak:realm:demo".to_owned()),
         None,
         Some("bob:local.host".to_owned()),
         1,
@@ -2423,7 +2423,7 @@ fn mention_candidate_uses_cached_member_handle() {
     apply_cached_participant_handle_labels(
         &mut participants,
         &store,
-        "ck:realm:demo",
+        "ak:realm:demo",
         "did:web:alice.example",
         "alice:local.host",
         "https://local.host",
@@ -2440,15 +2440,15 @@ fn mention_candidate_uses_cached_member_handle() {
 #[test]
 fn channel_from_strand_event_requires_real_discussion_track() {
     let event = json!({
-        "event_id": "ck:event:strand",
+        "event_id": "ak:event:strand",
         "kind": "ck.strand.create",
-        "realm_id": "ck:realm:demo",
-        "strand_id": "ck:strand:ops",
+        "realm_id": "ak:realm:demo",
+        "strand_id": "ak:strand:ops",
         "title": "Ops discussion",
         "category": "support",
         "summary": "Operations support",
         "strand": {
-            "id": "ck:strand:ops",
+            "id": "ak:strand:ops",
             "title": "Ops discussion",
             "tracks": {
                 "discussion": {"profile": "discussion"}
@@ -2456,9 +2456,9 @@ fn channel_from_strand_event_requires_real_discussion_track() {
         }
     });
 
-    let channel = channel_from_strand_event("ck:realm:demo", &event).unwrap();
+    let channel = channel_from_strand_event("ak:realm:demo", &event).unwrap();
 
-    assert_eq!(channel.strand_id, "ck:strand:ops");
+    assert_eq!(channel.strand_id, "ak:strand:ops");
     assert_eq!(channel.name, "Ops discussion");
     assert_eq!(channel.category, "support");
     assert_eq!(channel.kind, "discussion");
@@ -2469,13 +2469,13 @@ fn channel_from_strand_event_requires_real_discussion_track() {
 #[test]
 fn channel_from_strand_event_ignores_non_discussion_strands() {
     let event = json!({
-        "event_id": "ck:event:strand",
+        "event_id": "ak:event:strand",
         "kind": "ck.strand.create",
-        "realm_id": "ck:realm:demo",
-        "strand_id": "ck:strand:doc",
+        "realm_id": "ak:realm:demo",
+        "strand_id": "ak:strand:doc",
         "title": "Doc strand",
         "strand": {
-            "id": "ck:strand:doc",
+            "id": "ak:strand:doc",
             "title": "Doc strand",
             "tracks": {
                 "document": {"profile": "document"}
@@ -2483,7 +2483,7 @@ fn channel_from_strand_event_ignores_non_discussion_strands() {
         }
     });
 
-    assert!(channel_from_strand_event("ck:realm:demo", &event).is_none());
+    assert!(channel_from_strand_event("ak:realm:demo", &event).is_none());
 }
 
 #[test]
@@ -2492,7 +2492,7 @@ fn default_discussion_channel_uses_realm_default_strand_projection() {
         "summary": {
             "title": "Demo Realm",
             "strand": {
-                "strand_id": "ck:strand:demo",
+                "strand_id": "ak:strand:demo",
                 "title": "General",
                 "summary": "Realm-wide conversation",
                 "tracks": {
@@ -2503,9 +2503,9 @@ fn default_discussion_channel_uses_realm_default_strand_projection() {
         }
     });
 
-    let channel = default_discussion_channel("ck:realm:demo", Some(&body));
+    let channel = default_discussion_channel("ak:realm:demo", Some(&body));
 
-    assert_eq!(channel.strand_id, "ck:strand:demo");
+    assert_eq!(channel.strand_id, "ak:strand:demo");
     assert_eq!(channel.name, "General");
     assert_eq!(channel.kind, "discussion");
     assert_eq!(channel.topic.as_deref(), Some("Realm-wide conversation"));
@@ -2514,9 +2514,9 @@ fn default_discussion_channel_uses_realm_default_strand_projection() {
 
 #[test]
 fn default_discussion_channel_synthesizes_default_strand_when_projection_is_absent() {
-    let channel = default_discussion_channel("ck:realm:demo", None);
+    let channel = default_discussion_channel("ak:realm:demo", None);
 
-    assert_eq!(channel.strand_id, "ck:strand:demo");
+    assert_eq!(channel.strand_id, "ak:strand:demo");
     assert_eq!(channel.name, "Discussion");
     assert_eq!(channel.category, "default strand");
     assert!(channel.is_default);
@@ -2581,12 +2581,12 @@ fn typing_actor_snapshot_filters_expired_and_self_entries() {
     let expired = now - chrono::Duration::seconds(30);
     let future = now + chrono::Duration::seconds(60);
     let realms = std::collections::BTreeMap::from([(
-        "ck:realm:demo".to_owned(),
+        "ak:realm:demo".to_owned(),
         json!({
             "ephemeral": [{
                 "type": "ck.typing",
-                "realm_id": "ck:realm:demo",
-                "strand_id": "ck:strand:demo",
+                "realm_id": "ak:realm:demo",
+                "strand_id": "ak:strand:demo",
                 "actors": [
                     {
                         "actor": "did:web:alice.example",
@@ -2607,8 +2607,8 @@ fn typing_actor_snapshot_filters_expired_and_self_entries() {
 
     let snapshot = typing_actor_snapshot_from_sync_realms(
         &realms,
-        "ck:realm:demo",
-        "ck:strand:demo",
+        "ak:realm:demo",
+        "ak:strand:demo",
         "did:web:self.example",
     );
 
@@ -2617,8 +2617,8 @@ fn typing_actor_snapshot_filters_expired_and_self_entries() {
     assert_eq!(
         typing_actors_from_sync_realms(
             &realms,
-            "ck:realm:demo",
-            "ck:strand:demo",
+            "ak:realm:demo",
+            "ak:strand:demo",
             "did:web:self.example",
         ),
         vec!["did:web:alice.example".to_owned()]
@@ -2678,16 +2678,16 @@ fn decrypt_chat_encrypted_content_soft_fails_without_snapshot() {
         "scheme": "mls-rfc9420",
         "group_id": "group-x",
         "epoch": 1,
-        "content_type": "application/vnd.cokret.message+json",
+        "content_type": "application/vnd.arkret.message+json",
         "ciphertext": "AAAA",
         "payload_digest": "sha256:0",
     });
     assert!(
         decrypt_chat_encrypted_content(
             &store,
-            "ck:realm:none",
+            "ak:realm:none",
             "did:web:alice.example",
-            "ck:device:01964137-0000-7000-8000-000000000001",
+            "ak:device:01964137-0000-7000-8000-000000000001",
             &envelope,
         )
         .is_none()
@@ -2701,11 +2701,11 @@ fn chat_message_from_event_flags_encrypted_payload_as_decrypting() {
         "content": {
             "type": "ck.message.create",
             "body": "[encrypted]",
-            "strand_id": "ck:strand:1",
+            "strand_id": "ak:strand:1",
             "encrypted_content": {"ciphertext": "blob"},
         }
     });
-    let msg = chat_message_from_event("ck:realm:demo", &event).expect("message");
+    let msg = chat_message_from_event("ak:realm:demo", &event).expect("message");
     assert_eq!(msg.crypto_state, MessageCryptoState::Decrypting);
 }
 
@@ -2715,24 +2715,24 @@ fn chat_message_from_event_keeps_bodyless_encrypted_payload_visible() {
         "event_id": "evt:bodyless",
         "content": {
             "type": "ck.message.create",
-            "strand_id": "ck:strand:1",
-            "message_id": "ck:message:1",
+            "strand_id": "ak:strand:1",
+            "message_id": "ak:message:1",
             "encrypted_content": {
                 "scheme": "mls-rfc9420",
                 "version": "1.0",
-                "group_id": "ck:mls:test",
+                "group_id": "ak:mls:test",
                 "epoch": 1,
-                "content_type": "application/vnd.cokret.message+json",
+                "content_type": "application/vnd.arkret.message+json",
                 "ciphertext": "AAAA",
                 "payload_digest": "sha256:0000000000000000000000000000000000000000000000000000000000000000"
             },
         }
     });
 
-    let msg = chat_message_from_event("ck:realm:demo", &event).expect("message");
+    let msg = chat_message_from_event("ak:realm:demo", &event).expect("message");
 
     assert_eq!(msg.body, "");
-    assert_eq!(msg.strand_id, "ck:strand:1");
+    assert_eq!(msg.strand_id, "ak:strand:1");
     assert_eq!(msg.crypto_state, MessageCryptoState::Decrypting);
 }
 
@@ -2747,14 +2747,14 @@ fn chat_message_from_event_marks_failed_local_decrypt_as_key_missing() {
         "event_id": "evt:key-missing",
         "content": {
             "type": "ck.message.create",
-            "strand_id": "ck:strand:1",
-            "message_id": "ck:message:1",
+            "strand_id": "ak:strand:1",
+            "message_id": "ak:message:1",
             "encrypted_content": {
                 "scheme": "mls-rfc9420",
                 "version": "1.0",
-                "group_id": "ck:mls:test",
+                "group_id": "ak:mls:test",
                 "epoch": 1,
-                "content_type": "application/vnd.cokret.message+json",
+                "content_type": "application/vnd.arkret.message+json",
                 "ciphertext": "AAAA",
                 "payload_digest": "sha256:0000000000000000000000000000000000000000000000000000000000000000"
             },
@@ -2762,12 +2762,12 @@ fn chat_message_from_event_marks_failed_local_decrypt_as_key_missing() {
     });
 
     let msg = chat_message_from_event_with_sidecar(
-        "ck:realm:none",
+        "ak:realm:none",
         &event,
         Some(&store),
         Some((
             "did:web:bob.example",
-            "ck:device:01964137-0000-7000-8000-000000000001",
+            "ak:device:01964137-0000-7000-8000-000000000001",
         )),
     )
     .expect("message");
@@ -2779,16 +2779,16 @@ fn chat_message_from_event_marks_failed_local_decrypt_as_key_missing() {
 #[test]
 fn chat_message_revise_operation_uses_schema_target_ref() {
     let op = chat_message_revise_operation(
-        "ck:realm:019e4fd4-4e26-7cc9-af7e-d7102d6f4a22",
+        "ak:realm:019e4fd4-4e26-7cc9-af7e-d7102d6f4a22",
         "did:web:bob.example",
-        "ck:event:019e4fd4-4e26-7cc9-af7e-d7102d6f4a23",
+        "ak:event:019e4fd4-4e26-7cc9-af7e-d7102d6f4a23",
         "edited",
     )
     .expect("builds");
 
     assert_eq!(
         op.payload["target_ref"],
-        "ck:event:019e4fd4-4e26-7cc9-af7e-d7102d6f4a23"
+        "ak:event:019e4fd4-4e26-7cc9-af7e-d7102d6f4a23"
     );
     assert_eq!(op.payload["content"]["kind"], "ck.content.text");
     assert_eq!(op.payload["content"]["body"], "edited");
@@ -2807,16 +2807,16 @@ fn chat_message_revise_operation_addresses_message_target_via_message_id() {
     // valid per the message_revise_payload anyOf, and message_id is the typed
     // form the SDK builder emits for message ids.
     let op = chat_message_revise_operation(
-        "ck:realm:019e4fd4-4e26-7cc9-af7e-d7102d6f4a22",
+        "ak:realm:019e4fd4-4e26-7cc9-af7e-d7102d6f4a22",
         "did:web:bob.example",
-        "ck:message:019e4fd4-4e26-7cc9-af7e-d7102d6f4a23",
+        "ak:message:019e4fd4-4e26-7cc9-af7e-d7102d6f4a23",
         "edited",
     )
     .expect("builds");
 
     assert_eq!(
         op.payload["message_id"],
-        "ck:message:019e4fd4-4e26-7cc9-af7e-d7102d6f4a23"
+        "ak:message:019e4fd4-4e26-7cc9-af7e-d7102d6f4a23"
     );
     assert!(op.payload.get("target_ref").is_none());
     assert_eq!(op.payload["content"]["kind"], "ck.content.text");
@@ -2830,16 +2830,16 @@ fn chat_message_revise_operation_addresses_message_target_via_message_id() {
 #[test]
 fn chat_message_redact_operation_uses_event_target_for_event_id() {
     let op = chat_message_redact_operation(
-        "ck:realm:019e4fd4-4e26-7cc9-af7e-d7102d6f4a22",
+        "ak:realm:019e4fd4-4e26-7cc9-af7e-d7102d6f4a22",
         "did:web:bob.example",
-        "ck:event:019e4fd4-4e26-7cc9-af7e-d7102d6f4a23",
+        "ak:event:019e4fd4-4e26-7cc9-af7e-d7102d6f4a23",
         "author_redaction",
     )
     .expect("builds");
 
     assert_eq!(
         op.payload["target_event_id"],
-        "ck:event:019e4fd4-4e26-7cc9-af7e-d7102d6f4a23"
+        "ak:event:019e4fd4-4e26-7cc9-af7e-d7102d6f4a23"
     );
     assert_eq!(op.payload["reason"], "author_redaction");
     assert!(op.payload.get("message_id").is_none());
@@ -2852,16 +2852,16 @@ fn chat_message_redact_operation_uses_event_target_for_event_id() {
 #[test]
 fn chat_message_redact_operation_uses_message_id_for_message_target() {
     let op = chat_message_redact_operation(
-        "ck:realm:019e4fd4-4e26-7cc9-af7e-d7102d6f4a22",
+        "ak:realm:019e4fd4-4e26-7cc9-af7e-d7102d6f4a22",
         "did:web:bob.example",
-        "ck:message:019e4fd4-4e26-7cc9-af7e-d7102d6f4a23",
+        "ak:message:019e4fd4-4e26-7cc9-af7e-d7102d6f4a23",
         "author_redaction",
     )
     .expect("builds");
 
     assert_eq!(
         op.payload["message_id"],
-        "ck:message:019e4fd4-4e26-7cc9-af7e-d7102d6f4a23"
+        "ak:message:019e4fd4-4e26-7cc9-af7e-d7102d6f4a23"
     );
     assert_eq!(op.payload["reason"], "author_redaction");
     assert!(op.payload.get("target_event_id").is_none());
@@ -2874,16 +2874,16 @@ fn chat_message_redact_operation_uses_message_id_for_message_target() {
 #[test]
 fn chat_reaction_add_operation_uses_schema_target_ref() {
     let op = chat_reaction_add_operation(
-        "ck:realm:019e4fd4-4e26-7cc9-af7e-d7102d6f4a22",
+        "ak:realm:019e4fd4-4e26-7cc9-af7e-d7102d6f4a22",
         "did:web:bob.example",
-        "ck:event:019e4fd4-4e26-7cc9-af7e-d7102d6f4a23",
+        "ak:event:019e4fd4-4e26-7cc9-af7e-d7102d6f4a23",
         "+1",
     )
     .expect("builds");
 
     assert_eq!(
         op.payload["target_ref"],
-        "ck:event:019e4fd4-4e26-7cc9-af7e-d7102d6f4a23"
+        "ak:event:019e4fd4-4e26-7cc9-af7e-d7102d6f4a23"
     );
     assert_eq!(op.payload["key"], "+1");
     assert!(op.payload.get("event_id").is_none());

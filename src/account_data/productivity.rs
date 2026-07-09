@@ -18,7 +18,7 @@ pub const DRAFT_STRAND_FIELD_SLOT_PREFIX: &str = "field_";
 pub const PRODUCTIVITY_ACCOUNT_DATA_NAMESPACE_KEY_LEN: usize = 32;
 
 const PRODUCTIVITY_ACCOUNT_DATA_NAMESPACE_INFO: &[u8] =
-    b"cokret-personal-productivity-account-data-key-v1";
+    b"arkret-personal-productivity-account-data-key-v1";
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum AccountDataMergeChoice {

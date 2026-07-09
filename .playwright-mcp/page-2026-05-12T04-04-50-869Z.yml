@@ -8,7 +8,7 @@
     - text: C
     - navigation "Main navigation" [ref=e15]:
       - generic [ref=e16]:
-        - generic [ref=e17]: C Cokret
+        - generic [ref=e17]: C Arkret
         - generic [ref=e18]: Protocol client
       - generic [ref=e19]:
         - generic [ref=e20]:
@@ -125,7 +125,7 @@
         - generic [ref=e116]:
           - generic [ref=e117]:
             - generic [ref=e118]: Home
-            - generic [ref=e119]: Cokret workspace
+            - generic [ref=e119]: Arkret workspace
           - generic [ref=e120]: Acme Workspace
           - generic [ref=e121]: "Organization Principal: Acme Inc. Principal Server is the connected service boundary; Spaces keep independent policy and history."
         - generic [ref=e122]:

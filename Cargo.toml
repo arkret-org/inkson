@@ -3,9 +3,9 @@ name = "inkson"
 version = "0.3.0"
 edition = "2024"
 rust-version = "1.96"
-description = "Dioxus desktop and web Cokret v1 reference client"
+description = "Dioxus desktop and web Arkret v1 reference client"
 license = "Apache-2.0"
-repository = "https://github.com/cokret/inkson"
+repository = "https://github.com/arkret/inkson"
 
 [profile.wasm-dev]
 inherits = "dev"
@@ -54,8 +54,8 @@ mobile-ios = []
 
 [dependencies]
 # Feature-unification alias: `getrandom@0.2` is pulled in transitively by the
-# crypto stack (rand_core 0.6 → p256/k256/hpke-rs/openmls and cokret-core →
-# cokret-identifiers). On `wasm32-unknown-unknown` that 0.2.x dep needs the
+# crypto stack (rand_core 0.6 → p256/k256/hpke-rs/openmls and arkret-core →
+# arkret-identifiers). On `wasm32-unknown-unknown` that 0.2.x dep needs the
 # `js` feature so it routes RNG through Web Crypto; this alias is the only
 # place in the workspace that turns it on. NOT used via `use getrandom_02`
 # anywhere in src/ — do not remove without re-checking the wasm build.
@@ -106,7 +106,7 @@ chrono = {workspace = true,features = ["serde"]}
 dioxus-icons = {workspace = true,default-features = false}
 dioxus-primitives = {workspace = true,default-features = false}
 dioxus-router = {workspace = true}
-# C3: shared Cokret frontend component crate. The former `src/ui/`
+# C3: shared Arkret frontend component crate. The former `src/ui/`
 # css-module wrappers now live in yoface, which re-exports
 # `dioxus_primitives` and `dioxus_icons`; inkson imports
 # `yoface::ui::*` through the SDK-local `pub use yoface::ui`.
@@ -115,7 +115,7 @@ yoface = {path = "../yoface"}
 ed25519-dalek = {workspace = true,features = ["pem", "pkcs8", "zeroize"]}
 getrandom = {workspace = true,features = ["wasm_js"]}
 getrandom_02 = {workspace = true,features = ["js"]}
-# rand_core 0.6 alias for the cokret SDK webvh inception builder
+# rand_core 0.6 alias for the arkret SDK webvh inception builder
 # (`prepare_inception` takes a 0.6 `RngCore`); inkson's primary rand_core is 0.10.
 rand_core_06 = {workspace = true}
 hkdf = {workspace = true}
@@ -168,10 +168,10 @@ chrono = {workspace = true}
 # toggle is on AND a build-time `SENTRY_DSN` env var is set; an
 # empty DSN logs a debug message and skips init silently per
 # `src/telemetry.rs::sentry_init`. Wasm builds skip the dep entirely.
-# NOTE: cokret-sdk `default = []` (types-only) since the F-06 default-feature
+# NOTE: arkret-sdk `default = []` (types-only) since the F-06 default-feature
 # narrowing; this client must opt into every runtime feature it uses
 # explicitly (mls/device-runtime/... previously arrived via the old default).
-cokret-sdk = {workspace = true,features = ["client", "mls", "full-surface", "applet-runtime", "device-runtime", "sync-runtime", "timeline-runtime", "signer"]}
+arkret-sdk = {workspace = true,features = ["client", "mls", "full-surface", "applet-runtime", "device-runtime", "sync-runtime", "timeline-runtime", "signer"]}
 garth = {path = "../garth",default-features = false,features = ["native"]}
 dioxus = {workspace = true,features = ["desktop", "web"]}
 keyring = {workspace = true,features = ["apple-native", "windows-native", "linux-native"]}
@@ -206,8 +206,8 @@ tracing-subscriber = {workspace = true,features = ["env-filter", "fmt"]}
 # platform". `gloo-timers` routes through `setTimeout` instead, which is what
 # `sleep_for` uses for HTTP retry backoff in the wasm build.
 # See the non-wasm note above: opt into every runtime feature explicitly since
-# cokret-sdk `default = []`.
-cokret-sdk = {workspace = true,features = ["client", "mls", "full-surface", "applet-runtime", "device-runtime", "sync-runtime", "timeline-runtime", "signer"]}
+# arkret-sdk `default = []`.
+arkret-sdk = {workspace = true,features = ["client", "mls", "full-surface", "applet-runtime", "device-runtime", "sync-runtime", "timeline-runtime", "signer"]}
 garth = {path = "../garth",default-features = false,features = ["wasm"]}
 dioxus = {workspace = true,features = ["web"]}
 gloo-timers = {workspace = true,features = ["futures"]}
@@ -277,11 +277,11 @@ web-sys = {workspace = true,features = [
 [target.'cfg(not(target_arch = "wasm32"))'.dev-dependencies]
 # Stream J conformance gate (`tests/conformance_gates.rs`): JSON Schema
 # 2020-12 validation of envelopes produced by typed builders against
-# `cokret-spec/spec/v1/artifacts/schemas/event-envelope.schema.json`.
+# `arkret-spec/spec/v1/artifacts/schemas/event-envelope.schema.json`.
 # Pinned to the same version cotest uses so a registry/resource bump
 # lands in one place.
 
-# cokret fork of DioxusLabs/components, branched off the same revision cargo
+# arkret fork of DioxusLabs/components, branched off the same revision cargo
 # already resolved. The only delta is an idempotency guard in
 # `primitives/src/js/focus-trap.js`: `DialogRoot` injects that script per
 # Dialog instance and dioxus re-executes it across mounts, but as a classic
@@ -295,9 +295,9 @@ rand_core_06 = {workspace = true}
 regex = {workspace = true}
 # Pinned by rev; bump deliberately when upgrading.
 [patch."https://github.com/DioxusLabs/components"]
-dioxus-primitives = { git = "https://github.com/cokret/dioxus-components", rev = "3510aeee2d14f0ca2c11682c9b826650cb557d2f" }
+dioxus-primitives = { git = "https://github.com/arkret/dioxus-components", rev = "3510aeee2d14f0ca2c11682c9b826650cb557d2f" }
 
-# cokret fork of DioxusLabs/dioxus, branched off the v0.7.9 tag. The only delta
+# arkret fork of DioxusLabs/dioxus, branched off the v0.7.9 tag. The only delta
 # is `Callback::__point_to` in `packages/core/src/events.rs`: upstream 0.7.9
 # calls `.unwrap()` on `point_to`, which aborts the entire wasm instance (white
 # screen) when an `Option<EventHandler>` prop's owner scope is reclaimed in the
@@ -311,14 +311,14 @@ dioxus-primitives = { git = "https://github.com/cokret/dioxus-components", rev =
 # `subsecond` via workspace deps, and if the registry copies remained, the same
 # crate would exist under two sources and `GenerationalBox<T>` would mismatch
 # across the registry `dioxus-signals`/`dioxus-web` and the patched core.
-# See https://github.com/cokret/dioxus/commit/e59f9f24a5c27c9303cd61edd0452b44161374ab
+# See https://github.com/arkret/dioxus/commit/e59f9f24a5c27c9303cd61edd0452b44161374ab
 # Pinned by rev; bump deliberately when upgrading.
 [patch.crates-io]
-dioxus-core       = { git = "https://github.com/cokret/dioxus", rev = "e59f9f24a5c27c9303cd61edd0452b44161374ab" }
-dioxus-core-types = { git = "https://github.com/cokret/dioxus", rev = "e59f9f24a5c27c9303cd61edd0452b44161374ab" }
-generational-box  = { git = "https://github.com/cokret/dioxus", rev = "e59f9f24a5c27c9303cd61edd0452b44161374ab" }
-subsecond         = { git = "https://github.com/cokret/dioxus", rev = "e59f9f24a5c27c9303cd61edd0452b44161374ab" }
-subsecond-types   = { git = "https://github.com/cokret/dioxus", rev = "e59f9f24a5c27c9303cd61edd0452b44161374ab" }
+dioxus-core       = { git = "https://github.com/arkret/dioxus", rev = "e59f9f24a5c27c9303cd61edd0452b44161374ab" }
+dioxus-core-types = { git = "https://github.com/arkret/dioxus", rev = "e59f9f24a5c27c9303cd61edd0452b44161374ab" }
+generational-box  = { git = "https://github.com/arkret/dioxus", rev = "e59f9f24a5c27c9303cd61edd0452b44161374ab" }
+subsecond         = { git = "https://github.com/arkret/dioxus", rev = "e59f9f24a5c27c9303cd61edd0452b44161374ab" }
+subsecond-types   = { git = "https://github.com/arkret/dioxus", rev = "e59f9f24a5c27c9303cd61edd0452b44161374ab" }
 
 [workspace]
 resolver = "3"
@@ -331,7 +331,7 @@ bip39 = "2.2.2"
 chacha20poly1305 = {version = "0.10",default-features = false}
 chime = {version = "0.3.0",path = "../chime"}
 chrono = "0.4.45"
-cokret-sdk = {package = "cokret",version = "0.3.0",path = "../cokret-rust-sdk/crates/sdk"}
+arkret-sdk = {package = "arkret",version = "0.3.0",path = "../arkret-rust-sdk/crates/sdk"}
 dioxus = "0.7.9"
 dioxus-icons = {version = "0.1.0",default-features = false}
 dioxus-primitives = {version = "0.0.1",git = "https://github.com/DioxusLabs/components",default-features = false}
@@ -351,7 +351,7 @@ notify-rust = "4.17"
 pulldown-cmark = {version = "0.13",default-features = false}
 qrcode = {version = "0.14",default-features = false}
 rand_core = "0.10"
-# Distinct alias for the rand_core 0.6 API the cokret SDK's webvh inception
+# Distinct alias for the rand_core 0.6 API the arkret SDK's webvh inception
 # builder expects (`prepare_inception` takes a `rand_core::RngCore` from 0.6).
 # inkson's primary `rand_core` is 0.10, so the SDK's RngCore trait is reached
 # through this aliased dependency to keep trait identity matched.

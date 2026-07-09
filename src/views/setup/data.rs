@@ -194,7 +194,7 @@ pub(super) const HASH_PROFILE_OPTIONS: [(&str, &str, &str); 4] = [
     (
         "sha256",
         "SHA-256",
-        "Default. Interoperable everywhere in Cokret v1.",
+        "Default. Interoperable everywhere in Arkret v1.",
     ),
     (
         "sha512",

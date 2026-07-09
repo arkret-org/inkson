@@ -469,7 +469,7 @@ fn derive_key(snapshot_secret: &str, salt: &[u8]) -> [u8; 32] {
 }
 
 fn is_protocol_device_id(value: &str) -> bool {
-    let Some(rest) = value.strip_prefix("ck:device:") else {
+    let Some(rest) = value.strip_prefix("ak:device:") else {
         return false;
     };
     rest.len() == 36
@@ -514,14 +514,14 @@ mod tests {
     fn persist_restore_round_trip_recovers_group_state() {
         let bytes = fake_state_record_bytes("aabbccdd", 7);
         let envelope = encrypt_state(
-            "ck:realm:demo",
+            "ak:realm:demo",
             "aabbccdd",
             7,
             &bytes,
             "correct horse battery staple",
             &fixed_salt(),
         );
-        assert_eq!(envelope.realm_id, "ck:realm:demo");
+        assert_eq!(envelope.realm_id, "ak:realm:demo");
         assert_eq!(envelope.group_id, "aabbccdd");
         assert_eq!(envelope.epoch, 7);
         // Ciphertext is not the plaintext — encryption did something.
@@ -536,7 +536,7 @@ mod tests {
     fn snapshot_secret_mismatch_is_rejected_distinct_from_other_errors() {
         let bytes = fake_state_record_bytes("dead", 1);
         let envelope = encrypt_state(
-            "ck:realm:demo",
+            "ak:realm:demo",
             "dead",
             1,
             &bytes,
@@ -558,7 +558,7 @@ mod tests {
     #[test]
     fn outdated_snapshot_is_rejected_via_epoch_check() {
         let bytes = fake_state_record_bytes("beef", 3);
-        let envelope = encrypt_state("ck:realm:demo", "beef", 3, &bytes, "p1", &fixed_salt());
+        let envelope = encrypt_state("ak:realm:demo", "beef", 3, &bytes, "p1", &fixed_salt());
 
         // current_epoch_floor == 3 → still acceptable (>=).
         let ok = decrypt_with_epoch_check(&envelope, "p1", 3);
@@ -585,7 +585,7 @@ mod tests {
 
     #[test]
     fn malformed_hex_surfaces_typed_error() {
-        let mut envelope = encrypt_state("ck:realm:demo", "feed", 1, b"abc", "p", &fixed_salt());
+        let mut envelope = encrypt_state("ak:realm:demo", "feed", 1, b"abc", "p", &fixed_salt());
         envelope.ciphertext_hex = "zzzz".to_owned(); // not hex
         let result = decrypt_envelope(&envelope, "p");
         assert!(matches!(result, Err(EnvelopeError::Malformed(_))));
@@ -594,7 +594,7 @@ mod tests {
     #[test]
     fn key_backup_body_carries_content_metadata_and_blob() {
         let envelope = encrypt_state(
-            "ck:realm:demo",
+            "ak:realm:demo",
             "aaaa",
             42,
             b"placeholder",
@@ -602,24 +602,24 @@ mod tests {
             &fixed_salt(),
         );
         let body = envelope.to_key_backup_body(
-            "ck:backup:01964137-0000-7000-8000-000000000000",
+            "ak:backup:01964137-0000-7000-8000-000000000000",
             "did:web:alice.example",
-            "ck:device:01964137-0000-7000-8000-000000000001",
+            "ak:device:01964137-0000-7000-8000-000000000001",
         );
         assert_eq!(
             body["backup_id"],
-            "ck:backup:01964137-0000-7000-8000-000000000000"
+            "ak:backup:01964137-0000-7000-8000-000000000000"
         );
         assert_eq!(
             body["device_id"],
-            "ck:device:01964137-0000-7000-8000-000000000001"
+            "ak:device:01964137-0000-7000-8000-000000000001"
         );
         assert_eq!(body["backup_class"], "mls_history");
         assert_eq!(body["backup_version"], "kb_mls_snapshot_v1");
         assert!(
             body["series_id"]
                 .as_str()
-                .is_some_and(|value| value.starts_with("ck:backup_series:"))
+                .is_some_and(|value| value.starts_with("ak:backup_series:"))
         );
         assert_eq!(body["series_seq"], 0);
         assert_eq!(body["encryption"]["recipient_method"], "secret_storage_key");
@@ -629,12 +629,12 @@ mod tests {
         );
         assert!(body["encryption"].get("kdf").is_none());
         assert_eq!(body["contents"][0]["item_type"], "mls_group_state");
-        assert_eq!(body["contents"][0]["realm_id"], "ck:realm:demo");
+        assert_eq!(body["contents"][0]["realm_id"], "ak:realm:demo");
         assert_eq!(body["contents"][0]["mls_group_id"], "aaaa");
         assert_eq!(body["contents"][0]["epoch"], 42);
         assert_eq!(
             body["domain_separation"]["hkdf_info"],
-            "cokret-key-backup/mls_history/mls_snapshot/v1"
+            "arkret-key-backup/mls_history/mls_snapshot/v1"
         );
         crate::key_backup::validate_key_backup_envelope(
             &body,
@@ -648,7 +648,7 @@ mod tests {
         let blob = body["ciphertext"].as_str().unwrap();
         let bytes = URL_SAFE_NO_PAD.decode(blob).unwrap();
         let parsed: MlsSnapshotEnvelope = serde_json::from_slice(&bytes).unwrap();
-        assert_eq!(parsed.realm_id, "ck:realm:demo");
+        assert_eq!(parsed.realm_id, "ak:realm:demo");
         assert_eq!(parsed.epoch, 42);
     }
 
@@ -696,7 +696,7 @@ mod tests {
         // inner bytes don't parse as `MlsGroupStateRecord`. The error
         // is `InvalidStateRecord`, distinct from `SecretMismatch`.
         let envelope = encrypt_state(
-            "ck:realm:demo",
+            "ak:realm:demo",
             "z",
             0,
             b"this is not json",
@@ -724,17 +724,17 @@ mod tests {
         let identity = CokretMlsIdentity::new_basic(
             Did::new("did:web:alice.example".to_owned()).unwrap(),
             // SDK 0.7 requires the canonical `ck:device:<uuid7>` form.
-            DeviceId::new("ck:device:01904100-0000-7000-8000-000000000001".to_owned()).unwrap(),
+            DeviceId::new("ak:device:01904100-0000-7000-8000-000000000001".to_owned()).unwrap(),
         )
         .unwrap();
-        let group = identity.create_group(b"ck:realm:round28-snapshot").unwrap();
+        let group = identity.create_group(b"ak:realm:round28-snapshot").unwrap();
         let record = group.export_state_record().unwrap();
         let original_group_id = record.group_id.clone();
         let original_epoch = record.epoch;
 
         let bytes = serde_json::to_vec(&record).unwrap();
         let envelope = encrypt_state(
-            "ck:realm:round28-snapshot",
+            "ak:realm:round28-snapshot",
             &original_group_id,
             original_epoch,
             &bytes,

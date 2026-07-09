@@ -1,4 +1,4 @@
-// Thin JS shim over the real livekit-client SDK for the Cokret web (wasm)
+// Thin JS shim over the real livekit-client SDK for the Arkret web (wasm)
 // SFU media path. Every function here drives a genuine `LivekitClient.Room`
 // API; there are no stubs, no fabricated "connected" state, and no
 // hard-coded participant data. When this runs in a browser with the

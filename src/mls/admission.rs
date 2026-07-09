@@ -466,7 +466,7 @@ mod tests {
         let plan = CrossSigningSetupPlan::build_initial(actor, device);
         let principal = cokret_sdk::Did::new(actor.to_owned()).unwrap();
         let trust_domain =
-            cokret_sdk::TypedTrustDomainId::new("ck:trust_domain:example.test").unwrap();
+            cokret_sdk::TypedTrustDomainId::new("ak:trust_domain:example.test").unwrap();
         let output = CrossSigningExecutor::new(plan, principal, trust_domain)
             .run()
             .unwrap();
@@ -484,7 +484,7 @@ mod tests {
         ssk_generation: u64,
     ) -> cokret_sdk::KeyPackageClaimRecord {
         cokret_sdk::KeyPackageClaimRecord {
-            claim_id: "ck:mls_keypackage:test:Y2xhaW0tbm9uY2U".to_owned(),
+            claim_id: "ak:mls_keypackage:test:Y2xhaW0tbm9uY2U".to_owned(),
             keypackage_ref: record.keypackage_ref.as_str().to_owned(),
             keypackage_digest: record.keypackage_ref.clone(),
             principal_id: record.principal_id.clone(),
@@ -517,7 +517,7 @@ mod tests {
         let expected_kid = active_signer.verification_method().to_owned();
         let previous = crate::event_signer::replace_active_signer(Some(active_signer));
         let actor = "did:web:alice.example";
-        let device = "ck:device:01904100-0000-7000-8000-0000000000a1";
+        let device = "ak:device:01904100-0000-7000-8000-0000000000a1";
         let mut envelope = cokret_sdk::MlsWelcomeClaimEnvelope {
             keypackage_ref:
                 "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa".to_owned(),
@@ -526,10 +526,10 @@ mod tests {
             )
             .unwrap(),
             intended_realm_id: cokret_sdk::RealmId::new(
-                "ck:realm:01904100-0000-7000-8000-0000000000d1",
+                "ak:realm:01904100-0000-7000-8000-0000000000d1",
             )
             .unwrap(),
-            claim_id: "ck:mls:kp:test:nonce".to_owned(),
+            claim_id: "ak:mls:kp:test:nonce".to_owned(),
             requester_did: cokret_sdk::Did::new(actor.to_owned()).unwrap(),
             ssk_generation: None,
             requester_device_id: None,
@@ -564,15 +564,15 @@ mod tests {
     fn realm_key_share_event_matches_registered_payload_schema() {
         let _signer_guard =
             ActiveSignerGuard::install([9u8; 32], "did:key:zRealmKeyShareSchemaTest");
-        let realm = "ck:realm:01904100-0000-7000-8000-0000000000d7";
+        let realm = "ak:realm:01904100-0000-7000-8000-0000000000d7";
         let policy_digest =
             "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa".to_owned();
         let event = build_realm_key_share_event(
             realm,
             "did:web:alice.example",
-            "ck:device:01904100-0000-7000-8000-0000000000a1",
+            "ak:device:01904100-0000-7000-8000-0000000000a1",
             "did:web:bob.example",
-            "ck:device:01904100-0000-7000-8000-0000000000b1",
+            "ak:device:01904100-0000-7000-8000-0000000000b1",
             0,
             2,
             policy_digest.clone(),
@@ -607,11 +607,11 @@ mod tests {
         let mut alice_state = isolated_store_for_tests("invite-admission-alice");
         let mut bob_state = isolated_store_for_tests("invite-admission-bob");
         let secure = MemorySecureKeyStore::new();
-        let realm = "ck:realm:01904100-0000-7000-8000-0000000000d1";
+        let realm = "ak:realm:01904100-0000-7000-8000-0000000000d1";
         let alice = "did:web:alice.example";
-        let alice_device = "ck:device:01904100-0000-7000-8000-0000000000a1";
+        let alice_device = "ak:device:01904100-0000-7000-8000-0000000000a1";
         let bob = "did:web:bob.example";
-        let bob_device = "ck:device:01904100-0000-7000-8000-0000000000b1";
+        let bob_device = "ak:device:01904100-0000-7000-8000-0000000000b1";
 
         let publish = install_cross_signing(&mut alice_state, &secure, alice, alice_device);
         let genesis_summary =
@@ -720,11 +720,11 @@ mod tests {
         // admin at epoch N — a permanent, mutually-undecryptable fork.
         let mut alice_state = isolated_store_for_tests("admission-policy-root-alice");
         let secure = MemorySecureKeyStore::new();
-        let realm = "ck:realm:01904100-0000-7000-8000-0000000000e1";
+        let realm = "ak:realm:01904100-0000-7000-8000-0000000000e1";
         let alice = "did:web:alice.example";
-        let alice_device = "ck:device:01904100-0000-7000-8000-0000000000a1";
+        let alice_device = "ak:device:01904100-0000-7000-8000-0000000000a1";
         let bob = "did:web:bob.example";
-        let bob_device = "ck:device:01904100-0000-7000-8000-0000000000b1";
+        let bob_device = "ak:device:01904100-0000-7000-8000-0000000000b1";
 
         let publish = install_cross_signing(&mut alice_state, &secure, alice, alice_device);
         let genesis_summary =
@@ -750,7 +750,7 @@ mod tests {
         // (space/strand/message creates) would before the invite.
         let mut advanced = alice_state.seal_view_for_realm(realm);
         advanced.state_root = Some(
-            "ck:state:sha256:1111111111111111111111111111111111111111111111111111111111111111"
+            "ak:state:sha256:1111111111111111111111111111111111111111111111111111111111111111"
                 .to_owned(),
         );
         alice_state.set_realm_seal_view(realm, advanced);

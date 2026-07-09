@@ -235,7 +235,7 @@ pub(crate) fn card_from_projection_item(
         .object
         .get("id")
         .and_then(|v| v.as_str())
-        .unwrap_or("ck:strand:unknown")
+        .unwrap_or("ak:strand:unknown")
         .to_owned();
     let title = item
         .object

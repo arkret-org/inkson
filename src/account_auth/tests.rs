@@ -353,7 +353,7 @@ fn authorize_url_requests_standard_and_device_scope() {
     assert!(scopes.contains(&"openid"));
     assert!(scopes.contains(&"profile"));
     assert!(
-        scopes.contains(&format!("{COKRET_DEVICE_SCOPE_PREFIX}device-dddd-4444").as_str()),
+        scopes.contains(&format!("{ARKRET_DEVICE_SCOPE_PREFIX}device-dddd-4444").as_str()),
         "authorize URL must request the device-binding scope, got: {requested_scope}"
     );
 }

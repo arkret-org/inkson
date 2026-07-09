@@ -1299,7 +1299,7 @@ pub fn ChatPanel(
                                         let category = "general".to_owned();
                                         let summary = new_channel_topic().trim().to_owned();
                                         let create_card = new_channel_create_card();
-                                        let strand_id = format!("ck:strand:{}", uuid_v7());
+                                        let strand_id = format!("ak:strand:{}", uuid_v7());
                                         let rank = format!("r{}", chrono::Utc::now().timestamp_millis());
                                         let op = match ck_ops::discussion_strand_create(
                                             &realm,
@@ -4970,7 +4970,7 @@ pub fn ChatPanel(
                                 // P1: encrypt the canonical Content Block JSON
                                 // (`ck.content.text`), NOT the bare body bytes, so
                                 // strict receivers can parse the decrypted payload
-                                // as `application/vnd.cokret.message+json` and the
+                                // as `application/vnd.arkret.message+json` and the
                                 // decrypt-on-read path round-trips it back to text.
                                 let secure_content_block = match chat_content_block_for_body(&body)
                                 {

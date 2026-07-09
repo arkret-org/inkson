@@ -77,7 +77,7 @@ test("setup realm form stays in the main workspace layout", async ({ page }) => 
 
 test("setup, onboarding, and Board entry works", async ({ page }) => {
   await refreshServer(page);
-  await expect(page.getByTestId("sync-cursor")).toContainText("ck:cursor:e2e-2");
+  await expect(page.getByTestId("sync-cursor")).toContainText("ak:cursor:e2e-2");
 
   await page.goto("/onboarding", { waitUntil: "domcontentloaded" });
   await expect(page.getByTestId("onboarding-panel")).toBeVisible();
@@ -141,7 +141,7 @@ test("setup, onboarding, and Board entry works", async ({ page }) => {
   await latestTestId(page, "mls-backup-confirm-key").fill(generatedRecoveryKey);
   await latestTestId(page, "mls-backup-saved").click();
   await expect(page.getByTestId("mls-backup-modal")).toHaveCount(0);
-  await expect(page.getByTestId("realm-lifecycle-strand").getByTestId("selected-realm-id")).toContainText("ck:realm:");
+  await expect(page.getByTestId("realm-lifecycle-strand").getByTestId("selected-realm-id")).toContainText("ak:realm:");
 
   await page.getByTestId("realm-setup-done").getByRole("link", { name: "Open Realm", exact: true }).click();
   await expect(page.getByTestId("kanban-panel")).toBeVisible();
@@ -155,7 +155,7 @@ test("setup, onboarding, and Board entry works", async ({ page }) => {
   await expect(page.getByTestId("sidebar")).toContainText("Setup Strand Space");
   await expect(page.getByTestId("kanban-panel")).toBeVisible();
   await page.getByTestId("account-menu-button").click();
-  await expect(page.getByTestId("account-menu-frontier")).toContainText("ck:event:");
+  await expect(page.getByTestId("account-menu-frontier")).toContainText("ak:event:");
 });
 
 test("realm admin page handles metadata, modal member invite, epoch rotation and archive", async ({ page }) => {
@@ -249,7 +249,7 @@ test("realm admin page handles metadata, modal member invite, epoch rotation and
   await expect(page.getByTestId("realm-danger-confirm-submit")).toBeDisabled();
   await page
     .getByTestId("realm-danger-confirm-input")
-    .fill("ck:realm:0196419b-0000-7000-8000-000000000000");
+    .fill("ak:realm:0196419b-0000-7000-8000-000000000000");
   await expect(page.getByTestId("realm-danger-confirm-submit")).toBeEnabled();
   await page.getByTestId("realm-danger-confirm-submit").click();
   await expect(page.getByTestId("realm-admin-status")).toContainText("archive event submitted");

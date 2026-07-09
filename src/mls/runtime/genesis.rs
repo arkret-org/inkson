@@ -82,7 +82,7 @@ pub fn ensure_creator_mls_snapshot_for_effective_scope(
         .ratchet_tree()
         .map_err(|err| MlsRuntimeError::Genesis(format!("export ratchet tree: {err}")))?;
     let schedule_hash = group.schedule_hash().to_string();
-    let cipher_suite = cokret_sdk::COKRET_MLS_CIPHERSUITE_CANONICAL_ID.to_owned();
+    let cipher_suite = cokret_sdk::ARKRET_MLS_CIPHERSUITE_CANONICAL_ID.to_owned();
     let post_state = group
         .export_state_record()
         .map_err(|err| MlsRuntimeError::Genesis(format!("export state: {err}")))?;
@@ -165,7 +165,7 @@ pub fn initial_mls_snapshot_summary_from_existing_for_effective_scope(
         epoch: group.epoch(),
         ratchet_tree,
         schedule_hash: group.schedule_hash().to_string(),
-        cipher_suite: cokret_sdk::COKRET_MLS_CIPHERSUITE_CANONICAL_ID.to_owned(),
+        cipher_suite: cokret_sdk::ARKRET_MLS_CIPHERSUITE_CANONICAL_ID.to_owned(),
     }))
 }
 

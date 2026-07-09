@@ -13,24 +13,24 @@ test("bootstrap login and sync shows the connected workspace", async ({ page }) 
   await refreshServer(page);
 
   await expect(page.getByTestId("status-label")).toContainText("Online");
-  await expect(page.getByTestId("sync-cursor")).toContainText("ck:cursor:e2e-2");
-  await expect(page.getByTestId("realm-tree-list")).toContainText("Cokret Demo Realm");
+  await expect(page.getByTestId("sync-cursor")).toContainText("ak:cursor:e2e-2");
+  await expect(page.getByTestId("realm-tree-list")).toContainText("Arkret Demo Realm");
   await expect(page.getByTestId("realm-tree-list")).toContainText("Launch Realm");
   await expect(
-    page.getByTestId("realm-tree-node-button").filter({ hasText: "Cokret Demo Realm" }).locator(".sidebar-nav-icon"),
+    page.getByTestId("realm-tree-node-button").filter({ hasText: "Arkret Demo Realm" }).locator(".sidebar-nav-icon"),
   ).toHaveAttribute("title", "Encrypted Realm");
   await expect(
     page.getByTestId("realm-tree-node-button").filter({ hasText: "Launch Realm" }).locator(".sidebar-nav-icon"),
   ).toHaveAttribute("title", "Unencrypted Realm");
   await page.getByTestId("account-menu-button").click();
-  await expect(page.getByTestId("account-menu-frontier")).toContainText("ck:event:e2e");
+  await expect(page.getByTestId("account-menu-frontier")).toContainText("ak:event:e2e");
   await expect(page.getByTestId("account-menu-push")).toBeVisible();
   await expect(page.getByTestId("account-menu-queue")).toContainText("1");
   await page.keyboard.press("Escape");
   await expect(page.getByTestId("dashboard-panel")).toBeVisible();
   await expect(page.getByTestId("realm-tree-summary")).toContainText("Recent Realms & Spaces");
   await expect(
-    page.getByTestId("dashboard-realm-tree-card").filter({ hasText: "Cokret Demo Realm" }).locator(".pill.muted.xs"),
+    page.getByTestId("dashboard-realm-tree-card").filter({ hasText: "Arkret Demo Realm" }).locator(".pill.muted.xs"),
   ).toHaveText("Realm");
   await expect(
     page.getByTestId("dashboard-realm-tree-card").filter({ hasText: "Launch Realm" }).locator(".pill.muted.xs"),
@@ -105,7 +105,7 @@ test("login page delegates account lifecycle to coauth OIDC", async ({ page }) =
 
 test("connect refresh canonicalizes stale account DID but preserves device override", async ({ page }) => {
   const staleDid = "did:web:auth.local.host:users:01KCANONICAL";
-  const deviceId = "ck:device:01964137-0000-7000-8000-0000000000b0";
+  const deviceId = "ak:device:01964137-0000-7000-8000-0000000000b0";
   await expect(latestTestId(page, "status-label")).toContainText("Online");
   await writeLocalConfigAndReload(page, { account_did: staleDid, device_id: deviceId });
   await expect(latestTestId(page, "client-shell")).toBeVisible({ timeout: 120_000 });

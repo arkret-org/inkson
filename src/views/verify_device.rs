@@ -81,7 +81,7 @@ mod verification_key_poll_tests {
                 {"kind": "ck.mls.welcome", "content": {"unrelated": true}},
                 {
                     "kind": "ck.key.verification.key",
-                    "content": {"key": "bob-pub-b64==", "from_device": "ck:device:abc"},
+                    "content": {"key": "bob-pub-b64==", "from_device": "ak:device:abc"},
                 },
             ]
         });
@@ -144,7 +144,7 @@ mod qr_tests {
 
     #[test]
     fn typical_payload_produces_svg() {
-        let svg = render_qr_svg("cokret:verify:ck:device:abc:ck:device:xyz");
+        let svg = render_qr_svg("arkret:verify:ck:device:abc:ck:device:xyz");
         // qrcode 0.14 emits an `<?xml …?>` declaration before `<svg`.
         assert!(svg.contains("<svg"));
         assert!(svg.contains("</svg>"));
@@ -366,7 +366,7 @@ pub fn VerifyDevicePanel(
                                     let device_id = device_id.clone();
                                     move |_| {
                                         qr_data.set(format!(
-                                            "cokret:verify:{}:{}",
+                                            "arkret:verify:{}:{}",
                                             device_id, target_device()
                                         ));
                                     }
@@ -905,7 +905,7 @@ pub fn VerifyDevicePanel(
                                         {
                                             Some(trust_domain) => trust_domain,
                                             None => match cokret_sdk::TypedTrustDomainId::new(
-                                                "ck:trust_domain:unknown.local",
+                                                "ak:trust_domain:unknown.local",
                                             ) {
                                                 Ok(trust_domain) => trust_domain,
                                                 Err(error) => {
@@ -1046,7 +1046,7 @@ mod cross_signing_view_tests {
 
     #[test]
     fn initial_plan_lists_publish_and_device_authorized_events() {
-        let plan = CrossSigningSetupPlan::build_initial("did:webvh:alice.example", "ck:device:01a");
+        let plan = CrossSigningSetupPlan::build_initial("did:webvh:alice.example", "ak:device:01a");
         let kinds = plan.event_kinds();
         assert!(kinds.contains(&"ck.cross_signing.publish"));
         assert!(kinds.contains(&"ck.device.authorize"));

@@ -19,7 +19,7 @@ pub struct CurrentAccount {
 }
 
 /// A6.1 — app-local global search projection. The shape is used by the
-/// local decrypted client-index path; the Cokret HTTP catalog intentionally
+/// local decrypted client-index path; the Arkret HTTP catalog intentionally
 /// has no spec-defined global plaintext search endpoint.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct IndexSearchView {
@@ -291,7 +291,7 @@ pub const OP_SNAPSHOT_HEAD: &str = "ck.self.snapshot.query.manifest_head";
 ///
 /// Inkson no longer maintains its own `ServerDescription` struct; the SDK
 /// type is now the single source of truth, matching the spec at
-/// `cokret-spec/spec/v1/artifacts/schemas/service-describe.schema.json`
+/// `arkret-spec/spec/v1/artifacts/schemas/service-describe.schema.json`
 /// (17 required Round 4 fields, typed `claimed_profiles` / `compat_surfaces`,
 /// validated `Did` / `TypedTrustDomainId`). Because inkson cannot add
 /// inherent impls on a foreign type, the previous helper methods now live
@@ -398,7 +398,7 @@ pub use cokret_sdk::models::DirectoryDescription;
 /// Wire-shape sync response — re-exports the SDK's canonical
 /// [`cokret_sdk::models::SyncOutcome`] so client + server can never
 /// drift on field names / per-realm body shape. Spec source of truth
-/// at `cokret-spec/spec/v1/zh/sync/client-sync.md §2`. Inkson used to
+/// at `arkret-spec/spec/v1/zh/sync/client-sync.md §2`. Inkson used to
 /// own a custom `ClientSyncOutcome` with a bucketed-`spaces`
 /// deserializer; that was an older Matrix-style transcript that
 /// disagreed with what soland actually emits.
@@ -600,7 +600,7 @@ mod tests {
         // decode and broke every event submit ("error decoding response body").
         let value = serde_json::json!({
             "status": "accepted",
-            "accepted": ["ck:event:0196419b-0000-7000-8000-000000000001"],
+            "accepted": ["ak:event:0196419b-0000-7000-8000-000000000001"],
             "duplicate": [],
             "rejected": [],
             "actor_frontier": {"seq": 1},
@@ -610,7 +610,7 @@ mod tests {
         let outcome: super::SubmitEventResult = serde_json::from_value(value).unwrap();
         assert_eq!(
             outcome.event_id,
-            "ck:event:0196419b-0000-7000-8000-000000000001"
+            "ak:event:0196419b-0000-7000-8000-000000000001"
         );
         assert_eq!(outcome.status, "accepted");
         assert_eq!(outcome.cursor, "sx:cursor-1");
@@ -621,7 +621,7 @@ mod tests {
         // renames.json rejection policy: the removed flat `{event_id,
         // sync_token, …}` shape MUST NOT decode — canonical-only parser.
         let value = serde_json::json!({
-            "event_id": "ck:event:removed",
+            "event_id": "ak:event:removed",
             "status": "accepted",
             "sync_token": "sx:removed",
         });
@@ -633,12 +633,12 @@ mod tests {
         let value = serde_json::json!({
             "status": "duplicate",
             "accepted": [],
-            "duplicate": ["ck:event:0196419b-0000-7000-8000-000000000002"],
+            "duplicate": ["ak:event:0196419b-0000-7000-8000-000000000002"],
         });
         let outcome: super::SubmitEventResult = serde_json::from_value(value).unwrap();
         assert_eq!(
             outcome.event_id,
-            "ck:event:0196419b-0000-7000-8000-000000000002"
+            "ak:event:0196419b-0000-7000-8000-000000000002"
         );
         assert_eq!(outcome.status, "duplicate");
         assert_eq!(outcome.cursor, "");
@@ -671,43 +671,43 @@ mod tests {
     #[test]
     fn projection_realm_id_uses_space_home_realm() {
         let spaces = vec![
-            preview("ck:realm:root", RealmTreeNodeKind::Realm, "", None),
+            preview("ak:realm:root", RealmTreeNodeKind::Realm, "", None),
             preview(
-                "ck:space:child",
+                "ak:space:child",
                 RealmTreeNodeKind::Space,
-                "ck:realm:root",
-                Some("ck:realm:root"),
+                "ak:realm:root",
+                Some("ak:realm:root"),
             ),
         ];
 
         assert_eq!(
-            projection_realm_id_for_node(&spaces, "ck:space:child"),
-            "ck:realm:root"
+            projection_realm_id_for_node(&spaces, "ak:space:child"),
+            "ak:realm:root"
         );
     }
 
     #[test]
     fn projection_realm_id_climbs_parent_links_to_realm() {
         let spaces = vec![
-            preview("ck:realm:root", RealmTreeNodeKind::Realm, "", None),
+            preview("ak:realm:root", RealmTreeNodeKind::Realm, "", None),
             preview(
-                "ck:space:child",
+                "ak:space:child",
                 RealmTreeNodeKind::Space,
                 "",
-                Some("ck:realm:root"),
+                Some("ak:realm:root"),
             ),
         ];
 
         assert_eq!(
-            projection_realm_id_for_node(&spaces, "ck:space:child"),
-            "ck:realm:root"
+            projection_realm_id_for_node(&spaces, "ak:space:child"),
+            "ak:realm:root"
         );
     }
 
     #[test]
     fn known_projection_realm_id_waits_for_unknown_routes() {
         assert_eq!(
-            projection_realm_id_for_known_node(&[], "ck:space:child"),
+            projection_realm_id_for_known_node(&[], "ak:space:child"),
             None
         );
     }
@@ -724,7 +724,7 @@ mod tests {
             "allowed_introduction_kinds": ["consent_grant", "locator_ref"],
             "explicit_address_behavior": "drop",
             "unknown_invites": "quarantine",
-            "trusted_realm_ids": ["ck:realm:01904100-0000-7000-8000-000000000001"],
+            "trusted_realm_ids": ["ak:realm:01904100-0000-7000-8000-000000000001"],
             "trusted_principal_services": ["did:web:ps.example"],
             "blocked_subjects": ["did:web:spammer.example"],
             "disclosure": {"high_trust": "opaque", "low_trust": "opaque"},
@@ -740,7 +740,7 @@ mod tests {
         assert_eq!(re["trusted_principal_services"][0], "did:web:ps.example");
         assert_eq!(
             re["trusted_realm_ids"][0],
-            "ck:realm:01904100-0000-7000-8000-000000000001"
+            "ak:realm:01904100-0000-7000-8000-000000000001"
         );
     }
 
@@ -760,7 +760,7 @@ mod tests {
         let mut row = super::ContactListRow {
             peer: "did:web:bob.example".to_owned(),
             state: "accepted".to_owned(),
-            response_event_ref: Some("ck:event:resp".to_owned()),
+            response_event_ref: Some("ak:event:resp".to_owned()),
             granted_to_me: vec!["invite".to_owned()],
             ..Default::default()
         };
@@ -769,8 +769,8 @@ mod tests {
         assert_eq!(row.invite_consent_ref(), None);
         assert!(row.grants_me_invite());
         // The real server-supplied consent ref is surfaced verbatim.
-        row.invite_consent_grant_ref = Some("ck:event:consent".to_owned());
-        assert_eq!(row.invite_consent_ref(), Some("ck:event:consent"));
+        row.invite_consent_grant_ref = Some("ak:event:consent".to_owned());
+        assert_eq!(row.invite_consent_ref(), Some("ak:event:consent"));
         // Empty strings are treated as absent.
         row.invite_consent_grant_ref = Some("  ".to_owned());
         assert_eq!(row.invite_consent_ref(), None);

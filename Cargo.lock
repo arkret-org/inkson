@@ -857,7 +857,7 @@ version = "0.3.0"
 dependencies = [
  "base64",
  "chrono",
- "cokret",
+ "arkret",
  "gloo-timers 0.4.0",
  "httpdate",
  "reqwest 0.13.4",
@@ -978,7 +978,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "cokret"
+name = "arkret"
 version = "0.3.0"
 dependencies = [
  "argon2",
@@ -986,13 +986,13 @@ dependencies = [
  "chacha20poly1305",
  "chrono",
  "chrono-tz",
- "cokret-core",
- "cokret-crypto",
- "cokret-ffi",
- "cokret-html",
- "cokret-http-client",
- "cokret-keystore",
- "cokret-signatures",
+ "arkret-core",
+ "arkret-crypto",
+ "arkret-ffi",
+ "arkret-html",
+ "arkret-http-client",
+ "arkret-keystore",
+ "arkret-signatures",
  "ed25519-dalek",
  "getrandom 0.4.2",
  "hex",
@@ -1018,7 +1018,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "cokret-core"
+name = "arkret-core"
 version = "0.3.0"
 dependencies = [
  "base64",
@@ -1026,7 +1026,7 @@ dependencies = [
  "bs58",
  "chrono",
  "chrono-tz",
- "cokret-identifiers",
+ "arkret-identifiers",
  "getrandom 0.4.2",
  "hex",
  "hmac 0.13.0",
@@ -1042,12 +1042,12 @@ dependencies = [
 ]
 
 [[package]]
-name = "cokret-crypto"
+name = "arkret-crypto"
 version = "0.3.0"
 dependencies = [
  "chrono",
- "cokret-core",
- "cokret-signatures",
+ "arkret-core",
+ "arkret-signatures",
  "serde",
  "serde_json",
  "sha2 0.11.0",
@@ -1055,31 +1055,31 @@ dependencies = [
 ]
 
 [[package]]
-name = "cokret-ffi"
+name = "arkret-ffi"
 version = "0.3.0"
 dependencies = [
- "cokret-core",
+ "arkret-core",
  "serde",
  "serde_json",
 ]
 
 [[package]]
-name = "cokret-html"
+name = "arkret-html"
 version = "0.3.0"
 dependencies = [
- "cokret-core",
+ "arkret-core",
  "serde",
  "serde_json",
 ]
 
 [[package]]
-name = "cokret-http-client"
+name = "arkret-http-client"
 version = "0.3.0"
 dependencies = [
  "base64",
  "chrono",
- "cokret-core",
- "cokret-signatures",
+ "arkret-core",
+ "arkret-signatures",
  "futures-util",
  "getrandom 0.4.2",
  "reqwest 0.13.4",
@@ -1091,7 +1091,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "cokret-identifiers"
+name = "arkret-identifiers"
 version = "0.3.0"
 dependencies = [
  "getrandom 0.2.17",
@@ -1104,20 +1104,20 @@ dependencies = [
 ]
 
 [[package]]
-name = "cokret-keystore"
+name = "arkret-keystore"
 version = "0.3.0"
 dependencies = [
- "cokret-core",
+ "arkret-core",
  "tracing",
 ]
 
 [[package]]
-name = "cokret-signatures"
+name = "arkret-signatures"
 version = "0.3.0"
 dependencies = [
  "base64",
  "chrono",
- "cokret-core",
+ "arkret-core",
  "ed25519-dalek",
  "rand_core 0.6.4",
  "serde",
@@ -1747,7 +1747,7 @@ dependencies = [
 [[package]]
 name = "dioxus-attributes"
 version = "0.1.0"
-source = "git+https://github.com/cokret/dioxus-components?rev=3510aeee2d14f0ca2c11682c9b826650cb557d2f#3510aeee2d14f0ca2c11682c9b826650cb557d2f"
+source = "git+https://github.com/arkret/dioxus-components?rev=3510aeee2d14f0ca2c11682c9b826650cb557d2f#3510aeee2d14f0ca2c11682c9b826650cb557d2f"
 dependencies = [
  "dioxus-rsx",
  "proc-macro2",
@@ -1783,7 +1783,7 @@ checksum = "54f9ed8fc1a215ad34bb8dbae42a4ea54efbcd26ca9006bbe5cca78e511bf25f"
 [[package]]
 name = "dioxus-core"
 version = "0.7.9"
-source = "git+https://github.com/cokret/dioxus?rev=e59f9f24a5c27c9303cd61edd0452b44161374ab#e59f9f24a5c27c9303cd61edd0452b44161374ab"
+source = "git+https://github.com/arkret/dioxus?rev=e59f9f24a5c27c9303cd61edd0452b44161374ab#e59f9f24a5c27c9303cd61edd0452b44161374ab"
 dependencies = [
  "anyhow",
  "const_format",
@@ -1817,7 +1817,7 @@ dependencies = [
 [[package]]
 name = "dioxus-core-types"
 version = "0.7.9"
-source = "git+https://github.com/cokret/dioxus?rev=e59f9f24a5c27c9303cd61edd0452b44161374ab#e59f9f24a5c27c9303cd61edd0452b44161374ab"
+source = "git+https://github.com/arkret/dioxus?rev=e59f9f24a5c27c9303cd61edd0452b44161374ab#e59f9f24a5c27c9303cd61edd0452b44161374ab"
 
 [[package]]
 name = "dioxus-desktop"
@@ -2134,7 +2134,7 @@ dependencies = [
 [[package]]
 name = "dioxus-primitives"
 version = "0.0.1"
-source = "git+https://github.com/cokret/dioxus-components?rev=3510aeee2d14f0ca2c11682c9b826650cb557d2f#3510aeee2d14f0ca2c11682c9b826650cb557d2f"
+source = "git+https://github.com/arkret/dioxus-components?rev=3510aeee2d14f0ca2c11682c9b826650cb557d2f#3510aeee2d14f0ca2c11682c9b826650cb557d2f"
 dependencies = [
  "dioxus",
  "dioxus-attributes",
@@ -2898,9 +2898,9 @@ name = "garth"
 version = "0.3.0"
 dependencies = [
  "chrono",
- "cokret",
- "cokret-core",
- "cokret-http-client",
+ "arkret",
+ "arkret-core",
+ "arkret-http-client",
  "ed25519-dalek",
  "gloo-timers 0.3.0",
  "serde",
@@ -2998,7 +2998,7 @@ dependencies = [
 [[package]]
 name = "generational-box"
 version = "0.7.9"
-source = "git+https://github.com/cokret/dioxus?rev=e59f9f24a5c27c9303cd61edd0452b44161374ab#e59f9f24a5c27c9303cd61edd0452b44161374ab"
+source = "git+https://github.com/arkret/dioxus?rev=e59f9f24a5c27c9303cd61edd0452b44161374ab#e59f9f24a5c27c9303cd61edd0452b44161374ab"
 dependencies = [
  "parking_lot",
  "tracing",
@@ -3956,7 +3956,7 @@ dependencies = [
  "chacha20poly1305",
  "chime",
  "chrono",
- "cokret",
+ "arkret",
  "dioxus",
  "dioxus-icons",
  "dioxus-primitives",
@@ -7458,7 +7458,7 @@ dependencies = [
 [[package]]
 name = "subsecond"
 version = "0.7.9"
-source = "git+https://github.com/cokret/dioxus?rev=e59f9f24a5c27c9303cd61edd0452b44161374ab#e59f9f24a5c27c9303cd61edd0452b44161374ab"
+source = "git+https://github.com/arkret/dioxus?rev=e59f9f24a5c27c9303cd61edd0452b44161374ab#e59f9f24a5c27c9303cd61edd0452b44161374ab"
 dependencies = [
  "js-sys",
  "libc",
@@ -7476,7 +7476,7 @@ dependencies = [
 [[package]]
 name = "subsecond-types"
 version = "0.7.9"
-source = "git+https://github.com/cokret/dioxus?rev=e59f9f24a5c27c9303cd61edd0452b44161374ab#e59f9f24a5c27c9303cd61edd0452b44161374ab"
+source = "git+https://github.com/arkret/dioxus?rev=e59f9f24a5c27c9303cd61edd0452b44161374ab#e59f9f24a5c27c9303cd61edd0452b44161374ab"
 dependencies = [
  "serde",
 ]

@@ -10,7 +10,7 @@ use crate::views::helpers::{display_name_for_did, handle_display_from_did, short
 
 /// Per-member entry harvested from a cached Realm projection.
 ///
-/// R3.2 (cokret-spec @ b56cab1) — roster entries MUST NOT carry raw
+/// R3.2 (arkret-spec @ b56cab1) — roster entries MUST NOT carry raw
 /// handle / display fields. Identity resolution happens by following
 /// `identity_event_ids[]` (or inline `identity_events[]`) and applying
 /// the SDK's `effective_identity_events` helper. Handle strings only ever

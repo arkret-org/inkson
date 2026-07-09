@@ -60,8 +60,8 @@ pub struct PromoteIds {
 impl PromoteIds {
     pub fn fresh() -> Self {
         Self {
-            circle_id: format!("ck:circle:{}", uuid_v7()),
-            discussion_strand_id: format!("ck:strand:{}", uuid_v7()),
+            circle_id: format!("ak:circle:{}", uuid_v7()),
+            discussion_strand_id: format!("ak:strand:{}", uuid_v7()),
         }
     }
 }
@@ -156,9 +156,9 @@ mod tests {
     fn promote_ops_emit_circle_strand_and_private_relation() {
         let ids = PromoteIds::fresh();
         let ops = build_promote_ops(
-            "ck:realm:0196419b-0000-7000-8000-000000000001",
+            "ak:realm:0196419b-0000-7000-8000-000000000001",
             "did:web:alice.example",
-            "ck:strand:0196419b-0000-7000-8000-000000000003",
+            "ak:strand:0196419b-0000-7000-8000-000000000003",
             &ids,
             "Private discussion",
         )
@@ -169,7 +169,7 @@ mod tests {
         assert_eq!(ops[2].kind.as_str(), "ck.relation.create");
         assert_eq!(
             ops[0].payload["object"]["realm_id"],
-            "ck:realm:0196419b-0000-7000-8000-000000000001"
+            "ak:realm:0196419b-0000-7000-8000-000000000001"
         );
         assert_eq!(ops[1].payload["object"]["scope_circle_id"], ids.circle_id);
         assert_eq!(ops[2].payload["kind"], "confidential_discussion_of");
@@ -183,7 +183,7 @@ mod tests {
         assert_eq!(ops[2].payload["from_ref"], ids.discussion_strand_id);
         assert_eq!(
             ops[2].payload["to_ref"],
-            "ck:strand:0196419b-0000-7000-8000-000000000003"
+            "ak:strand:0196419b-0000-7000-8000-000000000003"
         );
         for event in &ops {
             cokret_sdk::schema::event_payload_validator_catalog()

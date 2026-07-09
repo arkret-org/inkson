@@ -58,8 +58,8 @@ pub(super) fn assignment_activity_summary(
 
 pub(super) fn relation_id_from_event_id(event_id: &str) -> Option<String> {
     event_id
-        .strip_prefix("ck:event:")
-        .map(|suffix| format!("ck:relation:{suffix}"))
+        .strip_prefix("ak:event:")
+        .map(|suffix| format!("ak:relation:{suffix}"))
 }
 
 pub(super) fn normalize_assignee_selection(

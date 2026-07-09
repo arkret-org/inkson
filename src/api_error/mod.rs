@@ -8,7 +8,7 @@ mod classify;
 pub use classify::*;
 
 #[derive(Clone, Debug, thiserror::Error)]
-#[error("Cokret API returned {status}: {error}")]
+#[error("Arkret API returned {status}: {error}")]
 pub struct CokretApiError {
     pub status: StatusCode,
     pub error: ErrorEnvelope,
@@ -120,7 +120,7 @@ pub fn decode_cokret_error(status: StatusCode, bytes: &[u8]) -> ErrorEnvelope {
         request_id = %envelope.request_id,
         status = %status.as_u16(),
         code = %envelope.code(),
-        "cokret error envelope decoded"
+        "arkret error envelope decoded"
     );
     envelope
 }

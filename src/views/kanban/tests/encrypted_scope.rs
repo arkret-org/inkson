@@ -59,7 +59,7 @@ fn unknown_scope_security_blocks_plaintext_private_content_fail_closed() {
     let board_create = crate::operation::ck_ops::space_create(
         TEST_REALM_ID,
         "did:web:alice.example",
-        "ck:space:00000000-0000-7000-8000-0000000000aa",
+        "ak:space:00000000-0000-7000-8000-0000000000aa",
         "board",
         "Roadmap",
         None,
@@ -78,9 +78,9 @@ fn unknown_scope_security_blocks_plaintext_private_content_fail_closed() {
 fn encrypted_scope_allows_encrypted_strand_update_patch_value() {
     let encrypted_payload = crate::crypto::compose_local_encrypted_message(
         "did:web:alice.example",
-        "ck:device:01904100-0000-7000-8000-000000000001",
-        "ck:space:0196419b-0000-7000-8000-000000000000",
-        "ck:message:kanban-patch-test",
+        "ak:device:01904100-0000-7000-8000-000000000001",
+        "ak:space:0196419b-0000-7000-8000-000000000000",
+        "ak:message:kanban-patch-test",
         "private synthesis",
     )
     .expect("test encryption should produce payload")
@@ -129,10 +129,10 @@ fn encrypted_private_patch_without_mls_snapshot_is_blocked_before_queueing() {
 
     let error = encrypt_private_card_detail_patch_values_with_store(
         patch,
-        "ck:realm:01904100-0000-7000-8000-000000000001",
-        "ck:strand:01904100-0000-7000-8000-0000000000ff",
+        "ak:realm:01904100-0000-7000-8000-000000000001",
+        "ak:strand:01904100-0000-7000-8000-0000000000ff",
         "did:web:alice.example",
-        "ck:device:01904100-0000-7000-8000-000000000001",
+        "ak:device:01904100-0000-7000-8000-000000000001",
         &mut state,
         &secure,
     )
@@ -141,7 +141,7 @@ fn encrypted_private_patch_without_mls_snapshot_is_blocked_before_queueing() {
     assert!(error.contains("MLS Welcome"));
     assert!(
         state
-            .mls_snapshot_for("ck:realm:01904100-0000-7000-8000-000000000001")
+            .mls_snapshot_for("ak:realm:01904100-0000-7000-8000-000000000001")
             .is_none()
     );
     assert!(state.load().raw_operations.is_empty());
@@ -152,12 +152,12 @@ fn encrypted_private_patch_without_mls_snapshot_is_blocked_before_queueing() {
 fn encrypted_private_patch_reports_unusable_pending_local_welcome() {
     use cokret_sdk::{CokretMlsIdentity, DeviceId, Did};
 
-    let realm = "ck:realm:01904100-0000-7000-8000-000000000001";
+    let realm = "ak:realm:01904100-0000-7000-8000-000000000001";
     let bob_actor = "did:web:bob.example";
-    let bob_device = "ck:device:01904100-0000-7000-8000-0000000000b2";
+    let bob_device = "ak:device:01904100-0000-7000-8000-0000000000b2";
     let alice = CokretMlsIdentity::new_basic(
         Did::new("did:web:alice.example".to_owned()).unwrap(),
-        DeviceId::new("ck:device:01904100-0000-7000-8000-0000000000a1".to_owned()).unwrap(),
+        DeviceId::new("ak:device:01904100-0000-7000-8000-0000000000a1".to_owned()).unwrap(),
     )
     .unwrap();
     let bob = CokretMlsIdentity::new_basic(
@@ -173,14 +173,14 @@ fn encrypted_private_patch_reports_unusable_pending_local_welcome() {
     state.ingest_to_device_messages(&[json!({
         "kind": "ck.mls.welcome",
         "sender_principal_id": "did:web:alice.example",
-        "sender_device_id": "ck:device:01904100-0000-7000-8000-0000000000a1",
+        "sender_device_id": "ak:device:01904100-0000-7000-8000-0000000000a1",
         "recipient_principal_id": bob_actor,
         "recipient_device_id": bob_device,
         "sent_at": chrono::Utc::now().to_rfc3339(),
         "expires_at": (chrono::Utc::now() + chrono::Duration::hours(1)).to_rfc3339(),
         "content": serde_json::to_value(&add.welcome).unwrap(),
         "unsigned": {
-            "mls_welcome_id": "ck:mls_welcome:01904100-0000-7000-8000-0000000000ff",
+            "mls_welcome_id": "ak:mls_welcome:01904100-0000-7000-8000-0000000000ff",
             "key_package_id": bob_key_package.keypackage_id.clone(),
         },
     })]);
@@ -192,7 +192,7 @@ fn encrypted_private_patch_reports_unusable_pending_local_welcome() {
     let patch = json!({
         "body": {"$op": "set", "value": "private body from invited member"},
     });
-    let strand_id = "ck:strand:01904100-0000-7000-8000-0000000000ff";
+    let strand_id = "ak:strand:01904100-0000-7000-8000-0000000000ff";
 
     let error = encrypt_private_card_detail_patch_values_with_store(
         patch, realm, strand_id, bob_actor, bob_device, &mut state, &secure,
@@ -214,12 +214,12 @@ fn encrypted_private_patch_reports_unusable_pending_local_welcome() {
 fn encrypted_private_patch_applies_pending_welcome_with_key_package_state() {
     use cokret_sdk::{CokretMlsIdentity, DeviceId, Did};
 
-    let realm = "ck:realm:01904100-0000-7000-8000-000000000001";
+    let realm = "ak:realm:01904100-0000-7000-8000-000000000001";
     let bob_actor = "did:web:bob.example";
-    let bob_device = "ck:device:01904100-0000-7000-8000-0000000000b3";
+    let bob_device = "ak:device:01904100-0000-7000-8000-0000000000b3";
     let alice = CokretMlsIdentity::new_basic(
         Did::new("did:web:alice.example".to_owned()).unwrap(),
-        DeviceId::new("ck:device:01904100-0000-7000-8000-0000000000a1".to_owned()).unwrap(),
+        DeviceId::new("ak:device:01904100-0000-7000-8000-0000000000a1".to_owned()).unwrap(),
     )
     .unwrap();
     let bob = CokretMlsIdentity::new_basic(
@@ -236,14 +236,14 @@ fn encrypted_private_patch_applies_pending_welcome_with_key_package_state() {
     state.ingest_to_device_messages(&[json!({
         "kind": "ck.mls.welcome",
         "sender_principal_id": "did:web:alice.example",
-        "sender_device_id": "ck:device:01904100-0000-7000-8000-0000000000a1",
+        "sender_device_id": "ak:device:01904100-0000-7000-8000-0000000000a1",
         "recipient_principal_id": bob_actor,
         "recipient_device_id": bob_device,
         "sent_at": chrono::Utc::now().to_rfc3339(),
         "expires_at": (chrono::Utc::now() + chrono::Duration::hours(1)).to_rfc3339(),
         "content": serde_json::to_value(&add.welcome).unwrap(),
         "unsigned": {
-            "mls_welcome_id": "ck:mls_welcome:01904100-0000-7000-8000-0000000000f1",
+            "mls_welcome_id": "ak:mls_welcome:01904100-0000-7000-8000-0000000000f1",
             "key_package_id": bob_key_package.keypackage_id.clone(),
         },
     })]);
@@ -259,7 +259,7 @@ fn encrypted_private_patch_applies_pending_welcome_with_key_package_state() {
     let patch = json!({
         "body": {"$op": "set", "value": "private body from invited member"},
     });
-    let strand_id = "ck:strand:01904100-0000-7000-8000-0000000000ff";
+    let strand_id = "ak:strand:01904100-0000-7000-8000-0000000000ff";
 
     let (patched, mls_events) = encrypt_private_card_detail_patch_values_with_store(
         patch, realm, strand_id, bob_actor, bob_device, &mut state, &secure,
@@ -302,8 +302,8 @@ fn encrypted_private_patch_applies_pending_welcome_with_key_package_state() {
 #[test]
 fn encrypted_private_patch_creator_bootstraps_initial_mls_snapshot() {
     let actor = "did:web:alice.example";
-    let device = "ck:device:01904100-0000-7000-8000-000000000001";
-    let realm = "ck:realm:01904100-0000-7000-8000-000000000001";
+    let device = "ak:device:01904100-0000-7000-8000-000000000001";
+    let realm = "ak:realm:01904100-0000-7000-8000-000000000001";
     let mut state = temp_state_store("creator-bootstrap-mls");
     state.save_realm_tree_projection(
         realm,
@@ -322,7 +322,7 @@ fn encrypted_private_patch_creator_bootstraps_initial_mls_snapshot() {
         "body": {"$op": "set", "value": "private body"},
     });
 
-    let strand_id = "ck:strand:01904100-0000-7000-8000-0000000000ff";
+    let strand_id = "ak:strand:01904100-0000-7000-8000-0000000000ff";
     let (patched, mls_events) = encrypt_private_card_detail_patch_values_with_store(
         patch, realm, strand_id, actor, device, &mut state, &secure,
     )
@@ -366,8 +366,8 @@ fn encrypted_private_patch_with_ready_snapshot_replaces_plaintext() {
     use cokret_sdk::{CokretMlsIdentity, DeviceId, Did};
 
     let actor = "did:web:alice.example";
-    let device = "ck:device:01904100-0000-7000-8000-000000000001";
-    let realm = "ck:realm:01904100-0000-7000-8000-000000000001";
+    let device = "ak:device:01904100-0000-7000-8000-000000000001";
+    let realm = "ak:realm:01904100-0000-7000-8000-000000000001";
     let mut state = temp_state_store("ready-mls");
     let secure = crate::secure_key_store::MemorySecureKeyStore::new();
     let secret =
@@ -391,7 +391,7 @@ fn encrypted_private_patch_with_ready_snapshot_replaces_plaintext() {
         realm,
         json!({ "active_profiles": [cokret_sdk::mls::MINIMAL_METADATA_REALM_PROFILE] }),
     );
-    let base_group_state_ref = "ck:event:0196419b-0000-7000-8000-000000000010";
+    let base_group_state_ref = "ak:event:0196419b-0000-7000-8000-000000000010";
     state.set_realm_seal_view(
         realm,
         crate::local_state::LocalSealView {
@@ -405,7 +405,7 @@ fn encrypted_private_patch_with_ready_snapshot_replaces_plaintext() {
         "body": {"$op": "set", "value": "private body"},
     });
 
-    let strand_id = "ck:strand:01904100-0000-7000-8000-0000000000ff";
+    let strand_id = "ak:strand:01904100-0000-7000-8000-0000000000ff";
     let (patched, mls_events) = encrypt_private_card_detail_patch_values_with_store(
         patch, realm, strand_id, actor, device, &mut state, &secure,
     )
@@ -446,13 +446,13 @@ fn encrypted_private_patch_with_ready_snapshot_replaces_plaintext() {
     assert!(commit.payload.get("effects").is_none());
     assert_eq!(
         commit.payload["governance_binding"]["realm_id"],
-        json!("ck:realm:01904100-0000-7000-8000-000000000001")
+        json!("ak:realm:01904100-0000-7000-8000-000000000001")
     );
     assert_eq!(
         commit.payload["governance_binding"]["effective_scope"],
         json!({
             "kind": "realm",
-            "realm_id": "ck:realm:01904100-0000-7000-8000-000000000001",
+            "realm_id": "ak:realm:01904100-0000-7000-8000-000000000001",
         })
     );
     assert_eq!(
@@ -469,15 +469,15 @@ fn mls_remove_commit_uses_explicit_revocation_membership_frontier() {
     state.set_realm_seal_view(
         TEST_REALM_ID,
         crate::local_state::LocalSealView {
-            frontier: vec!["ck:event:0196419b-0000-7000-8000-000000000099".to_owned()],
+            frontier: vec!["ak:event:0196419b-0000-7000-8000-000000000099".to_owned()],
             ..crate::local_state::LocalSealView::default()
         },
     );
     let revoke_frontier =
-        cokret_sdk::EventId::new("ck:event:0196419b-0000-7000-8000-000000000001".to_owned())
+        cokret_sdk::EventId::new("ak:event:0196419b-0000-7000-8000-000000000001".to_owned())
             .unwrap();
     let proposal_ref =
-        cokret_sdk::EventId::new("ck:event:0196419b-0000-7000-8000-000000000002".to_owned())
+        cokret_sdk::EventId::new("ak:event:0196419b-0000-7000-8000-000000000002".to_owned())
             .unwrap();
     let commit = cokret_sdk::MlsCommitEnvelope {
         group_id: "mls-remove-group".to_owned(),
@@ -505,7 +505,7 @@ fn mls_remove_commit_uses_explicit_revocation_membership_frontier() {
     );
     assert_ne!(
         event.payload["governance_binding"]["membership_frontier"][0],
-        json!("ck:event:0196419b-0000-7000-8000-000000000099")
+        json!("ak:event:0196419b-0000-7000-8000-000000000099")
     );
 }
 
@@ -519,10 +519,10 @@ fn encrypted_metadata_only_patch_does_not_require_mls_snapshot() {
 
     let (patched, mls_events) = encrypt_private_card_detail_patch_values_with_store(
         patch.clone(),
-        "ck:space:01904100-0000-7000-8000-000000000001",
-        "ck:strand:01904100-0000-7000-8000-0000000000ff",
+        "ak:space:01904100-0000-7000-8000-000000000001",
+        "ak:strand:01904100-0000-7000-8000-0000000000ff",
         "did:web:alice.example",
-        "ck:device:01904100-0000-7000-8000-000000000001",
+        "ak:device:01904100-0000-7000-8000-000000000001",
         &mut state,
         &secure,
     )
@@ -541,8 +541,8 @@ fn encrypted_scope_allows_structural_strand_position_update() {
         "did:web:alice.example",
         DEMO_STRAND_LEGAL_REVIEW_ID,
         json!({
-            "board_space_id": "ck:space:0196419b-0000-7000-8000-000000000001",
-            "list_space_id": "ck:space:0196419b-0000-7000-8000-000000000002",
+            "board_space_id": "ak:space:0196419b-0000-7000-8000-000000000001",
+            "list_space_id": "ak:space:0196419b-0000-7000-8000-000000000002",
             "rank": "U",
         }),
     )
@@ -561,8 +561,8 @@ fn encrypted_scope_allows_content_only_metadata_create_payloads() {
         TEST_REALM_ID,
         "did:web:alice.example",
         DEMO_STRAND_LEGAL_REVIEW_ID,
-        "ck:space:0196419b-0000-7000-8000-000000000001",
-        "ck:space:0196419b-0000-7000-8000-000000000002",
+        "ak:space:0196419b-0000-7000-8000-000000000001",
+        "ak:space:0196419b-0000-7000-8000-000000000002",
         "private card title",
         "U",
     )
@@ -572,10 +572,10 @@ fn encrypted_scope_allows_content_only_metadata_create_payloads() {
     let space = crate::operation::ck_ops::space_create(
         TEST_REALM_ID,
         "did:web:alice.example",
-        "ck:space:0196419b-0000-7000-8000-000000000002",
+        "ak:space:0196419b-0000-7000-8000-000000000002",
         "list",
         "private list title",
-        Some("ck:space:0196419b-0000-7000-8000-000000000001"),
+        Some("ak:space:0196419b-0000-7000-8000-000000000001"),
         Some("U"),
     )
     .expect("builds")
@@ -598,7 +598,7 @@ fn encrypted_scope_never_blocks_container_metadata_but_blocks_plaintext_private_
     let board = crate::operation::ck_ops::space_create(
         TEST_REALM_ID,
         "did:web:alice.example",
-        "ck:space:0196419b-0000-7000-8000-00000000aa01",
+        "ak:space:0196419b-0000-7000-8000-00000000aa01",
         "board",
         "ZZTEST board title",
         None,
@@ -616,10 +616,10 @@ fn encrypted_scope_never_blocks_container_metadata_but_blocks_plaintext_private_
     let list = crate::operation::ck_ops::space_create(
         TEST_REALM_ID,
         "did:web:alice.example",
-        "ck:space:0196419b-0000-7000-8000-00000000aa02",
+        "ak:space:0196419b-0000-7000-8000-00000000aa02",
         "list",
         "Todos list title",
-        Some("ck:space:0196419b-0000-7000-8000-00000000aa01"),
+        Some("ak:space:0196419b-0000-7000-8000-00000000aa01"),
         Some("r001"),
     )
     .expect("builds")
@@ -634,7 +634,7 @@ fn encrypted_scope_never_blocks_container_metadata_but_blocks_plaintext_private_
     let list_rank_update = crate::operation::ck_ops::space_update_patch(
         TEST_REALM_ID,
         "did:web:alice.example",
-        "ck:space:0196419b-0000-7000-8000-00000000aa02",
+        "ak:space:0196419b-0000-7000-8000-00000000aa02",
         json!({ "rank": "r000" }),
     )
     .expect("builds")

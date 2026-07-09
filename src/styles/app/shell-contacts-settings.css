@@ -1,4 +1,4 @@
-/* Cokret design implementation layer. */
+/* Arkret design implementation layer. */
 .shell {
   grid-template-columns: 316px minmax(0, 1fr) 352px;
 }

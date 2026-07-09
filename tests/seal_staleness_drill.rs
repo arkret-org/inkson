@@ -37,7 +37,7 @@ use inkson::operation::{EventEnvelope, EventEnvelopeExt};
 use regex::Regex;
 use sha2::{Digest, Sha256};
 
-const TEST_REALM_ID: &str = "ck:realm:0196419b-0000-7000-8000-000000000001";
+const TEST_REALM_ID: &str = "ak:realm:0196419b-0000-7000-8000-000000000001";
 const TEST_ACTOR_ID: &str = "did:web:alice.example";
 
 /// Deterministic Ed25519 seed used in this test process. Different
@@ -65,7 +65,7 @@ fn stamp_real_proof_and_anchor(envelope: &mut EventEnvelope) {
     hasher.update(b":seal_staleness_drill");
     let digest = hasher.finalize();
     envelope.seal_ref = Some(
-        cokret_sdk::SealId::new(format!("ck:seal:sha256:{}", hex_encode(&digest)))
+        cokret_sdk::SealId::new(format!("ak:seal:sha256:{}", hex_encode(&digest)))
             .expect("test seal ref is valid"),
     );
 
@@ -91,7 +91,7 @@ fn realm_create_envelope_carries_real_proof_and_real_anchor() {
         "restricted",
         "single_did",
         "sha256",
-        "ck:trust_domain:server.example",
+        "ak:trust_domain:server.example",
         &[],
         None,
         None,
@@ -120,7 +120,7 @@ fn full_bootstrap_chain_carries_real_proofs_and_anchors() {
         "restricted",
         "single_did",
         "sha256",
-        "ck:trust_domain:server.example",
+        "ak:trust_domain:server.example",
         &["did:web:bob.example".to_owned()],
         &["did:web:server.example".to_owned()],
         None,
@@ -225,7 +225,7 @@ fn assert_seal_ref_is_real(envelope: &EventEnvelope) {
         seal
     );
     let zero_anchor =
-        "ck:seal:sha256:0000000000000000000000000000000000000000000000000000000000000000";
+        "ak:seal:sha256:0000000000000000000000000000000000000000000000000000000000000000";
     assert_ne!(
         seal, zero_anchor,
         "envelope kind={} seal_ref is the all-zero sha256 hash (placeholder leak)",

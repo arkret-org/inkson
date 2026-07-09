@@ -53,9 +53,9 @@ use crate::media::rtc::{
 };
 
 /// The desktop LiveKit driver, run in the webview over the eval bridge. The
-/// leading `__COKRET_DRIVER_CONFIG__` token is replaced per call with the
+/// leading `__ARKRET_DRIVER_CONFIG__` token is replaced per call with the
 /// JSON connect config (URL, token, media flags, frame key); the
-/// `__COKRET_LIVEKIT_UMD_SOURCE__` token is replaced once with the vendored
+/// `__ARKRET_LIVEKIT_UMD_SOURCE__` token is replaced once with the vendored
 /// UMD body so the SDK ships inside the binary (no runtime CDN fetch).
 const DESKTOP_DRIVER_JS: &str = include_str!("../../assets/livekit_desktop_driver.js");
 
@@ -257,8 +257,8 @@ impl MediaTransport for NativeRtcTransport {
         let umd_literal = serde_json::to_string(LIVEKIT_UMD_SOURCE)
             .map_err(|_| RtcClientError::FocusUnavailableForClient)?;
         let script = DESKTOP_DRIVER_JS
-            .replacen("__COKRET_DRIVER_CONFIG__", &config_json, 1)
-            .replacen("__COKRET_LIVEKIT_UMD_SOURCE__", &umd_literal, 1);
+            .replacen("__ARKRET_DRIVER_CONFIG__", &config_json, 1)
+            .replacen("__ARKRET_LIVEKIT_UMD_SOURCE__", &umd_literal, 1);
 
         *self.state.borrow_mut() = TransportState::Connecting;
 
@@ -430,22 +430,22 @@ mod tests {
             focus_id: "fra-1".to_owned(),
             connect_url: "wss://livekit.example".to_owned(),
             backend_token: "jwt".to_owned(),
-            participant_identity: "ck:rtc_participant:self".to_owned(),
+            participant_identity: "ak:rtc_participant:self".to_owned(),
             participant_binding: cokret_sdk::CallMediaParticipantBinding {
                 scheme: cokret_sdk::PARTICIPANT_BINDING_SCHEMA.to_owned(),
                 sig: "sig".to_owned(),
                 issuer_kid: "did:web:media.example#key-1".to_owned(),
-                realm_id: cokret_sdk::RealmId::new("ck:realm:01904100-0000-7000-8000-9b64700c6ee8")
+                realm_id: cokret_sdk::RealmId::new("ak:realm:01904100-0000-7000-8000-9b64700c6ee8")
                     .unwrap(),
-                call_id: cokret_sdk::CallId::new("ck:call:0196441c-0000-7000-8000-000000000000")
+                call_id: cokret_sdk::CallId::new("ak:call:0196441c-0000-7000-8000-000000000000")
                     .unwrap(),
                 focus_id: "fra-1".to_owned(),
                 actor_id: cokret_sdk::Did::new("did:web:alice.example").unwrap(),
                 device_id: cokret_sdk::DeviceId::new(
-                    "ck:device:01904100-0000-7000-8000-000000000005",
+                    "ak:device:01904100-0000-7000-8000-000000000005",
                 )
                 .unwrap(),
-                participant_identity: "ck:rtc_participant:self".to_owned(),
+                participant_identity: "ak:rtc_participant:self".to_owned(),
                 issued_at: chrono::DateTime::parse_from_rfc3339("2026-04-26T00:00:00Z")
                     .unwrap()
                     .with_timezone(&chrono::Utc),
@@ -456,18 +456,18 @@ mod tests {
             ice_config: ice_config(),
             frame_key: zeroize::Zeroizing::new(vec![7u8; 32]),
             desired_media: DesiredMedia::audio_video(),
-            device_id: "ck:device:01904100-0000-7000-8000-000000000005".to_owned(),
-            realm_id: "ck:realm:01904100-0000-7000-8000-9b64700c6ee8".to_owned(),
-            call_id: "ck:call:0196441c-0000-7000-8000-000000000000".to_owned(),
+            device_id: "ak:device:01904100-0000-7000-8000-000000000005".to_owned(),
+            realm_id: "ak:realm:01904100-0000-7000-8000-9b64700c6ee8".to_owned(),
+            call_id: "ak:call:0196441c-0000-7000-8000-000000000000".to_owned(),
             epoch_id: 0,
         }
     }
 
     fn ice_config() -> cokret_sdk::IceConfig {
         cokret_sdk::IceConfig {
-            realm_id: cokret_sdk::RealmId::new("ck:realm:01904100-0000-7000-8000-9b64700c6ee8")
+            realm_id: cokret_sdk::RealmId::new("ak:realm:01904100-0000-7000-8000-9b64700c6ee8")
                 .unwrap(),
-            call_id: "ck:call:0196441c-0000-7000-8000-000000000000".to_owned(),
+            call_id: "ak:call:0196441c-0000-7000-8000-000000000000".to_owned(),
             actor_id: cokret_sdk::Did::new("did:web:alice.example").unwrap(),
             ice_servers: Vec::new(),
             ttl_seconds: 300,
@@ -491,12 +491,12 @@ mod tests {
         let session = session();
         let mut t = NativeRtcTransport::new(&session);
         assert_eq!(
-            t.install_frame_key("ck:rtc_participant:self", &[0u8; 16])
+            t.install_frame_key("ak:rtc_participant:self", &[0u8; 16])
                 .unwrap_err(),
             RtcClientError::E2eeKeySourceUnauthorised
         );
         assert!(
-            t.install_frame_key("ck:rtc_participant:self", &[0u8; 32])
+            t.install_frame_key("ak:rtc_participant:self", &[0u8; 32])
                 .is_ok()
         );
     }
@@ -537,16 +537,16 @@ mod tests {
         let session = session();
         let mut t = NativeRtcTransport::new(&session);
         let mut expected = BTreeSet::new();
-        expected.insert("ck:rtc_participant:bob".to_owned());
+        expected.insert("ak:rtc_participant:bob".to_owned());
         // Unknown identity is rejected (MEDIA-2).
         assert!(
-            t.on_participant_connected("ck:rtc_participant:mallory", &expected)
+            t.on_participant_connected("ak:rtc_participant:mallory", &expected)
                 .is_err()
         );
         assert!(t.remotes().is_empty());
         // Known identity is surfaced.
         assert!(
-            t.on_participant_connected("ck:rtc_participant:bob", &expected)
+            t.on_participant_connected("ak:rtc_participant:bob", &expected)
                 .is_ok()
         );
         assert_eq!(t.remotes().len(), 1);

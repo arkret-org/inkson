@@ -145,7 +145,7 @@ pub(crate) fn participant_handle_label_from_value(
         return Some(label);
     }
     // R3.1 wire rename: spec field is `handle`. Older payloads may
-    // still ship `handle_uri` (cokret:// URI form retired @ 7157ee8);
+    // still ship `handle_uri` (arkret:// URI form retired @ 7157ee8);
     // accept both for migration compatibility.
     [
         "handle",
