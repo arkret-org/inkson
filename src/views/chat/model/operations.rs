@@ -168,19 +168,16 @@ pub(crate) fn chat_message_revise_operation(
     event_id: &str,
     body: &str,
 ) -> anyhow::Result<cokret_sdk::Event> {
-    OperationBuilder::new(
+    // Route through the SDK-typed `message_revise_payload` builder rather than a
+    // hand-rolled `json!` body: it validates ids at build time and addresses a
+    // `ck:message:` target via the payload's `message_id` field (falling back to
+    // `target_ref` for event/local refs), matching the schema's anyOf.
+    crate::operation::ck_ops::message_revise_content(
         realm_id,
         actor,
-        cokret_sdk::events::kinds::EventKind::MessageRevise,
-    )
-    .target_ref(event_id)
-    .body(json!({
-        "content": {
-            "kind": "ck.content.text",
-            "body": body,
-        },
-        "target_ref": event_id,
-    }))
+        event_id,
+        cokret_sdk::ContentBlock::text(body),
+    )?
     .build_sdk_event("inkson")
 }
 

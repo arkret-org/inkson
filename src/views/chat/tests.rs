@@ -2801,7 +2801,11 @@ fn chat_message_revise_operation_uses_schema_target_ref() {
 }
 
 #[test]
-fn chat_message_revise_operation_accepts_message_id_target_ref() {
+fn chat_message_revise_operation_addresses_message_target_via_message_id() {
+    // A `ck:message:` target is addressed through the payload's `message_id`
+    // field (like `chat_message_redact_operation`), not `target_ref` — both are
+    // valid per the message_revise_payload anyOf, and message_id is the typed
+    // form the SDK builder emits for message ids.
     let op = chat_message_revise_operation(
         "ck:realm:019e4fd4-4e26-7cc9-af7e-d7102d6f4a22",
         "did:web:bob.example",
@@ -2811,9 +2815,12 @@ fn chat_message_revise_operation_accepts_message_id_target_ref() {
     .expect("builds");
 
     assert_eq!(
-        op.payload["target_ref"],
+        op.payload["message_id"],
         "ck:message:019e4fd4-4e26-7cc9-af7e-d7102d6f4a23"
     );
+    assert!(op.payload.get("target_ref").is_none());
+    assert_eq!(op.payload["content"]["kind"], "ck.content.text");
+    assert_eq!(op.payload["content"]["body"], "edited");
     cokret_sdk::schema::event_payload_validator_catalog()
         .unwrap()
         .validate_payload(op.kind.as_str(), &op.payload)
