@@ -423,6 +423,7 @@ async fn enroll_current_session_device(
         let sdk_base_url =
             crate::session_refresh::sdk_base_url_from_gate_account_base(&gate_account_base)?;
         cokret_sdk::http_client::ClientBuilder::new(sdk_base_url)
+            .allow_insecure_localhost()
             .auth(cokret_sdk::http_client::Auth::Dpop(
                 device_key.sdk_dpop_auth_for_access_token(grant_jwt),
             ))

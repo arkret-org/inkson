@@ -210,6 +210,7 @@ async fn hard_logout_at_authority(
     let sdk_base_url =
         crate::session_refresh::sdk_base_url_from_gate_account_base(&gate_account_base)?;
     let client = ClientBuilder::new(sdk_base_url)
+        .allow_insecure_localhost()
         .auth(Auth::Dpop(
             handle.sdk_dpop_auth_for_access_token(grant_jwt.to_owned()),
         ))

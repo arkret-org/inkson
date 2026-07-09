@@ -292,6 +292,7 @@ async fn rotate_session_grant(
             .map_err(|error| anyhow::anyhow!("resolve Account Authority: {error}"))?;
     let sdk_base_url = sdk_base_url_from_gate_account_base(&gate_account_base)?;
     let http = ClientBuilder::new(sdk_base_url)
+        .allow_insecure_localhost()
         .auth(Auth::Dpop(
             device_handle.sdk_dpop_auth_for_access_token(grant.grant_jwt.clone()),
         ))
@@ -568,6 +569,7 @@ pub async fn refresh_session_grant(
     let sdk_base_url = sdk_base_url_from_gate_account_base(gate_account_base)?;
     let supplied_dpop = dpop_proof.to_owned();
     let client = ClientBuilder::new(sdk_base_url)
+        .allow_insecure_localhost()
         .auth(Auth::Dpop(DpopAuth::with_access_token(
             grant_jwt.to_owned(),
             move |_request| Ok(supplied_dpop.clone()),

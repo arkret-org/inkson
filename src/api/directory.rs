@@ -577,7 +577,13 @@ impl CokretApi {
             return Ok(invitee);
         }
         if let Some((resolver_origin, locator_token)) = parse_invite_locator_url(target)? {
-            let resolver = cokret_sdk::http_client::Client::new(Url::parse(&resolver_origin)?)?;
+            // Loopback allowance (the SDK still rejects insecure remote URLs) so
+            // an invite locator resolves against a local dev / joint-e2e
+            // resolver on `http://127.0.0.1`.
+            let resolver =
+                cokret_sdk::http_client::ClientBuilder::new(Url::parse(&resolver_origin)?)
+                    .allow_insecure_localhost()
+                    .build()?;
             let body = cokret_sdk::InviteLocatorResolveRequestBody::new(locator_token);
             body.validate_minimal()
                 .map_err(|err| anyhow::anyhow!("invalid invite locator token: {err}"))?;
