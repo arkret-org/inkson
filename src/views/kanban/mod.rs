@@ -1,6 +1,6 @@
 use std::collections::{BTreeMap, BTreeSet};
 
-use dioxus::prelude::*;
+use dioxus::prelude::{Asset, AssetOptions, asset, manganis, *};
 use dioxus_primitives::checkbox::CheckboxState;
 use dioxus_router::hooks::{use_navigator, use_route};
 use serde_json::{Map, Value, json};
@@ -36,6 +36,22 @@ use model::*;
 
 #[cfg(test)]
 pub(crate) use crate::projection::kanban_ops::kanban_operations_from_events;
+
+#[used]
+static TOAST_EDITOR_SCRIPT: Asset = asset!(
+    "/assets/vendor/toastui-editor-all.min.js",
+    AssetOptions::js()
+        .with_hash_suffix(false)
+        .with_minify(false)
+);
+
+#[used]
+static TOAST_EDITOR_CSS: Asset = asset!(
+    "/assets/vendor/toastui-editor.min.css",
+    AssetOptions::css()
+        .with_hash_suffix(false)
+        .with_minify(false)
+);
 
 #[component]
 fn CardMarkdownEditor(
