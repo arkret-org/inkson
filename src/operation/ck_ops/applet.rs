@@ -23,6 +23,17 @@ fn optional_object(value: Value, context: &str) -> anyhow::Result<Option<BTreeMa
     }
 }
 
+/// Map a wire `runtime_status` token onto the closed SDK enum. Fail-closed:
+/// unknown tokens are rejected rather than forwarded as free-form strings.
+fn parse_runtime_status(runtime_status: &str) -> anyhow::Result<cokret_sdk::AppletRuntimeStatus> {
+    serde_json::from_value(Value::String(runtime_status.to_owned())).map_err(|_| {
+        anyhow::anyhow!(
+            "unknown applet runtime status {runtime_status:?} \
+             (spec enum: pending|running|completed|failed|cancelled)"
+        )
+    })
+}
+
 /// `ck.applet.registration` — declare an applet service_did + the
 /// event-kind subset / namespaces / capabilities it can write.
 pub fn applet_registration(
@@ -98,14 +109,14 @@ pub fn applet_interop_session_start(
     session_id: &str,
     params: serde_json::Value,
 ) -> anyhow::Result<OperationBuilder> {
-    let payload = cokret_sdk::AppletInteropSessionStartPayload {
-        applet_id: json!(applet_id),
-        session_id: json!(session_id),
-        service_did: None,
-        params: optional_object(params, "applet session params")?,
-        created_at: None,
-    };
-    let body = serde_json::to_value(payload)
+    let applet_id = parse_applet_identifier(applet_id).map_err(|err| anyhow::anyhow!("{err}"))?;
+    let mut payload =
+        cokret_sdk::AppletInteropSessionStartPayload::new(applet_id, session_id.to_owned());
+    if let Some(params) = optional_object(params, "applet session params")? {
+        payload = payload.with_params(params);
+    }
+    let body = payload
+        .to_value()
         .map_err(|err| anyhow::anyhow!("applet_interop_session_start_payload serialize: {err}"))?;
     Ok(OperationBuilder::new(
         realm_id,
@@ -126,14 +137,17 @@ pub fn applet_interop_session_status(
     runtime_status: &str,
     detail: serde_json::Value,
 ) -> anyhow::Result<OperationBuilder> {
-    let payload = cokret_sdk::AppletInteropSessionStatusPayload {
-        applet_id: json!(applet_id),
-        session_id: session_id.to_owned(),
-        runtime_status: runtime_status.to_owned(),
-        detail: optional_object(detail, "applet session status detail")?,
-        updated_at: None,
-    };
-    let body = serde_json::to_value(payload)
+    let applet_id = parse_applet_identifier(applet_id).map_err(|err| anyhow::anyhow!("{err}"))?;
+    let mut payload = cokret_sdk::AppletInteropSessionStatusPayload::new(
+        applet_id,
+        session_id.to_owned(),
+        parse_runtime_status(runtime_status)?,
+    );
+    if let Some(detail) = optional_object(detail, "applet session status detail")? {
+        payload = payload.with_detail(detail);
+    }
+    let body = payload
+        .to_value()
         .map_err(|err| anyhow::anyhow!("applet_interop_session_status_payload serialize: {err}"))?;
     Ok(OperationBuilder::new(
         realm_id,

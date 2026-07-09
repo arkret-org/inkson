@@ -42,6 +42,24 @@ pub fn parse_agent_identifier(agent_id: &str) -> Result<cokret_sdk::AgentId, Str
     cokret_sdk::Did::new(agent_id).map_err(|e| format!("invalid agent DID: {e}"))
 }
 
+/// Map a wire `protocol` token onto the closed SDK enum. Fail-closed: an
+/// unknown token (which the spec schema would also reject) surfaces here
+/// instead of shipping an out-of-enum string to soland.
+fn parse_interop_protocol(protocol: &str) -> anyhow::Result<cokret_sdk::AgentInteropProtocol> {
+    serde_json::from_value(Value::String(protocol.to_owned())).map_err(|_| {
+        anyhow::anyhow!(
+            "unknown agent interop protocol {protocol:?} (spec enum: a2a|acp|mcp_bridge|http_custom)"
+        )
+    })
+}
+
+/// Map a wire session `status` token onto the closed SDK enum. Fail-closed:
+/// unknown tokens are rejected rather than forwarded as free-form strings.
+fn parse_session_status(status: &str) -> anyhow::Result<cokret_sdk::AgentInteropSessionStatus> {
+    serde_json::from_value(Value::String(status.to_owned()))
+        .map_err(|_| anyhow::anyhow!("unknown agent interop session status {status:?}"))
+}
+
 /// `ck.agent.endpoint` — register an agent id + invocation endpoints.
 pub fn agent_endpoint(
     realm_id: &str,
@@ -80,22 +98,18 @@ pub fn agent_interop_session_start(
     _params: serde_json::Value,
     capability_grant: &str,
 ) -> anyhow::Result<OperationBuilder> {
-    let payload = cokret_sdk::AgentInteropSessionStartPayload {
-        session_id: session_id.to_owned(),
-        task_strand_id: None,
-        counterparty_agent: cokret_sdk::Did::new(counterparty_agent.to_owned())
-            .map_err(|err| anyhow::anyhow!("invalid counterparty agent DID: {err}"))?,
-        protocol: protocol.to_owned(),
-        external_protocol_version: None,
-        endpoint_ref: None,
-        capability_grant: cokret_sdk::GrantId::new(capability_grant.to_owned())
-            .map_err(|err| anyhow::anyhow!("invalid capability grant id: {err}"))?,
-        allowed_artifact_types: None,
-        max_duration_seconds: None,
-        audit_mode: None,
-    };
-    let body = serde_json::to_value(payload)
-        .map_err(|err| anyhow::anyhow!("agent_interop_session_start_payload serialize: {err}"))?;
+    let counterparty_agent = cokret_sdk::Did::new(counterparty_agent.to_owned())
+        .map_err(|err| anyhow::anyhow!("invalid counterparty agent DID: {err}"))?;
+    let capability_grant = cokret_sdk::GrantId::new(capability_grant.to_owned())
+        .map_err(|err| anyhow::anyhow!("invalid capability grant id: {err}"))?;
+    let body = cokret_sdk::AgentInteropSessionStartPayload::new(
+        session_id.to_owned(),
+        counterparty_agent,
+        parse_interop_protocol(protocol)?,
+        capability_grant,
+    )
+    .to_value()
+    .map_err(|err| anyhow::anyhow!("agent_interop_session_start_payload serialize: {err}"))?;
     Ok(OperationBuilder::new(
         realm_id,
         actor,
@@ -140,21 +154,12 @@ pub fn agent_interop_session_status(
     status: &str,
     _detail: serde_json::Value,
 ) -> anyhow::Result<OperationBuilder> {
-    let payload = cokret_sdk::AgentInteropSessionStatusPayload {
-        session_id: session_id.to_owned(),
-        status: status.to_owned(),
-        external_task_id: None,
-        last_update_at: None,
-        progress_basis_points: None,
-        summary: None,
-        cancelled_by: None,
-        cancelled_at: None,
-        reason_code: None,
-        external_cancel_ref: None,
-        cleanup_required: None,
-    };
-    let body = serde_json::to_value(payload)
-        .map_err(|err| anyhow::anyhow!("agent_interop_session_status_payload serialize: {err}"))?;
+    let body = cokret_sdk::AgentInteropSessionStatusPayload::new(
+        session_id.to_owned(),
+        parse_session_status(status)?,
+    )
+    .to_value()
+    .map_err(|err| anyhow::anyhow!("agent_interop_session_status_payload serialize: {err}"))?;
     Ok(OperationBuilder::new(
         realm_id,
         actor,
@@ -173,22 +178,22 @@ pub fn agent_interop_session_result(
     result: serde_json::Value,
     audit_binding: serde_json::Value,
 ) -> anyhow::Result<OperationBuilder> {
-    let payload = cokret_sdk::AgentInteropSessionResultPayload {
-        session_id: session_id.to_owned(),
-        status: "completed".to_owned(),
-        result_objects: value_object_list(result, "agent result_objects")?,
-        artifacts: value_object_list(audit_binding, "agent artifacts")?,
-        artifact_retention: None,
-        external_artifact_stub: None,
-        external_transcript_digest: None,
-        completed_at: None,
-        cancelled_by: None,
-        cancelled_at: None,
-        reason_code: None,
-        external_cancel_ref: None,
-        cleanup_required: None,
-    };
-    let body = serde_json::to_value(payload)
+    // `completed` terminal status; the builder's `to_value` enforces the spec
+    // anyOf (at least one of result_objects / artifacts / reason_code). Only
+    // attach the optional collections when they carry entries so the omission
+    // rule matches the previous `skip_serializing_if` behavior.
+    let mut payload = cokret_sdk::AgentInteropSessionResultPayload::new(
+        session_id.to_owned(),
+        cokret_sdk::AgentInteropResultStatus::Completed,
+    );
+    if let Some(result_objects) = value_object_list(result, "agent result_objects")? {
+        payload = payload.with_result_objects(result_objects);
+    }
+    if let Some(artifacts) = value_object_list(audit_binding, "agent artifacts")? {
+        payload = payload.with_artifacts(artifacts);
+    }
+    let body = payload
+        .to_value()
         .map_err(|err| anyhow::anyhow!("agent_interop_session_result_payload serialize: {err}"))?;
     Ok(OperationBuilder::new(
         realm_id,
