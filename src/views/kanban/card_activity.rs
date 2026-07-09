@@ -194,7 +194,7 @@ pub(super) fn activity_title_from_operation(
     actor_label: &impl Fn(&str) -> String,
 ) -> String {
     match kind {
-        "ck.relation.create" => {
+        "ak.relation.create" => {
             let relation_kind = json_path_string(Some(payload), &["body", "kind"])
                 .or_else(|| json_path_string(Some(payload), &["body", "relation_kind"]));
             if relation_kind.as_deref() == Some("assigned_to") {
@@ -207,17 +207,17 @@ pub(super) fn activity_title_from_operation(
                 "Relation added".to_owned()
             }
         }
-        "ck.relation.tombstone" => {
+        "ak.relation.tombstone" => {
             if let Some(actor) = json_path_string(Some(payload), &["assignment_actor_id"]) {
                 format!("Assignee removed: {}", actor_label(&actor))
             } else {
                 "Relation removed".to_owned()
             }
         }
-        "ck.strand.update" => strand_update_activity_title(payload),
-        "ck.strand.move" => "Card moved".to_owned(),
-        "ck.strand.reorder" => "Card reordered".to_owned(),
-        "ck.strand.create" => "Card created".to_owned(),
+        "ak.strand.update" => strand_update_activity_title(payload),
+        "ak.strand.move" => "Card moved".to_owned(),
+        "ak.strand.reorder" => "Card reordered".to_owned(),
+        "ak.strand.create" => "Card created".to_owned(),
         _ => kind.to_owned(),
     }
 }

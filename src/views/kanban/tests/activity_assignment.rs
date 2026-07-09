@@ -15,7 +15,7 @@ fn card_activity_items_show_local_strand_and_assignment_writes() {
             realm_id: Some(TEST_REALM_ID.to_owned()),
             received_at: received_at("2026-06-10T10:00:00Z"),
             payload: json!({
-                "kind": "ck.relation.tombstone",
+                "kind": "ak.relation.tombstone",
                 "operation_id": "op-assignee",
                 "write_state": "accepted",
                 "assignment_strand_id": card.id.clone(),
@@ -32,7 +32,7 @@ fn card_activity_items_show_local_strand_and_assignment_writes() {
             realm_id: Some(TEST_REALM_ID.to_owned()),
             received_at: received_at("2026-06-10T11:00:00Z"),
             payload: json!({
-                "kind": "ck.strand.update",
+                "kind": "ak.strand.update",
                 "operation_id": "op-due",
                 "write_state": "queued",
                 "activity_summary": "Due date cleared",
@@ -120,7 +120,7 @@ fn card_assignment_mutations_create_and_tombstone_relation_events() {
         .find(|mutation| matches!(mutation, CardAssignmentMutation::Create { .. }))
         .expect("create mutation");
     assert_eq!(create.actor_id(), "did:web:alice.example");
-    assert_eq!(create.operation().kind.as_str(), "ck.relation.create");
+    assert_eq!(create.operation().kind.as_str(), "ak.relation.create");
     assert_eq!(create.operation().payload["kind"], json!("assigned_to"));
     assert_eq!(create.operation().payload["from_ref"], json!(current.id));
     assert_eq!(
@@ -137,7 +137,7 @@ fn card_assignment_mutations_create_and_tombstone_relation_events() {
         tombstone.relation_id(),
         "ak:relation:0196419b-0000-7000-8000-0000000000bb"
     );
-    assert_eq!(tombstone.operation().kind.as_str(), "ck.relation.tombstone");
+    assert_eq!(tombstone.operation().kind.as_str(), "ak.relation.tombstone");
     assert_eq!(
         tombstone.operation().payload["relation_id"],
         json!("ak:relation:0196419b-0000-7000-8000-0000000000bb")

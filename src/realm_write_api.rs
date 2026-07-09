@@ -514,7 +514,7 @@ pub async fn grant_realm_admin(
         actor_id,
         grant_id,
         subject,
-        &["ck.realm.admin"],
+        &["ak.realm.admin"],
         None,
         Value::Null,
     )

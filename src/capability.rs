@@ -21,83 +21,83 @@ impl ActionGroup {
     /// prefixed). Entries that are inkson-local UI grouping placeholders are
     /// marked inline and must not be written into capability grants.
     /// F-CAP-FIX-1 (2026-05-19) brought this table in line with spec
-    /// fixtures, which write `actions: ["ck.strand.read", ...]` — under the
+    /// fixtures, which write `actions: ["ak.strand.read", ...]` — under the
     /// previous bare-name table a wire-shaped grant from any conforming
     /// server would have failed `CapabilityEngine::check`'s string
     /// comparison and produced false denies.
     pub fn actions(&self) -> &'static [&'static str] {
         match self {
             Self::Common => &[
-                "ck.realm.update",
-                "ck.space.create",
-                "ck.space.update",
-                "ck.space.archive",
-                "ck.space.restore",
-                "ck.space.tombstone",
-                "ck.strand.create",
-                "ck.strand.read",
-                "ck.strand.update",
-                "ck.strand.archive",
-                "ck.strand.restore",
-                "ck.relation.create",
-                "ck.relation.tombstone",
-                "ck.view.create",
-                "ck.view.update",
-                "ck.invite.create",
-                "ck.invite.accept",
-                "ck.invite.cancel",
+                "ak.realm.update",
+                "ak.space.create",
+                "ak.space.update",
+                "ak.space.archive",
+                "ak.space.restore",
+                "ak.space.tombstone",
+                "ak.strand.create",
+                "ak.strand.read",
+                "ak.strand.update",
+                "ak.strand.archive",
+                "ak.strand.restore",
+                "ak.relation.create",
+                "ak.relation.tombstone",
+                "ak.view.create",
+                "ak.view.update",
+                "ak.invite.create",
+                "ak.invite.accept",
+                "ak.invite.cancel",
             ],
             Self::SpaceStrand => &[
-                "ck.strand.move",
-                "ck.strand.reorder",
+                "ak.strand.move",
+                "ak.strand.reorder",
                 // Per arkret-spec dc01ad7 the four
                 // `strand.track.{enable,disable,update,set_primary}`
                 // verbs were unified into a single `ck.strand.tracks.update`
                 // capability covering all track mutations via a
                 // `ck.patch.v1` JSON Patch against `Strand.tracks`.
-                "ck.strand.tracks.update",
+                "ak.strand.tracks.update",
             ],
             Self::Conversation => &[
-                "ck.message.create",
-                "ck.message.revise",
-                "ck.message.redact",
-                "ck.reaction.add",
-                "ck.reaction.remove",
-                "ck.typing.broadcast",
-                "ck.read_cursor.advance",
+                "ak.message.create",
+                "ak.message.revise",
+                "ak.message.redact",
+                "ak.reaction.add",
+                "ak.reaction.remove",
+                "ak.typing.broadcast",
+                "ak.read_cursor.advance",
                 // R14: `ck.comment.*` are not in capability-action-registry.json
                 // (the registry has no comment action family). These remain
                 // inkson-local UI grouping placeholders only.
-                "ck.comment.create",
-                "ck.comment.update",
-                "ck.comment.redact",
+                "ak.comment.create",
+                "ak.comment.update",
+                "ak.comment.redact",
             ],
             Self::Morph => &[
-                "ck.morph.create",
-                "ck.morph.read",
-                "ck.morph.update",
-                "ck.morph.archive",
-                "ck.morph.restore",
+                "ak.morph.create",
+                "ak.morph.read",
+                "ak.morph.update",
+                "ak.morph.archive",
+                "ak.morph.restore",
                 // R14: `ck.morph.tombstone` is not in
                 // capability-action-registry.json; inkson-local UI grouping
                 // placeholder only.
-                "ck.morph.tombstone",
+                "ak.morph.tombstone",
             ],
             Self::Administrative => &[
-                "ck.capability.grant",
-                "ck.capability.delegate",
-                "ck.capability.revoke",
-                "ck.policy.set",
-                "ck.schema.define",
-                "ck.schema.update",
+                "ak.capability.grant",
+                "ak.capability.delegate",
+                "ak.capability.revoke",
+                "ak.policy.set",
+                "ak.schema.define",
+                "ak.schema.update",
                 // R14: `ck.member.{invite,remove,role_change}` are not in
                 // capability-action-registry.json. Member lifecycle is driven
                 // by the `ck.circle.member.*` / `ck.invite.*` registry actions
                 // and the `ck.member.state` FSM; these three remain
                 // inkson-local UI grouping placeholders only.
-                "ck.member.invite",
-                "ck.member.remove",
-                "ck.member.role_change",
+                "ak.member.invite",
+                "ak.member.remove",
+                "ak.member.role_change",
             ],
         }
     }
@@ -637,7 +637,7 @@ mod tests {
     fn test_grant() -> UiCapabilityGrant {
         grant(
             "did:web:bob",
-            &["ck.strand.read", "ck.strand.update"],
+            &["ak.strand.read", "ck.strand.update"],
             vec![UiCapabilityConstraint::Temporal {
                 not_before: None,
                 expires_at: Some("2027-01-01T00:00:00Z".to_owned()),
@@ -654,11 +654,11 @@ mod tests {
         // regression that re-introduces the removed short form.
         // Realm security-boundary actions live in ck.realm.*; Space
         // container actions live in ck.space.*.
-        assert!(ActionGroup::Common.contains("ck.realm.update"));
-        assert!(ActionGroup::Common.contains("ck.strand.create"));
-        assert!(ActionGroup::Conversation.contains("ck.message.create"));
-        assert!(ActionGroup::Administrative.contains("ck.capability.grant"));
-        assert!(!ActionGroup::Common.contains("ck.message.create"));
+        assert!(ActionGroup::Common.contains("ak.realm.update"));
+        assert!(ActionGroup::Common.contains("ak.strand.create"));
+        assert!(ActionGroup::Conversation.contains("ak.message.create"));
+        assert!(ActionGroup::Administrative.contains("ak.capability.grant"));
+        assert!(!ActionGroup::Common.contains("ak.message.create"));
         assert!(!ActionGroup::Common.contains("strand.create"));
     }
 
@@ -666,12 +666,12 @@ mod tests {
     fn test_lifecycle_archive_restore_symmetry() {
         // Spec contract: every lifecycle family with `*.archive` MUST also
         // expose `*.restore` (canonical archived -> active transition).
-        assert!(ActionGroup::Common.contains("ck.strand.archive"));
-        assert!(ActionGroup::Common.contains("ck.strand.restore"));
-        assert!(ActionGroup::Common.contains("ck.space.archive"));
-        assert!(ActionGroup::Common.contains("ck.space.restore"));
-        assert!(ActionGroup::Morph.contains("ck.morph.archive"));
-        assert!(ActionGroup::Morph.contains("ck.morph.restore"));
+        assert!(ActionGroup::Common.contains("ak.strand.archive"));
+        assert!(ActionGroup::Common.contains("ak.strand.restore"));
+        assert!(ActionGroup::Common.contains("ak.space.archive"));
+        assert!(ActionGroup::Common.contains("ak.space.restore"));
+        assert!(ActionGroup::Morph.contains("ak.morph.archive"));
+        assert!(ActionGroup::Morph.contains("ak.morph.restore"));
     }
 
     #[test]
@@ -685,7 +685,7 @@ mod tests {
             ..Default::default()
         };
         let ctx = UiCapabilityEvalContext::default();
-        let gate = engine.ui_gate("did:web:alice.example", "ck.space.archive", &resource, &ctx);
+        let gate = engine.ui_gate("did:web:alice.example", "ak.space.archive", &resource, &ctx);
         assert!(gate.enabled);
         assert!(gate.reason.is_empty());
     }
@@ -699,7 +699,7 @@ mod tests {
         engine.add_grant(UiCapabilityGrant {
             subject: "did:web:alice.example".to_owned(),
             resource_selectors: vec![UiResourceSelector::Wildcard],
-            actions: vec!["ck.realm.update".to_owned()],
+            actions: vec!["ak.realm.update".to_owned()],
             constraints: Vec::new(),
         });
         let resource = UiResourceRef {
@@ -707,9 +707,9 @@ mod tests {
             ..Default::default()
         };
         let ctx = UiCapabilityEvalContext::default();
-        let gate = engine.ui_gate("did:web:alice.example", "ck.space.archive", &resource, &ctx);
+        let gate = engine.ui_gate("did:web:alice.example", "ak.space.archive", &resource, &ctx);
         assert!(!gate.enabled);
-        assert!(gate.reason.contains("ck.space.archive"));
+        assert!(gate.reason.contains("ak.space.archive"));
     }
 
     #[test]
@@ -718,7 +718,7 @@ mod tests {
         engine.add_grant(UiCapabilityGrant {
             subject: "did:web:alice.example".to_owned(),
             resource_selectors: vec![UiResourceSelector::Wildcard],
-            actions: vec!["ck.space.archive".to_owned(), "ck.space.restore".to_owned()],
+            actions: vec!["ak.space.archive".to_owned(), "ck.space.restore".to_owned()],
             constraints: Vec::new(),
         });
         let resource = UiResourceRef {
@@ -726,7 +726,7 @@ mod tests {
             ..Default::default()
         };
         let ctx = UiCapabilityEvalContext::default();
-        let gate = engine.ui_gate("did:web:alice.example", "ck.space.archive", &resource, &ctx);
+        let gate = engine.ui_gate("did:web:alice.example", "ak.space.archive", &resource, &ctx);
         assert!(gate.enabled);
         assert!(gate.reason.is_empty());
     }
@@ -805,7 +805,7 @@ mod tests {
             ..Default::default()
         };
 
-        let decision = engine.check("did:web:bob", "ck.strand.read", &resource, &ctx);
+        let decision = engine.check("did:web:bob", "ak.strand.read", &resource, &ctx);
         assert_eq!(decision, UiAuthzDecision::Allow);
     }
 
@@ -815,7 +815,7 @@ mod tests {
         let resource = UiResourceRef::default();
         let ctx = UiCapabilityEvalContext::default();
 
-        let decision = engine.check("did:web:bob", "ck.strand.read", &resource, &ctx);
+        let decision = engine.check("did:web:bob", "ak.strand.read", &resource, &ctx);
         assert!(matches!(decision, UiAuthzDecision::Deny(_)));
     }
 
@@ -830,7 +830,7 @@ mod tests {
         };
         let ctx = UiCapabilityEvalContext::default();
 
-        let decision = engine.check("did:web:bob", "ck.strand.archive", &resource, &ctx);
+        let decision = engine.check("did:web:bob", "ak.strand.archive", &resource, &ctx);
         assert!(matches!(decision, UiAuthzDecision::Deny(_)));
     }
 
@@ -845,7 +845,7 @@ mod tests {
         };
         let ctx = UiCapabilityEvalContext::default();
 
-        let decision = engine.check("did:web:bob", "ck.strand.read", &resource, &ctx);
+        let decision = engine.check("did:web:bob", "ak.strand.read", &resource, &ctx);
         assert!(matches!(decision, UiAuthzDecision::Deny(_)));
     }
 
@@ -854,14 +854,14 @@ mod tests {
         // R5: an unconstrained grant covering the action/resource yields a
         // positive Allow (not a fail-open fallthrough).
         let mut engine = CapabilityEngine::new();
-        engine.add_grant(grant("did:web:bob", &["ck.strand.read"], Vec::new()));
+        engine.add_grant(grant("did:web:bob", &["ak.strand.read"], Vec::new()));
 
         let resource = UiResourceRef {
             space_id: Some("ak:space:test".to_owned()),
             ..Default::default()
         };
         let ctx = UiCapabilityEvalContext::default();
-        let decision = engine.check("did:web:bob", "ck.strand.read", &resource, &ctx);
+        let decision = engine.check("did:web:bob", "ak.strand.read", &resource, &ctx);
         assert_eq!(decision, UiAuthzDecision::Allow);
     }
 
@@ -872,7 +872,7 @@ mod tests {
         let mut engine = CapabilityEngine::new();
         engine.add_grant(grant(
             "did:web:bob",
-            &["ck.strand.read"],
+            &["ak.strand.read"],
             vec![UiCapabilityConstraint::ApprovalWorkflow {
                 approvers: vec!["did:web:alice".to_owned()],
                 min_approvals: 1,
@@ -884,7 +884,7 @@ mod tests {
             ..Default::default()
         };
         let ctx = UiCapabilityEvalContext::default();
-        let decision = engine.check("did:web:bob", "ck.strand.read", &resource, &ctx);
+        let decision = engine.check("did:web:bob", "ak.strand.read", &resource, &ctx);
         assert!(matches!(decision, UiAuthzDecision::RequireReview(_)));
     }
 

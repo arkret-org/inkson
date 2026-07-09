@@ -3,7 +3,7 @@ use super::*;
 #[test]
 fn strand_body_display_text_reads_content_block_body() {
     let body = json!({
-        "kind": "ck.content.text",
+        "kind": "ak.content.text",
         "body": "Long-form strand body"
     });
 
@@ -17,8 +17,8 @@ fn strand_body_display_text_reads_content_block_body() {
 fn strand_body_display_text_reads_nested_blocks() {
     let body = json!({
         "blocks": [
-            { "kind": "ck.content.text", "body": "First block" },
-            { "kind": "ck.content.text", "text": "Second block" }
+            { "kind": "ak.content.text", "body": "First block" },
+            { "kind": "ak.content.text", "text": "Second block" }
         ]
     });
 
@@ -61,7 +61,7 @@ fn value_is_mls_envelope_detects_encrypted_patch_values() {
     // Plain content blocks are NOT envelopes — unencrypted realms must
     // pay nothing and render as-is.
     assert!(!value_is_mls_envelope(&json!({
-        "kind": "ck.content.text",
+        "kind": "ak.content.text",
         "body": "plain body",
     })));
     assert!(!value_is_mls_envelope(&json!("just a string")));
@@ -69,7 +69,7 @@ fn value_is_mls_envelope_detects_encrypted_patch_values() {
 
 #[test]
 fn private_strand_display_text_passes_plaintext_through_without_ctx() {
-    let plain = json!({ "kind": "ck.content.text", "body": "plain body" });
+    let plain = json!({ "kind": "ak.content.text", "body": "plain body" });
     // No decrypt ctx, non-envelope value → renders the plaintext as-is.
     assert_eq!(
         private_strand_display_text(None, Some(&plain)),

@@ -975,7 +975,7 @@ pub(super) fn RealmsSection(
                                                                             tracing::warn!(
                                                                                 error = %text,
                                                                                 realm = %realm_id,
-                                                                                "ck.mls.genesis submit failed; soland will default epoch 0 and the kanban write path will retry",
+                                                                                "ak.mls.genesis submit failed; soland will default epoch 0 and the kanban write path will retry",
                                                                             );
                                                                         }
                                                                     }

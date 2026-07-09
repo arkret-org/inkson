@@ -93,7 +93,7 @@ fn typing_envelope_uses_spec_ephemeral_shape() {
     )
     .unwrap();
 
-    assert_eq!(envelope.kind, "ck.typing");
+    assert_eq!(envelope.kind, "ak.typing");
     assert_eq!(
         envelope.realm_id.to_string(),
         "ak:realm:0196419b-0000-7000-8000-000000000000"
@@ -130,7 +130,7 @@ fn read_receipt_envelope_uses_actor_not_event_as_sender() {
     )
     .unwrap();
 
-    assert_eq!(envelope.kind, "ck.receipt.read");
+    assert_eq!(envelope.kind, "ak.receipt.read");
     assert_eq!(envelope.actor_id.to_string(), "did:web:alice.example");
     assert_eq!(
         envelope.realm_id.to_string(),
@@ -149,7 +149,7 @@ fn read_receipt_envelope_uses_actor_not_event_as_sender() {
         envelope.payload["event_id"],
         "ak:event:01904100-0000-7000-8000-4a4116cba4e8"
     );
-    assert_eq!(envelope.payload["schema"], "ck.schema.read_receipt.v1");
+    assert_eq!(envelope.payload["schema"], "ak.schema.read_receipt.v1");
     assert!(
         !serde_json::to_value(&envelope)
             .unwrap()
@@ -174,7 +174,7 @@ fn presence_envelope_buckets_last_active_at_to_hour() {
     )
     .unwrap();
 
-    assert_eq!(envelope.kind, "ck.presence");
+    assert_eq!(envelope.kind, "ak.presence");
     assert_eq!(
         envelope.payload["realm_id"],
         "ak:realm:0196419b-0000-7000-8000-000000000000"
@@ -262,19 +262,19 @@ fn space_bootstrap_events_use_canonical_create_and_facet_kinds() {
     assert_eq!(
         kinds,
         vec![
-            "ck.realm.create",
-            "ck.realm.policy_components",
-            "ck.realm.join_rule",
-            "ck.realm.history_visibility",
-            "ck.realm.history_sharing_policy",
-            "ck.realm.discovery",
-            "ck.realm.plaintext_visible_services",
-            "ck.member.state",
+            "ak.realm.create",
+            "ak.realm.policy_components",
+            "ak.realm.join_rule",
+            "ak.realm.history_visibility",
+            "ak.realm.history_sharing_policy",
+            "ak.realm.discovery",
+            "ak.realm.plaintext_visible_services",
+            "ak.member.state",
         ]
     );
 
     let create = &events[0];
-    assert_eq!(create.payload["object"]["schema"], "ck.schema.realm.v1");
+    assert_eq!(create.payload["object"]["schema"], "ak.schema.realm.v1");
     // Spec rename (head 37ce729 / SDK 4d5a1af): realm.schema.json
     // `created_by_principal` → `created_by`.
     assert_eq!(
@@ -578,7 +578,7 @@ fn member_state_ban_event_uses_realm_scoped_member_cell() {
     )
     .expect("ban event");
 
-    assert_eq!(event.kind.as_str(), "ck.member.state");
+    assert_eq!(event.kind.as_str(), "ak.member.state");
     assert_eq!(
         event.payload["realm_id"],
         "ak:realm:0196419b-0000-7000-8000-000000000010"
@@ -651,7 +651,7 @@ fn space_create_payload_matches_spec_schema() {
         && let Err(error) = catalog.validate_payload(event.kind.as_str(), &event.payload)
     {
         panic!(
-            "ck.space.create payload violates spec: {error}\npayload: {}",
+            "ak.space.create payload violates spec: {error}\npayload: {}",
             serde_json::to_string_pretty(&event.payload).unwrap_or_default()
         );
     }
@@ -715,7 +715,7 @@ fn device_message_envelope_matches_schema_v1() {
     let envelope = build_device_message_envelope(
         "did:web:alice.example",
         "ak:device:01904100-0000-7000-8000-0000000000aa",
-        "ck.key.verification.request",
+        "ak.key.verification.request",
         "2026-04-26T00:10:00Z",
         json!({
             "method": "sas",
@@ -730,7 +730,7 @@ fn device_message_envelope_matches_schema_v1() {
             "messages": {
                 "did:web:alice.example": {
                     "ak:device:01904100-0000-7000-8000-0000000000aa": {
-                        "kind": "ck.key.verification.request",
+                        "kind": "ak.key.verification.request",
                         "expires_at": "2026-04-26T00:10:00Z",
                         "content": {
                             "method": "sas",
@@ -752,14 +752,14 @@ fn device_message_envelope_accepts_minimal_content() {
     let envelope = build_device_message_envelope(
         "did:web:bob.example",
         "ak:device:01904100-0000-7000-8000-0000000000bb",
-        "ck.key.verification.done",
+        "ak.key.verification.done",
         "2026-04-26T00:10:00Z",
         json!({"transaction_id": "verify-done-001"}),
     )
     .expect("device message envelope builds");
     let envelope = serde_json::to_value(envelope).expect("device message envelope serializes");
     let inner = &envelope["messages"]["did:web:bob.example"]["ak:device:01904100-0000-7000-8000-0000000000bb"];
-    assert_eq!(inner["kind"], "ck.key.verification.done");
+    assert_eq!(inner["kind"], "ak.key.verification.done");
     assert_eq!(inner["expires_at"], "2026-04-26T00:10:00Z");
     assert_eq!(inner["content"]["transaction_id"], "verify-done-001");
 }
@@ -782,7 +782,7 @@ fn device_verification_proof_requires_signed_envelope() {
     ensure_device_verification_proof_is_signed(&proof).expect("signed proof");
     assert_eq!(
         proof["device_envelope"]["type"].as_str(),
-        Some("ck.device.verification.proof.v1")
+        Some("ak.device.verification.proof.v1")
     );
     assert_eq!(proof["signature"]["alg"].as_str(), Some("EdDSA"));
     assert!(

@@ -81,14 +81,14 @@ fn build_read_receipt_preferences_body_has_canonical_field_shape() {
 /// when reading the entry back from `/sync`.
 #[test]
 fn read_receipt_account_data_key_matches_spec() {
-    assert_eq!(READ_RECEIPT_ACCOUNT_DATA_KEY, "ck.read_receipt.preferences");
+    assert_eq!(READ_RECEIPT_ACCOUNT_DATA_KEY, "ak.read_receipt.preferences");
 }
 
 #[test]
 fn presence_visibility_account_data_matches_spec() {
     assert_eq!(
         PRESENCE_VISIBILITY_ACCOUNT_DATA_KEY,
-        "ck.presence.visibility"
+        "ak.presence.visibility"
     );
     let hidden = build_presence_visibility_body(crate::local_state::PresenceVisibility::Nobody);
     assert_eq!(hidden["presence_visibility"], "nobody");
@@ -100,7 +100,7 @@ fn presence_visibility_account_data_matches_spec() {
 fn presence_preference_account_data_matches_spec() {
     assert_eq!(
         PRESENCE_PREFERENCE_ACCOUNT_DATA_KEY,
-        "ck.presence.preference"
+        "ak.presence.preference"
     );
     let body = build_presence_preference_body(&crate::local_state::PresencePreferenceState {
         manual_state: Some("dnd".to_owned()),
@@ -133,7 +133,7 @@ fn presence_expiry_choice_resolves_to_future_clears_at() {
 
 #[test]
 fn blocklist_account_data_key_matches_spec() {
-    assert_eq!(CLIENT_BLOCKLIST_ACCOUNT_DATA_KEY, "ck.account.blocklist");
+    assert_eq!(CLIENT_BLOCKLIST_ACCOUNT_DATA_KEY, "ak.account.blocklist");
 }
 
 #[test]

@@ -233,7 +233,7 @@ pub(super) fn submit_kanban_move(
         board_status.set("sign in before updating cards".to_owned());
         return;
     }
-    let envelope = if kind == "ck.strand.create" {
+    let envelope = if kind == "ak.strand.create" {
         let Some(board_space_id) = value.get("board_space_id").and_then(Value::as_str) else {
             board_status.set("cannot create card: missing board_space_id".to_owned());
             return;
@@ -292,7 +292,7 @@ pub(super) fn submit_kanban_move(
         .and_then(Value::as_str)
         .map(|board_space_id| strand_position_cell_id(board_space_id, &subject))
         .unwrap_or_else(|| format!("ak:cell:ck.component.strand.position.v1:{subject}"));
-    let effect_summary = if kind == "ck.strand.create" {
+    let effect_summary = if kind == "ak.strand.create" {
         serde_json::to_string(&event.payload).unwrap_or_else(|_| "{}".to_owned())
     } else {
         serde_json::to_string(&value).unwrap_or_else(|_| "{}".to_owned())
@@ -472,9 +472,9 @@ pub(super) fn dispatch_strand_position_move(
         rank: new_rank.clone(),
     };
     let kind = if dragged.from_column_id == target_column_id {
-        "ck.strand.reorder"
+        "ak.strand.reorder"
     } else {
-        "ck.strand.move"
+        "ak.strand.move"
     };
     submit_strand_position_cas_move(
         base_url,
@@ -1270,9 +1270,9 @@ pub(super) fn rebase_strand_position_after_conflict(
         // classifiers. Anything else falls through to ck.strand.move
         // because that's the spec wire shape for drag operations.
         let kind_static: &'static str = match kind.as_str() {
-            "ck.strand.reorder" => "ck.strand.reorder",
-            "ck.strand.move" => "ck.strand.move",
-            _ => "ck.strand.move",
+            "ak.strand.reorder" => "ck.strand.reorder",
+            "ak.strand.move" => "ck.strand.move",
+            _ => "ak.strand.move",
         };
         submit_strand_position_cas_move_with_attempt(
             base_url,

@@ -64,7 +64,7 @@ test("notifications are derived from index projections and respect per-realm mut
   const acceptBody = await acceptInvite.then((request) =>
     request.postDataJSON(),
   );
-  expect(acceptBody.kind).toBe("ck.member.state");
+  expect(acceptBody.kind).toBe("ak.member.state");
   expect(acceptBody.payload.invite_ref).toBe(
     "ak:invite:01904100-0000-7000-8000-000000000099",
   );

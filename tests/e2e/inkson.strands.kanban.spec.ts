@@ -105,15 +105,15 @@ test("kanban queues canonical event submissions and quarantines manual replay", 
   );
   await page.getByTestId("save-card-button").click();
   const eventBody = await eventSubmit.then((request) => request.postDataJSON());
-  expect(eventBody.kind).toBe("ck.strand.create");
+  expect(eventBody.kind).toBe("ak.strand.create");
   const positionComponent = eventBody.payload?.components?.find(
-    (component: { family?: string }) => component.family === "ck.component.strand.position.v1",
+    (component: { family?: string }) => component.family === "ak.component.strand.position.v1",
   );
-  expect(positionComponent?.family).toBe("ck.component.strand.position.v1");
+  expect(positionComponent?.family).toBe("ak.component.strand.position.v1");
   await page.getByTestId("board-queue-toggle").click();
-  await expect(page.getByTestId("board-event-record").last()).toContainText("ck.strand.create");
+  await expect(page.getByTestId("board-event-record").last()).toContainText("ak.strand.create");
   await expect(page.getByTestId("board-event-record").last()).toContainText("sha256:");
-  await expect(page.getByTestId("board-event-record").last()).toContainText("ck.component.strand.position.v1");
+  await expect(page.getByTestId("board-event-record").last()).toContainText("ak.component.strand.position.v1");
   await expect(page.getByTestId("board-conflict-alert")).toHaveCount(0);
 
   await page.getByTestId("replay-board-queue").click();
@@ -147,7 +147,7 @@ test("kanban card drag queues a strand move", async ({ page }) => {
   await page.getByTestId("kanban-card").first().dragTo(page.getByTestId("kanban-column").nth(1));
 
   await page.getByTestId("board-queue-toggle").click();
-  await expect(page.getByTestId("board-event-record").last()).toContainText("ck.strand.move");
+  await expect(page.getByTestId("board-event-record").last()).toContainText("ak.strand.move");
   await expect(page.getByTestId("kanban-column").nth(1)).toContainText("Legal review for public beta");
 });
 
@@ -192,11 +192,11 @@ test("card detail embeds discussion directly without discussion chrome", async (
   await page.getByTestId("chat-input").fill("hello @did:web:bob.example about #ak:task:123");
   await page.getByTestId("send-chat-button").click();
   const chatBody = await chatSend.then((request) => request.postDataJSON());
-  expect(chatBody.kind).toBe("ck.message.create");
+  expect(chatBody.kind).toBe("ak.message.create");
   expect(chatBody.payload.message_id).toMatch(/^ak:message:/);
   expect(chatBody.payload.strand_id).toContain("ak:strand:");
   expect(chatBody.payload.track_name).toBe("discussion");
-  expect(chatBody.payload.content.kind).toBe("ck.content.text");
+  expect(chatBody.payload.content.kind).toBe("ak.content.text");
   expect(chatBody.payload.content.body).toBe("hello @did:web:bob.example about #ak:task:123");
   expect(chatBody.payload.mentions).toBeUndefined();
   expect(Array.isArray(chatBody.payload.content.mention_sidecar_hash)).toBeTruthy();

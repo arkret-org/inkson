@@ -282,7 +282,7 @@ fn build_signed_genesis_recovery_policy_with_raw_signer(
     principal_scoped_recovery_policy_verification_method_id(principal_id, verification_method)?;
     let issued_at = chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Secs, true);
     let mut policy = json!({
-        "schema": "ck.schema.recovery_policy.v1",
+        "schema": "ak.schema.recovery_policy.v1",
         "policy_id": format!("ak:policy:{}", crate::operation::uuid_v7()),
         "principal_id": principal_id,
         "version": 1,
@@ -343,7 +343,7 @@ fn recovery_policy_signature_transcript(payload: &Value, signed_fields: &[&str])
         );
     }
     json!({
-        "type": "ck.identity.recovery_policy.signature.v1",
+        "type": "ak.identity.recovery_policy.signature.v1",
         "signed_fields": signed_fields,
         "payload": Value::Object(signed_payload),
     })
@@ -399,7 +399,7 @@ pub async fn ensure_recovery_policy_and_did_recovery_backup(
     let recovery_key_ref = format!("{}#recovery", principal_id.trim());
     let created_at = chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Secs, true);
     let plaintext = crate::canonical::canonical_json_bytes(&json!({
-        "schema": "ck.local.did_recovery_share.v1",
+        "schema": "ak.local.did_recovery_share.v1",
         "principal_id": principal_id,
         "recovery_key_ref": recovery_key_ref,
         "recovery_private_key_b64u": B64.encode(&recovery_private_key),

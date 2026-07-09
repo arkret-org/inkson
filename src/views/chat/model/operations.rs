@@ -79,7 +79,7 @@ pub(crate) fn shared_message_pin_add_operation(
         note: None,
     };
     let payload = serde_json::to_value(payload)?;
-    validate_pin_payload("ck.pin.add", &payload)?;
+    validate_pin_payload("ak.pin.add", &payload)?;
     OperationBuilder::new(
         realm_id,
         actor,
@@ -102,7 +102,7 @@ pub(crate) fn shared_message_pin_remove_operation(
         expected_rank: None,
     };
     let payload = serde_json::to_value(payload)?;
-    validate_pin_payload("ck.pin.remove", &payload)?;
+    validate_pin_payload("ak.pin.remove", &payload)?;
     OperationBuilder::new(
         realm_id,
         actor,

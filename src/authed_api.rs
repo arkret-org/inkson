@@ -15,7 +15,7 @@ pub fn authed_api(base_url: &str, session_credential: String) -> anyhow::Result<
 /// Create an authenticated API client that also forwards the latest sync token
 /// for read-your-writes consistency on subsequent reads.
 ///
-/// ②(A+②): `session_credential` is the `ck.session.grant` JWT.
+/// ②(A+②): `session_credential` is the `ak.session.grant` JWT.
 /// The client also binds the grant-binding (DPoP) key so every `/_arkret/self/*`
 /// request carries a per-request `DPoP` proof bound to the grant
 /// (api-conventions.md §3.3). This is the centralized self-path credential

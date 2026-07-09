@@ -161,11 +161,11 @@ pub fn parse_dnd_settings(value: &Value) -> Option<DndSettings> {
 }
 
 pub fn push_rules_from_account_data(entries: &[Value]) -> Option<PushRulesConfig> {
-    account_data_content(entries, "ck.push_rules").and_then(parse_push_rules)
+    account_data_content(entries, "ak.push_rules").and_then(parse_push_rules)
 }
 
 pub fn dnd_settings_from_account_data(entries: &[Value]) -> Option<DndSettings> {
-    account_data_content(entries, "ck.dnd_schedule").and_then(parse_dnd_settings)
+    account_data_content(entries, "ak.dnd_schedule").and_then(parse_dnd_settings)
 }
 
 pub fn evaluate_notification(
@@ -607,7 +607,7 @@ mod tests {
 
     fn message_context() -> NotificationEvalContext {
         NotificationEvalContext {
-            event_kind: "ck.message.create".to_owned(),
+            event_kind: "ak.message.create".to_owned(),
             notification_type: "message".to_owned(),
             realm_id: "ak:realm:demo".to_owned(),
             strand_id: Some("ak:strand:demo".to_owned()),
@@ -856,11 +856,11 @@ mod tests {
     fn account_data_helpers_extract_canonical_keys() {
         let entries = vec![
             json!({
-                "data_type": "ck.push_rules",
+                "data_type": "ak.push_rules",
                 "content": {"rules": [{"rule_id": "r1", "actions": ["notify"]}]}
             }),
             json!({
-                "data_type": "ck.dnd_schedule",
+                "data_type": "ak.dnd_schedule",
                 "content": {"dnd": {"enabled": true}}
             }),
         ];

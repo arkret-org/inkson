@@ -16,9 +16,9 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 const PLACEHOLDER_ACTIONS: &[&str] = &[
-    "ck.member.invite",
-    "ck.member.remove",
-    "ck.member.role_change",
+    "ak.member.invite",
+    "ak.member.remove",
+    "ak.member.role_change",
 ];
 
 /// Files allowed to mention the placeholder literals (their UI-label home and

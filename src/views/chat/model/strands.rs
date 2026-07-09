@@ -234,7 +234,7 @@ pub(crate) fn channel_from_strand_event(realm_id: &str, event: &Value) -> Option
     let candidates = message_candidates(event);
     if !candidates
         .iter()
-        .any(|candidate| value_string_at(candidate, &["kind", "type"]) == Some("ck.strand.create"))
+        .any(|candidate| value_string_at(candidate, &["kind", "type"]) == Some("ak.strand.create"))
     {
         return None;
     }

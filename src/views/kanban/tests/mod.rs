@@ -76,7 +76,7 @@ pub(super) fn board_write_record(state: CardState, note: &str) -> BoardWriteReco
     BoardWriteRecord {
         state,
         move_id: "ak:operation:test".to_owned(),
-        kind: "ck.strand.create".to_owned(),
+        kind: "ak.strand.create".to_owned(),
         cell_id: "ak:cell:test".to_owned(),
         effect_summary: "{}".to_owned(),
         seal_ref: "ak:seal:test".to_owned(),

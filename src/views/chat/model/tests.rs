@@ -22,7 +22,7 @@ mod device_identity_proof_tests {
         device_id: Option<&str>,
     ) -> Value {
         let mut envelope = json!({
-            "kind": "ck.message.create",
+            "kind": "ak.message.create",
             "realm_id": "ak:realm:r",
             "actor_id": actor_id,
             "created_at": "2026-06-16T00:00:00Z",
@@ -41,7 +41,7 @@ mod device_identity_proof_tests {
         let verification_method = signer.verification_method().to_owned();
         // Build the proof binding via the SDK's authoritative
         // `Proof::canonical_binding_bytes` (which folds in the
-        // `context = "ck-event-proof-v1"` domain tag) — the SAME transcript both
+        // `context = "ak.event-proof-v1"` domain tag) — the SAME transcript both
         // the production signer and the verifier use, so this test can never drift
         // from the on-wire binding again.
         let proof_created_at = chrono::DateTime::parse_from_rfc3339("2026-06-16T00:00:00Z")
@@ -182,7 +182,7 @@ mod device_identity_proof_tests {
     #[test]
     fn proofless_projection_is_not_applicable() {
         let envelope = json!({
-            "kind": "ck.message.create",
+            "kind": "ak.message.create",
             "actor_id": "did:web:legacy.example",
             "device_id": "ak:device:legacy",
             "message_id": "ak:msg:legacy",

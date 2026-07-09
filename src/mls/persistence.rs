@@ -17,7 +17,7 @@
 //! Also exposes the multi-device Welcome shuttle
 //! ([`encode_welcome_for_transport`] / [`decode_welcome_from_transport`])
 //! used to ship a typed `MlsWelcomeEnvelope` over soland's
-//! `/_arkret/self/device_messages` (with `type = "ck.mls.welcome"`). The
+//! `/_arkret/self/device_messages` (with `type = "ak.mls.welcome"`). The
 //! payload is the canonical SDK serialization — JSON serialize the
 //! `MlsWelcomeEnvelope` struct directly — so an apply-on-receive path
 //! can round-trip it via `serde_json::from_value` and feed it into
@@ -353,7 +353,7 @@ impl MlsSnapshotEnvelope {
                 "recipient_key_ref": "mls_group_secrets_backup_key",
                 "aead": {
                     "name": "xchacha20_poly1305",
-                    "aead_profile": "ck.aead.xchacha20_poly1305.v1",
+                    "aead_profile": "ak.aead.xchacha20_poly1305.v1",
                     "nonce": nonce
                 }
             },

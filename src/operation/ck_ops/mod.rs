@@ -298,9 +298,9 @@ pub(super) fn relation_create_payload_value(
 
 pub(super) fn patch_from_value(patch: Value) -> anyhow::Result<arkret_sdk::Patch> {
     let patch: arkret_sdk::Patch = serde_json::from_value(patch)
-        .map_err(|err| anyhow::anyhow!("ck.strand.update patch must match ck.patch.v1: {err}"))?;
+        .map_err(|err| anyhow::anyhow!("ak.strand.update patch must match ck.patch.v1: {err}"))?;
     patch
         .validate()
-        .map_err(|err| anyhow::anyhow!("ck.strand.update patch must match ck.patch.v1: {err}"))?;
+        .map_err(|err| anyhow::anyhow!("ak.strand.update patch must match ck.patch.v1: {err}"))?;
     Ok(patch)
 }

@@ -52,7 +52,7 @@ use crate::workflows::blocked_release_workflows;
 
 /// `ck.account_data` key used by the read-receipt preferences entry. Spec:
 /// `discovery/client-preferences.md` §3.6.
-pub(crate) const READ_RECEIPT_ACCOUNT_DATA_KEY: &str = "ck.read_receipt.preferences";
+pub(crate) const READ_RECEIPT_ACCOUNT_DATA_KEY: &str = "ak.read_receipt.preferences";
 
 /// `ck.account_data` key used by the cross-device UI preferences entry
 /// (theme, sidebar collapsed, per-Realm view). Spec:
@@ -61,21 +61,21 @@ pub(crate) const CLIENT_UI_ACCOUNT_DATA_KEY: &str = "client.ui";
 
 /// `ck.account_data` key used by the actor-private personal blocklist.
 /// Spec: `discovery/client-preferences.md` §2 / §3 privacy preferences.
-pub(crate) const CLIENT_BLOCKLIST_ACCOUNT_DATA_KEY: &str = "ck.account.blocklist";
+pub(crate) const CLIENT_BLOCKLIST_ACCOUNT_DATA_KEY: &str = "ak.account.blocklist";
 
 /// `ck.account_data` key used by notification push-rule preferences.
-pub(crate) const PUSH_RULES_ACCOUNT_DATA_KEY: &str = "ck.push_rules";
+pub(crate) const PUSH_RULES_ACCOUNT_DATA_KEY: &str = "ak.push_rules";
 
 /// `ck.account_data` key used by do-not-disturb preferences.
-pub(crate) const DND_ACCOUNT_DATA_KEY: &str = "ck.dnd_schedule";
+pub(crate) const DND_ACCOUNT_DATA_KEY: &str = "ak.dnd_schedule";
 
 /// `ck.account_data` key used by the principal-private presence policy.
-pub(crate) const PRESENCE_VISIBILITY_ACCOUNT_DATA_KEY: &str = "ck.presence.visibility";
+pub(crate) const PRESENCE_VISIBILITY_ACCOUNT_DATA_KEY: &str = "ak.presence.visibility";
 
 /// `ck.account_data` key used by the manual presence preference
 /// (profiles-presence.md §3.6). Send-side enforced; pushed encrypted —
 /// servers MUST NOT require a projection of this key.
-pub(crate) const PRESENCE_PREFERENCE_ACCOUNT_DATA_KEY: &str = "ck.presence.preference";
+pub(crate) const PRESENCE_PREFERENCE_ACCOUNT_DATA_KEY: &str = "ak.presence.preference";
 
 /// Resolve the relative expiry picker choice into an absolute RFC 3339
 /// UTC `clears_at` (profiles-presence.md §3.6). `never` (and anything
@@ -160,7 +160,7 @@ pub(crate) fn push_client_ui_account_data_with_avatar(
             }
             Err(err) => {
                 tracing::warn!(
-                    "ck.account_data.set for client.ui failed: {}",
+                    "ak.account_data.set for client.ui failed: {}",
                     err.display()
                 );
             }
@@ -232,7 +232,7 @@ pub(crate) fn push_blocklist_account_data(
             .await
             {
                 tracing::debug!(
-                    "ck.account_data.delete for ck.account.blocklist failed: {}",
+                    "ak.account_data.delete for ck.account.blocklist failed: {}",
                     err.display()
                 );
             }
@@ -245,7 +245,7 @@ pub(crate) fn push_blocklist_account_data(
             Ok(body) => body,
             Err(err) => {
                 tracing::warn!(
-                    "ck.account_data.set for ck.account.blocklist skipped: {}",
+                    "ak.account_data.set for ck.account.blocklist skipped: {}",
                     err
                 );
                 return;
@@ -267,7 +267,7 @@ pub(crate) fn push_blocklist_account_data(
             }
             Err(err) => {
                 tracing::debug!(
-                    "ck.account_data.set for ck.account.blocklist failed: {}",
+                    "ak.account_data.set for ck.account.blocklist failed: {}",
                     err.display()
                 );
             }

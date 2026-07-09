@@ -19,7 +19,7 @@ pub(super) fn value_is_plaintext_private_content(value: &Value) -> bool {
             let encrypted_profile = object
                 .get("profile")
                 .and_then(Value::as_str)
-                .is_some_and(|profile| profile == "ck.profile.encrypted_envelope.v1");
+                .is_some_and(|profile| profile == "ak.profile.encrypted_envelope.v1");
             !(encrypted_profile
                 || object.contains_key("encrypted_content")
                 || object.contains_key("ciphertext"))
@@ -71,7 +71,7 @@ pub(super) fn patch_touches_private_paths(payload: &Value, private_paths: &[&str
 
 pub(super) fn kanban_event_carries_plaintext_private_content(event: &arkret_sdk::Event) -> bool {
     match event.kind.as_str() {
-        "ck.strand.create" => [
+        "ak.strand.create" => [
             &["body"][..],
             &["object", "body"][..],
             &["synthesis"][..],
@@ -89,7 +89,7 @@ pub(super) fn kanban_event_carries_plaintext_private_content(event: &arkret_sdk:
         .any(|path| {
             value_at_path(&event.payload, path).is_some_and(value_is_plaintext_private_content)
         }),
-        "ck.strand.update" => {
+        "ak.strand.update" => {
             patch_touches_private_paths(&event.payload, KANBAN_PRIVATE_STRAND_PATCH_PATHS)
         }
         _ => false,
@@ -109,7 +109,7 @@ pub(super) fn kanban_event_carries_plaintext_private_content(event: &arkret_sdk:
 /// drop a container create/update, regardless of what
 /// `kanban_event_carries_plaintext_private_content` matches in the future. See
 /// _next.md X13.
-pub(super) const KANBAN_PLAINTEXT_METADATA_KINDS: &[&str] = &["ck.space.create", "ck.space.update"];
+pub(super) const KANBAN_PLAINTEXT_METADATA_KINDS: &[&str] = &["ak.space.create", "ck.space.update"];
 
 /// R4 fail-closed reason surfaced when the Realm security projection has not
 /// synced yet and we cannot prove the scope is plaintext. Mirrors the

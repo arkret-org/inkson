@@ -26,7 +26,7 @@ pub fn AgentsPanel(
     state_store: Signal<LocalStateStore>,
 ) -> Element {
     let mut agent_id = use_signal(String::new);
-    let mut protocol = use_signal(|| "ck.agent.v1".to_owned());
+    let mut protocol = use_signal(|| "ak.agent.v1".to_owned());
     let mut capabilities = use_signal(|| "strand.read".to_owned());
     let mut status = use_signal(String::new);
 
@@ -130,10 +130,10 @@ pub fn AgentsPanel(
                             .get("event_kind")
                             .and_then(Value::as_str)
                             .unwrap_or("");
-                        if kind.starts_with("ck.agent.interop_session.") {
+                        if kind.starts_with("ak.agent.interop_session.") {
                             session_events.push(event.clone());
                         }
-                        if kind != "ck.agent.interop_session.result" {
+                        if kind != "ak.agent.interop_session.result" {
                             continue;
                         }
                         let event_id = event
@@ -180,7 +180,7 @@ pub fn AgentsPanel(
             r.payload
                 .get("kind")
                 .and_then(Value::as_str)
-                .map(|k| k == "ck.agent.endpoint")
+                .map(|k| k == "ak.agent.endpoint")
                 .unwrap_or(false)
         })
         .cloned()
@@ -191,7 +191,7 @@ pub fn AgentsPanel(
             r.payload
                 .get("kind")
                 .and_then(Value::as_str)
-                .map(|k| k.starts_with("ck.agent.interop_session."))
+                .map(|k| k.starts_with("ak.agent.interop_session."))
                 .unwrap_or(false)
         })
         .cloned()
@@ -202,7 +202,7 @@ pub fn AgentsPanel(
             r.payload
                 .get("kind")
                 .and_then(Value::as_str)
-                .map(|k| k == "ck.agent.interop_session.result")
+                .map(|k| k == "ak.agent.interop_session.result")
                 .unwrap_or(false)
         })
         .cloned()
@@ -269,7 +269,7 @@ pub fn AgentsPanel(
                 "aria-describedby": "agent-register-form-help",
                 div { class: "event-head",
                     span { id: "agent-register-form-heading", "Register an automated member" }
-                    span { class: "badge", title: "ck.agent.endpoint", "Bot endpoint" }
+                    span { class: "badge", title: "ak.agent.endpoint", "Bot endpoint" }
                 }
                 div { id: "agent-register-form-help", class: "muted",
                     "Fill in agent_id + protocol + comma-separated capabilities. Submits a ck.agent.endpoint envelope."
@@ -621,7 +621,7 @@ pub fn AgentsPanel(
                                             "handoff to {target_label} approved; submitting start event"
                                         ));
                                         transcript_steps.write().push((
-                                            "ck.agent.interop_session.start".to_owned(),
+                                            "ak.agent.interop_session.start".to_owned(),
                                             format!("start handoff to {target_label}"),
                                         ));
                                         spawn(async move {
@@ -661,7 +661,7 @@ pub fn AgentsPanel(
                                                         resp.event_id
                                                     ));
                                                     transcript_steps.write().push((
-                                                        "ck.agent.interop_session.status".to_owned(),
+                                                        "ak.agent.interop_session.status".to_owned(),
                                                         "running (in-process echo bridge)".to_owned(),
                                                     ));
                                                     // Experimental-only surface:
@@ -678,7 +678,7 @@ pub fn AgentsPanel(
                                                         err.display()
                                                     ));
                                                     transcript_steps.write().push((
-                                                        "ck.agent.interop_session.status".to_owned(),
+                                                        "ak.agent.interop_session.status".to_owned(),
                                                         format!("failed: {}", err.display()),
                                                     ));
                                                 }
@@ -704,13 +704,13 @@ pub fn AgentsPanel(
                                 // ends are present.
                                 let synthesized = vec![
                                     serde_json::json!({
-                                        "kind": "ck.agent.interop_session.start"
+                                        "kind": "ak.agent.interop_session.start"
                                     }),
                                 ];
                                 let mut chain = synthesized;
                                 for (_, payload) in incoming_results.read().iter() {
                                     chain.push(serde_json::json!({
-                                        "kind": "ck.agent.interop_session.result",
+                                        "kind": "ak.agent.interop_session.result",
                                         "payload": payload,
                                     }));
                                 }
@@ -797,7 +797,7 @@ pub fn AgentsPanel(
                         "data-state": "{interop_modal().as_data_state()}",
                         div { class: "event-head",
                             span { "Capability approval" }
-                            span { class: "badge blue", "ck.agent.interop_session.start" }
+                            span { class: "badge blue", "ak.agent.interop_session.start" }
                         }
                         div { class: "workflow-form",
                             Input {
@@ -875,7 +875,7 @@ pub fn AgentsPanel(
                                                     &actor,
                                                     &grant_id,
                                                     &target,
-                                                    &["ck.agent.interop_session.start"],
+                                                    &["ak.agent.interop_session.start"],
                                                     None,
                                                     constraint,
                                                 )
@@ -1000,7 +1000,7 @@ pub fn AgentsPanel(
                         "data-state": "{publish_modal().as_data_state()}",
                         div { class: "event-head",
                             span { "Publish to source space" }
-                            span { class: "badge blue", "ck.strand.create" }
+                            span { class: "badge blue", "ak.strand.create" }
                         }
                         // Signer toggle. The self-with-attribution
                         // branch keeps actor_id = controller while

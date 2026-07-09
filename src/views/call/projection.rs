@@ -138,7 +138,7 @@ pub(super) fn media_service_selection(
             .get("kind")
             .and_then(|v| v.as_str())
             .unwrap_or_default();
-        if kind != "ck.realm.media_service" || record.realm_id.as_deref() != Some(realm_id) {
+        if kind != "ak.realm.media_service" || record.realm_id.as_deref() != Some(realm_id) {
             continue;
         }
         let body = operation_body(&record.payload);
@@ -169,11 +169,11 @@ pub(super) fn media_governance_evidence(
     realm_id: &str,
     media_plaintext_ui_confirmed: bool,
 ) -> Option<MediaGovernanceEvidence> {
-    let media_service_payload = latest_body_for_kind(state, realm_id, "ck.realm.media_service")?;
+    let media_service_payload = latest_body_for_kind(state, realm_id, "ak.realm.media_service")?;
     let policy_components_payload =
-        latest_body_for_kind(state, realm_id, "ck.realm.policy_components");
+        latest_body_for_kind(state, realm_id, "ak.realm.policy_components");
     let plaintext_visible_services_payload =
-        latest_body_for_kind(state, realm_id, "ck.realm.plaintext_visible_services")
+        latest_body_for_kind(state, realm_id, "ak.realm.plaintext_visible_services")
             .and_then(|body| serde_json::from_value(body).ok());
     let governance_binding = state
         .raw_operations
@@ -186,7 +186,7 @@ pub(super) fn media_governance_evidence(
                 .get("kind")
                 .and_then(Value::as_str)
                 .unwrap_or_default();
-            if !matches!(kind, "ck.mls.commit" | "ck.mls.genesis") {
+            if !matches!(kind, "ak.mls.commit" | "ck.mls.genesis") {
                 return None;
             }
             operation_body(&record.payload)
@@ -207,7 +207,7 @@ pub(super) fn media_service_decrypts_enabled(
     state: &crate::local_state::ClientLocalState,
     realm_id: &str,
 ) -> bool {
-    latest_body_for_kind(state, realm_id, "ck.realm.policy_components")
+    latest_body_for_kind(state, realm_id, "ak.realm.policy_components")
         .as_ref()
         .and_then(|body| {
             body.get("media_service_decrypts")
@@ -268,7 +268,7 @@ pub(super) fn call_state_participant_identities(
             .get("kind")
             .and_then(|v| v.as_str())
             .unwrap_or_default();
-        if kind != "ck.call.state" || record.realm_id.as_deref() != Some(realm_id) {
+        if kind != "ak.call.state" || record.realm_id.as_deref() != Some(realm_id) {
             continue;
         }
         let body = operation_body(&record.payload);
@@ -314,7 +314,7 @@ pub(super) fn call_state_participant_device_map(
             .get("kind")
             .and_then(|v| v.as_str())
             .unwrap_or_default();
-        if kind != "ck.call.state" || record.realm_id.as_deref() != Some(realm_id) {
+        if kind != "ak.call.state" || record.realm_id.as_deref() != Some(realm_id) {
             continue;
         }
         let body = operation_body(&record.payload);
@@ -359,7 +359,7 @@ pub(super) fn call_state_participant_actor_device_map(
             .get("kind")
             .and_then(|v| v.as_str())
             .unwrap_or_default();
-        if kind != "ck.call.state" || record.realm_id.as_deref() != Some(realm_id) {
+        if kind != "ak.call.state" || record.realm_id.as_deref() != Some(realm_id) {
             continue;
         }
         let body = operation_body(&record.payload);
@@ -503,7 +503,7 @@ mod tests {
                 realm_id: Some("ak:realm:01904100-0000-7000-8000-9b64700c6ee8".to_owned()),
                 received_at: chrono::Utc::now(),
                 payload: json!({
-                    "kind": "ck.realm.media_service",
+                    "kind": "ak.realm.media_service",
                     "body": {
                         "service_id": "did:web:media.example",
                         "foci": [
@@ -527,7 +527,7 @@ mod tests {
             realm_id: Some("ak:realm:01904100-0000-7000-8000-9b64700c6ee8".to_owned()),
             received_at: chrono::Utc::now(),
             payload: json!({
-                "kind": "ck.call.state",
+                "kind": "ak.call.state",
                 "body": {
                     "call_id": "ak:call:0196441c-0000-7000-8000-000000000000",
                     "state": "connecting",
@@ -556,7 +556,7 @@ mod tests {
                 realm_id: Some("ak:realm:01904100-0000-7000-8000-9b64700c6ee8".to_owned()),
                 received_at: chrono::Utc::now(),
                 payload: json!({
-                    "kind": "ck.call.state",
+                    "kind": "ak.call.state",
                     "body": {
                         "call_id": "ak:call:0196441c-0000-7000-8000-000000000000",
                         "state": "active",
@@ -598,7 +598,7 @@ mod tests {
                 realm_id: Some("ak:realm:01904100-0000-7000-8000-9b64700c6ee8".to_owned()),
                 received_at: chrono::Utc::now(),
                 payload: json!({
-                    "kind": "ck.call.state",
+                    "kind": "ak.call.state",
                     "body": {
                         "call_id": "ak:call:0196441c-0000-7000-8000-000000000000",
                         "state": "active",
@@ -670,7 +670,7 @@ mod tests {
             realm_id: Some("ak:realm:019a7360-0000-7000-8000-000000000000".to_owned()),
             received_at: chrono::Utc::now(),
             payload: json!({
-                "kind": "ck.call.state",
+                "kind": "ak.call.state",
                 "body": {
                     "call_id": "ak:call:019a7360-0000-7000-8000-000000000001",
                     "state": "ended",
@@ -705,7 +705,7 @@ mod tests {
             realm_id: Some("ak:realm:019a7360-0000-7000-8000-000000000000".to_owned()),
             received_at: chrono::Utc::now(),
             payload: json!({
-                "kind": "ck.call.state",
+                "kind": "ak.call.state",
                 "body": {
                     "call_id": "ak:call:019a7360-0000-7000-8000-000000000001",
                     "state": "ended",
@@ -759,7 +759,7 @@ mod tests {
                 "retention": retention,
                 "recording_start_event_id": start_event_id,
                 "artifact": {
-                    "schema": "ck.schema.call_recording_artifact.v1",
+                    "schema": "ak.schema.call_recording_artifact.v1",
                     "realm_id": realm_id,
                     "call_id": call_id,
                     "recording_id": recording_id,
@@ -773,7 +773,7 @@ mod tests {
                     "media_type": "video/mp4",
                     "encryption": {
                         "alg": "mls_exporter_aead_xchacha20poly1305_stream",
-                        "exporter_label": "ck-rtc-recording-key/v1",
+                        "exporter_label": "ak.rtc-recording-key/v1",
                         "context": {
                             "realm_id": realm_id,
                             "call_id": call_id,

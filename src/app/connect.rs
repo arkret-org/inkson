@@ -320,7 +320,7 @@ fn current_authed_api(
 }
 
 /// ②(A+②) — build a `/_arkret/self/*`-ready client: the credential
-/// (`ck.session.grant` JWT) in the HTTP Bearer authorization slot plus the
+/// (`ak.session.grant` JWT) in the HTTP Bearer authorization slot plus the
 /// grant-binding (DPoP) key so each request carries a per-request `DPoP` proof
 /// (api-conventions.md §3.3).
 /// Used by standalone (non-`connect`) self-path call sites that build their own
@@ -1323,7 +1323,7 @@ pub(super) fn connect(base: String, actor: String, device: String, ctx: ConnectC
                                     }
                                     continue;
                                 }
-                                if data_type == "ck.presence.visibility" {
+                                if data_type == "ak.presence.visibility" {
                                     let Some(visibility) = entry
                                         .get("content")
                                         .and_then(|content| content.get("presence_visibility"))
@@ -1346,7 +1346,7 @@ pub(super) fn connect(base: String, actor: String, device: String, ctx: ConnectC
                                 // same-account devices in dev / test
                                 // deployments; opaque ciphertext entries are
                                 // skipped (local state authoritative).
-                                if data_type == "ck.presence.preference" {
+                                if data_type == "ak.presence.preference" {
                                     if let Some(content) = entry.get("content")
                                         && content.get("ciphertext").is_none()
                                         && let Ok(preference) = serde_json::from_value::<
@@ -1359,7 +1359,7 @@ pub(super) fn connect(base: String, actor: String, device: String, ctx: ConnectC
                                     }
                                     continue;
                                 }
-                                if data_type == "ck.account.blocklist" {
+                                if data_type == "ak.account.blocklist" {
                                     let Some(content) = entry.get("content") else {
                                         continue;
                                     };

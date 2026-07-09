@@ -136,15 +136,15 @@ impl AgentGrantPreset {
     /// are emitted so soland never fail-closes on an unknown action.
     pub fn actions(self) -> &'static [&'static str] {
         match self {
-            Self::Read => &["ck.event.read"],
-            Self::Draft => &["ck.agent.draft.propose", "ck.agent.action_request"],
-            Self::ReplyAsAgent => &["ck.message.create", "ck.reaction.add"],
-            Self::ActOnBehalf => &["ck.message.create"],
+            Self::Read => &["ak.event.read"],
+            Self::Draft => &["ak.agent.draft.propose", "ck.agent.action_request"],
+            Self::ReplyAsAgent => &["ak.message.create", "ck.reaction.add"],
+            Self::ActOnBehalf => &["ak.message.create"],
             Self::Organizer => &[
-                "ck.strand.create",
-                "ck.strand.update",
-                "ck.relation.create",
-                "ck.message.create",
+                "ak.strand.create",
+                "ak.strand.update",
+                "ak.relation.create",
+                "ak.message.create",
             ],
         }
     }
@@ -198,10 +198,10 @@ impl AgentServiceScopePreset {
 
     pub fn actions(self) -> &'static [&'static str] {
         match self {
-            Self::SubscribeEvents => &["ck.self.events.stream.subscribe"],
-            Self::ScanCatchUp => &["ck.self.events.query.scan"],
-            Self::SubmitEvents => &["ck.self.events.command.submit"],
-            Self::ResolveResources => &["ck.self.events.resource.get"],
+            Self::SubscribeEvents => &["ak.self.events.stream.subscribe"],
+            Self::ScanCatchUp => &["ak.self.events.query.scan"],
+            Self::SubmitEvents => &["ak.self.events.command.submit"],
+            Self::ResolveResources => &["ak.self.events.resource.get"],
         }
     }
 }
@@ -787,7 +787,7 @@ pub fn live_session_rows(events: &[Value]) -> Vec<LiveSessionRow> {
             .get("event_kind")
             .and_then(Value::as_str)
             .unwrap_or("");
-        if !kind.starts_with("ck.agent.interop_session.") {
+        if !kind.starts_with("ak.agent.interop_session.") {
             continue;
         }
         let payload = event.get("payload").cloned().unwrap_or(Value::Null);
@@ -806,10 +806,10 @@ pub fn live_session_rows(events: &[Value]) -> Vec<LiveSessionRow> {
             }
         });
         match kind {
-            "ck.agent.interop_session.start" => {
+            "ak.agent.interop_session.start" => {
                 // Seed only; keep `negotiating` as the initial state.
             }
-            "ck.agent.interop_session.status" => {
+            "ak.agent.interop_session.status" => {
                 if let Some(status) = payload.get("status").and_then(Value::as_str) {
                     entry.status = status.to_owned();
                 }
@@ -863,7 +863,7 @@ pub fn verify_audit_chain(events: &[serde_json::Value]) -> AuditChainVerifyOutco
         Some(k) => k,
         None => return AuditChainVerifyOutcome::ChainBreak,
     };
-    if first_kind != "ck.agent.interop_session.start" {
+    if first_kind != "ak.agent.interop_session.start" {
         return AuditChainVerifyOutcome::ChainBreak;
     }
     let Some(last_event) = events.last() else {
@@ -873,7 +873,7 @@ pub fn verify_audit_chain(events: &[serde_json::Value]) -> AuditChainVerifyOutco
         Some(k) => k,
         None => return AuditChainVerifyOutcome::ChainBreak,
     };
-    if last_kind != "ck.agent.interop_session.result" {
+    if last_kind != "ak.agent.interop_session.result" {
         return AuditChainVerifyOutcome::ChainBreak;
     }
     // Middle events MUST be status events.
@@ -882,7 +882,7 @@ pub fn verify_audit_chain(events: &[serde_json::Value]) -> AuditChainVerifyOutco
             Some(k) => k,
             None => return AuditChainVerifyOutcome::ChainBreak,
         };
-        if k != "ck.agent.interop_session.status" {
+        if k != "ak.agent.interop_session.status" {
             return AuditChainVerifyOutcome::ChainBreak;
         }
     }

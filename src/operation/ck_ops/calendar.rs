@@ -22,11 +22,11 @@ pub fn rsvp_set(
         comment,
     };
     let payload = serde_json::to_value(payload)
-        .map_err(|err| anyhow::anyhow!("ck.rsvp.set payload serialize: {err}"))?;
+        .map_err(|err| anyhow::anyhow!("ak.rsvp.set payload serialize: {err}"))?;
     arkret_sdk::schema::event_payload_validator_catalog()
-        .map_err(|err| anyhow::anyhow!("ck.rsvp.set payload validator catalog: {err}"))?
-        .validate_payload("ck.rsvp.set", &payload)
-        .map_err(|err| anyhow::anyhow!("ck.rsvp.set payload is not schema-valid: {err}"))?;
+        .map_err(|err| anyhow::anyhow!("ak.rsvp.set payload validator catalog: {err}"))?
+        .validate_payload("ak.rsvp.set", &payload)
+        .map_err(|err| anyhow::anyhow!("ak.rsvp.set payload is not schema-valid: {err}"))?;
     Ok(OperationBuilder::new(
         realm_id,
         actor,

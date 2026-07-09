@@ -45,7 +45,7 @@ pub fn parse_pending_pairing_requests(inbox: &[Value]) -> Vec<PendingPairingRequ
     inbox
         .iter()
         .filter_map(|message| {
-            if message.get("kind").and_then(Value::as_str) != Some("ck.key.verification.request") {
+            if message.get("kind").and_then(Value::as_str) != Some("ak.key.verification.request") {
                 return None;
             }
             let content = message.get("content")?;
@@ -158,7 +158,7 @@ mod tests {
 
     fn request_message() -> Value {
         json!({
-            "kind": "ck.key.verification.request",
+            "kind": "ak.key.verification.request",
             "sender_principal_id": "did:web:alice",
             "sender_device_id": "ak:device:existing",
             "expires_at": "2026-06-17T12:00:00Z",
@@ -203,7 +203,7 @@ mod tests {
         let mut wrong_purpose = request_message();
         wrong_purpose["content"]["purpose"] = json!("device_key_verification");
         let mut wrong_kind = request_message();
-        wrong_kind["kind"] = json!("ck.secret.share");
+        wrong_kind["kind"] = json!("ak.secret.share");
         assert!(parse_pending_pairing_requests(&[wrong_purpose, wrong_kind]).is_empty());
     }
 

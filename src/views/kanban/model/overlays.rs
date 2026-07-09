@@ -120,7 +120,7 @@ pub(crate) fn strand_update_operations_from_events(events: &[Value]) -> Vec<RawO
 
 pub(crate) fn strand_update_operation_from_event(event: &Value) -> Option<RawOperationRecord> {
     // Single source in the projection layer (YGN-ARCH-01 step 3).
-    crate::projection::kanban_ops::raw_operation_from_event(event, "ck.strand.update")
+    crate::projection::kanban_ops::raw_operation_from_event(event, "ak.strand.update")
 }
 
 pub(crate) fn sync_selected_card_from_columns(
@@ -158,7 +158,7 @@ pub(crate) fn raw_operation_kind_matches(payload: &Value, expected: &str) -> boo
 }
 
 pub(crate) fn raw_operation_strand_update_target_id(payload: &Value) -> Option<String> {
-    if !raw_operation_kind_matches(payload, "ck.strand.update")
+    if !raw_operation_kind_matches(payload, "ak.strand.update")
         || !raw_operation_allows_overlay(payload)
     {
         return None;
@@ -198,7 +198,7 @@ pub(crate) fn local_space_create_state_for_target(
     projected_space_container_ids: &BTreeSet<String>,
     target_id: &str,
 ) -> Option<CardState> {
-    let state = local_operation_state_for_target(raw_operations, "ck.space.create", target_id)?;
+    let state = local_operation_state_for_target(raw_operations, "ak.space.create", target_id)?;
     if projected_space_container_ids.contains(target_id) {
         Some(CardState::Synced)
     } else {
@@ -258,9 +258,9 @@ pub(crate) fn overlay_local_card_assignment_records(
         .iter()
         .filter(|record| raw_operation_allows_overlay(&record.payload))
     {
-        if raw_operation_kind_matches(&record.payload, "ck.relation.create") {
+        if raw_operation_kind_matches(&record.payload, "ak.relation.create") {
             overlay_local_assignment_create(&mut columns, &record.payload);
-        } else if raw_operation_kind_matches(&record.payload, "ck.relation.tombstone") {
+        } else if raw_operation_kind_matches(&record.payload, "ak.relation.tombstone") {
             overlay_local_assignment_tombstone(&mut columns, &record.payload);
         }
     }
@@ -670,7 +670,7 @@ pub(crate) fn local_card_create_from_raw_operation(
     let payload = &record.payload;
     let kind = json_path_string(Some(payload), &["kind"])
         .or_else(|| json_path_string(Some(payload), &["wire_kind"]))?;
-    if kind != "ck.strand.create" {
+    if kind != "ak.strand.create" {
         return None;
     }
     if !raw_operation_allows_overlay(payload) {
@@ -725,7 +725,7 @@ pub(crate) fn local_space_create_from_raw_operation(
     let payload = &record.payload;
     let kind = json_path_string(Some(payload), &["kind"])
         .or_else(|| json_path_string(Some(payload), &["wire_kind"]))?;
-    if kind != "ck.space.create" {
+    if kind != "ak.space.create" {
         return None;
     }
     if !raw_operation_allows_overlay(payload) {
@@ -773,7 +773,7 @@ pub(crate) fn strand_position_component(body: Option<&Value>) -> Option<&Value> 
         .iter()
         .find(|component| {
             component.get("family").and_then(Value::as_str)
-                == Some("ck.component.strand.position.v1")
+                == Some("ak.component.strand.position.v1")
         })
 }
 

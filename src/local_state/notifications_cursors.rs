@@ -67,10 +67,10 @@ impl LocalStateStore {
             hlc: Hlc::now(&device_id).to_string(),
         };
         let marker = ReadMarkerRecord {
-            marker_type: "ck.read_cursor.advance".to_owned(),
+            marker_type: "ak.read_cursor.advance".to_owned(),
             body: ReadMarkerBody {
                 id: new_read_cursor_id(),
-                schema: "ck.schema.read_cursor.v1".to_owned(),
+                schema: "ak.schema.read_cursor.v1".to_owned(),
                 realm_id: realm_id.clone(),
                 read_scope: read_scope.clone(),
                 position,
@@ -113,7 +113,7 @@ impl LocalStateStore {
             .get("kind")
             .or_else(|| message.get("type"))
             .and_then(Value::as_str)
-            != Some("ck.read_cursor.update")
+            != Some("ak.read_cursor.update")
         {
             return false;
         }
@@ -147,14 +147,14 @@ impl LocalStateStore {
             .map(|value| value.with_timezone(&Utc))
             .unwrap_or_else(Utc::now);
         let marker = ReadMarkerRecord {
-            marker_type: "ck.read_cursor.advance".to_owned(),
+            marker_type: "ak.read_cursor.advance".to_owned(),
             body: ReadMarkerBody {
                 id: content
                     .get("id")
                     .and_then(Value::as_str)
                     .map(str::to_owned)
                     .unwrap_or_else(new_read_cursor_id),
-                schema: "ck.schema.read_cursor.v1".to_owned(),
+                schema: "ak.schema.read_cursor.v1".to_owned(),
                 realm_id: realm_id.to_owned(),
                 read_scope: read_scope.clone(),
                 position,

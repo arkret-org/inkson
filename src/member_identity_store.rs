@@ -76,7 +76,7 @@ impl MemberIdentityStore {
     /// Bulk-ingest a roster-inlined `identity_events[]` array. Each
     /// entry MUST be a full Event envelope shaped per
     /// `artifacts/schemas/event.schema.json` — i.e. with `event_id`,
-    /// `kind == "ck.member.identity.update"`, and a `payload` body that
+    /// `kind == "ak.member.identity.update"`, and a `payload` body that
     /// deserialises into [`MemberIdentityUpdatePayload`].
     ///
     /// Events that fail to parse are silently skipped (we don't crash
@@ -92,7 +92,7 @@ impl MemberIdentityStore {
                 continue;
             };
             let kind = event.get("kind").and_then(Value::as_str).unwrap_or("");
-            if kind != "ck.member.identity.update" {
+            if kind != "ak.member.identity.update" {
                 continue;
             }
             let Some(payload_value) = event.get("payload") else {
@@ -391,7 +391,7 @@ mod tests {
         seed_directory(actor, TEST_DEVICE, &signer);
         let event = json!({
             "event_id": "ak:event:01904100-0000-7000-8000-00000000000a",
-            "kind": "ck.member.identity.update",
+            "kind": "ak.member.identity.update",
             "payload": signed_payload(actor, TEST_DEVICE, "Alice v1", &signer),
         });
         store.ingest_inline(TEST_REALM, actor, &[event]);
@@ -418,7 +418,7 @@ mod tests {
         seed_directory(actor, TEST_DEVICE, &real);
         let event = json!({
             "event_id": "ak:event:01904100-0000-7000-8000-00000000000d",
-            "kind": "ck.member.identity.update",
+            "kind": "ak.member.identity.update",
             "payload": signed_payload(actor, TEST_DEVICE, "Impersonator", &attacker),
         });
         store.ingest_inline(TEST_REALM, actor, &[event]);
@@ -439,7 +439,7 @@ mod tests {
         let signer = SigningKey::from_bytes(&[3u8; 32]);
         let event = json!({
             "event_id": "ak:event:01904100-0000-7000-8000-00000000000e",
-            "kind": "ck.member.identity.update",
+            "kind": "ak.member.identity.update",
             "payload": signed_payload(actor, TEST_DEVICE, "Unresolved", &signer),
         });
         store.ingest_inline(TEST_REALM, actor, &[event]);
@@ -453,7 +453,7 @@ mod tests {
         let realm = "ak:realm:01904100-0000-7000-8000-000000000001";
         let event = json!({
             "event_id": "ak:event:01904100-0000-7000-8000-00000000000b",
-            "kind": "ck.member.identity.update",
+            "kind": "ak.member.identity.update",
             "payload": {
                 "realm_id": realm,
                 "actor_id": actor,
@@ -482,7 +482,7 @@ mod tests {
         let signer = SigningKey::from_bytes(&[7u8; 32]);
         let event = json!({
             "event_id": "ak:event:01904100-0000-7000-8000-00000000000c",
-            "kind": "ck.strand.move",
+            "kind": "ak.strand.move",
             "payload": signed_payload(actor, TEST_DEVICE, "Alice", &signer),
         });
         store.ingest_inline(TEST_REALM, actor, &[event]);

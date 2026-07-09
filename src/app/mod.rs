@@ -98,7 +98,7 @@ use sidebar_width::*;
 const UI_PREFERENCES_SCOPE: &str = "ui.browser";
 const SIDEBAR_WIDTH_PREFERENCE_KEY: &str = "layout.sidebar.width";
 const DEFAULT_SIDEBAR_WIDTH: f64 = 320.0;
-const OP_LIST_HANDLES_FOR_SUBJECT: &str = "ck.find.directory.query.list_handles_for_subject";
+const OP_LIST_HANDLES_FOR_SUBJECT: &str = "ak.find.directory.query.list_handles_for_subject";
 const MIN_SIDEBAR_WIDTH: f64 = 280.0;
 const MAX_SIDEBAR_WIDTH: f64 = 420.0;
 
@@ -1681,7 +1681,7 @@ pub fn RouterView() -> Element {
             // Recovery setup requires an enrollment-capable session. Establishing
             // the account recovery policy needs this device authorized as a
             // key-management device, which goes through the account authority
-            // (coauth) and therefore requires an active `ck.session.grant`. A
+            // (coauth) and therefore requires an active `ak.session.grant`. A
             // grant-less compatibility session can never pass that
             // gate, so auto-prompting it only loops on `recovery_policy_device_
             // not_authorized` and blocks the UI behind the modal. Don't prompt.
@@ -2510,7 +2510,7 @@ pub fn RouterView() -> Element {
                             tracing::warn!(
                                 realm = %short_protocol_id(&realm_for_log),
                                 ?error,
-                                "ck.realm_key.share answer failed; backing off request retry"
+                                "ak.realm_key.share answer failed; backing off request retry"
                             );
                         }
                     }

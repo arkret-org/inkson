@@ -104,7 +104,7 @@ pub fn project_moderation_queues(raw_ops: &[Value]) -> (Vec<StandingDecision>, V
 
     for payload in raw_ops {
         match payload_kind(payload) {
-            Some("ck.moderation.decision") => {
+            Some("ak.moderation.decision") => {
                 // Cell subject is the moderated `target_ref`; the decision is
                 // referenced by its sealed Event id (top-level `event_id` once
                 // synced). Latest-wins by target_ref.
@@ -120,14 +120,14 @@ pub fn project_moderation_queues(raw_ops: &[Value]) -> (Vec<StandingDecision>, V
                     );
                 }
             }
-            Some("ck.moderation.decision.lift") => {
+            Some("ak.moderation.decision.lift") => {
                 // The lift names the moderated `target_ref` (same cell subject),
                 // so drop the standing decision keyed by it.
                 if let Some(target_ref) = body_str(payload, "target_ref") {
                     decisions.remove(&target_ref);
                 }
             }
-            Some("ck.moderation.appeal.submit") => {
+            Some("ak.moderation.appeal.submit") => {
                 if let Some(appeal_id) = body_str(payload, "appeal_id") {
                     appeals.insert(
                         appeal_id.clone(),
@@ -140,14 +140,14 @@ pub fn project_moderation_queues(raw_ops: &[Value]) -> (Vec<StandingDecision>, V
                     );
                 }
             }
-            Some("ck.moderation.appeal.review") => {
+            Some("ak.moderation.appeal.review") => {
                 if let Some(appeal_id) = body_str(payload, "appeal_id")
                     && let Some(appeal) = appeals.get_mut(&appeal_id)
                 {
                     appeal.state = "under_review".to_owned();
                 }
             }
-            Some("ck.moderation.appeal.decision") | Some("ck.moderation.appeal.close") => {
+            Some("ak.moderation.appeal.decision") | Some("ck.moderation.appeal.close") => {
                 if let Some(appeal_id) = body_str(payload, "appeal_id") {
                     appeals.remove(&appeal_id);
                 }
@@ -197,7 +197,7 @@ pub fn ModerationWorkbench(
             div { class: "event", "data-testid": "moderation-decide-form",
                 div { class: "event-head",
                     span { "Seal moderation decision" }
-                    span { class: "badge", title: "ck.moderation.decision", "Decision" }
+                    span { class: "badge", title: "ak.moderation.decision", "Decision" }
                 }
                 div { class: "muted",
                     "content-moderation.md §4 — a sealed decision over a target_ref. hard_deny / soft_deny / quarantine / require_review change cross-peer visibility."
@@ -577,7 +577,7 @@ mod tests {
 
     fn decision_op(event_id: &str, target: &str, decision: &str) -> Value {
         json!({
-            "kind": "ck.moderation.decision",
+            "kind": "ak.moderation.decision",
             "event_id": event_id,
             "body": {
                 "target_ref": target,
@@ -593,7 +593,7 @@ mod tests {
             decision_op("ak:event:1", "ak:event:a", "quarantine"),
             decision_op("ak:event:2", "ak:event:b", "hard_deny"),
             json!({
-                "kind": "ck.moderation.decision.lift",
+                "kind": "ak.moderation.decision.lift",
                 "body": { "target_ref": "ak:event:a", "decision_ref": "ak:event:1" }
             }),
         ];
@@ -620,7 +620,7 @@ mod tests {
         // submit → review keeps it open as under_review.
         let open = vec![
             json!({
-                "kind": "ck.moderation.appeal.submit",
+                "kind": "ak.moderation.appeal.submit",
                 "body": {
                     "appeal_id": "ak:appeal:1",
                     "decision_ref": "ak:decision:1",
@@ -628,7 +628,7 @@ mod tests {
                 }
             }),
             json!({
-                "kind": "ck.moderation.appeal.review",
+                "kind": "ak.moderation.appeal.review",
                 "body": { "appeal_id": "ak:appeal:1" }
             }),
         ];
@@ -639,8 +639,8 @@ mod tests {
 
         // A terminal decision/close removes it from the open queue.
         for terminal in [
-            "ck.moderation.appeal.decision",
-            "ck.moderation.appeal.close",
+            "ak.moderation.appeal.decision",
+            "ak.moderation.appeal.close",
         ] {
             let mut ops = open.clone();
             ops.push(json!({ "kind": terminal, "body": { "appeal_id": "ak:appeal:1" } }));

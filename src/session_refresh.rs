@@ -1,8 +1,8 @@
-//! Session keep-alive, driven by the persisted `ck.session.grant`.
+//! Session keep-alive, driven by the persisted `ak.session.grant`.
 //!
 //! ②(A+②) model (api-conventions.md §3.3): there is **no** second client-visible
 //! local session credential minted by soland. After login, the client
-//! holds the `ck.session.grant` (issued by the Account Authority) plus the
+//! holds the `ak.session.grant` (issued by the Account Authority) plus the
 //! grant-binding (DPoP) key whose thumbprint is the grant's `cnf.jkt`. The grant
 //! itself is the live credential for `/_arkret/self/*`: every request presents
 //! `Authorization: Bearer <grant>` + a per-request `DPoP` proof.
@@ -52,7 +52,7 @@ pub enum RefreshOutcome {
     /// Nothing to do; the current grant is still fresh.
     Fresh,
     /// The grant was rotated. `session_credential` carries the live
-    /// `ck.session.grant` JWT; caller swaps it into the in-memory credential
+    /// `ak.session.grant` JWT; caller swaps it into the in-memory credential
     /// signal and the persisted config.
     Refreshed { session_credential: String },
     /// The refresh endpoint reported a terminal grant error. The persisted

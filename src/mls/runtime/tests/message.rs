@@ -539,7 +539,7 @@ fn malformed_welcome_is_counted_not_swallowed() {
     // A welcome entry whose content is not a valid MlsWelcomeEnvelope.
     let messages = json!({
         "messages": [
-            { "kind": "ck.mls.welcome", "content": { "not": "a welcome" } }
+            { "kind": "ak.mls.welcome", "content": { "not": "a welcome" } }
         ]
     });
     let outcome = apply_welcome_messages_with_device_snapshot(
@@ -590,7 +590,7 @@ fn welcome_apply_uses_key_package_identity_state() {
     let messages = json!({
         "messages": [
             {
-                "kind": "ck.mls.welcome",
+                "kind": "ak.mls.welcome",
                 "content": serde_json::to_value(&add.welcome).unwrap(),
                 "unsigned": {
                     "key_package_id": bob_key_package.keypackage_id.clone(),
@@ -632,7 +632,7 @@ fn durable_welcome_payload_without_claim_envelope_fails_closed() {
     let messages = json!({
         "messages": [
             {
-                "kind": "ck.mls.welcome",
+                "kind": "ak.mls.welcome",
                 "content": {
                     "mls_group_id": "mls-group-a",
                     "epoch": 1,
@@ -680,7 +680,7 @@ fn local_welcome_hint_filters_by_realm_group_id() {
     let other_realm = "ak:realm:01904100-0000-7000-8000-000000000002";
     let messages = vec![
         json!({
-            "kind": "ck.mls.welcome",
+            "kind": "ak.mls.welcome",
             "content": {
                 "group_id": mls_group_id_for_realm(realm),
                 "welcome_hash": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
@@ -690,14 +690,14 @@ fn local_welcome_hint_filters_by_realm_group_id() {
             },
         }),
         json!({
-            "kind": "ck.mls.welcome",
+            "kind": "ak.mls.welcome",
             "content": {
                 "group_id": mls_group_id_for_realm(other_realm),
                 "welcome_hash": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
             },
         }),
         json!({
-            "kind": "ck.key.verification.request",
+            "kind": "ak.key.verification.request",
             "content": {
                 "group_id": mls_group_id_for_realm(realm),
             },
@@ -831,7 +831,7 @@ fn ingest_realm_key_share_accepts_projected_payload_envelope() {
         &secrets,
     );
     let projected = json!({
-        "kind": "ck.realm_key.share",
+        "kind": "ak.realm_key.share",
         "sender": alice_actor,
         "sender_device_id": alice_device,
         "realm_id": realm,
@@ -902,7 +902,7 @@ fn ingest_realm_key_share_accepts_soland_content_payload_envelope() {
         &secrets,
     );
     let projected = json!({
-        "kind": "ck.realm_key.share",
+        "kind": "ak.realm_key.share",
         "sender_principal_id": alice_actor,
         "sender_device_id": alice_device,
         "content": {

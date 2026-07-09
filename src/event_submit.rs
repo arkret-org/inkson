@@ -160,7 +160,7 @@ impl EventSubmitter {
         // Only `ck.receipt.read` is an ephemeral receipt; other receipt
         // types (delivered/franking/etc.) stay on their own paths. Guard
         // the kind here so we don't accidentally widen the contract.
-        if receipt_type != "ck.receipt.read" {
+        if receipt_type != "ak.receipt.read" {
             anyhow::bail!("unsupported ephemeral receipt_type {receipt_type:?}");
         }
         let mut envelope =
@@ -618,9 +618,9 @@ enum CbaEffectPlane {
 }
 
 const DATA_PLANE_CELL_FAMILIES: &[&str] = &[
-    "ck.component.strand.discussion.timeline.v1",
-    "ck.component.message.reactions.v1",
-    "ck.component.pin.v1",
+    "ak.component.strand.discussion.timeline.v1",
+    "ak.component.message.reactions.v1",
+    "ak.component.pin.v1",
 ];
 
 fn cba_exempt_reducer_kind(kind: &arkret_sdk::events::kinds::EventKind) -> bool {
@@ -745,7 +745,7 @@ mod tests {
     fn sdk_event_without_proof(actor_id: &str) -> arkret_sdk::Event {
         serde_json::from_value(json!({
             "event_id": "ak:event:01904100-0000-7000-8000-000000000001",
-            "kind": "ck.presence",
+            "kind": "ak.presence",
             "realm_id": "ak:realm:01904100-0000-7000-8000-000000000001",
             "actor_id": actor_id,
             "actor_seq": 1,
@@ -848,19 +848,19 @@ mod tests {
                 sdk_event_with_kind(
                     "ak:event:01904100-0000-7000-8000-000000000001",
                     realm,
-                    "ck.message.create",
+                    "ak.message.create",
                     "did:web:alice.example",
                 ),
                 sdk_event_with_kind(
                     "ak:event:01904100-0000-7000-8000-000000000002",
                     other_realm,
-                    "ck.mls.genesis",
+                    "ak.mls.genesis",
                     "did:web:alice.example",
                 ),
                 sdk_event_with_kind(
                     expected.as_str(),
                     realm,
-                    "ck.mls.genesis",
+                    "ak.mls.genesis",
                     "did:web:alice.example",
                 ),
             ],
@@ -892,19 +892,19 @@ mod tests {
             "service_type": "principal_server",
             "protocol_version": "1.0",
             "supported_profiles": [
-                "ck.profile.core_event_store.v1",
-                "ck.profile.principal_server_events_api.v1"
+                "ak.profile.core_event_store.v1",
+                "ak.profile.principal_server_events_api.v1"
             ],
             "supported_operations": [
-                "ck.self.events.query.describe",
-                "ck.self.events.command.submit"
+                "ak.self.events.query.describe",
+                "ak.self.events.command.submit"
             ],
             "supported_bindings": [{"kind": "http_json", "base_url": "https://local.host"}],
-            "supported_features": ["ck.feature.soland.events.describe"],
+            "supported_features": ["ak.feature.soland.events.describe"],
             "auth_metadata": {"mode": "development"},
             "limits": {},
             "plaintext_visibility": {"default": "encrypted"},
-            "implemented_features": ["ck.feature.soland.events.describe"],
+            "implemented_features": ["ak.feature.soland.events.describe"],
             "claimed_profiles": [],
             "verified_profiles": [],
             "experimental_features": [],
@@ -941,7 +941,7 @@ mod tests {
         }
         serde_json::from_value(json!({
             "event_id": "ak:event:01904100-0000-7000-8000-000000000001",
-            "kind": "ck.presence",
+            "kind": "ak.presence",
             "realm_id": "ak:realm:01904100-0000-7000-8000-000000000001",
             "actor_id": "did:web:alice.example",
             "actor_seq": 1,

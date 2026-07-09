@@ -277,7 +277,7 @@ pub fn build_key_backup_unlock_proof_active(
         // shared-history cards permanently locked.
         let session_id = format!("ak:recovery_session:{}", crate::operation::uuid_v7());
         let local_digest = crate::canonical::canonical_sha256(&json!({
-            "type": "ck.key_backup.local_unlock_proof.v1",
+            "type": "ak.key_backup.local_unlock_proof.v1",
             "principal_id": principal_id,
             "requesting_device_id": requesting_device_id,
             "backup_id": backup_id,

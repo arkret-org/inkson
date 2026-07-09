@@ -112,9 +112,9 @@ mod personal_agent_tests {
         assert_eq!(
             scope.actions,
             vec![
-                "ck.self.events.stream.subscribe",
-                "ck.self.events.query.scan",
-                "ck.self.events.command.submit",
+                "ak.self.events.stream.subscribe",
+                "ak.self.events.query.scan",
+                "ak.self.events.command.submit",
             ]
         );
         let wire = serde_json::to_value(&scope).unwrap();
@@ -123,15 +123,15 @@ mod personal_agent_tests {
             serde_json::json!([
                 {
                     "kind": "operation",
-                    "operation": "ck.self.events.stream.subscribe"
+                    "operation": "ak.self.events.stream.subscribe"
                 },
                 {
                     "kind": "operation",
-                    "operation": "ck.self.events.query.scan"
+                    "operation": "ak.self.events.query.scan"
                 },
                 {
                     "kind": "operation",
-                    "operation": "ck.self.events.command.submit"
+                    "operation": "ak.self.events.command.submit"
                 }
             ])
         );
@@ -143,13 +143,13 @@ mod personal_agent_tests {
         let scope = requested_scope_for_presets(&[AgentServiceScopePreset::SubscribeEvents])
             .expect("service scope is required for runtime reachability");
 
-        assert_eq!(scope.actions, vec!["ck.self.events.stream.subscribe"]);
+        assert_eq!(scope.actions, vec!["ak.self.events.stream.subscribe"]);
         assert_eq!(
             content_actions_for_presets(&[AgentGrantPreset::Read, AgentGrantPreset::Draft]),
             vec![
-                "ck.event.read".to_owned(),
-                "ck.agent.draft.propose".to_owned(),
-                "ck.agent.action_request".to_owned()
+                "ak.event.read".to_owned(),
+                "ak.agent.draft.propose".to_owned(),
+                "ak.agent.action_request".to_owned()
             ]
         );
     }
@@ -164,7 +164,7 @@ mod personal_agent_tests {
 
         assert_eq!(
             scope.actions,
-            vec!["ck.self.events.query.scan", "ck.self.events.resource.get"]
+            vec!["ak.self.events.query.scan", "ck.self.events.resource.get"]
         );
     }
 
@@ -178,7 +178,7 @@ mod personal_agent_tests {
         );
         assert_eq!(
             grant["actions"],
-            serde_json::json!(["ck.message.create", "ck.reaction.add"])
+            serde_json::json!(["ak.message.create", "ck.reaction.add"])
         );
         assert_eq!(grant["subject"], "did:web:agents.example:summary");
         assert_eq!(grant["resources"][0]["kind"], "realm");
@@ -429,10 +429,10 @@ mod personal_agent_tests {
     #[test]
     fn build_action_approve_payload_binds_draft_digest_and_nonce() {
         let draft = serde_json::json!({
-            "type": "ck.agent.draft.v1",
+            "type": "ak.agent.draft.v1",
             "draft_id": "0197-draft",
             "agent_principal_id": "did:web:agents.example:summary",
-            "proposed_action": "ck.message.create",
+            "proposed_action": "ak.message.create",
             "target": {"kind": "realm", "realm_id": "ak:realm:01"},
             "content": {"body": "draft text"},
         });
@@ -444,7 +444,7 @@ mod personal_agent_tests {
         );
         assert_eq!(payload["draft_id"], "0197-draft");
         assert_eq!(payload["controller_principal_id"], "did:web:alice.example");
-        assert_eq!(payload["proposed_action"], "ck.message.create");
+        assert_eq!(payload["proposed_action"], "ak.message.create");
         assert_eq!(payload["approved_at"], "2026-06-26T00:00:00Z");
         assert_eq!(payload["expires_at"], "2026-06-26T01:00:00Z");
         let digest = payload["draft_content_digest"].as_str().unwrap();
@@ -464,7 +464,7 @@ mod personal_agent_tests {
         let request = serde_json::json!({
             "request_id": "ak:agent-action-request:0197",
             "agent_principal_id": "did:web:agents.example:summary",
-            "proposed_action": "ck.message.create",
+            "proposed_action": "ak.message.create",
             "target": {"kind": "realm", "realm_id": "ak:realm:01"},
             "request_canonical_digest": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
         });
@@ -515,7 +515,7 @@ mod personal_agent_tests {
         )
         .unwrap();
 
-        assert_eq!(operation.kind.as_str(), "ck.message.create");
+        assert_eq!(operation.kind.as_str(), "ak.message.create");
         assert_eq!(operation.actor_id.as_str(), "did:web:alice.example");
         assert_eq!(
             operation.executed_by.as_ref().map(|did| did.as_str()),
@@ -560,13 +560,13 @@ mod tests {
             "ak:realm:0196419b-0000-7000-8000-000000000001",
             "did:web:alice.example",
             "did:web:agent.example",
-            "ck.agent.v1",
+            "ak.agent.v1",
             &["strand.read"],
         )
         .expect("builds")
         .build("inkson");
         assert_eq!(op.payload["agent_id"], "did:web:agent.example");
-        assert_eq!(op.payload["endpoints"][0]["protocol"], "ck.agent.v1");
+        assert_eq!(op.payload["endpoints"][0]["protocol"], "ak.agent.v1");
         assert_eq!(op.payload["endpoints"][0]["capabilities"][0], "strand.read");
         assert!(op.payload.get("protocol").is_none());
         assert!(op.payload.get("capabilities").is_none());
@@ -790,22 +790,22 @@ mod tests {
     #[test]
     fn verify_audit_chain_requires_start_then_result() {
         // Missing start
-        let events = vec![json!({"kind": "ck.agent.interop_session.result"})];
+        let events = vec![json!({"kind": "ak.agent.interop_session.result"})];
         assert_eq!(
             verify_audit_chain(&events),
             AuditChainVerifyOutcome::ChainBreak
         );
         // Missing result
-        let events = vec![json!({"kind": "ck.agent.interop_session.start"})];
+        let events = vec![json!({"kind": "ak.agent.interop_session.start"})];
         assert_eq!(
             verify_audit_chain(&events),
             AuditChainVerifyOutcome::ChainBreak
         );
         // Middle event is not a status
         let events = vec![
-            json!({"kind": "ck.agent.interop_session.start"}),
-            json!({"kind": "ck.message.create"}),
-            json!({"kind": "ck.agent.interop_session.result"}),
+            json!({"kind": "ak.agent.interop_session.start"}),
+            json!({"kind": "ak.message.create"}),
+            json!({"kind": "ak.agent.interop_session.result"}),
         ];
         assert_eq!(
             verify_audit_chain(&events),
@@ -816,9 +816,9 @@ mod tests {
     #[test]
     fn verify_audit_chain_signature_invalid_when_audit_binding_is_garbage() {
         let events = vec![
-            json!({"kind": "ck.agent.interop_session.start"}),
+            json!({"kind": "ak.agent.interop_session.start"}),
             json!({
-                "kind": "ck.agent.interop_session.result",
+                "kind": "ak.agent.interop_session.result",
                 "payload": {
                     "audit_binding": {
                         "binding_kind": "ed25519_v1",
@@ -881,19 +881,19 @@ mod tests {
         let session = "ak:agent_interop_session:0197-aaa";
         let events = vec![
             json!({
-                "event_kind": "ck.agent.interop_session.start",
+                "event_kind": "ak.agent.interop_session.start",
                 "payload": {"session_id": session},
             }),
             json!({
-                "event_kind": "ck.agent.interop_session.status",
+                "event_kind": "ak.agent.interop_session.status",
                 "payload": {"session_id": session, "status": "negotiating"},
             }),
             json!({
-                "event_kind": "ck.agent.interop_session.status",
+                "event_kind": "ak.agent.interop_session.status",
                 "payload": {"session_id": session, "status": "accepted"},
             }),
             json!({
-                "event_kind": "ck.agent.interop_session.status",
+                "event_kind": "ak.agent.interop_session.status",
                 "payload": {"session_id": session, "status": "working"},
             }),
         ];
@@ -913,9 +913,9 @@ mod tests {
     fn live_session_rows_seed_start_as_negotiating_and_ignore_other_kinds() {
         let session = "ak:agent_interop_session:0197-bbb";
         let events = vec![
-            json!({"event_kind": "ck.message.create", "payload": {"body": "x"}}),
+            json!({"event_kind": "ak.message.create", "payload": {"body": "x"}}),
             json!({
-                "event_kind": "ck.agent.interop_session.start",
+                "event_kind": "ak.agent.interop_session.start",
                 "payload": {"session_id": session},
             }),
         ];
@@ -933,15 +933,15 @@ mod tests {
         let session = "ak:agent_interop_session:0197-ccc";
         let events = vec![
             json!({
-                "event_kind": "ck.agent.interop_session.start",
+                "event_kind": "ak.agent.interop_session.start",
                 "payload": {"session_id": session},
             }),
             json!({
-                "event_kind": "ck.agent.interop_session.status",
+                "event_kind": "ak.agent.interop_session.status",
                 "payload": {"session_id": session, "status": "working"},
             }),
             json!({
-                "event_kind": "ck.agent.interop_session.result",
+                "event_kind": "ak.agent.interop_session.result",
                 "payload": {"session_id": session, "status": "completed"},
             }),
         ];
@@ -1023,10 +1023,10 @@ mod tests {
             },
         });
         let events = vec![
-            json!({"kind": "ck.agent.interop_session.start"}),
-            json!({"kind": "ck.agent.interop_session.status"}),
+            json!({"kind": "ak.agent.interop_session.start"}),
+            json!({"kind": "ak.agent.interop_session.status"}),
             json!({
-                "kind": "ck.agent.interop_session.result",
+                "kind": "ak.agent.interop_session.result",
                 "payload": result_payload,
             }),
         ];

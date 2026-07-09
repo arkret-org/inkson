@@ -69,7 +69,7 @@ fn calendar_rsvp_operation_uses_occurrence_payload() {
     )
     .unwrap();
 
-    assert_eq!(event.kind.as_str(), "ck.rsvp.set");
+    assert_eq!(event.kind.as_str(), "ak.rsvp.set");
     assert_eq!(
         sdk_event_local_target_ref(&event),
         Some(TEST_CALENDAR_STRAND_ID)
@@ -164,7 +164,7 @@ fn calendar_overlay_merges_partial_direct_schedule_patch() {
         realm_id: Some(TEST_REALM_ID.to_owned()),
         received_at: chrono::Utc::now(),
         payload: json!({
-            "kind": "ck.strand.update",
+            "kind": "ak.strand.update",
             "operation_id": "op-calendar-start",
             "write_state": "queued",
             "body": {

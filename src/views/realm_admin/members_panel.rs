@@ -781,10 +781,10 @@ fn local_terminal_invite_ids_for_realm(
         .filter_map(|record| {
             let payload = &record.payload;
             match raw_operation_payload_kind(payload).as_deref() {
-                Some("ck.invite.accept") if raw_operation_is_accepted_fact(payload) => {
+                Some("ak.invite.accept") if raw_operation_is_accepted_fact(payload) => {
                     raw_operation_invite_ref(payload)
                 }
-                Some("ck.invite.cancel" | "ck.invite.revoke") => raw_operation_invite_ref(payload),
+                Some("ak.invite.cancel" | "ck.invite.revoke") => raw_operation_invite_ref(payload),
                 _ => None,
             }
         })
@@ -933,7 +933,7 @@ fn local_pending_invite_profile_from_raw_operation(
         return None;
     }
     let payload = &record.payload;
-    if raw_operation_payload_kind(payload).as_deref() != Some("ck.invite.create") {
+    if raw_operation_payload_kind(payload).as_deref() != Some("ak.invite.create") {
         return None;
     }
     let state = trimmed_string(payload.get("state").or_else(|| payload.get("status")))
@@ -1051,7 +1051,7 @@ fn local_invitee_by_invite_id_for_realm(
             continue;
         }
         let payload = &record.payload;
-        if raw_operation_payload_kind(payload).as_deref() != Some("ck.invite.create") {
+        if raw_operation_payload_kind(payload).as_deref() != Some("ak.invite.create") {
             continue;
         }
         let Some(invite_id) = raw_operation_invite_ref(payload) else {
@@ -1078,7 +1078,7 @@ fn local_membership_profile_from_raw_operation(
         return None;
     }
     match raw_operation_payload_kind(payload).as_deref()? {
-        "ck.member.state" => {
+        "ak.member.state" => {
             let actor_id = raw_member_actor_id(payload)?;
             let membership = raw_member_membership(payload)?;
             let mut profile = MemberProfile::bare(actor_id);
@@ -1086,7 +1086,7 @@ fn local_membership_profile_from_raw_operation(
             profile.invite_id = raw_operation_invite_ref(payload);
             Some(profile)
         }
-        "ck.invite.accept" => {
+        "ak.invite.accept" => {
             let invite_id = raw_operation_invite_ref(payload);
             let actor_id = raw_member_actor_id(payload).or_else(|| {
                 invite_id
@@ -1637,7 +1637,7 @@ fn PendingInviteRow(
                                                 format!("ak:operation:{}", crate::operation::uuid_v7()),
                                                 Some(realm.clone()),
                                                 json!({
-                                                    "kind": "ck.invite.cancel",
+                                                    "kind": "ak.invite.cancel",
                                                     "invite_id": invite_id.clone(),
                                                     "invitee": member.clone(),
                                                     "state": "revoked",
@@ -1913,7 +1913,7 @@ pub(crate) fn parse_realm_key_request_envelope(
         .or_else(|| envelope.get("type"))
         .and_then(Value::as_str)
         .unwrap_or_default();
-    if kind != "ck.realm_key.request" {
+    if kind != "ak.realm_key.request" {
         return None;
     }
     let payload_value = envelope
@@ -2328,7 +2328,7 @@ fn provider_candidates_from_inbox(
             .unwrap_or_default();
         let is_history_bearing = matches!(
             kind,
-            "ck.mls.welcome" | "ck.mls.commit" | "ck.realm_key.share"
+            "ak.mls.welcome" | "ck.mls.commit" | "ck.realm_key.share"
         ) || kind == arkret_sdk::events::kinds::REALM_KEY_SHARE;
         if !is_history_bearing {
             continue;
@@ -3116,7 +3116,7 @@ pub fn RealmMembersPanel(
                             crate::realm_read_api::authz_check_raw(
                                 &api.sdk_http_client()?,
                                 &actor,
-                                "ck.invite.create",
+                                "ak.invite.create",
                                 &realm,
                             )
                             .await
@@ -3126,7 +3126,7 @@ pub fn RealmMembersPanel(
                             crate::realm_read_api::authz_check_raw(
                                 &api.sdk_http_client()?,
                                 &actor,
-                                "ck.invite.cancel",
+                                "ak.invite.cancel",
                                 &realm,
                             )
                             .await
@@ -3144,7 +3144,7 @@ pub fn RealmMembersPanel(
                             crate::realm_read_api::authz_check_raw(
                                 &api.sdk_http_client()?,
                                 &actor,
-                                "ck.realm.admin",
+                                "ak.realm.admin",
                                 &realm,
                             )
                             .await
@@ -3473,7 +3473,7 @@ pub fn RealmMembersPanel(
                                                                             event_id.clone(),
                                                                             Some(realm.clone()),
                                                                             json!({
-                                                                                "kind": "ck.invite.create",
+                                                                                "kind": "ak.invite.create",
                                                                                 "invite_id": invite_id,
                                                                                 "invitee": did,
                                                                                 "state": "pending",
@@ -3640,7 +3640,7 @@ pub fn RealmMembersPanel(
                                                                         op_id.clone(),
                                                                         Some(realm.clone()),
                                                                         json!({
-                                                                            "kind": "ck.invite.create",
+                                                                            "kind": "ak.invite.create",
                                                                             "invite_id": invite_id,
                                                                             "invitee": invitee_did.clone(),
                                                                             "invitee_label": invitee_label.clone(),
@@ -4633,7 +4633,7 @@ mod tests {
             "ak:event:member-join".to_owned(),
             Some(realm_id.to_owned()),
             serde_json::json!({
-                "kind": "ck.member.state",
+                "kind": "ak.member.state",
                 "write_state": "synced",
                 "body": {
                     "actor_id": "did:web:bob.example",
@@ -4685,7 +4685,7 @@ mod tests {
             "ak:event:invite-local".to_owned(),
             Some(realm_id.to_owned()),
             serde_json::json!({
-                "kind": "ck.invite.create",
+                "kind": "ak.invite.create",
                 "invitee": "did:web:bob.example",
                 "invitee_label": "bob:example.com",
                 "state": "pending"
@@ -4710,7 +4710,7 @@ mod tests {
             "ak:event:invite-local".to_owned(),
             Some(realm_id.to_owned()),
             serde_json::json!({
-                "kind": "ck.invite.create",
+                "kind": "ak.invite.create",
                 "invite_id": invite_id,
                 "invitee": "did:web:bob.example",
                 "invitee_label": "bob:example.com",
@@ -4721,7 +4721,7 @@ mod tests {
             "ak:event:invite-accept".to_owned(),
             Some(realm_id.to_owned()),
             serde_json::json!({
-                "kind": "ck.invite.accept",
+                "kind": "ak.invite.accept",
                 "write_state": "synced",
                 "body": {
                     "invite_ref": invite_id
@@ -4758,7 +4758,7 @@ mod tests {
             "ak:event:invite-local".to_owned(),
             Some(realm_id.to_owned()),
             serde_json::json!({
-                "kind": "ck.invite.create",
+                "kind": "ak.invite.create",
                 "invite_id": invite_id,
                 "invitee": "did:web:bob.example",
                 "invitee_label": "bob:example.com",
@@ -4769,7 +4769,7 @@ mod tests {
             "local-accept-queued".to_owned(),
             Some(realm_id.to_owned()),
             serde_json::json!({
-                "kind": "ck.invite.accept",
+                "kind": "ak.invite.accept",
                 "write_state": "queued",
                 "body": {
                     "invite_ref": invite_id
@@ -4803,7 +4803,7 @@ mod tests {
             "ak:event:invite-local".to_owned(),
             Some(realm_id.to_owned()),
             serde_json::json!({
-                "kind": "ck.invite.create",
+                "kind": "ak.invite.create",
                 "invite_id": invite_id,
                 "invitee": "did:web:bob.example",
                 "invitee_label": "bob:example.com",
@@ -4814,7 +4814,7 @@ mod tests {
             "ak:event:invite-cancel".to_owned(),
             Some(realm_id.to_owned()),
             serde_json::json!({
-                "kind": "ck.invite.cancel",
+                "kind": "ak.invite.cancel",
                 "invite_id": invite_id,
                 "state": "revoked"
             }),
@@ -4844,7 +4844,7 @@ mod tests {
             "ak:event:invite-local".to_owned(),
             Some(realm_id.to_owned()),
             serde_json::json!({
-                "kind": "ck.invite.create",
+                "kind": "ak.invite.create",
                 "invitee": "did:web:bob.example",
                 "state": "pending"
             }),
@@ -4882,7 +4882,7 @@ mod tests {
             "ak:event:member-join".to_owned(),
             Some(realm_id.to_owned()),
             serde_json::json!({
-                "kind": "ck.member.state",
+                "kind": "ak.member.state",
                 "write_state": "synced",
                 "body": {
                     "actor_id": "did:web:bob.example",
@@ -4916,7 +4916,7 @@ mod tests {
             "ak:event:member-join-1".to_owned(),
             Some(realm_id.to_owned()),
             serde_json::json!({
-                "kind": "ck.member.state",
+                "kind": "ak.member.state",
                 "write_state": "synced",
                 "created_at": "2026-06-29T00:00:00Z",
                 "body": {
@@ -4929,7 +4929,7 @@ mod tests {
             "ak:event:member-leave".to_owned(),
             Some(realm_id.to_owned()),
             serde_json::json!({
-                "kind": "ck.member.state",
+                "kind": "ak.member.state",
                 "write_state": "synced",
                 "created_at": "2026-06-29T00:01:00Z",
                 "body": {
@@ -4947,7 +4947,7 @@ mod tests {
             "ak:event:member-join-2".to_owned(),
             Some(realm_id.to_owned()),
             serde_json::json!({
-                "kind": "ck.member.state",
+                "kind": "ak.member.state",
                 "write_state": "synced",
                 "created_at": "2026-06-29T00:02:00Z",
                 "body": {
@@ -5079,28 +5079,28 @@ mod tests {
             // A Welcome from the admitting (provider) device — top-level sender +
             // sender_device_id, addressed to this realm.
             json!({
-                "kind": "ck.mls.welcome",
+                "kind": "ak.mls.welcome",
                 "sender": PROVIDER_DID,
                 "sender_device_id": PROVIDER_DEVICE,
                 "content": { "realm_id": "ak:realm:abc" },
             }),
             // A self-authored message must never name ourselves as provider.
             json!({
-                "kind": "ck.mls.commit",
+                "kind": "ak.mls.commit",
                 "sender": SELF_DID,
                 "sender_device_id": "ak:device:self",
                 "realm_id": "ak:realm:abc",
             }),
             // Unrelated kind is ignored.
             json!({
-                "kind": "ck.typing",
+                "kind": "ak.typing",
                 "sender": "did:web:noise.example",
                 "sender_device_id": "ak:device:noise",
                 "realm_id": "ak:realm:abc",
             }),
             // A message for a different realm is filtered out.
             json!({
-                "kind": "ck.mls.welcome",
+                "kind": "ak.mls.welcome",
                 "sender": "did:web:other.example",
                 "sender_device_id": "ak:device:other",
                 "realm_id": "ak:realm:zzz",
@@ -5117,13 +5117,13 @@ mod tests {
     fn provider_candidates_dedup_repeated_sender() {
         let inbox = vec![
             json!({
-                "kind": "ck.mls.welcome",
+                "kind": "ak.mls.welcome",
                 "sender": PROVIDER_DID,
                 "sender_device_id": PROVIDER_DEVICE,
                 "realm_id": "ak:realm:abc",
             }),
             json!({
-                "kind": "ck.realm_key.share",
+                "kind": "ak.realm_key.share",
                 "sender": PROVIDER_DID,
                 "sender_device_id": PROVIDER_DEVICE,
                 "realm_id": "ak:realm:abc",
@@ -5136,7 +5136,7 @@ mod tests {
     #[test]
     fn harvests_provider_candidate_from_projected_device_welcome_envelope() {
         let inbox = vec![json!({
-            "kind": "ck.mls.welcome",
+            "kind": "ak.mls.welcome",
             "sender_principal_id": PROVIDER_DID,
             "sender_device_id": PROVIDER_DEVICE,
             "recipient_principal_id": SELF_DID,
@@ -5173,7 +5173,7 @@ mod tests {
         store.save_realm_tree_projection(
             realm,
             json!({
-                "schema": "ck.schema.realm.v1",
+                "schema": "ak.schema.realm.v1",
                 "object": {
                     "history_visibility": "shared",
                     "encryption_profile": "mls_rfc9420",
@@ -5185,7 +5185,7 @@ mod tests {
         snapshot.epoch = 1;
         store.save_mls_snapshot(realm.to_owned(), snapshot);
         store.ingest_to_device_messages(&[json!({
-            "kind": "ck.mls.welcome",
+            "kind": "ak.mls.welcome",
             "sender_principal_id": PROVIDER_DID,
             "sender_device_id": PROVIDER_DEVICE,
             "recipient_principal_id": SELF_DID,
@@ -5231,7 +5231,7 @@ mod tests {
                 .with_timezone(&chrono::Utc),
         };
         let envelope = json!({
-            "kind": "ck.realm_key.request",
+            "kind": "ak.realm_key.request",
             "realm_id": realm,
             "request_id": "sha256:5e54ee81d9debde1e0a09f20e0c7bc282f511e5ccb6c1e41d75f07018db835e9",
             "sender_device_id": "ak:device:self",
@@ -5271,7 +5271,7 @@ mod tests {
                 .with_timezone(&chrono::Utc),
         };
         let envelope = json!({
-            "kind": "ck.realm_key.request",
+            "kind": "ak.realm_key.request",
             "realm_id": realm,
             "request_id": "sha256:answer-dedup",
             "payload": request,
@@ -5307,7 +5307,7 @@ mod tests {
                 .with_timezone(&chrono::Utc),
         };
         let envelope = json!({
-            "kind": "ck.realm_key.request",
+            "kind": "ak.realm_key.request",
             "realm_id": realm,
             "payload": request,
         });
@@ -5341,7 +5341,7 @@ mod tests {
                 .with_timezone(&chrono::Utc),
         };
         let envelope = json!({
-            "kind": "ck.realm_key.request",
+            "kind": "ak.realm_key.request",
             "realm_id": "ak:realm:other",
             "payload": request,
         });

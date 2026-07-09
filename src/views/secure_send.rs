@@ -70,7 +70,7 @@ pub(crate) fn run_local_mls_encrypt(
 ) -> LocalMlsEncryptResult {
     let empty = (None, Vec::new(), None, None, None);
     let secure_store = crate::secure_key_store::default_secure_key_store("inkson");
-    let aad = arkret_sdk::EncryptedEnvelopeAadV1::hidden(realm_id, "ck.message.create");
+    let aad = arkret_sdk::EncryptedEnvelopeAadV1::hidden(realm_id, "ak.message.create");
     let Ok(aad_value) = serde_json::to_value(&aad) else {
         return empty;
     };

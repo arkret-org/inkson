@@ -12,7 +12,7 @@ fn mls_encrypted_projection_detects_epoch_pause_scope() {
     store.save_realm_tree_projection(
         realm.to_owned(),
         json!({
-            "schema": "ck.schema.realm.v1",
+            "schema": "ak.schema.realm.v1",
             "summary": {
                 "title": "Encrypted",
                 "encryption_profile": "mls_rfc9420"
@@ -25,7 +25,7 @@ fn mls_encrypted_projection_detects_epoch_pause_scope() {
     store.save_realm_tree_projection(
         plain.to_owned(),
         json!({
-            "schema": "ck.schema.realm.v1",
+            "schema": "ak.schema.realm.v1",
             "summary": {
                 "title": "Plain",
                 "encryption_profile": "none"
@@ -56,7 +56,7 @@ fn minimal_metadata_projection_detected_from_profiles_arrays() {
         json!({
             "summary": {
                 "active_profiles": [
-                    "ck.profile.core.v1",
+                    "ak.profile.core.v1",
                     arkret_sdk::mls::MINIMAL_METADATA_REALM_PROFILE
                 ]
             }
@@ -67,7 +67,7 @@ fn minimal_metadata_projection_detected_from_profiles_arrays() {
     let plain = "ak:realm:0196419b-0000-7000-8000-0000000000a3";
     store.save_realm_tree_projection(
         plain.to_owned(),
-        json!({ "profiles": ["ck.profile.core.v1"] }),
+        json!({ "profiles": ["ak.profile.core.v1"] }),
     );
     assert!(!store.realm_projection_is_minimal_metadata(plain));
 
@@ -154,7 +154,7 @@ fn apply_snapshot_chunks_imports_projection_status_and_encrypted_payload() {
     let message_id = "ak:message:01904100-0000-7000-8000-0000000000a1";
     let realm_id = "ak:realm:01904100-0000-7000-8000-0000000000aa";
     let encrypted_message = json!({
-        "schema": "ck.schema.encrypted_envelope.v1",
+        "schema": "ak.schema.encrypted_envelope.v1",
         "scheme": "mls-rfc9420",
         "group_id": realm_id,
         "epoch": 1,
@@ -168,7 +168,7 @@ fn apply_snapshot_chunks_imports_projection_status_and_encrypted_payload() {
     });
     let items = vec![
         arkret_sdk::SnapshotMaterializedItem {
-            kind: "ck.schema.encrypted_envelope.v1".to_owned(),
+            kind: "ak.schema.encrypted_envelope.v1".to_owned(),
             id: message_id.to_owned(),
             object: encrypted_message.clone(),
             source_event_id: snapshot_event_id("0000000000a1"),

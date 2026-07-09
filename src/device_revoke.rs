@@ -79,12 +79,12 @@ impl DeviceRevokeStep {
     pub fn canonical_event_kind(&self) -> Option<&'static str> {
         match self {
             Self::LocalRevoke => None,
-            Self::DeviceRevoked => Some("ck.device.revoke"),
+            Self::DeviceRevoked => Some("ak.device.revoke"),
             Self::RotateAccountMlsSecret => None,
-            Self::MlsProposeRemove { .. } => Some("ck.mls.proposal"),
-            Self::MlsCommit { .. } => Some("ck.mls.commit"),
-            Self::MlsWelcome { .. } => Some("ck.mls.welcome"),
-            Self::InvalidateKeyPackages => Some("ck.mls.keypackage"),
+            Self::MlsProposeRemove { .. } => Some("ak.mls.proposal"),
+            Self::MlsCommit { .. } => Some("ak.mls.commit"),
+            Self::MlsWelcome { .. } => Some("ak.mls.welcome"),
+            Self::InvalidateKeyPackages => Some("ak.mls.keypackage"),
             Self::UnregisterPushToken => None,
         }
     }
@@ -595,11 +595,11 @@ mod tests {
         assert_eq!(
             kinds,
             vec![
-                "ck.device.revoke",
-                "ck.mls.proposal",
-                "ck.mls.commit",
-                "ck.mls.welcome",
-                "ck.mls.keypackage",
+                "ak.device.revoke",
+                "ak.mls.proposal",
+                "ak.mls.commit",
+                "ak.mls.welcome",
+                "ak.mls.keypackage",
             ]
         );
     }

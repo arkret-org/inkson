@@ -366,7 +366,7 @@ pub fn DraftApprovalPanel(
         div { class: "event", "data-testid": "agent-draft-approval",
             div { class: "event-head",
                 span { "Draft and action approvals" }
-                span { class: "badge blue", "ck.agent.* approval" }
+                span { class: "badge blue", "ak.agent.* approval" }
             }
             div { class: "muted",
                 "Review agent-proposed drafts or action requests before anything reaches a shared Realm. Approve submits ck.agent.action_approve; reject submits ck.agent.action_reject with a human reason when provided."
@@ -382,7 +382,7 @@ pub fn DraftApprovalPanel(
             div { class: "workflow-form",
                 Input {
                     "data-testid": "agent-draft-input",
-                    placeholder: "ck.agent.draft.v1 or ck.agent.action_request payload (JSON)",
+                    placeholder: "ak.agent.draft.v1 or ck.agent.action_request payload (JSON)",
                     value: "{draft_input}",
                     oninput: move |event: FormEvent| draft_input.set(event.value()),
                 }

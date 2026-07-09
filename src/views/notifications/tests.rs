@@ -20,7 +20,7 @@ mod tests {
     fn hydrate_notifications_applies_push_rules_and_dnd() {
         let raw = vec![json!({
             "notification_id": "n1",
-            "schema": "ck.schema.notification.v1",
+            "schema": "ak.schema.notification.v1",
             "notification_type": "message",
             "realm_id": "ak:realm:quiet",
             "body": "hello"
@@ -45,7 +45,7 @@ mod tests {
     fn pending_invites_are_hydrated_as_notifications() {
         let invite = json!({
             "id": "ak:invite:01904100-0000-7000-8000-000000000001",
-            "schema": "ck.schema.invite.v1",
+            "schema": "ak.schema.invite.v1",
             "realm_id": "ak:realm:01904100-0000-7000-8000-000000000002",
             "inviter": "did:web:alice.example",
             "state": "pending",
@@ -53,7 +53,7 @@ mod tests {
         });
         let duplicate_invite = json!({
             "id": "ak:invite:01904100-0000-7000-8000-000000000099",
-            "schema": "ck.schema.invite.v1",
+            "schema": "ak.schema.invite.v1",
             "realm_id": "ak:realm:01904100-0000-7000-8000-000000000002",
             "inviter": "did:web:alice.example",
             "state": "pending",
@@ -105,7 +105,7 @@ mod tests {
         let notifications = hydrate_notifications(
             vec![json!({
                 "notification_id": "n1",
-                "schema": "ck.schema.notification.v1",
+                "schema": "ak.schema.notification.v1",
                 "notification_type": "mention",
                 "realm_id": "ak:realm:quiet",
                 "body": "hello",
@@ -131,10 +131,10 @@ mod tests {
         local_state.read_cursors.insert(
             "cursor".to_owned(),
             ReadMarkerRecord {
-                marker_type: "ck.read_cursor.advance".to_owned(),
+                marker_type: "ak.read_cursor.advance".to_owned(),
                 body: ReadMarkerBody {
                     id: "ak:read_cursor:01904100-0000-7000-8000-000000000006".to_owned(),
-                    schema: "ck.schema.read_cursor.v1".to_owned(),
+                    schema: "ak.schema.read_cursor.v1".to_owned(),
                     realm_id: realm_id.to_owned(),
                     read_scope,
                     position: ReadCursorPosition {
@@ -200,7 +200,7 @@ mod tests {
         // A brand-new invitation (distinct invite id) to the same realm.
         let invite = json!({
             "id": "ak:invite:00000000-0000-7000-8000-0000000000bb",
-            "schema": "ck.schema.invite.v1",
+            "schema": "ak.schema.invite.v1",
             "realm_id": realm_id,
             "state": "pending",
             "created_at": "2026-06-10T00:00:00Z",
@@ -292,7 +292,7 @@ mod tests {
         let realm_id = "ak:realm:01904100-0000-7000-8000-000000000010";
         let invite = json!({
             "id": "ak:invite:01904100-0000-7000-8000-000000000011",
-            "schema": "ck.schema.invite.v1",
+            "schema": "ak.schema.invite.v1",
             "realm_id": realm_id,
             "realm_title": "Partner Launch",
             "state": "pending",
@@ -325,7 +325,7 @@ mod tests {
     fn notification_eval_context_extracts_watch_and_e2ee_flags() {
         let ctx = notification_eval_context(&json!({
             "notification_id": "n1",
-            "event_kind": "ck.message.create",
+            "event_kind": "ak.message.create",
             "notification_type": "mention",
             "actor_id": "did:web:alice.example",
             "realm_id": "ak:realm:e2ee",
@@ -337,7 +337,7 @@ mod tests {
             "mentions_actor": true
         }));
 
-        assert_eq!(ctx.event_kind, "ck.message.create");
+        assert_eq!(ctx.event_kind, "ak.message.create");
         assert_eq!(ctx.notification_type, "mention");
         assert_eq!(ctx.strand_track.as_deref(), Some("discussion"));
         assert_eq!(ctx.watch_level, Some(WatchLevel::Participating));
@@ -351,7 +351,7 @@ mod tests {
     fn notification_eval_context_extracts_schedule_target() {
         let ctx = notification_eval_context(&json!({
             "notification_id": "n1",
-            "event_kind": "ck.strand.update",
+            "event_kind": "ak.strand.update",
             "notification_type": "schedule",
             "schedule_target": true,
         }));
@@ -364,7 +364,7 @@ mod tests {
     fn notification_eval_context_ignores_deprecated_sender_fields() {
         let ctx = notification_eval_context(&json!({
             "notification_id": "n1",
-            "event_kind": "ck.message.create",
+            "event_kind": "ak.message.create",
             "notification_type": "mention",
             "sender": "did:web:removed.example",
             "sender_did": "did:web:removed-did.example",
@@ -439,12 +439,12 @@ mod tests {
     fn notification_source_falls_back_to_account_data_only_when_endpoint_missing() {
         let account_data = vec![
             json!({
-                "schema": "ck.schema.notification.v1",
+                "schema": "ak.schema.notification.v1",
                 "notification_id": "n1",
                 "read": false
             }),
             json!({
-                "kind": "ck.profile",
+                "kind": "ak.profile",
                 "id": "profile"
             }),
         ];

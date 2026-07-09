@@ -15,7 +15,7 @@ impl CokretApi {
     }
 
     // ②(A+②): the Principal Server does not mint a second client-visible
-    // credential. The held credential is the `ck.session.grant` itself,
+    // credential. The held credential is the `ak.session.grant` itself,
     // presented per-request as
     // `Authorization: Bearer <grant>` + a `DPoP` proof (see
     // `CokretApi::with_bearer` / `with_dpop_device`).

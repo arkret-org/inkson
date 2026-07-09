@@ -24,7 +24,7 @@ pub fn build_morph_create(
     // key/shape stays aligned with the schema.
     let body = arkret_sdk::ObjectCreatePayload::new(morph)
         .to_value()
-        .map_err(|e| anyhow::anyhow!("ck.morph.create payload serialize: {e}"))?;
+        .map_err(|e| anyhow::anyhow!("ak.morph.create payload serialize: {e}"))?;
     Ok(OperationBuilder::new(
         realm_id,
         actor,
@@ -48,7 +48,7 @@ pub fn build_morph_update(
     patch: Value,
 ) -> anyhow::Result<OperationBuilder> {
     let patch: arkret_sdk::Patch = serde_json::from_value(patch)
-        .map_err(|err| anyhow::anyhow!("ck.morph.update patch must match ck.patch.v1: {err}"))?;
+        .map_err(|err| anyhow::anyhow!("ak.morph.update patch must match ck.patch.v1: {err}"))?;
     let typed_morph_id = arkret_sdk::MorphId::new(morph_id.to_owned())
         .map_err(|err| anyhow::anyhow!("invalid morph id {morph_id:?}: {err:?}"))?;
     let body = arkret_sdk::MorphUpdatePayload::for_morph(typed_morph_id, patch)
@@ -177,7 +177,7 @@ mod tests {
         )
         .expect("builds")
         .build("node");
-        assert_eq!(op.kind.as_str(), "ck.morph.update");
+        assert_eq!(op.kind.as_str(), "ak.morph.update");
         assert_eq!(
             op.payload["target_ref"],
             "ak:morph:0196419b-0000-7000-8000-000000000001"
@@ -213,7 +213,7 @@ mod tests {
         )
         .expect("builds")
         .build("node");
-        assert_eq!(op.kind.as_str(), "ck.relation.create");
+        assert_eq!(op.kind.as_str(), "ak.relation.create");
         // relation id is routed via target_ref, not a payload field.
         assert_eq!(op.local_target_ref(), Some("ak:relation:r1"));
         assert!(
@@ -237,7 +237,7 @@ mod tests {
         )
         .expect("builds")
         .build("node");
-        assert_eq!(op.kind.as_str(), "ck.container.move_item");
+        assert_eq!(op.kind.as_str(), "ak.container.move_item");
         assert_eq!(
             op.local_target_ref(),
             Some("ak:space:0196419b-0000-7000-8000-000000000001")
@@ -266,7 +266,7 @@ mod tests {
             ],
         )
         .build("node");
-        assert_eq!(op.kind.as_str(), "ck.container.rebalance");
+        assert_eq!(op.kind.as_str(), "ak.container.rebalance");
         assert_eq!(
             op.payload["container_ref"],
             "ak:space:0196419b-0000-7000-8000-000000000001"

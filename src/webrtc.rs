@@ -129,7 +129,7 @@ impl CallSignalReceiver {
             Some(d) => d,
             None => {
                 return CallSignalIngestOutcome::Rejected {
-                    reason: "ck.call.signal envelope missing device_id".to_owned(),
+                    reason: "ak.call.signal envelope missing device_id".to_owned(),
                 };
             }
         };
@@ -142,7 +142,7 @@ impl CallSignalReceiver {
         if let Err(err) = self.state.observe(&key, payload.seq) {
             tracing::warn!(
                 target: "inkson::webrtc",
-                "ck.call.signal seq rollback: {err}"
+                "ak.call.signal seq rollback: {err}"
             );
             return CallSignalIngestOutcome::SeqRollback {
                 call_id: payload.call_id.as_str().to_owned(),
@@ -195,7 +195,7 @@ mod tests {
     fn call_signal_classifies_as_ephemeral_in_registry() {
         use crate::conformance::{EventKindWireScope, event_kind_wire_scope};
         assert_eq!(
-            event_kind_wire_scope("ck.call.signal"),
+            event_kind_wire_scope("ak.call.signal"),
             Some(EventKindWireScope::Ephemeral)
         );
     }
@@ -204,7 +204,7 @@ mod tests {
     fn call_state_durable_kind_lookup() {
         use crate::conformance::{EventKindWireScope, event_kind_wire_scope};
         assert_eq!(
-            event_kind_wire_scope("ck.call.state"),
+            event_kind_wire_scope("ak.call.state"),
             Some(EventKindWireScope::Durable)
         );
     }
@@ -219,7 +219,7 @@ mod tests {
             None,
         )
         .build("node");
-        assert_eq!(op.kind, "ck.call.state");
+        assert_eq!(op.kind, "ak.call.state");
         assert_eq!(op.payload["state"], "active");
     }
 
@@ -235,7 +235,7 @@ mod tests {
             true,
         )
         .build("node");
-        assert_eq!(op.kind, "ck.call.recording.start");
+        assert_eq!(op.kind, "ak.call.recording.start");
         assert_eq!(op.payload["recording_agent"], "did:web:alice");
         assert_eq!(op.payload["capture_kind"], "recording");
         assert_eq!(op.payload["mode"], "audio_video");
@@ -255,7 +255,7 @@ mod tests {
             true,
         )
         .build("node");
-        assert_eq!(op.kind, "ck.call.recording.start");
+        assert_eq!(op.kind, "ak.call.recording.start");
         assert_eq!(op.payload["capture_kind"], "transcript");
         assert_eq!(op.payload["mode"], "audio");
     }
@@ -282,7 +282,7 @@ mod tests {
     fn v1_builder_accepts_canonical_signal_types() {
         for st in arkret_sdk::CALL_SIGNAL_TYPES {
             let env = make_v1_envelope(1, st);
-            assert_eq!(env.kind, "ck.call.signal");
+            assert_eq!(env.kind, "ak.call.signal");
             assert!(env.device_id.is_some());
         }
     }
@@ -323,7 +323,7 @@ mod tests {
         // Hand-build an envelope without proof to verify the receiver
         // rejects it (the Round 4 schema requires proof).
         let env = arkret_sdk::EphemeralEnvelope::new(
-            "ck.call.signal",
+            "ak.call.signal",
             arkret_sdk::RealmId::new("ak:realm:01904100-0000-7000-8000-000000000001").unwrap(),
             arkret_sdk::Did::new("did:web:alice.example").unwrap(),
             Some(

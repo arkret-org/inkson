@@ -78,7 +78,7 @@ pub const VAULT_NONCE_SALT_LEN: usize = 16;
 
 /// AEAD identifiers carried on the wire (spec §7.5 / §12 example).
 pub const VAULT_AEAD_NAME: &str = "xchacha20_poly1305";
-pub const VAULT_AEAD_PROFILE: &str = "ck.aead.xchacha20_poly1305.v1";
+pub const VAULT_AEAD_PROFILE: &str = "ak.aead.xchacha20_poly1305.v1";
 
 const HKDF_NONCE_INFO: &[u8] = b"arkret-key-backup-aead-nonce-v1";
 const HKDF_PASSKEY_WRAP_INFO: &[u8] = b"arkret-recovery-passkey-wrap-v1";

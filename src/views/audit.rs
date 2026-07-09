@@ -33,7 +33,7 @@ fn extract_string(value: &Value, key: &str) -> Option<String> {
 
 fn classify_audit_row(operation_id: &str, body: &Value) -> Option<AuditRow> {
     let kind = extract_string(body, "kind")?;
-    if !matches!(kind.as_str(), "ck.audit.accessed" | "ck.audit.ryw_receipt") {
+    if !matches!(kind.as_str(), "ak.audit.accessed" | "ck.audit.ryw_receipt") {
         return None;
     }
     Some(AuditRow {
@@ -56,11 +56,11 @@ pub fn AuditPanel(state_store: Signal<LocalStateStore>) -> Element {
         .collect();
     let attested_count = rows
         .iter()
-        .filter(|row| row.kind == "ck.audit.accessed")
+        .filter(|row| row.kind == "ak.audit.accessed")
         .count();
     let receipt_count = rows
         .iter()
-        .filter(|row| row.kind == "ck.audit.ryw_receipt")
+        .filter(|row| row.kind == "ak.audit.ryw_receipt")
         .count();
 
     rsx! {
@@ -74,12 +74,12 @@ pub fn AuditPanel(state_store: Signal<LocalStateStore>) -> Element {
                     div { class: "metric",
                         strong { "Access events" }
                         span { "data-testid": "audit-accessed-count", "{attested_count}" }
-                        div { class: "muted", "ck.audit.accessed (attested policy)" }
+                        div { class: "muted", "ak.audit.accessed (attested policy)" }
                     }
                     div { class: "metric",
                         strong { "Write receipts" }
                         span { "data-testid": "audit-receipt-count", "{receipt_count}" }
-                        div { class: "muted", "ck.audit.ryw_receipt (disclosed policy)" }
+                        div { class: "muted", "ak.audit.ryw_receipt (disclosed policy)" }
                     }
                     div { class: "metric",
                         strong { "Total observed" }
@@ -153,14 +153,14 @@ mod tests {
         let row = classify_audit_row(
             "op-1",
             &json!({
-                "kind": "ck.audit.accessed",
+                "kind": "ak.audit.accessed",
                 "realm_id": "ak:realm:s1",
                 "target_event_id": "ak:event:abc",
                 "reader_device": "did:key:zDevice",
             }),
         )
         .expect("should classify");
-        assert_eq!(row.kind, "ck.audit.accessed");
+        assert_eq!(row.kind, "ak.audit.accessed");
         assert_eq!(row.realm_id.as_deref(), Some("ak:realm:s1"));
         assert_eq!(row.target_event_id.as_deref(), Some("ak:event:abc"));
     }
@@ -170,12 +170,12 @@ mod tests {
         let row = classify_audit_row(
             "op-2",
             &json!({
-                "kind": "ck.audit.ryw_receipt",
+                "kind": "ak.audit.ryw_receipt",
                 "source_event_id": "ak:event:xyz",
             }),
         )
         .expect("should classify");
-        assert_eq!(row.kind, "ck.audit.ryw_receipt");
+        assert_eq!(row.kind, "ak.audit.ryw_receipt");
         assert_eq!(row.target_event_id.as_deref(), Some("ak:event:xyz"));
     }
 
@@ -184,7 +184,7 @@ mod tests {
         let none = classify_audit_row(
             "op-3",
             &json!({
-                "kind": "ck.message.create",
+                "kind": "ak.message.create",
                 "realm_id": "ak:realm:s1",
             }),
         );

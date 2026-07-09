@@ -52,7 +52,7 @@ fn snapshot_contract_manifest_payload() -> serde_json::Value {
         id: snapshot_id,
         realm_id,
         reducer_profile: arkret_sdk::SNAPSHOT_REDUCER_PROFILE_V1.to_owned(),
-        schema_profile_refs: vec!["ck.profile.core_event_store.v1".to_owned()],
+        schema_profile_refs: vec!["ak.profile.core_event_store.v1".to_owned()],
         state_digest,
         frontier: arkret_sdk::SnapshotFrontier {
             event_ids: vec![snapshot_contract_event_id("0000000000c1")],
@@ -96,7 +96,7 @@ fn inkson_accepts_server_contract_payloads() {
         "trust_domain": "ak:trust_domain:server.local",
         "service_type": "principal_server",
         "protocol_version": "1.0",
-        "supported_profiles": ["ck.schema.core.v1"],
+        "supported_profiles": ["ak.schema.core.v1"],
         "supported_features": [
             "account.subscribe",
             "sync.backfill",
@@ -109,25 +109,25 @@ fn inkson_accepts_server_contract_payloads() {
             "moderation.report"
         ],
         "supported_operations": [
-            "ck.self.account.stream.subscribe",
-            "ck.self.events.query.scan",
-            "ck.self.events.stream.subscribe",
-            "ck.self.snapshot.query.manifest_head",
-            "ck.find.directory.query.describe",
-            "ck.find.directory.query.search_realms",
-            "ck.find.directory.query.resolve_realm",
-            "ck.index.describe",
-            "ck.index.query",
-            "ck.self.authz.query.check",
-            "ck.self.authz.grants.query.effective",
-            "ck.self.authz.invites.query.list",
-            "ck.edge.push.command.register_device",
-            "ck.edge.push.command.unregister_device",
-            "ck.self.moderation.command.report"
+            "ak.self.account.stream.subscribe",
+            "ak.self.events.query.scan",
+            "ak.self.events.stream.subscribe",
+            "ak.self.snapshot.query.manifest_head",
+            "ak.find.directory.query.describe",
+            "ak.find.directory.query.search_realms",
+            "ak.find.directory.query.resolve_realm",
+            "ak.index.describe",
+            "ak.index.query",
+            "ak.self.authz.query.check",
+            "ak.self.authz.grants.query.effective",
+            "ak.self.authz.invites.query.list",
+            "ak.edge.push.command.register_device",
+            "ak.edge.push.command.unregister_device",
+            "ak.self.moderation.command.report"
         ],
         "supported_bindings": [{"kind": "http_json", "base_url": "/_arkret"}],
-        "supported_reducer_profiles": ["ck.reducer.v1"],
-        "supported_schema_profiles": ["ck.schema.core.v1"],
+        "supported_reducer_profiles": ["ak.reducer.v1"],
+        "supported_schema_profiles": ["ak.schema.core.v1"],
         "auth_metadata": {"mode": "development"},
         "limits": {"storage": "memory", "max_limit": 100},
         "plaintext_visibility": {"default": "encrypted"},
@@ -143,7 +143,7 @@ fn inkson_accepts_server_contract_payloads() {
     assert!(
         describe
             .supported_operations
-            .contains(&"ck.index.query".to_owned())
+            .contains(&"ak.index.query".to_owned())
     );
     assert_eq!(
         describe.supported_bindings[0].base_url.as_deref(),
@@ -155,7 +155,7 @@ fn inkson_accepts_server_contract_payloads() {
         "registry_mode": "development_local",
         "supported_receipts": ["local"],
         "protocol_version": "1.0",
-        "profiles": ["ck.identity.local-dev.v1"]
+        "profiles": ["ak.identity.local-dev.v1"]
     }))
     .unwrap();
     assert_eq!(identity.registry_mode, "development_local");
@@ -221,8 +221,8 @@ fn inkson_accepts_server_contract_payloads() {
         "trust_domain": "ak:trust_domain:server.local",
         "service_type": "directory_service",
         "protocol_version": "1.0",
-        "supported_profiles": ["ck.profile.directory_service.v1"],
-        "supported_operations": ["ck.find.directory.query.describe"],
+        "supported_profiles": ["ak.profile.directory_service.v1"],
+        "supported_operations": ["ak.find.directory.query.describe"],
         "supported_bindings": [{"kind": "http_json"}],
         "supported_features": [],
         "auth_metadata": {"mode": "public_no_auth"},
@@ -236,7 +236,7 @@ fn inkson_accepts_server_contract_payloads() {
         "compat_surfaces": [],
         "development_mode": false,
         "resource_types": ["realm", "organization", "actor"],
-        "discovery_profiles": ["ck.profile.directory_service.v1"],
+        "discovery_profiles": ["ak.profile.directory_service.v1"],
         "restricted_query_proof": false,
         "ingest_modes": ["push"],
         "accept_policy_kind": "open",
@@ -250,7 +250,7 @@ fn inkson_accepts_server_contract_payloads() {
     .unwrap();
     assert_eq!(
         directory.discovery_profiles[0],
-        "ck.profile.directory_service.v1"
+        "ak.profile.directory_service.v1"
     );
 
     let resolved = parse_resolve_realm(json!({
@@ -273,7 +273,7 @@ fn inkson_accepts_server_contract_payloads() {
             "service_type": "principal_server",
             "role": "primary",
             "endpoint": "http://server",
-            "operations": ["ck.self.events.command.submit"],
+            "operations": ["ak.self.events.command.submit"],
             "join_methods": ["invite_accept", "member_join"],
             "priority": 0,
             "source": "directory_ingest",
@@ -349,11 +349,11 @@ fn inkson_accepts_server_contract_payloads() {
     let grants: inkson::models::GrantList = serde_json::from_value(json!({
         "grants": [{
             "id": "ak:grant:0196419b-0000-7000-8000-000000000000",
-            "schema": "ck.schema.capability_grant.v1",
+            "schema": "ak.schema.capability_grant.v1",
             "realm_id": "ak:realm:0196419b-0000-7000-8000-000000000001",
             "issuer": "did:web:server.local",
             "subject": "did:web:alice.example",
-            "actions": ["ck.space.write_message"],
+            "actions": ["ak.space.write_message"],
             "resources": [
                 {"kind": "realm", "realm_id": "ak:realm:0196419b-0000-7000-8000-000000000001"}
             ],
@@ -472,13 +472,13 @@ fn server_description_gates_event_envelope_write_plane() {
         "service_type": "principal_server",
         "protocol_version": "1.0",
         "supported_profiles": [
-            "ck.profile.core_event_store.v1",
-            "ck.profile.principal_server_events_api.v1"
+            "ak.profile.core_event_store.v1",
+            "ak.profile.principal_server_events_api.v1"
         ],
         "supported_operations": [
-            "ck.self.events.query.describe",
-            "ck.self.events.command.submit",
-            "ck.self.account.stream.subscribe"
+            "ak.self.events.query.describe",
+            "ak.self.events.command.submit",
+            "ak.self.account.stream.subscribe"
         ],
         "supported_bindings": [{"kind": "http_json"}],
         "supported_features": ["events.submit", "account.subscribe"],
@@ -514,22 +514,22 @@ fn server_description_gates_event_envelope_write_plane() {
         "service_type": "principal_server",
         "protocol_version": "1.0",
         "supported_profiles": [
-            "ck.profile.core_event_store.v1",
-            "ck.profile.principal_server_events_api.v1"
+            "ak.profile.core_event_store.v1",
+            "ak.profile.principal_server_events_api.v1"
         ],
         "supported_operations": [
-            "ck.self.events.query.describe",
-            "ck.self.events.command.submit"
+            "ak.self.events.query.describe",
+            "ak.self.events.command.submit"
         ],
         "supported_bindings": [{"kind": "http_json", "base_url": "https://local.host"}],
-        "supported_features": ["ck.feature.soland.events.describe"],
+        "supported_features": ["ak.feature.soland.events.describe"],
         "auth_metadata": {"mode": "development"},
         "limits": {"storage": "postgres"},
         "plaintext_visibility": {"default": "encrypted"},
-        "implemented_features": ["ck.feature.soland.events.describe"],
+        "implemented_features": ["ak.feature.soland.events.describe"],
         "claimed_profiles": [
             {
-                "profile_id": "ck.profile.core_event_store.v1",
+                "profile_id": "ak.profile.core_event_store.v1",
                 "claim_kind": "self_claimed"
             }
         ],
@@ -554,7 +554,7 @@ fn server_description_gates_event_envelope_write_plane() {
             "service_type": "principal_server",
             "protocol_version": "1.0",
             "supported_profiles": [],
-            "supported_operations": ["ck.self.account.stream.subscribe"],
+            "supported_operations": ["ak.self.account.stream.subscribe"],
             "supported_features": ["account.subscribe"]
         }))
         .is_err()
@@ -568,7 +568,7 @@ fn server_description_gates_event_envelope_write_plane() {
         "service_type": "principal_server",
         "protocol_version": "1.0",
         "supported_profiles": [],
-        "supported_operations": ["ck.self.account.stream.subscribe"],
+        "supported_operations": ["ak.self.account.stream.subscribe"],
         "supported_bindings": [{"kind": "http_json"}],
         "supported_features": ["account.subscribe"],
         "auth_metadata": {"mode": "development"},
@@ -586,9 +586,9 @@ fn server_description_gates_event_envelope_write_plane() {
     assert_eq!(
         events_missing.missing_event_envelope_write_requirements(),
         vec![
-            "ck.profile.core_event_store.v1",
-            "ck.self.events.query.describe",
-            "ck.self.events.command.submit"
+            "ak.profile.core_event_store.v1",
+            "ak.self.events.query.describe",
+            "ak.self.events.command.submit"
         ]
     );
     // `plaintext_visibility` is now present + non-null, so it falls out of
@@ -596,9 +596,9 @@ fn server_description_gates_event_envelope_write_plane() {
     assert_eq!(
         events_missing.missing_v1_principal_server_requirements(),
         vec![
-            "ck.profile.core_event_store.v1",
-            "ck.self.events.query.describe",
-            "ck.self.events.command.submit",
+            "ak.profile.core_event_store.v1",
+            "ak.self.events.query.describe",
+            "ak.self.events.command.submit",
         ]
     );
 }
@@ -622,9 +622,9 @@ fn inkson_accepts_v1_sync_buckets_and_subscribe_ndjson_contract() {
             }
         },
         "left_realms": ["ak:realm:left"],
-        "to_device": [{"type": "ck.mls.welcome"}],
+        "to_device": [{"type": "ak.mls.welcome"}],
         "account_data": [{
-            "data_type": "ck.push_rules",
+            "data_type": "ak.push_rules",
             "content": {"global": {"enabled": true}}
         }],
         "device_lists": {"changed": [], "left": []},
@@ -666,23 +666,23 @@ fn inkson_accepts_v1_sync_buckets_and_subscribe_ndjson_contract() {
 fn account_data_canonical_contact_and_realm_remark_keys_contract() {
     assert_eq!(
         realm_remark_account_data_key("ak:realm:contract"),
-        "ck.contacts.realm.ak:realm:contract"
+        "ak.contacts.realm.ak:realm:contract"
     );
     assert_eq!(
         contact_remark_account_data_key("did:web:alice.example"),
-        "ck.contacts.actor.did:web:alice.example"
+        "ak.contacts.actor.did:web:alice.example"
     );
     assert_eq!(
         AccountDataKey::ClientReadReceipts.as_wire(),
-        "ck.read_receipt.preferences"
+        "ak.read_receipt.preferences"
     );
     assert_eq!(
         AccountDataKey::ClientNotifications.as_wire(),
-        "ck.push_rules"
+        "ak.push_rules"
     );
     assert_eq!(
         AccountDataKey::ClientDndSchedule.as_wire(),
-        "ck.dnd_schedule"
+        "ak.dnd_schedule"
     );
 }
 
@@ -718,7 +718,7 @@ fn local_remarks_do_not_leak_into_event_push_search_log_or_directory_surfaces() 
     assert_no_secret("event", &event, secret);
 
     let blind_push = json!({
-        "type": "ck.push.blind_wakeup.v1",
+        "type": "ak.push.blind_wakeup.v1",
         "reason": "background_sync_needed"
     });
     validate_blind_wakeup_payload(&blind_push).unwrap();
@@ -822,7 +822,7 @@ fn inkson_e2ee_workflow_matches_protocol_mls_envelope_behavior() {
     let encrypted = alice
         .encrypt_message(
             "ak:message:contract-1",
-            br#"{"content":{"kind":"ck.content.text","body":"hello via MLS"}}"#,
+            br#"{"content":{"kind":"ak.content.text","body":"hello via MLS"}}"#,
         )
         .unwrap();
     assert_eq!(encrypted.payload.scheme.as_str(), "mls-rfc9420");
@@ -837,7 +837,7 @@ fn inkson_e2ee_workflow_matches_protocol_mls_envelope_behavior() {
     };
     assert_eq!(
         plaintext,
-        br#"{"content":{"kind":"ck.content.text","body":"hello via MLS"}}"#
+        br#"{"content":{"kind":"ak.content.text","body":"hello via MLS"}}"#
     );
 }
 

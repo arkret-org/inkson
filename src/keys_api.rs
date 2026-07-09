@@ -119,13 +119,13 @@ pub async fn submit_realm_key_request(
     };
     payload
         .validate()
-        .map_err(|err| anyhow::anyhow!("ck.realm_key.request invalid: {err}"))?;
+        .map_err(|err| anyhow::anyhow!("ak.realm_key.request invalid: {err}"))?;
     let sent_at = crate::clock::now_utc();
     let envelope = arkret_sdk::EphemeralEnvelope {
         // `ck.realm_key.request` is a directed ephemeral relay, not a broadcast
         // signal, so it has no `events::kinds` constant; the literal is the
         // wire kind soland's `relay_ephemeral_realm_key_request` matches on.
-        kind: "ck.realm_key.request".to_owned(),
+        kind: "ak.realm_key.request".to_owned(),
         realm_id: arkret_sdk::RealmId::new(crate::operation::trim_realm_id(realm_id))?,
         actor_id: arkret_sdk::Did::new(actor_id.trim().to_owned())?,
         device_id: Some(arkret_sdk::DeviceId::new(device_id.trim().to_owned())?),

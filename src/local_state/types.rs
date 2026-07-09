@@ -799,7 +799,7 @@ pub struct ClientLocalState {
     /// Actor-private Realm remarks per
     /// `discovery/client-preferences.md` §3.7. Hydrated from the soland
     /// `/sync` `account_data[]` projection (entries with
-    /// `data_type == "ck.contacts.realm.<realm_id>"`) and from user edits
+    /// `data_type == "ak.contacts.realm.<realm_id>"`) and from user edits
     /// in settings. Keyed by Realm id so the sidebar / dashboard can join
     /// it against the public `RealmTreeNode.name` at render time and prefer
     /// `local_name` when set.
@@ -815,7 +815,7 @@ pub struct ClientLocalState {
     /// entry hides messages from the targeted DID in chat
     /// renderers and surfaces in the Settings → Privacy panel. The
     /// shape mirrors the wire body so the future
-    /// `ck.account_data.set("ck.account.blocklist", …)` push can serialise
+    /// `ck.account_data.set("ak.account.blocklist", …)` push can serialise
     /// straight from this `Vec`.
     #[serde(default)]
     pub client_blocklist: Vec<crate::account_data::BlocklistEntry>,
@@ -1020,7 +1020,7 @@ pub struct UserActionLogEntry {
     pub recorded_at: DateTime<Utc>,
 }
 
-/// Persisted `ck.session.grant` issued by the Account Authority during login.
+/// Persisted `ak.session.grant` issued by the Account Authority during login.
 ///
 /// ②(A+②) model (api-conventions.md §3.3): the grant itself is the live
 /// credential for `/_arkret/self/*`; soland does not mint a second

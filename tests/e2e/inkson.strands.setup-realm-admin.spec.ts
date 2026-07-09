@@ -109,13 +109,13 @@ test("setup, onboarding, and Board entry works", async ({ page }) => {
     (request) =>
       request.url().endsWith("/_arkret/self/events") &&
       request.method() === "POST" &&
-      (request.postData() ?? "").includes("ck.realm.create"),
+      (request.postData() ?? "").includes("ak.realm.create"),
   );
   const plaintextPolicyRequest = page.waitForRequest(
     (request) =>
       request.url().endsWith("/_arkret/self/events") &&
       request.method() === "POST" &&
-      (request.postData() ?? "").includes("ck.realm.plaintext_visible_services"),
+      (request.postData() ?? "").includes("ak.realm.plaintext_visible_services"),
   );
   await page.getByTestId("create-realm-button").click();
   // S6 gate (no recovery configured in the default mock account): accept the
@@ -127,7 +127,7 @@ test("setup, onboarding, and Board entry works", async ({ page }) => {
     realmCreateRequest.then((request) => request.postDataJSON()),
     plaintextPolicyRequest.then((request) => request.postDataJSON()),
   ]);
-  expect(JSON.stringify(realmCreateBody)).toContain("ck.realm.create");
+  expect(JSON.stringify(realmCreateBody)).toContain("ak.realm.create");
   expect(JSON.stringify(plaintextPolicyBody)).toContain("did:web:server.local");
   await expect(page.getByTestId("realm-lifecycle-strand")).toContainText(/created ak:realm:/);
   await expect(page.getByTestId("realm-lifecycle-strand")).toContainText("canonical policy listed / invite / shared");
@@ -222,7 +222,7 @@ test("realm admin page handles metadata, modal member invite, epoch rotation and
   const inviteCommit = page.waitForRequest("**/_arkret/self/events");
   await page.getByTestId("send-invite-button").click();
   const inviteBody = await inviteCommit.then((request) => request.postDataJSON());
-  expect(inviteBody.kind).toBe("ck.invite.create");
+  expect(inviteBody.kind).toBe("ak.invite.create");
   expect(inviteBody.payload.invite_id).toMatch(/^ak:invite:/);
   expect(inviteBody.payload.invitee).toBe("did:web:carol.example");
   expect(inviteBody.payload.invite_delivery_target).toEqual({

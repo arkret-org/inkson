@@ -9,13 +9,13 @@ use super::*;
 /// (spec `device-lifecycle.md` §8.1).
 // The keys/upload signing chain below is kept for wire-shape unit tests.
 #[cfg(test)]
-const KEYS_UPLOAD_SIGNATURE_PREFIX: &str = "ck-keys-upload-v1\n";
+const KEYS_UPLOAD_SIGNATURE_PREFIX: &str = "ak.keys-upload-v1\n";
 
 /// Build the spec `device-lifecycle.md` §8.1 canonical signing input for a
 /// `keys/upload` `device_signature`:
 ///
 /// ```text
-/// "ck-keys-upload-v1\n" + canonical_json({device_id, one_time_keys, fallback_keys})
+/// "ak.keys-upload-v1\n" + canonical_json({device_id, one_time_keys, fallback_keys})
 /// ```
 ///
 /// Missing `one_time_keys` / `fallback_keys` batches MUST normalize to an empty

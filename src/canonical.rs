@@ -178,14 +178,14 @@ mod tests {
     fn canonical_event_envelope_bytes_use_sdk_digest_payload() {
         let event: arkret_sdk::Event = serde_json::from_value(json!({
             "event_id": "ak:event:01904100-0000-7000-8000-000000000001",
-            "kind": "ck.message.create",
+            "kind": "ak.message.create",
             "realm_id": "ak:realm:01904100-0000-7000-8000-000000000001",
             "actor_id": "did:web:alice.example",
             "actor_seq": 1,
             "created_at": "2026-05-19T00:00:00Z",
             "hlc": "01970e589d21-0001-a13f9c2e",
             "prev_refs": [],
-            "payload": {"kind": "ck.content.text", "body": "hi"},
+            "payload": {"kind": "ak.content.text", "body": "hi"},
             "unsigned": {"local_only": true},
             "proofs": []
         }))

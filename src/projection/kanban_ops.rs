@@ -12,18 +12,18 @@ use crate::local_state::RawOperationRecord;
 
 /// Every kanban-relevant event kind the client folds into the board.
 pub(crate) const KANBAN_EVENT_KINDS: &[&str] = &[
-    "ck.space.create",
-    "ck.space.update",
-    "ck.space.archive",
-    "ck.space.restore",
-    "ck.strand.create",
-    "ck.strand.update",
-    "ck.strand.move",
-    "ck.strand.reorder",
-    "ck.strand.archive",
-    "ck.strand.restore",
-    "ck.relation.create",
-    "ck.relation.tombstone",
+    "ak.space.create",
+    "ak.space.update",
+    "ak.space.archive",
+    "ak.space.restore",
+    "ak.strand.create",
+    "ak.strand.update",
+    "ak.strand.move",
+    "ak.strand.reorder",
+    "ak.strand.archive",
+    "ak.strand.restore",
+    "ak.relation.create",
+    "ak.relation.tombstone",
 ];
 
 /// Normalize a batch of canonical realm events (from `backfill` /

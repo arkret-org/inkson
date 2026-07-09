@@ -234,7 +234,7 @@ pub fn strand_position_cas_update(
     // effect_space as the destination target_space_id and carries the
     // optional from_space_id / expected_position CAS hints.
     match kind {
-        "ck.strand.reorder" => {
+        "ak.strand.reorder" => {
             let payload = strand_reorder_payload_value(
                 board_space_id,
                 strand_id,

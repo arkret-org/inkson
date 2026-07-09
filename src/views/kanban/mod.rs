@@ -2751,7 +2751,7 @@ pub fn KanbanPanel(
                                             &account_did,
                                             &selected_board_space_id(),
                                             &card.id,
-                                            "ck.strand.archive",
+                                            "ak.strand.archive",
                                         );
                                         // Block archive until the card's create
                                         // event is server-acked. The SDK reducer
@@ -2915,7 +2915,7 @@ pub fn KanbanPanel(
                                                     realm.clone(),
                                                     actor.clone(),
                                                     strand_id.clone(),
-                                                    "ck.strand.create",
+                                                    "ak.strand.create",
                                                     value,
                                                     selected_scope_security_encrypted,
                                                     state_store,
@@ -2963,7 +2963,7 @@ pub fn KanbanPanel(
                                 &capability_engine,
                                 &account_did,
                                 &column.id,
-                                "ck.space.archive",
+                                "ak.space.archive",
                             );
                             let title_text = if gate.enabled {
                                 "Archive this list (ck.space.archive)".to_owned()
@@ -3047,7 +3047,7 @@ pub fn KanbanPanel(
                                                 &capability_engine,
                                                 &account_did,
                                                 &column.id,
-                                                "ck.space.restore",
+                                                "ak.space.restore",
                                             );
                                             let title_text = if gate.enabled {
                                                 "Restore this list (ck.space.restore)".to_owned()
@@ -3153,7 +3153,7 @@ pub fn KanbanPanel(
                                                 &account_did,
                                                 &selected_board_space_id(),
                                                 &row.card.id,
-                                                "ck.strand.restore",
+                                                "ak.strand.restore",
                                             );
                                             let title_text = if gate.enabled {
                                                 "Restore this card (ck.strand.restore)".to_owned()
@@ -3634,9 +3634,9 @@ pub fn KanbanPanel(
                                                                 StrandLifecycleState::Archived
                                                             };
                                                             let action = if target == StrandLifecycleState::Archived {
-                                                                "ck.strand.archive"
+                                                                "ak.strand.archive"
                                                             } else {
-                                                                "ck.strand.restore"
+                                                                "ak.strand.restore"
                                                             };
                                                             let gate = capability_gate_for_strand(
                                                                 &capability_engine,

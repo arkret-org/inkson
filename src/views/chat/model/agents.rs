@@ -149,7 +149,7 @@ pub(crate) fn agent_metadata_from_raw_operations(
 ) -> std::collections::BTreeMap<String, AgentParticipantMetadata> {
     let mut out = std::collections::BTreeMap::new();
     for record in raw_operations {
-        if raw_operation_kind(&record.payload) != Some("ck.agent.endpoint") {
+        if raw_operation_kind(&record.payload) != Some("ak.agent.endpoint") {
             continue;
         }
         if !raw_operation_realm_matches_or_unscoped(record, realm_id) {

@@ -22,10 +22,10 @@ use crate::models::AccountDataSetResult;
 
 pub const FILE_TRANSFER_PURPOSE: &str = "file_transfer";
 pub const FILE_TRANSFER_RECORD_KIND: &str = "file_transfer";
-pub const FILE_TRANSFER_RECORD_ENVELOPE_SCHEME: &str = "ck.file_transfer.account_data_envelope.v1";
-pub const FILE_TRANSFER_BLOB_SCHEME: &str = "ck.file_transfer.encrypted_blob.v1";
-pub const FILE_TRANSFER_SCHEMA: &str = "ck.schema.file_transfer.v1";
-pub const FILE_TRANSFER_AEAD_PROFILE: &str = "ck.aead.xchacha20_poly1305.v1";
+pub const FILE_TRANSFER_RECORD_ENVELOPE_SCHEME: &str = "ak.file_transfer.account_data_envelope.v1";
+pub const FILE_TRANSFER_BLOB_SCHEME: &str = "ak.file_transfer.encrypted_blob.v1";
+pub const FILE_TRANSFER_SCHEMA: &str = "ak.schema.file_transfer.v1";
+pub const FILE_TRANSFER_AEAD_PROFILE: &str = "ak.aead.xchacha20_poly1305.v1";
 pub const FILE_TRANSFER_RETENTION_DAYS: i64 = 7;
 pub const FILE_TRANSFER_KEY_HPKE_INFO: &[u8] = b"arkret-file-transfer-key-hpke-x25519-v1";
 
@@ -173,7 +173,7 @@ pub async fn upload_actor_private_file(
     let server_response = match outcome {
         AccountDataSetResult::Stored { response } => response,
         AccountDataSetResult::Unsupported { status } => {
-            anyhow::bail!("ck.account_data.set unsupported for file transfer: {status}");
+            anyhow::bail!("ak.account_data.set unsupported for file transfer: {status}");
         }
     };
     Ok(FileTransferUploadResult {
@@ -225,7 +225,7 @@ pub async fn upload_device_bound_file(
     let server_response = match outcome {
         AccountDataSetResult::Stored { response } => response,
         AccountDataSetResult::Unsupported { status } => {
-            anyhow::bail!("ck.account_data.set unsupported for file transfer: {status}");
+            anyhow::bail!("ak.account_data.set unsupported for file transfer: {status}");
         }
     };
 
@@ -1177,7 +1177,7 @@ mod tests {
             try_decrypt_file_transfer_from_device_message(
                 &record,
                 &ciphertext,
-                &json!({"kind": "ck.key.verification.request"}),
+                &json!({"kind": "ak.key.verification.request"}),
                 &recipient_sk,
                 ACTOR,
                 RECIPIENT_DEVICE,

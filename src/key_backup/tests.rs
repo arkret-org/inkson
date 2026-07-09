@@ -69,7 +69,7 @@ fn build_recovery_vault_backup_body_seals_per_spec() {
     assert_eq!(body["encryption"]["aead"]["name"], "xchacha20_poly1305");
     assert_eq!(
         body["encryption"]["aead"]["aead_profile"],
-        "ck.aead.xchacha20_poly1305.v1"
+        "ak.aead.xchacha20_poly1305.v1"
     );
     assert!(is_base64url_token(
         body["encryption"]["aead"]["nonce"].as_str().unwrap()

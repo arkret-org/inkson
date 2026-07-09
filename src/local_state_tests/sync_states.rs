@@ -13,7 +13,7 @@ fn sync_event_states_update_submission_by_event_id() {
         local_id,
         Some(event_id.to_owned()),
         realm,
-        "ck.strand.move",
+        "ak.strand.move",
         MoveSubmissionState::PendingSeal,
         None,
         Some("ak:seal:sha256:abc".to_owned()),
@@ -80,7 +80,7 @@ fn sync_event_states_update_submission_when_event_and_move_ids_are_present() {
     store.record_move_submission(
         move_id,
         realm,
-        "ck.strand.move",
+        "ak.strand.move",
         MoveSubmissionState::PendingSeal,
         None,
         None,

@@ -329,7 +329,7 @@ test("encrypted Realm creation without recovery is gated, then proceeds on overr
     if (
       request.url().endsWith("/_arkret/self/events") &&
       request.method() === "POST" &&
-      (request.postData() ?? "").includes("ck.realm.create")
+      (request.postData() ?? "").includes("ak.realm.create")
     ) {
       realmCreateRequests += 1;
     }
@@ -352,7 +352,7 @@ test("encrypted Realm creation without recovery is gated, then proceeds on overr
     (request) =>
       request.url().endsWith("/_arkret/self/events") &&
       request.method() === "POST" &&
-      (request.postData() ?? "").includes("ck.realm.create"),
+      (request.postData() ?? "").includes("ak.realm.create"),
   );
   await page.getByTestId("create-realm-button").click();
   await realmCreateRequest;
@@ -383,7 +383,7 @@ test("mls recovery backup generates 24 recovery words", async ({ page }) => {
     (request) =>
       request.url().endsWith("/_arkret/self/events") &&
       request.method() === "POST" &&
-      (request.postData() ?? "").includes("ck.realm.create"),
+      (request.postData() ?? "").includes("ak.realm.create"),
   );
   await page.getByTestId("create-realm-button").click();
   await realmCreateRequest;
@@ -440,7 +440,7 @@ test("encrypted Realm backup uses existing Recovery Key instead of generating an
     (request) =>
       request.url().endsWith("/_arkret/self/events") &&
       request.method() === "POST" &&
-      (request.postData() ?? "").includes("ck.realm.create"),
+      (request.postData() ?? "").includes("ak.realm.create"),
   );
   await page.getByTestId("create-realm-button").click();
   // Recovery is already configured, so the S6 gate is bypassed entirely.

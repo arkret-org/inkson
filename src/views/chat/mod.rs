@@ -663,7 +663,7 @@ pub fn ChatPanel(
                             &device,
                             &strand_id,
                             &event_id,
-                            "ck.receipt.read",
+                            "ak.receipt.read",
                         )
                         .await
                     },
@@ -1389,7 +1389,7 @@ pub fn ChatPanel(
                                                                     Some(realm.clone()),
                                                                     json!({
                                                                         "strand_id": strand_id,
-                                                                        "kind": "ck.strand.create",
+                                                                        "kind": "ak.strand.create",
                                                                         "title": title,
                                                                         "category": category,
                                                                         "summary": channel_topic,
@@ -1687,7 +1687,7 @@ pub fn ChatPanel(
                                 class: "pinned-bar",
                                 "data-testid": "pinned-bar",
                                 "data-source": "shared-event",
-                                "data-permission": "ck.pin.add ck.pin.remove",
+                                "data-permission": "ak.pin.add ck.pin.remove",
                                 if pinned_view.is_empty() {
                                     span {
                                         class: "pinned-bar-empty",
@@ -2156,7 +2156,7 @@ pub fn ChatPanel(
                                                 r#type: "button",
                                                 "data-testid": "message-shared-pin-button",
                                                 "data-source": "shared-event",
-                                                "data-permission": if is_pinned { "ck.pin.remove" } else { "ck.pin.add" },
+                                                "data-permission": if is_pinned { "ak.pin.remove" } else { "ck.pin.add" },
                                                 onclick: move |_| {
                                                     let rank = existing_pin
                                                         .as_ref()
@@ -2279,7 +2279,7 @@ pub fn ChatPanel(
                                                 disabled: is_saved_private,
                                                 "data-testid": "message-private-save-button",
                                                 "data-source": "private-account-data",
-                                                "data-account-data-prefix": "ck.saved.v1",
+                                                "data-account-data-prefix": "ak.saved.v1",
                                                 // T7: delegates to the shared dispatcher
                                                 // (also used by the hover
                                                 // `chat-save-button`); it handles the
@@ -2332,7 +2332,7 @@ pub fn ChatPanel(
                                         class: "message-private-saved-indicator",
                                         "data-testid": "message-private-saved-indicator",
                                         "data-source": "private-account-data",
-                                        "data-account-data-prefix": "ck.saved.v1",
+                                        "data-account-data-prefix": "ak.saved.v1",
                                         "data-target-ref": "{message_target_ref}",
                                         title: crate::i18n::tr("message.private_saved"),
                                         UiIcon { name: "check" }
@@ -2665,7 +2665,7 @@ pub fn ChatPanel(
                                                                         Some(realm_for_record),
                                                                         json!({
                                                                             "event_id": resp.event_id.clone(),
-                                                                            "kind": "ck.message.create",
+                                                                            "kind": "ak.message.create",
                                                                             "actor_id": actor_for_store,
                                                                             "body": body_for_store,
                                                                             "strand_id": strand_id_for_store,
@@ -2781,7 +2781,7 @@ pub fn ChatPanel(
                                                     "data-testid": "chat-pin-button",
                                                     "data-source": "shared-event",
                                                     "data-pinned": if is_pinned { "true" } else { "false" },
-                                                    "data-permission": if is_pinned { "ck.pin.remove" } else { "ck.pin.add" },
+                                                    "data-permission": if is_pinned { "ak.pin.remove" } else { "ck.pin.add" },
                                                     onclick: move |_| {
                                                         let rank = existing_pin
                                                             .as_ref()
@@ -2907,7 +2907,7 @@ pub fn ChatPanel(
                                             disabled: message_is_saved_private,
                                             "data-testid": "chat-save-button",
                                             "data-source": "private-account-data",
-                                            "data-account-data-prefix": "ck.saved.v1",
+                                            "data-account-data-prefix": "ak.saved.v1",
                                             onclick: {
                                                 let private_save_action = private_save_action.clone();
                                                 move |_| (*private_save_action)()
@@ -4889,7 +4889,7 @@ pub fn ChatPanel(
                                                     Some(realm_for_record),
                                                     json!({
                                                         "event_id": resp.event_id.clone(),
-                                                        "kind": "ck.message.create",
+                                                        "kind": "ak.message.create",
                                                         "actor_id": actor_for_store,
                                                         "body": body_for_store,
                                                         "strand_id": strand_id_for_store,
@@ -5203,7 +5203,7 @@ pub fn ChatPanel(
                                             Some(realm_for_record.clone()),
                                             json!({
                                                 "event_id": resp_event_id.clone(),
-                                                "kind": "ck.message.create",
+                                                "kind": "ak.message.create",
                                                 "actor_id": actor_for_record.clone(),
                                                 "strand_id": strand_id_for_record.clone(),
                                                 "message_id": message_id_for_record.clone(),

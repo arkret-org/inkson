@@ -68,7 +68,7 @@ pub fn projection_events_from_sync_realms(
         };
 
         for event in wire_events {
-            if event.get("kind").and_then(Value::as_str) == Some("ck.audit.policy_access") {
+            if event.get("kind").and_then(Value::as_str) == Some("ak.audit.policy_access") {
                 match crate::late_recovery::late_recovered_event_from_audit_policy_access_event(
                     event, false,
                 ) {
@@ -106,7 +106,7 @@ pub fn projection_events_from_sync_realms(
                     crate::late_recovery::LateRecoveryAuditAccessConversion::NotLateRecovery => {}
                 }
             }
-            if event.get("kind").and_then(Value::as_str) != Some("ck.message.create") {
+            if event.get("kind").and_then(Value::as_str) != Some("ak.message.create") {
                 continue;
             }
             let event_id = event

@@ -83,7 +83,7 @@ test("chat send failures mark the message and keep actions quiet until hover", a
       return route.fallback();
     }
     const body = await route.request().postDataJSON();
-    if (body.kind !== "ck.message.create") {
+    if (body.kind !== "ak.message.create") {
       return route.fallback();
     }
     return route.fulfill({
@@ -125,7 +125,7 @@ test("chat membership denial restores draft without panicking", async ({ page })
       return route.fallback();
     }
     const body = await route.request().postDataJSON();
-    if (body.kind !== "ck.message.create") {
+    if (body.kind !== "ak.message.create") {
       return route.fallback();
     }
     return route.fulfill({
@@ -162,7 +162,7 @@ test("chat retries plaintext sends after granting current service visibility", a
       return route.fallback();
     }
     const body = await route.request().postDataJSON();
-    if (body.kind !== "ck.message.create") {
+    if (body.kind !== "ak.message.create") {
       return route.fallback();
     }
     attempts += 1;
@@ -191,7 +191,7 @@ test("chat retries plaintext sends after granting current service visibility", a
     (request) =>
       request.url().endsWith("/_arkret/self/events") &&
       request.method() === "POST" &&
-      request.postDataJSON().kind === "ck.realm.update",
+      request.postDataJSON().kind === "ak.realm.update",
   );
   await page.getByTestId("chat-input").fill("policy retry message");
   await page.getByTestId("send-chat-button").click();
@@ -223,7 +223,7 @@ test("chat separates shared pins from private saved account-data", async ({ page
     if (!request.url().endsWith("/_arkret/self/events") || request.method() !== "POST") {
       return false;
     }
-    return request.postDataJSON().kind === "ck.pin.add";
+    return request.postDataJSON().kind === "ak.pin.add";
   });
   await page.getByTestId("message-shared-pin-button").click();
   const sharedPinBody = await sharedPinRequest.then((request) => request.postDataJSON());
@@ -244,7 +244,7 @@ test("chat separates shared pins from private saved account-data", async ({ page
       return false;
     }
     const body = request.postDataJSON();
-    return body.kind === "ck.account_data.set" && String(body.payload?.key ?? "").startsWith("ck.saved.v1:");
+    return body.kind === "ak.account_data.set" && String(body.payload?.key ?? "").startsWith("ck.saved.v1:");
   });
   await page.getByTestId("message-private-save-button").click();
   const savedBody = await savedRequest.then((request) => request.postDataJSON());

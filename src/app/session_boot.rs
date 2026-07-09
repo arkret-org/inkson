@@ -145,7 +145,7 @@ pub(super) fn initial_session_credential_from_state(
 }
 
 /// localStorage key the cotest joint-e2e harness uses to hand inkson a real
-/// `ck.session.grant` + the DPoP device seed it is bound to. Read ONCE at boot,
+/// `ak.session.grant` + the DPoP device seed it is bound to. Read ONCE at boot,
 /// only in wasm builds compiled with `wasm-localstorage-secrets-test`.
 #[cfg(all(target_arch = "wasm32", feature = "wasm-localstorage-secrets-test"))]
 pub(super) const TEST_SESSION_INJECTION_KEY: &str = "inkson.test.session_injection.v1";

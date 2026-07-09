@@ -85,7 +85,7 @@ impl LocalStateStore {
         }
     }
 
-    // ── Personal blocklist (spec client-preferences.md "ck.account.blocklist") ─
+    // ── Personal blocklist (spec client-preferences.md "ak.account.blocklist") ─
 
     /// Current personal blocklist. Cheap clone — the underlying `Vec`
     /// is short by design (curated by the user).
@@ -106,7 +106,7 @@ impl LocalStateStore {
     ///
     /// Persists synchronously to disk; the caller is responsible for
     /// pushing the new list to soland via
-    /// `ck.account_data.set("ck.account.blocklist", …)`.
+    /// `ck.account_data.set("ak.account.blocklist", …)`.
     pub fn block_user(&mut self, did: impl AsRef<str>, reason: Option<String>) -> bool {
         self.ensure_cached_loaded();
         let now = chrono::Utc::now().to_rfc3339();

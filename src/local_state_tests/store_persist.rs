@@ -12,7 +12,7 @@ fn local_state_store_tracks_cursor_operations_projections_and_drafts() {
     store.append_raw_operation(
         "ak:operation:local-01",
         Some("ak:realm:demo".to_owned()),
-        serde_json::json!({"type": "ck.message.create"}),
+        serde_json::json!({"type": "ak.message.create"}),
     );
     store.save_realm_tree_projection("ak:realm:demo", serde_json::json!({"name": "Demo"}));
     store.save_draft("ak:realm:demo", "hello");
@@ -38,7 +38,7 @@ fn raw_operation_upsert_is_noop_for_identical_payload() {
     let path = temp_state_path("raw-op-upsert-noop");
     let mut store = LocalStateStore::with_path(path);
     let payload = serde_json::json!({
-        "kind": "ck.strand.create",
+        "kind": "ak.strand.create",
         "event_id": "ak:event:upsert-1",
         "operation_id": "op-upsert-1",
         "write_state": "synced",
@@ -73,14 +73,14 @@ fn raw_operation_upsert_reports_real_payload_changes() {
     let path = temp_state_path("raw-op-upsert-change");
     let mut store = LocalStateStore::with_path(path);
     let base = serde_json::json!({
-        "kind": "ck.strand.update",
+        "kind": "ak.strand.update",
         "event_id": "ak:event:upsert-2",
         "operation_id": "op-upsert-2",
         "write_state": "synced",
         "body": { "patch": { "title": { "$op": "set", "value": "Before" } } }
     });
     let enriched = serde_json::json!({
-        "kind": "ck.strand.update",
+        "kind": "ak.strand.update",
         "event_id": "ak:event:upsert-2",
         "operation_id": "op-upsert-2",
         "write_state": "synced",
@@ -111,18 +111,18 @@ fn raw_operation_upsert_keeps_redaction_tombstone_over_plaintext_create() {
     let path = temp_state_path("raw-op-upsert-redacted");
     let mut store = LocalStateStore::with_path(path);
     let tombstone = serde_json::json!({
-        "kind": "ck.message.create",
+        "kind": "ak.message.create",
         "event_id": "ak:event:upsert-redacted",
         "message_id": "ak:message:upsert-redacted",
         "redacted": true,
         "state": "redacted",
-        "content": {"kind": "ck.content.text", "body": "[redacted]"}
+        "content": {"kind": "ak.content.text", "body": "[redacted]"}
     });
     let plaintext = serde_json::json!({
-        "kind": "ck.message.create",
+        "kind": "ak.message.create",
         "event_id": "ak:event:upsert-redacted",
         "message_id": "ak:message:upsert-redacted",
-        "content": {"kind": "ck.content.text", "body": "secret"}
+        "content": {"kind": "ak.content.text", "body": "secret"}
     });
 
     assert!(store.upsert_raw_operation(
@@ -151,24 +151,24 @@ fn raw_operation_upsert_replaces_message_timeline_projection_by_message_id() {
     let realm_id = Some("ak:realm:upsert".to_owned());
     let message_id = "ak:message:upsert-message-id";
     let original = serde_json::json!({
-        "kind": "ck.message.create",
+        "kind": "ak.message.create",
         "event_id": "ak:event:upsert-message-original",
         "message_id": message_id,
-        "content": {"kind": "ck.content.text", "body": "original"}
+        "content": {"kind": "ak.content.text", "body": "original"}
     });
     let revised_projection = serde_json::json!({
-        "kind": "ck.message.create",
+        "kind": "ak.message.create",
         "event_id": "ak:event:upsert-message-revision",
         "message_id": message_id,
-        "content": {"kind": "ck.content.text", "body": "edited"}
+        "content": {"kind": "ak.content.text", "body": "edited"}
     });
     let redacted_projection = serde_json::json!({
-        "kind": "ck.message.create",
+        "kind": "ak.message.create",
         "event_id": "ak:event:upsert-message-revision",
         "message_id": message_id,
         "redacted": true,
         "state": "redacted",
-        "content": {"kind": "ck.content.text", "body": "[redacted]"}
+        "content": {"kind": "ak.content.text", "body": "[redacted]"}
     });
 
     assert!(store.upsert_raw_operation(
@@ -210,7 +210,7 @@ fn realm_lifecycle_state_tracks_destroy_without_raw_operation_scan() {
     store.append_raw_operation(
         "ak:operation:destroy",
         Some(realm_id.to_owned()),
-        serde_json::json!({"kind": "ck.realm.destroy"}),
+        serde_json::json!({"kind": "ak.realm.destroy"}),
     );
 
     assert!(store.realm_is_destroyed(realm_id));
@@ -372,7 +372,7 @@ fn local_state_store_persists_private_read_cursors() {
         "ak:event:read-1",
     );
 
-    assert_eq!(marker.marker_type, "ck.read_cursor.advance");
+    assert_eq!(marker.marker_type, "ak.read_cursor.advance");
     assert_eq!(marker.body.realm_id, "ak:realm:demo");
     assert_eq!(marker.body.position.event_id, "ak:event:read-1");
     assert_eq!(marker.body.read_scope.kind, "strand");
@@ -383,10 +383,10 @@ fn local_state_store_persists_private_read_cursors() {
     assert_eq!(
         marker.ck_read_cursor_operation(),
         serde_json::json!({
-            "kind": "ck.read_cursor.advance",
+            "kind": "ak.read_cursor.advance",
             "payload": {
                 "id": &marker.body.id,
-                "schema": "ck.schema.read_cursor.v1",
+                "schema": "ak.schema.read_cursor.v1",
                 "actor_id": "did:web:alice.example",
                 "device_id": "device-1",
                 "realm_id": "ak:realm:demo",
@@ -419,10 +419,10 @@ fn local_state_store_ingests_read_cursor_update_to_device() {
     let path = temp_state_path("read-cursor-update");
     let mut store = LocalStateStore::with_path(path.clone());
     store.ingest_to_device_messages(&[serde_json::json!({
-        "kind": "ck.read_cursor.update",
+        "kind": "ak.read_cursor.update",
         "sender_device_id": "ak:device:01904100-0000-7000-8000-000000000001",
         "content": {
-            "schema": "ck.schema.read_cursor.v1",
+            "schema": "ak.schema.read_cursor.v1",
             "actor_id": "did:web:alice.example",
             "device_id": "ak:device:01904100-0000-7000-8000-000000000001",
             "realm_id": "ak:realm:01904100-0000-7000-8000-000000000002",

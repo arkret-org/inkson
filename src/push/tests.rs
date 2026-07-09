@@ -54,7 +54,7 @@ fn builds_unregister_request_from_existing_state() {
 #[test]
 fn summarizes_push_bridge_contract() {
     let summary = summarize_push_gateway_bridge(&PushBridgeDescribeOutcome {
-        contract: "ck.push.bridge.describe".to_owned(),
+        contract: "ak.push.bridge.describe".to_owned(),
         version: "2026-05-03".to_owned(),
         api_base_path: "/_arkret/edge/push".to_owned(),
         gateway: Default::default(),
@@ -74,7 +74,7 @@ fn summarizes_push_bridge_contract() {
         spec_version: None,
     });
 
-    assert!(summary.contains("ck.push.bridge.describe"));
+    assert!(summary.contains("ak.push.bridge.describe"));
     assert!(summary.contains("/_arkret/edge/push/notify"));
     assert!(summary.contains("e2ee_blind_wakeup"));
 }
@@ -114,7 +114,7 @@ fn ensure_production_register_accepts_real_keys() {
 #[test]
 fn blind_wakeup_payload_lint_rejects_stable_identifiers() {
     let ok = serde_json::json!({
-        "type": "ck.push.blind_wakeup.v1",
+        "type": "ak.push.blind_wakeup.v1",
         "reason": "background_sync_needed"
     });
     validate_blind_wakeup_payload(&ok).expect("redacted wakeup is allowed");
@@ -180,7 +180,7 @@ fn apns_provider_returns_bridged_host_token() {
 #[test]
 fn vapid_extractor_returns_none_when_webpush_not_advertised() {
     let mut describe = PushBridgeDescribeOutcome::default();
-    describe.contract = "ck.push.bridge.describe.v1".to_owned();
+    describe.contract = "ak.push.bridge.describe.v1".to_owned();
     describe.version = "2026-05-09".to_owned();
     describe.gateway.supported_profiles = vec!["fcm".to_owned(), "apns".to_owned()];
     assert!(vapid_public_key_from_describe(&describe).is_none());

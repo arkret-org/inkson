@@ -43,7 +43,7 @@ fn s256_challenge_matches_rfc7636_test_vector() {
 }
 
 /// The introspection proof MUST be a valid Ed25519 JWS over the
-/// canonical claims, MUST embed `ck.session_grant.introspection_proof.v1`
+/// canonical claims, MUST embed `ak.session_grant.introspection_proof.v1`
 /// as `type`, MUST hash the grant JWT into `grant_jwt_hash`, and MUST
 /// round-trip the challenge / audience / grant_id verbatim. coauth's
 /// verifier requires every one of those exact strings - drift here
@@ -77,7 +77,7 @@ fn session_grant_proof_signs_canonical_claims() {
     let claims: arkret_sdk::SessionGrantIntrospectionProofClaims =
         serde_json::from_slice(&payload_bytes).unwrap();
     assert_eq!(
-        claims.kind, "ck.session_grant.introspection_proof.v1",
+        claims.kind, "ak.session_grant.introspection_proof.v1",
         "type claim must match coauth's spec"
     );
     assert_eq!(claims.grant_id, "01HABC123");

@@ -166,7 +166,7 @@ impl LocalStateStore {
         self.ensure_cached_loaded();
         let before = self.cached.to_device_inbox.len();
         self.cached.to_device_inbox.retain(|message| {
-            if message.get("kind").and_then(Value::as_str) != Some("ck.key.verification.request") {
+            if message.get("kind").and_then(Value::as_str) != Some("ak.key.verification.request") {
                 return true;
             }
             let Some(content) = message.get("content") else {
@@ -195,7 +195,7 @@ impl LocalStateStore {
         }
         let before = self.cached.to_device_inbox.len();
         self.cached.to_device_inbox.retain(|message| {
-            if message.get("kind").and_then(Value::as_str) != Some("ck.realm_key.request") {
+            if message.get("kind").and_then(Value::as_str) != Some("ak.realm_key.request") {
                 return true;
             }
             realm_key_request_message_id(message).as_deref() != Some(request_id)
@@ -219,7 +219,7 @@ impl LocalStateStore {
         }
         let before = self.cached.to_device_inbox.len();
         self.cached.to_device_inbox.retain(|message| {
-            if message.get("kind").and_then(Value::as_str) != Some("ck.realm_key.share") {
+            if message.get("kind").and_then(Value::as_str) != Some("ak.realm_key.share") {
                 return true;
             }
             realm_key_share_message_id(message).as_deref() != Some(operation_id)
@@ -239,7 +239,7 @@ impl LocalStateStore {
     ) {
         self.ensure_cached_loaded();
         let operation_id = operation_id.into();
-        if raw_operation_kind(&payload) == Some("ck.realm.destroy")
+        if raw_operation_kind(&payload) == Some("ak.realm.destroy")
             && let Some(realm_id) = realm_id.as_deref().filter(|id| !id.trim().is_empty())
         {
             self.cached.realm_lifecycle_state.insert(
@@ -438,7 +438,7 @@ fn raw_payload_string(payload: &Value, key: &str) -> Option<String> {
 }
 
 fn raw_payload_is_message_create(payload: &Value) -> bool {
-    raw_operation_kind(payload) == Some("ck.message.create")
+    raw_operation_kind(payload) == Some("ak.message.create")
         && raw_payload_string(payload, "message_id")
             .as_deref()
             .is_some_and(|message_id| message_id.starts_with("ak:message:"))

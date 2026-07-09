@@ -27,11 +27,11 @@ soland, run `cargo run -- --bind local.host:443` and add a hosts-file entry.
 **Symptom**: coauth completes OIDC but the dashboard never loads; the
 status banner says "missing session grant".
 
-**Cause**: the coauth token bundle did not include `ck.session.grant`.
+**Cause**: the coauth token bundle did not include `ak.session.grant`.
 
 **Fix**: clear the OIDC bundle under **Settings → Sign out** and retry. If
 the issue persists, your coauth instance is on an old release — check that
-it ships `ck.session.grant` claims.
+it ships `ak.session.grant` claims.
 
 ---
 

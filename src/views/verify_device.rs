@@ -43,7 +43,7 @@ enum VerifyMethod {
 /// retrying without surfacing noise.
 fn extract_peer_verification_key(value: &serde_json::Value) -> Option<String> {
     fn key_from_entry(entry: &serde_json::Value) -> Option<String> {
-        if entry.get("kind").and_then(|t| t.as_str()) != Some("ck.key.verification.key") {
+        if entry.get("kind").and_then(|t| t.as_str()) != Some("ak.key.verification.key") {
             return None;
         }
         let content = entry.get("content").and_then(|v| v.as_object())?;
@@ -78,9 +78,9 @@ mod verification_key_poll_tests {
     fn picks_key_out_of_flat_events_list() {
         let resp = json!({
             "messages": [
-                {"kind": "ck.mls.welcome", "content": {"unrelated": true}},
+                {"kind": "ak.mls.welcome", "content": {"unrelated": true}},
                 {
-                    "kind": "ck.key.verification.key",
+                    "kind": "ak.key.verification.key",
                     "content": {"key": "bob-pub-b64==", "from_device": "ak:device:abc"},
                 },
             ]
@@ -95,7 +95,7 @@ mod verification_key_poll_tests {
     fn returns_none_when_no_verification_key_present() {
         let resp = json!({
             "messages": [
-                {"kind": "ck.mls.welcome", "content": {"welcome_blob": "..."}},
+                {"kind": "ak.mls.welcome", "content": {"welcome_blob": "..."}},
             ]
         });
         assert!(extract_peer_verification_key(&resp).is_none());
@@ -105,7 +105,7 @@ mod verification_key_poll_tests {
     fn ignores_envelope_with_blank_key() {
         let resp = json!({
             "messages": [
-                {"kind": "ck.key.verification.key", "content": {"key": "   "}}
+                {"kind": "ak.key.verification.key", "content": {"key": "   "}}
             ]
         });
         assert!(extract_peer_verification_key(&resp).is_none());
@@ -116,7 +116,7 @@ mod verification_key_poll_tests {
         let resp = json!({
             "messages": [
                 {
-                    "kind": "ck.key.verification.key",
+                    "kind": "ak.key.verification.key",
                     "content": {
                         "device_envelope": {
                             "local_public_key": "signed-pub-b64=="
@@ -284,7 +284,7 @@ pub fn VerifyDevicePanel(
                         && messages
                             .messages
                             .iter()
-                            .all(|message| message.kind.starts_with("ck.key.verification."));
+                            .all(|message| message.kind.starts_with("ak.key.verification."));
                     let messages_value = match serde_json::to_value(&messages) {
                         Ok(v) => v,
                         Err(_) => continue,
@@ -538,7 +538,7 @@ pub fn VerifyDevicePanel(
                                                             "inkson-sas-key",
                                                             &account,
                                                             &target,
-                                                            "ck.key.verification.key",
+                                                            "ak.key.verification.key",
                                                             &crate::clock::rfc3339_secs_in(10),
                                                             signed_content,
                                                         )
@@ -1048,8 +1048,8 @@ mod cross_signing_view_tests {
     fn initial_plan_lists_publish_and_device_authorized_events() {
         let plan = CrossSigningSetupPlan::build_initial("did:webvh:alice.example", "ak:device:01a");
         let kinds = plan.event_kinds();
-        assert!(kinds.contains(&"ck.cross_signing.publish"));
-        assert!(kinds.contains(&"ck.device.authorize"));
+        assert!(kinds.contains(&"ak.cross_signing.publish"));
+        assert!(kinds.contains(&"ak.device.authorize"));
         assert!(matches!(plan.mode, CrossSigningSetupMode::InitialSetup));
     }
 }

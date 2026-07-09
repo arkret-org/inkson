@@ -368,7 +368,7 @@ mod tests {
             json!({
                 "strand_id": "ak:strand:01904100-0000-7000-8000-000000000002",
                 "track_name": "discussion",
-                "content": {"kind": "ck.content.text", "body": "hello"}
+                "content": {"kind": "ak.content.text", "body": "hello"}
             }),
         );
         let event_value = serde_json::to_value(&event).unwrap();

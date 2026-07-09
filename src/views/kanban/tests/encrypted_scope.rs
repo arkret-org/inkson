@@ -171,7 +171,7 @@ fn encrypted_private_patch_reports_unusable_pending_local_welcome() {
 
     let mut state = temp_state_store("pending-local-welcome");
     state.ingest_to_device_messages(&[json!({
-        "kind": "ck.mls.welcome",
+        "kind": "ak.mls.welcome",
         "sender_principal_id": "did:web:alice.example",
         "sender_device_id": "ak:device:01904100-0000-7000-8000-0000000000a1",
         "recipient_principal_id": bob_actor,
@@ -234,7 +234,7 @@ fn encrypted_private_patch_applies_pending_welcome_with_key_package_state() {
 
     let mut state = temp_state_store("pending-local-welcome-with-state");
     state.ingest_to_device_messages(&[json!({
-        "kind": "ck.mls.welcome",
+        "kind": "ak.mls.welcome",
         "sender_principal_id": "did:web:alice.example",
         "sender_device_id": "ak:device:01904100-0000-7000-8000-0000000000a1",
         "recipient_principal_id": bob_actor,
@@ -350,7 +350,7 @@ fn encrypted_private_patch_creator_bootstraps_initial_mls_snapshot() {
     let genesis = mls_events
         .genesis
         .expect("freshly-created creator group should emit genesis");
-    assert_eq!(genesis.kind.as_str(), "ck.mls.genesis");
+    assert_eq!(genesis.kind.as_str(), "ak.mls.genesis");
     assert_eq!(genesis.payload["epoch"].as_u64(), Some(0));
     assert_eq!(
         genesis.payload["creator_principal_id"].as_str(),
@@ -437,7 +437,7 @@ fn encrypted_private_patch_with_ready_snapshot_replaces_plaintext() {
     let commit = mls_events
         .commit
         .expect("overdue minimal metadata MLS snapshot should emit commit event");
-    assert_eq!(commit.kind.as_str(), "ck.mls.commit");
+    assert_eq!(commit.kind.as_str(), "ak.mls.commit");
     assert_registered_payload_valid(&commit);
     assert!(commit.payload.get("group_id").is_none());
     assert!(commit.payload.get("expected_prev_epoch").is_none());
@@ -550,7 +550,7 @@ fn encrypted_scope_allows_structural_strand_position_update() {
     .build("inkson");
     let event = sdk_event(event);
 
-    assert_eq!(event.kind.as_str(), "ck.strand.update");
+    assert_eq!(event.kind.as_str(), "ak.strand.update");
     assert!(!kanban_event_carries_plaintext_private_content(&event));
     assert!(kanban_plaintext_block_reason(Some(true), &event).is_none());
 }
@@ -607,7 +607,7 @@ fn encrypted_scope_never_blocks_container_metadata_but_blocks_plaintext_private_
     .expect("builds")
     .build("inkson");
     let board = sdk_event(board);
-    assert_eq!(board.kind.as_str(), "ck.space.create");
+    assert_eq!(board.kind.as_str(), "ak.space.create");
     assert!(
         kanban_plaintext_block_reason(Some(true), &board).is_none(),
         "encrypted scope must not block board container create"
@@ -625,7 +625,7 @@ fn encrypted_scope_never_blocks_container_metadata_but_blocks_plaintext_private_
     .expect("builds")
     .build("inkson");
     let list = sdk_event(list);
-    assert_eq!(list.kind.as_str(), "ck.space.create");
+    assert_eq!(list.kind.as_str(), "ak.space.create");
     assert!(
         kanban_plaintext_block_reason(Some(true), &list).is_none(),
         "encrypted scope must not block list container create"
@@ -640,7 +640,7 @@ fn encrypted_scope_never_blocks_container_metadata_but_blocks_plaintext_private_
     .expect("builds")
     .build("inkson");
     let list_rank_update = sdk_event(list_rank_update);
-    assert_eq!(list_rank_update.kind.as_str(), "ck.space.update");
+    assert_eq!(list_rank_update.kind.as_str(), "ak.space.update");
     assert!(
         kanban_plaintext_block_reason(Some(true), &list_rank_update).is_none(),
         "encrypted scope must not block list rank update"

@@ -164,9 +164,9 @@ mod tests {
         )
         .expect("promote ops build");
         assert_eq!(ops.len(), 3);
-        assert_eq!(ops[0].kind.as_str(), "ck.circle.create");
-        assert_eq!(ops[1].kind.as_str(), "ck.strand.create");
-        assert_eq!(ops[2].kind.as_str(), "ck.relation.create");
+        assert_eq!(ops[0].kind.as_str(), "ak.circle.create");
+        assert_eq!(ops[1].kind.as_str(), "ak.strand.create");
+        assert_eq!(ops[2].kind.as_str(), "ak.relation.create");
         assert_eq!(
             ops[0].payload["object"]["realm_id"],
             "ak:realm:0196419b-0000-7000-8000-000000000001"

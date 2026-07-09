@@ -171,7 +171,7 @@ pub fn CallPanel(
                 .payload
                 .get("kind")
                 .and_then(|v| v.as_str())
-                .map(|kind| kind.starts_with("ck.call."))
+                .map(|kind| kind.starts_with("ak.call."))
                 .unwrap_or(false)
         })
         .count();

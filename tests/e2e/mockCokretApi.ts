@@ -472,7 +472,7 @@ export async function mockCokretApi(
         typeof body.device_id === "string" ? body.device_id : currentDeviceId;
       const authorizedEvent: Record<string, unknown> = {
         event_id: "ak:event:01964137-0000-7000-8000-00000000d0e1",
-        kind: "ck.device.authorize",
+        kind: "ak.device.authorize",
         realm_id: "ak:realm:01964137-0000-7000-8000-00000000c0de",
         actor_id: accountPrincipalId,
         executed_by: ENROLLMENT_AUTHORITY_DID,
@@ -560,15 +560,15 @@ export async function mockCokretApi(
         service_type: "principal_server",
         protocol_version: "1.0",
         supported_profiles: [
-          "ck.profile.minimal_client.v1",
-          "ck.profile.chat_mvp.v1",
-          "ck.profile.kanban_mvp.v1",
-          "ck.profile.full_client.v1",
-          "ck.profile.e2ee_client.v1",
-          "ck.profile.push_gateway.v1",
-          "ck.profile.mimi_interop.v1",
-          "ck.profile.core_event_store.v1",
-          "ck.profile.principal_server_events_api.v1",
+          "ak.profile.minimal_client.v1",
+          "ak.profile.chat_mvp.v1",
+          "ak.profile.kanban_mvp.v1",
+          "ak.profile.full_client.v1",
+          "ak.profile.e2ee_client.v1",
+          "ak.profile.push_gateway.v1",
+          "ak.profile.mimi_interop.v1",
+          "ak.profile.core_event_store.v1",
+          "ak.profile.principal_server_events_api.v1",
         ],
         supported_features: [
           "sync.client_sync",
@@ -594,82 +594,82 @@ export async function mockCokretApi(
           "events.submit",
         ],
         supported_operations: [
-          "ck.server.query.describe",
-          "ck.self.account.stream.subscribe",
-          "ck.self.account.query.describe",
-          "ck.self.account.query.viewer",
-          "ck.self.account.command.update_profile",
-          "ck.self.events.query.scan",
-          "ck.self.events.stream.subscribe",
-          "ck.self.events.query.describe",
-          "ck.self.events.command.submit",
-          "ck.self.space.query.list",
-          "ck.self.strand.query.list",
-          "ck.find.directory.query.search_realms",
-          "ck.find.directory.query.resolve_realm",
-          "ck.find.directory.query.describe",
-          "ck.find.directory.query.search_organizations",
-          "ck.find.directory.query.search_actors",
-          "ck.find.directory.query.resolve_handle",
+          "ak.server.query.describe",
+          "ak.self.account.stream.subscribe",
+          "ak.self.account.query.describe",
+          "ak.self.account.query.viewer",
+          "ak.self.account.command.update_profile",
+          "ak.self.events.query.scan",
+          "ak.self.events.stream.subscribe",
+          "ak.self.events.query.describe",
+          "ak.self.events.command.submit",
+          "ak.self.space.query.list",
+          "ak.self.strand.query.list",
+          "ak.find.directory.query.search_realms",
+          "ak.find.directory.query.resolve_realm",
+          "ak.find.directory.query.describe",
+          "ak.find.directory.query.search_organizations",
+          "ak.find.directory.query.search_actors",
+          "ak.find.directory.query.resolve_handle",
           ...(advertiseListHandlesForSubject
-            ? ["ck.find.directory.query.list_handles_for_subject"]
+            ? ["ak.find.directory.query.list_handles_for_subject"]
             : []),
-          "ck.self.authz.query.check",
-          "ck.self.authz.grants.query.effective",
-          "ck.self.authz.invites.query.list",
-          "ck.root.identity.registry.query.describe",
-          "ck.root.identity.query.resolve",
-          "ck.root.identity.recovery_policy.resource.get",
-          "ck.root.identity.recovery_policy.command.publish",
-          "ck.gate.account.command.register",
-          "ck.gate.account.command.pair_device",
-          "ck.gate.account.command.revoke_session",
-          "ck.self.contact.query.list",
-          "ck.self.contact.command.request",
-          "ck.self.contact.command.respond",
-          "ck.self.contact.command.tombstone",
-          "ck.self.invite_receive_policy.resource.get",
-          "ck.self.invite_receive_policy.resource.replace",
-          "ck.self.direct_conversation.command.resolve",
-          "ck.self.circle.command.create",
-          "ck.self.circle.query.list",
-          "ck.self.circle.resource.get",
-          "ck.self.circle.member.command.add",
-          "ck.self.circle.member.resource.delete",
-          "ck.self.circle.command.rotate_scope",
-          "ck.self.circle.command.archive",
-          "ck.self.circle.command.restore",
-          "ck.self.circle.command.tombstone",
-          "ck.self.keys.upload.create",
-          "ck.self.keys.query.lookup",
-          "ck.self.keys.command.claim",
-          "ck.self.keys.backups.query.list",
-          "ck.self.keys.backups.resource.replace",
-          "ck.self.device_messages.query.list",
-          "ck.self.device_messages.command.send",
-          "ck.self.device_messages.command.ack",
-          "ck.edge.push.command.register_device",
-          "ck.edge.push.command.unregister_device",
-          "ck.self.blob.upload.create",
-          "ck.self.blob.resource.get",
-          "ck.self.media.query.ice_config",
-          "ck.self.moderation.command.report",
-          "ck.open.mimi.query.provider_directory",
-          "ck.open.mimi.exchange.request_key_material",
-          "ck.open.mimi.query.group_info",
-          "ck.open.mimi.command.update_room",
-          "ck.open.mimi.command.notify",
-          "ck.open.mimi.command.submit_message",
-          "ck.open.mimi.command.request_consent",
-          "ck.open.mimi.command.update_consent",
-          "ck.open.mimi.query.identifiers",
-          "ck.open.mimi.command.report_abuse",
-          "ck.open.mimi.command.proxy_download",
-          "ck.open.invite_locator.query.resolve",
-          "ck.self.ephemeral.command.send",
+          "ak.self.authz.query.check",
+          "ak.self.authz.grants.query.effective",
+          "ak.self.authz.invites.query.list",
+          "ak.root.identity.registry.query.describe",
+          "ak.root.identity.query.resolve",
+          "ak.root.identity.recovery_policy.resource.get",
+          "ak.root.identity.recovery_policy.command.publish",
+          "ak.gate.account.command.register",
+          "ak.gate.account.command.pair_device",
+          "ak.gate.account.command.revoke_session",
+          "ak.self.contact.query.list",
+          "ak.self.contact.command.request",
+          "ak.self.contact.command.respond",
+          "ak.self.contact.command.tombstone",
+          "ak.self.invite_receive_policy.resource.get",
+          "ak.self.invite_receive_policy.resource.replace",
+          "ak.self.direct_conversation.command.resolve",
+          "ak.self.circle.command.create",
+          "ak.self.circle.query.list",
+          "ak.self.circle.resource.get",
+          "ak.self.circle.member.command.add",
+          "ak.self.circle.member.resource.delete",
+          "ak.self.circle.command.rotate_scope",
+          "ak.self.circle.command.archive",
+          "ak.self.circle.command.restore",
+          "ak.self.circle.command.tombstone",
+          "ak.self.keys.upload.create",
+          "ak.self.keys.query.lookup",
+          "ak.self.keys.command.claim",
+          "ak.self.keys.backups.query.list",
+          "ak.self.keys.backups.resource.replace",
+          "ak.self.device_messages.query.list",
+          "ak.self.device_messages.command.send",
+          "ak.self.device_messages.command.ack",
+          "ak.edge.push.command.register_device",
+          "ak.edge.push.command.unregister_device",
+          "ak.self.blob.upload.create",
+          "ak.self.blob.resource.get",
+          "ak.self.media.query.ice_config",
+          "ak.self.moderation.command.report",
+          "ak.open.mimi.query.provider_directory",
+          "ak.open.mimi.exchange.request_key_material",
+          "ak.open.mimi.query.group_info",
+          "ak.open.mimi.command.update_room",
+          "ak.open.mimi.command.notify",
+          "ak.open.mimi.command.submit_message",
+          "ak.open.mimi.command.request_consent",
+          "ak.open.mimi.command.update_consent",
+          "ak.open.mimi.query.identifiers",
+          "ak.open.mimi.command.report_abuse",
+          "ak.open.mimi.command.proxy_download",
+          "ak.open.invite_locator.query.resolve",
+          "ak.self.ephemeral.command.send",
         ],
-        supported_schema_profiles: ["ck.schema.core.v1"],
-        supported_reducer_profiles: ["ck.reducer.v1"],
+        supported_schema_profiles: ["ak.schema.core.v1"],
+        supported_reducer_profiles: ["ak.reducer.v1"],
         supported_bindings: [{ kind: "http_json" }],
         auth_metadata: {
           mode: "development",
@@ -784,10 +784,10 @@ export async function mockCokretApi(
         trust_domain: "ak:trust_domain:server.local",
         service_type: "principal_server",
         protocol_version: "1.0",
-        supported_profiles: ["ck.profile.core_event_store.v1"],
+        supported_profiles: ["ak.profile.core_event_store.v1"],
         supported_operations: [
-          "ck.self.events.command.submit",
-          "ck.self.events.query.describe",
+          "ak.self.events.command.submit",
+          "ak.self.events.query.describe",
         ],
         supported_bindings: [{ kind: "http_json" }],
         supported_features: [],
@@ -851,7 +851,7 @@ export async function mockCokretApi(
       let syncToken = "sx:e2e:event";
       const submittedEvents = Array.isArray(body.events) ? body.events : [body];
       for (const event of submittedEvents) {
-        if (event.kind === "ck.device.authorize") {
+        if (event.kind === "ak.device.authorize") {
           const payload = event.payload ?? event.content ?? {};
           const binding = payload.enrollment_authority_binding ?? {};
           if (
@@ -872,7 +872,7 @@ export async function mockCokretApi(
                 error: {
                   code: "schema_violation",
                   message:
-                    "ck.device.authorize payload violates mock SDK artifact schema",
+                    "ak.device.authorize payload violates mock SDK artifact schema",
                 },
               },
               400,
@@ -886,8 +886,8 @@ export async function mockCokretApi(
         }
         const raw = JSON.stringify(event);
         if (
-          event.kind !== "ck.realm.create" &&
-          !raw.includes("ck.realm.create")
+          event.kind !== "ak.realm.create" &&
+          !raw.includes("ak.realm.create")
         ) {
           continue;
         }
@@ -920,7 +920,7 @@ export async function mockCokretApi(
           });
         }
       }
-      if (body.kind === "ck.space.create") {
+      if (body.kind === "ak.space.create") {
         const object = body.payload?.object ?? {};
         const containerId =
           object.id ??
@@ -944,7 +944,7 @@ export async function mockCokretApi(
           });
         }
       }
-      if (body.kind === "ck.message.create") {
+      if (body.kind === "ak.message.create") {
         messageCounter += 1;
         syncToken = `sx:e2e:message-${messageCounter}`;
         const realmId = body.realm_id ?? DEMO_REALM;
@@ -959,14 +959,14 @@ export async function mockCokretApi(
           payload: body.payload,
         });
       }
-      if (body.kind === "ck.strand.create") {
+      if (body.kind === "ak.strand.create") {
         messageCounter += 1;
         syncToken = `sx:e2e:strand-${messageCounter}`;
         const object = body.payload?.object ?? {};
         const component = Array.isArray(body.payload?.components)
           ? body.payload.components.find(
               (candidate: { family?: string }) =>
-                candidate.family === "ck.component.strand.position.v1",
+                candidate.family === "ak.component.strand.position.v1",
             )
           : undefined;
         const strandId = body.payload?.strand_id ?? object.id;
@@ -1037,8 +1037,8 @@ export async function mockCokretApi(
           },
         ],
         receipt: {
-          kind: "ck.open.mimi.exchange.request_key_material",
-          profile: "ck.profile.mimi_interop.v1",
+          kind: "ak.open.mimi.exchange.request_key_material",
+          profile: "ak.profile.mimi_interop.v1",
         },
       });
     }
@@ -1052,7 +1052,7 @@ export async function mockCokretApi(
         ok: true,
         room_id: roomId,
         receipt: {
-          kind: "ck.open.mimi.command.update_room",
+          kind: "ak.open.mimi.command.update_room",
           operation_id: "ak:operation:mimi-room-update",
         },
       });
@@ -1066,7 +1066,7 @@ export async function mockCokretApi(
         ok: true,
         accepted: ["did:web:remote.example"],
         receipt: {
-          kind: "ck.open.mimi.command.notify",
+          kind: "ak.open.mimi.command.notify",
           notification_id: "ak:mimi:notify:e2e",
         },
       });
@@ -1079,11 +1079,11 @@ export async function mockCokretApi(
       return json(route, {
         event_ref: "ak:event:01964137-0000-7000-8000-00000000d0aa",
         delivery: {
-          kind: "ck.mimi.mapping_receipt",
-          profile: "ck.profile.mimi_interop.v1",
+          kind: "ak.mimi.mapping_receipt",
+          profile: "ak.profile.mimi_interop.v1",
           mimi_room_uri: "mimi://mimi.example.com/rooms/01JSMIMI",
           source_format: "text/markdown;variant=GFM-MIMI",
-          target_format: "ck.message.create",
+          target_format: "ak.message.create",
           original_envelope_hash: "sha256:e2e-mimi-envelope",
           mapped_operation_id: "ak:operation:mimi-submit-e2e",
           mimi_message_id: "mimi-msg-e2e",
@@ -1107,8 +1107,8 @@ export async function mockCokretApi(
         room_binding_ref: "ak:event:01964137-0000-7000-8000-00000000d0ab",
         proofs: [
           {
-            kind: "ck.open.mimi.query.group_info",
-            profile: "ck.profile.mimi_interop.v1",
+            kind: "ak.open.mimi.query.group_info",
+            profile: "ak.profile.mimi_interop.v1",
           },
         ],
       });
@@ -1122,7 +1122,7 @@ export async function mockCokretApi(
         ok: true,
         consent_id: "ak:mimi-consent:e2e",
         state: "requested",
-        receipt: { kind: "ck.open.mimi.command.request_consent" },
+        receipt: { kind: "ak.open.mimi.command.request_consent" },
       });
     }
 
@@ -1134,7 +1134,7 @@ export async function mockCokretApi(
         ok: true,
         consent_id: "ak:mimi-consent:e2e",
         state: "accepted",
-        receipt: { kind: "ck.open.mimi.command.update_consent" },
+        receipt: { kind: "ak.open.mimi.command.update_consent" },
       });
     }
 
@@ -1171,7 +1171,7 @@ export async function mockCokretApi(
         ok: true,
         report_id: "ak:report:mimi-e2e",
         status: "queued",
-        receipt: { kind: "ck.open.mimi.command.report_abuse" },
+        receipt: { kind: "ak.open.mimi.command.report_abuse" },
       });
     }
 
@@ -1207,7 +1207,7 @@ export async function mockCokretApi(
           devices: accountDeviceSummaries(),
           profile: {
             id: "ak:actor_profile:01964137-0000-7000-8000-0000000000a1",
-            schema: "ck.schema.actor_profile.v1",
+            schema: "ak.schema.actor_profile.v1",
             principal_id: body.principal_id,
             actor_kind: "user",
             display_name: body.display_name ?? "inkson",
@@ -1239,7 +1239,7 @@ export async function mockCokretApi(
       return json(route, {
         profile: {
           id: "ak:actor_profile:01964137-0000-7000-8000-0000000000a1",
-          schema: "ck.schema.actor_profile.v1",
+          schema: "ak.schema.actor_profile.v1",
           principal_id: "did:web:alice.example",
           actor_kind: "user",
           display_name: displayName,
@@ -1270,7 +1270,7 @@ export async function mockCokretApi(
       const notificationEvents = includeDemoRealms
         ? [
             {
-              kind: "ck.notification",
+              kind: "ak.notification",
               notification_id: "notif-msg-1",
               title: "New message",
               body: "Alice sent a message in Demo Realm",
@@ -1281,7 +1281,7 @@ export async function mockCokretApi(
               read: false,
             },
             {
-              kind: "ck.notification",
+              kind: "ak.notification",
               notification_id: "notif-invite-1",
               invite_id: "ak:invite:01904100-0000-7000-8000-000000000099",
               title: "New invite",
@@ -1374,7 +1374,7 @@ export async function mockCokretApi(
         left_realms: [],
         to_device: {
           messages: includeDemoRealms
-            ? [{ kind: "ck.mls.welcome", content: { ciphertext: "opaque" } }]
+            ? [{ kind: "ak.mls.welcome", content: { ciphertext: "opaque" } }]
             : [],
           ack_token: "mock-to-device-ack",
         },
@@ -1453,7 +1453,7 @@ export async function mockCokretApi(
       const body = await route.request().postDataJSON();
       expect(body.locator_token).toBeTruthy();
       return json(route, {
-        schema: "ck.schema.principal_locator.v1",
+        schema: "ak.schema.principal_locator.v1",
         subject_id: "did:web:carol.example",
         recipient_service_did: "did:web:server.local",
         issued_at: "2026-06-07T00:00:00Z",
@@ -1571,8 +1571,8 @@ export async function mockCokretApi(
         trust_domain: "ak:trust_domain:server.local",
         service_type: "directory_service",
         protocol_version: "1.0",
-        supported_profiles: ["ck.profile.directory_service.v1"],
-        supported_operations: ["ck.find.directory.query.describe"],
+        supported_profiles: ["ak.profile.directory_service.v1"],
+        supported_operations: ["ak.find.directory.query.describe"],
         supported_bindings: [{ kind: "http_json" }],
         supported_features: [],
         auth_metadata: { mode: "public_no_auth" },
@@ -1586,7 +1586,7 @@ export async function mockCokretApi(
         compat_surfaces: [],
         development_mode: false,
         resource_types: ["realm", "organization", "actor"],
-        discovery_profiles: ["ck.profile.directory_service.v1"],
+        discovery_profiles: ["ak.profile.directory_service.v1"],
         restricted_query_proof: false,
         ingest_modes: ["push"],
         accept_policy_kind: "open",
@@ -1630,7 +1630,7 @@ export async function mockCokretApi(
         registry_mode: "development_local",
         supported_receipts: ["local"],
         protocol_version: "1.0",
-        profiles: ["ck.identity.local-dev.v1"],
+        profiles: ["ak.identity.local-dev.v1"],
       });
     }
 
@@ -1836,7 +1836,7 @@ export async function mockCokretApi(
       route.request().method() === "GET"
     ) {
       return json(route, {
-        schema: "ck.schema.invite_receive_policy.v1",
+        schema: "ak.schema.invite_receive_policy.v1",
         subject_id: "did:web:alice.example",
         allowed_introduction_kinds: [
           "consent_grant",
@@ -1896,7 +1896,7 @@ export async function mockCokretApi(
         state: "active",
         profile: {
           id: "ak:actor_profile:01964137-0000-7000-8000-0000000000a1",
-          schema: "ck.schema.actor_profile.v1",
+          schema: "ak.schema.actor_profile.v1",
           principal_id: accountPrincipalId,
           actor_kind: "user",
           display_name: "inkson",
@@ -1907,7 +1907,7 @@ export async function mockCokretApi(
       };
       if (primaryHandle) {
         viewer.primary_handle_claim = {
-          schema: "ck.schema.handle_claim.v1",
+          schema: "ak.schema.handle_claim.v1",
           handle: primaryHandle,
           subject: accountPrincipalId,
         };
@@ -2109,10 +2109,10 @@ export async function mockCokretApi(
       const body = await route.request().postDataJSON();
       if (
         ![
-          "ck.receipt.read",
-          "ck.typing",
-          "ck.presence",
-          "ck.call.signal",
+          "ak.receipt.read",
+          "ak.typing",
+          "ak.presence",
+          "ak.call.signal",
         ].includes(body.kind)
       ) {
         return json(
@@ -2351,7 +2351,7 @@ function joinCandidate() {
     service_type: "principal_server",
     role: "primary",
     endpoint: null,
-    operations: ["ck.self.events.command.submit"],
+    operations: ["ak.self.events.command.submit"],
     join_methods: ["invite_accept", "member_join"],
     priority: 0,
     source: "directory_ingest",
@@ -2377,7 +2377,7 @@ function mimiProviderDirectory() {
         service_type: "mimi_provider_facade",
         provider_id: "mimi://mimi.example.com",
         base_url: "https://mimi.example.com/_arkret/open/mimi",
-        supported_profiles: ["ck.profile.mimi_interop.v1"],
+        supported_profiles: ["ak.profile.mimi_interop.v1"],
       },
     ],
     features: {

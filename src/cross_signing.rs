@@ -89,9 +89,9 @@ impl CrossSigningSetupStep {
         match self {
             Self::GeneratePrincipalSigningKey | Self::GenerateSelfAndUserSigningKeys => None,
             Self::SignSubordinateBindings => None,
-            Self::PublishSecretStorageBackup => Some("ck.schema.key_backup.v1"),
-            Self::EmitCrossSigningPublish => Some("ck.cross_signing.publish"),
-            Self::SignCurrentDeviceBinding => Some("ck.device.authorize"),
+            Self::PublishSecretStorageBackup => Some("ak.schema.key_backup.v1"),
+            Self::EmitCrossSigningPublish => Some("ak.cross_signing.publish"),
+            Self::SignCurrentDeviceBinding => Some("ak.device.authorize"),
             Self::RecomputeDeviceTrustStates => None,
         }
     }
@@ -199,7 +199,7 @@ impl CrossSigningSetupPlan {
     pub fn event_kinds(&self) -> Vec<&'static str> {
         let mut seen: Vec<&'static str> = Vec::new();
         if matches!(self.mode, CrossSigningSetupMode::Reset) {
-            seen.push("ck.cross_signing.reset");
+            seen.push("ak.cross_signing.reset");
         }
         for step in &self.steps {
             if let Some(kind) = step.canonical_event_kind()
@@ -608,9 +608,9 @@ mod tests {
         assert_eq!(plan.new_generation, 1);
         assert_eq!(plan.steps.len(), 7);
         let kinds = plan.event_kinds();
-        assert!(kinds.contains(&"ck.cross_signing.publish"));
-        assert!(kinds.contains(&"ck.device.authorize"));
-        assert!(kinds.contains(&"ck.schema.key_backup.v1"));
+        assert!(kinds.contains(&"ak.cross_signing.publish"));
+        assert!(kinds.contains(&"ak.device.authorize"));
+        assert!(kinds.contains(&"ak.schema.key_backup.v1"));
     }
 
     #[test]
@@ -619,7 +619,7 @@ mod tests {
         assert_eq!(plan.mode, CrossSigningSetupMode::Reset);
         assert_eq!(plan.previous_generation, Some(2));
         assert_eq!(plan.new_generation, 3);
-        assert_eq!(plan.event_kinds()[0], "ck.cross_signing.reset");
+        assert_eq!(plan.event_kinds()[0], "ak.cross_signing.reset");
     }
 
     #[test]
@@ -784,7 +784,7 @@ mod tests {
                 principal.as_str(),
             )
             .unwrap();
-        assert_eq!(envelope.kind.as_str(), "ck.cross_signing.publish");
+        assert_eq!(envelope.kind.as_str(), "ak.cross_signing.publish");
         assert_eq!(
             envelope
                 .unsigned

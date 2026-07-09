@@ -26,7 +26,7 @@ pub fn principal_signing_proof_transcript(session: &Value) -> anyhow::Result<Val
             .ok_or_else(|| anyhow::anyhow!("recovery session missing `{name}`"))
     };
     Ok(json!({
-        "type": "ck.identity.recovery_proof.v1",
+        "type": "ak.identity.recovery_proof.v1",
         "kind": "principal_signing",
         "principal_id": field("principal_id")?,
         "requesting_device_id": field("requesting_device_id")?,
@@ -101,7 +101,7 @@ mod tests {
 
     fn sample_session() -> Value {
         json!({
-            "schema": "ck.schema.recovery_session.v1",
+            "schema": "ak.schema.recovery_session.v1",
             "recovery_session_id": "ak:recovery_session:01964137-0000-7000-8000-0000000000aa",
             "principal_id": "did:key:z6MkPrincipalFixture",
             "requesting_device_id": "ak:device:01964137-0000-7000-8000-000000000099",
@@ -120,7 +120,7 @@ mod tests {
     #[test]
     fn transcript_binds_every_session_field() {
         let t = principal_signing_proof_transcript(&sample_session()).unwrap();
-        assert_eq!(t["type"], "ck.identity.recovery_proof.v1");
+        assert_eq!(t["type"], "ak.identity.recovery_proof.v1");
         assert_eq!(t["kind"], "principal_signing");
         for f in [
             "principal_id",

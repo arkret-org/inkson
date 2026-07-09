@@ -274,7 +274,7 @@ pub(super) fn ensure_sidebar_row_perms(
                     crate::realm_read_api::authz_check_raw(
                         &api.sdk_http_client()?,
                         &actor,
-                        "ck.invite.create",
+                        "ak.invite.create",
                         &realm_id,
                     )
                     .await
@@ -284,7 +284,7 @@ pub(super) fn ensure_sidebar_row_perms(
                     crate::realm_read_api::authz_check_raw(
                         &api.sdk_http_client()?,
                         &actor,
-                        "ck.realm.update",
+                        "ak.realm.update",
                         &realm_id,
                     )
                     .await

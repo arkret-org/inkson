@@ -1,7 +1,7 @@
 //! App-wide, single-flight session-credential refresher.
 //!
 //! The current credential (`token` signal, sent with every API call) is the
-//! active `ck.session.grant` JWT. When a request comes back `auth_expired`, the
+//! active `ak.session.grant` JWT. When a request comes back `auth_expired`, the
 //! app either restores the still-valid grant into memory or rotates it through
 //! the Account Authority refresh endpoint. It clears the live session only when
 //! the refresh endpoint returns a structured terminal grant error. Missing

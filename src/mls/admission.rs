@@ -230,7 +230,7 @@ pub(crate) fn build_realm_key_share_event(
     // requires this signature, so a provider without an active signer must
     // fail closed and retry after device signing is ready.
     payload.sender_device_signature = sign_realm_key_share_sender_signature(&payload)
-        .ok_or_else(|| "ck.realm_key.share requires an active sender device signer".to_owned())?;
+        .ok_or_else(|| "ak.realm_key.share requires an active sender device signer".to_owned())?;
     let body = serde_json::to_value(&payload)
         .map_err(|err| format!("serialize ck.realm_key.share payload: {err}"))?;
     crate::operation::OperationBuilder::new(
@@ -240,7 +240,7 @@ pub(crate) fn build_realm_key_share_event(
     )
     .body(body)
     .build_sdk_event("inkson")
-    .map_err(|err| format!("ck.realm_key.share SDK Event conversion failed: {err}"))
+    .map_err(|err| format!("ak.realm_key.share SDK Event conversion failed: {err}"))
 }
 
 /// Wrap an already-constructed [`arkret_sdk::RealmKeySharePayload`] (e.g. the
@@ -260,7 +260,7 @@ pub(crate) fn wrap_realm_key_share_payload_event(
     mut payload: arkret_sdk::RealmKeySharePayload,
 ) -> Result<arkret_sdk::Event, String> {
     payload.sender_device_signature = sign_realm_key_share_sender_signature(&payload)
-        .ok_or_else(|| "ck.realm_key.share requires an active sender device signer".to_owned())?;
+        .ok_or_else(|| "ak.realm_key.share requires an active sender device signer".to_owned())?;
     let body = serde_json::to_value(&payload)
         .map_err(|err| format!("serialize ck.realm_key.share payload: {err}"))?;
     crate::operation::OperationBuilder::new(
@@ -270,7 +270,7 @@ pub(crate) fn wrap_realm_key_share_payload_event(
     )
     .body(body)
     .build_sdk_event("inkson")
-    .map_err(|err| format!("ck.realm_key.share SDK Event conversion failed: {err}"))
+    .map_err(|err| format!("ak.realm_key.share SDK Event conversion failed: {err}"))
 }
 
 /// Sign the canonical `RealmKeySharePayload::sender_signing_input()` with this
@@ -585,7 +585,7 @@ mod tests {
             .validate_payload(event.kind.as_str(), &event.payload)
             .unwrap_or_else(|err| {
                 panic!(
-                    "ck.realm_key.share payload violates registered schema: {err}\npayload: {}",
+                    "ak.realm_key.share payload violates registered schema: {err}\npayload: {}",
                     serde_json::to_string_pretty(&event.payload).unwrap()
                 )
             });
@@ -657,12 +657,12 @@ mod tests {
         )
         .unwrap();
 
-        assert_eq!(admission.commit.kind.as_str(), "ck.mls.commit");
+        assert_eq!(admission.commit.kind.as_str(), "ak.mls.commit");
         assert_eq!(
             admission.commit.payload["base_epoch_ref"],
             json!(genesis_event.event_id.as_str())
         );
-        assert_eq!(admission.welcome.kind.as_str(), "ck.mls.welcome");
+        assert_eq!(admission.welcome.kind.as_str(), "ak.mls.welcome");
         assert_eq!(
             admission.welcome.payload["ciphertext"],
             admission.welcome_envelope.welcome
@@ -679,14 +679,14 @@ mod tests {
             .validate_payload(admission.welcome.kind.as_str(), &admission.welcome.payload)
             .unwrap_or_else(|err| {
                 panic!(
-                    "ck.mls.welcome payload violates registered schema: {err}\npayload: {}",
+                    "ak.mls.welcome payload violates registered schema: {err}\npayload: {}",
                     serde_json::to_string_pretty(&admission.welcome.payload).unwrap()
                 )
             });
 
         let messages = json!({
             "messages": [{
-                "kind": "ck.mls.welcome",
+                "kind": "ak.mls.welcome",
                 "content": serde_json::to_value(&admission.welcome_envelope).unwrap(),
                 "unsigned": {
                     "key_package_id": claim.keypackage_ref,

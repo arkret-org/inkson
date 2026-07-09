@@ -13,7 +13,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use serde_json::{Value, json};
 
 pub(crate) fn is_notification_account_data(value: &Value) -> bool {
-    value.get("schema").and_then(Value::as_str) == Some("ck.schema.notification.v1")
+    value.get("schema").and_then(Value::as_str) == Some("ak.schema.notification.v1")
 }
 
 pub(crate) fn raw_notifications_from_sources(
@@ -154,7 +154,7 @@ fn notification_is_invite(value: &Value) -> bool {
     ["notification_kind", "notification_type", "type", "kind"]
         .iter()
         .filter_map(|key| value.get(*key).and_then(Value::as_str))
-        .any(|kind| matches!(kind, "invite" | "ck.invite" | "ck.invite.create"))
+        .any(|kind| matches!(kind, "invite" | "ak.invite" | "ck.invite.create"))
 }
 
 pub(crate) fn drop_joined_invite_notifications(

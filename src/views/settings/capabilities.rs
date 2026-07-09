@@ -268,11 +268,11 @@ mod tests {
     fn sample_grant(subject: serde_json::Value) -> Capability {
         serde_json::from_value(json!({
             "id": "ak:grant:0196419b-0000-7000-8000-000000000000",
-            "schema": "ck.schema.capability.v1",
+            "schema": "ak.schema.capability.v1",
             "realm_id": "ak:realm:0196419b-0000-7000-8000-000000000001",
             "issuer": "did:web:alice.example",
             "subject": subject,
-            "actions": ["ck.message.create"],
+            "actions": ["ak.message.create"],
             "resources": [
                 {"kind": "realm", "realm_id": "ak:realm:0196419b-0000-7000-8000-000000000001"}
             ],
@@ -290,7 +290,7 @@ mod tests {
             row.capability_id,
             "ak:grant:0196419b-0000-7000-8000-000000000000"
         );
-        assert_eq!(row.action, "ck.message.create");
+        assert_eq!(row.action, "ak.message.create");
         assert_eq!(row.issuer_did, "did:web:alice.example");
         assert_eq!(row.subject_did, "did:web:bob.example");
         assert!(row.expires_at.starts_with("2026-12-31"));

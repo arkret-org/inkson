@@ -23,7 +23,7 @@ fn local_card_update_overlay_replays_queued_summary_and_body_on_top_of_projectio
         realm_id: Some("ak:realm:r1".to_owned()),
         received_at: chrono::Utc::now(),
         payload: json!({
-            "kind": "ck.strand.update",
+            "kind": "ak.strand.update",
             "operation_id": "op-1",
             "write_state": "queued",
             "body": {
@@ -62,7 +62,7 @@ fn overlay_local_card_update_records_clears_due_from_fields_replacement() {
         realm_id: Some("ak:realm:r1".to_owned()),
         received_at: chrono::Utc::now(),
         payload: json!({
-            "kind": "ck.strand.update",
+            "kind": "ak.strand.update",
             "operation_id": "op-clear-due",
             "write_state": "queued",
             "body": {
@@ -98,7 +98,7 @@ fn card_synthesis_track_entries_preserve_append_history() {
             realm_id: Some("ak:realm:r1".to_owned()),
             received_at: received_at("2026-05-22T10:00:00Z"),
             payload: json!({
-                "kind": "ck.strand.update",
+                "kind": "ak.strand.update",
                 "operation_id": "op-1",
                 "actor_id": "did:web:acme.example:users:alice",
                 "created_at": "2026-05-22T10:00:00Z",
@@ -116,7 +116,7 @@ fn card_synthesis_track_entries_preserve_append_history() {
             realm_id: Some("ak:realm:r1".to_owned()),
             received_at: received_at("2026-05-22T11:00:00Z"),
             payload: json!({
-                "kind": "ck.strand.update",
+                "kind": "ak.strand.update",
                 "operation_id": "op-2",
                 "actor_id": "did:web:acme.example:users:bob",
                 "created_at": "2026-05-22T11:00:00Z",
@@ -165,7 +165,7 @@ fn card_synthesis_track_entries_replay_full_set_events_without_reattributing_his
             realm_id: Some("ak:realm:r1".to_owned()),
             received_at: received_at("2026-05-22T10:00:00Z"),
             payload: json!({
-                "kind": "ck.strand.update",
+                "kind": "ak.strand.update",
                 "operation_id": "op-1",
                 "actor_id": "did:web:acme.example:users:alice",
                 "created_at": "2026-05-22T10:00:00Z",
@@ -183,7 +183,7 @@ fn card_synthesis_track_entries_replay_full_set_events_without_reattributing_his
             realm_id: Some("ak:realm:r1".to_owned()),
             received_at: received_at("2026-05-22T11:00:00Z"),
             payload: json!({
-                "kind": "ck.strand.update",
+                "kind": "ak.strand.update",
                 "operation_id": "op-2",
                 "actor_id": "did:web:acme.example:users:bob",
                 "created_at": "2026-05-22T11:00:00Z",
@@ -233,7 +233,7 @@ fn local_event_sourced_ops_recover_authors_without_per_tab_backfill() {
     // deliver them, folded through the SAME funnel the engine ingests with.
     let history_events = vec![
         json!({
-            "event_kind": "ck.strand.update",
+            "event_kind": "ak.strand.update",
             "event_id": "op-1",
             "actor_id": "did:web:acme.example:users:alice",
             "created_at": "2026-05-22T10:00:00Z",
@@ -244,7 +244,7 @@ fn local_event_sourced_ops_recover_authors_without_per_tab_backfill() {
             }
         }),
         json!({
-            "event_kind": "ck.strand.update",
+            "event_kind": "ak.strand.update",
             "event_id": "op-2",
             "actor_id": "did:web:acme.example:users:bob",
             "created_at": "2026-05-22T11:00:00Z",
@@ -300,7 +300,7 @@ fn engine_ingest_dedupes_resent_strand_update_by_operation_id() {
     card.updated_at = "2026-05-22T10:00:00Z".to_owned();
 
     let event = json!({
-        "event_kind": "ck.strand.update",
+        "event_kind": "ak.strand.update",
         "event_id": "op-1",
         "actor_id": "did:web:acme.example:users:alice",
         "created_at": "2026-05-22T10:00:00Z",
@@ -445,7 +445,7 @@ fn strand_participant_dids_filters_by_target_strand_and_pulls_unique_actors() {
             realm_id: Some("ak:realm:r1".to_owned()),
             received_at: chrono::Utc::now(),
             payload: json!({
-                "kind": "ck.strand.update",
+                "kind": "ak.strand.update",
                 "body": {
                     "strand_id": "ak:strand:target",
                     "actor_id": "did:web:alice.example",
@@ -458,7 +458,7 @@ fn strand_participant_dids_filters_by_target_strand_and_pulls_unique_actors() {
             realm_id: Some("ak:realm:r1".to_owned()),
             received_at: chrono::Utc::now(),
             payload: json!({
-                "kind": "ck.message.create",
+                "kind": "ak.message.create",
                 "body": {
                     "target_ref": "ak:strand:target",
                     // Canonical actor key only; forbidden `sender`
@@ -474,7 +474,7 @@ fn strand_participant_dids_filters_by_target_strand_and_pulls_unique_actors() {
             realm_id: Some("ak:realm:r1".to_owned()),
             received_at: chrono::Utc::now(),
             payload: json!({
-                "kind": "ck.strand.update",
+                "kind": "ak.strand.update",
                 "body": {
                     "strand_id": "ak:strand:other",
                     "actor_id": "did:web:carol.example",
@@ -729,7 +729,7 @@ fn seed_strand_ids_are_valid_object_patch_targets() {
         )
         .expect("builds")
         .build("inkson");
-        assert_eq!(event.kind.as_str(), "ck.strand.update");
+        assert_eq!(event.kind.as_str(), "ak.strand.update");
         assert_eq!(sdk_event_local_target_ref(&event), Some(strand_id));
     }
 }

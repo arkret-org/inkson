@@ -64,7 +64,7 @@ pub fn capability_grant_actions(
     let realm = trim_realm_id(realm_id);
     let mut grant = json!({
         "id": grant_id,
-        "schema": "ck.schema.capability.v1",
+        "schema": "ak.schema.capability.v1",
         "realm_id": realm,
         "issuer": actor,
         "subject": subject,

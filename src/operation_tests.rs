@@ -72,7 +72,7 @@ fn operation_builder_generates_valid_envelope() {
         "did:web:alice",
         arkret_sdk::events::kinds::EventKind::MessageCreate,
     )
-    .body(json!({"content": {"kind": "ck.content.text", "body": "hello"}}))
+    .body(json!({"content": {"kind": "ak.content.text", "body": "hello"}}))
     .build("test_node");
 
     assert!(!op.local_operation_id().is_empty());
@@ -81,7 +81,7 @@ fn operation_builder_generates_valid_envelope() {
         "ak:realm:0196419b-0000-7000-8000-0000000000aa"
     );
     assert_eq!(op.actor_id.as_str(), "did:web:alice");
-    assert_eq!(op.kind.as_str(), "ck.message.create");
+    assert_eq!(op.kind.as_str(), "ak.message.create");
     assert!(!op.hlc.as_str().is_empty());
     assert!(op.actor_seq > 0);
     // Spec compliance: build() never attaches a placeholder proof —
@@ -96,7 +96,7 @@ fn operation_round_trip_serde() {
         "did:web:bob",
         arkret_sdk::events::kinds::EventKind::MessageCreate,
     )
-    .body(json!({"content": {"kind": "ck.content.text", "body": "hello world"}}))
+    .body(json!({"content": {"kind": "ak.content.text", "body": "hello world"}}))
     .build("node");
     let json = serde_json::to_string(&op).unwrap();
     let parsed: EventEnvelope = serde_json::from_str(&json).unwrap();
@@ -110,7 +110,7 @@ fn operation_builder_can_emit_signed_authorization_binding() {
         "did:web:bob",
         arkret_sdk::events::kinds::EventKind::MessageCreate,
     )
-    .body(json!({"content": {"kind": "ck.content.text", "body": "hello world"}}))
+    .body(json!({"content": {"kind": "ak.content.text", "body": "hello world"}}))
     .executed_by("did:web:agent.example")
     .authorization_ref("ak:grant:0196419b-0000-7000-8000-000000000001")
     .build("node");
@@ -144,7 +144,7 @@ fn event_envelope_accepts_current_optional_top_level_fields() {
         "did:web:bob",
         arkret_sdk::events::kinds::EventKind::MessageCreate,
     )
-    .body(json!({"content": {"kind": "ck.content.text", "body": "hello world"}}))
+    .body(json!({"content": {"kind": "ak.content.text", "body": "hello world"}}))
     .build("node");
     let mut value = serde_json::to_value(&op).unwrap();
     let object = value.as_object_mut().unwrap();
@@ -190,7 +190,7 @@ fn event_envelope_rejects_unknown_top_level_fields() {
         "did:web:bob",
         arkret_sdk::events::kinds::EventKind::MessageCreate,
     )
-    .body(json!({"content": {"kind": "ck.content.text", "body": "hello world"}}))
+    .body(json!({"content": {"kind": "ak.content.text", "body": "hello world"}}))
     .build("node");
     let mut value = serde_json::to_value(&op).unwrap();
     value
@@ -218,7 +218,7 @@ fn kanban_card_strand_create_carries_position_in_metadata_fields() {
     .expect("builds")
     .build("node");
 
-    assert_eq!(op.kind.as_str(), "ck.strand.create");
+    assert_eq!(op.kind.as_str(), "ak.strand.create");
     assert_eq!(
         op.realm_id.as_str(),
         "ak:realm:0196419b-0000-7000-8000-000000000001"
@@ -290,7 +290,7 @@ fn mls_commit_builder_matches_registered_payload_schema() {
         .unwrap()
         .build("node");
 
-    assert_eq!(op.kind.as_str(), "ck.mls.commit");
+    assert_eq!(op.kind.as_str(), "ak.mls.commit");
     assert!(op.payload.get("group_id").is_none());
     assert!(op.payload.get("preconditions").is_none());
     assert!(op.payload.get("effects").is_none());
@@ -310,7 +310,7 @@ fn incident_status_update_uses_schema_safe_fields_patch() {
     .expect("builds")
     .build("node");
 
-    assert_eq!(op.kind.as_str(), "ck.strand.update");
+    assert_eq!(op.kind.as_str(), "ak.strand.update");
     assert_eq!(op.payload["target_ref"], strand_id);
     assert!(op.payload.get("strand_id").is_none());
     assert!(op.payload["patch"].get("fields.status").is_none());
@@ -332,7 +332,7 @@ fn discussion_strand_create_emits_discussion_track() {
     )
     .unwrap()
     .build("node");
-    assert_eq!(op.kind.as_str(), "ck.strand.create");
+    assert_eq!(op.kind.as_str(), "ak.strand.create");
     assert_eq!(
         op.payload["object"]["id"],
         "ak:strand:0196419b-0000-7000-8000-000000000001"
@@ -363,7 +363,7 @@ fn strand_tracks_update_primary_uses_is_primary_patch_key() {
     )
     .expect("builds")
     .build("node");
-    assert_eq!(op.kind.as_str(), "ck.strand.tracks.update");
+    assert_eq!(op.kind.as_str(), "ak.strand.tracks.update");
     assert_eq!(
         op.payload["patch"]["tracks.discussion.is_primary"]["value"],
         true
@@ -389,7 +389,7 @@ fn strand_update_patch_uses_canonical_payload_patch() {
     )
     .expect("builds")
     .build("node");
-    assert_eq!(op.kind.as_str(), "ck.strand.update");
+    assert_eq!(op.kind.as_str(), "ak.strand.update");
     assert_eq!(op.local_target_ref(), Some(strand_id));
     assert_eq!(op.payload["target_ref"], strand_id);
     assert!(op.payload.get("strand_id").is_none());
@@ -433,7 +433,7 @@ fn strand_update_builders_match_registered_object_patch_schema() {
     ];
 
     for event in &events {
-        assert_eq!(event.kind.as_str(), "ck.strand.update");
+        assert_eq!(event.kind.as_str(), "ak.strand.update");
         assert!(event.payload.get("patch").is_some());
         assert_eq!(event.payload["target_ref"], strand_id);
         assert!(event.payload.get("strand_id").is_none());
@@ -450,7 +450,7 @@ fn strand_position_cas_update_rejects_incomplete_effect_position() {
     let error = ck_ops::strand_position_cas_update(
         "ak:realm:0196419b-0000-7000-8000-000000000001",
         "did:web:alice",
-        "ck.strand.move",
+        "ak.strand.move",
         "ak:space:0196419b-0000-7000-8000-000000000010",
         "ak:strand:0196419b-0000-7000-8000-000000000020",
         json!({
@@ -509,10 +509,10 @@ fn object_patch_family_builders_match_registered_payload_schema() {
 
     for event in &events {
         assert!(event.payload.get("patch").is_some(), "{}", event.kind);
-        if event.kind == "ck.strand.tracks.update" {
+        if event.kind == "ak.strand.tracks.update" {
             assert_eq!(event.payload["strand_id"], strand_id);
             assert!(event.payload.get("target_ref").is_none(), "{}", event.kind);
-        } else if event.kind == "ck.space.update" {
+        } else if event.kind == "ak.space.update" {
             assert_eq!(event.payload["space_id"], space_id);
             assert!(event.payload.get("target_ref").is_none(), "{}", event.kind);
         } else {
@@ -527,7 +527,7 @@ fn strand_position_cas_update_emits_canonical_move_payload() {
     let op = ck_ops::strand_position_cas_update(
         "ak:realm:0196419b-0000-7000-8000-000000000001",
         "did:web:alice",
-        "ck.strand.move",
+        "ak.strand.move",
         "ak:space:0196419b-0000-7000-8000-000000000010",
         "ak:strand:0196419b-0000-7000-8000-000000000020",
         json!({
@@ -542,7 +542,7 @@ fn strand_position_cas_update_emits_canonical_move_payload() {
     .expect("builds")
     .build("node");
 
-    assert_eq!(op.kind.as_str(), "ck.strand.move");
+    assert_eq!(op.kind.as_str(), "ak.strand.move");
     assert_eq!(
         op.payload["board_space_id"],
         "ak:space:0196419b-0000-7000-8000-000000000010"
@@ -565,7 +565,7 @@ fn strand_position_cas_update_emits_canonical_reorder_payload() {
     let op = ck_ops::strand_position_cas_update(
         "ak:realm:0196419b-0000-7000-8000-000000000001",
         "did:web:alice",
-        "ck.strand.reorder",
+        "ak.strand.reorder",
         "ak:space:0196419b-0000-7000-8000-000000000010",
         "ak:strand:0196419b-0000-7000-8000-000000000020",
         json!({
@@ -580,7 +580,7 @@ fn strand_position_cas_update_emits_canonical_reorder_payload() {
     .expect("builds")
     .build("node");
 
-    assert_eq!(op.kind.as_str(), "ck.strand.reorder");
+    assert_eq!(op.kind.as_str(), "ak.strand.reorder");
     assert_eq!(
         op.payload["board_space_id"],
         "ak:space:0196419b-0000-7000-8000-000000000010"
@@ -609,12 +609,12 @@ fn space_create_emits_canonical_space_object() {
     )
     .expect("builds")
     .build("node");
-    assert_eq!(op.kind.as_str(), "ck.space.create");
+    assert_eq!(op.kind.as_str(), "ak.space.create");
     assert_eq!(
         op.local_target_ref(),
         Some("ak:space:0196419b-0000-7000-8000-000000000002")
     );
-    assert_eq!(op.payload["object"]["schema"], "ck.schema.space.v1");
+    assert_eq!(op.payload["object"]["schema"], "ak.schema.space.v1");
     assert_eq!(
         op.payload["object"]["id"],
         "ak:space:0196419b-0000-7000-8000-000000000002"
@@ -689,13 +689,13 @@ fn sdk_event_conversion_accepts_unsigned_builder_for_signing() {
         "did:web:alice.example",
         arkret_sdk::events::kinds::EventKind::MessageCreate,
     )
-    .body(json!({"kind": "ck.content.text", "body": "hi"}))
+    .body(json!({"kind": "ak.content.text", "body": "hi"}))
     .build("node");
 
     let sdk_event = op.clone();
 
     assert!(sdk_event.proofs.is_empty());
-    assert_eq!(sdk_event.kind.as_str(), "ck.message.create");
+    assert_eq!(sdk_event.kind.as_str(), "ak.message.create");
     assert_eq!(sdk_event.realm_id.as_str(), op.realm_id.as_str());
 }
 
@@ -708,7 +708,7 @@ fn sdk_submit_event_conversion_preserves_signed_digest() {
         "did:web:alice.example",
         arkret_sdk::events::kinds::EventKind::MessageCreate,
     )
-    .body(json!({"kind": "ck.content.text", "body": "hi"}))
+    .body(json!({"kind": "ak.content.text", "body": "hi"}))
     .build("node");
     let signing_key = SigningKey::from_bytes(&[7u8; 32]);
     op.sign_ed25519(
@@ -758,7 +758,7 @@ fn invite_helpers_emit_canonical_kinds() {
     )
     .expect("builds")
     .build("node");
-    assert_eq!(create.kind.as_str(), "ck.invite.create");
+    assert_eq!(create.kind.as_str(), "ak.invite.create");
     assert_eq!(create.payload["invite_id"], invite_id);
     assert_eq!(create.payload["invitee"], "did:web:bob.example");
     assert_eq!(
@@ -796,7 +796,7 @@ fn invite_helpers_emit_canonical_kinds() {
     )
     .expect("builds")
     .build("node");
-    assert_eq!(accept.kind.as_str(), "ck.invite.accept");
+    assert_eq!(accept.kind.as_str(), "ak.invite.accept");
     assert_eq!(accept.payload["invite_id"], invite_id);
     assert!(accept.payload.get("state").is_none());
     assert_registered_payload_valid(&accept);
@@ -809,7 +809,7 @@ fn invite_helpers_emit_canonical_kinds() {
     )
     .expect("builds")
     .build("node");
-    assert_eq!(cancel.kind.as_str(), "ck.invite.cancel");
+    assert_eq!(cancel.kind.as_str(), "ak.invite.cancel");
     assert_eq!(cancel.payload["invite_id"], invite_id);
     assert_eq!(cancel.payload["reason"], "expired");
     assert!(cancel.payload.get("state").is_none());
@@ -826,7 +826,7 @@ fn space_lifecycle_helpers_emit_canonical_kinds() {
     )
     .expect("builds")
     .build("node");
-    assert_eq!(archive.kind.as_str(), "ck.space.archive");
+    assert_eq!(archive.kind.as_str(), "ak.space.archive");
     assert_eq!(archive.payload["space_id"], container_space_id);
     assert_eq!(archive.local_target_ref(), Some(container_space_id));
 
@@ -837,7 +837,7 @@ fn space_lifecycle_helpers_emit_canonical_kinds() {
     )
     .expect("builds")
     .build("node");
-    assert_eq!(restore.kind.as_str(), "ck.space.restore");
+    assert_eq!(restore.kind.as_str(), "ak.space.restore");
     assert_eq!(restore.payload["space_id"], container_space_id);
     assert_eq!(restore.local_target_ref(), Some(container_space_id));
 }
@@ -852,7 +852,7 @@ fn strand_lifecycle_helpers_emit_canonical_kinds() {
     )
     .expect("builds")
     .build("node");
-    assert_eq!(archive.kind.as_str(), "ck.strand.archive");
+    assert_eq!(archive.kind.as_str(), "ak.strand.archive");
     assert_eq!(archive.payload["target_ref"], strand_id);
     assert!(archive.payload.get("strand_id").is_none());
     assert_eq!(archive.local_target_ref(), Some(strand_id));
@@ -865,7 +865,7 @@ fn strand_lifecycle_helpers_emit_canonical_kinds() {
     )
     .expect("builds")
     .build("node");
-    assert_eq!(restore.kind.as_str(), "ck.strand.restore");
+    assert_eq!(restore.kind.as_str(), "ak.strand.restore");
     assert_eq!(restore.payload["target_ref"], strand_id);
     assert!(restore.payload.get("strand_id").is_none());
     assert_eq!(restore.local_target_ref(), Some(strand_id));
@@ -885,7 +885,7 @@ fn applet_helpers_emit_canonical_kinds_and_target_refs() {
 
     let reg = ck_ops::applet_registration(realm, actor, service_did, "extensions", &["read"])
         .build("node");
-    assert_eq!(reg.kind.as_str(), "ck.applet.registration");
+    assert_eq!(reg.kind.as_str(), "ak.applet.registration");
     assert_eq!(reg.payload["service_did"], service_did);
     assert_eq!(reg.payload["namespace"], "extensions");
     assert_eq!(reg.payload["capabilities"][0], "read");
@@ -893,7 +893,7 @@ fn applet_helpers_emit_canonical_kinds_and_target_refs() {
 
     let disc =
         ck_ops::applet_discovery(realm, actor, service_did, json!({"version": 1})).build("node");
-    assert_eq!(disc.kind.as_str(), "ck.applet.discovery");
+    assert_eq!(disc.kind.as_str(), "ak.applet.discovery");
     assert_eq!(disc.payload["manifest"]["version"], 1);
     assert_eq!(disc.local_target_ref(), Some(service_did));
 
@@ -906,7 +906,7 @@ fn applet_helpers_emit_canonical_kinds_and_target_refs() {
     )
     .expect("builds")
     .build("node");
-    assert_eq!(start.kind.as_str(), "ck.applet.interop_session.start");
+    assert_eq!(start.kind.as_str(), "ak.applet.interop_session.start");
     assert_eq!(start.payload["applet_id"], applet_id);
     assert_eq!(start.payload["session_id"], session_id);
     assert_eq!(start.local_target_ref(), Some(session_id));
@@ -922,7 +922,7 @@ fn applet_helpers_emit_canonical_kinds_and_target_refs() {
     )
     .expect("builds")
     .build("node");
-    assert_eq!(status.kind.as_str(), "ck.applet.interop_session.status");
+    assert_eq!(status.kind.as_str(), "ak.applet.interop_session.status");
     assert_eq!(status.payload["applet_id"], applet_id);
     assert_eq!(status.payload["runtime_status"], "running");
     assert!(status.payload.get("status").is_none());
@@ -941,7 +941,7 @@ fn applet_helpers_emit_canonical_kinds_and_target_refs() {
     )
     .expect("builds")
     .build("node");
-    assert_eq!(err.kind.as_str(), "ck.applet.bridge_error");
+    assert_eq!(err.kind.as_str(), "ak.applet.bridge_error");
     assert_eq!(err.payload["applet_id"], applet_id);
     assert_eq!(
         err.payload["failed_transaction_ref"],
@@ -961,11 +961,11 @@ fn agent_helpers_emit_canonical_kinds_and_target_refs() {
     let realm = "ak:realm:0196419b-0000-7000-8000-0000000000aa";
     let actor = "did:web:alice.example";
 
-    let endpoint = ck_ops::agent_endpoint(realm, actor, agent, "ck.agent.v1", &["strand.read"])
+    let endpoint = ck_ops::agent_endpoint(realm, actor, agent, "ak.agent.v1", &["strand.read"])
         .expect("builds")
         .build("node");
-    assert_eq!(endpoint.kind.as_str(), "ck.agent.endpoint");
-    assert_eq!(endpoint.payload["endpoints"][0]["protocol"], "ck.agent.v1");
+    assert_eq!(endpoint.kind.as_str(), "ak.agent.endpoint");
+    assert_eq!(endpoint.payload["endpoints"][0]["protocol"], "ak.agent.v1");
     assert_eq!(endpoint.local_target_ref(), Some(agent));
 
     let start = ck_ops::agent_interop_session_start(
@@ -979,7 +979,7 @@ fn agent_helpers_emit_canonical_kinds_and_target_refs() {
     )
     .expect("builds")
     .build("node");
-    assert_eq!(start.kind.as_str(), "ck.agent.interop_session.start");
+    assert_eq!(start.kind.as_str(), "ak.agent.interop_session.start");
     assert_eq!(start.payload["counterparty_agent"], agent);
     assert_eq!(
         start.payload["capability_grant"],
@@ -992,7 +992,7 @@ fn agent_helpers_emit_canonical_kinds_and_target_refs() {
         ck_ops::agent_interop_session_status(realm, actor, session_id, "working", json!({}))
             .expect("builds")
             .build("node");
-    assert_eq!(status.kind.as_str(), "ck.agent.interop_session.status");
+    assert_eq!(status.kind.as_str(), "ak.agent.interop_session.status");
     assert_eq!(status.payload["status"], "working");
     assert!(status.payload.get("detail").is_none());
     assert_registered_payload_valid(&status);
@@ -1006,7 +1006,7 @@ fn agent_helpers_emit_canonical_kinds_and_target_refs() {
     )
     .expect("builds")
     .build("node");
-    assert_eq!(result.kind.as_str(), "ck.agent.interop_session.result");
+    assert_eq!(result.kind.as_str(), "ak.agent.interop_session.result");
     assert_eq!(result.payload["status"], "completed");
     assert_eq!(result.payload["result_objects"][0]["summary"], "TL;DR");
     assert_eq!(result.payload["artifacts"][0]["merkle_root"], "sha256:abc");
@@ -1027,9 +1027,9 @@ fn message_revise_builder_uses_content_payload_schema() {
     .expect("builds")
     .build("node");
 
-    assert_eq!(event.kind.as_str(), "ck.message.revise");
+    assert_eq!(event.kind.as_str(), "ak.message.revise");
     assert_eq!(event.payload["message_id"], message_id);
-    assert_eq!(event.payload["content"]["kind"], "ck.content.text");
+    assert_eq!(event.payload["content"]["kind"], "ak.content.text");
     assert_eq!(event.payload["content"]["body"], "updated body");
     assert!(event.payload.get("patch").is_none());
     assert_registered_payload_valid(&event);
@@ -1106,7 +1106,7 @@ mod realm_organization_builder_tests {
         .expect("builds")
         .build("node");
 
-        assert_eq!(event.kind.as_str(), "ck.realm.organization");
+        assert_eq!(event.kind.as_str(), "ak.realm.organization");
         // The statement binds the organization DID, not a Space/Strand id.
         assert_eq!(event.local_target_ref(), Some(ORG_DID));
         assert_eq!(event.payload["organization_id"], ORG_DID);

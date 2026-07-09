@@ -105,7 +105,7 @@ pub fn build_card_comment_payload(comment: &CardComment) -> anyhow::Result<Value
         })
         .collect::<anyhow::Result<Vec<Value>>>()?;
 
-    let mut content = arkret_sdk::ContentBlock::new("ck.content.text", comment.body.clone())
+    let mut content = arkret_sdk::ContentBlock::new("ak.content.text", comment.body.clone())
         .with_field("format", json!("markdown"));
     if !mentions.is_empty() {
         content = content.with_field("mentions", Value::Array(mentions));
@@ -214,7 +214,7 @@ mod tests {
         assert_eq!(payload["track_name"], "discussion");
         // Body rides in the content block, not a top-level `body`.
         assert!(payload.get("body").is_none());
-        assert_eq!(payload["content"]["kind"], "ck.content.text");
+        assert_eq!(payload["content"]["kind"], "ak.content.text");
         assert_eq!(payload["content"]["body"], "hi @did:web:bob.example");
         // Mentions are structured nodes inside the content block.
         assert_eq!(
@@ -244,7 +244,7 @@ mod tests {
         let payload = build_card_comment_payload(&comment).expect("builds");
         arkret_sdk::schema::event_payload_validator_catalog()
             .unwrap()
-            .validate_payload("ck.message.create", &payload)
+            .validate_payload("ak.message.create", &payload)
             .expect("card comment payload must satisfy message_create_payload schema");
     }
 

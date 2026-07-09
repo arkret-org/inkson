@@ -93,7 +93,7 @@ pub(super) fn NewSpaceSection(
                     .and_then(|kind| kind.as_str())
                     .or_else(|| body.get("schema").and_then(|schema| schema.as_str()))
                 {
-                    Some("space") | Some("ck.schema.space.v1") => "space",
+                    Some("space") | Some("ak.schema.space.v1") => "space",
                     _ => "realm",
                 };
                 if kind == "realm" {
@@ -152,7 +152,7 @@ pub(super) fn NewSpaceSection(
             .and_then(|kind| kind.as_str())
             .or_else(|| body.get("schema").and_then(|schema| schema.as_str()))
         {
-            Some("space") | Some("ck.schema.space.v1") => "space",
+            Some("space") | Some("ak.schema.space.v1") => "space",
             _ => "realm",
         }
     };
@@ -475,7 +475,7 @@ pub(super) fn NewSpaceSection(
                     div { class: "setup-summary-row setup-summary-row-stack",
                         strong { "Wire shape" }
                         span { class: "muted",
-                            "ck.space.create event + optional parent_space_id / default_realm_id. Lifecycle actions below dispatch ck.space.archive / restore / tombstone."
+                            "ak.space.create event + optional parent_space_id / default_realm_id. Lifecycle actions below dispatch ck.space.archive / restore / tombstone."
                         }
                     }
                 }

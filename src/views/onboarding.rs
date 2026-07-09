@@ -8,7 +8,7 @@
 //! - `identity/identity-did.md` §3 — the default principal DID method is `did:webvh`; `did:web` is
 //!   kept for testing/local strands and is not recommended for production.
 //! - `identity/identity-handles.md` — handles are only human-readable entry points.
-//! - `crypto-media/device-lifecycle.md` §1-§3 — login factor → ck.session.grant; device
+//! - `crypto-media/device-lifecycle.md` §1-§3 — login factor → ak.session.grant; device
 //!   authorization → ck.device.authorize; device verification → ck.key.verification.*.
 //! - `crypto-media/device-lifecycle.md` §10-§13 — recovery key (24 words) / SSS.
 //!
@@ -780,7 +780,7 @@ mod tests {
             let label = step.label();
             assert!(!label.is_empty(), "label cannot be empty");
             assert!(
-                !label.starts_with("ck."),
+                !label.starts_with("ak."),
                 "labels are human strings, not event kinds: got `{label}`"
             );
         }

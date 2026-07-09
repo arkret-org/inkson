@@ -187,7 +187,7 @@ fn schema_validator_rejects_obviously_invalid_envelope() {
     // pattern requires `7<...>` in time-hi field).
     let bogus = serde_json::json!({
         "event_id": "ak:event:not-a-uuid",
-        "kind": "ck.realm.create",
+        "kind": "ak.realm.create",
         "realm_id": "ak:realm:0196419b-0000-7000-8000-000000000001",
         "actor_id": "did:web:alice.example",
         "actor_seq": 1,
@@ -208,7 +208,7 @@ fn schema_validator_rejects_obviously_invalid_envelope() {
     // schema validator is silently degraded to a syntax-only checker.
     let reducer_missing_required = serde_json::json!({
         "event_id": "ak:event:0196419b-0000-7777-8000-000000000003",
-        "kind": "ck.realm.create",
+        "kind": "ak.realm.create",
         "realm_id": "ak:realm:0196419b-0000-7000-8000-000000000001",
         "actor_id": "did:web:alice.example",
         "actor_seq": 1,

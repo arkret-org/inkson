@@ -19,7 +19,7 @@ fn projection_expiry_stub_does_not_restore_authors_plaintext_sidecar() {
             "summary": {"summary": "Demo"},
             "timeline": {
                 "events": [{
-                    "kind": "ck.message.create",
+                    "kind": "ak.message.create",
                     "event_id": "ak:event:expired",
                     "actor_id": "did:web:alice.example",
                     "realm_id": realm,
@@ -27,7 +27,7 @@ fn projection_expiry_stub_does_not_restore_authors_plaintext_sidecar() {
                     "message_id": message,
                     "expiry_stub": true,
                     "expiry_state": "expired",
-                    "content": {"kind": "ck.content.text", "body": "[expired]"}
+                    "content": {"kind": "ak.content.text", "body": "[expired]"}
                 }]
             }
         }),
@@ -81,7 +81,7 @@ fn client_core_message_decode_golden_matches_inkson_ingest() {
         serde_json::json!({
             "strand_id": "ak:strand:01904100-0000-7000-8000-000000000201",
             "track_name": "discussion",
-            "content": {"kind": "ck.content.text", "body": "hello"}
+            "content": {"kind": "ak.content.text", "body": "hello"}
         }),
     );
     let reaction = golden_event(
@@ -159,7 +159,7 @@ fn projection_late_recovery_rejection_blocks_sidecar_plaintext() {
             "summary": {"summary": "Demo"},
             "timeline": {
                 "events": [{
-                    "kind": "ck.message.create",
+                    "kind": "ak.message.create",
                     "event_id": "ak:event:late",
                     "actor_id": "did:web:alice.example",
                     "realm_id": realm,
@@ -200,7 +200,7 @@ fn projection_audit_policy_access_late_recovery_marker_is_guarded() {
             "summary": {"summary": "Demo"},
             "timeline": {
                 "events": [{
-                    "kind": "ck.audit.policy_access",
+                    "kind": "ak.audit.policy_access",
                     "event_id": "ak:event:01904100-0000-7000-8000-000000000099",
                     "original_received_at": "2026-05-20T00:00:00Z",
                     "late_recovery": {

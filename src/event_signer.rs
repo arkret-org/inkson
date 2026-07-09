@@ -278,7 +278,7 @@ impl InksonEventSigner {
         // transcript the verifier reconstructs: `{context, event_digest, actor_id,
         // verification_method, created_at, domain?, audience?}`. Hand-rolling the
         // binding here drifted from the SDK (it omitted the `context =
-        // "ck-event-proof-v1"` domain tag encoding.md §2 mandates), so every
+        // "ak.event-proof-v1"` domain tag encoding.md §2 mandates), so every
         // cross-member Event proof failed the binding-JWS signature check despite a
         // correct signing key and a matching `event_digest`.
         let proof_created_at = chrono::DateTime::parse_from_rfc3339(&created_at)
@@ -1074,7 +1074,7 @@ mod tests {
             event.event_digest().unwrap().as_str()
         );
         // The binding transcript is the SDK's authoritative `canonical_binding_bytes`
-        // (folds in the `context = "ck-event-proof-v1"` domain tag), matching the
+        // (folds in the `context = "ak.event-proof-v1"` domain tag), matching the
         // production signer.
         let did = arkret_sdk::Did::new(event.actor_id.as_str().to_owned()).unwrap();
         let proof_binding_bytes = proof.canonical_binding_bytes(&did).unwrap();
@@ -1163,14 +1163,14 @@ mod tests {
         let signer = build_ed25519_device_signer([10u8; 32], "did:web:sdk.example", TEST_DEVICE_ID);
         let mut event: arkret_sdk::Event = serde_json::from_value(json!({
             "event_id": "ak:event:01904100-0000-7000-8000-000000000001",
-            "kind": "ck.message.create",
+            "kind": "ak.message.create",
             "realm_id": TEST_REALM_ID,
             "actor_id": "did:web:sdk.example",
             "actor_seq": 1,
             "created_at": "2026-05-19T00:00:00Z",
             "hlc": "01970e589d21-0001-a13f9c2e",
             "prev_refs": [],
-            "payload": {"kind": "ck.content.text", "body": "typed"},
+            "payload": {"kind": "ak.content.text", "body": "typed"},
             "proofs": []
         }))
         .unwrap();

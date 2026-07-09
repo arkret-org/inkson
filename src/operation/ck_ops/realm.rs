@@ -160,18 +160,18 @@ pub fn realm_organization_statement(
     revokes_statement_id: Option<String>,
 ) -> anyhow::Result<OperationBuilder> {
     if control_scopes.is_empty() {
-        anyhow::bail!("ck.realm.organization control_scopes must not be empty");
+        anyhow::bail!("ak.realm.organization control_scopes must not be empty");
     }
     // Local fail-fast on the status / revocation coupling. The same invariant
     // is re-enforced by the SDK verifier server-side; surfacing it here gives
     // the UI an immediate, deterministic error.
     match (status, &revokes_statement_id) {
         (RealmOrganizationStatus::Revoked, None) => {
-            anyhow::bail!("ck.realm.organization revoked status requires revokes_statement_id");
+            anyhow::bail!("ak.realm.organization revoked status requires revokes_statement_id");
         }
         (RealmOrganizationStatus::Active, Some(_)) => {
             anyhow::bail!(
-                "ck.realm.organization active status must not carry revokes_statement_id"
+                "ak.realm.organization active status must not carry revokes_statement_id"
             );
         }
         _ => {}
@@ -185,13 +185,13 @@ pub fn realm_organization_statement(
     ) {
         (true, None) => {
             anyhow::bail!(
-                "ck.realm.organization issuer_role {:?} requires authorization.delegation_ref",
+                "ak.realm.organization issuer_role {:?} requires authorization.delegation_ref",
                 authorization.issuer_role
             );
         }
         (false, Some(_)) => {
             anyhow::bail!(
-                "ck.realm.organization delegation_ref only valid for delegated issuer_role"
+                "ak.realm.organization delegation_ref only valid for delegated issuer_role"
             );
         }
         _ => {}

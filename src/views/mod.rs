@@ -7,7 +7,7 @@
 //
 // | View module        | claude-design page                | spec sections                                           | primary event kinds                                                |
 // |--------------------|-----------------------------------|---------------------------------------------------------|--------------------------------------------------------------------|
-// | login              | desktop/login.html, mobile/login  | crypto-media/device-lifecycle §1-3                     | ck.session.grant, ck.device.authorize                            |
+// | login              | desktop/login.html, mobile/login  | crypto-media/device-lifecycle §1-3                     | ak.session.grant, ck.device.authorize                            |
 // | dashboard          | desktop/home.html, mobile/home    | overview/architecture §3, sync/client-sync             | (read-only projection of frontier + spaces + notifications)        |
 // | kanban             | desktop/board.html, mobile/board  | overview/current-model §4, models/views §6             | ck.strand.move, ck.strand.reorder, ck.space.update (board/list container)|
 // | chat               | desktop/discussion.html           | models/object-model-standard §5, current-model §3      | ck.strand.tracks.update (unified), ck.message.*                      |
@@ -30,7 +30,7 @@
 //    consumer side.
 // 4. Push paths default to masked payloads (`background_sync_needed`); the body is decrypted
 //    locally.
-// 5. The Auth Service can only issue short-lived `ck.session.grant`; any change to the long-lived
+// 5. The Auth Service can only issue short-lived `ak.session.grant`; any change to the long-lived
 //    device set must go through `ck.device.authorize`.
 
 pub mod agents;

@@ -48,8 +48,8 @@ fn projection_kind_for_admin(subject_id: &str, body: Option<&Value>) -> RealmTre
         .and_then(Value::as_str)
         .or_else(|| body.get("schema").and_then(Value::as_str))
     {
-        Some("space") | Some("ck.schema.space.v1") => RealmTreeNodeKind::Space,
-        Some("realm") | Some("ck.schema.realm.v1") => RealmTreeNodeKind::Realm,
+        Some("space") | Some("ak.schema.space.v1") => RealmTreeNodeKind::Space,
+        Some("realm") | Some("ak.schema.realm.v1") => RealmTreeNodeKind::Realm,
         _ => {
             let has_parent = projection_string(
                 body,

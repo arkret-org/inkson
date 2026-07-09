@@ -215,14 +215,14 @@ test.describe("feature coverage placeholders", () => {
         return false;
       }
       const body = request.postDataJSON?.() as Record<string, unknown> | undefined;
-      return body?.kind === "ck.cross_signing.publish";
+      return body?.kind === "ak.cross_signing.publish";
     });
 
     await page.getByTestId("run-cross-signing-setup").click();
 
     const publishRequest = await publishPromise;
     const body = publishRequest.postDataJSON() as Record<string, unknown>;
-    expect(body.kind).toBe("ck.cross_signing.publish");
+    expect(body.kind).toBe("ak.cross_signing.publish");
 
     // The envelope MUST target the principal control Realm (spec
     // key-management.md §4.1).

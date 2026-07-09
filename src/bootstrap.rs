@@ -626,7 +626,7 @@ pub(crate) async fn bootstrap_mls_welcome_for_realm(
         && messages
             .messages
             .iter()
-            .all(|message| message.kind == "ck.mls.welcome");
+            .all(|message| message.kind == "ak.mls.welcome");
 
     // Runs on every target now that OpenMLS builds + runs under wasm32
     // (the browser uses the in-tree OpenMLS via the `js` feature). Previously

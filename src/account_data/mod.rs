@@ -58,12 +58,12 @@ impl AccountDataKey {
     pub fn as_wire(&self) -> &str {
         match self {
             Self::ClientUi => "client.ui",
-            Self::ClientReadReceipts => "ck.read_receipt.preferences",
-            Self::ClientPresence => "ck.presence.visibility",
-            Self::ClientPresencePreference => "ck.presence.preference",
-            Self::ClientBlocklist => "ck.account.blocklist",
-            Self::ClientNotifications => "ck.push_rules",
-            Self::ClientDndSchedule => "ck.dnd_schedule",
+            Self::ClientReadReceipts => "ak.read_receipt.preferences",
+            Self::ClientPresence => "ak.presence.visibility",
+            Self::ClientPresencePreference => "ak.presence.preference",
+            Self::ClientBlocklist => "ak.account.blocklist",
+            Self::ClientNotifications => "ak.push_rules",
+            Self::ClientDndSchedule => "ak.dnd_schedule",
             Self::ClientLanguage => "client.language",
             Self::Custom(s) => s,
         }
@@ -72,12 +72,12 @@ impl AccountDataKey {
     pub fn from_wire(s: &str) -> Self {
         match s {
             "client.ui" => Self::ClientUi,
-            "ck.read_receipt.preferences" => Self::ClientReadReceipts,
-            "ck.presence.visibility" => Self::ClientPresence,
-            "ck.presence.preference" => Self::ClientPresencePreference,
-            "ck.account.blocklist" => Self::ClientBlocklist,
-            "ck.push_rules" => Self::ClientNotifications,
-            "ck.dnd_schedule" => Self::ClientDndSchedule,
+            "ak.read_receipt.preferences" => Self::ClientReadReceipts,
+            "ak.presence.visibility" => Self::ClientPresence,
+            "ak.presence.preference" => Self::ClientPresencePreference,
+            "ak.account.blocklist" => Self::ClientBlocklist,
+            "ak.push_rules" => Self::ClientNotifications,
+            "ak.dnd_schedule" => Self::ClientDndSchedule,
             "client.language" => Self::ClientLanguage,
             other => Self::Custom(other.to_owned()),
         }

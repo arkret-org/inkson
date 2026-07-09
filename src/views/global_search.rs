@@ -270,7 +270,7 @@ pub fn GlobalSearchPanel(
             div { class: "event",
                 div { class: "event-head",
                     span { {tr("search.title")} }
-                    span { class: "muted", title: "ck.index.search", "Search index" }
+                    span { class: "muted", title: "ak.index.search", "Search index" }
                 }
                 form {
                     onsubmit: move |evt| {
@@ -518,7 +518,7 @@ mod tests {
             json!({
                 "summary": {"summary": "Searchable Realm"},
                 "timeline": {"events": [{
-                    "kind": "ck.message.create",
+                    "kind": "ak.message.create",
                     "event_id": event_id,
                     "actor_id": "did:web:alice.example",
                     "created_at": "2026-06-19T00:00:00Z",
@@ -569,14 +569,14 @@ mod tests {
             json!({
                 "summary": {"summary": "Encrypted Realm"},
                 "timeline": {"events": [{
-                    "kind": "ck.message.create",
+                    "kind": "ak.message.create",
                     "event_id": "ak:event:01904100-0000-7000-8000-000000000912",
                     "actor_id": "did:web:alice.example",
                     "created_at": "2026-06-19T00:00:00Z",
                     "content": {
                         "realm_id": realm_id,
                         "message_id": "ak:message:01904100-0000-7000-8000-000000000913",
-                        "encrypted_content": {"schema": "ck.schema.encrypted_envelope.v1"}
+                        "encrypted_content": {"schema": "ak.schema.encrypted_envelope.v1"}
                     }
                 }]}
             }),
@@ -607,7 +607,7 @@ mod tests {
                 json!({
                     "summary": {"summary": "First Realm"},
                     "timeline": {"events": [{
-                        "kind": "ck.message.create",
+                        "kind": "ak.message.create",
                         "event_id": "ak:event:01904100-0000-7000-8000-000000000923",
                         "actor_id": "did:web:alice.example",
                         "created_at": "2026-06-19T00:00:00Z",
@@ -620,7 +620,7 @@ mod tests {
                 json!({
                     "summary": {"summary": "Second Realm"},
                     "timeline": {"events": [{
-                        "kind": "ck.message.create",
+                        "kind": "ak.message.create",
                         "event_id": "ak:event:01904100-0000-7000-8000-000000000924",
                         "actor_id": "did:web:bob.example",
                         "created_at": "2026-06-19T00:00:00Z",

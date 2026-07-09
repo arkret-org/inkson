@@ -33,7 +33,7 @@ pub fn space_create(
     if let Some(rank) = rank {
         object.rank = Some(rank.to_owned());
     }
-    let body = object_create_payload_value(object, "ck.space.create payload serialize")?;
+    let body = object_create_payload_value(object, "ak.space.create payload serialize")?;
     Ok(OperationBuilder::new(
         realm_id,
         actor,

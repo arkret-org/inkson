@@ -131,7 +131,7 @@ impl GovernanceBindingPayload {
 
 /// The `ck.profile.mls_governance_binding.full.v1` profile id. Mirrors the
 /// hardening profile registered in `spec/v1/artifacts/profiles/conformance-profiles.json`.
-pub const PROFILE_MLS_GOVERNANCE_BINDING_FULL: &str = "ck.profile.mls_governance_binding.full.v1";
+pub const PROFILE_MLS_GOVERNANCE_BINDING_FULL: &str = "ak.profile.mls_governance_binding.full.v1";
 
 #[cfg(test)]
 mod tests {

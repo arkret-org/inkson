@@ -189,8 +189,8 @@ pub fn RealmAdminPanel(
         RealmTreeNodeKind::Space => "Space",
     };
     let metadata_event_kind = match metadata_subject.kind {
-        RealmTreeNodeKind::Realm => "ck.realm.update",
-        RealmTreeNodeKind::Space => "ck.space.update",
+        RealmTreeNodeKind::Realm => "ak.realm.update",
+        RealmTreeNodeKind::Space => "ak.space.update",
     };
     let alert_count = usize::from(realm_paused)
         + usize::from(realm_pending_mls_binding)
@@ -571,7 +571,7 @@ pub fn RealmAdminPanel(
                 div { class: "event", "data-testid": "mls-epoch-widget",
                     div { class: "event-head",
                         span { "MLS epoch & governance frontier" }
-                        span { "ck.component.mls.epoch.v1 · governance.covered_seals.v1" }
+                        span { "ak.component.mls.epoch.v1 · governance.covered_seals.v1" }
                     }
                     div { class: "muted",
                         "Read-only view of the most recent MLS epoch published in the cell map and the governance covered_seals value Move acceptance gates against. Updates as soon as sync surfaces a new seal view — no fetch button needed."
@@ -604,7 +604,7 @@ pub fn RealmAdminPanel(
                 div { class: "event", "data-testid": "notary-cell-card",
                     div { class: "event-head",
                         span { "Notary cell" }
-                        span { "ck.component.notary.v1" }
+                        span { "ak.component.notary.v1" }
                     }
                     div { class: "muted",
                         "Recovery notary mode for this Realm — controls who can re-seal a paused frontier. Read-only; modifications go through the dedicated notary-rotation strand."
@@ -1393,7 +1393,7 @@ pub fn RealmAdminPanel(
                                     .await
                                     {
                                         Ok(resp) => status_msg.set(format!(
-                                            "ck.capability.grant event {}: event_id={}",
+                                            "ak.capability.grant event {}: event_id={}",
                                             short_protocol_id(&op_id),
                                             short_protocol_id(&resp.event_id)
                                         )),
@@ -1479,7 +1479,7 @@ pub fn RealmAdminPanel(
                                     .await
                                     {
                                         Ok(resp) => status_msg.set(format!(
-                                            "ck.capability.revoke event {}: event_id={}",
+                                            "ak.capability.revoke event {}: event_id={}",
                                             short_protocol_id(&op_id),
                                             short_protocol_id(&resp.event_id)
                                         )),
@@ -1497,7 +1497,7 @@ pub fn RealmAdminPanel(
             div { class: "event", "data-testid": "realm-admin-grant-card",
                 div { class: "event-head",
                     span { {crate::i18n::tr("realm_admin.admin_grant_title")} }
-                    span { class: "badge", "ck.realm.admin" }
+                    span { class: "badge", "ak.realm.admin" }
                 }
                 div { class: "muted",
                     {crate::i18n::tr("realm_admin.admin_grant_hint")}

@@ -167,7 +167,7 @@ for the derivation chain and the threat-model decisions behind it.
     │  (epoch_authenticator, group_context)
     ▼
 [MLS Exporter API]
-    │  - label = "ck-rtc-frame-key/v1"
+    │  - label = "ak.rtc-frame-key/v1"
     │  - context = (empty bytes; the call_id is mixed in via group_context)
     │  - length = 19
     │  - KDF.Nh = 32 (SHA-256-based KDF)
@@ -186,7 +186,7 @@ for the derivation chain and the threat-model decisions behind it.
 ```
 
 The 19-byte exporter length is the spec-mandated value for SFrame v1 over
-MLS. The label `"ck-rtc-frame-key/v1"` namespaces this derivation away
+MLS. The label `"ak.rtc-frame-key/v1"` namespaces this derivation away
 from any other MLS exporter use within the same group (e.g. file-transfer
 key derivation, which uses a different label).
 

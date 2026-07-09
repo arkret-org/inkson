@@ -8,7 +8,7 @@ use serde_json::{Value, json};
 /// `device_signature`. Distinct domain string from the prekey `keys/upload`
 /// (`ck-keys-upload-v1`, spec §8.1) so a signature over one batch can never be
 /// replayed as the other; binds the device + the published KeyPackage batch.
-const KEYPACKAGE_UPLOAD_SIGNATURE_PREFIX: &str = "ck-keypackage-upload-v1\n";
+const KEYPACKAGE_UPLOAD_SIGNATURE_PREFIX: &str = "ak.keypackage-upload-v1\n";
 
 /// Sign the MLS KeyPackage upload batch with the local event-signer (device
 /// identity Ed25519 `did:key`), binding `device_id` + the published

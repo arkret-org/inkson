@@ -68,7 +68,7 @@ fn move_submission_record_round_trips_through_store() {
     store.record_move_submission(
         mid,
         realm,
-        "ck.consent.grant",
+        "ak.consent.grant",
         MoveSubmissionState::PendingSeal,
         None,
         Some("ak:seal:sha256:abc".to_owned()),
@@ -111,7 +111,7 @@ fn move_submission_pending_mls_binding_drives_toast() {
     store.record_move_submission(
         "sha256:222",
         realm,
-        "ck.message.create",
+        "ak.message.create",
         MoveSubmissionState::PendingMlsBinding,
         Some("covered_seals missing".to_owned()),
         None,

@@ -28,8 +28,8 @@ pub enum AuditPolicy {
 impl AuditPolicy {
     pub fn profile_id(self) -> &'static str {
         match self {
-            Self::Attested => "ck.profile.attested_audit.e2ee.v1",
-            Self::Disclosed => "ck.profile.disclosed_audit.e2ee.v1",
+            Self::Attested => "ak.profile.attested_audit.e2ee.v1",
+            Self::Disclosed => "ak.profile.disclosed_audit.e2ee.v1",
         }
     }
 }
@@ -191,7 +191,7 @@ mod tests {
             "did:key:zDevice",
         )
         .build("node");
-        assert_eq!(op.kind, "ck.audit.accessed");
+        assert_eq!(op.kind, "ak.audit.accessed");
         assert_eq!(op.payload["target_ref"], "ak:event:abc");
         assert_eq!(op.payload["actor_id"], "did:web:alice");
         assert!(
@@ -214,7 +214,7 @@ mod tests {
             vec!["did:key:zA".into(), "did:key:zB".into()],
         )
         .build("node");
-        assert_eq!(op.kind, "ck.audit.ryw_receipt");
+        assert_eq!(op.kind, "ak.audit.ryw_receipt");
         assert_eq!(op.payload["target_ref"], "ak:event:abc");
         assert_eq!(op.payload["actor_id"], "did:web:alice");
         assert!(
@@ -237,7 +237,7 @@ mod tests {
             vec!["display_name".into(), "avatar".into()],
         )
         .build("node");
-        assert_eq!(op.kind, "ck.identity.presentation_request");
+        assert_eq!(op.kind, "ak.identity.presentation_request");
         assert_eq!(op.payload["requested_claims"][0], "display_name");
     }
 
@@ -251,7 +251,7 @@ mod tests {
             vec!["email".into()],
         )
         .build("node");
-        assert_eq!(op.kind, "ck.identity.disclosure_receipt");
+        assert_eq!(op.kind, "ak.identity.disclosure_receipt");
         assert_eq!(op.payload["counterparty"], "did:web:bob");
     }
 
@@ -259,11 +259,11 @@ mod tests {
     fn audit_policy_profile_ids_match_spec() {
         assert_eq!(
             AuditPolicy::Attested.profile_id(),
-            "ck.profile.attested_audit.e2ee.v1"
+            "ak.profile.attested_audit.e2ee.v1"
         );
         assert_eq!(
             AuditPolicy::Disclosed.profile_id(),
-            "ck.profile.disclosed_audit.e2ee.v1"
+            "ak.profile.disclosed_audit.e2ee.v1"
         );
     }
 }

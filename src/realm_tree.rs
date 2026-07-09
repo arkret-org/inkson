@@ -436,7 +436,7 @@ pub(crate) fn extract_parent_space_id(space_id: &str, body: &Value) -> Option<St
             .get("kind")
             .or_else(|| event.get("type"))
             .and_then(Value::as_str)?;
-        if kind != "ck.space.parent" {
+        if kind != "ak.space.parent" {
             return None;
         }
         for container in [
@@ -482,7 +482,7 @@ pub(crate) fn extract_child_space_ids(space_id: &str, body: &Value) -> Vec<Strin
             .get("kind")
             .or_else(|| event.get("type"))
             .and_then(Value::as_str);
-        if kind != Some("ck.space.child") {
+        if kind != Some("ak.space.child") {
             continue;
         }
         for container in [
@@ -803,8 +803,8 @@ pub(crate) fn projection_tree_node_kind(id: &str, body: &Value) -> RealmTreeNode
         .and_then(Value::as_str)
         .or_else(|| body.get("schema").and_then(Value::as_str))
     {
-        Some("space") | Some("ck.schema.space.v1") => RealmTreeNodeKind::Space,
-        Some("realm") | Some("ck.schema.realm.v1") => RealmTreeNodeKind::Realm,
+        Some("space") | Some("ak.schema.space.v1") => RealmTreeNodeKind::Space,
+        Some("realm") | Some("ak.schema.realm.v1") => RealmTreeNodeKind::Realm,
         _ if id.starts_with("ak:space:") => RealmTreeNodeKind::Space,
         _ if id.starts_with("ak:realm:") => RealmTreeNodeKind::Realm,
         _ => RealmTreeNodeKind::Realm,
@@ -871,7 +871,7 @@ pub(crate) fn projection_looks_like_strand(body: &Value) -> bool {
         || body.get("tracks").is_some()
         || matches!(
             body.get("kind").and_then(Value::as_str),
-            Some("ck.strand.create" | "discussion" | "strand")
+            Some("ak.strand.create" | "discussion" | "strand")
         )
         || matches!(
             body.get("summary")
@@ -1170,7 +1170,7 @@ mod tests {
                 "ak:space:child",
                 &json!({
                     "state": [{
-                        "kind": "ck.space.parent",
+                        "kind": "ak.space.parent",
                         "payload": {"parent_space_id": "ak:space:root"}
                     }]
                 })
@@ -1224,7 +1224,7 @@ mod tests {
         spaces.insert(
             "ak:realm:root".to_owned(),
             json!({
-                "schema": "ck.schema.realm.v1",
+                "schema": "ak.schema.realm.v1",
                 "summary": {
                     "title": "Root",
                     "summary": "Root Realm"
@@ -1234,7 +1234,7 @@ mod tests {
         spaces.insert(
             "ak:space:child".to_owned(),
             json!({
-                "schema": "ck.schema.space.v1",
+                "schema": "ak.schema.space.v1",
                 "realm_id": "ak:realm:root",
                 "summary": {
                     "title": "Child",
@@ -1265,14 +1265,14 @@ mod tests {
         spaces.insert(
             "ak:realm:root".to_owned(),
             json!({
-                "schema": "ck.schema.realm.v1",
+                "schema": "ak.schema.realm.v1",
                 "summary": {"title": "Root"}
             }),
         );
         spaces.insert(
             "ak:space:child".to_owned(),
             json!({
-                "schema": "ck.schema.space.v1",
+                "schema": "ak.schema.space.v1",
                 "realm_id": "ak:realm:root",
                 "summary": {"title": "Child"}
             }),
@@ -1302,7 +1302,7 @@ mod tests {
         spaces.insert(
             "ak:realm:root".to_owned(),
             json!({
-                "schema": "ck.schema.realm.v1",
+                "schema": "ak.schema.realm.v1",
                 "summary": {
                     "title": "Root",
                     "summary": "Root Realm"
@@ -1478,7 +1478,7 @@ mod tests {
         spaces.insert(
             "ak:space:real".to_owned(),
             json!({
-                "schema": "ck.schema.space.v1",
+                "schema": "ak.schema.space.v1",
                 "realm_id": "ak:realm:root",
                 "summary": {"title": "Real Space"}
             }),

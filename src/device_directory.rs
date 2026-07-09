@@ -1065,8 +1065,8 @@ mod tests {
 
     fn tier2_algorithms() -> Vec<String> {
         vec![
-            "ck.hpke_x25519_aead_chacha20poly1305.v1".to_owned(),
-            "ck.mls.v1".to_owned(),
+            "ak.hpke_x25519_aead_chacha20poly1305.v1".to_owned(),
+            "ak.mls.v1".to_owned(),
         ]
     }
 

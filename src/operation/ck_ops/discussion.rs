@@ -32,7 +32,7 @@ pub fn discussion_strand_create(
         );
     let payload = arkret_sdk::ObjectCreatePayload::new(strand)
         .to_value()
-        .map_err(|e| anyhow::anyhow!("ck.strand.create payload serialize: {e}"))?;
+        .map_err(|e| anyhow::anyhow!("ak.strand.create payload serialize: {e}"))?;
     Ok(OperationBuilder::new(
         realm_id,
         actor,
@@ -64,7 +64,7 @@ pub fn discussion_circle_create(
         display,
         did_id(actor)?,
     );
-    let body = object_create_payload_value(circle, "ck.circle.create payload serialize")?;
+    let body = object_create_payload_value(circle, "ak.circle.create payload serialize")?;
     Ok(OperationBuilder::new(
         realm_id,
         actor,
@@ -98,7 +98,7 @@ pub fn scoped_discussion_strand_create(
     strand.scope_circle_id = Some(circle_id_value(circle_id)?);
     let payload = arkret_sdk::ObjectCreatePayload::new(strand)
         .to_value()
-        .map_err(|e| anyhow::anyhow!("ck.strand.create payload serialize: {e}"))?;
+        .map_err(|e| anyhow::anyhow!("ak.strand.create payload serialize: {e}"))?;
     Ok(OperationBuilder::new(
         realm_id,
         actor,

@@ -238,7 +238,7 @@ pub fn agent_publish_attribution_strand(
         .with_extra("attribution", json!(attribution_agent));
     let payload = arkret_sdk::ObjectCreatePayload::new(strand)
         .to_value()
-        .map_err(|e| anyhow::anyhow!("ck.strand.create attribution payload serialize: {e}"))?;
+        .map_err(|e| anyhow::anyhow!("ak.strand.create attribution payload serialize: {e}"))?;
     Ok(OperationBuilder::new(
         realm_id,
         actor,

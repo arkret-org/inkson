@@ -465,7 +465,7 @@ mod tests {
         let sealed =
             arkret_sdk::secret_share::seal_history_secret_to_device_pubkey(&rrk_pk, &rows).unwrap();
         let share = json!({
-            "kind": "ck.realm_key.share",
+            "kind": "ak.realm_key.share",
             "content": { "ciphertext": sealed }
         });
         let recovered = recover_history_from_rrk_shares(&rrk_sk, std::slice::from_ref(&share));

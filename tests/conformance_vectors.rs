@@ -151,7 +151,7 @@ fn crypto_signature_fixture_canonical_binding_matches() {
     let mut covered = 0_usize;
     for vector in vectors {
         let name = vector["name"].as_str().unwrap_or("?");
-        if name != "ck.vector.encoding.crypto.ed25519_detached_jws.v1" {
+        if name != "ak.vector.encoding.crypto.ed25519_detached_jws.v1" {
             continue;
         }
 

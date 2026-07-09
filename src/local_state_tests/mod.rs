@@ -78,7 +78,7 @@ pub(super) fn snapshot_manifest_for_items(
         id: snapshot_id,
         realm_id,
         reducer_profile: arkret_sdk::SNAPSHOT_REDUCER_PROFILE_V1.to_owned(),
-        schema_profile_refs: vec!["ck.profile.core_event_store.v1".to_owned()],
+        schema_profile_refs: vec!["ak.profile.core_event_store.v1".to_owned()],
         state_digest,
         frontier: arkret_sdk::SnapshotFrontier {
             event_ids: vec![snapshot_event_id("0000000000a2")],

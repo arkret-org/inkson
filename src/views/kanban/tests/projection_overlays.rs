@@ -35,7 +35,7 @@ fn collection_projection_maps_to_kanban_columns() {
                         "title": "Legal review",
                         "summary": "ensure GDPR sign-off",
                         "body": {
-                            "kind": "ck.content.text",
+                            "kind": "ak.content.text",
                             "body": "Review processor wording before beta."
                         },
                     }),
@@ -149,7 +149,7 @@ fn collection_projection_overlay_applies_remote_encrypted_strand_updates() {
     let events = vec![json!({
         "event_id": "ak:event:0196419b-0000-7000-8000-00000000f003",
         "operation_id": "ak:operation:0196419b-0000-7000-8000-00000000f003",
-        "event_kind": "ck.strand.update",
+        "event_kind": "ak.strand.update",
         "actor_id": "did:web:alice.example",
         "created_at": "2026-05-22T10:00:00Z",
         "realm_id": TEST_REALM_ID,
@@ -246,12 +246,12 @@ fn local_space_create_state_becomes_synced_once_projection_contains_target() {
         realm_id: Some("ak:realm:0196419b-0000-7000-8000-000000000000".to_owned()),
         received_at: chrono::Utc::now(),
         payload: json!({
-            "kind": "ck.space.create",
+            "kind": "ak.space.create",
             "operation_id": "sha256:local-board-create",
             "body": {
                 "object": {
                     "id": board_id,
-                    "schema": "ck.schema.space.v1",
+                    "schema": "ak.schema.space.v1",
                     "kind": "board",
                     "title": "Design board"
                 }
@@ -309,7 +309,7 @@ fn lifecycle_projection_builds_persisted_board_columns_and_cards() {
         title: "Persisted card".to_owned(),
         summary: Some("Loaded from projection".to_owned()),
         body: Some(json!({
-            "kind": "ck.content.text",
+            "kind": "ak.content.text",
             "body": "Projection body content"
         })),
         board_space_id: Some(board_id.to_owned()),
@@ -390,7 +390,7 @@ fn local_strand_create_overlay_restores_card_until_projection_catches_up() {
         realm_id: Some("ak:realm:0196419b-0000-7000-8000-000000000000".to_owned()),
         received_at: chrono::Utc::now(),
         payload: json!({
-            "kind": "ck.strand.create",
+            "kind": "ak.strand.create",
             "operation_id": "sha256:local-create",
             "effect": {
                 "strand_id": strand_id,
@@ -459,7 +459,7 @@ fn remote_strand_update_events_overlay_detail_fields_on_projection() {
     let events = vec![json!({
         "event_id": "ak:event:0196419b-0000-7000-8000-00000000f001",
         "operation_id": "ak:operation:0196419b-0000-7000-8000-00000000f001",
-        "event_kind": "ck.strand.update",
+        "event_kind": "ak.strand.update",
         "actor_id": "did:web:alice.example",
         "created_at": "2026-05-22T10:00:00Z",
         "realm_id": "ak:realm:0196419b-0000-7000-8000-000000000000",
@@ -521,7 +521,7 @@ fn remote_encrypted_strand_update_overlay_marks_private_fields_locked() {
     let events = vec![json!({
         "event_id": "ak:event:0196419b-0000-7000-8000-00000000f002",
         "operation_id": "ak:operation:0196419b-0000-7000-8000-00000000f002",
-        "event_kind": "ck.strand.update",
+        "event_kind": "ak.strand.update",
         "actor_id": "did:web:alice.example",
         "created_at": "2026-05-22T10:00:00Z",
         "realm_id": "ak:realm:0196419b-0000-7000-8000-000000000000",

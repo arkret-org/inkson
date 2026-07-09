@@ -48,9 +48,9 @@ pub enum AppealState {
 impl AppealState {
     pub fn from_latest_event_kind(kind: &str, payload: &Value) -> Self {
         match kind {
-            "ck.moderation.appeal.submit" => Self::Submitted,
-            "ck.moderation.appeal.review" => Self::UnderReview,
-            "ck.moderation.appeal.decision" => {
+            "ak.moderation.appeal.submit" => Self::Submitted,
+            "ak.moderation.appeal.review" => Self::UnderReview,
+            "ak.moderation.appeal.decision" => {
                 let verdict = payload
                     .get("verdict")
                     .and_then(|v| v.as_str())
@@ -58,7 +58,7 @@ impl AppealState {
                     .to_owned();
                 Self::Decided { verdict }
             }
-            "ck.moderation.appeal.close" => Self::Closed,
+            "ak.moderation.appeal.close" => Self::Closed,
             _ => Self::None,
         }
     }
@@ -177,7 +177,7 @@ pub fn AppealEntrypoint(
             "aria-label": "Appeal this moderation decision",
             div { class: "event-head",
                 span { "Appeal this moderation decision" }
-                span { class: "badge", "ck.moderation.appeal.submit" }
+                span { class: "badge", "ak.moderation.appeal.submit" }
             }
             div {
                 class: "muted",
@@ -275,16 +275,16 @@ mod tests {
     #[test]
     fn appeal_state_from_kind_recognises_all_four_wire_kinds() {
         assert_eq!(
-            AppealState::from_latest_event_kind("ck.moderation.appeal.submit", &json!({})),
+            AppealState::from_latest_event_kind("ak.moderation.appeal.submit", &json!({})),
             AppealState::Submitted
         );
         assert_eq!(
-            AppealState::from_latest_event_kind("ck.moderation.appeal.review", &json!({})),
+            AppealState::from_latest_event_kind("ak.moderation.appeal.review", &json!({})),
             AppealState::UnderReview
         );
         assert_eq!(
             AppealState::from_latest_event_kind(
-                "ck.moderation.appeal.decision",
+                "ak.moderation.appeal.decision",
                 &json!({"verdict": "uphold"}),
             ),
             AppealState::Decided {
@@ -292,7 +292,7 @@ mod tests {
             }
         );
         assert_eq!(
-            AppealState::from_latest_event_kind("ck.moderation.appeal.close", &json!({})),
+            AppealState::from_latest_event_kind("ak.moderation.appeal.close", &json!({})),
             AppealState::Closed
         );
     }
@@ -309,7 +309,7 @@ mod tests {
         )
         .expect("build appeal op")
         .build("test-node");
-        assert_eq!(op.kind, "ck.moderation.appeal.submit");
+        assert_eq!(op.kind, "ak.moderation.appeal.submit");
         assert_eq!(
             op.payload["realm_id"],
             "ak:realm:01904100-0000-7000-8000-000000000001"
@@ -321,7 +321,7 @@ mod tests {
             .unwrap();
         registry
             .validate_value(
-                "ck.schema.moderation_appeal.v1#/$defs/submit_payload",
+                "ak.schema.moderation_appeal.v1#/$defs/submit_payload",
                 &op.payload,
             )
             .unwrap();

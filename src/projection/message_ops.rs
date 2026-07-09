@@ -68,24 +68,24 @@ fn discussion_event_kind(value: &Value) -> Option<&str> {
 }
 
 pub(crate) fn message_kind_is_create(value: &Value) -> bool {
-    discussion_event_kind(value) == Some("ck.message.create")
+    discussion_event_kind(value) == Some("ak.message.create")
 }
 
 pub(crate) fn message_kind_is_revise(value: &Value) -> bool {
-    discussion_event_kind(value) == Some("ck.message.revise")
+    discussion_event_kind(value) == Some("ak.message.revise")
 }
 
 fn discussion_kind_is_raw_operation(kind: &str) -> bool {
     matches!(
         kind,
-        "ck.message.create"
-            | "ck.message.revise"
-            | "ck.message.redact"
-            | "ck.reaction.add"
-            | "ck.reaction.remove"
-            | "ck.pin.add"
-            | "ck.pin.remove"
-            | "ck.pin.reorder"
+        "ak.message.create"
+            | "ak.message.revise"
+            | "ak.message.redact"
+            | "ak.reaction.add"
+            | "ak.reaction.remove"
+            | "ak.pin.add"
+            | "ak.pin.remove"
+            | "ak.pin.reorder"
     )
 }
 
@@ -185,7 +185,7 @@ mod tests {
             json!({
                 "strand_id": "ak:strand:01904100-0000-7000-8000-000000000201",
                 "track_name": "discussion",
-                "content": {"kind": "ck.content.text", "body": "hello"}
+                "content": {"kind": "ak.content.text", "body": "hello"}
             }),
         );
         let value = serde_json::to_value(&event).unwrap();

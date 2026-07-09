@@ -213,7 +213,7 @@ pub fn AppletsPanel(
             r.payload
                 .get("kind")
                 .and_then(Value::as_str)
-                .map(|k| k == "ck.applet.registration")
+                .map(|k| k == "ak.applet.registration")
                 .unwrap_or(false)
         })
         .cloned()
@@ -224,7 +224,7 @@ pub fn AppletsPanel(
             r.payload
                 .get("kind")
                 .and_then(Value::as_str)
-                .map(|k| k.starts_with("ck.applet.interop_session."))
+                .map(|k| k.starts_with("ak.applet.interop_session."))
                 .unwrap_or(false)
         })
         .cloned()
@@ -235,7 +235,7 @@ pub fn AppletsPanel(
             r.payload
                 .get("kind")
                 .and_then(Value::as_str)
-                .map(|k| k == "ck.applet.bridge_error")
+                .map(|k| k == "ak.applet.bridge_error")
                 .unwrap_or(false)
         })
         .cloned()
@@ -290,7 +290,7 @@ pub fn AppletsPanel(
                     .payload
                     .get("kind")
                     .and_then(Value::as_str)
-                    .map(|k| k.starts_with("ck.applet."))
+                    .map(|k| k.starts_with("ak.applet."))
                     .unwrap_or(false);
                 let matches_did = r
                     .payload
@@ -352,7 +352,7 @@ pub fn AppletsPanel(
             div { class: "event", "data-testid": "applet-register-form",
                 div { class: "event-head",
                     span { "Register applet" }
-                    span { class: "badge", title: "ck.applet.registration", "Applet" }
+                    span { class: "badge", title: "ak.applet.registration", "Applet" }
                 }
                 div { class: "workflow-form",
                     Input {
@@ -983,14 +983,14 @@ mod tests {
 
     #[test]
     fn applet_session_kind_filter_matches_three_session_event_kinds() {
-        // The view filters with `kind.starts_with("ck.applet.interop_session.")`.
+        // The view filters with `kind.starts_with("ak.applet.interop_session.")`.
         for kind in [
-            "ck.applet.interop_session.start",
-            "ck.applet.interop_session.status",
+            "ak.applet.interop_session.start",
+            "ak.applet.interop_session.status",
         ] {
-            assert!(kind.starts_with("ck.applet.interop_session."));
+            assert!(kind.starts_with("ak.applet.interop_session."));
         }
-        assert!(!"ck.applet.registration".starts_with("ck.applet.interop_session."));
+        assert!(!"ak.applet.registration".starts_with("ck.applet.interop_session."));
     }
 
     // ── G3.Y4 — install helpers ─────────────────────────────────
@@ -1071,7 +1071,7 @@ mod tests {
         let plan = serde_json::json!({
             "plan_digest": "sha256:deadbeef",
             "approved_scopes": [{
-                "actions": ["ck.message.create", "ck.applet.ghost.provision"],
+                "actions": ["ak.message.create", "ck.applet.ghost.provision"],
                 "realm_ids": ["ak:realm:01904100-0000-7000-8000-000000000010"],
                 "constraints": []
             }],
@@ -1079,7 +1079,7 @@ mod tests {
         let (digest, scopes) = parse_install_plan(&plan).unwrap();
         assert_eq!(digest, "sha256:deadbeef");
         assert_eq!(scopes.len(), 1);
-        assert_eq!(scopes[0].actions[0], "ck.message.create");
+        assert_eq!(scopes[0].actions[0], "ak.message.create");
 
         // Missing plan_digest is a hard error (never commit a digest-less
         // install — soland would reject it with applet_install_plan_mismatch).
@@ -1091,11 +1091,11 @@ mod tests {
     fn parse_applet_approval_actions_splits_and_dedupes() {
         assert_eq!(
             parse_applet_approval_actions(
-                "ck.message.create, ck.applet.ghost.provision\nck.message.create"
+                "ak.message.create, ck.applet.ghost.provision\nck.message.create"
             ),
             vec![
-                "ck.applet.ghost.provision".to_owned(),
-                "ck.message.create".to_owned()
+                "ak.applet.ghost.provision".to_owned(),
+                "ak.message.create".to_owned()
             ]
         );
     }

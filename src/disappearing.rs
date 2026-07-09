@@ -98,7 +98,7 @@ mod tests {
         assert_eq!(
             message_expiry_stub_body(&serde_json::json!({
                 "expiry_stub": true,
-                "content": {"kind": "ck.content.text", "body": "[expired]"}
+                "content": {"kind": "ak.content.text", "body": "[expired]"}
             })),
             "[expired]"
         );
@@ -124,12 +124,12 @@ mod tests {
             serde_json::json!({
                 "timeline": {
                     "events": [{
-                        "kind": "ck.message.create",
+                        "kind": "ak.message.create",
                         "realm_id": realm,
                         "strand_id": strand,
                         "message_id": message,
                         "expiry_stub": true,
-                        "content": {"kind": "ck.content.text", "body": "[expired]"}
+                        "content": {"kind": "ak.content.text", "body": "[expired]"}
                     }]
                 }
             }),

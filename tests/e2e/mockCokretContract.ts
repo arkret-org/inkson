@@ -18,20 +18,20 @@ export function mockCokretContract(req) {
       service_type: "principal_server",
       protocol_version: "1.0",
       supported_profiles: [
-        "ck.profile.minimal_client.v1",
-        "ck.profile.chat_mvp.v1",
-        "ck.profile.kanban_mvp.v1",
-        "ck.profile.full_client.v1",
-        "ck.profile.principal_server_events_api.v1",
+        "ak.profile.minimal_client.v1",
+        "ak.profile.chat_mvp.v1",
+        "ak.profile.kanban_mvp.v1",
+        "ak.profile.full_client.v1",
+        "ak.profile.principal_server_events_api.v1",
       ],
       supported_features: ["sync.client_sync", "directory.search_realms", "events.submit"],
       supported_operations: [
-        "ck.server.query.describe",
-        "ck.self.events.command.submit",
-        "ck.self.events.query.scan",
-        "ck.find.directory.query.search_realms",
-        "ck.self.keys.backups.query.list",
-        "ck.self.ephemeral.command.send",
+        "ak.server.query.describe",
+        "ak.self.events.command.submit",
+        "ak.self.events.query.scan",
+        "ak.find.directory.query.search_realms",
+        "ak.self.keys.backups.query.list",
+        "ak.self.ephemeral.command.send",
       ],
       limits: {},
     });
@@ -61,13 +61,13 @@ export function mockCokretContract(req) {
       state: "active",
       devices: [],
       primary_handle_claim: {
-        schema: "ck.schema.handle_claim.v1",
+        schema: "ak.schema.handle_claim.v1",
         handle: "alice:local.host",
         subject: "did:web:alice.example",
       },
       profile: {
         id: "ak:actor_profile:01964137-0000-7000-8000-0000000000a1",
-        schema: "ck.schema.actor_profile.v1",
+        schema: "ak.schema.actor_profile.v1",
         principal_id: "did:web:alice.example",
         actor_kind: "user",
         display_name: "inkson",
@@ -82,8 +82,8 @@ export function mockCokretContract(req) {
       trust_domain: "ak:trust_domain:server.local",
       service_type: "directory_service",
       protocol_version: "1.0",
-      supported_profiles: ["ck.profile.directory_service.v1"],
-      supported_operations: ["ck.find.directory.query.describe"],
+      supported_profiles: ["ak.profile.directory_service.v1"],
+      supported_operations: ["ak.find.directory.query.describe"],
       supported_bindings: [{ kind: "http_json" }],
       supported_features: [],
       auth_metadata: { mode: "public_no_auth" },
@@ -97,7 +97,7 @@ export function mockCokretContract(req) {
       compat_surfaces: [],
       development_mode: false,
       resource_types: ["realm", "organization", "actor"],
-      discovery_profiles: ["ck.profile.directory_service.v1"],
+      discovery_profiles: ["ak.profile.directory_service.v1"],
       restricted_query_proof: false,
       ingest_modes: ["push"],
       accept_policy_kind: "open",
@@ -151,7 +151,7 @@ export function mockCokretContract(req) {
   }
 
   if (method === "POST" && path === "/_arkret/self/ephemeral") {
-    if (!["ck.receipt.read", "ck.typing", "ck.presence", "ck.call.signal"].includes(body.kind)) {
+    if (!["ak.receipt.read", "ck.typing", "ck.presence", "ck.call.signal"].includes(body.kind)) {
       return json(
         {
           ok: false,

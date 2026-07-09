@@ -31,7 +31,7 @@ impl LocalStateStore {
                 continue;
             };
             let kind = event.get("kind").and_then(Value::as_str).unwrap_or("");
-            if kind != "ck.member.identity.update" {
+            if kind != "ak.member.identity.update" {
                 continue;
             }
             let already = bucket.iter().any(|existing| {

@@ -2,7 +2,7 @@
 //!
 //! soland delivers inbound call signaling inline on each realm's sync body:
 //! `body.ephemeral[]` carries a typed item
-//! `{ "type":"ck.call.signal", "realm_id":…, "call_signals":[ <envelope> ] }`
+//! `{ "type":"ak.call.signal", "realm_id":…, "call_signals":[ <envelope> ] }`
 //! where each envelope is the full signed
 //! `{kind, realm_id, actor_id, device_id, sent_at, expires_at,
 //!   payload:{call_id, signal_type, seq, data}, proof}` shape submitted by the
@@ -184,7 +184,7 @@ pub fn decode_realm_call_signals(realm_id: &str, body: &Value) -> Vec<DecodedCal
         let is_call_signal = item
             .get("type")
             .and_then(Value::as_str)
-            .map(|t| t == "ck.call.signal")
+            .map(|t| t == "ak.call.signal")
             .unwrap_or(false);
         if !is_call_signal {
             continue;
@@ -211,7 +211,7 @@ pub fn decode_realm_call_signals(realm_id: &str, body: &Value) -> Vec<DecodedCal
 /// `payload.{call_id,signal_type,seq}` / `actor_id`).
 fn decode_call_signal_envelope(realm_id: &str, envelope: &Value) -> Option<DecodedCallSignal> {
     let kind = envelope.get("kind").and_then(Value::as_str)?;
-    if kind != "ck.call.signal" {
+    if kind != "ak.call.signal" {
         return None;
     }
     let sender_actor = envelope.get("actor_id").and_then(Value::as_str)?.to_owned();
@@ -366,7 +366,7 @@ async fn moderator_signal_authorized(decoded: &DecodedCallSignal, api: Option<&C
         crate::realm_read_api::authz_check_resource_raw(
             &api.sdk_http_client()?,
             &decoded.sender_actor,
-            "ck.call.moderate",
+            "ak.call.moderate",
             Some(serde_json::json!({
                 "kind": "call",
                 "realm_id": decoded.realm_id.clone(),
@@ -675,7 +675,7 @@ mod tests {
         data: Value,
     ) -> Value {
         json!({
-            "kind": "ck.call.signal",
+            "kind": "ak.call.signal",
             "realm_id": "ak:realm:r",
             "actor_id": actor,
             "device_id": device,
@@ -695,7 +695,7 @@ mod tests {
         json!({
             "ephemeral": [
                 {
-                    "type": "ck.call.signal",
+                    "type": "ak.call.signal",
                     "realm_id": "ak:realm:r",
                     "call_signals": envelopes,
                 }
@@ -726,11 +726,11 @@ mod tests {
     fn decode_skips_non_call_ephemeral_and_bad_kind() {
         let body = json!({
             "ephemeral": [
-                { "type": "ck.typing", "actor_id": "x" },
+                { "type": "ak.typing", "actor_id": "x" },
                 {
-                    "type": "ck.call.signal",
+                    "type": "ak.call.signal",
                     "call_signals": [
-                        json!({ "kind": "ck.not.call", "actor_id": "y", "payload": {} }),
+                        json!({ "kind": "ak.not.call", "actor_id": "y", "payload": {} }),
                     ],
                 }
             ]
@@ -898,7 +898,7 @@ mod tests {
     /// Build a real signed `ck.call.signal` envelope the same way the sender
     /// (`ephemeral::attach_broadcast_ephemeral_proof`) does: a detached JWS
     /// over the SDK's authoritative proof binding object (which folds in the
-    /// `context = "ck-event-proof-v1"` domain tag), with `event_digest` =
+    /// `context = "ak.event-proof-v1"` domain tag), with `event_digest` =
     /// canonical hash of the envelope without `proof`.
     fn signed_call_signal_envelope(
         signer: &crate::event_signer::InksonEventSigner,
@@ -906,7 +906,7 @@ mod tests {
         device_id: &str,
     ) -> Value {
         let mut envelope = json!({
-            "kind": "ck.call.signal",
+            "kind": "ak.call.signal",
             "realm_id": "ak:realm:r",
             "actor_id": actor_id,
             "device_id": device_id,

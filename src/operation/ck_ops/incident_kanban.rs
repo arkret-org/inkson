@@ -47,7 +47,7 @@ pub fn incident_strand_create(
     .target_ref(strand_id)
     .body(object_create_payload_value(
         object,
-        "ck.strand.create incident payload serialize",
+        "ak.strand.create incident payload serialize",
     )?))
 }
 
@@ -102,6 +102,6 @@ pub fn kanban_card_strand_create(
     .target_ref(strand_id)
     .body(object_create_payload_value(
         object,
-        "ck.strand.create kanban card payload serialize",
+        "ak.strand.create kanban card payload serialize",
     )?))
 }

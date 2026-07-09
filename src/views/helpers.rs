@@ -590,11 +590,11 @@ pub fn WhyThisHandlePanel(
         div { class: "why-this-handle", "data-testid": "why-this-handle-panel",
             div { class: "why-this-handle-head",
                 strong { "Why am I seeing this handle?" }
-                span { class: "muted", "ck.find.directory.query.list_handles_for_subject" }
+                span { class: "muted", "ak.find.directory.query.list_handles_for_subject" }
             }
             div { class: "muted",
                 "Handles are not authoritative roster fields — they come from signed "
-                code { "ck.schema.handle_claim.v1" }
+                code { "ak.schema.handle_claim.v1" }
                 " evidence. This shows the claims visible to you and the §3.2.1 primary handle."
             }
             Button {

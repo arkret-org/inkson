@@ -792,7 +792,7 @@ async fn finish_oidc_callback(
     if actor.trim().is_empty() {
         return Err("Account Authority did not return an account DID.".to_owned());
     }
-    // ②(A+②): the held credential is the `ck.session.grant` itself; every
+    // ②(A+②): the held credential is the `ak.session.grant` itself; every
     // `/_arkret/self/*` request presents it as `Authorization: Bearer <grant>` +
     // a per-request `DPoP` proof bound to the grant's `cnf.jkt`. Verify the
     // credential up front by reading the account viewer through a grant+DPoP

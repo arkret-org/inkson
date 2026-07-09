@@ -147,7 +147,7 @@ Access-Control-Max-Age: 600
 ```
 
 `Access-Control-Allow-Origin: *` is **forbidden** because the browser
-also sends DPoP-bound credentials and the `ck.session.grant` cookie.
+also sends DPoP-bound credentials and the `ak.session.grant` cookie.
 
 ### TLS
 

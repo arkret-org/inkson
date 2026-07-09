@@ -2,9 +2,9 @@
 //!
 //! Wire shape (spec: `models/content-types.md §4.9`, canonical schema
 //! `content-block-poll.schema.json`, `additionalProperties: false`):
-//! * `ck.message.create` with a `poll_block` content block `{kind: "ck.content.poll", body, poll:
+//! * `ck.message.create` with a `poll_block` content block `{kind: "ak.content.poll", body, poll:
 //!   {kind: "disclosed", max_selections, answers: [{id, text}]}}` creates a poll.
-//! * `ck.message.create` with a `poll_response_block` `{kind: "ck.content.poll.response", body,
+//! * `ck.message.create` with a `poll_response_block` `{kind: "ak.content.poll.response", body,
 //!   poll_response: {poll_ref: id:message, selections: [answer_id]}}` records a response.
 //!
 //! Closing a poll has NO carrier in spec v1 (the content-block schema's
@@ -208,7 +208,7 @@ impl PollCard {
         poll_ref: Option<&str>,
         content: &Value,
     ) -> Option<Self> {
-        if content_kind(content) != Some("ck.content.poll") {
+        if content_kind(content) != Some("ak.content.poll") {
             return None;
         }
         let poll = content.get("poll")?;
@@ -272,7 +272,7 @@ impl PollCard {
 /// `(poll_ref, selections)`. An empty `selections` array is schema-legal but
 /// tallies nothing, so it returns `None`.
 pub fn poll_response_from_content(content: &Value) -> Option<(String, Vec<String>)> {
-    if content_kind(content) != Some("ck.content.poll.response") {
+    if content_kind(content) != Some("ak.content.poll.response") {
         return None;
     }
     let response = content.get("poll_response")?;
@@ -501,11 +501,11 @@ mod tests {
             &draft,
         )
         .expect("builds");
-        assert_eq!(op.kind.as_str(), "ck.message.create");
+        assert_eq!(op.kind.as_str(), "ak.message.create");
         assert!(op.payload.get("encrypted").is_none());
         // Canonical poll_block: nested `poll` object, no flat legacy fields.
         let block = op.payload.get("content").unwrap();
-        assert_eq!(block["kind"], "ck.content.poll");
+        assert_eq!(block["kind"], "ak.content.poll");
         assert_eq!(block["body"], "ship?");
         assert!(block.get("poll_id").is_none());
         assert!(block.get("options").is_none());
@@ -515,7 +515,7 @@ mod tests {
         let answers = block["poll"]["answers"].as_array().unwrap();
         assert_eq!(answers.len(), 2);
         assert_eq!(answers[0]["id"], "opt-0");
-        assert_eq!(answers[0]["text"]["kind"], "ck.content.text");
+        assert_eq!(answers[0]["text"]["kind"], "ak.content.text");
         assert_eq!(answers[0]["text"]["body"], "yes");
         // The stamped wire message id is readable back for poll_ref use.
         let message_ref = poll_message_ref(&op).unwrap();
@@ -537,7 +537,7 @@ mod tests {
         )
         .expect("builds");
         let block = op.payload.get("content").unwrap();
-        assert_eq!(block["kind"], "ck.content.poll.response");
+        assert_eq!(block["kind"], "ak.content.poll.response");
         assert!(block.get("poll_id").is_none());
         assert!(block.get("choice").is_none());
         assert_eq!(
@@ -570,14 +570,14 @@ mod tests {
     #[test]
     fn poll_card_from_content_parses_canonical_poll_block() {
         let content = json!({
-            "kind": "ck.content.poll",
+            "kind": "ak.content.poll",
             "body": "ship?",
             "poll": {
                 "kind": "disclosed",
                 "max_selections": 2,
                 "answers": [
-                    {"id": "yes", "text": {"kind": "ck.content.text", "body": "Yes"}},
-                    {"id": "no", "text": {"kind": "ck.content.text", "body": "No"}}
+                    {"id": "yes", "text": {"kind": "ak.content.text", "body": "Yes"}},
+                    {"id": "no", "text": {"kind": "ak.content.text", "body": "No"}}
                 ]
             }
         });
@@ -603,7 +603,7 @@ mod tests {
     fn poll_card_from_content_fails_closed_on_non_canonical_shapes() {
         // Legacy flat shape (pre-canonical) — no `poll` object.
         let flat = json!({
-            "kind": "ck.content.poll",
+            "kind": "ak.content.poll",
             "poll_id": "poll-1",
             "question": "ship?",
             "options": [{"id": "yes", "label": "Yes"}, {"id": "no", "label": "No"}]
@@ -611,12 +611,12 @@ mod tests {
         assert!(PollCard::from_content("ak:event:1".to_owned(), None, &flat).is_none());
         // Unknown tally-disclosure mode.
         let undisclosed = json!({
-            "kind": "ck.content.poll",
+            "kind": "ak.content.poll",
             "body": "ship?",
             "poll": {
                 "kind": "hidden",
                 "max_selections": 1,
-                "answers": [{"id": "yes", "text": {"kind": "ck.content.text", "body": "Yes"}}]
+                "answers": [{"id": "yes", "text": {"kind": "ak.content.text", "body": "Yes"}}]
             }
         });
         assert!(PollCard::from_content("ak:event:1".to_owned(), None, &undisclosed).is_none());
@@ -625,7 +625,7 @@ mod tests {
     #[test]
     fn poll_response_from_content_parses_canonical_block_only() {
         let canonical = json!({
-            "kind": "ck.content.poll.response",
+            "kind": "ak.content.poll.response",
             "body": "poll response",
             "poll_response": {
                 "poll_ref": "ak:message:01904100-0000-7000-8000-000000000012",
@@ -637,7 +637,7 @@ mod tests {
         assert_eq!(selections, vec!["opt-0".to_owned(), "opt-2".to_owned()]);
         // Legacy flat shape fails closed.
         let flat = json!({
-            "kind": "ck.content.poll.response",
+            "kind": "ak.content.poll.response",
             "poll_id": "poll-1",
             "choice": "opt-0"
         });

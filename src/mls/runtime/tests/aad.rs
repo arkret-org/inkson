@@ -26,7 +26,7 @@ fn aad_visibility_inferred_from_canonical_aad_shape() {
     // hidden() omits both event-id fields ⇒ Hidden.
     let hidden = serde_json::to_value(arkret_sdk::EncryptedEnvelopeAadV1::hidden(
         "ak:realm:r",
-        "ck.message.create",
+        "ak.message.create",
     ))
     .unwrap();
     assert_eq!(aad_visibility_of(&hidden), AadVisibility::Hidden);
@@ -34,7 +34,7 @@ fn aad_visibility_inferred_from_canonical_aad_shape() {
     assert_eq!(
         aad_visibility_of(&json!({
             "realm_id": "ak:realm:r",
-            "event_kind": "ck.message.create",
+            "event_kind": "ak.message.create",
             "event_ref_digest": "sha256:aa"
         })),
         AadVisibility::RoutingDigest
@@ -43,7 +43,7 @@ fn aad_visibility_inferred_from_canonical_aad_shape() {
     assert_eq!(
         aad_visibility_of(&json!({
             "realm_id": "ak:realm:r",
-            "event_kind": "ck.message.create",
+            "event_kind": "ak.message.create",
             "event_id": "ak:event:1"
         })),
         AadVisibility::OpaqueId
@@ -52,7 +52,7 @@ fn aad_visibility_inferred_from_canonical_aad_shape() {
     assert_eq!(
         aad_visibility_of(&json!({
             "realm_id": "ak:realm:r",
-            "event_kind": "ck.message.create",
+            "event_kind": "ak.message.create",
             "event_id": null,
             "event_ref_digest": null
         })),

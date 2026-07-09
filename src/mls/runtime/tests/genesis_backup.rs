@@ -82,11 +82,11 @@ fn build_mls_genesis_payload_has_required_fields() {
     // schema so the full payload passes strict client/server validation.
     let catalog = arkret_sdk::schema::event_payload_validator_catalog().unwrap();
     if catalog
-        .missing_payload_validators_for(std::iter::once("ck.mls.genesis"))
+        .missing_payload_validators_for(std::iter::once("ak.mls.genesis"))
         .is_empty()
     {
         catalog
-            .validate_payload("ck.mls.genesis", &payload)
+            .validate_payload("ak.mls.genesis", &payload)
             .expect("genesis payload must satisfy the registered schema");
     }
 }

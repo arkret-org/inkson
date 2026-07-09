@@ -371,10 +371,10 @@ pub fn build_blocklist_account_data_body(entries: &[BlocklistEntry]) -> Value {
 pub fn blocklist_entries_from_account_data(value: &Value) -> Result<Vec<BlocklistEntry>, String> {
     let entries = value
         .get("entries")
-        .ok_or_else(|| "ck.account.blocklist.entries missing".to_owned())?;
+        .ok_or_else(|| "ak.account.blocklist.entries missing".to_owned())?;
     let entries = entries
         .as_array()
-        .ok_or_else(|| "ck.account.blocklist.entries must be an array".to_owned())?;
+        .ok_or_else(|| "ak.account.blocklist.entries must be an array".to_owned())?;
     Ok(entries
         .iter()
         .filter_map(blocklist_entry_from_account_data_value)

@@ -34,7 +34,7 @@ impl CokretApi {
     /// `/_arkret/self/*` requests.
     ///
     /// ②(A+②) model (api-conventions.md §3.3): the held credential is the
-    /// `ck.session.grant` itself, so callers pass the grant JWT here. Combined
+    /// `ak.session.grant` itself, so callers pass the grant JWT here. Combined
     /// with [`Self::with_dpop_device`], SDK-backed requests carry
     /// `Authorization: Bearer <grant>` plus a per-request `DPoP` proof bound to
     /// that grant (`ath=hash(grant)`).

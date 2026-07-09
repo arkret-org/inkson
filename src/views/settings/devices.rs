@@ -118,7 +118,7 @@ fn build_pair_payload(
     challenge_signature: &str,
 ) -> String {
     let payload = json!({
-        "schema": "ck.device.pair.request.v1",
+        "schema": "ak.device.pair.request.v1",
         "account_did": account_did,
         "pairing_code": pairing_code,
         "new_device_pubkey": {
@@ -150,7 +150,7 @@ fn build_pairing_verification_content(
         "from_device": requesting_device_id,
         "timestamp": chrono::Utc::now().to_rfc3339(),
         "expires_at": expires_at,
-        "methods": ["ck.sas.v1", "ck.qr.v1"],
+        "methods": ["ak.sas.v1", "ck.qr.v1"],
         "purpose": "same_principal_device_authorization",
         "pairing_code": request_payload.get("pairing_code").cloned().unwrap_or(Value::Null),
         "new_device_pubkey": request_payload.get("new_device_pubkey").cloned().unwrap_or(Value::Null),
@@ -565,7 +565,7 @@ fn render_revoke_modal(
                 }
                 p {
                     "This will write "
-                    code { "ck.device.revoke" }
+                    code { "ak.device.revoke" }
                     " to your principal control Realm, remove the device from any E2EE Realm it participates in, and rotate the account MLS history secret. The action cannot be undone."
                 }
                 p { class: "muted", "data-testid": "device-revoke-threat-note",
@@ -1040,7 +1040,7 @@ fn render_pair_strand(
                                             continue;
                                         }
                                         let txn_id = format!(
-                                            "ck.key.verification.request:{}:{}",
+                                            "ak.key.verification.request:{}:{}",
                                             requesting_device_id, row.device_id
                                         );
                                         match crate::keys_api::send_device_message_envelope(
@@ -1048,7 +1048,7 @@ fn render_pair_strand(
                                             &txn_id,
                                             &actor,
                                             &row.device_id,
-                                            "ck.key.verification.request",
+                                            "ak.key.verification.request",
                                             &expires_at,
                                             content.clone(),
                                         )
@@ -1285,7 +1285,7 @@ mod tests {
             "challenge-signature",
         );
         let parsed: Value = serde_json::from_str(&raw).unwrap();
-        assert_eq!(parsed["schema"], "ck.device.pair.request.v1");
+        assert_eq!(parsed["schema"], "ak.device.pair.request.v1");
         assert_eq!(parsed["account_did"], "did:web:alice");
         assert_eq!(parsed["pairing_code"], "pairing-code");
         assert_eq!(parsed["new_device_pubkey"]["kid"], "device-1");

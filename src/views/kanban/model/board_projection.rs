@@ -260,7 +260,7 @@ pub(crate) fn strand_views_from_ops(
             continue;
         };
         match kind.as_str() {
-            "ck.strand.create" => {
+            "ak.strand.create" => {
                 if let Some(view) = strand_view_from_create_op(record) {
                     if !by_id.contains_key(&view.strand_id) {
                         order.push(view.strand_id.clone());
@@ -268,28 +268,28 @@ pub(crate) fn strand_views_from_ops(
                     by_id.insert(view.strand_id.clone(), view);
                 }
             }
-            "ck.strand.move" => {
+            "ak.strand.move" => {
                 if let Some(id) = op_strand_target_id(record)
                     && let Some(view) = by_id.get_mut(&id)
                 {
                     apply_move_to_view(view, record);
                 }
             }
-            "ck.strand.reorder" => {
+            "ak.strand.reorder" => {
                 if let Some(id) = op_strand_target_id(record)
                     && let Some(view) = by_id.get_mut(&id)
                 {
                     apply_reorder_to_view(view, record);
                 }
             }
-            "ck.strand.archive" => {
+            "ak.strand.archive" => {
                 if let Some(id) = op_strand_target_id(record)
                     && let Some(view) = by_id.get_mut(&id)
                 {
                     view.state = "archived".to_owned();
                 }
             }
-            "ck.strand.restore" => {
+            "ak.strand.restore" => {
                 if let Some(id) = op_strand_target_id(record)
                     && let Some(view) = by_id.get_mut(&id)
                 {
@@ -351,21 +351,21 @@ pub(crate) fn space_container_views_from_ops(
             continue;
         };
         match kind.as_str() {
-            "ck.space.update" => {
+            "ak.space.update" => {
                 if let Some(id) = op_space_target_id(record)
                     && let Some(view) = by_id.get_mut(&id)
                 {
                     apply_space_update_to_view(view, record);
                 }
             }
-            "ck.space.archive" => {
+            "ak.space.archive" => {
                 if let Some(id) = op_space_target_id(record)
                     && let Some(view) = by_id.get_mut(&id)
                 {
                     view.state = "archived".to_owned();
                 }
             }
-            "ck.space.restore" => {
+            "ak.space.restore" => {
                 if let Some(id) = op_space_target_id(record)
                     && let Some(view) = by_id.get_mut(&id)
                 {
@@ -421,7 +421,7 @@ mod tests {
         }
         json!({
             "event_id": format!("ak:event:{id}"),
-            "kind": "ck.space.create",
+            "kind": "ak.space.create",
             "realm_id": REALM,
             "actor_id": "did:web:creator.example",
             "created_at": "2026-06-28T00:00:00Z",
@@ -442,14 +442,14 @@ mod tests {
     ) -> Value {
         json!({
             "event_id": format!("ak:event:{id}"),
-            "kind": "ck.strand.create",
+            "kind": "ak.strand.create",
             "realm_id": REALM,
             "actor_id": actor,
             "created_at": created_at,
             "payload": {
                 "object": {
                     "id": id,
-                    "schema": "ck.schema.strand.v1",
+                    "schema": "ak.schema.strand.v1",
                     "realm_id": REALM,
                     "created_by": actor,
                     "created_at": created_at,
@@ -470,7 +470,7 @@ mod tests {
     fn strand_move_event(id: &str, board: &str, target_list: &str, rank: &str) -> Value {
         json!({
             "event_id": format!("ak:event:move-{id}"),
-            "kind": "ck.strand.move",
+            "kind": "ak.strand.move",
             "realm_id": REALM,
             "actor_id": "did:web:mover.example",
             "created_at": "2026-06-28T01:00:00Z",
@@ -486,7 +486,7 @@ mod tests {
     fn strand_archive_event(id: &str) -> Value {
         json!({
             "event_id": format!("ak:event:archive-{id}"),
-            "kind": "ck.strand.archive",
+            "kind": "ak.strand.archive",
             "realm_id": REALM,
             "actor_id": "did:web:archiver.example",
             "created_at": "2026-06-28T02:00:00Z",
@@ -561,7 +561,7 @@ mod tests {
         let events = vec![
             sdk_event(
                 "ak:event:01904100-0000-7000-8000-000000000111",
-                "ck.space.create",
+                "ak.space.create",
                 1,
                 "2026-07-08T00:00:00Z",
                 json!({
@@ -575,7 +575,7 @@ mod tests {
             ),
             sdk_event(
                 "ak:event:01904100-0000-7000-8000-000000000112",
-                "ck.space.create",
+                "ak.space.create",
                 2,
                 "2026-07-08T00:00:01Z",
                 json!({
@@ -590,13 +590,13 @@ mod tests {
             ),
             sdk_event(
                 "ak:event:01904100-0000-7000-8000-000000000113",
-                "ck.strand.create",
+                "ak.strand.create",
                 3,
                 "2026-07-08T00:00:02Z",
                 json!({
                     "object": {
                         "id": "ak:strand:01904100-0000-7000-8000-000000000301",
-                        "schema": "ck.schema.strand.v1",
+                        "schema": "ak.schema.strand.v1",
                         "realm_id": REALM,
                         "created_by": "did:webvh:z6mkfixture:alice.example",
                         "created_at": "2026-07-08T00:00:02Z",
@@ -776,11 +776,11 @@ mod tests {
                 "op-create-1",
                 "2026-06-28T00:05:00Z",
                 json!({
-                    "kind": "ck.strand.create",
+                    "kind": "ak.strand.create",
                     "operation_id": "op-create-1",
                     "actor_id": "did:web:alice.example",
                     "created_at": "2026-06-28T00:05:00Z",
-                    "wire_kind": "ck.strand.create",
+                    "wire_kind": "ak.strand.create",
                     "write_state": "queued",
                     "effect": {
                         "strand_id": strand,
@@ -846,7 +846,7 @@ mod tests {
             "op-move-1",
             "2026-06-28T00:06:00Z",
             json!({
-                "kind": "ck.strand.move",
+                "kind": "ak.strand.move",
                 "move_id": "op-move-1",
                 "board_space_id": BOARD,
                 "strand_id": strand,
@@ -896,7 +896,7 @@ mod tests {
                 "op-rank-a",
                 "2026-06-28T00:02:00Z",
                 json!({
-                    "kind": "ck.space.update",
+                    "kind": "ak.space.update",
                     "write_state": "queued",
                     "body": { "space_id": LIST_A, "patch": { "rank": { "$op": "set", "value": "r002" } } },
                 }),
@@ -905,7 +905,7 @@ mod tests {
                 "op-rank-b",
                 "2026-06-28T00:03:00Z",
                 json!({
-                    "kind": "ck.space.update",
+                    "kind": "ak.space.update",
                     "write_state": "queued",
                     "body": { "space_id": LIST_B, "patch": { "rank": rank_entry.clone() } },
                 }),
@@ -933,7 +933,7 @@ mod tests {
             "op-archive-1",
             "2026-06-28T00:04:00Z",
             json!({
-                "kind": "ck.space.archive",
+                "kind": "ak.space.archive",
                 "write_state": "queued",
                 "body": { "space_id": LIST_A },
             }),
@@ -996,13 +996,13 @@ mod tests {
         ops.push(local_op_from_builder(
             "op-rank-a",
             "2026-06-28T00:02:00Z",
-            "ck.space.update",
+            "ak.space.update",
             space_update_body(LIST_A, "r002"),
         ));
         ops.push(local_op_from_builder(
             "op-rank-b",
             "2026-06-28T00:03:00Z",
-            "ck.space.update",
+            "ak.space.update",
             space_update_body(LIST_B, "r001"),
         ));
         let (columns, ..) = project_board(&ops, BOARD, REALM, None);
@@ -1019,7 +1019,7 @@ mod tests {
         let move_body = crate::operation::ck_ops::strand_position_cas_update(
             REALM,
             "did:web:alice.example",
-            "ck.strand.move",
+            "ak.strand.move",
             BOARD,
             strand,
             json!({ "list_space_id": LIST_A, "rank": "U" }),
@@ -1046,7 +1046,7 @@ mod tests {
         ops.push(local_op_from_builder(
             "op-move-real",
             "2026-06-28T00:06:00Z",
-            "ck.strand.move",
+            "ak.strand.move",
             move_body,
         ));
         let (columns, ..) = project_board(&ops, BOARD, REALM, None);
@@ -1070,8 +1070,8 @@ mod tests {
     fn ingest_funnel_only_accepts_kanban_kinds() {
         let events = vec![
             space_create_event(BOARD, "board", "Board1", None),
-            json!({ "kind": "ck.message.create", "realm_id": REALM, "payload": {} }),
-            json!({ "kind": "ck.mls.commit", "realm_id": REALM, "payload": {} }),
+            json!({ "kind": "ak.message.create", "realm_id": REALM, "payload": {} }),
+            json!({ "kind": "ak.mls.commit", "realm_id": REALM, "payload": {} }),
         ];
         let ops = kanban_operations_from_events(&events);
         assert_eq!(ops.len(), 1, "non-kanban kinds are dropped by the funnel");

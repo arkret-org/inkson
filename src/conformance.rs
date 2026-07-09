@@ -9,23 +9,23 @@ use serde_json::Value;
 
 use crate::models::{ServerDescription, ServerDescriptionExt};
 
-pub const PROFILE_MINIMAL_CLIENT: &str = "ck.profile.minimal_client.v1";
+pub const PROFILE_MINIMAL_CLIENT: &str = "ak.profile.minimal_client.v1";
 // T2.3: chat_only_client / kanban_only_client profile ids were removed from
 // the spec (artifacts/registry/deprecated-profile-ids.json, since 0a5ab85).
 // Replacement profile ids are ck.profile.chat_mvp.v1 / ck.profile.kanban_mvp.v1;
 // modality is otherwise expressed via Realm schema, not via single-modality
 // profile gating.
-pub const PROFILE_CHAT_MVP: &str = "ck.profile.chat_mvp.v1";
-pub const PROFILE_KANBAN_MVP: &str = "ck.profile.kanban_mvp.v1";
-pub const PROFILE_FULL_CLIENT: &str = "ck.profile.full_client.v1";
-pub const PROFILE_E2EE_CLIENT: &str = "ck.profile.e2ee_client.v1";
-pub const PROFILE_FEDERATION_MINIMAL: &str = "ck.profile.federation_minimal.v1";
+pub const PROFILE_CHAT_MVP: &str = "ak.profile.chat_mvp.v1";
+pub const PROFILE_KANBAN_MVP: &str = "ak.profile.kanban_mvp.v1";
+pub const PROFILE_FULL_CLIENT: &str = "ak.profile.full_client.v1";
+pub const PROFILE_E2EE_CLIENT: &str = "ak.profile.e2ee_client.v1";
+pub const PROFILE_FEDERATION_MINIMAL: &str = "ak.profile.federation_minimal.v1";
 // T0.3: push_gateway is a gateway role profile (not a client role). inkson
 // is a client and MUST NOT declare itself as supporting the push_gateway
 // profile (no entry in client_profile_declarations()). The constant is kept
 // only so the settings panel can read whether the *server* advertises a
 // push gateway endpoint.
-pub const PROFILE_PUSH_GATEWAY: &str = "ck.profile.push_gateway.v1";
+pub const PROFILE_PUSH_GATEWAY: &str = "ak.profile.push_gateway.v1";
 /// MLS Governance Binding hardening profile (`encryption-and-audit.md` §10).
 ///
 /// Inkson ships the canonical event payload through
@@ -33,7 +33,7 @@ pub const PROFILE_PUSH_GATEWAY: &str = "ck.profile.push_gateway.v1";
 /// and the `covered_seals_cell` add-effect through [`arkret_sdk::mls_move`].
 /// The commit submit path remains gated on server features advertised via
 /// [`crate::api::Api::events_describe`] before the profile reports `ready`.
-pub const PROFILE_MLS_GOVERNANCE_BINDING_FULL: &str = "ck.profile.mls_governance_binding.full.v1";
+pub const PROFILE_MLS_GOVERNANCE_BINDING_FULL: &str = "ak.profile.mls_governance_binding.full.v1";
 
 /// Conformance profile declarations per arkret-spec section 13.1.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -174,7 +174,7 @@ pub fn client_profile_declarations() -> Vec<ClientProfileDeclaration> {
         // .v1_1_extension_implementation`. v1 core conformance does NOT
         // require them; servers that don't ship them stay v1 core compliant.
         ClientProfileDeclaration {
-            profile_id: "ck.profile.applet_service.v1",
+            profile_id: "ak.profile.applet_service.v1",
             label: "applet_service",
             description: "Applet integration: bridge / bot registration, ghost actor, portal Space (extensions/applet-integration).",
             local_supported: false,
@@ -182,7 +182,7 @@ pub fn client_profile_declarations() -> Vec<ClientProfileDeclaration> {
             tier: ConformanceTier::V1_1Extension,
         },
         ClientProfileDeclaration {
-            profile_id: "ck.profile.agent_runtime.v1",
+            profile_id: "ak.profile.agent_runtime.v1",
             label: "agent_runtime",
             description: "Agent runtime: A2A / ACP / MCP protocol session events (extensions/agent-protocol-interop).",
             local_supported: false,
@@ -190,7 +190,7 @@ pub fn client_profile_declarations() -> Vec<ClientProfileDeclaration> {
             tier: ConformanceTier::V1_1Extension,
         },
         ClientProfileDeclaration {
-            profile_id: "ck.profile.mimi_interop.v1",
+            profile_id: "ak.profile.mimi_interop.v1",
             label: "mimi_interop",
             description: "MIMI interop: provider facade, room binding, ciphertext envelope (extensions/mimi-interop).",
             local_supported: false,
@@ -513,7 +513,7 @@ fn validate_encrypted_envelope_schema(value: &Value) -> Result<(), ValidationErr
         .map(|_| ())
         .map_err(|_| ValidationError::InvalidValue {
             field: "encrypted-envelope".into(),
-            expected: "ck.schema.encrypted_envelope.v1".into(),
+            expected: "ak.schema.encrypted_envelope.v1".into(),
         })
 }
 
@@ -559,19 +559,19 @@ mod tests {
         assert!(
             profiles
                 .iter()
-                .any(|p| p.profile_id == "ck.profile.minimal_client.v1" && p.supported)
+                .any(|p| p.profile_id == "ak.profile.minimal_client.v1" && p.supported)
         );
         assert!(
             profiles
                 .iter()
-                .any(|p| p.profile_id == "ck.profile.chat_mvp.v1" && p.supported)
+                .any(|p| p.profile_id == "ak.profile.chat_mvp.v1" && p.supported)
         );
         // T0.3: inkson is a client, push_gateway is a gateway role — it
         // MUST NOT appear in the client's supported profile set.
         assert!(
             !profiles
                 .iter()
-                .any(|p| p.profile_id == "ck.profile.push_gateway.v1")
+                .any(|p| p.profile_id == "ak.profile.push_gateway.v1")
         );
     }
 
@@ -590,9 +590,9 @@ mod tests {
             "supported_profiles": [PROFILE_MINIMAL_CLIENT],
             "supported_features": [],
             "supported_operations": [
-                "ck.self.events.resource.get",
-                "ck.self.events.query.scan",
-                "ck.server.query.describe",
+                "ak.self.events.resource.get",
+                "ak.self.events.query.scan",
+                "ak.server.query.describe",
             ],
             "supported_bindings": [],
             // SDK AuthMetadata.mode is required (no default) — the fixture
@@ -625,7 +625,7 @@ mod tests {
         assert!(
             chat.missing
                 .iter()
-                .any(|missing| missing.contains("ck.self.account.stream.subscribe")),
+                .any(|missing| missing.contains("ak.self.account.stream.subscribe")),
             "expected chat_mvp to flag missing ck.self.account.stream.subscribe, got {:?}",
             chat.missing
         );
@@ -672,7 +672,7 @@ mod tests {
     fn validate_event_schema_ok() {
         let event = json!({
             "event_id": "ak:event:01904100-0000-7000-8000-000000000001",
-            "kind": "ck.message.create",
+            "kind": "ak.message.create",
             "realm_id": "ak:realm:01904100-0000-7000-8000-000000000001",
             "actor_id": "did:web:alice",
             "actor_seq": 1,
@@ -692,7 +692,7 @@ mod tests {
     fn validate_event_schema_rejects_unknown_kind() {
         let event = json!({
             "event_id": "ak:event:01904100-0000-7000-8000-000000000001",
-            "kind": "ck.bogus.kind",
+            "kind": "ak.bogus.kind",
             "realm_id": "ak:realm:01904100-0000-7000-8000-000000000001",
             "actor_id": "did:web:alice",
             "actor_seq": 1,
@@ -704,7 +704,7 @@ mod tests {
         });
         match validate_structure(&event, "event") {
             Err(ValidationError::UnknownEventKind(kind)) => {
-                assert_eq!(kind, "ck.bogus.kind");
+                assert_eq!(kind, "ak.bogus.kind");
             }
             other => panic!("expected UnknownEventKind, got {other:?}"),
         }
@@ -712,10 +712,10 @@ mod tests {
 
     #[test]
     fn require_known_event_kind_accepts_canonical_and_rejects_garbage() {
-        assert!(require_known_event_kind("ck.message.create").is_ok());
-        assert!(require_known_event_kind("ck.strand.update").is_ok());
-        assert!(require_known_event_kind("ck.typing").is_ok());
-        let err = require_known_event_kind("ck.bogus.kind").expect_err("unknown kind must error");
+        assert!(require_known_event_kind("ak.message.create").is_ok());
+        assert!(require_known_event_kind("ak.strand.update").is_ok());
+        assert!(require_known_event_kind("ak.typing").is_ok());
+        let err = require_known_event_kind("ak.bogus.kind").expect_err("unknown kind must error");
         assert!(matches!(err, ValidationError::UnknownEventKind(_)));
     }
 
@@ -731,7 +731,7 @@ mod tests {
             "aad_visibility_event_id": "hidden",
             "aad": {
                 "realm_id": "ak:realm:01904100-0000-7000-8000-000000000001",
-                "event_kind": "ck.message.create"
+                "event_kind": "ak.message.create"
             },
             "key_ref": {
                 "algorithm": "MLS",
@@ -752,7 +752,7 @@ mod tests {
             "aad_visibility_event_id": "hidden",
             "aad": {
                 "realm_id": "ak:realm:01904100-0000-7000-8000-000000000001",
-                "event_kind": "ck.message.create"
+                "event_kind": "ak.message.create"
             },
             "key_ref": {
                 "algorithm": "MLS-EXPORTER-AEAD",
@@ -781,54 +781,54 @@ mod tests {
     fn known_event_kinds_covers_load_bearing_kinds() {
         let kinds = known_event_kinds();
         // current-model §3 — unified track update (spec dc01ad7)
-        assert!(kinds.contains(&"ck.strand.tracks.update"));
+        assert!(kinds.contains(&"ak.strand.tracks.update"));
         // Split track events were removed in the dc01ad7 unification.
-        assert!(!kinds.contains(&"ck.strand.track.enable"));
-        assert!(!kinds.contains(&"ck.strand.track.disable"));
-        assert!(!kinds.contains(&"ck.strand.track.update"));
-        assert!(!kinds.contains(&"ck.strand.track.set_primary"));
+        assert!(!kinds.contains(&"ak.strand.track.enable"));
+        assert!(!kinds.contains(&"ak.strand.track.disable"));
+        assert!(!kinds.contains(&"ak.strand.track.update"));
+        assert!(!kinds.contains(&"ak.strand.track.set_primary"));
         // current-model §4 — board / list workflow container
-        assert!(kinds.contains(&"ck.strand.move"));
-        assert!(kinds.contains(&"ck.strand.reorder"));
+        assert!(kinds.contains(&"ak.strand.move"));
+        assert!(kinds.contains(&"ak.strand.reorder"));
         // device-lifecycle §1.2 (login / authorization / verification three axes)
-        assert!(kinds.contains(&"ck.session.grant"));
-        assert!(kinds.contains(&"ck.device.authorize"));
-        assert!(kinds.contains(&"ck.device.revoke"));
+        assert!(kinds.contains(&"ak.session.grant"));
+        assert!(kinds.contains(&"ak.device.authorize"));
+        assert!(kinds.contains(&"ak.device.revoke"));
         // device-lifecycle §7-§9 verification ceremony events.
-        assert!(kinds.contains(&"ck.key.verification.start"));
-        assert!(kinds.contains(&"ck.key.verification.done"));
+        assert!(kinds.contains(&"ak.key.verification.start"));
+        assert!(kinds.contains(&"ak.key.verification.done"));
         // discovery/read-receipts §6 — read marker is a wire event,
         // notification is *not* (it's a derived projection).
-        assert!(kinds.contains(&"ck.read_cursor.advance"));
-        assert!(kinds.contains(&"ck.receipt.read"));
-        assert!(!kinds.contains(&"ck.notification.dismiss"));
+        assert!(kinds.contains(&"ak.read_cursor.advance"));
+        assert!(kinds.contains(&"ak.receipt.read"));
+        assert!(!kinds.contains(&"ak.notification.dismiss"));
         // audited-e2ee — attested + disclosed audit profiles
-        assert!(kinds.contains(&"ck.audit.accessed"));
-        assert!(kinds.contains(&"ck.audit.ryw_receipt"));
+        assert!(kinds.contains(&"ak.audit.accessed"));
+        assert!(kinds.contains(&"ak.audit.ryw_receipt"));
         // Removed by spec
-        assert!(!kinds.contains(&"ck.strand.convert"));
-        assert!(!kinds.contains(&"ck.mls.epoch"));
+        assert!(!kinds.contains(&"ak.strand.convert"));
+        assert!(!kinds.contains(&"ak.mls.epoch"));
         // T2.3 (spec 0a5ab85): single 'set' kinds were decomposed into
         // per-component cells / typed lifecycle events.
-        assert!(!kinds.contains(&"ck.space.lifecycle.set"));
-        assert!(!kinds.contains(&"ck.space.policy.set"));
+        assert!(!kinds.contains(&"ak.space.lifecycle.set"));
+        assert!(!kinds.contains(&"ak.space.policy.set"));
         // Realm/Space split: security-boundary events live in ck.realm.*;
         // container lifecycle events live in ck.space.*.
-        assert!(kinds.contains(&"ck.realm.create"));
-        assert!(kinds.contains(&"ck.realm.update"));
-        assert!(kinds.contains(&"ck.space.archive"));
-        assert!(kinds.contains(&"ck.space.restore"));
-        assert!(kinds.contains(&"ck.space.tombstone"));
+        assert!(kinds.contains(&"ak.realm.create"));
+        assert!(kinds.contains(&"ak.realm.update"));
+        assert!(kinds.contains(&"ak.space.archive"));
+        assert!(kinds.contains(&"ak.space.restore"));
+        assert!(kinds.contains(&"ak.space.tombstone"));
         // Renamed: ck.actor.profile.update -> ck.profile.update
-        assert!(kinds.contains(&"ck.profile.update"));
-        assert!(!kinds.contains(&"ck.actor.profile.update"));
+        assert!(kinds.contains(&"ak.profile.update"));
+        assert!(!kinds.contains(&"ak.actor.profile.update"));
     }
 
     #[test]
     fn known_event_kinds_have_protocol_namespace() {
         for kind in known_event_kinds() {
             assert!(
-                kind.starts_with("ck."),
+                kind.starts_with("ak."),
                 "event kind `{kind}` must live in the ck.* namespace"
             );
             assert!(
@@ -914,6 +914,6 @@ mod tests {
 
     #[test]
     fn event_kind_wire_scope_returns_none_for_unknown_kind() {
-        assert_eq!(super::event_kind_wire_scope("ck.bogus.kind"), None);
+        assert_eq!(super::event_kind_wire_scope("ak.bogus.kind"), None);
     }
 }

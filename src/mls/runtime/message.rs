@@ -47,7 +47,7 @@ struct WelcomeMessageEntry {
 /// ends — the SDK binds it verbatim into the AEAD AAD.
 pub fn history_content_aad_bytes(realm_id: &str, epoch: u64) -> Vec<u8> {
     let aad = serde_json::json!({
-        "purpose": "ck.realm_key.history_content.v1",
+        "purpose": "ak.realm_key.history_content.v1",
         "realm_id": realm_id.trim(),
         "epoch": epoch,
     });
@@ -702,7 +702,7 @@ fn collect_welcome_message_entries(value: &serde_json::Value) -> Vec<WelcomeMess
             .get("kind")
             .or_else(|| entry.get("type"))
             .and_then(|t| t.as_str())
-            == Some("ck.mls.welcome")
+            == Some("ak.mls.welcome")
             && let Some(content) = entry.get("content")
         {
             welcomes.push(WelcomeMessageEntry {
@@ -733,7 +733,7 @@ pub fn mls_welcome_message_matches_realm(message: &serde_json::Value, realm_id: 
         .get("kind")
         .or_else(|| message.get("type"))
         .and_then(|t| t.as_str())
-        != Some("ck.mls.welcome")
+        != Some("ak.mls.welcome")
     {
         return false;
     }

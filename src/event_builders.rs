@@ -311,19 +311,19 @@ pub fn build_realm_create_event(
         };
     let realm_object_id = trim_realm_id(realm_id);
     let envelope_realm_id = trim_realm_id(realm_id);
-    let cell = space_cell("ck.component.realm.create.v1", &envelope_realm_id);
+    let cell = space_cell("ak.component.realm.create.v1", &envelope_realm_id);
     let created_at_for_object = event_timestamp();
     let notary = realm_genesis_notary(notary_profile, actor_id)?;
     let mut object = json!({
         "id": realm_object_id,
-        "schema": "ck.schema.realm.v1",
+        "schema": "ak.schema.realm.v1",
         "title": title,
         "trust_domain": trust_domain,
         // Spec rename (head 37ce729 / SDK 4d5a1af): realm.schema.json
         // `created_by_principal` → `created_by`. No serde alias —
         // aggressive migration.
         "created_by": actor_id,
-        "schema_refs": ["ck.schema.realm.v1"],
+        "schema_refs": ["ak.schema.realm.v1"],
         "default_discoverability": discoverability,
         "default_join_rule": join_rule,
         "history_visibility": history_visibility,
@@ -386,7 +386,7 @@ pub fn build_realm_create_event(
     // `realm_create_payload` (object, additionalProperties:false).
     let realm_body = arkret_sdk::ObjectCreatePayload::new(object.clone())
         .to_value()
-        .map_err(|e| anyhow::anyhow!("ck.realm.create payload serialize: {e}"))?;
+        .map_err(|e| anyhow::anyhow!("ak.realm.create payload serialize: {e}"))?;
     let mut event = OperationBuilder::new(
         realm_id,
         actor_id,
@@ -396,7 +396,7 @@ pub fn build_realm_create_event(
     .body(realm_body)
     .preconditions(preconditions)
     .effects(effects)
-    .requirements(event_requirements_with_schema("ck.schema.realm.v1"))
+    .requirements(event_requirements_with_schema("ak.schema.realm.v1"))
     .build_sdk_event("inkson")?;
     set_sdk_event_created_at(&mut event, &created_at_for_object)?;
     Ok(event)
@@ -611,17 +611,17 @@ pub fn build_space_create_event(
         );
     }
     let mut object = serde_json::to_value(&space_object)
-        .map_err(|e| anyhow::anyhow!("ck.space.create object serialize: {e}"))?;
+        .map_err(|e| anyhow::anyhow!("ak.space.create object serialize: {e}"))?;
     // Preserve the envelope timestamp on the wire object (SDK defaults
     // `created_at` to construction time).
     object["created_at"] = Value::String(created_at.clone());
 
-    let cell = space_cell("ck.component.space.create.v1", space_id);
+    let cell = space_cell("ak.component.space.create.v1", space_id);
     let preconditions = vec![head_eq_precondition(&cell, Value::Null)?];
     let effects = vec![set_effect(&cell, object.clone())?];
     let space_body = arkret_sdk::ObjectCreatePayload::new(object.clone())
         .to_value()
-        .map_err(|e| anyhow::anyhow!("ck.space.create payload serialize: {e}"))?;
+        .map_err(|e| anyhow::anyhow!("ak.space.create payload serialize: {e}"))?;
     let mut event = OperationBuilder::new(
         realm_id,
         actor_id,
@@ -631,7 +631,7 @@ pub fn build_space_create_event(
     .body(space_body)
     .preconditions(preconditions)
     .effects(effects)
-    .requirements(event_requirements_with_schema("ck.schema.space.v1"))
+    .requirements(event_requirements_with_schema("ak.schema.space.v1"))
     .build_sdk_event("inkson")?;
     set_sdk_event_created_at(&mut event, &created_at)?;
     Ok(event)
@@ -688,7 +688,7 @@ pub fn build_space_lifecycle_event(
         _ => unreachable!("unsupported Space lifecycle kind was rejected above"),
     };
     let created_at = event_timestamp();
-    let cell = space_cell("ck.component.space.state.v1", space_id);
+    let cell = space_cell("ak.component.space.state.v1", space_id);
     let preconditions = vec![head_eq_precondition(
         &cell,
         Value::String(prior_state.to_owned()),
@@ -718,13 +718,13 @@ pub fn build_realm_state_event(
     value: Value,
 ) -> anyhow::Result<arkret_sdk::Event> {
     let cell_family = match &kind {
-        EventKind::RealmJoinRule => "ck.component.realm.join_rule.v1",
-        EventKind::RealmHistoryVisibility => "ck.component.realm.history_visibility.v1",
-        EventKind::RealmHistorySharingPolicy => "ck.component.realm.history_sharing_policy.v1",
-        EventKind::RealmPreviewPolicy => "ck.component.realm.preview_policy.v1",
-        EventKind::RealmDiscovery => "ck.component.realm.discovery.v1",
-        EventKind::RealmSchema => "ck.component.realm.schema.v1",
-        EventKind::RealmPolicyComponents => "ck.component.realm.policy_components.v1",
+        EventKind::RealmJoinRule => "ak.component.realm.join_rule.v1",
+        EventKind::RealmHistoryVisibility => "ak.component.realm.history_visibility.v1",
+        EventKind::RealmHistorySharingPolicy => "ak.component.realm.history_sharing_policy.v1",
+        EventKind::RealmPreviewPolicy => "ak.component.realm.preview_policy.v1",
+        EventKind::RealmDiscovery => "ak.component.realm.discovery.v1",
+        EventKind::RealmSchema => "ak.component.realm.schema.v1",
+        EventKind::RealmPolicyComponents => "ak.component.realm.policy_components.v1",
         other => {
             return Err(anyhow::anyhow!(
                 "unsupported Realm state event kind {}",
@@ -775,7 +775,7 @@ pub fn build_realm_archive_event(
 ) -> anyhow::Result<arkret_sdk::Event> {
     let created_at = event_timestamp();
     let realm_id_wire = trim_realm_id(realm_id);
-    let cell = space_cell("ck.component.realm.archive.v1", &realm_id_wire);
+    let cell = space_cell("ak.component.realm.archive.v1", &realm_id_wire);
     // Strong type: realm_archive_payload (additionalProperties:false).
     let mut typed = arkret_sdk::RealmArchivePayload::new(archived);
     if let Some(reason) = reason.map(str::trim).filter(|value| !value.is_empty()) {
@@ -807,7 +807,7 @@ pub fn build_realm_destroy_event(
     }
     let created_at = event_timestamp();
     let realm_id_wire = trim_realm_id(realm_id);
-    let cell = space_cell("ck.component.realm.destroy.v1", &realm_id_wire);
+    let cell = space_cell("ak.component.realm.destroy.v1", &realm_id_wire);
     // Strong type: realm_destroy_payload (reason required; verification_stub
     // _required omitted so the reducer applies its default; additionalProperties
     // :false).
@@ -882,7 +882,7 @@ pub fn build_plaintext_visible_services_event(
     let created_at = event_timestamp();
     let realm_id_wire = trim_realm_id(realm_id);
     let cell = space_cell(
-        "ck.component.realm.plaintext_visible_services.v1",
+        "ak.component.realm.plaintext_visible_services.v1",
         &realm_id_wire,
     );
     let preconditions = vec![head_eq_precondition(&cell, Value::Null)?];
@@ -1083,7 +1083,7 @@ pub fn build_signed_device_verification_proof(
     signing_key: &ed25519_dalek::SigningKey,
 ) -> anyhow::Result<Value> {
     let mut body = json!({
-        "type": "ck.device.verification.proof.v1",
+        "type": "ak.device.verification.proof.v1",
         "from_actor": from_actor,
         "from_device": from_device,
         "target_device": target_device,

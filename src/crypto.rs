@@ -212,7 +212,7 @@ fn compose_local_encrypted_message_inner(
     // informative-only, per guides/migrating-from-matrix.md.)
     let plaintext = serde_json::to_vec(&serde_json::json!({
         "content": {
-            "kind": "ck.content.text",
+            "kind": "ak.content.text",
             "body": body,
         }
     }))?;

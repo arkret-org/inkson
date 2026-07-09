@@ -108,7 +108,7 @@ pub fn build_typing_envelope(
             .map_err(|err| anyhow::anyhow!("invalid device_id for ck.typing: {err}"))?,
     );
     arkret_sdk::EphemeralEnvelope::new(
-        "ck.typing",
+        "ak.typing",
         realm,
         actor,
         device,
@@ -161,7 +161,7 @@ pub fn build_receipt_read_envelope(
     let device = arkret_sdk::DeviceId::new(device_id)
         .map_err(|err| anyhow::anyhow!("invalid device_id for ck.receipt.read: {err}"))?;
     arkret_sdk::EphemeralEnvelope::new(
-        "ck.receipt.read",
+        "ak.receipt.read",
         realm,
         actor,
         Some(device),
@@ -183,7 +183,7 @@ pub fn build_presence_envelope(
     last_active_at: Option<chrono::DateTime<chrono::Utc>>,
 ) -> anyhow::Result<arkret_sdk::EphemeralEnvelope> {
     if arkret_sdk::PresenceStatus::parse_wire(state).is_none() {
-        anyhow::bail!("ck.presence state {state:?} is not a canonical presence state");
+        anyhow::bail!("ak.presence state {state:?} is not a canonical presence state");
     }
     let now = chrono::Utc::now();
     let expires_at = now + chrono::Duration::seconds(EPHEMERAL_DEFAULT_TTL_SECS);
@@ -202,7 +202,7 @@ pub fn build_presence_envelope(
         // chars). NFC-normalize proactively for free-typed text.
         let message = arkret_sdk::canonical::to_nfc(message);
         arkret_sdk::validate_status_message(&message)
-            .map_err(|err| anyhow::anyhow!("ck.presence status_message rejected: {err}"))?;
+            .map_err(|err| anyhow::anyhow!("ak.presence status_message rejected: {err}"))?;
         payload.insert("status_message".into(), Value::String(message));
     }
     if let Some(ts) = last_active_at {
@@ -218,7 +218,7 @@ pub fn build_presence_envelope(
     let device = arkret_sdk::DeviceId::new(device_id)
         .map_err(|err| anyhow::anyhow!("invalid device_id for ck.presence: {err}"))?;
     arkret_sdk::EphemeralEnvelope::new(
-        "ck.presence",
+        "ak.presence",
         realm,
         actor,
         Some(device),
@@ -272,14 +272,14 @@ pub fn build_call_signal_envelope_v1(
     let actor = arkret_sdk::Did::new(actor_id)
         .map_err(|err| anyhow::anyhow!("invalid actor_id for ck.call.signal: {err}"))?;
     if device_id.trim().is_empty() {
-        anyhow::bail!("ck.call.signal requires non-empty device_id (round 4 schema_violation)");
+        anyhow::bail!("ak.call.signal requires non-empty device_id (round 4 schema_violation)");
     }
     let device = Some(
         arkret_sdk::DeviceId::new(device_id)
             .map_err(|err| anyhow::anyhow!("invalid device_id for ck.call.signal: {err}"))?,
     );
     if !arkret_sdk::CALL_SIGNAL_TYPES.contains(&signal_type) {
-        anyhow::bail!("ck.call.signal signal_type {signal_type:?} not in canonical 13-value enum");
+        anyhow::bail!("ak.call.signal signal_type {signal_type:?} not in canonical 13-value enum");
     }
     let call = arkret_sdk::CallId::new(call_id)
         .map_err(|err| anyhow::anyhow!("invalid call_id for ck.call.signal: {err}"))?;
@@ -291,9 +291,9 @@ pub fn build_call_signal_envelope_v1(
     };
     payload
         .validate_signal_type()
-        .map_err(|err| anyhow::anyhow!("ck.call.signal payload rejected: {err}"))?;
+        .map_err(|err| anyhow::anyhow!("ak.call.signal payload rejected: {err}"))?;
     arkret_sdk::EphemeralEnvelope::new(
-        "ck.call.signal",
+        "ak.call.signal",
         realm,
         actor,
         device,

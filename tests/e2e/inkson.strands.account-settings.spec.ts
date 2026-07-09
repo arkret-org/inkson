@@ -309,9 +309,9 @@ test("account settings split account/server info and surface personal agents", a
   await page.getByTestId("agent-admin-provision-button").click();
   const provisionBody = (await provisionRequest).postDataJSON();
   expect(provisionBody.requested_scope.actions).toEqual([
-    "ck.self.events.stream.subscribe",
-    "ck.self.events.query.scan",
-    "ck.self.events.command.submit",
+    "ak.self.events.stream.subscribe",
+    "ak.self.events.query.scan",
+    "ak.self.events.command.submit",
   ]);
   expect(JSON.stringify(provisionBody.requested_scope.resources)).not.toContain("realm_id");
   await expect(page.getByTestId("agent-admin-pairing-card")).toBeVisible();

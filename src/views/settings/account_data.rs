@@ -42,7 +42,7 @@ pub(super) fn encrypted_account_data_marker(
     Ok(json!({
         "client_side_conformance": {
             "encrypted_account_data": true,
-            "profile_id": "ck.profile.e2ee_client.v1",
+            "profile_id": "ak.profile.e2ee_client.v1",
             "payload_digest": payload_digest
         },
         "content_type": "application/vnd.arkret.account-data+json",
@@ -83,7 +83,7 @@ pub(super) fn push_read_receipt_account_data(
             }
             Err(err) => {
                 tracing::warn!(
-                    "ck.account_data.set for read-receipt prefs failed: {}",
+                    "ak.account_data.set for read-receipt prefs failed: {}",
                     err.display()
                 );
             }
@@ -142,7 +142,7 @@ pub(super) fn push_presence_preference_account_data(
     {
         Ok(body) => body,
         Err(err) => {
-            tracing::warn!("ck.account_data.set for ck.presence.preference skipped: {err}");
+            tracing::warn!("ak.account_data.set for ck.presence.preference skipped: {err}");
             return;
         }
     };
@@ -161,7 +161,7 @@ pub(super) fn push_presence_preference_account_data(
             }
             Err(err) => {
                 tracing::warn!(
-                    "ck.account_data.set for ck.presence.preference failed: {}",
+                    "ak.account_data.set for ck.presence.preference failed: {}",
                     err.display()
                 );
             }
@@ -196,7 +196,7 @@ pub(super) fn push_presence_visibility_account_data(
             }
             Err(err) => {
                 tracing::warn!(
-                    "ck.account_data.set for ck.presence.visibility failed: {}",
+                    "ak.account_data.set for ck.presence.visibility failed: {}",
                     err.display()
                 );
             }
@@ -310,7 +310,7 @@ pub(super) fn push_notification_rules_account_data(
     let body = match encrypted_account_data_marker(PUSH_RULES_ACCOUNT_DATA_KEY, &body) {
         Ok(body) => body,
         Err(err) => {
-            tracing::warn!("ck.account_data.set for ck.push_rules skipped: {}", err);
+            tracing::warn!("ak.account_data.set for ck.push_rules skipped: {}", err);
             return;
         }
     };
@@ -328,7 +328,7 @@ pub(super) fn push_notification_rules_account_data(
             }
             Err(err) => {
                 tracing::debug!(
-                    "ck.account_data.set for ck.push_rules failed: {}",
+                    "ak.account_data.set for ck.push_rules failed: {}",
                     err.display()
                 );
             }

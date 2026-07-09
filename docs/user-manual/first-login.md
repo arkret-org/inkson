@@ -48,7 +48,7 @@ a bug — see [`faq-troubleshooting.md`](../faq-troubleshooting.md#discovery-fai
 <!-- TODO(screenshot): coauth-oidc-page.png -->
 <!-- TODO(screenshot): coauth-callback-success.png -->
 
-If the bundle is missing the `ck.session.grant` claim, the device-bootstrap
+If the bundle is missing the `ak.session.grant` claim, the device-bootstrap
 step (next) will fail closed. Re-attempt the login.
 
 ---

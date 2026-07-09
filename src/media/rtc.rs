@@ -417,12 +417,12 @@ fn recompute_media_policy_root(
     let subject = realm_id.as_str();
     let mut cells = std::collections::BTreeMap::new();
     cells.insert(
-        media_policy_cell("ck.component.realm.media_service.v1", subject)?,
+        media_policy_cell("ak.component.realm.media_service.v1", subject)?,
         arkret_sdk::lattice::CellState::Value(media_service_payload.clone()),
     );
     if let Some(payload) = policy_components_payload {
         cells.insert(
-            media_policy_cell("ck.component.realm.policy_components.v1", subject)?,
+            media_policy_cell("ak.component.realm.policy_components.v1", subject)?,
             arkret_sdk::lattice::CellState::Value(payload.clone()),
         );
     }
@@ -430,7 +430,7 @@ fn recompute_media_policy_root(
         let value =
             serde_json::to_value(payload).map_err(|_| RtcClientError::MlsGovernanceBindingStale)?;
         cells.insert(
-            media_policy_cell("ck.component.realm.plaintext_visible_services.v1", subject)?,
+            media_policy_cell("ak.component.realm.plaintext_visible_services.v1", subject)?,
             arkret_sdk::lattice::CellState::Value(value),
         );
     }
@@ -1037,7 +1037,7 @@ mod tests {
             ],
             policy_root,
             arkret_sdk::MLS_GOVERNANCE_BINDING_FULL_PROFILE,
-            "ck.reducer.realm.v1",
+            "ak.reducer.realm.v1",
         )
         .unwrap();
         let governance_binding = if let Some(payload) = plaintext_visible_services_payload.as_ref()
@@ -1086,7 +1086,7 @@ mod tests {
 
     #[test]
     fn frame_key_label_matches_spec() {
-        assert_eq!(SFRAME_FRAME_KEY_LABEL, "ck-rtc-frame-key/v1");
+        assert_eq!(SFRAME_FRAME_KEY_LABEL, "ak.rtc-frame-key/v1");
         assert_eq!(MEDIA_TOKEN_TTL_MAX_SECS, 600);
     }
 

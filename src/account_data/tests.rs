@@ -84,12 +84,12 @@ fn snapshot_head_absent_from_state_defaults_to_none() {
 fn key_round_trip() {
     for s in [
         "client.ui",
-        "ck.read_receipt.preferences",
-        "ck.presence.visibility",
-        "ck.presence.preference",
-        "ck.account.blocklist",
-        "ck.push_rules",
-        "ck.dnd_schedule",
+        "ak.read_receipt.preferences",
+        "ak.presence.visibility",
+        "ak.presence.preference",
+        "ak.account.blocklist",
+        "ak.push_rules",
+        "ak.dnd_schedule",
         "client.language",
     ] {
         assert_eq!(AccountDataKey::from_wire(s).as_wire(), s);
@@ -125,10 +125,10 @@ fn set_recomputes_digest() {
 fn realm_remark_key_round_trip() {
     let realm_id = "ak:realm:0196419b-0000-7000-8000-000000000000";
     let key = realm_remark_account_data_key(realm_id);
-    assert_eq!(key, format!("ck.contacts.realm.{realm_id}"));
+    assert_eq!(key, format!("ak.contacts.realm.{realm_id}"));
     assert_eq!(realm_id_from_realm_remark_key(&key), Some(realm_id));
     assert_eq!(
-        realm_id_from_realm_remark_key("ck.read_receipt.preferences"),
+        realm_id_from_realm_remark_key("ak.read_receipt.preferences"),
         None
     );
 }
@@ -137,10 +137,10 @@ fn realm_remark_key_round_trip() {
 fn contact_remark_key_round_trip() {
     let did = "did:web:alice.example";
     let key = contact_remark_account_data_key(did);
-    assert_eq!(key, format!("ck.contacts.actor.{did}"));
+    assert_eq!(key, format!("ak.contacts.actor.{did}"));
     assert_eq!(actor_id_from_contact_remark_key(&key), Some(did));
     assert_eq!(
-        actor_id_from_contact_remark_key("ck.contacts.realm.x"),
+        actor_id_from_contact_remark_key("ak.contacts.realm.x"),
         None
     );
 }
@@ -670,8 +670,8 @@ fn build_account_data_set_emits_canonical_kind() {
         json!({"send": false}),
     )
     .build("node");
-    assert_eq!(op.kind, "ck.account_data.set");
-    assert_eq!(op.payload["key"], "ck.read_receipt.preferences");
+    assert_eq!(op.kind, "ak.account_data.set");
+    assert_eq!(op.payload["key"], "ak.read_receipt.preferences");
     assert_eq!(op.payload["owner"], "did:web:alice");
     assert_eq!(op.payload["body"]["send"], false);
     assert!(op.payload["updated_at"].is_string());
@@ -740,7 +740,7 @@ fn contact_and_realm_remarks_are_encrypted_account_data() {
 
 #[test]
 fn private_account_data_builders_emit_encrypted_payload() {
-    let key = "ck.scheduled_send.v1:ak:message:01904100-0000-7000-8000-000000000001";
+    let key = "ak.scheduled_send.v1:ak:message:01904100-0000-7000-8000-000000000001";
     let op = build_private_account_data_set(
         "ak:realm:0196419b-0000-7000-8000-000000000001",
         "did:web:alice",
@@ -749,7 +749,7 @@ fn private_account_data_builders_emit_encrypted_payload() {
     )
     .unwrap()
     .build("node");
-    assert_eq!(op.kind, "ck.account_data.set");
+    assert_eq!(op.kind, "ak.account_data.set");
     assert_eq!(op.payload["key"], key);
     assert!(op.payload.get("body").is_none());
     assert_eq!(op.payload["encrypted_payload"]["ciphertext"], "opaque");
@@ -783,7 +783,7 @@ fn private_account_data_builder_can_emit_cas_guard() {
     )
     .unwrap()
     .build("node");
-    assert_eq!(op.kind, "ck.account_data.set");
+    assert_eq!(op.kind, "ak.account_data.set");
     assert_eq!(op.payload["expected_state_digest"], expected);
     assert!(op.payload.get("body").is_none());
     assert_eq!(op.payload["encrypted_payload"]["ciphertext"], "opaque");
@@ -803,7 +803,7 @@ fn private_account_data_builder_can_emit_cas_guard() {
 #[test]
 fn generic_builder_does_not_put_private_values_under_body() {
     let key = AccountDataKey::Custom(
-        "ck.scheduled_send.v1:ak:message:01904100-0000-7000-8000-000000000001".to_owned(),
+        "ak.scheduled_send.v1:ak:message:01904100-0000-7000-8000-000000000001".to_owned(),
     );
     let op = build_account_data_set(
         "ak:realm:0196419b-0000-7000-8000-000000000001",
@@ -824,8 +824,8 @@ fn build_account_data_tombstone_emits_canonical_payload() {
         &AccountDataKey::ClientReadReceipts,
     )
     .build("node");
-    assert_eq!(op.kind, "ck.account_data.set");
-    assert_eq!(op.payload["key"], "ck.read_receipt.preferences");
+    assert_eq!(op.kind, "ak.account_data.set");
+    assert_eq!(op.payload["key"], "ak.read_receipt.preferences");
     assert_eq!(op.payload["owner"], "did:web:alice");
     assert_eq!(op.payload["tombstone"], true);
     assert!(op.payload["updated_at"].is_string());
@@ -941,7 +941,7 @@ fn legacy_local_drafts_migrate_to_private_draft_account_data() {
     .unwrap();
     assert_eq!(migrated.len(), 1);
     let item = &migrated[0];
-    assert!(item.account_data_key.starts_with("ck.draft.v1:message:"));
+    assert!(item.account_data_key.starts_with("ak.draft.v1:message:"));
     assert!(item.account_data_key.ends_with(":compose"));
     assert!(!item.account_data_key.contains("ak:realm:"));
     assert_eq!(item.value.content["body"], "draft text");
@@ -965,7 +965,7 @@ fn legacy_saved_items_migrate_to_independent_private_values() {
     )
     .unwrap();
     assert_eq!(migrated.len(), 1);
-    assert!(migrated[0].account_data_key.starts_with("ck.saved.v1:"));
+    assert!(migrated[0].account_data_key.starts_with("ak.saved.v1:"));
     assert!(!migrated[0].account_data_key.contains("Focus"));
     assert!(!migrated[0].account_data_key.contains("ak:message:"));
     assert_eq!(migrated[0].value.collection_title, "Focus");

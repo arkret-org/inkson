@@ -106,7 +106,7 @@ pub(crate) fn local_redaction_tombstone_for_message(
     redaction_ref: Option<&str>,
 ) -> Value {
     let mut event = json!({
-        "kind": "ck.message.create",
+        "kind": "ak.message.create",
         "event_id": message.id.clone(),
         "realm_id": message.realm_id.clone(),
         "strand_id": message.strand_id.clone(),
@@ -153,7 +153,7 @@ fn message_redaction_marker_from_event(event: &Value) -> Option<MessageRedaction
             &["kind", "event_kind", "type", "op_type", "event_type"],
         )
     })?;
-    if kind != "ck.message.redact" && kind != "ck.redaction" {
+    if kind != "ak.message.redact" && kind != "ck.redaction" {
         return None;
     }
     let payload = redaction_payload_candidate(event);
@@ -363,8 +363,8 @@ fn reaction_marker_from_event(event: &Value) -> Option<ReactionMarker> {
         )
     })?;
     let active = match kind {
-        "ck.reaction.add" => true,
-        "ck.reaction.remove" => false,
+        "ak.reaction.add" => true,
+        "ak.reaction.remove" => false,
         _ => return None,
     };
     let target_ref = first_string_in_candidates(
@@ -964,7 +964,7 @@ pub(crate) fn chat_message_from_event_with_sidecar(
     let candidates = message_candidates(event);
     if poll_content_from_candidates(&candidates)
         .and_then(|content| content.get("kind").and_then(Value::as_str))
-        .is_some_and(|kind| kind == "ck.content.poll.response")
+        .is_some_and(|kind| kind == "ak.content.poll.response")
     {
         return None;
     }
@@ -1218,7 +1218,7 @@ pub(crate) fn poll_content_from_candidates<'a>(candidates: &[&'a Value]) -> Opti
             candidate
                 .get("kind")
                 .and_then(Value::as_str)
-                .is_some_and(|kind| matches!(kind, "ck.content.poll" | "ck.content.poll.response"))
+                .is_some_and(|kind| matches!(kind, "ak.content.poll" | "ck.content.poll.response"))
         })
         .copied()
 }
@@ -1286,7 +1286,7 @@ pub(crate) fn apply_shared_pin_event(
     else {
         return;
     };
-    if !matches!(kind, "ck.pin.add" | "ck.pin.remove" | "ck.pin.reorder") {
+    if !matches!(kind, "ak.pin.add" | "ck.pin.remove" | "ck.pin.reorder") {
         return;
     }
     let payload = event
@@ -1313,7 +1313,7 @@ pub(crate) fn apply_shared_pin_event(
         return;
     };
     match kind {
-        "ck.pin.add" => {
+        "ak.pin.add" => {
             let rank = payload
                 .get("rank")
                 .and_then(Value::as_str)
@@ -1328,10 +1328,10 @@ pub(crate) fn apply_shared_pin_event(
                 pins.push(SharedMessagePin::new(&scope, target_ref.to_owned(), rank));
             }
         }
-        "ck.pin.remove" => {
+        "ak.pin.remove" => {
             pins.retain(|pin| !(pin.matches_scope(&scope) && pin.target_ref == target_ref));
         }
-        "ck.pin.reorder" => {
+        "ak.pin.reorder" => {
             if let Some(rank) = payload.get("rank").and_then(Value::as_str)
                 && let Some(existing) = pins
                     .iter_mut()
@@ -1377,7 +1377,7 @@ fn moderation_kind_from_candidates<'a>(candidates: &[&'a Value]) -> Option<&'a s
                 &["kind", "event_kind", "type", "op_type", "event_type"],
             )
         })
-        .find(|kind| kind.starts_with("ck.moderation."))
+        .find(|kind| kind.starts_with("ak.moderation."))
 }
 
 pub(crate) fn moderation_appeal_prompts_from_events(
@@ -1399,7 +1399,7 @@ pub(crate) fn moderation_appeal_prompts_from_events(
             continue;
         }
         match kind {
-            "ck.moderation.decision" => {
+            "ak.moderation.decision" => {
                 let Some(decision_ref) = first_string_in_candidates(
                     &candidates,
                     &["decision_id", "event_id", "id", "operation_id"],
@@ -1421,14 +1421,14 @@ pub(crate) fn moderation_appeal_prompts_from_events(
                     },
                 );
             }
-            "ck.moderation.decision.lift" => {
+            "ak.moderation.decision.lift" => {
                 if let Some(decision_ref) =
                     first_string_in_candidates(&candidates, &["decision_ref"])
                 {
                     decisions.remove(decision_ref);
                 }
             }
-            "ck.moderation.appeal.submit" => {
+            "ak.moderation.appeal.submit" => {
                 if first_string_in_candidates(&candidates, &["appellant"]) != Some(appellant) {
                     continue;
                 }
@@ -1446,7 +1446,7 @@ pub(crate) fn moderation_appeal_prompts_from_events(
                     prompt.verdict = None;
                 }
             }
-            "ck.moderation.appeal.review" => {
+            "ak.moderation.appeal.review" => {
                 let Some(appeal_id) = first_string_in_candidates(&candidates, &["appeal_id"])
                 else {
                     continue;
@@ -1458,7 +1458,7 @@ pub(crate) fn moderation_appeal_prompts_from_events(
                     prompt.verdict = None;
                 }
             }
-            "ck.moderation.appeal.decision" => {
+            "ak.moderation.appeal.decision" => {
                 let Some(appeal_id) = first_string_in_candidates(&candidates, &["appeal_id"])
                 else {
                     continue;
@@ -1471,7 +1471,7 @@ pub(crate) fn moderation_appeal_prompts_from_events(
                         .map(ToOwned::to_owned);
                 }
             }
-            "ck.moderation.appeal.close" => {
+            "ak.moderation.appeal.close" => {
                 let Some(appeal_id) = first_string_in_candidates(&candidates, &["appeal_id"])
                 else {
                     continue;
@@ -1571,7 +1571,7 @@ pub(crate) fn typing_actor_snapshot_from_sync_realms(
         };
         for item in ephemeral {
             let kind = value_string_at(item, &["type", "kind"]).unwrap_or_default();
-            if kind != "ck.typing" {
+            if kind != "ak.typing" {
                 continue;
             }
             if value_string_at(item, &["strand_id"]).unwrap_or_default() != strand_id {

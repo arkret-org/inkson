@@ -511,7 +511,7 @@ pub async fn set_account_data(
         Err(error) => {
             if let Some(status) = crate::api_error::unsupported_endpoint_status(&error) {
                 tracing::warn!(
-                    "ck.account_data.set submit for {type_key} returned {status}; \
+                    "ak.account_data.set submit for {type_key} returned {status}; \
                      keeping local state authoritative"
                 );
                 return Ok(AccountDataSetResult::Unsupported { status });
@@ -559,7 +559,7 @@ pub async fn set_private_account_data_with_cas(
         Err(error) => {
             if let Some(status) = crate::api_error::unsupported_endpoint_status(&error) {
                 tracing::warn!(
-                    "ck.account_data.set submit for private {type_key} returned {status}; \
+                    "ak.account_data.set submit for private {type_key} returned {status}; \
                      keeping local state authoritative"
                 );
                 return Ok(AccountDataSetResult::Unsupported { status });
@@ -618,13 +618,13 @@ mod tests {
             "state": "active",
             "devices": [],
             "primary_handle_claim": {
-                "schema": "ck.schema.handle_claim.v1",
+                "schema": "ak.schema.handle_claim.v1",
                 "handle": "alice:local.host",
                 "subject": "did:web:alice.example"
             },
             "profile": {
                 "id": "ak:actor_profile:01970000-0000-7000-8000-000000000001",
-                "schema": "ck.schema.actor_profile.v1",
+                "schema": "ak.schema.actor_profile.v1",
                 "principal_id": "did:web:alice.example",
                 "actor_kind": "user",
                 "display_name": "Alice",

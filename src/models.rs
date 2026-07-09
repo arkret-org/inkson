@@ -281,11 +281,11 @@ pub enum AccountDataSetResult {
     Unsupported { status: reqwest::StatusCode },
 }
 
-pub const PROFILE_CORE_EVENT_STORE: &str = "ck.profile.core_event_store.v1";
-pub const PROFILE_PRINCIPAL_SERVER_EVENTS_API: &str = "ck.profile.principal_server_events_api.v1";
-pub const OP_EVENTS_DESCRIBE: &str = "ck.self.events.query.describe";
-pub const OP_EVENTS_SUBMIT: &str = "ck.self.events.command.submit";
-pub const OP_SNAPSHOT_HEAD: &str = "ck.self.snapshot.query.manifest_head";
+pub const PROFILE_CORE_EVENT_STORE: &str = "ak.profile.core_event_store.v1";
+pub const PROFILE_PRINCIPAL_SERVER_EVENTS_API: &str = "ak.profile.principal_server_events_api.v1";
+pub const OP_EVENTS_DESCRIBE: &str = "ak.self.events.query.describe";
+pub const OP_EVENTS_SUBMIT: &str = "ak.self.events.command.submit";
+pub const OP_SNAPSHOT_HEAD: &str = "ak.self.snapshot.query.manifest_head";
 
 /// Inkson-side convenience methods over the SDK's [`ServerDescription`].
 ///

@@ -9,7 +9,7 @@ pub(crate) fn passkey_wrap_aad(
     wrap: &PasskeyRecoveryWrap,
 ) -> anyhow::Result<Vec<u8>> {
     crate::canonical::canonical_json_bytes(&serde_json::json!({
-        "schema": "ck.local.recovery_passkey_wrap.v1",
+        "schema": "ak.local.recovery_passkey_wrap.v1",
         "account_id": account_id,
         "wrap_id": wrap.wrap_id,
         "credential_id": wrap.credential_id_b64,

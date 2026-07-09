@@ -357,7 +357,7 @@ fn timestamp_from_contexts(value: &Value, keys: &[&str]) -> Option<DateTime<Utc>
 }
 
 fn audit_policy_access_payload_value(event: &Value) -> Option<&Value> {
-    if string_from_value(event, &["kind", "type", "event_type"]) == Some("ck.audit.policy_access") {
+    if string_from_value(event, &["kind", "type", "event_type"]) == Some("ak.audit.policy_access") {
         return event
             .get("payload")
             .or_else(|| event.get("content"))
@@ -368,7 +368,7 @@ fn audit_policy_access_payload_value(event: &Value) -> Option<&Value> {
             continue;
         };
         if string_from_value(candidate, &["kind", "type", "event_type"])
-            == Some("ck.audit.policy_access")
+            == Some("ak.audit.policy_access")
             || string_from_value(candidate, &["access_kind"]) == Some("e2ee_late_recovery")
         {
             return Some(candidate);
@@ -606,7 +606,7 @@ mod tests {
     #[test]
     fn transition_event_rejects_in_spec_order() {
         let both_membership_and_share_fail = serde_json::json!({
-            "kind": "ck.message.create",
+            "kind": "ak.message.create",
             "decryption_state": "decryption_failed",
             "late_recovery": {
                 "receiver_visible_at_t0": false,
@@ -620,7 +620,7 @@ mod tests {
         );
 
         let share_and_expiry_fail = serde_json::json!({
-            "kind": "ck.message.create",
+            "kind": "ak.message.create",
             "decryption_state": "decryption_failed",
             "late_recovery": {
                 "receiver_visible_at_t0": true,
@@ -634,7 +634,7 @@ mod tests {
         );
 
         let expiry_fails_last = serde_json::json!({
-            "kind": "ck.message.create",
+            "kind": "ak.message.create",
             "decryption_state": "decryption_failed",
             "late_recovery": {
                 "receiver_visible_at_t0": true,
@@ -651,7 +651,7 @@ mod tests {
     #[test]
     fn transition_event_accepts_only_marked_late_recovery() {
         let ordinary = serde_json::json!({
-            "kind": "ck.message.create",
+            "kind": "ak.message.create",
             "content": {"encrypted_content": true}
         });
         assert_eq!(
@@ -660,7 +660,7 @@ mod tests {
         );
 
         let late = serde_json::json!({
-            "kind": "ck.message.create",
+            "kind": "ak.message.create",
             "decryption_state": "decryption_failed",
             "late_recovery": {
                 "receiver_visible_at_t0": true,
@@ -679,7 +679,7 @@ mod tests {
     fn audit_policy_access_conversion_is_guarded() {
         let base = Utc.with_ymd_and_hms(2026, 5, 20, 0, 0, 0).unwrap();
         let event = serde_json::json!({
-            "kind": "ck.audit.policy_access",
+            "kind": "ak.audit.policy_access",
             "event_id": "ak:event:01904100-0000-7000-8000-000000000099",
             "original_received_at": "2026-05-19T23:45:00Z",
             "late_recovery": {
@@ -708,7 +708,7 @@ mod tests {
         }
 
         let rejected = serde_json::json!({
-            "kind": "ck.audit.policy_access",
+            "kind": "ak.audit.policy_access",
             "late_recovery": {
                 "receiver_visible_at_t0": false,
                 "source_rechecked_current_share_policy": true

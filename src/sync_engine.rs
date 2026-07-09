@@ -845,7 +845,7 @@ async fn run_iteration(
         ));
     }
 
-    // ②(A+②): `token` is the `ck.session.grant`; every self-path sync request
+    // ②(A+②): `token` is the `ak.session.grant`; every self-path sync request
     // must include the grant-binding (DPoP) key instead of falling back to a bare
     // bearer request that the server will reject.
     let api = match crate::authed_api::authed_api(&base, token.clone()) {
@@ -1668,9 +1668,9 @@ fn to_device_batch_all_ack_safe(messages: &[Value]) -> bool {
             .or_else(|| message.get("type"))
             .and_then(Value::as_str)
             .unwrap_or_default();
-        kind.starts_with("ck.key.verification.")
+        kind.starts_with("ak.key.verification.")
             || kind == crate::mls::secret_share::SECRET_SHARE_KIND_REQUEST
-            || kind == "ck.realm_key.request"
+            || kind == "ak.realm_key.request"
     })
 }
 
@@ -1742,7 +1742,7 @@ fn discussion_state_control_event_kind(event: &Value) -> Option<&str> {
 fn discussion_state_control_event_is_ingestable(event: &Value) -> bool {
     matches!(
         discussion_state_control_event_kind(event),
-        Some("ck.pin.add" | "ck.pin.remove" | "ck.pin.reorder")
+        Some("ak.pin.add" | "ck.pin.remove" | "ck.pin.reorder")
     )
 }
 
@@ -1829,7 +1829,7 @@ fn sync_event_string(value: Option<&Value>, path: &[&str]) -> Option<String> {
 fn membership_operation_from_event(event: &Value) -> Option<RawOperationRecord> {
     let kind = sync_event_string(Some(event), &["event_kind"])
         .or_else(|| sync_event_string(Some(event), &["kind"]))?;
-    if !matches!(kind.as_str(), "ck.member.state" | "ck.invite.accept") {
+    if !matches!(kind.as_str(), "ak.member.state" | "ck.invite.accept") {
         return None;
     }
     let body = event
@@ -2007,7 +2007,7 @@ fn invalidate_cache_for_revocation_events(
             .and_then(Value::as_str)
             .or_else(|| event.get("type").and_then(Value::as_str))
             .unwrap_or("");
-        kind == "ck.cross_signing.reset" || kind == "ck.device.revoke"
+        kind == "ak.cross_signing.reset" || kind == "ck.device.revoke"
     }
 
     /// Read the actor DID string from the event, falling back to the roster entry.
@@ -2131,7 +2131,7 @@ fn apply_account_data(
             continue;
         }
         // ck.account.blocklist — personal block list.
-        if data_type == "ck.presence.visibility" {
+        if data_type == "ak.presence.visibility" {
             let Some(visibility) = entry
                 .get("content")
                 .and_then(|content| content.get("presence_visibility"))
@@ -2151,7 +2151,7 @@ fn apply_account_data(
         // plaintext-readable body only appears from same-account devices
         // in dev / test deployments; opaque ciphertext entries are
         // silently skipped (local state stays authoritative).
-        if data_type == "ck.presence.preference" {
+        if data_type == "ak.presence.preference" {
             if let Some(content) = entry.get("content")
                 && content.get("ciphertext").is_none()
                 && let Ok(preference) = serde_json::from_value::<
@@ -2162,7 +2162,7 @@ fn apply_account_data(
             }
             continue;
         }
-        if data_type == "ck.account.blocklist" {
+        if data_type == "ak.account.blocklist" {
             let Some(content) = entry.get("content") else {
                 continue;
             };
@@ -2271,15 +2271,15 @@ mod tests {
             json!({
                 "strand_id": "ak:strand:0196419b-0000-7000-8000-000000000011",
                 "track_name": "discussion",
-                "content": {"kind": "ck.content.text", "body": "hello"}
+                "content": {"kind": "ak.content.text", "body": "hello"}
             }),
         );
         let state_event = sdk_event(
-            "ck.space.create",
+            "ak.space.create",
             json!({
                 "object": {
                     "id": "ak:space:0196419b-0000-7000-8000-000000000001",
-                    "schema": "ck.schema.space.v1",
+                    "schema": "ak.schema.space.v1",
                     "realm_id": sdk_realm_id().as_str(),
                     "kind": "board",
                     "title": "Adapter Board"
@@ -2345,7 +2345,7 @@ mod tests {
                 "cursor": "ak:cursor:realmframe1",
                 "payload": {
                     "event_id": "ak:event:0196419b-0000-7000-8000-000000000101",
-                    "event_kind": "ck.space.create",
+                    "event_kind": "ak.space.create",
                     "realm_id": realm_id,
                     "actor_id": "did:web:bob.example",
                     "created_at": "2026-06-29T00:00:00Z",
@@ -2353,7 +2353,7 @@ mod tests {
                     "payload": {
                         "object": {
                             "id": board_id,
-                            "schema": "ck.schema.space.v1",
+                            "schema": "ak.schema.space.v1",
                             "realm_id": realm_id,
                             "kind": "board",
                             "title": "Cross-member board"
@@ -2399,7 +2399,7 @@ mod tests {
             &[
                 json!({
                     "event_id": "ak:event:0196419b-0000-7000-8000-000000000201",
-                    "event_kind": "ck.member.state",
+                    "event_kind": "ak.member.state",
                     "realm_id": realm_id,
                     "actor_id": "did:web:alice.example",
                     "created_at": "2026-06-29T00:00:00Z",
@@ -2410,7 +2410,7 @@ mod tests {
                 }),
                 json!({
                     "event_id": "ak:event:0196419b-0000-7000-8000-000000000202",
-                    "kind": "ck.invite.accept",
+                    "kind": "ak.invite.accept",
                     "realm_id": realm_id,
                     "actor_id": "did:web:carol.example",
                     "created_at": "2026-06-29T00:00:01Z",
@@ -2420,12 +2420,12 @@ mod tests {
                 }),
                 json!({
                     "event_id": "ak:event:0196419b-0000-7000-8000-000000000203",
-                    "kind": "ck.mls.commit",
+                    "kind": "ak.mls.commit",
                     "realm_id": realm_id,
                     "payload": {}
                 }),
                 json!({
-                    "kind": "ck.member.state",
+                    "kind": "ak.member.state",
                     "realm_id": realm_id,
                     "actor_id": "did:web:dave.example",
                     "created_at": "2026-06-29T00:00:02Z",
@@ -2440,12 +2440,12 @@ mod tests {
         assert_eq!(changed, 2);
         let state = store.load();
         assert_eq!(state.raw_operations.len(), 2);
-        assert_eq!(state.raw_operations[0].payload["kind"], "ck.member.state");
+        assert_eq!(state.raw_operations[0].payload["kind"], "ak.member.state");
         assert_eq!(
             state.raw_operations[0].payload["body"]["membership"],
             "join"
         );
-        assert_eq!(state.raw_operations[1].payload["kind"], "ck.invite.accept");
+        assert_eq!(state.raw_operations[1].payload["kind"], "ak.invite.accept");
         assert_eq!(
             state.raw_operations[1].payload["body"]["invite_ref"],
             "ak:invite:0196419b-0000-7000-8000-000000000301"
@@ -2466,27 +2466,27 @@ mod tests {
     fn to_device_ack_safe_batches_exclude_key_material() {
         assert!(to_device_batch_all_ack_safe(&[]));
         assert!(to_device_batch_all_ack_safe(&[
-            to_device_message("ck.key.verification.request"),
+            to_device_message("ak.key.verification.request"),
             to_device_message(crate::mls::secret_share::SECRET_SHARE_KIND_REQUEST),
-            to_device_message("ck.realm_key.request"),
+            to_device_message("ak.realm_key.request"),
         ]));
         assert!(to_device_batch_allows_cursor_advance(
-            &[to_device_message("ck.key.verification.request")],
+            &[to_device_message("ak.key.verification.request")],
             false,
         ));
         assert!(!to_device_batch_allows_cursor_advance(
-            &[to_device_message("ck.key.verification.request")],
+            &[to_device_message("ak.key.verification.request")],
             true,
         ));
 
         assert!(!to_device_batch_all_ack_safe(&[to_device_message(
-            "ck.mls.welcome"
+            "ak.mls.welcome"
         )]));
         assert!(!to_device_batch_all_ack_safe(&[to_device_message(
             crate::mls::secret_share::SECRET_SHARE_KIND_SEND,
         )]));
         assert!(!to_device_batch_all_ack_safe(&[to_device_message(
-            "ck.future.secret.material"
+            "ak.future.secret.material"
         )]));
     }
 
@@ -2502,7 +2502,7 @@ mod tests {
                 "events": [{
                     "event_id": "ak:event:01904100-0000-7000-8000-0000000000a1",
                     "operation_id": "ak:operation:01904100-0000-7000-8000-0000000000a1",
-                    "event_kind": "ck.strand.update",
+                    "event_kind": "ak.strand.update",
                     "actor_id": "did:web:bob.example",
                     "created_at": "2026-06-24T10:00:00Z",
                     "realm_id": "ak:realm:01904100-0000-7000-8000-000000000001",
@@ -2545,7 +2545,7 @@ mod tests {
             "state": {
                 "events": [{
                     "event_id": "ak:event:01904100-0000-7000-8000-0000000000b1",
-                    "event_kind": "ck.pin.add",
+                    "event_kind": "ak.pin.add",
                     "actor_id": "did:web:mei.example",
                     "created_at": "2026-06-24T10:00:00Z",
                     "realm_id": realm_id,
@@ -2567,7 +2567,7 @@ mod tests {
             state.raw_operations[0].operation_id,
             "ak:event:01904100-0000-7000-8000-0000000000b1"
         );
-        assert_eq!(state.raw_operations[0].payload["event_kind"], "ck.pin.add");
+        assert_eq!(state.raw_operations[0].payload["event_kind"], "ak.pin.add");
         assert_eq!(
             state.raw_operations[0].payload["payload"]["pin_scope"]["id"],
             strand_id
@@ -2584,7 +2584,7 @@ mod tests {
                 "events": [
                     {
                         "event_id": "ak:event:01904100-0000-7000-8000-0000000000c1",
-                        "event_kind": "ck.message.revise",
+                        "event_kind": "ak.message.revise",
                         "actor_id": "did:web:bob.example",
                         "created_at": "2026-06-24T10:00:00Z",
                         "realm_id": realm_id,
@@ -2593,14 +2593,14 @@ mod tests {
                             "target_ref": "ak:message:01904100-0000-7000-8000-000000000101",
                             "strand_id": strand_id,
                             "content": {
-                                "kind": "ck.content.text",
+                                "kind": "ak.content.text",
                                 "body": "edited state projection"
                             }
                         }
                     },
                     {
                         "event_id": "ak:event:01904100-0000-7000-8000-0000000000c2",
-                        "event_kind": "ck.message.redact",
+                        "event_kind": "ak.message.redact",
                         "actor_id": "did:web:bob.example",
                         "created_at": "2026-06-24T10:01:00Z",
                         "realm_id": realm_id,
@@ -2797,7 +2797,7 @@ mod tests {
             "members": [{
                 "actor_id": "did:web:alice.example",
                 "identity_events": [
-                    { "event_id": "e1", "kind": "ck.cross_signing.reset" }
+                    { "event_id": "e1", "kind": "ak.cross_signing.reset" }
                 ]
             }]
         });
@@ -2815,7 +2815,7 @@ mod tests {
         let (mut cache, did) = seed_cache("did:web:bob.example");
         let body = json!({
             "state": { "events": [
-                { "event_id": "e9", "kind": "ck.device.revoke", "actor_id": "did:web:bob.example" }
+                { "event_id": "e9", "kind": "ak.device.revoke", "actor_id": "did:web:bob.example" }
             ]}
         });
         invalidate_cache_for_revocation_events(&mut cache, &body);
@@ -2829,8 +2829,8 @@ mod tests {
         let (mut cache, did) = seed_cache("did:web:dave.example");
         let body = json!({
             "state": { "events": [
-                { "event_id": "e10", "kind": "ck.device.revoke", "actor": "did:web:dave.example" },
-                { "event_id": "e11", "kind": "ck.device.revoke", "sender": "did:web:dave.example" }
+                { "event_id": "e10", "kind": "ak.device.revoke", "actor": "did:web:dave.example" },
+                { "event_id": "e11", "kind": "ak.device.revoke", "sender": "did:web:dave.example" }
             ]}
         });
         invalidate_cache_for_revocation_events(&mut cache, &body);
@@ -2848,7 +2848,7 @@ mod tests {
             "members": [{
                 "actor_id": "did:web:carol.example",
                 "identity_events": [
-                    { "event_id": "e2", "kind": "ck.member.identity.update" }
+                    { "event_id": "e2", "kind": "ak.member.identity.update" }
                 ]
             }]
         });
@@ -2868,7 +2868,7 @@ mod tests {
             "members": [{
                 "actor_id": "did:web:mallory.example",
                 "identity_events": [
-                    { "event_id": "e3", "kind": "ck.device.revoke" }
+                    { "event_id": "e3", "kind": "ak.device.revoke" }
                 ]
             }]
         });

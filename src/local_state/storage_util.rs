@@ -303,8 +303,8 @@ pub(crate) fn snapshot_item_encrypted_payload(
         .get("schema")
         .or_else(|| item.object.get("type"))
         .and_then(Value::as_str);
-    let is_envelope = item.kind == "ck.schema.encrypted_envelope.v1"
-        || schema == Some("ck.schema.encrypted_envelope.v1");
+    let is_envelope = item.kind == "ak.schema.encrypted_envelope.v1"
+        || schema == Some("ak.schema.encrypted_envelope.v1");
     if !is_envelope {
         return None;
     }

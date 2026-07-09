@@ -34,14 +34,14 @@ use crate::mls::runtime::{self, StoredAccountMlsSecret};
 use crate::secure_key_store::SecureKeyStore;
 
 /// Wire `kind` for the secret request.
-pub const SECRET_SHARE_KIND_REQUEST: &str = "ck.secret.request";
+pub const SECRET_SHARE_KIND_REQUEST: &str = "ak.secret.request";
 /// Wire `kind` for the sealed secret response.
-pub const SECRET_SHARE_KIND_SEND: &str = "ck.secret.send";
+pub const SECRET_SHARE_KIND_SEND: &str = "ak.secret.send";
 /// HPKE scheme label on `ck.secret.send.content.scheme`. Matches the canonical
 /// device HPKE label in `device-lifecycle.md` §4. The crypto suite is the
 /// RFC 9180 base mode of [`crate::hpke_backup`] (DHKEM-X25519 / HKDF-SHA256 /
 /// ChaCha20Poly1305).
-pub const SECRET_SHARE_SCHEME: &str = "ck.hpke_x25519_aead_chacha20poly1305.v1";
+pub const SECRET_SHARE_SCHEME: &str = "ak.hpke_x25519_aead_chacha20poly1305.v1";
 /// `secret_id` for the account MLS snapshot secret — the only secret class the
 /// D2D direct-share path ships in v1. Equal to
 /// [`crate::mls::account_recovery::MLS_ACCOUNT_SECRET_SECRET_ID`].
@@ -49,7 +49,7 @@ pub const SECRET_SHARE_SECRET_ID: &str = "inkson_mls_account_secret";
 
 /// HPKE `info` (domain separation). Distinct from the key-backup `info` so a
 /// secret-share envelope can never be confused with a recovery backup envelope.
-const SECRET_SHARE_HPKE_INFO: &[u8] = b"ck-secret-share/v1";
+const SECRET_SHARE_HPKE_INFO: &[u8] = b"ak.secret-share/v1";
 
 /// Per-strand state held by the requesting (new) device between sending
 /// `ck.secret.request` and opening the matching `ck.secret.send`. The private
@@ -128,7 +128,7 @@ pub fn parse_request_content(content: &Value) -> Result<ParsedSecretRequest> {
     let request_id = content.request_id;
     let secret_id = content.secret_id;
     if secret_id != SECRET_SHARE_SECRET_ID {
-        bail!("ck.secret.request.secret_id {secret_id:?} is not supported");
+        bail!("ak.secret.request.secret_id {secret_id:?} is not supported");
     }
     let from_device = content.from_device.as_str().to_owned();
     let recipient_hpke_public_key = content.recipient_hpke_public_key;
@@ -203,18 +203,18 @@ pub fn open_send_content(
             .map_err(|err| anyhow!("decode ck.secret.send.content: {err}"))?;
     let outer_request_id = send_content.request_id;
     if outer_request_id != requester.request_id {
-        bail!("ck.secret.send.request_id does not match a pending request (unsolicited)");
+        bail!("ak.secret.send.request_id does not match a pending request (unsolicited)");
     }
     let secret_id = send_content.secret_id;
     if secret_id != SECRET_SHARE_SECRET_ID {
-        bail!("ck.secret.send.secret_id {secret_id:?} is not supported");
+        bail!("ak.secret.send.secret_id {secret_id:?} is not supported");
     }
     if send_content.from_device.as_str() != sender_device_id {
-        bail!("ck.secret.send.from_device does not match envelope sender_device_id");
+        bail!("ak.secret.send.from_device does not match envelope sender_device_id");
     }
     let scheme = send_content.scheme;
     if scheme != SECRET_SHARE_SCHEME {
-        bail!("ck.secret.send.scheme {scheme:?} is not {SECRET_SHARE_SCHEME}");
+        bail!("ak.secret.send.scheme {scheme:?} is not {SECRET_SHARE_SCHEME}");
     }
     let enc = URL_SAFE_NO_PAD
         .decode(send_content.enc.as_bytes())
@@ -288,7 +288,7 @@ pub async fn send_request(
     let content = build_request_content(requester, requesting_device_id)?;
     crate::keys_api::send_device_message_envelope(
         &api.sdk_http_client()?,
-        &format!("ck.secret.request:{}", requester.request_id),
+        &format!("ak.secret.request:{}", requester.request_id),
         account_did,
         target_existing_device_id,
         SECRET_SHARE_KIND_REQUEST,
@@ -326,7 +326,7 @@ pub async fn respond_to_request(
     )?;
     crate::keys_api::send_device_message_envelope(
         &api.sdk_http_client()?,
-        &format!("ck.secret.send:{}", request.request_id),
+        &format!("ak.secret.send:{}", request.request_id),
         account_did,
         &request.from_device,
         SECRET_SHARE_KIND_SEND,
@@ -355,7 +355,7 @@ pub fn try_open_envelope(
     let expires_at = string_field(envelope, "expires_at")?;
     let content = envelope
         .get("content")
-        .ok_or_else(|| anyhow!("ck.secret.send envelope missing content"))?;
+        .ok_or_else(|| anyhow!("ak.secret.send envelope missing content"))?;
     let opened = open_send_content(
         requester,
         content,
@@ -557,7 +557,7 @@ mod tests {
     fn try_open_envelope_filters_kind_and_opens_send() {
         let (requester, send) = drive_happy_path();
         // A non-secret-share envelope is ignored.
-        let other = json!({"kind": "ck.key.verification.done", "content": {}});
+        let other = json!({"kind": "ak.key.verification.done", "content": {}});
         assert_eq!(
             try_open_envelope(&requester, &other, ACCOUNT_DID, NEW_DEVICE).unwrap(),
             None

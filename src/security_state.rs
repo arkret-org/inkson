@@ -253,7 +253,7 @@ mod tests {
         );
         projections.insert(
             "ak:space:s1".to_owned(),
-            json!({"schema": "ck.schema.space.v1", "realm_id": "ak:realm:r1"}),
+            json!({"schema": "ak.schema.space.v1", "realm_id": "ak:realm:r1"}),
         );
         let body = security_projection_for_scope_id(&projections, "ak:space:s1")
             .expect("realm projection for space");

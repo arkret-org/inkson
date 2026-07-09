@@ -237,7 +237,7 @@ pub fn encrypt_mls_asset(
 /// message event bodies that carry a single attached blob.
 pub fn attachment_payload(metadata: &MediaMetadata) -> anyhow::Result<Value> {
     Ok(json!({
-        "kind": "ck.content.attachment",
+        "kind": "ak.content.attachment",
         "metadata": serde_json::to_value(metadata)?,
     }))
 }

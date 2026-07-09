@@ -248,7 +248,7 @@ pub fn build_did_recovery_backup_body(
 /// written explicitly so `aead.name` is unambiguously consistent with the
 /// selected suite per `hpke-suite-registry.json` registry rules.
 pub const HPKE_AEAD_NAME: &str = "chacha20_poly1305";
-pub const HPKE_AEAD_PROFILE: &str = "ck.aead.chacha20_poly1305.v1";
+pub const HPKE_AEAD_PROFILE: &str = "ak.aead.chacha20_poly1305.v1";
 
 /// `info` transcript bound into the HPKE context (key-management.md §7.5.2):
 /// canonical_json of the envelope identity tuple. Both sealer and opener

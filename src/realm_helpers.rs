@@ -25,7 +25,7 @@ pub(crate) fn select_join_candidate(
             candidate
                 .operations
                 .iter()
-                .any(|op| op == "ck.self.events.command.submit")
+                .any(|op| op == "ak.self.events.command.submit")
         })
         .filter(|candidate| candidate.join_methods.contains(&join_method))
         .filter(|candidate| join_candidate_is_current(candidate))

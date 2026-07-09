@@ -71,7 +71,7 @@ impl DeviceEnrollmentRequest {
 /// `ck.device.authorize` record: the default-MUST HPKE suite (secret / key
 /// envelope sealing) plus the MLS v1 group algorithm. UTF-8 bytewise sorted.
 pub const INKSON_DEVICE_ALGORITHMS: &[&str] =
-    &["ck.hpke_x25519_aead_chacha20poly1305.v1", "ck.mls.v1"];
+    &["ak.hpke_x25519_aead_chacha20poly1305.v1", "ck.mls.v1"];
 
 pub fn inkson_device_algorithms() -> Vec<String> {
     INKSON_DEVICE_ALGORITHMS
@@ -107,7 +107,7 @@ fn validate_signed_device_authorize(
     event: arkret_sdk::Event,
     expected_device_id: &str,
 ) -> anyhow::Result<arkret_sdk::Event> {
-    if event.kind.as_str() != "ck.device.authorize" {
+    if event.kind.as_str() != "ak.device.authorize" {
         anyhow::bail!(
             "enrollment authority returned unexpected event kind {:?}",
             event.kind.as_str()
@@ -169,7 +169,7 @@ mod tests {
     fn signed_device_authorize(device_id: &str) -> serde_json::Value {
         json!({
             "event_id": "ak:event:01964137-0000-7000-8000-000000000000",
-            "kind": "ck.device.authorize",
+            "kind": "ak.device.authorize",
             "realm_id": "ak:realm:01964137-0000-7000-8000-000000000001",
             "actor_id": "did:webvh:example:users:alice",
             "executed_by": "did:webvh:example:auth-server",
@@ -208,7 +208,7 @@ mod tests {
         let device_id = "ak:device:01964137-0000-7000-8000-000000000002";
         let event = signed_device_authorize(device_id);
         let parsed = parse_signed_device_authorize(&event, device_id).expect("parse");
-        assert_eq!(parsed.kind.as_str(), "ck.device.authorize");
+        assert_eq!(parsed.kind.as_str(), "ak.device.authorize");
         assert_eq!(parsed.actor_seq, 3);
     }
 
@@ -217,7 +217,7 @@ mod tests {
         let device_id = "ak:device:01964137-0000-7000-8000-0000000000f1";
         let event = json!({
             "event_id": "ak:event:01964137-0000-7000-8000-00000000d0e1",
-            "kind": "ck.device.authorize",
+            "kind": "ak.device.authorize",
             "realm_id": "ak:realm:01964137-0000-7000-8000-00000000c0de",
             "actor_id": "did:web:first.example",
             "executed_by": "did:web:auth.local.host",
@@ -251,7 +251,7 @@ mod tests {
             }]
         });
         let parsed = parse_signed_device_authorize(&event, device_id).expect("parse");
-        assert_eq!(parsed.kind.as_str(), "ck.device.authorize");
+        assert_eq!(parsed.kind.as_str(), "ak.device.authorize");
         assert_eq!(parsed.actor_seq, 1);
     }
 
@@ -281,7 +281,7 @@ mod tests {
     fn rejects_wrong_kind() {
         let device_id = "ak:device:01964137-0000-7000-8000-000000000002";
         let mut event = signed_device_authorize(device_id);
-        event["kind"] = json!("ck.device.revoke");
+        event["kind"] = json!("ak.device.revoke");
         let err = parse_signed_device_authorize(&event, device_id)
             .expect_err("wrong kind must fail closed");
         assert!(err.to_string().contains("unexpected event kind"));
