@@ -82,7 +82,12 @@ pub fn target_is_text_input(tag: Option<&str>, contenteditable: bool) -> bool {
 #[component]
 pub fn ShortcutHelpOverlay(visible: Signal<bool>) -> Element {
     if !visible() {
-        return rsx! { div { class: "shortcut-help-overlay-hidden" } };
+        // Render nothing when hidden. A placeholder `div` here becomes an
+        // auto-placed grid item inside `.shell.app` and stretches to cover the
+        // workspace column, painting on top of live content (it is the last
+        // child) and silently intercepting pointer events — which blocked
+        // clicks on modal buttons such as the Recovery Key setup dialog.
+        return rsx! {};
     }
     let shortcuts = default_shortcuts();
     let title = tr("shortcuts.title");
