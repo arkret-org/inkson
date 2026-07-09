@@ -189,22 +189,22 @@ test("card detail embeds discussion directly without discussion chrome", async (
   await expect(page.getByTestId("discussion-main-panel")).not.toContainText("Primary discussion");
 
   const chatSend = page.waitForRequest("**/_arkret/self/events");
-  await page.getByTestId("chat-input").fill("hello @did:web:bob.example about #ck:task:123");
+  await page.getByTestId("chat-input").fill("hello @did:web:bob.example about #ak:task:123");
   await page.getByTestId("send-chat-button").click();
   const chatBody = await chatSend.then((request) => request.postDataJSON());
   expect(chatBody.kind).toBe("ck.message.create");
-  expect(chatBody.payload.message_id).toMatch(/^ck:message:/);
+  expect(chatBody.payload.message_id).toMatch(/^ak:message:/);
   expect(chatBody.payload.strand_id).toContain("ak:strand:");
   expect(chatBody.payload.track_name).toBe("discussion");
   expect(chatBody.payload.content.kind).toBe("ck.content.text");
-  expect(chatBody.payload.content.body).toBe("hello @did:web:bob.example about #ck:task:123");
+  expect(chatBody.payload.content.body).toBe("hello @did:web:bob.example about #ak:task:123");
   expect(chatBody.payload.mentions).toBeUndefined();
   expect(Array.isArray(chatBody.payload.content.mention_sidecar_hash)).toBeTruthy();
-  await expect(page.getByTestId("chat-message").last()).toContainText("hello @did:web:bob.example about #ck:task:123");
+  await expect(page.getByTestId("chat-message").last()).toContainText("hello @did:web:bob.example about #ak:task:123");
   await page.getByTestId("card-detail-tab-description").click();
   await expect(page.getByTestId("card-description-panel")).toBeVisible();
   await expect(page.getByTestId("card-discussion-panel")).toHaveCount(1);
   await expect(page.getByTestId("card-discussion-panel")).toBeHidden();
   await page.getByTestId("card-detail-tab-discussion").click();
-  await expect(page.getByTestId("chat-message").last()).toContainText("hello @did:web:bob.example about #ck:task:123");
+  await expect(page.getByTestId("chat-message").last()).toContainText("hello @did:web:bob.example about #ak:task:123");
 });

@@ -421,7 +421,7 @@ pub(crate) fn chat_message_create_operation_with_expiry(
     .with_message_id(message_id);
     if let Some(reply_to) = reply_to.map(str::trim).filter(|value| !value.is_empty()) {
         if !is_schema_message_id(reply_to) {
-            anyhow::bail!("reply_to must be a ck:message id");
+            anyhow::bail!("reply_to must be a ak:message id");
         }
         payload = payload.with_reply_to(reply_to);
     }

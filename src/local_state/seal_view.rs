@@ -74,7 +74,7 @@ pub struct LocalSealView {
     /// The current `governance.covered_seals` cell value - the lattice
     /// frontier cell that governance Moves require predecessor coverage of
     /// before they're accepted. Surfaced as a string so the UI can render
-    /// whatever shape soland publishes (typically a `ck:state:sha256:...`
+    /// whatever shape soland publishes (typically a `ak:state:sha256:...`
     /// ref). `None` means the governance cell hasn't been observed yet.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub covered_seals: Option<String>,

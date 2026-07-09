@@ -465,7 +465,7 @@ fn chat_message_create_operation_rejects_event_id_reply_target() {
     )
     .expect_err("event ids are not valid message reply targets");
 
-    assert!(err.to_string().contains("reply_to must be a ck:message id"));
+    assert!(err.to_string().contains("reply_to must be a ak:message id"));
 }
 
 #[test]

@@ -109,7 +109,7 @@ fn mls_self_update_membership_frontier(
     arkret_sdk::EventId::new(base_group_state_ref.to_owned())
         .map(|event_id| vec![event_id])
         .map_err(|_| {
-            "MLS self-update membership_frontier requires a ck:event base group-state ref"
+            "MLS self-update membership_frontier requires a ak:event base group-state ref"
                 .to_owned()
         })
 }

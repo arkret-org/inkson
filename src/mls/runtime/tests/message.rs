@@ -710,7 +710,7 @@ fn local_welcome_hint_filters_by_realm_group_id() {
     );
     assert_eq!(
         local_mls_welcome_hint_for_realm(&messages, realm),
-        "1:ck:mls_welcome:01904100-0000-7000-8000-0000000000aa"
+        "1:ak:mls_welcome:01904100-0000-7000-8000-0000000000aa"
     );
     assert_eq!(
         local_mls_welcome_hint_for_realm(&messages, other_realm),

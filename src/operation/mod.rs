@@ -211,7 +211,7 @@ impl OperationBuilder {
     pub fn redacts(mut self, redacts: impl Into<String>) -> Self {
         let redacts = redacts.into();
         self.redacts = Some(
-            arkret_sdk::EventId::new(redacts).expect("redacts must be a canonical ck:event id"),
+            arkret_sdk::EventId::new(redacts).expect("redacts must be a canonical ak:event id"),
         );
         self
     }

@@ -175,7 +175,7 @@ function isDid(value: unknown): value is string {
 function isDeviceId(value: unknown): value is string {
   return (
     typeof value === "string" &&
-    /^ck:device:[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(
+    /^ak:device:[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(
       value,
     )
   );
@@ -825,7 +825,7 @@ export async function mockCokretApi(
         experimental_features: [],
         compat_surfaces: [],
         development_mode: true,
-        // Strict typed EventId — must be a canonical ck:event:<uuidv7>.
+        // Strict typed EventId — must be a canonical ak:event:<uuidv7>.
         frontier: ["ak:event:0196419b-0000-7000-8000-00000000e2e0"],
       });
     }
@@ -895,7 +895,7 @@ export async function mockCokretApi(
           event.realm_id ??
           event.payload?.realm_id ??
           event.payload?.object?.realm_id ??
-          raw.match(/ck:realm:[0-9a-f-]+/)?.[0] ??
+          raw.match(/ak:realm:[0-9a-f-]+/)?.[0] ??
           SETUP_REALM;
         const title =
           event.payload?.object?.title ??
@@ -1979,7 +1979,7 @@ export async function mockCokretApi(
       >;
       const grants = personalAgentGrants.get(agentPrincipalId) ?? [];
       const grant = {
-        grant_id: `ck:grant:01964137-0000-7000-8000-${String(grants.length + 1).padStart(12, "0")}`,
+        grant_id: `ak:grant:01964137-0000-7000-8000-${String(grants.length + 1).padStart(12, "0")}`,
         ...(typeof body.grant === "object" && body.grant !== null
           ? (body.grant as Record<string, unknown>)
           : {}),

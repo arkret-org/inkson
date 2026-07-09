@@ -98,7 +98,7 @@ pub(crate) fn run_local_mls_encrypt(
 }
 
 /// Normalise a seal/state reference to a bare `sha256:<hex>` hash when it is
-/// one (peeling `ak:seal:` / `ck:state:` prefixes), else `None`.
+/// one (peeling `ak:seal:` / `ak:state:` prefixes), else `None`.
 // Single canonical digest-grammar validator; moved to the MLS core layer
 // (YGN-ARCH-01 step 2) and re-exported for this module's callers.
 pub(crate) use crate::mls::group_events::mls_sha256_hash_from_ref;
@@ -144,7 +144,7 @@ pub(crate) fn mls_membership_frontier(
     arkret_sdk::EventId::new(base_group_state_ref.to_owned())
         .map(|event_id| vec![event_id])
         .map_err(|_| {
-            "MLS self-update membership_frontier requires a ck:event base group-state ref"
+            "MLS self-update membership_frontier requires a ak:event base group-state ref"
                 .to_owned()
         })
 }

@@ -77,7 +77,7 @@ pub struct ContactListRow {
     /// instead of requiring a locator URL.
     ///
     /// soland's `GET /_arkret/self/contacts` now surfaces this field directly
-    /// (a legal `ck:event` ref when the peer granted me invite/any consent,
+    /// (a legal `ak:event` ref when the peer granted me invite/any consent,
     /// otherwise empty/absent). When it is empty the contact has not authorised
     /// me to invite them, so the UI disables the row rather than guessing a ref.
     #[serde(default)]

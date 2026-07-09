@@ -650,7 +650,7 @@ mod tests {
         // not a client-fabricated `did:web` identifier. Only audience tokens
         // and (elsewhere) picker chips carry resolved subjects.
         let mentions = parse_mention_nodes(
-            "ping @did:web:bob.example and @Alice and @carol:example.com about #ck:task:123 and #topic-demo",
+            "ping @did:web:bob.example and @Alice and @carol:example.com about #ak:task:123 and #topic-demo",
         );
         assert!(
             mentions.is_empty(),

@@ -67,7 +67,7 @@ pub enum ShareTarget {
 }
 
 impl ShareTarget {
-    /// Build a [`ShareTarget`] from possibly-`ck:`-prefixed ids, stripping the
+    /// Build a [`ShareTarget`] from possibly-`ak:`-prefixed ids, stripping the
     /// sigil so the SDK grammar receives the bare path segments it expects.
     pub fn realm(realm_id: &str) -> Self {
         ShareTarget::Realm {
@@ -290,12 +290,12 @@ impl OpenedLink {
     }
 }
 
-/// Strip a leading `ck:<kind>:` sigil so the SDK grammar receives the bare
+/// Strip a leading `ak:<kind>:` sigil so the SDK grammar receives the bare
 /// path segment (uuid or alias). Idempotent on already-bare input.
 fn strip_sigil(id: &str) -> String {
     let id = id.trim();
     if let Some(rest) = id.strip_prefix("ak:") {
-        // `ak:realm:<uuid>` → `<uuid>`; alias strings have no `ck:` prefix.
+        // `ak:realm:<uuid>` → `<uuid>`; alias strings have no `ak:` prefix.
         rest.split_once(':')
             .map(|(_, v)| v.to_owned())
             .unwrap_or_else(|| id.to_owned())

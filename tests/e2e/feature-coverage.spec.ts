@@ -169,7 +169,7 @@ test.describe("feature coverage placeholders", () => {
     expect(response.ok()).toBeTruthy();
     const body = request.postDataJSON();
     expect(body.pairing_code).toBeTruthy();
-    expect(body.new_device_pubkey.kid).toMatch(/^ck:device:/);
+    expect(body.new_device_pubkey.kid).toMatch(/^ak:device:/);
     expect(body.challenge_signature).toBeTruthy();
     await expect(page.getByTestId("accept-pairing-status")).toContainText("Sibling device paired");
   });
@@ -456,7 +456,7 @@ test.describe("feature coverage placeholders", () => {
   // UI surface: realm admin
   // spec: authz/capabilities.md
   test("realm-admin: capability grant and revoke live under security", async ({ page }) => {
-    await page.goto("/realms/ck:realm:0196419b-0000-7000-8000-000000000000/settings/security", {
+    await page.goto("/realms/ak:realm:0196419b-0000-7000-8000-000000000000/settings/security", {
       waitUntil: "domcontentloaded",
       timeout: 120_000,
     });

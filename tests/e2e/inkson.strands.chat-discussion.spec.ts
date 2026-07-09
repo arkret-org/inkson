@@ -229,7 +229,7 @@ test("chat separates shared pins from private saved account-data", async ({ page
   const sharedPinBody = await sharedPinRequest.then((request) => request.postDataJSON());
 
   expect(sharedPinBody.payload.pin_scope.kind).toBe("strand");
-  expect(sharedPinBody.payload.target_ref).toMatch(/^ck:message:/);
+  expect(sharedPinBody.payload.target_ref).toMatch(/^ak:message:/);
   expect(sharedPinBody.payload.key).toBeUndefined();
   expect(sharedPinBody.payload.encrypted_payload).toBeUndefined();
   await expect(page.getByTestId("pinned-bar")).toHaveAttribute("data-source", "shared-event");
@@ -251,7 +251,7 @@ test("chat separates shared pins from private saved account-data", async ({ page
 
   expect(savedBody.payload.key).toMatch(/^ck\.saved\.v1:/);
   expect(savedBody.payload.encrypted_payload.kind).toBe("saved_item");
-  expect(savedBody.payload.encrypted_payload.target_ref).toMatch(/^ck:message:/);
+  expect(savedBody.payload.encrypted_payload.target_ref).toMatch(/^ak:message:/);
   expect(savedBody.payload.body).toBeUndefined();
   expect(savedBody.payload.pin_scope).toBeUndefined();
   await expect(page.getByTestId("message-private-saved-indicator").last()).toHaveAttribute(

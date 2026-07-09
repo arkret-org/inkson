@@ -208,7 +208,7 @@ test("settings MIMI facade discovers drafts and runs interop actions", async ({ 
 
   await page.getByTestId("mimi-proxy-download").click();
   await expect(page.getByTestId("mimi-action-receipt")).toContainText(
-    "proxy-download ck:blob:sha256:01015dc8af66d01f557ea63f13538f1964848840a350c5311d1efc8ad138bb91",
+    "proxy-download ak:blob:sha256:01015dc8af66d01f557ea63f13538f1964848840a350c5311d1efc8ad138bb91",
   );
 
   const submit = page.waitForRequest("**/_arkret/open/mimi/strands/01JSMIMI/messages");

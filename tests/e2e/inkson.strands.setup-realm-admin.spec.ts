@@ -129,7 +129,7 @@ test("setup, onboarding, and Board entry works", async ({ page }) => {
   ]);
   expect(JSON.stringify(realmCreateBody)).toContain("ck.realm.create");
   expect(JSON.stringify(plaintextPolicyBody)).toContain("did:web:server.local");
-  await expect(page.getByTestId("realm-lifecycle-strand")).toContainText(/created ck:realm:/);
+  await expect(page.getByTestId("realm-lifecycle-strand")).toContainText(/created ak:realm:/);
   await expect(page.getByTestId("realm-lifecycle-strand")).toContainText("canonical policy listed / invite / shared");
   await expect(page.getByTestId("realm-setup-done")).toBeVisible();
   await expect(latestTestId(page, "mls-backup-modal")).toBeVisible();
@@ -159,7 +159,7 @@ test("setup, onboarding, and Board entry works", async ({ page }) => {
 });
 
 test("realm admin page handles metadata, modal member invite, epoch rotation and archive", async ({ page }) => {
-  await gotoAndDismissRecovery(page, "/realms/ck:realm:0196419b-0000-7000-8000-000000000000/settings");
+  await gotoAndDismissRecovery(page, "/realms/ak:realm:0196419b-0000-7000-8000-000000000000/settings");
   await expect(latestTestId(page, "realm-admin-panel")).toBeVisible();
   await expect(latestTestId(page, "realm-admin-overview")).toContainText("Realm settings");
   await expect(page.getByTestId("admin-discussion-admission")).toHaveCount(0);
@@ -172,13 +172,13 @@ test("realm admin page handles metadata, modal member invite, epoch rotation and
   await expect(adminSections.getByRole("link", { name: "Federation" }).last()).toBeVisible();
   await expect(adminSections.getByRole("link", { name: "Repair & Danger" }).last()).toBeVisible();
 
-  await gotoAndDismissRecovery(page, "/realms/ck:realm:0196419b-0000-7000-8000-000000000000/settings/members");
-  await expect(page).toHaveURL(/\/realms\/ck:realm:0196419b-0000-7000-8000-000000000000\/members$/);
+  await gotoAndDismissRecovery(page, "/realms/ak:realm:0196419b-0000-7000-8000-000000000000/settings/members");
+  await expect(page).toHaveURL(/\/realms\/ak:realm:0196419b-0000-7000-8000-000000000000\/members$/);
   await dismissBlockingRecoveryModal(page);
   await expect(latestTestId(page, "realm-members-panel")).toBeVisible();
   await expect(page.getByTestId("realm-admin-panel")).toHaveCount(0);
 
-  await gotoAndDismissRecovery(page, "/realms/ck:realm:0196419b-0000-7000-8000-000000000000/settings/profile");
+  await gotoAndDismissRecovery(page, "/realms/ak:realm:0196419b-0000-7000-8000-000000000000/settings/profile");
   await expect(page.getByTestId("realm-profile")).toBeVisible();
   await page.getByTestId("realm-name-input").fill("Updated Demo Realm");
   await page.getByTestId("realm-summary-input").fill("Updated realm summary");
@@ -189,13 +189,13 @@ test("realm admin page handles metadata, modal member invite, epoch rotation and
   await page.getByTestId("update-metadata-button").click();
   await expect(page.getByTestId("realm-admin-status")).toContainText("profile updated");
 
-  await gotoAndDismissRecovery(page, "/realms/ck:realm:0196419b-0000-7000-8000-000000000000/settings/access");
+  await gotoAndDismissRecovery(page, "/realms/ak:realm:0196419b-0000-7000-8000-000000000000/settings/access");
   await expect(page.getByTestId("realm-profile")).toHaveCount(0);
   await expect(page.getByTestId("realm-name-input")).toHaveCount(0);
   await expect(page.getByTestId("join-policy")).toBeVisible();
   await expect(page.getByTestId("history-visibility")).toBeVisible();
 
-  await gotoAndDismissRecovery(page, "/realms/ck:realm:0196419b-0000-7000-8000-000000000000/members");
+  await gotoAndDismissRecovery(page, "/realms/ak:realm:0196419b-0000-7000-8000-000000000000/members");
   await expect(page.getByTestId("member-table")).toBeVisible();
   await page.getByTestId("open-invite-modal-button").click();
   await expect(page.getByTestId("invite-member-modal")).toBeVisible();
@@ -223,7 +223,7 @@ test("realm admin page handles metadata, modal member invite, epoch rotation and
   await page.getByTestId("send-invite-button").click();
   const inviteBody = await inviteCommit.then((request) => request.postDataJSON());
   expect(inviteBody.kind).toBe("ck.invite.create");
-  expect(inviteBody.payload.invite_id).toMatch(/^ck:invite:/);
+  expect(inviteBody.payload.invite_id).toMatch(/^ak:invite:/);
   expect(inviteBody.payload.invitee).toBe("did:web:carol.example");
   expect(inviteBody.payload.invite_delivery_target).toEqual({
     recipient_service_did: "did:web:server.local",
@@ -234,7 +234,7 @@ test("realm admin page handles metadata, modal member invite, epoch rotation and
   // The invite modal closes itself once the create event is accepted.
   await expect(page.getByTestId("invite-member-modal")).toHaveCount(0);
 
-  await gotoAndDismissRecovery(page, "/realms/ck:realm:0196419b-0000-7000-8000-000000000000/settings/security");
+  await gotoAndDismissRecovery(page, "/realms/ak:realm:0196419b-0000-7000-8000-000000000000/settings/security");
   await page.getByTestId("rotate-realm-epoch").click();
   // YOU-01-009: rotation is now a real local `self_update_commit`
   // published as `ck.mls.commit`. The e2e fixture has no local MLS group
@@ -243,7 +243,7 @@ test("realm admin page handles metadata, modal member invite, epoch rotation and
   // shim.
   await expect(page.getByTestId("realm-admin-status")).toContainText("rotate failed");
 
-  await gotoAndDismissRecovery(page, "/realms/ck:realm:0196419b-0000-7000-8000-000000000000/settings/repair");
+  await gotoAndDismissRecovery(page, "/realms/ak:realm:0196419b-0000-7000-8000-000000000000/settings/repair");
   await page.getByTestId("archive-realm-button").click();
   await expect(page.getByTestId("realm-danger-confirm-modal")).toBeVisible();
   await expect(page.getByTestId("realm-danger-confirm-submit")).toBeDisabled();

@@ -96,7 +96,7 @@ test("login page delegates account lifecycle to coauth OIDC", async ({ page }) =
   const oidcScaffold = JSON.parse(oidcScaffoldEntry?.value ?? "{}");
   expect(oidcScaffold.principal_actor_id).toBe("");
   expect(oidcScaffold.device_id).toMatch(
-    /^ck:device:[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/,
+    /^ak:device:[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/,
   );
   await expect(page.getByText("coauth")).toBeVisible();
   await expect(page.getByText("Create account")).toBeVisible();

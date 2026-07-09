@@ -86,7 +86,7 @@ pub async fn submit_call_signal_v1(
     // ephemeral-envelope.schema.json / webrtc-signaling.md §5.1: the proof
     // is detached-JWS, isomorphic to the persistent Event proof, with
     // verification_method `{actor_id}#{device_id}` (fragment = the full
-    // ck:device id) over the canonical envelope bytes without `proof`.
+    // ak:device id) over the canonical envelope bytes without `proof`.
     attach_broadcast_ephemeral_proof(&mut envelope)?;
 
     submitter.submit_ephemeral_envelope(&envelope).await

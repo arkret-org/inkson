@@ -157,7 +157,7 @@ pub fn principal_server_options_for(
 /// peek pattern.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AccountProfile {
-    /// Stable, opaque id (UUIDv7 prefixed `ck:profile:`). NOT derived
+    /// Stable, opaque id (UUIDv7 prefixed `ak:profile:`). NOT derived
     /// from the account_did — DIDs can rotate via inception-upgrade,
     /// but the profile id should stay put so the switcher UI doesn't
     /// lose its row.

@@ -171,7 +171,7 @@ pub(super) fn select_server(server_url: String, ctx: ServerSelectionContext) {
 
     // A space cached against the previous server's view is meaningless
     // on the new server (different service DID, different membership,
-    // potentially overlapping ck:space ids that point at unrelated
+    // potentially overlapping ak:space ids that point at unrelated
     // rooms). Wipe the account-scoped cache before re-pointing the URL
     // so the next sync starts from a clean slate. Device-level state
     // (local_identity, push_registration) is preserved.
