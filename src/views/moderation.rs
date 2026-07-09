@@ -164,12 +164,13 @@ pub fn project_moderation_queues(raw_ops: &[Value]) -> (Vec<StandingDecision>, V
 
 #[component]
 pub fn ModerationWorkbench(
-    base_url: String,
     account_did: String,
     token: Signal<String>,
     selected_realm_id: String,
-    state_store: Signal<LocalStateStore>,
 ) -> Element {
+    // A4 — base_url / state_store from session context instead of props.
+    let base_url = crate::app::SessionContext::base_url_string();
+    let state_store = crate::app::SessionContext::get().state_store;
     // New-decision form state.
     let mut decide_target = use_signal(String::new);
     let mut decide_verdict = use_signal(|| "quarantine".to_owned());

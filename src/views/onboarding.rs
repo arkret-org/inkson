@@ -122,12 +122,13 @@ impl OnboardingStep {
 #[component]
 #[allow(clippy::redundant_closure)] // `use_signal(|| signal())` reads the inner value at init.
 pub fn OnboardingPanel(
-    base_url: String,
     token: Signal<String>,
     account_did: Signal<String>,
     device_id: Signal<String>,
-    state_store: Signal<LocalStateStore>,
 ) -> Element {
+    // A4 — base_url / state_store from session context instead of props.
+    let base_url = crate::app::SessionContext::base_url_string();
+    let mut state_store = crate::app::SessionContext::get().state_store;
     let mut step = use_signal(|| OnboardingStep::DidMethod);
     let mut did_method = use_signal(|| DEFAULT_PRINCIPAL_DID_METHOD.to_owned());
     let mut handle_local = use_signal(|| "alice".to_owned());

@@ -82,6 +82,7 @@ mod feature_gate;
 mod handles;
 mod manage_pages;
 mod session_boot;
+mod session_context;
 mod sidebar;
 mod sidebar_width;
 pub(crate) use clipboard::*;
@@ -92,6 +93,7 @@ pub(crate) use feature_gate::*;
 pub(crate) use handles::*;
 pub(crate) use manage_pages::*;
 use session_boot::*;
+pub(crate) use session_context::SessionContext;
 use sidebar::*;
 use sidebar_width::*;
 
@@ -238,6 +240,12 @@ pub fn RouterView() -> Element {
     let mut token = use_signal(move || initial_session_credential);
     let mut session_boot_state = use_signal(move || initial_session_boot_state);
     let mut session_generation = use_signal(|| 0_u64);
+
+    // A4 — provide the session-scoped shared handles (`state_store`, `base_url`)
+    // via context so descendant components read them through
+    // `use_context::<SessionContext>()` instead of threading them down as props.
+    // Same signal handles `RouterView` already owns; single source of truth.
+    use_context_provider(|| SessionContext { state_store, base_url });
 
     // Install the app-wide, single-flight session credential refresher exactly once.
     // Every auth-expired handler (connect, sync, chat send, Realm create,
@@ -3368,10 +3376,8 @@ pub fn RouterView() -> Element {
             // compare the pairing code and approve/reject without navigating to
             // the devices settings page.
             crate::components::DevicePairApprovalPrompt {
-                base_url,
                 token,
                 device_id,
-                state_store,
             }
             crate::components::AgentRuntimeApprovalPrompt {
                 base_url,
@@ -3386,7 +3392,6 @@ pub fn RouterView() -> Element {
                 crate::components::EncryptionFloorPrompt {
                     token,
                     account_did,
-                    state_store,
                     sync_bootstrap_complete,
                     device_authorization_check_complete,
                     needs_device_authorization,
@@ -3398,11 +3403,9 @@ pub fn RouterView() -> Element {
                 }
             }
             crate::components::RecoveryKeySetupPrompt {
-                base_url,
                 token,
                 account_did,
                 device_id,
-                state_store,
                 open: recovery_key_setup_prompt,
                 account_primary_handle,
                 on_server_configured: move |_| account_recovery_configured.set(Some(true)),
@@ -3456,11 +3459,9 @@ pub fn RouterView() -> Element {
             // `needs_mls_unlock`.
             if active_prompt == AccountHealthPrompt::MlsUnlock {
                 crate::components::MlsUnlockPrompt {
-                    base_url,
                     token,
                     actor_id: account_did,
                     device_id,
-                    state_store,
                     needs_mls_unlock,
                     restore_payload_cache: mls_restore_payload_cache,
                 }
@@ -3470,11 +3471,9 @@ pub fn RouterView() -> Element {
             // `needs_mls_backup` (local secret exists, no server backup yet).
             if active_prompt == AccountHealthPrompt::MlsBackup {
                 crate::components::MlsBackupPrompt {
-                    base_url,
                     token,
                     actor_id: account_did,
                     device_id,
-                    state_store,
                     needs_mls_backup,
                     account_recovery_configured,
                     account_primary_handle,
@@ -4676,7 +4675,6 @@ pub fn RouterView() -> Element {
                             realm_id: active_realm_id.clone(),
                             current_surface: resolved_realm_surface,
                             account_did: account_did(),
-                            state_store,
                             members_active: realm_members_active,
                             minimal_ready,
                             kanban_ready,
@@ -5409,12 +5407,10 @@ pub fn RouterView() -> Element {
                     },
                     Route::Dashboard => rsx! {
                         crate::views::dashboard::DashboardPanel {
-                            base_url: base_url(),
                             token,
                             realm_tree_nodes,
                             selected_realm_id,
                             view,
-                            state_store,
                             device_queue: device_queue(),
                             frontier_state: frontier_state(),
                             sync_cursor: sync_cursor(),
@@ -5434,7 +5430,6 @@ pub fn RouterView() -> Element {
                                 if kanban_ready {
                                     rsx! {
                                         crate::views::kanban::KanbanPanel {
-                                            base_url: base_url(),
                                             plaintext_service_did: active_service_did.clone(),
                                             token,
                                             account_did: account_did(),
@@ -5444,7 +5439,6 @@ pub fn RouterView() -> Element {
                                             sync_cursor,
                                             realm_live_epoch,
                                             frontier_state,
-                                            state_store,
                                             event_write_ready,
                                         }
                                     }
@@ -5461,7 +5455,6 @@ pub fn RouterView() -> Element {
                         if minimal_ready {
                             rsx! {
                                 crate::views::chat::ChatPanel {
-                                    base_url: base_url(),
                                     plaintext_service_did: active_service_did.clone(),
                                     account_did: account_did(),
                                     device_id: device_id(),
@@ -5470,7 +5463,6 @@ pub fn RouterView() -> Element {
                                     sync_cursor,
                                     realm_live_epoch,
                                     frontier_state,
-                                    state_store,
                                     initial_strand_id: strand_id.clone(),
                                     embedded: false,
                                     direct_mode: true,
@@ -5489,7 +5481,6 @@ pub fn RouterView() -> Element {
                         if minimal_ready {
                             rsx! {
                                 crate::views::chat::ChatPanel {
-                                    base_url: base_url(),
                                     plaintext_service_did: active_service_did.clone(),
                                     account_did: account_did(),
                                     device_id: device_id(),
@@ -5498,7 +5489,6 @@ pub fn RouterView() -> Element {
                                     sync_cursor,
                                     realm_live_epoch,
                                     frontier_state,
-                                    state_store,
                                     initial_strand_id: default_strand_id_for_realm(&active_realm_id),
                                     embedded: false,
                                     direct_mode: false,
@@ -5511,11 +5501,9 @@ pub fn RouterView() -> Element {
                     },
                     Route::Directory => rsx! {
                         crate::views::directory::DirectoryPanel {
-                            base_url: base_url(),
                             selected_realm_id,
                             token,
                             view,
-                            state_store,
                         }
                     },
                     Route::RealmsManage => rsx! {
@@ -5549,9 +5537,7 @@ pub fn RouterView() -> Element {
                     },
                     Route::Contacts => rsx! {
                         crate::views::contacts::ContactsPanel {
-                            base_url: base_url(),
                             token,
-                            state_store,
                         }
                     },
                     Route::Setup | Route::SetupSection { .. } => {
@@ -5678,7 +5664,6 @@ pub fn RouterView() -> Element {
                         if kanban_ready {
                             rsx! {
                                 crate::views::kanban::KanbanPanel {
-                                    base_url: base_url(),
                                     plaintext_service_did: active_service_did.clone(),
                                     token,
                                     account_did: account_did(),
@@ -5688,7 +5673,6 @@ pub fn RouterView() -> Element {
                                     sync_cursor,
                                     realm_live_epoch,
                                     frontier_state,
-                                    state_store,
                                     event_write_ready,
                                 }
                             }
@@ -5698,11 +5682,9 @@ pub fn RouterView() -> Element {
                     },
                     Route::Notifications => rsx! {
                         crate::views::notifications::NotificationsPanel {
-                            base_url: base_url(),
                             account_did: account_did(),
                             device_id: device_id(),
                             token,
-                            state_store,
                         }
                     },
                     Route::Call {
@@ -5719,9 +5701,7 @@ pub fn RouterView() -> Element {
                         };
                         rsx! {
                             crate::views::call::CallPanel {
-                                base_url: base_url(),
                                 token,
-                                state_store,
                                 selected_realm_id: call_realm_id,
                                 account_did: account_did(),
                                 device_id: device_id(),
@@ -5734,11 +5714,9 @@ pub fn RouterView() -> Element {
                     },
                     Route::Onboarding => rsx! {
                         crate::views::onboarding::OnboardingPanel {
-                            base_url: base_url(),
                             token,
                             account_did,
                             device_id,
-                            state_store,
                         }
                     },
                     Route::Quarantine => rsx! {
@@ -5760,11 +5738,9 @@ pub fn RouterView() -> Element {
                     Route::Applets => rsx! {
                         if crate::views::applets::applets_enabled() {
                             crate::views::applets::AppletsPanel {
-                                base_url: base_url(),
                                 account_did,
                                 token,
                                 selected_realm_id: selected_realm_id(),
-                                state_store,
                             }
                         } else {
                             DeferredFeatureGate { feature: "experimental-applets" }
@@ -5773,11 +5749,9 @@ pub fn RouterView() -> Element {
                     Route::Agents => rsx! {
                         if crate::views::agents::agents_enabled() {
                             crate::views::agents::AgentsPanel {
-                                base_url: base_url(),
                                 account_did,
                                 token,
                                 selected_realm_id: selected_realm_id(),
-                                state_store,
                             }
                         } else {
                             DeferredFeatureGate { feature: "experimental-agents" }
@@ -5786,7 +5760,6 @@ pub fn RouterView() -> Element {
                     // A6.1 — global cross-Space message search panel.
                     Route::Search => rsx! {
                         crate::views::global_search::GlobalSearchPanel {
-                            state_store,
                             account_did,
                             device_id,
                             initial_query: String::new(),
@@ -5833,11 +5806,9 @@ pub fn RouterView() -> Element {
                             }
                         }
                         crate::views::notifications::NotificationsPanel {
-                            base_url: base_url(),
                             account_did: account_did(),
                             device_id: device_id(),
                             token,
-                            state_store,
                         }
                     }
                 }

@@ -601,7 +601,6 @@ fn WriteStateBadge(state: CardState, icon_only: Option<bool>) -> Element {
 
 #[component]
 pub fn KanbanPanel(
-    base_url: String,
     plaintext_service_did: String,
     token: Signal<String>,
     account_did: String,
@@ -615,9 +614,11 @@ pub fn KanbanPanel(
     /// live reconciler independently of the account cursor.
     realm_live_epoch: Signal<u64>,
     frontier_state: Signal<String>,
-    state_store: Signal<LocalStateStore>,
     event_write_ready: bool,
 ) -> Element {
+    // A4 — base_url / state_store from session context instead of props.
+    let base_url = crate::app::SessionContext::base_url_string();
+    let mut state_store = crate::app::SessionContext::get().state_store;
     // T20 — load board projection from API when available, otherwise seed.
     // Source signal lets the UI surface persisted API projection vs
     // explicit demo seed in the board header.
@@ -4498,7 +4499,6 @@ pub fn KanbanPanel(
                                                         role: "tabpanel",
                                                         "aria-hidden": "{active_detail_tab != CardDetailContentTab::Discussion}",
                                                         crate::views::chat::ChatPanel {
-                                                            base_url: base_url.clone(),
                                                             plaintext_service_did: plaintext_service_did.clone(),
                                                             account_did: account_did.clone(),
                                                             device_id: device_id.clone(),
@@ -4507,7 +4507,6 @@ pub fn KanbanPanel(
                                                             sync_cursor,
                                                             realm_live_epoch,
                                                             frontier_state,
-                                                            state_store,
                                                             initial_strand_id: card.primary_strand_id.clone(),
                                                             embedded: true,
                                                             direct_mode: false,

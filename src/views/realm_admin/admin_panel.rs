@@ -308,7 +308,6 @@ pub fn RealmAdminPanel(
             // holder who can decrypt all history (never "real-time listening").
             crate::components::DurabilityDisclosureBanner {
                 realm_id: selected_realm_id.clone(),
-                state_store,
             }
             // Realm-wide notary-paused banner. Fires whenever any tracked
             // Move for this Realm has surfaced `NotaryPaused`. The Space
@@ -514,7 +513,6 @@ pub fn RealmAdminPanel(
                 if durability_rrk_active {
                     super::durability_recovery::DurabilityRecoveryPanel {
                         realm_id: selected_realm_id.clone(),
-                        state_store,
                     }
                 }
                 // Covered_frontier_lag alert banner. Mirrors sodmin's admin
@@ -715,7 +713,6 @@ pub fn RealmAdminPanel(
                         crate::components::AvatarUploader {
                             current_blob_ref: metadata_avatar_blob_ref(),
                             alt_text: format!("{metadata_subject_label} avatar"),
-                            base_url: base_url.clone(),
                             api_token: token(),
                             upload_realm_id: Some(metadata_subject.home_realm_id.clone()),
                             test_id_prefix: "realm-avatar".to_owned(),
@@ -1648,11 +1645,9 @@ pub fn RealmAdminPanel(
             // / appeal_* API; queues project from the local raw-operation log.
             if active_section == RealmAdminSection::Moderation {
                 crate::views::moderation::ModerationWorkbench {
-                    base_url: base_url.clone(),
                     account_did: account_did.clone(),
                     token,
                     selected_realm_id: selected_realm_id.clone(),
-                    state_store,
                 }
             }
 

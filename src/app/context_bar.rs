@@ -5,12 +5,13 @@ pub(super) fn RealmContextBar(
     realm_id: String,
     current_surface: Option<RealmSurface>,
     account_did: String,
-    state_store: Signal<LocalStateStore>,
     members_active: bool,
     minimal_ready: bool,
     kanban_ready: bool,
     full_ready: bool,
 ) -> Element {
+    // A4 — state_store from session context instead of a prop.
+    let mut state_store = crate::app::SessionContext::get().state_store;
     let mut menu_open = use_signal(|| false);
     let (current_nav_label, current_nav_icon) = match current_surface {
         Some(surface) => (surface.short_label(), surface.icon_name()),

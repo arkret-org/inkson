@@ -24,7 +24,8 @@ const PROTOCOL_VERSION: &str = "1.0";
 const RAW_EVENT_PREVIEW_LIMIT: usize = 50;
 
 #[component]
-pub fn DeveloperToolsPanel(state_store: Signal<LocalStateStore>) -> Element {
+pub fn DeveloperToolsPanel() -> Element {
+    let state_store = crate::app::SessionContext::get().state_store;
     let state = state_store.read().load();
     let raw_ops_total = state.raw_operations.len();
     let preview_count = raw_ops_total.min(RAW_EVENT_PREVIEW_LIMIT);

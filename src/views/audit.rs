@@ -47,7 +47,8 @@ fn classify_audit_row(operation_id: &str, body: &Value) -> Option<AuditRow> {
 }
 
 #[component]
-pub fn AuditPanel(state_store: Signal<LocalStateStore>) -> Element {
+pub fn AuditPanel() -> Element {
+    let state_store = crate::app::SessionContext::get().state_store;
     let state = state_store.read().load();
     let rows: Vec<AuditRow> = state
         .raw_operations

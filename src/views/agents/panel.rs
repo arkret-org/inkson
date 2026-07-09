@@ -19,12 +19,13 @@ use crate::views::helpers::{short_protocol_id, with_authed_api};
 
 #[component]
 pub fn AgentsPanel(
-    base_url: String,
     account_did: String,
     token: Signal<String>,
     selected_realm_id: String,
-    state_store: Signal<LocalStateStore>,
 ) -> Element {
+    // A4 — base_url / state_store from session context instead of props.
+    let base_url = crate::app::SessionContext::base_url_string();
+    let state_store = crate::app::SessionContext::get().state_store;
     let mut agent_id = use_signal(String::new);
     let mut protocol = use_signal(|| "ak.agent.v1".to_owned());
     let mut capabilities = use_signal(|| "strand.read".to_owned());

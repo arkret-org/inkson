@@ -224,11 +224,12 @@ use crate::realm_tree::string_field;
 
 #[component]
 pub fn GlobalSearchPanel(
-    state_store: Signal<LocalStateStore>,
     account_did: Signal<String>,
     device_id: Signal<String>,
     initial_query: String,
 ) -> Element {
+    // A4 — state_store from session context instead of a prop.
+    let state_store = crate::app::SessionContext::get().state_store;
     // `Signal` is `Copy`; the `mut` here is just so the closures below
     // can re-assign the bindings without explicit `let mut` shadowing
     // — `.set()` itself takes `&self`. The compiler suggests removing

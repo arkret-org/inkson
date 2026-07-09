@@ -36,16 +36,17 @@ impl DashboardContactsSummary {
 #[component]
 #[allow(clippy::redundant_closure)] // `|| signal()` is not equivalent to `&signal` here.
 pub fn DashboardPanel(
-    base_url: String,
     token: Signal<String>,
     realm_tree_nodes: Signal<Vec<RealmTreeNode>>,
     selected_realm_id: Signal<String>,
     view: Signal<super::AppView>,
-    state_store: Signal<LocalStateStore>,
     device_queue: usize,
     frontier_state: String,
     sync_cursor: String,
 ) -> Element {
+    // A4 — base_url / state_store from session context instead of props.
+    let base_url = crate::app::SessionContext::base_url_string();
+    let state_store = crate::app::SessionContext::get().state_store;
     let mut protocol_health = use_signal(Vec::<(String, String)>::new);
     let mut health_loading = use_signal(|| false);
     let mut recent_strands = use_signal(Vec::<crate::projection_views::StrandProjectionView>::new);

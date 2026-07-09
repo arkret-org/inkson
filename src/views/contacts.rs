@@ -592,11 +592,10 @@ fn run_contact_action(
 }
 
 #[component]
-pub fn ContactsPanel(
-    base_url: String,
-    token: Signal<String>,
-    state_store: Signal<LocalStateStore>,
-) -> Element {
+pub fn ContactsPanel(token: Signal<String>) -> Element {
+    // A4 — base_url / state_store from session context instead of props.
+    let base_url = crate::app::SessionContext::base_url_string();
+    let state_store = crate::app::SessionContext::get().state_store;
     let mut contacts = use_signal(Vec::<ContactListRow>::new);
     let mut status = use_signal(|| "loading".to_owned());
     let mut error = use_signal(|| Option::<String>::None);

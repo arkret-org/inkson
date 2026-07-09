@@ -129,7 +129,6 @@ fn chat_visible_read_receipt_should_display(
 
 #[component]
 pub fn ChatPanel(
-    base_url: String,
     plaintext_service_did: String,
     account_did: String,
     device_id: String,
@@ -142,7 +141,6 @@ pub fn ChatPanel(
     /// realm stream without advancing the account aggregate cursor.
     realm_live_epoch: Signal<u64>,
     frontier_state: Signal<String>,
-    state_store: Signal<LocalStateStore>,
     initial_strand_id: String,
     embedded: bool,
     direct_mode: bool,
@@ -151,6 +149,9 @@ pub fn ChatPanel(
     #[props(default)]
     focus_message_id: String,
 ) -> Element {
+    // A4 — base_url / state_store from session context instead of props.
+    let base_url = crate::app::SessionContext::base_url_string();
+    let mut state_store = crate::app::SessionContext::get().state_store;
     let navigator = use_navigator();
     let did_cache = use_context::<Signal<crate::did_resolver::DidResolutionCache>>();
     let initial_default_channel = (!selected_realm_id.trim().is_empty())

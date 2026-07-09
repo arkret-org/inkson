@@ -10,7 +10,6 @@ use crate::realm_tree::string_field;
 pub fn EncryptionFloorPrompt(
     token: Signal<String>,
     account_did: Signal<String>,
-    state_store: Signal<LocalStateStore>,
     sync_bootstrap_complete: Signal<bool>,
     device_authorization_check_complete: Signal<bool>,
     needs_device_authorization: Signal<bool>,
@@ -26,6 +25,8 @@ pub fn EncryptionFloorPrompt(
     /// `active_prompt` churns during sync.
     mut dismissed: Signal<bool>,
 ) -> Element {
+    // A4 — state_store from session context instead of a prop.
+    let state_store = crate::app::SessionContext::get().state_store;
     use_effect(move || {
         let session = token();
         let actor = account_did();

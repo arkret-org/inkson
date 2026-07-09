@@ -103,14 +103,15 @@ fn organization_preview_value(preview: arkret_sdk::models::OrganizationPreview) 
 
 #[component]
 pub fn DirectoryPanel(
-    base_url: String,
     selected_realm_id: Signal<String>,
     token: Signal<String>,
     view: Signal<super::AppView>,
-    // F-REMARK-FANOUT-1: needed so handle resolution can prefer the
-    // actor-private ContactRemark.local_name over the raw DID.
-    state_store: Signal<LocalStateStore>,
 ) -> Element {
+    // A4 — base_url / state_store from session context instead of props.
+    // (state_store: F-REMARK-FANOUT-1 — handle resolution prefers the
+    // actor-private ContactRemark.local_name over the raw DID.)
+    let base_url = crate::app::SessionContext::base_url_string();
+    let state_store = crate::app::SessionContext::get().state_store;
     let mut active_tab = use_signal(|| DirectoryTab::Realms);
     let mut query = use_signal(String::new);
     // Local search-results scratch. Previously this view borrowed the

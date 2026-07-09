@@ -22,18 +22,16 @@ use dioxus::prelude::*;
 use crate::device_pairing::{
     PendingPairingRequest, pairing_request_body, parse_pending_pairing_requests,
 };
-use crate::local_state::LocalStateStore;
 use crate::ui::button::{Button, ButtonVariant};
 use crate::ui::dialog::Dialog;
 use crate::views::helpers::{short_protocol_id, with_authed_api};
 
 #[component]
-pub fn DevicePairApprovalPrompt(
-    base_url: Signal<String>,
-    token: Signal<String>,
-    device_id: Signal<String>,
-    state_store: Signal<LocalStateStore>,
-) -> Element {
+pub fn DevicePairApprovalPrompt(token: Signal<String>, device_id: Signal<String>) -> Element {
+    // A4 — base_url / state_store from session context instead of props.
+    let session = crate::app::SessionContext::get();
+    let base_url = session.base_url;
+    let mut state_store = session.state_store;
     // Requests the user already acted on this session (approved, rejected, or
     // dismissed via escape). Keyed by `request_key`.
     let mut handled = use_signal(HashSet::<String>::new);

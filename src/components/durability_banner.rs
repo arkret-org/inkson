@@ -21,7 +21,6 @@
 
 use dioxus::prelude::*;
 
-use crate::local_state::LocalStateStore;
 use crate::mls::durability::durability_mode_label;
 use crate::views::helpers::{handle_display_from_did, short_protocol_id};
 
@@ -48,10 +47,9 @@ enum RecipientVerification {
 /// Disclosure banner. Renders nothing unless `realm_id`'s effective durability
 /// is RRK-active. Mount inside the Realm admin / conversation surface.
 #[component]
-pub fn DurabilityDisclosureBanner(
-    realm_id: String,
-    state_store: Signal<LocalStateStore>,
-) -> Element {
+pub fn DurabilityDisclosureBanner(realm_id: String) -> Element {
+    // A4 — state_store from session context instead of a prop.
+    let state_store = crate::app::SessionContext::get().state_store;
     // Read the policy + scheme gate synchronously from the local projection.
     let policy = {
         let store = state_store.read();

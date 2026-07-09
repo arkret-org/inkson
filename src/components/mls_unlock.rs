@@ -5,7 +5,6 @@ use dioxus::prelude::*;
 use dioxus_router::Link;
 
 use super::UiIcon;
-use crate::local_state::LocalStateStore;
 use crate::recovery_crypto::normalize_recovery_key_input;
 use crate::routes::Route;
 use crate::ui::button::{Button, ButtonSize, ButtonVariant};
@@ -50,14 +49,16 @@ where
 /// [`crate::mls::account_recovery::restore_mls_history_with_recovery_key_from_payload`].
 #[component]
 pub fn MlsUnlockPrompt(
-    base_url: Signal<String>,
     token: Signal<String>,
     actor_id: Signal<String>,
     device_id: Signal<String>,
-    state_store: Signal<LocalStateStore>,
     needs_mls_unlock: Signal<bool>,
     restore_payload_cache: Signal<Option<serde_json::Value>>,
 ) -> Element {
+    // A4 — base_url / state_store from session context instead of props.
+    let session = crate::app::SessionContext::get();
+    let base_url = session.base_url;
+    let state_store = session.state_store;
     let mut passphrase = use_signal(String::new);
     let mut status = use_signal(String::new);
     let mut busy = use_signal(|| false);

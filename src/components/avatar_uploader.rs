@@ -34,7 +34,6 @@ fn avatar_preview_data_url(bytes: &[u8], media_type: &str) -> String {
 pub struct AvatarUploaderProps {
     pub current_blob_ref: String,
     pub alt_text: String,
-    pub base_url: String,
     pub api_token: String,
     pub on_uploaded: EventHandler<String>,
     pub on_clear: EventHandler<()>,
@@ -49,13 +48,14 @@ pub fn AvatarUploader(props: AvatarUploaderProps) -> Element {
     let AvatarUploaderProps {
         current_blob_ref,
         alt_text,
-        base_url,
         api_token,
         on_uploaded,
         on_clear,
         upload_realm_id,
         test_id_prefix,
     } = props;
+    // A4 — base_url now comes from the session context instead of a prop.
+    let base_url = crate::app::SessionContext::base_url_string();
 
     let mut pending_selection = use_signal(|| None::<PendingAvatarSelection>);
     let mut crop_zoom = use_signal(|| 125_i32);

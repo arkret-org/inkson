@@ -90,15 +90,17 @@ fn begin_recovery_key_setup(
 
 #[component]
 pub fn RecoveryKeySetupPrompt(
-    base_url: Signal<String>,
     token: Signal<String>,
     account_did: Signal<String>,
     device_id: Signal<String>,
-    state_store: Signal<LocalStateStore>,
     open: Signal<bool>,
     account_primary_handle: Signal<String>,
     #[props(default)] on_server_configured: Option<EventHandler<()>>,
 ) -> Element {
+    // A4 — base_url / state_store from session context instead of props.
+    let session = crate::app::SessionContext::get();
+    let base_url = session.base_url;
+    let mut state_store = session.state_store;
     let mut generated_recovery_key = use_signal(String::new);
     let mut status = use_signal(String::new);
     let mut copied = use_signal(|| false);

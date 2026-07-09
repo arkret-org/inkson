@@ -68,12 +68,11 @@ fn trust_level_label(trust_level: &str) -> &'static str {
 
 #[component]
 pub fn ConnectionsSettingsCard(
-    base_url: Signal<String>,
     account_did: Signal<String>,
     token: Signal<String>,
-    mut state_store: Signal<LocalStateStore>,
 ) -> Element {
-    let _ = base_url;
+    // A4 — state_store from session context instead of a prop.
+    let mut state_store = crate::app::SessionContext::get().state_store;
     let _ = token;
 
     let account_key = account_did();

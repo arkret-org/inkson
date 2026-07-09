@@ -49,10 +49,9 @@ fn parse_share_events(raw: &str) -> Result<Vec<Value>, String> {
 
 /// Realm-level recovery card. Mount inside the Realm admin Security section.
 #[component]
-pub fn DurabilityRecoveryPanel(
-    realm_id: String,
-    mut state_store: Signal<LocalStateStore>,
-) -> Element {
+pub fn DurabilityRecoveryPanel(realm_id: String) -> Element {
+    // A4 — state_store from session context instead of a prop.
+    let mut state_store = crate::app::SessionContext::get().state_store;
     let mut recovery_key = use_signal(String::new);
     let mut shares_raw = use_signal(String::new);
     let mut status = use_signal(String::new);

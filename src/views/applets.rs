@@ -171,12 +171,13 @@ pub fn classify_manifest_input(raw: &str) -> ManifestInputKind {
 
 #[component]
 pub fn AppletsPanel(
-    base_url: String,
     account_did: String,
     token: Signal<String>,
     selected_realm_id: String,
-    state_store: Signal<LocalStateStore>,
 ) -> Element {
+    // A4 — base_url / state_store from session context instead of props.
+    let base_url = crate::app::SessionContext::base_url_string();
+    let state_store = crate::app::SessionContext::get().state_store;
     let mut service_did = use_signal(String::new);
     let mut namespace = use_signal(|| "extensions".to_owned());
     let mut capabilities = use_signal(|| "read".to_owned());

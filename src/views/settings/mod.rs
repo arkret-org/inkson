@@ -3334,14 +3334,14 @@ pub fn SettingsPanel(
                     // ── Audit log (promoted from the Release sub-tab) ─────
                     if active_section == SettingsSection::Audit {
                         div { class: "settings-content-stack",
-                            crate::views::audit::AuditPanel { state_store }
+                            crate::views::audit::AuditPanel {}
                         }
                     }
 
                     // ── Developer tools (promoted from the Release sub-tab) ──
                     if active_section == SettingsSection::Developer {
                         div { class: "settings-content-stack",
-                            crate::views::developer::DeveloperToolsPanel { state_store }
+                            crate::views::developer::DeveloperToolsPanel {}
                         }
                     }
 

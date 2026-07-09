@@ -640,11 +640,9 @@ fn upload_mls_backup_with_recovery_key(
 
 #[component]
 pub fn MlsBackupPrompt(
-    base_url: Signal<String>,
     token: Signal<String>,
     actor_id: Signal<String>,
     device_id: Signal<String>,
-    state_store: Signal<LocalStateStore>,
     needs_mls_backup: Signal<bool>,
     /// Server truth for account-level recovery. `Some(true)` means the account
     /// already has a Recovery Key root, even if this browser has no local
@@ -653,6 +651,10 @@ pub fn MlsBackupPrompt(
     /// Primary account handle claim, used only to name the recovery-key download file readably.
     account_primary_handle: Signal<String>,
 ) -> Element {
+    // A4 — base_url / state_store from session context instead of props.
+    let session = crate::app::SessionContext::get();
+    let base_url = session.base_url;
+    let state_store = session.state_store;
     let mut generated_recovery_key = use_signal(String::new);
     let mut generated_recovery_key_confirm = use_signal(String::new);
     let mut recovery_key_input = use_signal(String::new);

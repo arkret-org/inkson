@@ -28,9 +28,7 @@ use crate::views::helpers::{display_name_for_did, short_protocol_id, with_event_
 #[component]
 #[allow(clippy::too_many_arguments)]
 pub fn CallPanel(
-    base_url: String,
     token: Signal<String>,
-    state_store: Signal<LocalStateStore>,
     selected_realm_id: String,
     account_did: String,
     device_id: String,
@@ -48,6 +46,9 @@ pub fn CallPanel(
     #[props(default)]
     incoming: bool,
 ) -> Element {
+    // A4 — base_url / state_store from session context instead of props.
+    let base_url = crate::app::SessionContext::base_url_string();
+    let state_store = crate::app::SessionContext::get().state_store;
     let initial_stage = if incoming {
         CallStage::IncomingRinging
     } else if !call_id.is_empty() {

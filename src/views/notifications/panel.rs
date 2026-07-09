@@ -20,12 +20,13 @@ use crate::views::helpers::short_protocol_id;
 
 #[component]
 pub fn NotificationsPanel(
-    base_url: String,
     account_did: String,
     device_id: String,
     token: Signal<String>,
-    state_store: Signal<LocalStateStore>,
 ) -> Element {
+    // A4 — base_url / state_store from session context instead of props.
+    let base_url = crate::app::SessionContext::base_url_string();
+    let mut state_store = crate::app::SessionContext::get().state_store;
     let initial_state = state_store.read().load();
     let initial_notifications = hydrate_notifications(
         initial_state.notification_projection.clone(),
