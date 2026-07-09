@@ -91,30 +91,6 @@ pub fn realm_update_patch(
     .body(object_patch_payload_value(realm_id, patch)?))
 }
 
-/// `ck.realm.update` patch event carrying Realm metadata (name / topic /
-/// description / etc.). This is a plain Realm metadata patch — it has NO
-/// organization-control semantics. Pass the merge patch as `value`.
-///
-/// YGN-ORG-01: previously misnamed `realm_organization_update`, which made
-/// it look like it bound an organization principal to the Realm. It never
-/// did: `ck.realm.update` only patches the Realm object. Organization
-/// binding now lives in [`realm_organization_statement`]
-/// (`ck.realm.organization`).
-pub fn realm_metadata_update(
-    realm_id: &str,
-    actor: &str,
-    value: serde_json::Value,
-) -> anyhow::Result<OperationBuilder> {
-    let patch = patch_from_value(value)?;
-    Ok(OperationBuilder::new(
-        realm_id,
-        actor,
-        cokret_sdk::events::kinds::EventKind::RealmUpdate,
-    )
-    .target_ref(realm_id)
-    .body(object_patch_payload_value(realm_id, patch)?))
-}
-
 /// Explicit, externally-sourced authorization for a `ck.realm.organization`
 /// statement (YGN-ORG-02).
 ///

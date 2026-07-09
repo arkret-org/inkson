@@ -489,9 +489,10 @@ fn object_patch_family_builders_match_registered_payload_schema() {
         )
         .expect("builds")
         .build("node"),
-        ck_ops::realm_metadata_update(
+        ck_ops::realm_update_patch(
             realm_id,
             actor,
+            realm_id,
             json!({ "title": { "$op": "set", "value": "Engineering" } }),
         )
         .expect("builds")
