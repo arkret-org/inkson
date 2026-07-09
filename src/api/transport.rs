@@ -57,8 +57,16 @@ impl CokretApi {
     }
 
     pub(crate) fn sdk_http_client(&self) -> anyhow::Result<cokret_sdk::http_client::Client> {
+        // Permit `http://` only for loopback hosts (the SDK's guard still
+        // rejects insecure remote URLs), matching inkson's own
+        // `config::validate_server_url` loopback policy and the garth/login
+        // client path (`views::login`). Without this the CokretApi transport
+        // could not reach a local dev / joint-e2e soland on `http://127.0.0.1`,
+        // while the client-core path could — an inconsistency that broke
+        // UI-driven realm create against a loopback stack.
         let mut builder = cokret_sdk::http_client::ClientBuilder::new(self.base_url.clone())
-            .http_client(self.http.clone());
+            .http_client(self.http.clone())
+            .allow_insecure_localhost();
         match (
             self.authorization_credential.as_ref(),
             self.dpop_device.as_ref(),
