@@ -943,28 +943,6 @@ pub fn build_member_state_transition_event(
     )
 }
 
-pub fn build_member_state_invite_accept_event(
-    realm_id: &str,
-    actor_id: &str,
-    invite_id: &str,
-) -> anyhow::Result<cokret_sdk::Event> {
-    let invite_id = invite_id.trim();
-    if invite_id.is_empty() {
-        return Err(anyhow::anyhow!("invite_id is required for invite accept"));
-    }
-    let mut event = build_member_state_transition_event_with_binding(
-        realm_id,
-        actor_id,
-        actor_id,
-        Some("invite"),
-        "join",
-        "invite_accept",
-        None,
-    )?;
-    event.payload["invite_ref"] = json!(invite_id);
-    Ok(event)
-}
-
 fn build_member_state_transition_event_with_binding(
     realm_id: &str,
     actor_id: &str,

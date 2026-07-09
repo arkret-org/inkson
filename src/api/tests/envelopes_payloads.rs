@@ -4,10 +4,10 @@ use crate::ephemeral::{
     validate_outgoing_registered_event_payload,
 };
 use crate::event_builders::{
-    build_device_message_envelope, build_member_state_invite_accept_event,
-    build_member_state_transition_event, build_realm_bootstrap_events, build_realm_create_event,
-    build_signed_device_verification_proof, build_space_create_event,
-    ensure_device_verification_proof_is_signed, recommended_history_sharing_policy_for_visibility,
+    build_device_message_envelope, build_member_state_transition_event,
+    build_realm_bootstrap_events, build_realm_create_event, build_signed_device_verification_proof,
+    build_space_create_event, ensure_device_verification_proof_is_signed,
+    recommended_history_sharing_policy_for_visibility,
 };
 use crate::operation::OperationBuilder;
 use crate::projection_views::{
@@ -564,53 +564,6 @@ fn realm_bootstrap_rejects_handle_seed_without_directory_evidence() {
         err.to_string()
             .contains("handle bootstrap requires a Directory-resolved invite address")
     );
-}
-
-#[test]
-fn member_state_invite_accept_event_carries_invite_ref() {
-    let event = build_member_state_invite_accept_event(
-        "ck:realm:0196419b-0000-7000-8000-000000000010",
-        "did:web:bob.example",
-        "ck:invite:0196419b-0000-7000-8000-000000000020",
-    )
-    .expect("invite accept event");
-
-    assert_eq!(event.kind.as_str(), "ck.member.state");
-    assert_eq!(
-        event.realm_id.as_str(),
-        "ck:realm:0196419b-0000-7000-8000-000000000010"
-    );
-    assert_eq!(event.actor_id.as_str(), "did:web:bob.example");
-    // Spec `membership_payload` requires `realm_id` in the body for join.
-    assert_eq!(
-        event.payload["realm_id"],
-        "ck:realm:0196419b-0000-7000-8000-000000000010"
-    );
-    assert_eq!(event.payload["actor_id"], "did:web:bob.example");
-    assert_eq!(event.payload["membership"], "join");
-    assert_eq!(event.payload["reason"], "invite_accept");
-    assert_eq!(
-        event.payload["invite_ref"],
-        "ck:invite:0196419b-0000-7000-8000-000000000020"
-    );
-    assert!(event.payload.get("invite_id").is_none());
-    assert_eq!(event.payload["delivery_status"], "unroutable");
-    assert_eq!(event.preconditions.len(), 1);
-    assert_eq!(
-        event.preconditions[0].cell.as_str(),
-        "ck:cell:ck.component.member.state.v1:did:web:bob.example"
-    );
-    assert_eq!(
-        event.preconditions[0].predicate.value,
-        Some(json!("invite"))
-    );
-    assert_eq!(event.effects.len(), 1);
-    assert_eq!(
-        event.effects[0].cell.as_str(),
-        "ck:cell:ck.component.member.state.v1:did:web:bob.example"
-    );
-    assert_eq!(event.effects[0].op.from, Some(json!("invite")));
-    assert_eq!(event.effects[0].op.to, Some(json!("join")));
 }
 
 #[test]
