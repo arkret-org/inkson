@@ -1,10 +1,10 @@
 //! Canonical JSON wrapper used by inkson write paths.
 //!
-//! Re-exports `cokret_sdk::canonical` so all envelope, Move, Seal, and key-
+//! Re-exports `arkret_sdk::canonical` so all envelope, Move, Seal, and key-
 //! backup bodies can be hashed and signed against a single canonical encoder
 //! instead of relying on `serde_json`'s default object-key order.
 
-pub use cokret_sdk::canonical::{
+pub use arkret_sdk::canonical::{
     canonical_json_bytes as sdk_canonical_json_bytes,
     canonical_json_string as sdk_canonical_json_string, canonical_sha256 as sdk_canonical_sha256,
     sha256_digest as sdk_sha256_digest, sha256_hex as sdk_sha256_hex, validate_timestamp_canonical,
@@ -13,7 +13,7 @@ use serde::Serialize;
 
 /// Wire-canonical JSON bytes — sorted object keys, integer-only numbers per
 /// `encoding.md` §3.2. Returns an `anyhow::Error` so call sites can chain into
-/// the rest of inkson's error surface without dragging `cokret_core::Error`
+/// the rest of inkson's error surface without dragging `arkret_core::Error`
 /// across module boundaries.
 pub fn canonical_json_bytes<T: Serialize>(value: &T) -> anyhow::Result<Vec<u8>> {
     sdk_canonical_json_bytes(value).map_err(|e| anyhow::anyhow!("canonical encode failed: {e:?}"))
@@ -93,13 +93,13 @@ pub fn canonical_event_digest<T: Serialize>(body: &T) -> anyhow::Result<String> 
 // when the spec adds new canonicalization rules for a specific
 // envelope type.
 
-/// F-CANONICAL-1: canonical bytes for a SDK [`cokret_sdk::Event`] payload —
+/// F-CANONICAL-1: canonical bytes for a SDK [`arkret_sdk::Event`] payload —
 /// the input the signer hashes when producing the detached JWS over
 /// an inbound event. Matches `conformance/encoding.md §2` (event
 /// envelope canonicalization rules: sorted keys, integer-only
 /// numbers, no whitespace) and excludes `proofs` / `unsigned` exactly
-/// as [`cokret_sdk::Event::event_digest`] does.
-pub fn canonical_event_envelope_bytes(envelope: &cokret_sdk::Event) -> anyhow::Result<Vec<u8>> {
+/// as [`arkret_sdk::Event::event_digest`] does.
+pub fn canonical_event_envelope_bytes(envelope: &arkret_sdk::Event) -> anyhow::Result<Vec<u8>> {
     canonical_json_bytes(&envelope.digest_payload()?)
 }
 
@@ -176,7 +176,7 @@ mod tests {
 
     #[test]
     fn canonical_event_envelope_bytes_use_sdk_digest_payload() {
-        let event: cokret_sdk::Event = serde_json::from_value(json!({
+        let event: arkret_sdk::Event = serde_json::from_value(json!({
             "event_id": "ak:event:01904100-0000-7000-8000-000000000001",
             "kind": "ck.message.create",
             "realm_id": "ak:realm:01904100-0000-7000-8000-000000000001",

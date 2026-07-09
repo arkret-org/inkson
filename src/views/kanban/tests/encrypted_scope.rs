@@ -150,7 +150,7 @@ fn encrypted_private_patch_without_mls_snapshot_is_blocked_before_queueing() {
 #[cfg(not(target_arch = "wasm32"))]
 #[test]
 fn encrypted_private_patch_reports_unusable_pending_local_welcome() {
-    use cokret_sdk::{CokretMlsIdentity, DeviceId, Did};
+    use arkret_sdk::{CokretMlsIdentity, DeviceId, Did};
 
     let realm = "ak:realm:01904100-0000-7000-8000-000000000001";
     let bob_actor = "did:web:bob.example";
@@ -212,7 +212,7 @@ fn encrypted_private_patch_reports_unusable_pending_local_welcome() {
 #[cfg(not(target_arch = "wasm32"))]
 #[test]
 fn encrypted_private_patch_applies_pending_welcome_with_key_package_state() {
-    use cokret_sdk::{CokretMlsIdentity, DeviceId, Did};
+    use arkret_sdk::{CokretMlsIdentity, DeviceId, Did};
 
     let realm = "ak:realm:01904100-0000-7000-8000-000000000001";
     let bob_actor = "did:web:bob.example";
@@ -363,7 +363,7 @@ fn encrypted_private_patch_creator_bootstraps_initial_mls_snapshot() {
 #[cfg(not(target_arch = "wasm32"))]
 #[test]
 fn encrypted_private_patch_with_ready_snapshot_replaces_plaintext() {
-    use cokret_sdk::{CokretMlsIdentity, DeviceId, Did};
+    use arkret_sdk::{CokretMlsIdentity, DeviceId, Did};
 
     let actor = "did:web:alice.example";
     let device = "ak:device:01904100-0000-7000-8000-000000000001";
@@ -389,7 +389,7 @@ fn encrypted_private_patch_with_ready_snapshot_replaces_plaintext() {
     );
     state.save_realm_tree_projection(
         realm,
-        json!({ "active_profiles": [cokret_sdk::mls::MINIMAL_METADATA_REALM_PROFILE] }),
+        json!({ "active_profiles": [arkret_sdk::mls::MINIMAL_METADATA_REALM_PROFILE] }),
     );
     let base_group_state_ref = "ak:event:0196419b-0000-7000-8000-000000000010";
     state.set_realm_seal_view(
@@ -474,16 +474,16 @@ fn mls_remove_commit_uses_explicit_revocation_membership_frontier() {
         },
     );
     let revoke_frontier =
-        cokret_sdk::EventId::new("ak:event:0196419b-0000-7000-8000-000000000001".to_owned())
+        arkret_sdk::EventId::new("ak:event:0196419b-0000-7000-8000-000000000001".to_owned())
             .unwrap();
     let proposal_ref =
-        cokret_sdk::EventId::new("ak:event:0196419b-0000-7000-8000-000000000002".to_owned())
+        arkret_sdk::EventId::new("ak:event:0196419b-0000-7000-8000-000000000002".to_owned())
             .unwrap();
-    let commit = cokret_sdk::MlsCommitEnvelope {
+    let commit = arkret_sdk::MlsCommitEnvelope {
         group_id: "mls-remove-group".to_owned(),
         epoch: 8,
         commit: "commit-bytes".to_owned(),
-        commit_digest: cokret_sdk::Hash::new(format!("sha256:{}", "a".repeat(64))).unwrap(),
+        commit_digest: arkret_sdk::Hash::new(format!("sha256:{}", "a".repeat(64))).unwrap(),
         ratchet_tree: None,
         app_state_ref: None,
     };

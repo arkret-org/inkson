@@ -45,7 +45,7 @@
 //!      DID-resolved verification method key byte-for-byte. Mismatch / unresolvable → fail.
 //!   2. **PSK→SSK→device chain**: hand the DID-anchored PSK plus the publish payload, the device's
 //!      `cross_signing_binding`, and the directory key to the SDK primitive
-//!      [`cokret_sdk::verify_device_cross_signing_chain`].
+//!      [`arkret_sdk::verify_device_cross_signing_chain`].
 //!   3. **Accept only on `CrossSigned`**. Missing `cross_signing` / missing `cross_signing_binding`
 //!      / `Unverified` / `NeedsReverification` all map to a negative cache entry for this regime.
 //! - **Service-attested enrollment** (`device-lifecycle.md` §5.4): managed-DID principals have no
@@ -58,8 +58,8 @@
 use std::collections::HashMap;
 use std::sync::{LazyLock, RwLock};
 
-use cokret_sdk::signatures::PublicKeyMaterial;
-use cokret_sdk::{
+use arkret_sdk::signatures::PublicKeyMaterial;
+use arkret_sdk::{
     CrossSigningPublishContent, DeviceId, DeviceTrustBinding, DeviceTrustState, Did, DidDocument,
     QueryDeviceCrossSigningBinding, resolve_verification_method_key_from_document,
 };
@@ -233,7 +233,7 @@ pub fn public_key_from_directory_value(value: &str) -> Option<PublicKeyMaterial>
 /// `Some(None)` = present-but-unusable (revoked / no key),
 /// `None` = the device was absent from the response.
 fn directory_verdict(
-    outcome: &cokret_sdk::models::KeysQueryOutcome,
+    outcome: &arkret_sdk::models::KeysQueryOutcome,
     actor: &str,
     device: &str,
 ) -> Option<Option<PublicKeyMaterial>> {
@@ -242,7 +242,7 @@ fn directory_verdict(
     // Spec §8.2: a non-active status, or an omitted key, both mean unusable.
     let active = matches!(
         record.device_status,
-        None | Some(cokret_sdk::models::DeviceStatus::Active)
+        None | Some(arkret_sdk::models::DeviceStatus::Active)
     );
     if !active {
         return Some(None);
@@ -255,10 +255,10 @@ fn directory_verdict(
 }
 
 fn directory_record<'a>(
-    outcome: &'a cokret_sdk::models::KeysQueryOutcome,
+    outcome: &'a arkret_sdk::models::KeysQueryOutcome,
     actor: &str,
     device: &str,
-) -> Option<&'a cokret_sdk::models::QueryDeviceRecord> {
+) -> Option<&'a arkret_sdk::models::QueryDeviceRecord> {
     outcome
         .device_keys
         .iter()
@@ -270,12 +270,12 @@ fn directory_record<'a>(
 // ── Tier-2: client-side cross-signing chain verification (§8.3) ────────────
 
 /// Convert the directory `cross_signing[principal]` publish payload (the
-/// `cross-signing-publish.schema.json` counterpart [`cokret_sdk::CrossSigningPublish`])
+/// `cross-signing-publish.schema.json` counterpart [`arkret_sdk::CrossSigningPublish`])
 /// into the SDK chain-verifier input type [`CrossSigningPublishContent`]. The
 /// two are field-for-field 1:1 (soland produces one from the other by the same
 /// round-trip), so a JSON round-trip is lossless; a shape mismatch fails closed.
 fn publish_content_from_directory(
-    publish: &cokret_sdk::CrossSigningPublish,
+    publish: &arkret_sdk::CrossSigningPublish,
 ) -> Option<CrossSigningPublishContent> {
     let value = serde_json::to_value(publish).ok()?;
     serde_json::from_value(value).ok()
@@ -332,7 +332,7 @@ fn anchor_psk_against_did(
 /// step 5 "directory key ⇔ cross-signed key".
 pub fn verify_tier2_chain(
     did_document: &DidDocument,
-    publish: &cokret_sdk::CrossSigningPublish,
+    publish: &arkret_sdk::CrossSigningPublish,
     binding: &QueryDeviceCrossSigningBinding,
     actor: &Did,
     device: &DeviceId,
@@ -351,7 +351,7 @@ pub fn verify_tier2_chain(
         return DeviceTrustState::Unverified;
     };
     let trust_binding = trust_binding_from_directory(binding);
-    cokret_sdk::verify_device_cross_signing_chain(cokret_sdk::DeviceCrossSigningChainVerification {
+    arkret_sdk::verify_device_cross_signing_chain(arkret_sdk::DeviceCrossSigningChainVerification {
         publish: &publish_content,
         binding: &trust_binding,
         principal_id: actor,
@@ -374,7 +374,7 @@ pub fn verify_tier2_chain(
 /// `Unverified` / `NeedsReverification`, or an undecodable directory key. There
 /// is no Tier-1 fallback: a present-but-unverifiable key is rejected.
 fn tier2_accepted_key(
-    outcome: &cokret_sdk::models::KeysQueryOutcome,
+    outcome: &arkret_sdk::models::KeysQueryOutcome,
     did_document: &DidDocument,
     actor: &Did,
     device: &DeviceId,
@@ -422,7 +422,7 @@ fn tier2_accepted_key(
 /// anchors: the accepted `ck.device.authorize` id and the enrollment authority
 /// binding that caused the projection.
 fn service_attested_accepted_key(
-    outcome: &cokret_sdk::models::KeysQueryOutcome,
+    outcome: &arkret_sdk::models::KeysQueryOutcome,
     actor: &Did,
     device: &DeviceId,
 ) -> Option<PublicKeyMaterial> {
@@ -432,7 +432,7 @@ fn service_attested_accepted_key(
         return None;
     }
     let binding = record.enrollment_authority_binding.as_ref()?;
-    if binding.kind != cokret_sdk::DeviceEnrollmentAuthorityBinding::KIND_SERVICE_ATTESTED {
+    if binding.kind != arkret_sdk::DeviceEnrollmentAuthorityBinding::KIND_SERVICE_ATTESTED {
         return None;
     }
     if binding.authorization_ref.trim().is_empty() {
@@ -557,7 +557,7 @@ pub fn verify_proof_value(
     actor_id: &str,
     public_key: &PublicKeyMaterial,
 ) -> bool {
-    let proof: cokret_sdk::Proof = match serde_json::from_value(proof_value.clone()) {
+    let proof: arkret_sdk::Proof = match serde_json::from_value(proof_value.clone()) {
         Ok(proof) => proof,
         Err(_) => return false,
     };
@@ -565,7 +565,7 @@ pub fn verify_proof_value(
     if verification_method_controller(&proof.verification_method) != actor_id {
         return false;
     }
-    let did = match cokret_sdk::Did::new(actor_id.to_owned()) {
+    let did = match arkret_sdk::Did::new(actor_id.to_owned()) {
         Ok(did) => did,
         Err(_) => return false,
     };
@@ -573,7 +573,7 @@ pub fn verify_proof_value(
         Ok(bytes) => bytes,
         Err(_) => return false,
     };
-    cokret_sdk::signatures::verify_eddsa_detached_jws_proof(
+    arkret_sdk::signatures::verify_eddsa_detached_jws_proof(
         &proof,
         &canonical_bytes,
         &did,
@@ -766,7 +766,7 @@ mod tests {
     #[test]
     fn directory_verdict_revoked_is_negative_even_with_key() {
         let did = test_did_key(33);
-        let outcome: cokret_sdk::models::KeysQueryOutcome =
+        let outcome: arkret_sdk::models::KeysQueryOutcome =
             serde_json::from_value(serde_json::json!({
                 "device_keys": {
                     "did:web:carol": {
@@ -787,7 +787,7 @@ mod tests {
     #[test]
     fn directory_verdict_active_with_key_resolves() {
         let did = test_did_key(44);
-        let outcome: cokret_sdk::models::KeysQueryOutcome =
+        let outcome: arkret_sdk::models::KeysQueryOutcome =
             serde_json::from_value(serde_json::json!({
                 "device_keys": {
                     "did:web:dave": {
@@ -815,7 +815,7 @@ mod tests {
 
     #[test]
     fn directory_verdict_absent_device_is_none() {
-        let outcome: cokret_sdk::models::KeysQueryOutcome =
+        let outcome: arkret_sdk::models::KeysQueryOutcome =
             serde_json::from_value(serde_json::json!({
                 "device_keys": {}
             }))
@@ -828,7 +828,7 @@ mod tests {
         let did = test_did_key(55);
         let actor = Did::new("did:web:managed-alice.example".to_owned()).unwrap();
         let device = DeviceId::new(TEST_DEVICE_ID.to_owned()).unwrap();
-        let outcome: cokret_sdk::models::KeysQueryOutcome =
+        let outcome: arkret_sdk::models::KeysQueryOutcome =
             serde_json::from_value(serde_json::json!({
                 "device_keys": {
                     actor.as_str(): {
@@ -862,7 +862,7 @@ mod tests {
     fn service_attested_missing_authorize_event_id_fails_closed() {
         let actor = Did::new("did:web:managed-bob.example".to_owned()).unwrap();
         let device = DeviceId::new(TEST_DEVICE_ID.to_owned()).unwrap();
-        let outcome: cokret_sdk::models::KeysQueryOutcome =
+        let outcome: arkret_sdk::models::KeysQueryOutcome =
             serde_json::from_value(serde_json::json!({
                 "device_keys": {
                     actor.as_str(): {
@@ -889,7 +889,7 @@ mod tests {
     // genuine Ed25519 signatures, following the SDK's own
     // `signed_chain_fixture` construction (sdk devices/tests.rs §550+).
 
-    use cokret_sdk::{
+    use arkret_sdk::{
         CrossSigningBinding, CrossSigningKeyRecord,
         CrossSigningPublishContent as SdkPublishContent, SignedCrossSigningKey, TypedTrustDomainId,
         base64url_encode,
@@ -919,7 +919,7 @@ mod tests {
         actor: Did,
         device: DeviceId,
         document: DidDocument,
-        publish: cokret_sdk::CrossSigningPublish,
+        publish: arkret_sdk::CrossSigningPublish,
         binding: QueryDeviceCrossSigningBinding,
         device_signing_key: String,
     }
@@ -1001,7 +1001,7 @@ mod tests {
 
         // Serialize the SDK content into the artifact `CrossSigningPublish` the
         // directory carries (1:1 field shape).
-        let publish: cokret_sdk::CrossSigningPublish =
+        let publish: arkret_sdk::CrossSigningPublish =
             serde_json::from_value(serde_json::to_value(&content).unwrap()).unwrap();
 
         // SSK signs the device binding over the bare multibase device key
@@ -1039,7 +1039,7 @@ mod tests {
 
         /// Build a `keys/query` outcome carrying this fixture's directory facet
         /// + Tier-2 material for the `(actor, device)`.
-        fn outcome(&self) -> cokret_sdk::models::KeysQueryOutcome {
+        fn outcome(&self) -> arkret_sdk::models::KeysQueryOutcome {
             serde_json::from_value(serde_json::json!({
                 "device_keys": {
                     self.actor.as_str(): {
@@ -1106,7 +1106,7 @@ mod tests {
     #[test]
     fn tier2_tampered_device_binding_rejected() {
         let mut fx = build_tier2_fixture(TIER2_ACTOR, TIER2_DEVICE, 11, 22, 33, 1, 1);
-        let mut raw = cokret_sdk::base64url_decode(&fx.binding.signature).unwrap();
+        let mut raw = arkret_sdk::base64url_decode(&fx.binding.signature).unwrap();
         raw[0] ^= 0xff;
         fx.binding.signature = base64url_encode(&raw);
         assert_eq!(
@@ -1200,7 +1200,7 @@ mod tests {
         // `cross_signing_binding`. Tier-2 treats missing binding as Unverified
         // (do NOT relax for bootstrap on this line).
         let fx = build_tier2_fixture(TIER2_ACTOR, TIER2_DEVICE, 11, 22, 33, 1, 1);
-        let outcome: cokret_sdk::models::KeysQueryOutcome =
+        let outcome: arkret_sdk::models::KeysQueryOutcome =
             serde_json::from_value(serde_json::json!({
                 "device_keys": {
                     fx.actor.as_str(): {
@@ -1225,7 +1225,7 @@ mod tests {
         // Revoked status → Tier-1 facet already negative; Tier-2 never even
         // reaches the chain. No key regardless of valid Tier-2 material.
         let fx = build_tier2_fixture(TIER2_ACTOR, TIER2_DEVICE, 11, 22, 33, 1, 1);
-        let outcome: cokret_sdk::models::KeysQueryOutcome =
+        let outcome: arkret_sdk::models::KeysQueryOutcome =
             serde_json::from_value(serde_json::json!({
                 "device_keys": {
                     fx.actor.as_str(): {

@@ -1,8 +1,8 @@
 //! Per-realm `ck.self.events.stream.subscribe` long-poll engine.
 //!
 //! This is the realm-scoped counterpart to [`crate::sync_engine`]. The account
-//! engine drives `/_cokret/self/account/subscribe` (the account-aggregate
-//! stream); this engine drives `/_cokret/self/events/subscribe?realms=<R>` for
+//! engine drives `/_arkret/self/account/subscribe` (the account-aggregate
+//! stream); this engine drives `/_arkret/self/events/subscribe?realms=<R>` for
 //! the currently-selected realm.
 //!
 //! Why a SECOND engine instead of reusing the account stream's cursor:
@@ -126,7 +126,7 @@ impl ClientProjector for RealmIngestProjector {
     fn project(
         &self,
         batch: Vec<ClientEvent>,
-    ) -> impl std::future::Future<Output = cokret_sdk::Result<()>> + '_ {
+    ) -> impl std::future::Future<Output = arkret_sdk::Result<()>> + '_ {
         let payloads: Vec<Value> = batch
             .into_iter()
             .filter_map(client_event_to_legacy_payload)
@@ -237,7 +237,7 @@ async fn run_realm_iteration(
             }
         };
 
-    let realm_id_typed = match cokret_sdk::RealmId::new(realm_id.to_owned()) {
+    let realm_id_typed = match arkret_sdk::RealmId::new(realm_id.to_owned()) {
         Ok(realm_id) => realm_id,
         Err(error) => {
             tracing::warn!(error = %error, realm_id, "invalid realm id for events subscribe");
@@ -337,21 +337,21 @@ mod tests {
 
     const TEST_REALM: &str = "ak:realm:01904100-0000-7000-8000-000000000001";
 
-    fn test_realm_id() -> cokret_sdk::RealmId {
-        cokret_sdk::RealmId::new(TEST_REALM).unwrap()
+    fn test_realm_id() -> arkret_sdk::RealmId {
+        arkret_sdk::RealmId::new(TEST_REALM).unwrap()
     }
 
-    fn test_actor_id() -> cokret_sdk::Did {
-        cokret_sdk::Did::new("did:webvh:z6mkfixture:alice.example").unwrap()
+    fn test_actor_id() -> arkret_sdk::Did {
+        arkret_sdk::Did::new("did:webvh:z6mkfixture:alice.example").unwrap()
     }
 
-    fn test_event(kind: &str, payload: Value) -> cokret_sdk::Event {
-        cokret_sdk::Event::new(
+    fn test_event(kind: &str, payload: Value) -> arkret_sdk::Event {
+        arkret_sdk::Event::new(
             kind,
             test_realm_id(),
             test_actor_id(),
             1,
-            cokret_sdk::Hlc::new("01970e589d21-0004-a13f9c2e").unwrap(),
+            arkret_sdk::Hlc::new("01970e589d21-0004-a13f9c2e").unwrap(),
             payload,
         )
         .unwrap()
@@ -360,7 +360,7 @@ mod tests {
     #[test]
     fn client_event_message_converts_to_legacy_ingest_payload() {
         let event = test_event(
-            cokret_sdk::events::kinds::MESSAGE_CREATE,
+            arkret_sdk::events::kinds::MESSAGE_CREATE,
             json!({
                 "strand_id": "ak:strand:01904100-0000-7000-8000-000000000002",
                 "track_name": "discussion",
@@ -388,7 +388,7 @@ mod tests {
     #[test]
     fn client_event_generic_event_converts_to_legacy_ingest_payload() {
         let event = test_event(
-            cokret_sdk::events::kinds::STRAND_UPDATE,
+            arkret_sdk::events::kinds::STRAND_UPDATE,
             json!({"target_ref": "ak:strand:01904100-0000-7000-8000-000000000002", "patch": {}}),
         );
         let event_value = serde_json::to_value(&event).unwrap();

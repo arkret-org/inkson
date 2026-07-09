@@ -54,7 +54,7 @@ pub(super) fn build_invite_locator_token(account_did: &str) -> String {
 
 pub(super) fn build_invite_locator_url(base_url: &str, locator_token: &str) -> String {
     let base = base_url.trim_end_matches('/');
-    format!("{base}/_cokret/open/invite-locators/resolve#token={locator_token}")
+    format!("{base}/_arkret/open/invite-locators/resolve#token={locator_token}")
 }
 
 pub(super) fn render_invite_locator_qr_svg(locator_url: &str) -> String {

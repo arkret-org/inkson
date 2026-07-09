@@ -7,7 +7,7 @@
 //!
 //! Read side: the verified relationships and declared hints are read from the
 //! spec-canonical projection `ck.self.realm_organization.query.list`
-//! (`GET /_cokret/self/realms/{realm_id}/organizations`) via
+//! (`GET /_arkret/self/realms/{realm_id}/organizations`) via
 //! [`crate::api::CokretApi::list_realm_organizations`]. The server only returns
 //! `verified_active` / `revoked_or_expired` rows plus
 //! `declared_organization_hints`.
@@ -18,7 +18,7 @@
 //! organization-side signatures and does NOT call coauth admin endpoints; this
 //! panel only reads and links operators to where the binding flow lives.
 
-use cokret_sdk::models::{
+use arkret_sdk::models::{
     RealmOrganizationControlScope, RealmOrganizationLifecyclePhase, RealmOrganizationRelationship,
     RealmOrganizationRelationshipList, RealmOrganizationRelationshipRow, RealmOrganizationStatus,
 };
@@ -843,7 +843,7 @@ fn OrganizationBindPanel(
                                     crate::operation::ck_ops::RealmOrganizationAuthorizationInput {
                                         issuer: org_did.clone(),
                                         issuer_role:
-                                            cokret_sdk::models::RealmOrganizationIssuerRole::OrganizationDid,
+                                            arkret_sdk::models::RealmOrganizationIssuerRole::OrganizationDid,
                                         verification_method: did_key_id.clone(),
                                         delegation_ref: None,
                                         executed_by: None,

@@ -13,7 +13,7 @@ async fn publish_mls_key_package_fails_closed_without_active_signer() {
     // bails before reading any field, but we still want the
     // argument well-formed so a future refactor that touches the
     // record before bailing surfaces here.
-    let record: cokret_sdk::MlsKeyPackageRecord = serde_json::from_value(serde_json::json!({
+    let record: arkret_sdk::MlsKeyPackageRecord = serde_json::from_value(serde_json::json!({
         "keypackage_id": "ak:mls:kp:01904100-0000-7000-8000-000000000001",
         "principal_id": "did:web:alice.example",
         "device_id": "ak:device:01904100-0000-7000-8000-000000000001",
@@ -39,9 +39,9 @@ async fn publish_mls_key_package_fails_closed_without_active_signer() {
 #[cfg(not(target_arch = "wasm32"))]
 #[test]
 fn mls_key_package_upload_entry_carries_digest_and_ref() {
-    let identity = cokret_sdk::CokretMlsIdentity::new_basic(
-        cokret_sdk::Did::new("did:web:alice.example".to_owned()).unwrap(),
-        cokret_sdk::DeviceId::new("ak:device:01904100-0000-7000-8000-000000000001".to_owned())
+    let identity = arkret_sdk::CokretMlsIdentity::new_basic(
+        arkret_sdk::Did::new("did:web:alice.example".to_owned()).unwrap(),
+        arkret_sdk::DeviceId::new("ak:device:01904100-0000-7000-8000-000000000001".to_owned())
             .unwrap(),
     )
     .unwrap();

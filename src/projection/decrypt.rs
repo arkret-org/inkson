@@ -21,7 +21,7 @@ pub(crate) fn try_local_mls_decrypt_core(
     device_id: &str,
     payload_value: &Value,
 ) -> Option<Vec<u8>> {
-    let payload: cokret_sdk::EncryptedPayload =
+    let payload: arkret_sdk::EncryptedPayload =
         serde_json::from_value(payload_value.clone()).ok()?;
     let secure_store = crate::secure_key_store::default_secure_key_store("inkson");
     crate::mls::runtime::decrypt_application_payload(

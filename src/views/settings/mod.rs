@@ -1487,7 +1487,7 @@ pub fn SettingsPanel(
                                     }
                                 }
                                 div { class: "muted",
-                                    "Contract: ck.schema.key_backup.v1 over /_cokret/self/keys/backups/*. This is not required for encrypted-history recovery setup."
+                                    "Contract: ck.schema.key_backup.v1 over /_arkret/self/keys/backups/*. This is not required for encrypted-history recovery setup."
                                 }
                             }
                         }
@@ -1546,8 +1546,8 @@ pub fn SettingsPanel(
                                     let api_token = token();
                                     spawn(async move {
                                         match with_authed_sdk_client(&base, api_token, |http| async move {
-                                            http.get::<cokret_sdk::MimiGroupInfoOutcome>(
-                                                "/_cokret/open/mimi/strands/01JSMIMI/group-info",
+                                            http.get::<arkret_sdk::MimiGroupInfoOutcome>(
+                                                "/_arkret/open/mimi/strands/01JSMIMI/group-info",
                                             )
                                             .await
                                             .map_err(anyhow::Error::from)
@@ -1594,14 +1594,14 @@ pub fn SettingsPanel(
                                     let api_token = token();
                                     spawn(async move {
                                         match with_authed_sdk_client(&base, api_token, |http| async move {
-                                            let request = cokret_sdk::MimiIdentifierQueryRequestBody {
+                                            let request = arkret_sdk::MimiIdentifierQueryRequestBody {
                                                 identifiers: vec![json!({"mimi_uri": "mimi://remote.example/alice"})],
                                                 requester: None,
                                                 privacy_profile: Some("private_identifier_query".to_owned()),
                                                 proofs: Vec::new(),
                                             };
-                                            http.post::<_, cokret_sdk::MimiIdentifierQueryOutcome>(
-                                                "/_cokret/open/mimi/identifiers/query",
+                                            http.post::<_, arkret_sdk::MimiIdentifierQueryOutcome>(
+                                                "/_arkret/open/mimi/identifiers/query",
                                                 &request,
                                             )
                                             .await
@@ -1650,9 +1650,9 @@ pub fn SettingsPanel(
                                     let device = device_id();
                                     spawn(async move {
                                         match with_authed_sdk_client(&base, api_token, |http| async move {
-                                            let request = cokret_sdk::MimiSubmitMessageRequestBody {
-                                                sender_actor_id: cokret_sdk::Did::new(actor.trim().to_owned())?,
-                                                device_id: cokret_sdk::DeviceId::new(device.trim().to_owned())?,
+                                            let request = arkret_sdk::MimiSubmitMessageRequestBody {
+                                                sender_actor_id: arkret_sdk::Did::new(actor.trim().to_owned())?,
+                                                device_id: arkret_sdk::DeviceId::new(device.trim().to_owned())?,
                                                 ciphertext: json!({
                                                     "source_format": "text/markdown;variant=GFM-MIMI",
                                                     "body": "MIMI interop test from inkson",
@@ -1662,8 +1662,8 @@ pub fn SettingsPanel(
                                                 epoch: None,
                                                 associated_data: serde_json::Value::Null,
                                             };
-                                            http.post::<_, cokret_sdk::MimiSubmitMessageOutcome>(
-                                                "/_cokret/open/mimi/strands/01JSMIMI/messages",
+                                            http.post::<_, arkret_sdk::MimiSubmitMessageOutcome>(
+                                                "/_arkret/open/mimi/strands/01JSMIMI/messages",
                                                 &request,
                                             )
                                             .await
@@ -1707,15 +1707,15 @@ pub fn SettingsPanel(
                                     let actor = account_did();
                                     spawn(async move {
                                         match with_authed_sdk_client(&base, api_token, |http| async move {
-                                            let request = cokret_sdk::MimiProxyDownloadRequestBody {
+                                            let request = arkret_sdk::MimiProxyDownloadRequestBody {
                                                 asset_ref: "ak:blob:sha256:01015dc8af66d01f557ea63f13538f1964848840a350c5311d1efc8ad138bb91".to_owned(),
-                                                requester: cokret_sdk::Did::new(actor.trim().to_owned())?,
+                                                requester: arkret_sdk::Did::new(actor.trim().to_owned())?,
                                                 strand_id: None,
                                                 ohttp_context: serde_json::Value::Null,
                                                 range: None,
                                             };
-                                            http.post::<_, cokret_sdk::MimiProxyDownloadOutcome>(
-                                                "/_cokret/open/mimi/proxy-download",
+                                            http.post::<_, arkret_sdk::MimiProxyDownloadOutcome>(
+                                                "/_arkret/open/mimi/proxy-download",
                                                 &request,
                                             )
                                             .await
@@ -2167,10 +2167,10 @@ pub fn SettingsPanel(
                             "data-testid": "presence-status-save-button",
                             onclick: move |_| {
                                 let manual_state = presence_manual_state();
-                                let message = cokret_sdk::canonical::to_nfc(
+                                let message = arkret_sdk::canonical::to_nfc(
                                     presence_status_message().trim(),
                                 );
-                                if let Err(error) = cokret_sdk::validate_status_message(&message) {
+                                if let Err(error) = arkret_sdk::validate_status_message(&message) {
                                     presence_status_feedback.set(
                                         format!("Status message is invalid: {error}"),
                                     );

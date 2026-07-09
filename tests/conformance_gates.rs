@@ -157,8 +157,8 @@ fn cba_exempt_reducer_kind(kind: &EventKind) -> bool {
     )
 }
 
-fn test_seal_basis() -> cokret_sdk::SealBasis {
-    let view: cokret_sdk::RealmSealFrontierView = serde_json::from_value(serde_json::json!({
+fn test_seal_basis() -> arkret_sdk::SealBasis {
+    let view: arkret_sdk::RealmSealFrontierView = serde_json::from_value(serde_json::json!({
         "realm_id": TEST_REALM_ID,
         "seal_id": TEST_ANCHOR_REF,
         "control_event_set_root": TEST_ROOT_HASH,

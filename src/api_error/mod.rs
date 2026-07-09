@@ -1,4 +1,4 @@
-use cokret_sdk::ErrorEnvelope;
+use arkret_sdk::ErrorEnvelope;
 use reqwest::StatusCode;
 use serde::Deserialize;
 use serde_json::Value;
@@ -20,8 +20,8 @@ pub(crate) fn api_error_status_and_envelope(
     if let Some(api_error) = error.downcast_ref::<CokretApiError>() {
         return Some((api_error.status, &api_error.error));
     }
-    if let Some(cokret_sdk::Error::Api { status, error }) =
-        error.downcast_ref::<cokret_sdk::Error>()
+    if let Some(arkret_sdk::Error::Api { status, error }) =
+        error.downcast_ref::<arkret_sdk::Error>()
     {
         return Some((StatusCode::from_u16(*status).ok()?, error.as_ref()));
     }
@@ -52,12 +52,12 @@ struct ApiErrorBody {
 /// it up without each call site needing to wire its own UI. The
 /// obligations array (per `authz/policy-server.md` §3) is pulled from
 /// the envelope's `details["obligations"]` slot if present.
-pub fn decode_cokret_error(status: StatusCode, bytes: &[u8]) -> ErrorEnvelope {
+pub fn decode_arkret_error(status: StatusCode, bytes: &[u8]) -> ErrorEnvelope {
     #[derive(Deserialize)]
     struct PlainEnvelope {
         #[serde(default)]
         ok: bool,
-        error: cokret_sdk::ErrorDetail,
+        error: arkret_sdk::ErrorDetail,
         #[serde(default = "default_request_id")]
         request_id: String,
     }

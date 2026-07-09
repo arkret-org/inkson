@@ -12,7 +12,7 @@
 //!
 //! Incoming `ck.agent.interop_session.result` events fetched from
 //! soland are decoded + verified via
-//! `cokret_sdk::agent_binding::verify_audit_binding_by_kind`. The
+//! `arkret_sdk::agent_binding::verify_audit_binding_by_kind`. The
 //! panel renders a per-result badge so operators can tell at a glance
 //! whether the signature matches.
 //!

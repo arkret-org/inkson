@@ -10,20 +10,20 @@ pub fn invite_create_structured(
     invite_id: &str,
     invitee: &str,
     role: Option<&str>,
-    invite_delivery_target: cokret_sdk::InviteDeliveryTarget,
+    invite_delivery_target: arkret_sdk::InviteDeliveryTarget,
     introduction_evidence_digest: &str,
 ) -> anyhow::Result<OperationBuilder> {
     // Strong `invite_payload` (directed-create anyOf branch). The id /
     // digest strings are parsed into SDK newtypes so malformed wire is a
     // build-time error, and `x_role` is carried via the typed extension
     // map (re-prefixed on serialize).
-    let invite_id_typed = cokret_sdk::InviteId::new(invite_id.to_owned())
+    let invite_id_typed = arkret_sdk::InviteId::new(invite_id.to_owned())
         .map_err(|err| anyhow::anyhow!("invite_id not canonical {invite_id:?}: {err}"))?;
-    let invitee_did = cokret_sdk::Did::new(invitee.to_owned())
+    let invitee_did = arkret_sdk::Did::new(invitee.to_owned())
         .map_err(|err| anyhow::anyhow!("invitee not a DID {invitee:?}: {err}"))?;
-    let digest = cokret_sdk::Hash::new(introduction_evidence_digest.to_owned())
+    let digest = arkret_sdk::Hash::new(introduction_evidence_digest.to_owned())
         .map_err(|err| anyhow::anyhow!("introduction_evidence_digest invalid: {err}"))?;
-    let mut payload = cokret_sdk::models::InviteCreatePayload::new(
+    let mut payload = arkret_sdk::models::InviteCreatePayload::new(
         invite_id_typed,
         invitee_did,
         invite_delivery_target,
@@ -39,7 +39,7 @@ pub fn invite_create_structured(
     Ok(OperationBuilder::new(
         realm_id,
         actor,
-        cokret_sdk::events::kinds::EventKind::InviteCreate,
+        arkret_sdk::events::kinds::EventKind::InviteCreate,
     )
     .body(body))
 }
@@ -53,7 +53,7 @@ pub fn invite_accept(
     Ok(OperationBuilder::new(
         realm_id,
         actor,
-        cokret_sdk::events::kinds::EventKind::InviteAccept,
+        arkret_sdk::events::kinds::EventKind::InviteAccept,
     )
     .target_ref(invite_id)
     .body(body))
@@ -69,7 +69,7 @@ pub fn invite_cancel(
     Ok(OperationBuilder::new(
         realm_id,
         actor,
-        cokret_sdk::events::kinds::EventKind::InviteCancel,
+        arkret_sdk::events::kinds::EventKind::InviteCancel,
     )
     .target_ref(invite_id)
     .body(body))

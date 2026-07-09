@@ -178,7 +178,7 @@ pub fn projection_events_from_sync_realms(
                 // canonical Content Block JSON → display text.
                 let decrypted_body = if sidecar_body.is_none() {
                     if let (Some((actor_id, device_id)), Some(store)) = (decrypt_identity, store) {
-                        serde_json::from_value::<cokret_sdk::EncryptedEnvelopeV1>(
+                        serde_json::from_value::<arkret_sdk::EncryptedEnvelopeV1>(
                             encrypted_content.clone(),
                         )
                         .ok()

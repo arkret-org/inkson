@@ -44,6 +44,6 @@ fn keypackage_claim_request_carries_required_capabilities() {
     let wire = serde_json::to_value(&body).expect("claim request serializes");
     assert_eq!(
         wire["required_capabilities"],
-        json!(cokret_sdk::ARKRET_MLS_KEY_PACKAGE_CAPABILITIES)
+        json!(arkret_sdk::ARKRET_MLS_KEY_PACKAGE_CAPABILITIES)
     );
 }

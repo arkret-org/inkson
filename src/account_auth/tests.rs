@@ -74,7 +74,7 @@ fn session_grant_proof_signs_canonical_claims() {
         .expect("proof JWS must verify under matching pubkey");
     // Decode + assert payload claims.
     let payload_bytes = URL_SAFE_NO_PAD.decode(parts[1]).unwrap();
-    let claims: cokret_sdk::SessionGrantIntrospectionProofClaims =
+    let claims: arkret_sdk::SessionGrantIntrospectionProofClaims =
         serde_json::from_slice(&payload_bytes).unwrap();
     assert_eq!(
         claims.kind, "ck.session_grant.introspection_proof.v1",
@@ -195,9 +195,9 @@ fn test_discovery() -> OidcDiscoveryDocument {
     }
 }
 
-fn test_oidc_method() -> cokret_sdk::AuthMethod {
-    cokret_sdk::AuthMethod {
-        method: cokret_sdk::AuthMethodKind::Oidc,
+fn test_oidc_method() -> arkret_sdk::AuthMethod {
+    arkret_sdk::AuthMethod {
+        method: arkret_sdk::AuthMethodKind::Oidc,
         issuer: Some("https://issuer.example".to_owned()),
         provider: None,
         openid_configuration: Some(
@@ -205,8 +205,8 @@ fn test_oidc_method() -> cokret_sdk::AuthMethod {
         ),
         client_id: Some("inkson-test".to_owned()),
         scopes: vec!["openid".to_owned(), "profile".to_owned()],
-        grant_exchange: cokret_sdk::AuthGrantExchange {
-            proof_kind: cokret_sdk::SessionGrantProofKind::OidcCodeExchange,
+        grant_exchange: arkret_sdk::AuthGrantExchange {
+            proof_kind: arkret_sdk::SessionGrantProofKind::OidcCodeExchange,
         },
     }
 }
@@ -387,29 +387,29 @@ fn authorize_url_falls_back_to_native_client_id() {
 /// `gate_account_base` derivation uses the strong `account_authority`.
 #[test]
 fn resolve_gate_account_base_prefers_account_authority() {
-    let mut metadata = cokret_sdk::AuthMetadata::minimal("production");
-    metadata.account_authority = Some(cokret_sdk::AccountAuthority {
+    let mut metadata = arkret_sdk::AuthMetadata::minimal("production");
+    metadata.account_authority = Some(arkret_sdk::AccountAuthority {
         origin: "https://aa.example".to_owned(),
-        gate_account_base: "https://aa.example/_cokret/gate/account".to_owned(),
+        gate_account_base: "https://aa.example/_arkret/gate/account".to_owned(),
     });
     let base = resolve_gate_account_base("https://principal.example", &metadata).unwrap();
-    assert_eq!(base, "https://aa.example/_cokret/gate/account");
+    assert_eq!(base, "https://aa.example/_arkret/gate/account");
 }
 
 #[test]
 fn resolve_gate_account_base_derives_from_account_authority_origin() {
-    let mut metadata = cokret_sdk::AuthMetadata::minimal("production");
-    metadata.account_authority = Some(cokret_sdk::AccountAuthority {
+    let mut metadata = arkret_sdk::AuthMetadata::minimal("production");
+    metadata.account_authority = Some(arkret_sdk::AccountAuthority {
         origin: "https://aa.example".to_owned(),
         gate_account_base: String::new(),
     });
     let base = resolve_gate_account_base("https://principal.example", &metadata).unwrap();
-    assert_eq!(base, "https://aa.example/_cokret/gate/account");
+    assert_eq!(base, "https://aa.example/_arkret/gate/account");
 }
 
 #[test]
 fn resolve_gate_account_base_fails_closed_without_account_authority() {
-    let metadata = cokret_sdk::AuthMetadata::minimal("production");
+    let metadata = arkret_sdk::AuthMetadata::minimal("production");
     let error = resolve_gate_account_base("https://principal.example", &metadata).unwrap_err();
     assert!(
         error

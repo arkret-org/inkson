@@ -20,7 +20,7 @@ pub fn incident_strand_create(
     priority: &str,
 ) -> anyhow::Result<OperationBuilder> {
     let realm_id = trim_realm_id(realm_id);
-    let object = cokret_sdk::StrandCreateObject::new(
+    let object = arkret_sdk::StrandCreateObject::new(
         strand_id_value(strand_id)?,
         realm_id_value(&realm_id)?,
         did_id(actor)?,
@@ -31,18 +31,18 @@ pub fn incident_strand_create(
     .with_metadata_field("incident_priority", json!(priority))
     .with_track(
         "synthesis",
-        cokret_sdk::StrandTrackConfig::new()
+        arkret_sdk::StrandTrackConfig::new()
             .primary()
             .with_profile("incident_response"),
     )
     .with_track(
         "discussion",
-        cokret_sdk::StrandTrackConfig::new().with_profile("war_room"),
+        arkret_sdk::StrandTrackConfig::new().with_profile("war_room"),
     );
     Ok(OperationBuilder::new(
         &realm_id,
         actor,
-        cokret_sdk::events::kinds::EventKind::StrandCreate,
+        arkret_sdk::events::kinds::EventKind::StrandCreate,
     )
     .target_ref(strand_id)
     .body(object_create_payload_value(
@@ -78,7 +78,7 @@ pub fn kanban_card_strand_create(
     rank: &str,
 ) -> anyhow::Result<OperationBuilder> {
     let realm_id = trim_realm_id(realm_id);
-    let object = cokret_sdk::StrandCreateObject::new(
+    let object = arkret_sdk::StrandCreateObject::new(
         strand_id_value(strand_id)?,
         realm_id_value(&realm_id)?,
         did_id(actor)?,
@@ -90,14 +90,14 @@ pub fn kanban_card_strand_create(
     .with_metadata_field("rank", json!(rank))
     .with_track(
         "synthesis",
-        cokret_sdk::StrandTrackConfig::new()
+        arkret_sdk::StrandTrackConfig::new()
             .primary()
             .with_profile("kanban_card"),
     );
     Ok(OperationBuilder::new(
         &realm_id,
         actor,
-        cokret_sdk::events::kinds::EventKind::StrandCreate,
+        arkret_sdk::events::kinds::EventKind::StrandCreate,
     )
     .target_ref(strand_id)
     .body(object_create_payload_value(

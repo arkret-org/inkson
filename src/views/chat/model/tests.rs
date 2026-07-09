@@ -47,12 +47,12 @@ mod device_identity_proof_tests {
         let proof_created_at = chrono::DateTime::parse_from_rfc3339("2026-06-16T00:00:00Z")
             .unwrap()
             .with_timezone(&chrono::Utc);
-        let did = cokret_sdk::Did::new(actor_id.to_owned()).unwrap();
-        let mut proof = cokret_sdk::Proof {
+        let did = arkret_sdk::Did::new(actor_id.to_owned()).unwrap();
+        let mut proof = arkret_sdk::Proof {
             kind: "detached_jws".to_owned(),
             alg: signer.algorithm().to_owned(),
             verification_method: verification_method.clone(),
-            event_digest: cokret_sdk::Hash::new(event_digest).unwrap(),
+            event_digest: arkret_sdk::Hash::new(event_digest).unwrap(),
             created_at: proof_created_at,
             domain: None,
             audience: None,
@@ -67,7 +67,7 @@ mod device_identity_proof_tests {
         envelope
     }
 
-    fn pubkey(seed: u8) -> cokret_sdk::signatures::PublicKeyMaterial {
+    fn pubkey(seed: u8) -> arkret_sdk::signatures::PublicKeyMaterial {
         let sk = ed25519_dalek::SigningKey::from_bytes(&[seed; 32]);
         let did = crate::did_key::did_key_from_verifying_key(&sk.verifying_key());
         crate::device_directory::public_key_from_directory_value(&did).unwrap()

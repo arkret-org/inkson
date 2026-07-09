@@ -685,7 +685,7 @@ fn productivity_account_data_keys_use_sdk_private_derivation() {
     let saved = saved_account_data_key(ns, "Focus", target_ref).unwrap();
     let draft = draft_account_data_key(
         ns,
-        cokret_sdk::DraftKind::Message,
+        arkret_sdk::DraftKind::Message,
         target_ref,
         DRAFT_MESSAGE_SLOT,
     )
@@ -718,11 +718,11 @@ fn contact_and_realm_remarks_are_encrypted_account_data() {
 
     assert_eq!(
         private_account_data_key_prefix(&realm_key),
-        Some(cokret_sdk::ACCOUNT_DATA_TYPE_CONTACTS_REALM)
+        Some(arkret_sdk::ACCOUNT_DATA_TYPE_CONTACTS_REALM)
     );
     assert_eq!(
         private_account_data_key_prefix(&actor_key),
-        Some(cokret_sdk::ACCOUNT_DATA_TYPE_CONTACTS_ACTOR)
+        Some(arkret_sdk::ACCOUNT_DATA_TYPE_CONTACTS_ACTOR)
     );
     assert!(validate_private_account_data_key(&realm_key).is_ok());
     assert!(validate_private_account_data_key(&actor_key).is_ok());
@@ -768,7 +768,7 @@ fn private_account_data_builders_emit_encrypted_payload() {
 fn private_account_data_builder_can_emit_cas_guard() {
     let key = draft_account_data_key(
         b"inkson-account-data-test-key",
-        cokret_sdk::DraftKind::Message,
+        arkret_sdk::DraftKind::Message,
         "ak:realm:01904100-0000-7000-8000-000000000001",
         DRAFT_MESSAGE_SLOT,
     )
@@ -860,7 +860,7 @@ fn draft_sync_value_requires_origin_device_id_and_current_slot_shape() {
     let field_slot = draft_slot_for_strand_field_path(&json!("metadata.title")).unwrap();
     assert!(field_slot.starts_with("field_"));
     assert_eq!(field_slot.len(), "field_".len() + 64);
-    assert!(validate_draft_slot(cokret_sdk::DraftKind::StrandField, &field_slot).is_ok());
+    assert!(validate_draft_slot(arkret_sdk::DraftKind::StrandField, &field_slot).is_ok());
 }
 
 #[test]

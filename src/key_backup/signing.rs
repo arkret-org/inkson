@@ -369,7 +369,7 @@ fn key_backup_unlock_backoff_scope(
     api: &crate::api::CokretApi,
     principal_id: &str,
 ) -> anyhow::Result<String> {
-    let endpoint = api.endpoint("_cokret/self/keys/backups")?;
+    let endpoint = api.endpoint("_arkret/self/keys/backups")?;
     Ok(format!(
         "{}|principal={}",
         endpoint.as_str(),
@@ -412,7 +412,7 @@ fn unlocked_key_backup_cache_key(
     principal_id: &str,
     requesting_device_id: &str,
 ) -> anyhow::Result<String> {
-    let endpoint = api.endpoint("_cokret/self/keys/backups")?;
+    let endpoint = api.endpoint("_arkret/self/keys/backups")?;
     let backup_id = required_str_anyhow(backup_metadata, "backup_id")?;
     let backup_class = required_str_anyhow(backup_metadata, "backup_class")?;
     let series_id = required_str_anyhow(backup_metadata, "series_id")?;
@@ -511,7 +511,7 @@ mod tests {
         // ceremony kind (e.g. `recovery_unlock`) makes the server fail closed with
         // `recovery_evidence_unbound` and permanently locks shared-history cards.
         assert_eq!(proof["proof_kind"], "principal_signing");
-        serde_json::from_value::<cokret_sdk::KeyBackupUnlockProof>(proof)
+        serde_json::from_value::<arkret_sdk::KeyBackupUnlockProof>(proof)
             .expect("unlock proof matches SDK schema");
     }
 

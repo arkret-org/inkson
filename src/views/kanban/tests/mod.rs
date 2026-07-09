@@ -35,7 +35,7 @@ pub(super) trait TestEventPayloadView {
 }
 
 #[cfg(not(target_arch = "wasm32"))]
-impl TestEventPayloadView for cokret_sdk::Event {
+impl TestEventPayloadView for arkret_sdk::Event {
     fn kind_for_schema(&self) -> &str {
         self.kind.as_str()
     }
@@ -47,7 +47,7 @@ impl TestEventPayloadView for cokret_sdk::Event {
 
 #[cfg(not(target_arch = "wasm32"))]
 pub(super) fn assert_registered_payload_valid(event: &impl TestEventPayloadView) {
-    cokret_sdk::schema::event_payload_validator_catalog()
+    arkret_sdk::schema::event_payload_validator_catalog()
         .unwrap()
         .validate_payload(event.kind_for_schema(), event.payload_for_schema())
         .unwrap_or_else(|err| {
@@ -60,12 +60,12 @@ pub(super) fn assert_registered_payload_valid(event: &impl TestEventPayloadView)
 }
 
 #[cfg(not(target_arch = "wasm32"))]
-pub(super) fn sdk_event(event: crate::operation::EventEnvelope) -> cokret_sdk::Event {
+pub(super) fn sdk_event(event: crate::operation::EventEnvelope) -> arkret_sdk::Event {
     event
 }
 
 #[cfg(not(target_arch = "wasm32"))]
-pub(super) fn sdk_event_local_target_ref(event: &cokret_sdk::Event) -> Option<&str> {
+pub(super) fn sdk_event_local_target_ref(event: &arkret_sdk::Event) -> Option<&str> {
     event
         .unsigned
         .get("local_target_ref")

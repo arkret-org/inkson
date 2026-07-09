@@ -7,25 +7,25 @@ use crate::local_state::isolated_store_for_tests as temp_state_store;
 use crate::mls::runtime::*;
 use crate::secure_key_store::{MemorySecureKeyStore, SecureKeyStoreError};
 
-fn genesis_governance_binding(group_id: &str) -> cokret_sdk::MlsGovernanceBindingPayload {
+fn genesis_governance_binding(group_id: &str) -> arkret_sdk::MlsGovernanceBindingPayload {
     let realm_id =
-        cokret_sdk::RealmId::new("ak:realm:01904100-0000-7000-8000-000000000001").unwrap();
+        arkret_sdk::RealmId::new("ak:realm:01904100-0000-7000-8000-000000000001").unwrap();
     let frontier =
-        vec![cokret_sdk::EventId::new("ak:event:01904100-0000-7000-8000-0000000000aa").unwrap()];
-    let policy_root = cokret_sdk::Hash::new(
+        vec![arkret_sdk::EventId::new("ak:event:01904100-0000-7000-8000-0000000000aa").unwrap()];
+    let policy_root = arkret_sdk::Hash::new(
         "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
     )
     .unwrap();
     // Genesis installs epoch 0 (governance binding epoch 0 -> 0).
-    cokret_sdk::MlsGovernanceBindingPayload::realm(
+    arkret_sdk::MlsGovernanceBindingPayload::realm(
         realm_id,
         group_id,
         0,
         0,
         frontier,
         policy_root,
-        cokret_sdk::MLS_GOVERNANCE_BINDING_FULL_PROFILE,
-        cokret_sdk::CORE_REDUCER_PROFILE,
+        arkret_sdk::MLS_GOVERNANCE_BINDING_FULL_PROFILE,
+        arkret_sdk::CORE_REDUCER_PROFILE,
     )
     .unwrap()
 }
@@ -80,7 +80,7 @@ fn build_mls_genesis_payload_has_required_fields() {
 
     // Validate against the registered canonical `mls_genesis_payload`
     // schema so the full payload passes strict client/server validation.
-    let catalog = cokret_sdk::schema::event_payload_validator_catalog().unwrap();
+    let catalog = arkret_sdk::schema::event_payload_validator_catalog().unwrap();
     if catalog
         .missing_payload_validators_for(std::iter::once("ck.mls.genesis"))
         .is_empty()
@@ -180,7 +180,7 @@ fn mls_history_backup_decode_rejects_metadata_mismatch() {
 #[cfg(not(target_arch = "wasm32"))]
 #[test]
 fn restore_mls_history_backup_saves_snapshot_when_fresh() {
-    use cokret_sdk::{CokretMlsIdentity, DeviceId, Did};
+    use arkret_sdk::{CokretMlsIdentity, DeviceId, Did};
 
     let actor = "did:web:alice.example";
     let device = "ak:device:01904100-0000-7000-8000-000000000001";
@@ -222,7 +222,7 @@ fn restore_mls_history_backup_saves_snapshot_when_fresh() {
 #[cfg(not(target_arch = "wasm32"))]
 #[test]
 fn restore_mls_history_backup_rejects_epoch_rollback() {
-    use cokret_sdk::{CokretMlsIdentity, DeviceId, Did};
+    use arkret_sdk::{CokretMlsIdentity, DeviceId, Did};
 
     let actor = "did:web:alice.example";
     let device = "ak:device:01904100-0000-7000-8000-000000000001";
@@ -273,7 +273,7 @@ fn restore_mls_history_backup_rejects_epoch_rollback() {
 #[cfg(not(target_arch = "wasm32"))]
 #[test]
 fn cross_device_recovery_restores_history_without_local_secret() {
-    use cokret_sdk::{CokretMlsIdentity, DeviceId, Did};
+    use arkret_sdk::{CokretMlsIdentity, DeviceId, Did};
 
     use crate::mls::account_recovery::{
         build_mls_account_secret_backup_body_with_kek, decrypt_mls_account_secret_backup,

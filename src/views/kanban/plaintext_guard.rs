@@ -69,7 +69,7 @@ pub(super) fn patch_touches_private_paths(payload: &Value, private_paths: &[&str
         })
 }
 
-pub(super) fn kanban_event_carries_plaintext_private_content(event: &cokret_sdk::Event) -> bool {
+pub(super) fn kanban_event_carries_plaintext_private_content(event: &arkret_sdk::Event) -> bool {
     match event.kind.as_str() {
         "ck.strand.create" => [
             &["body"][..],
@@ -128,7 +128,7 @@ pub(super) const SECURITY_STATE_NOT_READY_REASON: &str =
 ///   projection is still in flight.
 pub(super) fn kanban_plaintext_block_reason(
     scope_security_encrypted: Option<bool>,
-    event: &cokret_sdk::Event,
+    event: &arkret_sdk::Event,
 ) -> Option<String> {
     match scope_security_encrypted {
         // Known plaintext Realm — legitimate plaintext write, never block.

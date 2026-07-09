@@ -313,7 +313,7 @@ fn space_bootstrap_events_use_canonical_create_and_facet_kinds() {
         create.effects[0].cell.to_string(),
         "ak:cell:ck.component.realm.create.v1:ck:realm:0196419b-0000-7000-8000-000000000001"
     );
-    assert_eq!(create.effects[0].op.op_type, cokret_sdk::LatticeOpType::Set);
+    assert_eq!(create.effects[0].op.op_type, arkret_sdk::LatticeOpType::Set);
     // seal_ref starts unset on the typed envelope. Realm genesis
     // has no snapshot head yet, so the create event relies on its
     // `head_eq null` precondition instead of a prior seal.
@@ -432,7 +432,7 @@ fn realm_bootstrap_rejects_prejoin_history_with_strict_mls_scheme() {
 
     assert!(
         err.to_string()
-            .contains(cokret_sdk::error::REASON_HISTORY_VISIBILITY_REQUIRES_HISTORY_CAPABLE_SCHEME)
+            .contains(arkret_sdk::error::REASON_HISTORY_VISIBILITY_REQUIRES_HISTORY_CAPABLE_SCHEME)
     );
 }
 
@@ -485,7 +485,7 @@ fn default_history_sharing_policy_matches_prejoin_visibility() {
 
 /// Regression: every genesis bootstrap envelope must produce the SAME
 /// canonical digest whether hashed by inkson's local builder or after a
-/// round-trip through the authoritative `cokret_sdk::Event` wire model.
+/// round-trip through the authoritative `arkret_sdk::Event` wire model.
 ///
 /// The bug this guards: genesis preconditions assert `head_eq null` (an
 /// empty cell) and member transitions move `from: null → join`, both of
@@ -527,7 +527,7 @@ fn bootstrap_envelopes_have_no_sdk_digest_drift() {
         let digest = event
             .event_digest()
             .unwrap_or_else(|err| panic!("{kind}: SDK event_digest: {err}"));
-        let roundtrip: cokret_sdk::Event = serde_json::from_value(
+        let roundtrip: arkret_sdk::Event = serde_json::from_value(
             serde_json::to_value(&event).unwrap_or_else(|err| panic!("{kind}: to_value: {err}")),
         )
         .unwrap_or_else(|err| panic!("{kind}: SDK roundtrip: {err}"));
@@ -603,21 +603,21 @@ fn member_state_ban_event_uses_realm_scoped_member_cell() {
 #[test]
 fn outgoing_payload_schema_gate_accepts_sdk_object_patch_payload() {
     let strand_id = "ak:strand:0196419b-0000-7000-8000-000000000002";
-    let mut patch = cokret_sdk::Patch::new();
+    let mut patch = arkret_sdk::Patch::new();
     patch
         .insert_op(
             "fields.document",
-            cokret_sdk::PatchOp::set(json!({ "blocks": [] })),
+            arkret_sdk::PatchOp::set(json!({ "blocks": [] })),
         )
         .unwrap();
-    let payload = cokret_sdk::ObjectPatchPayload::for_target(strand_id, patch)
+    let payload = arkret_sdk::ObjectPatchPayload::for_target(strand_id, patch)
         .unwrap()
         .to_value()
         .unwrap();
     let event = OperationBuilder::new(
         "ak:realm:0196419b-0000-7000-8000-000000000010",
         "did:web:alice.example",
-        cokret_sdk::events::kinds::EventKind::StrandUpdate,
+        arkret_sdk::events::kinds::EventKind::StrandUpdate,
     )
     .target_ref(strand_id)
     .body(payload)
@@ -644,7 +644,7 @@ fn space_create_payload_matches_spec_schema() {
         None,
     )
     .unwrap();
-    let catalog = cokret_sdk::schema::event_payload_validator_catalog().unwrap();
+    let catalog = arkret_sdk::schema::event_payload_validator_catalog().unwrap();
     if catalog
         .missing_payload_validators_for(std::iter::once(event.kind.as_str()))
         .is_empty()
@@ -659,7 +659,7 @@ fn space_create_payload_matches_spec_schema() {
 
 /// Contract test: every event produced by `build_realm_bootstrap_events`
 /// MUST satisfy the spec payload-schema rule for its event kind, using
-/// the same `cokret_sdk::schema::event_payload_validator_catalog` that
+/// the same `arkret_sdk::schema::event_payload_validator_catalog` that
 /// soland runs on the wire. Catches schema drift (missing required
 /// fields, wrong patterns) at `cargo test` rather than user runtime.
 #[test]
@@ -685,7 +685,7 @@ fn realm_bootstrap_payloads_match_spec_schema() {
     )
     .unwrap();
 
-    let catalog = cokret_sdk::schema::event_payload_validator_catalog().unwrap();
+    let catalog = arkret_sdk::schema::event_payload_validator_catalog().unwrap();
     for event in &events {
         if catalog
             .missing_payload_validators_for(std::iter::once(event.kind.as_str()))

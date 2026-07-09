@@ -107,13 +107,13 @@ test("setup, onboarding, and Board entry works", async ({ page }) => {
   await expect(setupPanel.getByRole("button", { name: "Create Space" })).toHaveCount(0);
   const realmCreateRequest = page.waitForRequest(
     (request) =>
-      request.url().endsWith("/_cokret/self/events") &&
+      request.url().endsWith("/_arkret/self/events") &&
       request.method() === "POST" &&
       (request.postData() ?? "").includes("ck.realm.create"),
   );
   const plaintextPolicyRequest = page.waitForRequest(
     (request) =>
-      request.url().endsWith("/_cokret/self/events") &&
+      request.url().endsWith("/_arkret/self/events") &&
       request.method() === "POST" &&
       (request.postData() ?? "").includes("ck.realm.plaintext_visible_services"),
   );
@@ -217,9 +217,9 @@ test("realm admin page handles metadata, modal member invite, epoch rotation and
   await page
     .getByTestId("invite-target-input")
     .fill(
-      "http://127.0.0.1:8787/_cokret/open/invite-locators/resolve#token=e2e-invite-locator-token-00000001",
+      "http://127.0.0.1:8787/_arkret/open/invite-locators/resolve#token=e2e-invite-locator-token-00000001",
     );
-  const inviteCommit = page.waitForRequest("**/_cokret/self/events");
+  const inviteCommit = page.waitForRequest("**/_arkret/self/events");
   await page.getByTestId("send-invite-button").click();
   const inviteBody = await inviteCommit.then((request) => request.postDataJSON());
   expect(inviteBody.kind).toBe("ck.invite.create");
@@ -239,7 +239,7 @@ test("realm admin page handles metadata, modal member invite, epoch rotation and
   // YOU-01-009: rotation is now a real local `self_update_commit`
   // published as `ck.mls.commit`. The e2e fixture has no local MLS group
   // state for this realm, so the rotate must fail closed with a status
-  // message instead of calling the former non-spec /_cokret/self/mls/rotate
+  // message instead of calling the former non-spec /_arkret/self/mls/rotate
   // shim.
   await expect(page.getByTestId("realm-admin-status")).toContainText("rotate failed");
 

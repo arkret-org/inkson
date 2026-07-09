@@ -1,6 +1,6 @@
 //! Default DID resolver chain for inkson.
 //!
-//! Wraps `cokret_sdk::identity::*` resolvers with a inkson-specific
+//! Wraps `arkret_sdk::identity::*` resolvers with a inkson-specific
 //! `ResolverPolicy` so login / coauth / Move-signing call sites can validate
 //! principal DIDs before relying on a server-asserted identity.
 //!
@@ -21,12 +21,12 @@
 use std::collections::HashMap;
 
 use chrono::{DateTime, Duration, Utc};
-use cokret_sdk::identity::{
+use arkret_sdk::identity::{
     CompositeDidResolver, DID_WEB_MAX_DOCUMENT_BYTES, DidKeyResolver, DidResolver as _,
     DidWebDocumentOutcome, DidWebResolver, DidWebvhDocumentOutcome, DidWebvhLogOutcome,
     DidWebvhResolver, ResolverFailMode, ResolverPolicy, host_is_safe_for_outbound,
 };
-use cokret_sdk::{Did, DidDocument};
+use arkret_sdk::{Did, DidDocument};
 
 /// Deployment profile drives which DID methods are accepted as principal.
 ///
@@ -423,7 +423,7 @@ async fn fetch_did_webvh_document(
 /// and `keyAgreement`, which the SDK [`DidDocument`] projection drops).
 ///
 /// The Realm Recovery Key (RRK) verification path
-/// (`cokret_sdk::history_recovery::resolve_realm_history_recovery_key`,
+/// (`arkret_sdk::history_recovery::resolve_realm_history_recovery_key`,
 /// encryption-and-audit.md §2.10.8 / identity-did.md §8.3) needs the original
 /// document to confirm an active `CokretRealmHistoryRecoveryKey` service entry
 /// designates the declared verification method. This reuses the same
@@ -441,7 +441,7 @@ async fn fetch_did_webvh_document(
 /// the SDK resolver then fails closed with `durability_recovery_recipient_unverified`.
 pub async fn fetch_raw_did_document_json(
     http: &reqwest::Client,
-    did: &cokret_sdk::Did,
+    did: &arkret_sdk::Did,
 ) -> Option<serde_json::Value> {
     match did.method() {
         "web" => {
@@ -904,7 +904,7 @@ mod tests {
 
     // ── P3.2b: anchor fetch + ingest of did:web documents ────────────────────
 
-    use cokret_sdk::identity::DidWebDocumentOutcome;
+    use arkret_sdk::identity::DidWebDocumentOutcome;
 
     use crate::device_directory::DidAnchor as _;
 

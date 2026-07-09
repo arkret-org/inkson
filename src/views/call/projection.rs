@@ -25,7 +25,7 @@ fn call_state_recording_artifact_boundary(
     {
         return Err(crate::media::rtc::RtcClientError::RecordingArtifactPipelineBypassed);
     }
-    let payload: cokret_sdk::CallStatePayload = serde_json::from_value(body.clone())
+    let payload: arkret_sdk::CallStatePayload = serde_json::from_value(body.clone())
         .map_err(|_| crate::media::rtc::RtcClientError::RecordingArtifactPipelineBypassed)?;
     payload
         .validate_recording_result_artifact()
@@ -43,7 +43,7 @@ fn call_state_transcript_artifact_boundary(
     {
         return Err(crate::media::rtc::RtcClientError::TranscriptionArtifactPipelineBypassed);
     }
-    let payload: cokret_sdk::CallStatePayload = serde_json::from_value(body.clone())
+    let payload: arkret_sdk::CallStatePayload = serde_json::from_value(body.clone())
         .map_err(|_| crate::media::rtc::RtcClientError::TranscriptionArtifactPipelineBypassed)?;
     payload
         .validate_transcript_result_storage()
@@ -641,7 +641,7 @@ mod tests {
     }
 
     #[test]
-    fn recording_artifact_boundary_accepts_cokret_blob_artifact() {
+    fn recording_artifact_boundary_accepts_arkret_blob_artifact() {
         assert!(call_state_recording_artifact_boundary(&valid_recording_call_state()).is_ok());
     }
 

@@ -68,11 +68,11 @@ pub fn ensure_creator_mls_snapshot_for_effective_scope(
 
     let secret = load_or_create_device_snapshot_secret(secure_store, actor_id, device_id)
         .map_err(MlsRuntimeError::DeviceSecret)?;
-    let principal_did = cokret_sdk::Did::new(actor_id.to_owned())
+    let principal_did = arkret_sdk::Did::new(actor_id.to_owned())
         .map_err(|err| MlsRuntimeError::Identity(format!("{err:?}")))?;
-    let device_id_typed = cokret_sdk::DeviceId::new(device_id.to_owned())
+    let device_id_typed = arkret_sdk::DeviceId::new(device_id.to_owned())
         .map_err(|err| MlsRuntimeError::Identity(format!("{err:?}")))?;
-    let identity = cokret_sdk::CokretMlsIdentity::new_basic(principal_did, device_id_typed)
+    let identity = arkret_sdk::CokretMlsIdentity::new_basic(principal_did, device_id_typed)
         .map_err(|err| MlsRuntimeError::Identity(format!("{err:?}")))?;
     let group_seed = circle.unwrap_or(realm);
     let group = identity
@@ -82,7 +82,7 @@ pub fn ensure_creator_mls_snapshot_for_effective_scope(
         .ratchet_tree()
         .map_err(|err| MlsRuntimeError::Genesis(format!("export ratchet tree: {err}")))?;
     let schedule_hash = group.schedule_hash().to_string();
-    let cipher_suite = cokret_sdk::ARKRET_MLS_CIPHERSUITE_CANONICAL_ID.to_owned();
+    let cipher_suite = arkret_sdk::ARKRET_MLS_CIPHERSUITE_CANONICAL_ID.to_owned();
     let post_state = group
         .export_state_record()
         .map_err(|err| MlsRuntimeError::Genesis(format!("export state: {err}")))?;
@@ -165,7 +165,7 @@ pub fn initial_mls_snapshot_summary_from_existing_for_effective_scope(
         epoch: group.epoch(),
         ratchet_tree,
         schedule_hash: group.schedule_hash().to_string(),
-        cipher_suite: cokret_sdk::ARKRET_MLS_CIPHERSUITE_CANONICAL_ID.to_owned(),
+        cipher_suite: arkret_sdk::ARKRET_MLS_CIPHERSUITE_CANONICAL_ID.to_owned(),
     }))
 }
 
@@ -188,7 +188,7 @@ pub fn build_mls_genesis_payload(
     summary: &InitialMlsSnapshotSummary,
     actor_id: &str,
     device_id: &str,
-    governance_binding: &cokret_sdk::MlsGovernanceBindingPayload,
+    governance_binding: &arkret_sdk::MlsGovernanceBindingPayload,
 ) -> Result<Value, MlsRuntimeError> {
     let binding_value = serde_json::to_value(governance_binding)
         .map_err(|err| MlsRuntimeError::Genesis(format!("serialize governance binding: {err}")))?;

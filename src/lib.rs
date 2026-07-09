@@ -33,7 +33,7 @@ pub mod card_comments;
 /// `Circle` is the intra-Realm cryptographic sub-boundary (strict
 /// subset of Realm membership + independent MLS group). This module is
 /// the client-side surface; the canonical struct lives in
-/// `cokret_sdk::cokret_core::models::circle`.
+/// `arkret_sdk::arkret_core::models::circle`.
 pub mod circle;
 pub mod circle_api;
 pub mod circle_mls;
@@ -82,7 +82,7 @@ pub mod media_api;
 /// R3.1 (arkret-spec @ 7157ee8) — Realm-scoped
 /// `ck.member.identity.update` event store. Sync ingests inlined
 /// `members[].identity_events[]` here; UI views resolve the current
-/// effective [`cokret_sdk::MemberIdentity`] via the SDK's
+/// effective [`arkret_sdk::MemberIdentity`] via the SDK's
 /// replacement-edge filter helper. MLS decryption (MID-4) + proof
 /// signature verification (MID-5) are gated on `TODO(R4)`.
 pub mod member_identity_store;
@@ -120,7 +120,7 @@ pub mod perf;
 // after refactor a37e1b9 routed ephemeral signals through the soland sync
 // projection the module was dead code. Its fail-closed `last_active_at`
 // bucket validation moved into the shared SDK
-// (`cokret_sdk::validate_last_active_at`), which soland now enforces at
+// (`arkret_sdk::validate_last_active_at`), which soland now enforces at
 // admission — the receive path here consumes the already-validated
 // projection.
 /// Sync projection layer (account/realm wire payloads -> local projection

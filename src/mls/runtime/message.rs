@@ -51,7 +51,7 @@ pub fn history_content_aad_bytes(realm_id: &str, epoch: u64) -> Vec<u8> {
         "realm_id": realm_id.trim(),
         "epoch": epoch,
     });
-    cokret_sdk::canonical::canonical_json_bytes(&aad)
+    arkret_sdk::canonical::canonical_json_bytes(&aad)
         .unwrap_or_else(|_| format!("{}|{epoch}", realm_id.trim()).into_bytes())
 }
 
@@ -76,7 +76,7 @@ pub fn decrypt_application_payload(
     realm_id: &str,
     actor_id: &str,
     device_id: &str,
-    payload: &cokret_sdk::EncryptedPayload,
+    payload: &arkret_sdk::EncryptedPayload,
 ) -> Option<Vec<u8>> {
     let digest = payload.payload_digest.as_str();
     if let Some(plaintext) = state_store.mls_decrypted_plaintext_for(realm_id, digest) {
@@ -116,11 +116,11 @@ pub fn decrypt_application_payload(
             // prior retain or a `ck.realm_key.share`. Past-epoch / pre-join
             // content (epoch != current) still needs a retained or granted
             // secret, handled by the group-free standalone path below.
-            if payload.scheme == cokret_sdk::EncryptedPayloadScheme::MlsExporterAeadV1
+            if payload.scheme == arkret_sdk::EncryptedPayloadScheme::MlsExporterAeadV1
                 && snapshot.epoch == payload.epoch
                 && let Ok(secret) = group.derive_and_retain_history_secret(realm_id)
                 && let Ok(nonce_and_ct) =
-                    cokret_sdk::base64url_decode(payload.ciphertext.as_bytes())
+                    arkret_sdk::base64url_decode(payload.ciphertext.as_bytes())
                 && let Ok(plaintext) = group.decrypt_content_exporter_aead(
                     &secret,
                     realm_id,
@@ -171,16 +171,16 @@ pub fn decrypt_application_payload(
 /// the receive ratchet.
 ///
 /// Group-free: uses the SDK's
-/// [`cokret_sdk::mls::decrypt_content_exporter_aead_standalone`] so a device
+/// [`arkret_sdk::mls::decrypt_content_exporter_aead_standalone`] so a device
 /// that holds the granted `history_secret` but has **no** local MLS snapshot
 /// for the Realm (e.g. a member granted history before processing its own
 /// Welcome) can still read pre-join content.
 fn try_history_decrypt_standalone(
     state_store: &crate::local_state::LocalStateStore,
     realm_id: &str,
-    payload: &cokret_sdk::EncryptedPayload,
+    payload: &arkret_sdk::EncryptedPayload,
 ) -> Option<Vec<u8>> {
-    let nonce_and_ct = cokret_sdk::base64url_decode(payload.ciphertext.as_bytes()).ok()?;
+    let nonce_and_ct = arkret_sdk::base64url_decode(payload.ciphertext.as_bytes()).ok()?;
     // The payload's own epoch is the only key that can open it; prefer the exact
     // match, but fall back to scanning all granted secrets so a payload whose
     // epoch field drifted from the keyed epoch still resolves.
@@ -195,7 +195,7 @@ fn try_history_decrypt_standalone(
         );
     for (epoch, secret) in candidates {
         let aad_bytes = history_content_aad_bytes(realm_id, epoch);
-        if let Ok(plaintext) = cokret_sdk::mls::decrypt_content_exporter_aead_standalone(
+        if let Ok(plaintext) = arkret_sdk::mls::decrypt_content_exporter_aead_standalone(
             &secret,
             realm_id,
             &nonce_and_ct,
@@ -363,7 +363,7 @@ pub fn collect_realm_key_share_messages_for_realm(
                 .get("kind")
                 .or_else(|| message.get("type"))
                 .and_then(|t| t.as_str())
-                == Some(cokret_sdk::events::kinds::REALM_KEY_SHARE)
+                == Some(arkret_sdk::events::kinds::REALM_KEY_SHARE)
         })
         .filter(|message| realm_key_share_message_realm_id(message).as_deref() == Some(realm_id))
         .cloned()
@@ -388,7 +388,7 @@ pub fn ingest_realm_key_share(
     let content = realm_key_share_payload_value(share_envelope)
         .or_else(|| share_envelope.get("payload"))
         .unwrap_or(share_envelope);
-    let payload: cokret_sdk::RealmKeySharePayload = match serde_json::from_value(content.clone()) {
+    let payload: arkret_sdk::RealmKeySharePayload = match serde_json::from_value(content.clone()) {
         Ok(payload) => payload,
         Err(err) => {
             tracing::debug!(%realm_id, error = %err, "skip malformed ck.realm_key.share");
@@ -430,7 +430,7 @@ pub fn ingest_realm_key_share(
         }
     };
     let secrets =
-        match cokret_sdk::secret_share::open_history_secret_with_device_privkey(&privkey, sealed) {
+        match arkret_sdk::secret_share::open_history_secret_with_device_privkey(&privkey, sealed) {
             Ok(secrets) => secrets,
             Err(err) => {
                 tracing::debug!(%realm_id, error = %err, "open ck.realm_key.share failed");
@@ -516,7 +516,7 @@ pub fn realm_key_share_sender_device_pair(
 ///   is tolerated and a populated one is verified under its embedded key (HPKE seal gates the
 ///   payload).
 pub(crate) fn verify_realm_key_share_sender_signature(
-    payload: &cokret_sdk::RealmKeySharePayload,
+    payload: &arkret_sdk::RealmKeySharePayload,
     sender_principal_id: Option<&str>,
 ) -> bool {
     use ed25519_dalek::{Signature, Verifier as _, VerifyingKey};
@@ -570,7 +570,7 @@ pub(crate) fn verify_realm_key_share_sender_signature(
     else {
         return false;
     };
-    let Ok(pubkey_bytes) = cokret_sdk::decode_ed25519_multibase(pubkey_multibase) else {
+    let Ok(pubkey_bytes) = arkret_sdk::decode_ed25519_multibase(pubkey_multibase) else {
         return false;
     };
     // SEC-02: when a directory key is cached, the self-asserted signer key MUST
@@ -583,7 +583,7 @@ pub(crate) fn verify_realm_key_share_sender_signature(
             return false;
         }
     }
-    let Ok(sig_bytes) = cokret_sdk::base64url_decode(sig_b64.as_bytes()) else {
+    let Ok(sig_bytes) = arkret_sdk::base64url_decode(sig_b64.as_bytes()) else {
         return false;
     };
     let Ok(signature) = Signature::from_slice(&sig_bytes) else {
@@ -600,7 +600,7 @@ pub(crate) fn verify_realm_key_share_sender_signature(
 /// sender device.
 enum DirectoryVerdict {
     /// A trusted authoritative verify key is cached.
-    Key(cokret_sdk::signatures::PublicKeyMaterial),
+    Key(arkret_sdk::signatures::PublicKeyMaterial),
     /// The sender device is revoked / absent / has no signing key.
     Revoked,
     /// A sender principal was claimed but the directory key could not be
@@ -639,7 +639,7 @@ pub fn mls_group_member_principal_ids_for_realm(
 /// Export + re-encrypt the post-decrypt group state as a snapshot envelope,
 /// carrying the epoch clock and bumping the §5.6 observed-message counter.
 fn export_receive_chain_envelope(
-    group: &cokret_sdk::CokretMlsGroup,
+    group: &arkret_sdk::CokretMlsGroup,
     realm_id: &str,
     secret: &str,
     previous: &crate::mls::persistence::MlsSnapshotEnvelope,
@@ -725,7 +725,7 @@ pub fn collect_welcome_entries(value: &serde_json::Value) -> Vec<serde_json::Val
 }
 
 pub fn mls_group_id_for_realm(realm_id: &str) -> String {
-    cokret_sdk::base64url_encode(realm_id.trim().as_bytes())
+    arkret_sdk::base64url_encode(realm_id.trim().as_bytes())
 }
 
 pub fn mls_welcome_message_matches_realm(message: &serde_json::Value, realm_id: &str) -> bool {
@@ -787,8 +787,8 @@ fn durable_welcome_payload_reject_reason(value: &serde_json::Value) -> Option<&'
     if !looks_like_durable_payload {
         return None;
     }
-    let _ = serde_json::from_value::<cokret_sdk::MlsWelcomePayload>(value.clone());
-    Some(cokret_sdk::error::REASON_KEYPACKAGE_WELCOME_ENVELOPE_MISMATCH)
+    let _ = serde_json::from_value::<arkret_sdk::MlsWelcomePayload>(value.clone());
+    Some(arkret_sdk::error::REASON_KEYPACKAGE_WELCOME_ENVELOPE_MISMATCH)
 }
 
 /// YGN-SEC-01 gate (1): before accepting an inbound Welcome, independently
@@ -819,7 +819,7 @@ fn verify_welcome_claim_envelope_signer(welcome_value: &serde_json::Value) -> Re
         // an additional layer.
         return Ok(());
     };
-    let envelope: cokret_sdk::MlsWelcomeClaimEnvelope = serde_json::from_value(claim_value.clone())
+    let envelope: arkret_sdk::MlsWelcomeClaimEnvelope = serde_json::from_value(claim_value.clone())
         .map_err(|err| format!("claim_envelope decode: {err}"))?;
     // Shape validation: non-empty kid/sig and alg in {EdDSA, Ed25519}.
     envelope
@@ -881,7 +881,7 @@ fn verify_welcome_claim_envelope_signer(welcome_value: &serde_json::Value) -> Re
     let signing_bytes = envelope
         .canonical_signing_bytes()
         .map_err(|err| format!("claim_envelope canonical bytes: {err}"))?;
-    let sig_bytes = cokret_sdk::base64url_decode(envelope.signature.sig.as_bytes())
+    let sig_bytes = arkret_sdk::base64url_decode(envelope.signature.sig.as_bytes())
         .map_err(|err| format!("claim_envelope signature decode: {err}"))?;
     let signature = Signature::from_slice(&sig_bytes)
         .map_err(|err| format!("claim_envelope signature malformed: {err}"))?;
@@ -916,7 +916,7 @@ fn verify_welcome_claim_envelope_signer(welcome_value: &serde_json::Value) -> Re
 /// guarantees "embedded MLS binding equals the server declaration"; inclusion
 /// proof closure waits for the Seal view injection noted below.
 fn verify_welcome_governance_binding(
-    group: &cokret_sdk::CokretMlsGroup,
+    group: &arkret_sdk::CokretMlsGroup,
     welcome_value: &serde_json::Value,
 ) -> Result<Option<String>, String> {
     let Some(binding) = welcome_value.get("governance_binding") else {
@@ -945,18 +945,18 @@ fn verify_welcome_governance_binding(
     let binding_profile = binding
         .get("binding_profile")
         .and_then(serde_json::Value::as_str)
-        .unwrap_or(cokret_sdk::MLS_GOVERNANCE_BINDING_FULL_PROFILE)
+        .unwrap_or(arkret_sdk::MLS_GOVERNANCE_BINDING_FULL_PROFILE)
         .to_owned();
     let reducer_profile = binding
         .get("reducer_profile")
         .and_then(serde_json::Value::as_str)
-        .unwrap_or(cokret_sdk::CORE_REDUCER_PROFILE)
+        .unwrap_or(arkret_sdk::CORE_REDUCER_PROFILE)
         .to_owned();
 
-    let policy_root_hash = cokret_sdk::Hash::new(policy_root_str.clone())
+    let policy_root_hash = arkret_sdk::Hash::new(policy_root_str.clone())
         .map_err(|err| format!("governance_binding.policy_root invalid hash: {err:?}"))?;
 
-    let mut expected = cokret_sdk::MlsGovernanceBindingValidationContext::for_commit(
+    let mut expected = arkret_sdk::MlsGovernanceBindingValidationContext::for_commit(
         mls_group_id,
         previous_epoch,
         next_epoch,
@@ -1001,9 +1001,9 @@ pub fn apply_welcome_messages_with_device_snapshot(
     // error (the readiness status machinery keys off these).
     let secret = load_or_create_device_snapshot_secret(secure_store, actor_id, device_id)
         .map_err(MlsRuntimeError::DeviceSecret)?;
-    let principal_did = cokret_sdk::Did::new(actor_id.to_owned())
+    let principal_did = arkret_sdk::Did::new(actor_id.to_owned())
         .map_err(|err| MlsRuntimeError::Identity(format!("{err:?}")))?;
-    let device_id_typed = cokret_sdk::DeviceId::new(device_id.to_owned())
+    let device_id_typed = arkret_sdk::DeviceId::new(device_id.to_owned())
         .map_err(|err| MlsRuntimeError::Identity(format!("{err:?}")))?;
     // Per-welcome failures no longer abort the loop or get swallowed: each is
     // counted and the first reason retained so callers can report partial
@@ -1033,7 +1033,7 @@ pub fn apply_welcome_messages_with_device_snapshot(
         // object. It independently verifies this governance_binding against the
         // MLS GroupContext; keep the raw JSON for that check.
         let welcome_value_for_governance = welcome_value.clone();
-        let welcome = match serde_json::from_value::<cokret_sdk::MlsWelcomeEnvelope>(welcome_value)
+        let welcome = match serde_json::from_value::<arkret_sdk::MlsWelcomeEnvelope>(welcome_value)
         {
             Ok(welcome) => welcome,
             Err(err) => {
@@ -1049,7 +1049,7 @@ pub fn apply_welcome_messages_with_device_snapshot(
                 key_package_id,
             ) {
                 Ok(Some(serialized_state)) => {
-                    match cokret_sdk::CokretMlsIdentity::restore_from_private_state(
+                    match arkret_sdk::CokretMlsIdentity::restore_from_private_state(
                         principal_did.clone(),
                         device_id_typed.clone(),
                         &serialized_state,
@@ -1098,7 +1098,7 @@ pub fn apply_welcome_messages_with_device_snapshot(
                 continue;
             }
         };
-        let group = match cokret_sdk::CokretMlsGroup::join_from_welcome(identity, &welcome) {
+        let group = match arkret_sdk::CokretMlsGroup::join_from_welcome(identity, &welcome) {
             Ok(group) => group,
             Err(err) => {
                 outcome.record_failure(format!("join welcome: {err}"));
@@ -1191,10 +1191,10 @@ pub fn encrypt_values_with_device_snapshot(
     plaintext_values: &[Vec<u8>],
 ) -> Result<
     (
-        cokret_sdk::Hash,
-        Vec<cokret_sdk::Did>,
+        arkret_sdk::Hash,
+        Vec<arkret_sdk::Did>,
         Vec<serde_json::Value>,
-        Option<cokret_sdk::MlsCommitEnvelope>,
+        Option<arkret_sdk::MlsCommitEnvelope>,
         Option<crate::mls::persistence::MlsSnapshotEnvelope>,
     ),
     MlsRuntimeError,
@@ -1311,19 +1311,19 @@ pub fn encrypt_values_with_device_snapshot(
 
 /// Encrypt a single message plaintext under the Realm MLS group, binding
 /// `aad` into the payload digest, and return the structured
-/// [`cokret_sdk::EncryptedPayload`] (not yet wrapped as a wire envelope).
+/// [`arkret_sdk::EncryptedPayload`] (not yet wrapped as a wire envelope).
 ///
 /// The caller assembles the spec-canonical `ck.schema.encrypted_envelope.v1`
-/// wire shape via [`cokret_sdk::EncryptedEnvelopeV1::from_payload`] once it
+/// wire shape via [`arkret_sdk::EncryptedEnvelopeV1::from_payload`] once it
 /// knows the accepted group-state reference for this epoch (genesis, latest
 /// winning commit, or a forced commit returned by this helper). `aad` MUST be
 /// the canonical `EncryptedEnvelopeAadV1` value, so the digest verification
 /// round-trips.
 type DeviceSnapshotEncryption = (
-    cokret_sdk::Hash,
-    Vec<cokret_sdk::Did>,
-    cokret_sdk::EncryptedPayload,
-    Option<cokret_sdk::MlsCommitEnvelope>,
+    arkret_sdk::Hash,
+    Vec<arkret_sdk::Did>,
+    arkret_sdk::EncryptedPayload,
+    Option<arkret_sdk::MlsCommitEnvelope>,
     Option<crate::mls::persistence::MlsSnapshotEnvelope>,
 );
 
@@ -1440,21 +1440,21 @@ pub fn encrypt_message_with_device_snapshot(
 /// SEC-08 — fail-closed committer-side assertion that a `minimal_metadata_realm`
 /// send uses `aad_visibility=hidden` (`encryption-and-audit.md` §2.9).
 ///
-/// Thin wrapper over the SDK's [`cokret_sdk::enforce_minimal_metadata_aad`]
+/// Thin wrapper over the SDK's [`arkret_sdk::enforce_minimal_metadata_aad`]
 /// that maps the SDK protocol error into [`MlsRuntimeError::AadPolicy`] so the
 /// runtime's typed error surface stays uniform. This mirrors soland's
 /// server-side reject, giving client + server defence in depth: a minimal Realm
 /// can never emit a non-hidden AAD, and the server would reject it if it
 /// somehow did.
 pub fn assert_minimal_metadata_aad(
-    visibility: &cokret_sdk::AadVisibility,
+    visibility: &arkret_sdk::AadVisibility,
     is_minimal_metadata: bool,
 ) -> Result<(), MlsRuntimeError> {
-    cokret_sdk::enforce_minimal_metadata_aad(visibility, is_minimal_metadata)
+    arkret_sdk::enforce_minimal_metadata_aad(visibility, is_minimal_metadata)
         .map_err(|err| MlsRuntimeError::AadPolicy(err.to_string()))
 }
 
-/// SEC-08 — infer the [`cokret_sdk::AadVisibility`] discriminator from a
+/// SEC-08 — infer the [`arkret_sdk::AadVisibility`] discriminator from a
 /// canonical `ck.schema.encrypted_envelope.v1` AAD value.
 ///
 /// The schema discriminator is structural (`encryption-and-audit.md` §2.9): a
@@ -1464,13 +1464,13 @@ pub fn assert_minimal_metadata_aad(
 /// path so a minimal Realm cannot ship a non-hidden AAD even if a caller
 /// constructed one. `event_id` is checked first so a malformed value carrying
 /// both fields resolves to the *less* private (and therefore rejected) form.
-pub(crate) fn aad_visibility_of(aad: &serde_json::Value) -> cokret_sdk::AadVisibility {
+pub(crate) fn aad_visibility_of(aad: &serde_json::Value) -> arkret_sdk::AadVisibility {
     let has = |key: &str| aad.get(key).is_some_and(|v| !v.is_null());
     if has("event_id") {
-        cokret_sdk::AadVisibility::OpaqueId
+        arkret_sdk::AadVisibility::OpaqueId
     } else if has("event_ref_digest") {
-        cokret_sdk::AadVisibility::RoutingDigest
+        arkret_sdk::AadVisibility::RoutingDigest
     } else {
-        cokret_sdk::AadVisibility::Hidden
+        arkret_sdk::AadVisibility::Hidden
     }
 }

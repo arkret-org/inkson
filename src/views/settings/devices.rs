@@ -3,7 +3,7 @@
 //!
 //! Surfaces:
 //! - `device-list` — wrapper element listing the principal's active devices from `GET
-//!   /_cokret/self/account/viewer` via [`crate::api::CokretApi::list_devices`]
+//!   /_arkret/self/account/viewer` via [`crate::api::CokretApi::list_devices`]
 //! - `device-row` per row, with `data-device-id` and a `device-row-current` boolean tag on the row
 //!   matching the local `LocalStateStore::device_id`
 //! - `device-revoke-button` per row, which opens a confirmation modal
@@ -28,8 +28,8 @@
 //!
 //! ## Endpoints
 //!
-//! - `GET /_cokret/self/account/viewer` — implemented (soland)
-//! - `POST /_cokret/gate/account/device-pair` — spec-level device pairing.
+//! - `GET /_arkret/self/account/viewer` — implemented (soland)
+//! - `POST /_arkret/gate/account/device-pair` — spec-level device pairing.
 
 use dioxus::prelude::*;
 use dioxus_router::Link;
@@ -143,7 +143,7 @@ fn build_pairing_verification_content(
     gate_audience: &str,
     expires_at: &str,
 ) -> Value {
-    let canonical = cokret_sdk::canonical::canonical_json_bytes(request_payload)
+    let canonical = arkret_sdk::canonical::canonical_json_bytes(request_payload)
         .unwrap_or_else(|_| request_payload.to_string().into_bytes());
     json!({
         "transaction_id": uuid_v7(),
@@ -156,7 +156,7 @@ fn build_pairing_verification_content(
         "new_device_pubkey": request_payload.get("new_device_pubkey").cloned().unwrap_or(Value::Null),
         "challenge_signature": request_payload.get("challenge_signature").cloned().unwrap_or(Value::Null),
         "gate_audience": gate_audience,
-        "request_canonical_digest": cokret_sdk::canonical::sha256_digest(&canonical),
+        "request_canonical_digest": arkret_sdk::canonical::sha256_digest(&canonical),
         "device_metadata": request_payload
             .get("device_metadata")
             .cloned()
@@ -1148,7 +1148,7 @@ fn render_pair_strand(
             }
             p { class: "muted",
                 "Use this section only on an already-authorized device. Paste the new-device request and approve it through "
-                code { "/_cokret/gate/account/device-pair" }
+                code { "/_arkret/gate/account/device-pair" }
                 "."
             }
             Textarea {

@@ -8,7 +8,7 @@
 //! UI: `claimed`, `send_failed`, `revoked_by_capability_loss`,
 //! `revoked_by_inviter_left`, `invalidated_by_rate_limit`. The
 //! [`InviteTerminalState`] enum mirrors
-//! [`cokret_sdk::ThirdPartyInviteTerminalState`] and carries the i18n
+//! [`arkret_sdk::ThirdPartyInviteTerminalState`] and carries the i18n
 //! key + user-facing label so the UI can render any terminal state
 //! consistently without re-discovering the labels.
 //!
@@ -22,7 +22,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
 /// Round 4 — terminal states for an invite, matching
-/// [`cokret_sdk::ThirdPartyInviteTerminalState`] one-for-one.
+/// [`arkret_sdk::ThirdPartyInviteTerminalState`] one-for-one.
 ///
 /// The UI surfaces every variant via [`label`] / [`i18n_key`] so a
 /// receiver-side reducer can advance the invite to any terminal state
@@ -40,8 +40,8 @@ pub enum InviteTerminalState {
 impl InviteTerminalState {
     /// Map back to the SDK's canonical enum so callers can serialise
     /// directly to the wire without re-defining the JSON shape.
-    pub fn as_sdk(self) -> cokret_sdk::ThirdPartyInviteTerminalState {
-        use cokret_sdk::ThirdPartyInviteTerminalState as S;
+    pub fn as_sdk(self) -> arkret_sdk::ThirdPartyInviteTerminalState {
+        use arkret_sdk::ThirdPartyInviteTerminalState as S;
         match self {
             Self::Claimed => S::Claimed,
             Self::SendFailed => S::SendFailed,
@@ -113,7 +113,7 @@ impl InviteTerminalState {
 }
 
 /// Assemble a `ck.invite.claim` event body carrying the verification-service
-/// `binding_proof` and subject-signed SDK [`cokret_sdk::InviteSubjectProof`].
+/// `binding_proof` and subject-signed SDK [`arkret_sdk::InviteSubjectProof`].
 ///
 /// Returns the raw JSON body for the caller to wrap with
 /// [`crate::operation::OperationBuilder::build_sdk_event`] and submit through
@@ -129,8 +129,8 @@ pub fn build_invite_claim_body(
     subject_signing_key: &SigningKey,
     subject_verification_method: &str,
 ) -> anyhow::Result<Value> {
-    let binding_proof_digest = cokret_sdk::canonical::canonical_sha256(binding_proof)?;
-    let proof_body = cokret_sdk::InviteSubjectProofBody::from_wire_parts(
+    let binding_proof_digest = arkret_sdk::canonical::canonical_sha256(binding_proof)?;
+    let proof_body = arkret_sdk::InviteSubjectProofBody::from_wire_parts(
         subject_id,
         invite_id,
         realm_id,
@@ -141,7 +141,7 @@ pub fn build_invite_claim_body(
     )?;
     let proof_bytes = proof_body.canonical_bytes()?;
     let sig = subject_signing_key.sign(&proof_bytes);
-    let subject_proof = cokret_sdk::InviteSubjectProof::new(
+    let subject_proof = arkret_sdk::InviteSubjectProof::new(
         subject_verification_method,
         proof_body.transcript_digest()?,
         base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(sig.to_bytes()),
@@ -188,7 +188,7 @@ mod tests {
     fn subject_proof_signature_verifies_against_device_key() {
         let signing_key = deterministic_signing_key(7);
         let verifying = signing_key.verifying_key();
-        let body = cokret_sdk::InviteSubjectProofBody::from_wire_parts(
+        let body = arkret_sdk::InviteSubjectProofBody::from_wire_parts(
             "did:web:alice.example",
             "ak:invite:0196419b-0000-7000-8000-000000000001",
             "ak:realm:0196419b-0000-7000-8000-000000000010",
@@ -229,8 +229,8 @@ mod tests {
         )
         .unwrap();
         let expected_binding_digest =
-            cokret_sdk::canonical::canonical_sha256(&binding_proof).unwrap();
-        let expected_transcript_digest = cokret_sdk::invite_subject_proof_transcript_digest(
+            arkret_sdk::canonical::canonical_sha256(&binding_proof).unwrap();
+        let expected_transcript_digest = arkret_sdk::invite_subject_proof_transcript_digest(
             "did:web:alice.example",
             "ak:invite:0196419b-0000-7000-8000-000000000001",
             "ak:realm:0196419b-0000-7000-8000-000000000010",

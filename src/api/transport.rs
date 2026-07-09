@@ -31,7 +31,7 @@ impl CokretApi {
     }
 
     /// Set the credential presented as `Authorization: Bearer <…>` on
-    /// `/_cokret/self/*` requests.
+    /// `/_arkret/self/*` requests.
     ///
     /// ②(A+②) model (api-conventions.md §3.3): the held credential is the
     /// `ck.session.grant` itself, so callers pass the grant JWT here. Combined
@@ -56,7 +56,7 @@ impl CokretApi {
         self
     }
 
-    pub(crate) fn sdk_http_client(&self) -> anyhow::Result<cokret_sdk::http_client::Client> {
+    pub(crate) fn sdk_http_client(&self) -> anyhow::Result<arkret_sdk::http_client::Client> {
         // Permit `http://` only for loopback hosts (the SDK's guard still
         // rejects insecure remote URLs), matching inkson's own
         // `config::validate_server_url` loopback policy and the garth/login
@@ -64,7 +64,7 @@ impl CokretApi {
         // could not reach a local dev / joint-e2e soland on `http://127.0.0.1`,
         // while the client-core path could — an inconsistency that broke
         // UI-driven realm create against a loopback stack.
-        let mut builder = cokret_sdk::http_client::ClientBuilder::new(self.base_url.clone())
+        let mut builder = arkret_sdk::http_client::ClientBuilder::new(self.base_url.clone())
             .http_client(self.http.clone())
             .allow_insecure_localhost();
         match (
@@ -72,15 +72,15 @@ impl CokretApi {
             self.dpop_device.as_ref(),
         ) {
             (Some(token), Some(handle)) => {
-                builder = builder.auth(cokret_sdk::http_client::Auth::Dpop(
+                builder = builder.auth(arkret_sdk::http_client::Auth::Dpop(
                     handle.sdk_dpop_auth_for_access_token(token.clone()),
                 ));
             }
             (Some(token), None) => {
-                builder = builder.auth(cokret_sdk::http_client::Auth::Bearer(token.clone()));
+                builder = builder.auth(arkret_sdk::http_client::Auth::Bearer(token.clone()));
             }
             (None, Some(handle)) => {
-                builder = builder.auth(cokret_sdk::http_client::Auth::Dpop(
+                builder = builder.auth(arkret_sdk::http_client::Auth::Dpop(
                     handle.sdk_dpop_proof_only_auth(),
                 ));
             }
@@ -112,7 +112,7 @@ impl CokretApi {
         let normalized = path.trim().trim_start_matches('/');
         if !soland_path_allowed(normalized) {
             anyhow::bail!(
-                "inkson redline: forbidden soland private path `{normalized}`; use only spec-defined `/_cokret/` endpoints"
+                "inkson redline: forbidden soland private path `{normalized}`; use only spec-defined `/_arkret/` endpoints"
             );
         }
         Ok(self.base_url.join(normalized)?)

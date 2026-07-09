@@ -103,7 +103,7 @@ fn agent_endpoint_slug(payload: &Value) -> Option<String> {
             &["agent_slug"],
         ],
     )
-    .filter(|slug| cokret_sdk::models::validate_agent_slug(slug).is_ok())
+    .filter(|slug| arkret_sdk::models::validate_agent_slug(slug).is_ok())
 }
 
 fn agent_endpoint_display_name(payload: &Value, agent_id: &str) -> Option<String> {
@@ -204,7 +204,7 @@ pub(crate) fn agent_metadata_from_mentions(
         };
         if agent_slug.is_empty()
             || controller_subject_id.as_str().trim().is_empty()
-            || cokret_sdk::models::validate_agent_slug(agent_slug).is_err()
+            || arkret_sdk::models::validate_agent_slug(agent_slug).is_err()
         {
             continue;
         }

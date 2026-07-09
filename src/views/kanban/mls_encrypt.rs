@@ -24,8 +24,8 @@ use crate::views::helpers::{short_protocol_id, with_authed_api};
 /// bumps it.
 #[derive(Default, Debug)]
 pub(super) struct EncryptedWriteMlsEvents {
-    pub genesis: Option<cokret_sdk::Event>,
-    pub commit: Option<cokret_sdk::Event>,
+    pub genesis: Option<arkret_sdk::Event>,
+    pub commit: Option<arkret_sdk::Event>,
     /// X14 — the post-commit MLS snapshot. Persisted by the caller ONLY
     /// after the server ACCEPTS `commit`, so the local snapshot epoch never
     /// races ahead of the server's accepted epoch (the root cause of

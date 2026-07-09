@@ -393,7 +393,7 @@ fn fresh_device_restores_via_recovery_key_no_passphrase() {
     // (empty secure store) recovers WITHOUT the passphrase, using only the
     // recovery PRIVATE key to HPKE-open the account secret. Fully end-to-end
     // on host (real OpenMLS group), no live soland.
-    use cokret_sdk::{CokretMlsIdentity, DeviceId, Did};
+    use arkret_sdk::{CokretMlsIdentity, DeviceId, Did};
 
     let device_a = "ak:device:01964137-0000-7000-8000-00000000000a";
     let realm = "ak:realm:01964137-0000-7000-8000-0000000000ab";
@@ -567,7 +567,7 @@ fn recovery_public_key_backup_without_policy_ref_rejected_when_policy_expected()
 #[cfg(not(target_arch = "wasm32"))]
 #[test]
 fn restore_replaces_stale_local_secret_before_history_replay() {
-    use cokret_sdk::{CokretMlsIdentity, DeviceId, Did};
+    use arkret_sdk::{CokretMlsIdentity, DeviceId, Did};
 
     let device_a = "ak:device:01964137-0000-7000-8000-00000000000a";
     let realm = "ak:realm:01964137-0000-7000-8000-0000000000ab";
@@ -1051,7 +1051,7 @@ fn select_sidecar_honors_active_series_record() {
 #[cfg(not(target_arch = "wasm32"))]
 #[test]
 fn restore_brings_back_the_sidecar_into_the_store() {
-    use cokret_sdk::{CokretMlsIdentity, DeviceId, Did};
+    use arkret_sdk::{CokretMlsIdentity, DeviceId, Did};
 
     // Build a real, decryptable account-secret + history backup so Step 1/2
     // succeed and the account secret is local for the sidecar KEK source.

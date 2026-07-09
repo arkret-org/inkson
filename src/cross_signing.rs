@@ -23,7 +23,7 @@ use anyhow::Context;
 use base64::Engine as _;
 use base64::engine::general_purpose::STANDARD_NO_PAD as B64;
 use chrono::{Timelike, Utc};
-use cokret_sdk::{
+use arkret_sdk::{
     CrossSigningBinding, CrossSigningKeyRecord, CrossSigningPublishContent, Did,
     SignedCrossSigningKey, TypedTrustDomainId,
 };
@@ -80,7 +80,7 @@ impl CrossSigningSetupStep {
     /// test, and the e2e specs were all aligned in one pass.
     ///
     /// `PublishSecretStorageBackup` keeps `ck.schema.key_backup.v1`
-    /// because key-backup is uploaded via PUT /_cokret/self/keys/backups/*
+    /// because key-backup is uploaded via PUT /_arkret/self/keys/backups/*
     /// rather than emitted as a wire event — the value here is the
     /// schema_id of the request body envelope, intentionally
     /// schema-namespaced. Renaming the function to
@@ -387,13 +387,13 @@ impl CrossSigningSetupOutput {
         &self,
         realm_id: &str,
         actor: &str,
-    ) -> anyhow::Result<cokret_sdk::Event> {
+    ) -> anyhow::Result<arkret_sdk::Event> {
         let body = serde_json::to_value(&self.publish_content)
             .context("serialize cross_signing publish content")?;
         OperationBuilder::new(
             realm_id,
             actor,
-            cokret_sdk::events::kinds::EventKind::CrossSigningPublish,
+            arkret_sdk::events::kinds::EventKind::CrossSigningPublish,
         )
         .target_ref(self.publish_content.principal_id.as_str())
         .body(body)

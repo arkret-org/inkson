@@ -5,7 +5,7 @@ use crate::secure_key_store::SecureKeyStore;
 
 /// YOU-01-009 — operator-forced MLS epoch rotation via a real
 /// `self_update_commit`, replacing the former non-spec
-/// `POST /_cokret/self/mls/rotate` HTTP shim. Restores the Realm group
+/// `POST /_arkret/self/mls/rotate` HTTP shim. Restores the Realm group
 /// from the local snapshot, performs a self-update commit, and returns
 /// the commit envelope plus the encrypted POST-commit snapshot. The
 /// caller MUST submit the matching `ck.mls.commit` event and persist the
@@ -19,7 +19,7 @@ pub fn force_epoch_rotation_commit(
     device_id: &str,
 ) -> Result<
     (
-        cokret_sdk::MlsCommitEnvelope,
+        arkret_sdk::MlsCommitEnvelope,
         crate::mls::persistence::MlsSnapshotEnvelope,
     ),
     MlsRuntimeError,
@@ -43,7 +43,7 @@ pub fn force_epoch_rotation_commit_for_effective_scope(
     device_id: &str,
 ) -> Result<
     (
-        cokret_sdk::MlsCommitEnvelope,
+        arkret_sdk::MlsCommitEnvelope,
         crate::mls::persistence::MlsSnapshotEnvelope,
     ),
     MlsRuntimeError,
@@ -90,10 +90,10 @@ pub fn build_mls_remove_commit_for_effective_scope(
     actor_id: &str,
     device_id: &str,
     target_principal_id: &str,
-    revocation_membership_frontier: &[cokret_sdk::EventId],
+    revocation_membership_frontier: &[arkret_sdk::EventId],
 ) -> Result<
     (
-        cokret_sdk::MlsRemoveMemberResult,
+        arkret_sdk::MlsRemoveMemberResult,
         crate::mls::persistence::MlsSnapshotEnvelope,
     ),
     MlsRuntimeError,
@@ -107,7 +107,7 @@ pub fn build_mls_remove_commit_for_effective_scope(
         .ok_or(MlsRuntimeError::MissingWelcome)?;
     let secret = load_device_snapshot_secret(secure_store, actor_id, device_id)
         .map_err(MlsRuntimeError::DeviceSecret)?;
-    let target = cokret_sdk::Did::new(target_principal_id.to_owned())
+    let target = arkret_sdk::Did::new(target_principal_id.to_owned())
         .map_err(|err| MlsRuntimeError::Identity(format!("{err:?}")))?;
     // COR-04: bind the commit to the Seal-view epoch floor so a stale / rolled-back
     // local snapshot can't silently fork the group from an outdated epoch.
@@ -143,8 +143,8 @@ pub fn build_mls_remove_commit_for_effective_scope(
 /// `leaves`: those sets are useful for ordinary commit freshness but are not
 /// proof that this Remove covers the specific revocation that triggered it.
 pub fn canonical_mls_remove_membership_frontier(
-    revocation_membership_frontier: &[cokret_sdk::EventId],
-) -> Result<Vec<cokret_sdk::EventId>, MlsRuntimeError> {
+    revocation_membership_frontier: &[arkret_sdk::EventId],
+) -> Result<Vec<arkret_sdk::EventId>, MlsRuntimeError> {
     if revocation_membership_frontier.is_empty() {
         return Err(MlsRuntimeError::Commit(
             "MLS Remove governance binding requires the accepted ck.device.revoke event \
@@ -165,10 +165,10 @@ pub fn build_add_member_commit_for_effective_scope(
     circle_id: Option<&str>,
     actor_id: &str,
     device_id: &str,
-    member_key_package: &cokret_sdk::MlsKeyPackageRecord,
+    member_key_package: &arkret_sdk::MlsKeyPackageRecord,
 ) -> Result<
     (
-        cokret_sdk::MlsAddMemberResult,
+        arkret_sdk::MlsAddMemberResult,
         crate::mls::persistence::MlsSnapshotEnvelope,
     ),
     MlsRuntimeError,
@@ -214,10 +214,10 @@ pub fn build_add_members_commit_for_effective_scope(
     circle_id: Option<&str>,
     actor_id: &str,
     device_id: &str,
-    member_key_packages: &[cokret_sdk::MlsKeyPackageRecord],
+    member_key_packages: &[arkret_sdk::MlsKeyPackageRecord],
 ) -> Result<
     (
-        cokret_sdk::MlsAddMembersResult,
+        arkret_sdk::MlsAddMembersResult,
         crate::mls::persistence::MlsSnapshotEnvelope,
     ),
     MlsRuntimeError,
@@ -354,7 +354,7 @@ pub fn build_idle_self_update_commit(
     now: chrono::DateTime<chrono::Utc>,
 ) -> Result<
     Option<(
-        cokret_sdk::MlsCommitEnvelope,
+        arkret_sdk::MlsCommitEnvelope,
         crate::mls::persistence::MlsSnapshotEnvelope,
     )>,
     MlsRuntimeError,
@@ -433,7 +433,7 @@ pub const SELF_PRESERVATION_MAX_EPOCH_AGE_DAYS: i64 = 7;
 ///
 /// For a `minimal_metadata_realm` Realm the §2.9 epoch-lifetime SHOULD is a
 /// MUST of ≤1h (delegated to the SDK's
-/// [`cokret_sdk::minimal_metadata_epoch_overdue`], which never reports clock
+/// [`arkret_sdk::minimal_metadata_epoch_overdue`], which never reports clock
 /// skew as overdue).
 ///
 /// For a normal Realm this implements the §5.6 self-preservation SHOULD: a
@@ -453,7 +453,7 @@ pub fn should_force_epoch_advance(
     if is_minimal_metadata {
         // §2.9 MUST ≤1h — kept independent of the pending-commit suppression
         // so the stricter profile's fail-safe direction is preserved.
-        return cokret_sdk::minimal_metadata_epoch_overdue(epoch_started_at, now);
+        return arkret_sdk::minimal_metadata_epoch_overdue(epoch_started_at, now);
     }
     if has_pending_commit {
         return false;

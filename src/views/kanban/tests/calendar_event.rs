@@ -21,11 +21,11 @@ fn calendar_patch_sets_schedule_recurrence_profile_and_private_location_path() {
 
     assert_eq!(
         patch["metadata.fields.profile"]["value"],
-        cokret_sdk::PROFILE_CALENDAR_EVENT
+        arkret_sdk::PROFILE_CALENDAR_EVENT
     );
     assert_eq!(
         patch["metadata.fields.profile_refs"]["value"][0],
-        cokret_sdk::PROFILE_CALENDAR_EVENT
+        arkret_sdk::PROFILE_CALENDAR_EVENT
     );
     assert_eq!(
         patch["metadata.fields.start"]["value"],
@@ -88,11 +88,11 @@ fn calendar_projection_reads_schedule_and_plain_location() {
     let fields = Map::from_iter([
         (
             "profile".to_owned(),
-            json!(cokret_sdk::PROFILE_CALENDAR_EVENT),
+            json!(arkret_sdk::PROFILE_CALENDAR_EVENT),
         ),
         (
             "profile_refs".to_owned(),
-            json!([cokret_sdk::PROFILE_CALENDAR_EVENT]),
+            json!([arkret_sdk::PROFILE_CALENDAR_EVENT]),
         ),
         ("start".to_owned(), json!("2026-06-20T09:00:00Z")),
         ("end".to_owned(), json!("2026-06-20T10:00:00Z")),

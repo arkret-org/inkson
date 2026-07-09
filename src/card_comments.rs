@@ -10,7 +10,7 @@
 //!
 //! This module ships the typed representation + the payload builder
 //! that constructs the canonical `ck.message.create` op via the SDK's
-//! typed [`cokret_sdk::MessageCreatePayload`]. The UI drawer +
+//! typed [`arkret_sdk::MessageCreatePayload`]. The UI drawer +
 //! projection wiring are follow-ups; this revision is the data-layer
 //! half that can be unit-tested in isolation.
 //!
@@ -78,7 +78,7 @@ impl CardComment {
 }
 
 /// F-CARD-COMMENT-1: build the `ck.message.create` payload for a card
-/// comment, reusing the SDK's typed [`cokret_sdk::MessageCreatePayload`]
+/// comment, reusing the SDK's typed [`arkret_sdk::MessageCreatePayload`]
 /// so the field set stays schema-compliant by construction.
 ///
 /// The comment body rides in a `ck.content.text` content block; recognized
@@ -98,27 +98,27 @@ pub fn build_card_comment_payload(comment: &CardComment) -> anyhow::Result<Value
             // YOU-05-006: `Mention` is now the SDK's strongly-typed model,
             // so the extracted string is validated into a `Did` here and a
             // malformed mention surfaces as a recoverable error.
-            let subject_id = cokret_sdk::Did::new(did.clone())
+            let subject_id = arkret_sdk::Did::new(did.clone())
                 .map_err(|err| anyhow::anyhow!("invalid mention DID {did:?}: {err:?}"))?;
             serde_json::to_value(Mention::new(subject_id))
                 .map_err(|err| anyhow::anyhow!("mention serialize: {err}"))
         })
         .collect::<anyhow::Result<Vec<Value>>>()?;
 
-    let mut content = cokret_sdk::ContentBlock::new("ck.content.text", comment.body.clone())
+    let mut content = arkret_sdk::ContentBlock::new("ck.content.text", comment.body.clone())
         .with_field("format", json!("markdown"));
     if !mentions.is_empty() {
         content = content.with_field("mentions", Value::Array(mentions));
     }
 
-    let strand_id = cokret_sdk::StrandId::new(comment.card_strand_id.clone()).map_err(|err| {
+    let strand_id = arkret_sdk::StrandId::new(comment.card_strand_id.clone()).map_err(|err| {
         anyhow::anyhow!(
             "invalid card strand id {:?}: {err:?}",
             comment.card_strand_id
         )
     })?;
 
-    let mut payload = cokret_sdk::MessageCreatePayload::with_content(
+    let mut payload = arkret_sdk::MessageCreatePayload::with_content(
         strand_id,
         DISCUSSION_TRACK,
         content
@@ -242,7 +242,7 @@ mod tests {
     fn build_payload_validates_against_message_create_schema() {
         let comment = CardComment::new(CARD_STRAND_ID, "ship it @did:web:bob.example");
         let payload = build_card_comment_payload(&comment).expect("builds");
-        cokret_sdk::schema::event_payload_validator_catalog()
+        arkret_sdk::schema::event_payload_validator_catalog()
             .unwrap()
             .validate_payload("ck.message.create", &payload)
             .expect("card comment payload must satisfy message_create_payload schema");

@@ -11,7 +11,7 @@ export function mockCokretContract(req) {
   const body = req.body ?? {};
   const query = req.query ?? {};
 
-  if (method === "GET" && path === "/_cokret/describe") {
+  if (method === "GET" && path === "/_arkret/describe") {
     return json({
       service_did: "did:web:server.local",
       trust_domain: "ak:trust_domain:server.local",
@@ -37,7 +37,7 @@ export function mockCokretContract(req) {
     });
   }
 
-  if (method === "POST" && path === "/_cokret/self/events") {
+  if (method === "POST" && path === "/_arkret/self/events") {
     // Canonical EventsSubmitOutcome wire shape (soland head 37ce729):
     // {status, accepted[], cursor} — no top-level event_id/sync_token.
     const acceptedId = body.event_id ?? firstEventId(body.events) ?? "ak:event:e2e";
@@ -51,11 +51,11 @@ export function mockCokretContract(req) {
     });
   }
 
-  if (method === "GET" && path === "/_cokret/self/events") {
+  if (method === "GET" && path === "/_arkret/self/events") {
     return json({ events: [], next_cursor: null, has_more: false });
   }
 
-  if (method === "GET" && path === "/_cokret/self/account/viewer") {
+  if (method === "GET" && path === "/_arkret/self/account/viewer") {
     return json({
       principal_id: "did:web:alice.example",
       state: "active",
@@ -76,7 +76,7 @@ export function mockCokretContract(req) {
     });
   }
 
-  if (method === "GET" && path === "/_cokret/find/directory/describe") {
+  if (method === "GET" && path === "/_arkret/find/directory/describe") {
     return json({
       service_did: "did:web:server.local",
       trust_domain: "ak:trust_domain:server.local",
@@ -110,14 +110,14 @@ export function mockCokretContract(req) {
     });
   }
 
-  if (method === "POST" && path === "/_cokret/find/directory/search-realms") {
+  if (method === "POST" && path === "/_arkret/find/directory/search-realms") {
     return json({
       realms: [realmPreview()],
       has_more: false,
     });
   }
 
-  if (method === "GET" && path === "/_cokret/self/keys/backups") {
+  if (method === "GET" && path === "/_arkret/self/keys/backups") {
     const backups = [];
     const backupClass = query.backup_class;
     return json({
@@ -128,14 +128,14 @@ export function mockCokretContract(req) {
     });
   }
 
-  if (method === "GET" && path === "/_cokret/root/identity/recovery-policy") {
+  if (method === "GET" && path === "/_arkret/root/identity/recovery-policy") {
     return json({
       active_policy: null,
       principal_id: body.principal_id ?? req.account?.did ?? "did:web:alice.example",
     });
   }
 
-  if (method === "POST" && path === "/_cokret/gate/account/device-pair") {
+  if (method === "POST" && path === "/_arkret/gate/account/device-pair") {
     const deviceId = body.new_device_pubkey?.kid ?? "ak:device:01964137-0000-7000-8000-0000000000b2";
     return json({
       device_id: deviceId,
@@ -150,7 +150,7 @@ export function mockCokretContract(req) {
     });
   }
 
-  if (method === "POST" && path === "/_cokret/self/ephemeral") {
+  if (method === "POST" && path === "/_arkret/self/ephemeral") {
     if (!["ck.receipt.read", "ck.typing", "ck.presence", "ck.call.signal"].includes(body.kind)) {
       return json(
         {
@@ -171,23 +171,23 @@ export function mockCokretContract(req) {
   return undefined;
 }
 
-// Short-form aliases for callers that pass a path without the `/_cokret/`
+// Short-form aliases for callers that pass a path without the `/_arkret/`
 // prefix. Each alias MUST resolve to a path with a matching branch above;
 // `/realm/create` and `/realms/create` were dropped together with the
 // realm/space creation surface forbidden by inkson/tests/server_contract.rs.
 // `/account/viewer` is the short alias for the spec account viewer. Profile
 // update remains distinct and MUST NOT collapse onto this read path.
 export function canonicalPath(path) {
-  const clean = path.startsWith("/_cokret/") ? path : path.replace(/\/+$/, "");
+  const clean = path.startsWith("/_arkret/") ? path : path.replace(/\/+$/, "");
   const aliases = {
-    "/server/describe": "/_cokret/describe",
-    "/events/submit": "/_cokret/self/events",
-    "/events/list": "/_cokret/self/events",
-    "/account/viewer": "/_cokret/self/account/viewer",
-    "/directory/search-realms": "/_cokret/find/directory/search-realms",
-    "/keys/backups": "/_cokret/self/keys/backups",
-    "/gate/account/device-pair": "/_cokret/gate/account/device-pair",
-    "/ephemeral": "/_cokret/self/ephemeral",
+    "/server/describe": "/_arkret/describe",
+    "/events/submit": "/_arkret/self/events",
+    "/events/list": "/_arkret/self/events",
+    "/account/viewer": "/_arkret/self/account/viewer",
+    "/directory/search-realms": "/_arkret/find/directory/search-realms",
+    "/keys/backups": "/_arkret/self/keys/backups",
+    "/gate/account/device-pair": "/_arkret/gate/account/device-pair",
+    "/ephemeral": "/_arkret/self/ephemeral",
   };
   return aliases[clean] ?? clean;
 }
@@ -200,7 +200,7 @@ function json(body, status = 200) {
   return { status, body };
 }
 
-// Mirrors the shape soland's `/_cokret/find/directory/search-realms` actually emits
+// Mirrors the shape soland's `/_arkret/find/directory/search-realms` actually emits
 // (see `soland/src/routing/spaces/directory.rs::search_realms`). The fields
 // here MUST stay aligned with that endpoint — the cotest parity test runs
 // this response against a live soland process.

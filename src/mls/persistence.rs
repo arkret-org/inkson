@@ -10,21 +10,21 @@
 //!
 //! 1. **Serialize on commit.** The SDK's `CokretMlsGroup` already exposes `export_state_record()` /
 //!    `restore_from_state_record()` so the openmls provider storage can be round-tripped through a
-//!    typed [`cokret_sdk::MlsGroupStateRecord`]. We wrap that record in [`MlsSnapshotEnvelope`]
+//!    typed [`arkret_sdk::MlsGroupStateRecord`]. We wrap that record in [`MlsSnapshotEnvelope`]
 //!    which adds a device-scoped confidentiality layer so a stolen state.json doesn't leak the
 //!    openmls provider keys.
 //!
 //! Also exposes the multi-device Welcome shuttle
 //! ([`encode_welcome_for_transport`] / [`decode_welcome_from_transport`])
 //! used to ship a typed `MlsWelcomeEnvelope` over soland's
-//! `/_cokret/self/device_messages` (with `type = "ck.mls.welcome"`). The
+//! `/_arkret/self/device_messages` (with `type = "ck.mls.welcome"`). The
 //! payload is the canonical SDK serialization — JSON serialize the
 //! `MlsWelcomeEnvelope` struct directly — so an apply-on-receive path
 //! can round-trip it via `serde_json::from_value` and feed it into
-//! [`cokret_sdk::CokretMlsGroup::join_from_welcome`].
+//! [`arkret_sdk::CokretMlsGroup::join_from_welcome`].
 //!
 //! 2. **Persist via key_backup.** [`MlsSnapshotEnvelope::to_key_backup_body`] produces the
-//!    `ck.schema.key_backup.v1` request body used by `PUT /_cokret/self/keys/backups/{backup_id}`.
+//!    `ck.schema.key_backup.v1` request body used by `PUT /_arkret/self/keys/backups/{backup_id}`.
 //!    The blob is opaque to soland; device-secret-derived encryption keeps the server
 //!    zero-knowledge of group keys.
 //!
@@ -63,7 +63,7 @@ use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use chacha20poly1305::aead::{Aead, OsRng, Payload};
 use chacha20poly1305::{AeadCore, ChaCha20Poly1305, KeyInit, Nonce};
 use chrono::{DateTime, SecondsFormat, Utc};
-use cokret_sdk::MlsGroupStateRecord;
+use arkret_sdk::MlsGroupStateRecord;
 use hkdf::Hkdf;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
@@ -80,7 +80,7 @@ pub const AEAD_VERSION_CHACHA20_POLY1305: u8 = 1;
 /// Typed envelope wrapping an encrypted MLS group state
 /// record. Persisted via `LocalStateStore` and (for cross-device
 /// restore) shipped as the `ciphertext` body of a
-/// `PUT /_cokret/self/keys/backups/{backup_id}` call. The fields here are
+/// `PUT /_arkret/self/keys/backups/{backup_id}` call. The fields here are
 /// the minimum required for tamper detection + outdated-snapshot
 /// detection; everything else (signing key set / openmls provider
 /// storage entries) lives inside the key-backup `ciphertext`.
@@ -331,7 +331,7 @@ impl MlsSnapshotEnvelope {
     pub fn to_key_backup_body(&self, backup_id: &str, actor_id: &str, device_id: &str) -> Value {
         let envelope_bytes = serde_json::to_vec(self).unwrap_or_default();
         let ciphertext = URL_SAFE_NO_PAD.encode(&envelope_bytes);
-        let ciphertext_digest = cokret_sdk::canonical::sha256_digest(&envelope_bytes);
+        let ciphertext_digest = arkret_sdk::canonical::sha256_digest(&envelope_bytes);
         let nonce_material = format!(
             "{backup_id}|{actor_id}|{device_id}|mls_history|kb_mls_snapshot_v1|{}|xchacha20_poly1305",
             self.recorded_at.to_rfc3339_opts(SecondsFormat::Secs, true)
@@ -428,7 +428,7 @@ impl MlsSnapshotEnvelope {
 /// Helper that decrypts an [`MlsSnapshotEnvelope`] + parses out the typed
 /// [`MlsGroupStateRecord`] without trying to reconstruct the live MLS group
 /// via the OpenMLS provider. Callers that need an executable
-/// [`cokret_sdk::CokretMlsGroup`] should use [`restore_envelope`].
+/// [`arkret_sdk::CokretMlsGroup`] should use [`restore_envelope`].
 pub fn restore_state_record_only(
     envelope: &MlsSnapshotEnvelope,
     snapshot_secret: &str,
@@ -441,7 +441,7 @@ pub fn restore_state_record_only(
 
 /// Helper used by the boot path and local MLS actions. Decrypts the envelope,
 /// sanity-checks the epoch, and reconstructs the SDK group via
-/// [`cokret_sdk::CokretMlsGroup::restore_from_state_record`].
+/// [`arkret_sdk::CokretMlsGroup::restore_from_state_record`].
 ///
 /// `current_epoch_floor` is taken from the latest Seal view; pass
 /// `0` to skip the freshness check (e.g. first-boot rehydrate where
@@ -450,10 +450,10 @@ pub fn restore_envelope(
     envelope: &MlsSnapshotEnvelope,
     snapshot_secret: &str,
     current_epoch_floor: u64,
-) -> Result<cokret_sdk::CokretMlsGroup, EnvelopeError> {
+) -> Result<arkret_sdk::CokretMlsGroup, EnvelopeError> {
     let bytes = decrypt_with_epoch_check(envelope, snapshot_secret, current_epoch_floor)?;
     let record = MlsSnapshotEnvelope::restore_state_record(&bytes)?;
-    cokret_sdk::CokretMlsGroup::restore_from_state_record(&record)
+    arkret_sdk::CokretMlsGroup::restore_from_state_record(&record)
         .map_err(|err| EnvelopeError::SdkRestore(err.to_string()))
 }
 
@@ -719,7 +719,7 @@ mod tests {
         // End-to-end: SDK creates a group → export_state_record →
         // encrypt → decrypt → SDK restore. The restored group must
         // report the same group_id + epoch.
-        use cokret_sdk::{CokretMlsIdentity, DeviceId, Did};
+        use arkret_sdk::{CokretMlsIdentity, DeviceId, Did};
 
         let identity = CokretMlsIdentity::new_basic(
             Did::new("did:web:alice.example".to_owned()).unwrap(),

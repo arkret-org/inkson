@@ -9,7 +9,7 @@
 //! 2. read the next `actor_seq` from the principal control stream's actor frontier on the Principal
 //!    Server;
 //! 3. ask the enrollment authority to mint a signed `service_attested` `ck.device.authorize` Event,
-//!    then submit it verbatim to the Principal Server's `POST /_cokret/self/events`.
+//!    then submit it verbatim to the Principal Server's `POST /_arkret/self/events`.
 //!
 //! The flow is idempotent at the caller: it is only invoked when the device
 //! is not yet authorized, and a concurrent / already-applied authorization is
@@ -42,7 +42,7 @@ pub struct DeviceEnrollmentRequest {
 }
 
 impl DeviceEnrollmentRequest {
-    fn to_sdk_body(&self) -> anyhow::Result<cokret_sdk::AccountDeviceEnrollRequestBody> {
+    fn to_sdk_body(&self) -> anyhow::Result<arkret_sdk::AccountDeviceEnrollRequestBody> {
         let not_before = match self
             .not_before
             .as_deref()
@@ -55,8 +55,8 @@ impl DeviceEnrollmentRequest {
             ),
             None => None,
         };
-        Ok(cokret_sdk::AccountDeviceEnrollRequestBody {
-            device_id: cokret_sdk::DeviceId::new(self.device_id.trim().to_owned())
+        Ok(arkret_sdk::AccountDeviceEnrollRequestBody {
+            device_id: arkret_sdk::DeviceId::new(self.device_id.trim().to_owned())
                 .context("device-enroll `device_id`")?,
             device_public_key: self.device_public_key.clone(),
             hpke_key: self.hpke_key.clone(),
@@ -97,16 +97,16 @@ pub fn device_public_key_multibase(material: &SigningSeedMaterial) -> String {
 pub fn parse_signed_device_authorize(
     signed_event: &serde_json::Value,
     expected_device_id: &str,
-) -> anyhow::Result<cokret_sdk::Event> {
-    let event: cokret_sdk::Event = serde_json::from_value(signed_event.clone())
+) -> anyhow::Result<arkret_sdk::Event> {
+    let event: arkret_sdk::Event = serde_json::from_value(signed_event.clone())
         .map_err(|err| anyhow::anyhow!("decode signed device.authorize SDK Event: {err}"))?;
     validate_signed_device_authorize(event, expected_device_id)
 }
 
 fn validate_signed_device_authorize(
-    event: cokret_sdk::Event,
+    event: arkret_sdk::Event,
     expected_device_id: &str,
-) -> anyhow::Result<cokret_sdk::Event> {
+) -> anyhow::Result<arkret_sdk::Event> {
     if event.kind.as_str() != "ck.device.authorize" {
         anyhow::bail!(
             "enrollment authority returned unexpected event kind {:?}",
@@ -131,11 +131,11 @@ fn validate_signed_device_authorize(
 
 /// Enroll the current session device: ask the Account Authority to sign a
 /// `ck.device.authorize` for `request`, then submit it through `principal_api`
-/// (`POST /_cokret/self/events`). `expected_device_id` is this session's
+/// (`POST /_arkret/self/events`). `expected_device_id` is this session's
 /// self-certifying id, used to fail closed if the returned event addresses a
 /// different device.
 pub async fn enroll_current_device(
-    account_client: &cokret_sdk::http_client::Client,
+    account_client: &arkret_sdk::http_client::Client,
     principal_api: &CokretApi,
     request: &DeviceEnrollmentRequest,
     expected_device_id: &str,

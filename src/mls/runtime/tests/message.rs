@@ -139,22 +139,22 @@ fn two_member_group_with_bob_snapshot(
     realm: &str,
     bob_actor: &str,
     bob_device: &str,
-) -> cokret_sdk::CokretMlsGroup {
-    let alice = cokret_sdk::CokretMlsIdentity::new_basic(
-        cokret_sdk::Did::new("did:web:alice.example".to_owned()).unwrap(),
-        cokret_sdk::DeviceId::new("ak:device:01904100-0000-7000-8000-0000000000a1".to_owned())
+) -> arkret_sdk::CokretMlsGroup {
+    let alice = arkret_sdk::CokretMlsIdentity::new_basic(
+        arkret_sdk::Did::new("did:web:alice.example".to_owned()).unwrap(),
+        arkret_sdk::DeviceId::new("ak:device:01904100-0000-7000-8000-0000000000a1".to_owned())
             .unwrap(),
     )
     .unwrap();
-    let bob = cokret_sdk::CokretMlsIdentity::new_basic(
-        cokret_sdk::Did::new(bob_actor.to_owned()).unwrap(),
-        cokret_sdk::DeviceId::new(bob_device.to_owned()).unwrap(),
+    let bob = arkret_sdk::CokretMlsIdentity::new_basic(
+        arkret_sdk::Did::new(bob_actor.to_owned()).unwrap(),
+        arkret_sdk::DeviceId::new(bob_device.to_owned()).unwrap(),
     )
     .unwrap();
     let bob_key_package = bob.key_package_record().unwrap();
     let mut alice_group = alice.create_group(realm.as_bytes()).unwrap();
     let add = alice_group.add_member(&bob_key_package).unwrap();
-    let bob_group = cokret_sdk::CokretMlsGroup::join_from_welcome(bob, &add.welcome).unwrap();
+    let bob_group = arkret_sdk::CokretMlsGroup::join_from_welcome(bob, &add.welcome).unwrap();
 
     let secret = load_or_create_device_snapshot_secret(secure, bob_actor, bob_device).unwrap();
     let post_state = bob_group.export_state_record().unwrap();
@@ -321,7 +321,7 @@ fn author_own_ciphertext_stays_soft_failure_without_state_regression() {
         &[br#""mine""#.to_vec()],
     )
     .unwrap();
-    let payload: cokret_sdk::EncryptedPayload =
+    let payload: arkret_sdk::EncryptedPayload =
         serde_json::from_value(encrypted_values[0].clone()).unwrap();
     let after_send = state.mls_snapshot_for(realm).unwrap();
 
@@ -403,7 +403,7 @@ fn encrypted_write_with_snapshot_requires_existing_device_secret() {
 #[cfg(not(target_arch = "wasm32"))]
 #[test]
 fn encrypted_write_uses_device_key_snapshot_when_ready() {
-    use cokret_sdk::{CokretMlsIdentity, DeviceId, Did};
+    use arkret_sdk::{CokretMlsIdentity, DeviceId, Did};
 
     let actor = "did:web:alice.example";
     let device = "ak:device:01904100-0000-7000-8000-000000000001";
@@ -465,7 +465,7 @@ fn encrypt_does_not_persist_snapshot_until_caller_saves_on_accept() {
 
     state.save_realm_tree_projection(
         realm,
-        json!({ "active_profiles": [cokret_sdk::mls::MINIMAL_METADATA_REALM_PROFILE] }),
+        json!({ "active_profiles": [arkret_sdk::mls::MINIMAL_METADATA_REALM_PROFILE] }),
     );
     assert!(state.realm_projection_is_minimal_metadata(realm));
 
@@ -564,15 +564,15 @@ fn welcome_apply_uses_key_package_identity_state() {
     let realm = "ak:realm:01904100-0000-7000-8000-0000000000c1";
     let bob_actor = "did:web:bob.example";
     let bob_device = "ak:device:01904100-0000-7000-8000-0000000000c2";
-    let alice = cokret_sdk::CokretMlsIdentity::new_basic(
-        cokret_sdk::Did::new("did:web:alice.example".to_owned()).unwrap(),
-        cokret_sdk::DeviceId::new("ak:device:01904100-0000-7000-8000-0000000000a1".to_owned())
+    let alice = arkret_sdk::CokretMlsIdentity::new_basic(
+        arkret_sdk::Did::new("did:web:alice.example".to_owned()).unwrap(),
+        arkret_sdk::DeviceId::new("ak:device:01904100-0000-7000-8000-0000000000a1".to_owned())
             .unwrap(),
     )
     .unwrap();
-    let bob = cokret_sdk::CokretMlsIdentity::new_basic(
-        cokret_sdk::Did::new(bob_actor.to_owned()).unwrap(),
-        cokret_sdk::DeviceId::new(bob_device.to_owned()).unwrap(),
+    let bob = arkret_sdk::CokretMlsIdentity::new_basic(
+        arkret_sdk::Did::new(bob_actor.to_owned()).unwrap(),
+        arkret_sdk::DeviceId::new(bob_device.to_owned()).unwrap(),
     )
     .unwrap();
     let bob_key_package = bob.key_package_record().unwrap();
@@ -670,7 +670,7 @@ fn durable_welcome_payload_without_claim_envelope_fails_closed() {
             .first_error
             .as_deref()
             .unwrap_or_default()
-            .contains(cokret_sdk::error::REASON_KEYPACKAGE_WELCOME_ENVELOPE_MISMATCH)
+            .contains(arkret_sdk::error::REASON_KEYPACKAGE_WELCOME_ENVELOPE_MISMATCH)
     );
 }
 
@@ -736,7 +736,7 @@ fn realm_key_share_envelope(
     let _signer_guard =
         ActiveSignerGuard::install([17u8; 32], "did:key:zRealmKeyShareRuntimeTestSigner");
     let sealed =
-        cokret_sdk::secret_share::seal_history_secret_to_device_pubkey(recipient_pub, secrets)
+        arkret_sdk::secret_share::seal_history_secret_to_device_pubkey(recipient_pub, secrets)
             .unwrap();
     let (lo, hi) = secrets.iter().fold((u64::MAX, 0_u64), |(lo, hi), (e, _)| {
         (lo.min(*e), hi.max(*e))
@@ -1027,14 +1027,14 @@ fn tier3_history_decrypt_reads_provider_exporter_aead_content() {
 
     // Wrap the exporter-aead blob as the `EncryptedPayload` a content event
     // would carry (epoch + base64url(nonce||ct)).
-    let payload = cokret_sdk::EncryptedPayload {
-        scheme: cokret_sdk::EncryptedPayloadScheme::MlsRfc9420,
+    let payload = arkret_sdk::EncryptedPayload {
+        scheme: arkret_sdk::EncryptedPayloadScheme::MlsRfc9420,
         group_id: mls_group_id_for_realm(realm),
         epoch,
         content_type: "application/json".to_owned(),
-        ciphertext: cokret_sdk::base64url_encode(&nonce_and_ct),
+        ciphertext: arkret_sdk::base64url_encode(&nonce_and_ct),
         aad: None,
-        payload_digest: cokret_sdk::Hash::new(cokret_sdk::canonical::sha256_digest(&nonce_and_ct))
+        payload_digest: arkret_sdk::Hash::new(arkret_sdk::canonical::sha256_digest(&nonce_and_ct))
             .unwrap(),
         key_ref: None,
     };
@@ -1087,9 +1087,9 @@ fn tier3_history_decrypt_works_without_local_snapshot() {
     let _ = history_store.delete_secret(&history_key);
 
     // Build alice's group WITHOUT persisting any snapshot into `state`.
-    let alice = cokret_sdk::CokretMlsIdentity::new_basic(
-        cokret_sdk::Did::new("did:web:alice.example".to_owned()).unwrap(),
-        cokret_sdk::DeviceId::new("ak:device:01904100-0000-7000-8000-0000000000a1".to_owned())
+    let alice = arkret_sdk::CokretMlsIdentity::new_basic(
+        arkret_sdk::Did::new("did:web:alice.example".to_owned()).unwrap(),
+        arkret_sdk::DeviceId::new("ak:device:01904100-0000-7000-8000-0000000000a1".to_owned())
             .unwrap(),
     )
     .unwrap();
@@ -1108,14 +1108,14 @@ fn tier3_history_decrypt_works_without_local_snapshot() {
         .map(|(_, secret)| secret)
         .expect("retained history secret for the current epoch");
 
-    let payload = cokret_sdk::EncryptedPayload {
-        scheme: cokret_sdk::EncryptedPayloadScheme::MlsRfc9420,
+    let payload = arkret_sdk::EncryptedPayload {
+        scheme: arkret_sdk::EncryptedPayloadScheme::MlsRfc9420,
         group_id: mls_group_id_for_realm(realm),
         epoch,
         content_type: "application/json".to_owned(),
-        ciphertext: cokret_sdk::base64url_encode(&nonce_and_ct),
+        ciphertext: arkret_sdk::base64url_encode(&nonce_and_ct),
         aad: None,
-        payload_digest: cokret_sdk::Hash::new(cokret_sdk::canonical::sha256_digest(&nonce_and_ct))
+        payload_digest: arkret_sdk::Hash::new(arkret_sdk::canonical::sha256_digest(&nonce_and_ct))
             .unwrap(),
         key_ref: None,
     };
@@ -1169,7 +1169,7 @@ fn realm_key_share_sender_signature_round_trips() {
         "c2VhbGVk".to_owned(),
     )
     .unwrap();
-    let payload: cokret_sdk::RealmKeySharePayload =
+    let payload: arkret_sdk::RealmKeySharePayload =
         serde_json::from_value(event.payload.clone()).unwrap();
 
     // A real signature object was attached, and it verifies.

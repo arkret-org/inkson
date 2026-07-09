@@ -32,7 +32,7 @@
 | 变量 | 取值 | 判定来源 |
 | --- | --- | --- |
 | **V1 设备信任** `device_trust` | `first`（首台，inception bootstrap）/ `authorized`（已在设备集合）/ `new_with_peer`（新设备，有可用旧设备）/ `new_no_peer`（新设备，无可用旧设备） | durable device list（PCR 中的 `ck.device.authorize` / `ck.device.list_update`） |
-| **V2 恢复配置** `recovery_state` | `configured`（genesis recovery policy accepted + `did_recovery` series_seq=0 存在，或离线 sealed receipt）/ `none`（SPOF） | `GET /_cokret/root/identity/recovery-policy`（`active_policy=null` ⇒ `none`）+ `GET /_cokret/self/keys/backups?backup_class=did_recovery` |
+| **V2 恢复配置** `recovery_state` | `configured`（genesis recovery policy accepted + `did_recovery` series_seq=0 存在，或离线 sealed receipt）/ `none`（SPOF） | `GET /_arkret/root/identity/recovery-policy`（`active_policy=null` ⇒ `none`）+ `GET /_arkret/self/keys/backups?backup_class=did_recovery` |
 | **V3 E2EE 材料/备份** `e2ee_backup` | `in_sync` / `needs_unlock`（服务器有备份、本地无材料）/ `needs_backup`（本地有材料、服务器无或落后）/ `none`（无任何材料，仅异常存量账号） | 本地 secret storage vs 服务端 backup series |
 | **V4 加密地板** `floor_state` | `recommended`（PCR 与全部私有 Realm 达推荐地板）/ `low`（PCR floor 缺失或存在显式低地板的 Realm）/ `unknown`（projection 不足，不弹） | realm projections（PCR 优先，PCR 在视野内时以 PCR 为准） |
 
@@ -132,11 +132,11 @@ sequenceDiagram
     N->>S: 登录因子 (密码/passkey/OIDC)
     S-->>N: fresh-device 受限 session grant<br/>(只能做 ck.key.verification.* bootstrap,<br/>不能读 E2EE 历史/解备份/请求 ck.secret.*)
     N->>N: 本地生成 device key
-    N->>S: POST /_cokret/self/device_messages<br/>ck.key.verification.request<br/>purpose=same_principal_device_authorization<br/>+ pairing_code + new_device_pubkey + challenge_signature
+    N->>S: POST /_arkret/self/device_messages<br/>ck.key.verification.request<br/>purpose=same_principal_device_authorization<br/>+ pairing_code + new_device_pubkey + challenge_signature
     S-->>O: account subscribe delta.to_device<br/>(push 仅作唤醒)
     O->>O: UI 展示新设备 metadata + pairing code<br/>用户与新设备屏幕比对
     Note over N,O: SAS / QR transcript<br/>(start→accept→key→mac→done)
-    O->>S: POST /_cokret/gate/account/device-pair<br/>transcript 绑定的 pairing_code/new_device_pubkey<br/>/challenge_signature + 自身 fresh proof
+    O->>S: POST /_arkret/gate/account/device-pair<br/>transcript 绑定的 pairing_code/new_device_pubkey<br/>/challenge_signature + 自身 fresh proof
     S-->>S: 写入 ck.device.authorize + ck.device.list_update (PCR)
     N->>S: 验证 durable device list (不信 done 消息本身)
     N->>O: ck.secret.request (HPKE 公钥)
@@ -172,7 +172,7 @@ sequenceDiagram
     participant S as 服务端
 
     N->>S: 登录因子
-    N->>S: GET /_cokret/root/identity/recovery-policy
+    N->>S: GET /_arkret/root/identity/recovery-policy
     alt active_policy == null
         S-->>N: 无 accepted policy → fail closed → 转 S5
     end

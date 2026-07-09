@@ -7,7 +7,7 @@ use super::OperationBuilder;
 /// Durable `ck.device.revoke` Control Move on the principal control
 /// stream (`crypto-media/device-lifecycle.md` §2.2, SPEC-SOL-003
 /// resolution). `realm_id` MUST be the principal's control realm
-/// (`cokret_sdk::auth::principal_control_realm_id`); the caller MUST
+/// (`arkret_sdk::auth::principal_control_realm_id`); the caller MUST
 /// attach a `seal_basis` minted from the registered frontier sourcing
 /// before building. The payload carries no frontier field — the
 /// authorization basis is the envelope `seal_basis` and the effective
@@ -22,12 +22,12 @@ pub fn device_revoke(
     revoked_by_device_id: &str,
     reason: &str,
 ) -> anyhow::Result<OperationBuilder> {
-    let payload = cokret_sdk::DeviceRevokePayload {
-        principal_id: cokret_sdk::Did::new(actor.to_owned())
+    let payload = arkret_sdk::DeviceRevokePayload {
+        principal_id: arkret_sdk::Did::new(actor.to_owned())
             .map_err(|err| anyhow::anyhow!("invalid principal DID {actor:?}: {err}"))?,
         device_id: target_device_id.to_owned(),
-        revoked_by: cokret_sdk::DeviceOrPrincipalRef::DeviceId(
-            cokret_sdk::DeviceId::new(revoked_by_device_id.to_owned())
+        revoked_by: arkret_sdk::DeviceOrPrincipalRef::DeviceId(
+            arkret_sdk::DeviceId::new(revoked_by_device_id.to_owned())
                 .map_err(|err| anyhow::anyhow!("invalid revoking device id: {err}"))?,
         ),
         revoked_at: crate::clock::now_utc_secs(),
@@ -39,7 +39,7 @@ pub fn device_revoke(
     Ok(OperationBuilder::new(
         realm_id,
         actor,
-        cokret_sdk::events::kinds::EventKind::DeviceRevoke,
+        arkret_sdk::events::kinds::EventKind::DeviceRevoke,
     )
     .target_ref(target_device_id)
     .body(body))
@@ -53,14 +53,14 @@ pub fn device_revoke(
 pub fn mls_commit_with_governance(
     realm_id: &str,
     actor: &str,
-    payload: &cokret_sdk::MlsCommitPayload,
+    payload: &arkret_sdk::MlsCommitPayload,
 ) -> anyhow::Result<OperationBuilder> {
     let group_id = payload.mls_group_id().to_owned();
     let body = serde_json::to_value(payload)?;
     Ok(OperationBuilder::new(
         realm_id,
         actor,
-        cokret_sdk::events::kinds::EventKind::MlsCommit,
+        arkret_sdk::events::kinds::EventKind::MlsCommit,
     )
     .target_ref(group_id)
     .body(body))
@@ -71,13 +71,13 @@ pub fn mls_proposal_with_governance(
     realm_id: &str,
     actor: &str,
     group_id: &str,
-    payload: &cokret_sdk::MlsProposalPayload,
+    payload: &arkret_sdk::MlsProposalPayload,
 ) -> anyhow::Result<OperationBuilder> {
     let body = serde_json::to_value(payload)?;
     Ok(OperationBuilder::new(
         realm_id,
         actor,
-        cokret_sdk::events::kinds::EventKind::MlsProposal,
+        arkret_sdk::events::kinds::EventKind::MlsProposal,
     )
     .target_ref(group_id.to_owned())
     .body(body))
@@ -101,7 +101,7 @@ pub fn mls_genesis_with_governance(
     OperationBuilder::new(
         realm_id,
         actor,
-        cokret_sdk::events::kinds::EventKind::MlsGenesis,
+        arkret_sdk::events::kinds::EventKind::MlsGenesis,
     )
     .target_ref(group_id.to_owned())
     .body(payload.clone())
@@ -120,7 +120,7 @@ pub fn mls_welcome_with_governance(
     OperationBuilder::new(
         realm_id,
         actor,
-        cokret_sdk::events::kinds::EventKind::MlsWelcome,
+        arkret_sdk::events::kinds::EventKind::MlsWelcome,
     )
     .target_ref(group_id.to_owned())
     .body(payload.clone())

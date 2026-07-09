@@ -52,14 +52,14 @@ pub(crate) fn shared_pin_scope_for_message(realm_id: &str, strand_id: &str) -> S
     }
 }
 
-fn sdk_pin_scope(pin_scope: &SharedPinScope) -> anyhow::Result<cokret_sdk::PinScope> {
+fn sdk_pin_scope(pin_scope: &SharedPinScope) -> anyhow::Result<arkret_sdk::PinScope> {
     match pin_scope.kind {
-        SharedPinScopeKind::Realm => Ok(cokret_sdk::PinScope::Realm {
-            id: cokret_sdk::RealmId::new(pin_scope.id.clone())
+        SharedPinScopeKind::Realm => Ok(arkret_sdk::PinScope::Realm {
+            id: arkret_sdk::RealmId::new(pin_scope.id.clone())
                 .map_err(|error| anyhow::anyhow!("invalid pin realm scope: {error:?}"))?,
         }),
-        SharedPinScopeKind::Strand => Ok(cokret_sdk::PinScope::Strand {
-            id: cokret_sdk::StrandId::new(pin_scope.id.clone())
+        SharedPinScopeKind::Strand => Ok(arkret_sdk::PinScope::Strand {
+            id: arkret_sdk::StrandId::new(pin_scope.id.clone())
                 .map_err(|error| anyhow::anyhow!("invalid pin strand scope: {error:?}"))?,
         }),
     }
@@ -71,8 +71,8 @@ pub(crate) fn shared_message_pin_add_operation(
     pin_scope: &SharedPinScope,
     target_ref: &str,
     rank: &str,
-) -> anyhow::Result<cokret_sdk::Event> {
-    let payload = cokret_sdk::PinAddPayload {
+) -> anyhow::Result<arkret_sdk::Event> {
+    let payload = arkret_sdk::PinAddPayload {
         pin_scope: sdk_pin_scope(pin_scope)?,
         target_ref: target_ref.to_owned(),
         rank: rank.to_owned(),
@@ -83,7 +83,7 @@ pub(crate) fn shared_message_pin_add_operation(
     OperationBuilder::new(
         realm_id,
         actor,
-        cokret_sdk::events::kinds::EventKind::PinAdd,
+        arkret_sdk::events::kinds::EventKind::PinAdd,
     )
     .target_ref(target_ref)
     .body(payload)
@@ -95,8 +95,8 @@ pub(crate) fn shared_message_pin_remove_operation(
     actor: &str,
     pin_scope: &SharedPinScope,
     target_ref: &str,
-) -> anyhow::Result<cokret_sdk::Event> {
-    let payload = cokret_sdk::PinRemovePayload {
+) -> anyhow::Result<arkret_sdk::Event> {
+    let payload = arkret_sdk::PinRemovePayload {
         pin_scope: sdk_pin_scope(pin_scope)?,
         target_ref: target_ref.to_owned(),
         expected_rank: None,
@@ -106,7 +106,7 @@ pub(crate) fn shared_message_pin_remove_operation(
     OperationBuilder::new(
         realm_id,
         actor,
-        cokret_sdk::events::kinds::EventKind::PinRemove,
+        arkret_sdk::events::kinds::EventKind::PinRemove,
     )
     .target_ref(target_ref)
     .body(payload)
@@ -114,7 +114,7 @@ pub(crate) fn shared_message_pin_remove_operation(
 }
 
 fn validate_pin_payload(kind: &str, payload: &Value) -> anyhow::Result<()> {
-    cokret_sdk::schema::event_payload_validator_catalog()
+    arkret_sdk::schema::event_payload_validator_catalog()
         .map_err(|error| anyhow::anyhow!("{kind} payload validator catalog: {error}"))?
         .validate_payload(kind, payload)
         .map_err(|error| anyhow::anyhow!("{kind} payload is not schema-valid: {error}"))
@@ -141,7 +141,7 @@ pub(crate) fn chat_saved_account_data_item(
 ) -> anyhow::Result<crate::account_data::SavedAccountDataItem> {
     crate::account_data::saved_account_data_item(
         namespace_key,
-        cokret_sdk::SavedItemValue {
+        arkret_sdk::SavedItemValue {
             collection_title: CHAT_PRIVATE_SAVED_COLLECTION_TITLE.to_owned(),
             target_ref: target_ref.to_owned(),
             note: None,
@@ -167,7 +167,7 @@ pub(crate) fn chat_message_revise_operation(
     actor: &str,
     event_id: &str,
     body: &str,
-) -> anyhow::Result<cokret_sdk::Event> {
+) -> anyhow::Result<arkret_sdk::Event> {
     // Route through the SDK-typed `message_revise_payload` builder rather than a
     // hand-rolled `json!` body: it validates ids at build time and addresses a
     // `ck:message:` target via the payload's `message_id` field (falling back to
@@ -176,7 +176,7 @@ pub(crate) fn chat_message_revise_operation(
         realm_id,
         actor,
         event_id,
-        cokret_sdk::ContentBlock::text(body),
+        arkret_sdk::ContentBlock::text(body),
     )?
     .build_sdk_event("inkson")
 }
@@ -186,9 +186,9 @@ pub(crate) fn chat_message_redact_operation(
     actor: &str,
     target_id: &str,
     reason: &str,
-) -> anyhow::Result<cokret_sdk::Event> {
+) -> anyhow::Result<arkret_sdk::Event> {
     let target_id = target_id.trim();
-    let mut payload = cokret_sdk::MessageRedactPayload {
+    let mut payload = arkret_sdk::MessageRedactPayload {
         message_id: None,
         target_ref: None,
         event_id: None,
@@ -199,12 +199,12 @@ pub(crate) fn chat_message_redact_operation(
     };
     if target_id.starts_with("ak:event:") {
         payload.target_event_id = Some(
-            cokret_sdk::EventId::new(target_id.to_owned())
+            arkret_sdk::EventId::new(target_id.to_owned())
                 .map_err(|err| anyhow::anyhow!("invalid redaction event target: {err}"))?,
         );
     } else if target_id.starts_with("ak:message:") {
         payload.message_id = Some(
-            cokret_sdk::MessageId::new(target_id.to_owned())
+            arkret_sdk::MessageId::new(target_id.to_owned())
                 .map_err(|err| anyhow::anyhow!("invalid redaction message target: {err}"))?,
         );
     } else {
@@ -216,7 +216,7 @@ pub(crate) fn chat_message_redact_operation(
     OperationBuilder::new(
         realm_id,
         actor,
-        cokret_sdk::events::kinds::EventKind::MessageRedact,
+        arkret_sdk::events::kinds::EventKind::MessageRedact,
     )
     .target_ref(target_id)
     .body(body)
@@ -228,11 +228,11 @@ pub(crate) fn chat_reaction_add_operation(
     actor: &str,
     event_id: &str,
     key: &str,
-) -> anyhow::Result<cokret_sdk::Event> {
+) -> anyhow::Result<arkret_sdk::Event> {
     OperationBuilder::new(
         realm_id,
         actor,
-        cokret_sdk::events::kinds::EventKind::ReactionAdd,
+        arkret_sdk::events::kinds::EventKind::ReactionAdd,
     )
     .target_ref(event_id)
     .body(json!({
@@ -251,14 +251,14 @@ pub(crate) fn chat_reaction_add_operation_encrypted(
     actor: &str,
     event_id: &str,
     routing_tag: &str,
-    encrypted_payload: &cokret_sdk::EncryptedPayload,
-) -> anyhow::Result<cokret_sdk::Event> {
+    encrypted_payload: &arkret_sdk::EncryptedPayload,
+) -> anyhow::Result<arkret_sdk::Event> {
     let encrypted_payload_json =
         serde_json::to_value(encrypted_payload).unwrap_or(serde_json::Value::Null);
     OperationBuilder::new(
         realm_id,
         actor,
-        cokret_sdk::events::kinds::EventKind::ReactionAdd,
+        arkret_sdk::events::kinds::EventKind::ReactionAdd,
     )
     .target_ref(event_id)
     .body(json!({
@@ -282,7 +282,7 @@ pub(crate) fn build_chat_reaction_add_operation(
     event_id: &str,
     emoji: &str,
     channel_encrypted: bool,
-) -> anyhow::Result<Option<cokret_sdk::Event>> {
+) -> anyhow::Result<Option<arkret_sdk::Event>> {
     if !channel_encrypted {
         return chat_reaction_add_operation(realm_id, actor, event_id, emoji).map(Some);
     }
@@ -339,7 +339,7 @@ pub(crate) fn chat_message_create_operation(
     body: &str,
     mentions: &[MentionNode],
     reply_to: Option<&str>,
-) -> anyhow::Result<cokret_sdk::Event> {
+) -> anyhow::Result<arkret_sdk::Event> {
     chat_message_create_operation_with_expiry(
         realm_id,
         actor,
@@ -374,11 +374,11 @@ fn public_update_policy_error(body: &str) -> Option<&'static str> {
         .then_some("public_update_blocked: remove internal root-cause or credential details")
 }
 
-pub(crate) fn chat_content_block_for_body(body: &str) -> anyhow::Result<cokret_sdk::ContentBlock> {
+pub(crate) fn chat_content_block_for_body(body: &str) -> anyhow::Result<arkret_sdk::ContentBlock> {
     if let Some(error) = public_update_policy_error(body) {
         anyhow::bail!(error);
     }
-    Ok(cokret_sdk::ContentBlock::text(body))
+    Ok(arkret_sdk::ContentBlock::text(body))
 }
 
 pub(crate) fn chat_message_create_operation_with_expiry(
@@ -390,8 +390,8 @@ pub(crate) fn chat_message_create_operation_with_expiry(
     body: &str,
     mentions: &[MentionNode],
     reply_to: Option<&str>,
-    expiry: Option<cokret_sdk::DisappearingMessageExpiry>,
-) -> anyhow::Result<cokret_sdk::Event> {
+    expiry: Option<arkret_sdk::DisappearingMessageExpiry>,
+) -> anyhow::Result<arkret_sdk::Event> {
     let actor_mentions = mentions
         .iter()
         .filter_map(|mention| mention.as_mention().cloned())
@@ -413,7 +413,7 @@ pub(crate) fn chat_message_create_operation_with_expiry(
     }
     // T2.3: v1 wire uses `track_name` — a display-only message segment
     // identifier — instead of the removed `branch` top-level field.
-    let mut payload = cokret_sdk::MessageCreatePayload::with_content(
+    let mut payload = arkret_sdk::MessageCreatePayload::with_content(
         strand_id_value(strand_id)?,
         "discussion",
         sdk_payload_value(content.to_value(), "chat message content serialize")?,
@@ -431,7 +431,7 @@ pub(crate) fn chat_message_create_operation_with_expiry(
     OperationBuilder::new(
         realm_id,
         actor,
-        cokret_sdk::events::kinds::EventKind::MessageCreate,
+        arkret_sdk::events::kinds::EventKind::MessageCreate,
     )
     .target_ref(strand_id)
     .body(sdk_payload_value(
@@ -461,7 +461,7 @@ pub(crate) async fn submit_chat_operation_with_plaintext_retry(
     realm_id: &str,
     actor_id: &str,
     plaintext_visible_services: &[String],
-    operation: &cokret_sdk::Event,
+    operation: &arkret_sdk::Event,
 ) -> anyhow::Result<SubmitEventResult> {
     match api.event_submitter()?.submit_sdk_event(operation).await {
         Ok(response) => Ok(response),
@@ -513,7 +513,7 @@ pub(crate) async fn submit_chat_operation_with_auth_refresh(
     session_credential: String,
     wait_for_sync_token: Option<String>,
     plaintext_visible_services: &[String],
-    operation: &cokret_sdk::Event,
+    operation: &arkret_sdk::Event,
 ) -> anyhow::Result<SubmitEventResult> {
     let api = authed_api_with_sync(base_url, session_credential, wait_for_sync_token.clone())?;
     let first = submit_chat_operation_with_plaintext_retry(

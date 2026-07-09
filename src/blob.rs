@@ -12,7 +12,7 @@
 //! # Attachment AEAD is the SDK's canonical codec
 //!
 //! All client-side attachment encryption is delegated to
-//! [`cokret_sdk::blob_aead`], the canonical implementation of
+//! [`arkret_sdk::blob_aead`], the canonical implementation of
 //! `ck.blob.stream_aead.v1` (chunked streaming AEAD) and
 //! `ck.blob.whole_file_aead.v1` (whole-file AEAD). Inkson no longer ships a
 //! private XChaCha envelope or its own nonce derivation; the
@@ -21,10 +21,10 @@
 //! SDK's [`EncryptedAttachmentEnvelope`], whose serde shape is exactly
 //! `blob.schema.json#/$defs/encrypted_attachment`.
 
-use cokret_sdk::blob_aead::{
+use arkret_sdk::blob_aead::{
     self, DEFAULT_SEGMENT_SIZE, EncryptedAttachmentEnvelope, StreamEncryptParams,
 };
-pub use cokret_sdk::{
+pub use arkret_sdk::{
     Attachment, AuthenticatedDownloadGrant, DownloadGrantScope, EncryptedAttachment, KeyRefObject,
     MediaMetadata, Thumbnail, safe_content_disposition, safe_content_type,
 };
@@ -244,7 +244,7 @@ pub fn attachment_payload(metadata: &MediaMetadata) -> anyhow::Result<Value> {
 
 #[cfg(test)]
 mod tests {
-    use cokret_sdk::blob_aead::{
+    use arkret_sdk::blob_aead::{
         SCHEME_STREAM, SCHEME_WHOLE_FILE, decrypt_stream, decrypt_whole_file,
     };
 
@@ -280,7 +280,7 @@ mod tests {
         assert_eq!(asset.blob_ref(), blob_typed_id(&asset.ciphertext));
         assert_eq!(
             asset.ciphertext_digest(),
-            cokret_sdk::canonical::sha256_digest(&asset.ciphertext)
+            arkret_sdk::canonical::sha256_digest(&asset.ciphertext)
         );
         // ciphertext-only metadata: no plaintext filename / media type leaks
         // into the wire envelope.

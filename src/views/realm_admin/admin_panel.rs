@@ -994,7 +994,7 @@ pub fn RealmAdminPanel(
 
             if active_section == RealmAdminSection::Security {
             // MLS epoch rotation. YOU-01-009: the spec has no
-            // `POST /_cokret/self/mls/rotate` shim — epoch rotation is a
+            // `POST /_arkret/self/mls/rotate` shim — epoch rotation is a
             // real local `self_update_commit` published as the canonical
             // `ck.mls.commit` event (persist-on-accept).
             div { class: "event", "data-testid": "mls-rotation",

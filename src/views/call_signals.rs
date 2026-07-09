@@ -333,7 +333,7 @@ pub async fn route_realm_call_signals(
 /// gate is unit-testable.
 fn verify_decoded_proof(
     decoded: &DecodedCallSignal,
-    key: &cokret_sdk::signatures::PublicKeyMaterial,
+    key: &arkret_sdk::signatures::PublicKeyMaterial,
 ) -> bool {
     crate::device_directory::verify_ephemeral_envelope_proof(&decoded.envelope, key)
 }
@@ -927,12 +927,12 @@ mod tests {
         // Use a fresh `created_at` so the receiver-side ephemeral replay-window gate
         // (`verify_ephemeral_envelope_proof`) accepts these fixtures.
         let created_at = chrono::Utc::now();
-        let did = cokret_sdk::Did::new(actor_id.to_owned()).unwrap();
-        let mut proof = cokret_sdk::Proof {
-            kind: cokret_sdk::proof_kind::DETACHED_JWS.to_owned(),
+        let did = arkret_sdk::Did::new(actor_id.to_owned()).unwrap();
+        let mut proof = arkret_sdk::Proof {
+            kind: arkret_sdk::proof_kind::DETACHED_JWS.to_owned(),
             alg: signer.algorithm().to_owned(),
             verification_method: format!("{actor_id}#device"),
-            event_digest: cokret_sdk::Hash::new(event_digest).unwrap(),
+            event_digest: arkret_sdk::Hash::new(event_digest).unwrap(),
             created_at,
             domain: None,
             audience: None,
@@ -947,7 +947,7 @@ mod tests {
         envelope
     }
 
-    fn pubkey_material(seed: u8) -> cokret_sdk::signatures::PublicKeyMaterial {
+    fn pubkey_material(seed: u8) -> arkret_sdk::signatures::PublicKeyMaterial {
         let sk = ed25519_dalek::SigningKey::from_bytes(&[seed; 32]);
         let did = crate::did_key::did_key_from_verifying_key(&sk.verifying_key());
         crate::device_directory::public_key_from_directory_value(&did).unwrap()

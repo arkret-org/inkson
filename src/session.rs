@@ -99,7 +99,7 @@ thread_local! {
 /// *sequential* refresh is allowed to rotate again. The single-flight guard
 /// only coalesces concurrent callers; this closes the sequential gap where a
 /// caller that keeps reclassifying the same failure as `auth_expired` would
-/// otherwise rotate the grant — and re-resolve its uncached `/_cokret/describe`
+/// otherwise rotate the grant — and re-resolve its uncached `/_arkret/describe`
 /// — on every iteration, storming the network.
 const REFRESH_COOLDOWN_MS: u64 = 3_000;
 
@@ -172,7 +172,7 @@ pub async fn refresh_current_session() -> CurrentSessionRefresh {
     // *concurrent* callers — sequential callers each ran a full rotation. A
     // driver that keeps re-classifying the same non-auth failure as
     // `auth_expired` (e.g. a self-re-running effect polling during MLS seal)
-    // would rotate the grant, and pre-resolve its uncached `/_cokret/describe`,
+    // would rotate the grant, and pre-resolve its uncached `/_arkret/describe`,
     // on every iteration — the `describe` request storm seen on card create in
     // an encrypted Realm. If a refresh produced a live credential within the
     // cooldown, reuse it instead of rotating again: the rotated grant is still

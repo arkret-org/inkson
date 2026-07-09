@@ -20,7 +20,7 @@ pub fn space_create(
     parent_space_id: Option<&str>,
     rank: Option<&str>,
 ) -> anyhow::Result<OperationBuilder> {
-    let mut object = cokret_sdk::SpaceCreateObject::new(
+    let mut object = arkret_sdk::SpaceCreateObject::new(
         space_id_value(container_space_id)?,
         realm_id_value(&trim_realm_id(realm_id))?,
         kind,
@@ -37,7 +37,7 @@ pub fn space_create(
     Ok(OperationBuilder::new(
         realm_id,
         actor,
-        cokret_sdk::events::kinds::EventKind::SpaceCreate,
+        arkret_sdk::events::kinds::EventKind::SpaceCreate,
     )
     .target_ref(container_space_id)
     .body(body))
@@ -55,12 +55,12 @@ pub fn space_restore(
     Ok(OperationBuilder::new(
         realm_id,
         actor,
-        cokret_sdk::events::kinds::EventKind::SpaceRestore,
+        arkret_sdk::events::kinds::EventKind::SpaceRestore,
     )
     .target_ref(container_space_id)
     .body(space_state_transition_payload_value(
         container_space_id,
-        cokret_sdk::ObjectState::Active,
+        arkret_sdk::ObjectState::Active,
     )?))
 }
 
@@ -77,7 +77,7 @@ pub fn space_update_patch(
     Ok(OperationBuilder::new(
         realm_id,
         actor,
-        cokret_sdk::events::kinds::EventKind::SpaceUpdate,
+        arkret_sdk::events::kinds::EventKind::SpaceUpdate,
     )
     .target_ref(space_id)
     .body(space_patch_payload_value(space_id, patch)?))

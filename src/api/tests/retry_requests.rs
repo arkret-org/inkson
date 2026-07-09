@@ -3,14 +3,14 @@ use crate::ephemeral::ensure_events_submit_accepted;
 
 #[test]
 fn events_batch_response_rejects_partial_acceptance() {
-    let accepted: cokret_sdk::EventsSubmitOutcome = serde_json::from_value(json!({
+    let accepted: arkret_sdk::EventsSubmitOutcome = serde_json::from_value(json!({
         "status": "accepted",
         "rejected": []
     }))
     .unwrap();
     ensure_events_submit_accepted(&accepted).expect("fully accepted submit should pass");
 
-    let partial: cokret_sdk::EventsSubmitOutcome = serde_json::from_value(json!({
+    let partial: arkret_sdk::EventsSubmitOutcome = serde_json::from_value(json!({
         "status": "partial",
         "rejected": [
             {

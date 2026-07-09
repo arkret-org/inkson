@@ -6,11 +6,11 @@
 //! surfaces.
 
 use chrono::{Duration, Utc};
-use cokret_sdk::models::{
+use arkret_sdk::models::{
     AgentKeyScope, AgentKeyScopeResource, AgentKeyScopeResourceKind, AgentParticipation,
     AgentProjection, AgentStatus, AgentView,
 };
-use cokret_sdk::{
+use arkret_sdk::{
     AgentKeyApprovalEvidence, AgentKeyApprovalEvidenceKind, AgentKeyAuthorizePayload,
     AgentKeyAuthorizePayloadRuntimeAttestation, AgentKeyPairRequestBody,
     AgentKeyRuntimeAttestationKind, AgentPairingBootstrap, Did, Hash, PublicKey, RealmId,
@@ -288,11 +288,11 @@ pub fn requested_scope_for_presets(
 pub fn build_agent_pairing_bootstrap_json(
     base_url: &str,
     service_did: &str,
-    outcome: &cokret_sdk::AgentProvisionOutcome,
+    outcome: &arkret_sdk::AgentProvisionOutcome,
 ) -> serde_json::Result<String> {
     let base_url = base_url.trim_end_matches('/');
     let bootstrap = AgentPairingBootstrap {
-        cokret_base_url: base_url.to_owned(),
+        arkret_base_url: base_url.to_owned(),
         service_did: Did::new(service_did.trim().to_owned()).map_err(json_invalid_input)?,
         agent_principal_id: outcome.agent_principal_id.clone(),
         pairing_request_id: outcome.pairing_request_id.clone(),
@@ -303,16 +303,16 @@ pub fn build_agent_pairing_bootstrap_json(
 }
 
 /// Wraps the bootstrap into a standard HTTPS Universal/App Link whose host is the
-/// deployment's `cokret_base_url` (CKP-0008 forbids a custom URI scheme).
+/// deployment's `arkret_base_url` (CKP-0008 forbids a custom URI scheme).
 /// The fragment carries only a short handoff token; runtimes resolve it through
-/// `POST /_cokret/open/agent-pairing/resolve` to obtain the six-field bootstrap.
+/// `POST /_arkret/open/agent-pairing/resolve` to obtain the six-field bootstrap.
 pub fn build_agent_pairing_deep_link(base_url: &str, pairing_token: &str) -> String {
     let base = base_url.trim_end_matches('/');
-    format!("{base}/_cokret/open/agent-pairing/resolve#token={pairing_token}")
+    format!("{base}/_arkret/open/agent-pairing/resolve#token={pairing_token}")
 }
 
 pub fn build_agent_pairing_handoff_token(pairing_request_id: &str, pairing_code: &str) -> String {
-    cokret_sdk::base64url_encode(
+    arkret_sdk::base64url_encode(
         serde_json::to_vec(&json!({
             "r": pairing_request_id,
             "c": pairing_code,
@@ -386,7 +386,7 @@ pub fn summarize_runtime_key_approval_request(
 ) -> anyhow::Result<RuntimeKeyApprovalSummary> {
     let request = parse_runtime_key_approval_request(raw)?;
     let public_key_fingerprint =
-        cokret_sdk::agent::agent_runtime_public_key_digest(&request.public_key)?
+        arkret_sdk::agent::agent_runtime_public_key_digest(&request.public_key)?
             .as_str()
             .to_owned();
     let proof_expires_at = request
@@ -444,7 +444,7 @@ pub fn build_agent_key_authorize_event_for_pairing(
     service_did: &str,
     key_state: &Value,
     request: &AgentKeyPairRequestBody,
-) -> anyhow::Result<cokret_sdk::Event> {
+) -> anyhow::Result<arkret_sdk::Event> {
     let controller = Did::new(controller_did.trim().to_owned())?;
     if request.pairing_request_id != key_state_str(key_state, "pairing_request_id")? {
         anyhow::bail!("runtime request pairing_request_id does not match this agent");
@@ -458,12 +458,12 @@ pub fn build_agent_key_authorize_event_for_pairing(
             .ok_or_else(|| anyhow::anyhow!("agent key_state.requested_scope is required"))?,
     )?;
     let runtime_public_key_digest =
-        cokret_sdk::agent::agent_runtime_public_key_digest(&request.public_key)?;
+        arkret_sdk::agent::agent_runtime_public_key_digest(&request.public_key)?;
     let runtime_public_key: PublicKey = serde_json::from_value(request.public_key.clone())?;
     if runtime_public_key.kid != request.verification_method {
         anyhow::bail!("runtime request public_key.kid does not match verification_method");
     }
-    let pairing_digest = cokret_sdk::agent::agent_key_pairing_request_binding_digest(
+    let pairing_digest = arkret_sdk::agent::agent_key_pairing_request_binding_digest(
         &controller,
         &request.agent_principal_id,
         &request.verification_method,
@@ -505,10 +505,10 @@ pub fn build_agent_key_authorize_event_for_pairing(
         revocation_check_ref: None,
         runtime_attestation,
     };
-    let realm_id = RealmId::new(cokret_sdk::auth::principal_control_realm_id(&controller))?;
-    let hlc = cokret_sdk::Hlc::new(crate::hlc::Hlc::now("inkson").encode())?;
+    let realm_id = RealmId::new(arkret_sdk::auth::principal_control_realm_id(&controller))?;
+    let hlc = arkret_sdk::Hlc::new(crate::hlc::Hlc::now("inkson").encode())?;
     let mut event =
-        cokret_sdk::agent::build_agent_key_authorize_event(&payload, realm_id, controller, 1, hlc)?;
+        arkret_sdk::agent::build_agent_key_authorize_event(&payload, realm_id, controller, 1, hlc)?;
     event.unsigned.insert(
         "pairing_request_id".to_owned(),
         json!(request.pairing_request_id),
@@ -891,11 +891,11 @@ pub fn verify_audit_chain(events: &[serde_json::Value]) -> AuditChainVerifyOutco
         .get("payload")
         .cloned()
         .unwrap_or_else(|| last_event.clone());
-    match cokret_sdk::agent_binding::verify_audit_binding_by_kind(&result_payload) {
-        cokret_sdk::agent_binding::AuditBindingVerifyOutcome::Valid => {
+    match arkret_sdk::agent_binding::verify_audit_binding_by_kind(&result_payload) {
+        arkret_sdk::agent_binding::AuditBindingVerifyOutcome::Valid => {
             AuditChainVerifyOutcome::Valid
         }
-        cokret_sdk::agent_binding::AuditBindingVerifyOutcome::Absent => {
+        arkret_sdk::agent_binding::AuditBindingVerifyOutcome::Absent => {
             AuditChainVerifyOutcome::ChainBreak
         }
         _ => AuditChainVerifyOutcome::SignatureInvalid,
@@ -952,21 +952,21 @@ impl AuditVerifyStatus {
 /// to the SDK so future schemes land in one place instead of being
 /// re-implemented by every client surface.
 pub(crate) fn verify_agent_audit_binding(payload: &Value) -> AuditVerifyStatus {
-    match cokret_sdk::agent_binding::verify_audit_binding_by_kind(payload) {
-        cokret_sdk::agent_binding::AuditBindingVerifyOutcome::Valid => AuditVerifyStatus::Valid,
-        cokret_sdk::agent_binding::AuditBindingVerifyOutcome::SubjectMismatch => {
+    match arkret_sdk::agent_binding::verify_audit_binding_by_kind(payload) {
+        arkret_sdk::agent_binding::AuditBindingVerifyOutcome::Valid => AuditVerifyStatus::Valid,
+        arkret_sdk::agent_binding::AuditBindingVerifyOutcome::SubjectMismatch => {
             AuditVerifyStatus::SubjectMismatch
         }
-        cokret_sdk::agent_binding::AuditBindingVerifyOutcome::SignatureMismatch => {
+        arkret_sdk::agent_binding::AuditBindingVerifyOutcome::SignatureMismatch => {
             AuditVerifyStatus::SignatureMismatch
         }
-        cokret_sdk::agent_binding::AuditBindingVerifyOutcome::Malformed => {
+        arkret_sdk::agent_binding::AuditBindingVerifyOutcome::Malformed => {
             AuditVerifyStatus::Malformed
         }
-        cokret_sdk::agent_binding::AuditBindingVerifyOutcome::Unsupported => {
+        arkret_sdk::agent_binding::AuditBindingVerifyOutcome::Unsupported => {
             AuditVerifyStatus::Unsupported
         }
-        cokret_sdk::agent_binding::AuditBindingVerifyOutcome::Absent => AuditVerifyStatus::Absent,
+        arkret_sdk::agent_binding::AuditBindingVerifyOutcome::Absent => AuditVerifyStatus::Absent,
     }
 }
 
@@ -1077,8 +1077,8 @@ pub(crate) fn agent_status_wire(status: AgentStatus) -> &'static str {
 /// Hash pasted draft content or action request payload fragments.
 /// Return a sha256 digest for canonical JSON.
 fn canonical_digest(value: &Value) -> Option<String> {
-    cokret_sdk::canonical::canonical_json_bytes(value)
-        .map(cokret_sdk::canonical::sha256_digest)
+    arkret_sdk::canonical::canonical_json_bytes(value)
+        .map(arkret_sdk::canonical::sha256_digest)
         .ok()
 }
 
@@ -1179,14 +1179,14 @@ pub fn build_act_on_behalf_message_operation(
     approval_nonce: &str,
     strand_id: &str,
     body: &str,
-) -> anyhow::Result<cokret_sdk::Event> {
-    let strand_id_typed = cokret_sdk::StrandId::new(strand_id.to_owned())
+) -> anyhow::Result<arkret_sdk::Event> {
+    let strand_id_typed = arkret_sdk::StrandId::new(strand_id.to_owned())
         .map_err(|error| anyhow::anyhow!("invalid strand id {strand_id:?}: {error:?}"))?;
-    let content = cokret_sdk::ContentBlock::text(body)
+    let content = arkret_sdk::ContentBlock::text(body)
         .to_value()
         .map_err(|error| anyhow::anyhow!("act-on-behalf content serialize: {error}"))?;
     let mut payload =
-        cokret_sdk::MessageCreatePayload::with_content(strand_id_typed, "discussion", content)
+        arkret_sdk::MessageCreatePayload::with_content(strand_id_typed, "discussion", content)
             .to_value()
             .map_err(|error| anyhow::anyhow!("act-on-behalf message payload serialize: {error}"))?;
     if let Some(object) = payload.as_object_mut() {
@@ -1196,7 +1196,7 @@ pub fn build_act_on_behalf_message_operation(
     crate::operation::OperationBuilder::new(
         realm_id,
         controller_principal_id,
-        cokret_sdk::events::kinds::EventKind::MessageCreate,
+        arkret_sdk::events::kinds::EventKind::MessageCreate,
     )
     .target_ref(strand_id)
     .executed_by(agent_principal_id)

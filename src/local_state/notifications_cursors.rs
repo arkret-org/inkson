@@ -463,7 +463,7 @@ impl LocalStateStore {
 
     /// Resolve effective send preference per spec (server policy → strand →
     /// realm → default). Mirror of
-    /// `cokret_sdk::ReadReceiptPreferences::effective_send` extended with
+    /// `arkret_sdk::ReadReceiptPreferences::effective_send` extended with
     /// server-declared policy lock: when the Realm publishes a
     /// `ck.realm.read_receipt_policy` with `disclosure="required"` the
     /// answer is forced `true`; with `disclosure="disabled"` it's forced

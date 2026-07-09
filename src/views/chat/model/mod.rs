@@ -1,7 +1,7 @@
 // Re-export the parent (`chat/mod.rs`) glob into this module AND down to the
 // sub-files. `super` here is `chat/mod.rs`; `pub(crate) use super::*;` pulls in
 // every name it brought via `use ...;` (Value, json!, MentionNode, WatchLevel,
-// ClientLocalState, cokret_sdk, crate::* …) and re-exports them so each
+// ClientLocalState, arkret_sdk, crate::* …) and re-exports them so each
 // sub-file's own `use super::*;` (where their `super` is this module) resolves
 // the same set of names. Rust does not propagate glob-imported names through a
 // glob, so this explicit re-export is what keeps the children compiling.

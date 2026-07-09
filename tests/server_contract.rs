@@ -3,7 +3,7 @@ use inkson::account_data::{
     AccountDataKey, ContactRemark, RealmRemark, contact_remark_account_data_key,
     realm_remark_account_data_key,
 };
-use inkson::api_error::{CokretApiError, decode_cokret_error, is_auth_expired_error};
+use inkson::api_error::{CokretApiError, decode_arkret_error, is_auth_expired_error};
 use inkson::config::{ClientConfig, LocalConfigStore};
 use inkson::models::ServerDescriptionExt;
 use inkson::operation::OperationBuilder;
@@ -16,21 +16,21 @@ use inkson::telemetry::{UserActionOutcome, build_user_action_entry, format_user_
 use reqwest::StatusCode;
 use serde_json::json;
 
-fn snapshot_contract_event_id(suffix: &str) -> cokret_sdk::EventId {
-    cokret_sdk::EventId::new(format!("ak:event:01904100-0000-7000-8000-{suffix}")).unwrap()
+fn snapshot_contract_event_id(suffix: &str) -> arkret_sdk::EventId {
+    arkret_sdk::EventId::new(format!("ak:event:01904100-0000-7000-8000-{suffix}")).unwrap()
 }
 
-fn snapshot_contract_hash(seed: u8) -> cokret_sdk::Hash {
-    cokret_sdk::Hash::new(format!("sha256:{}", format!("{seed:02x}").repeat(32))).unwrap()
+fn snapshot_contract_hash(seed: u8) -> arkret_sdk::Hash {
+    arkret_sdk::Hash::new(format!("sha256:{}", format!("{seed:02x}").repeat(32))).unwrap()
 }
 
 fn snapshot_contract_manifest_payload() -> serde_json::Value {
     let snapshot_id =
-        cokret_sdk::SnapshotId::new("ak:snapshot:01904100-0000-7000-8000-0000000000cc").unwrap();
+        arkret_sdk::SnapshotId::new("ak:snapshot:01904100-0000-7000-8000-0000000000cc").unwrap();
     let realm_id =
-        cokret_sdk::RealmId::new("ak:realm:01904100-0000-7000-8000-0000000000cc").unwrap();
-    let service_did = cokret_sdk::Did::new("did:web:server.local").unwrap();
-    let items = vec![cokret_sdk::SnapshotMaterializedItem {
+        arkret_sdk::RealmId::new("ak:realm:01904100-0000-7000-8000-0000000000cc").unwrap();
+    let service_did = arkret_sdk::Did::new("did:web:server.local").unwrap();
+    let items = vec![arkret_sdk::SnapshotMaterializedItem {
         kind: "realm".to_owned(),
         id: realm_id.to_string(),
         object: json!({
@@ -39,46 +39,46 @@ fn snapshot_contract_manifest_payload() -> serde_json::Value {
         }),
         source_event_id: snapshot_contract_event_id("0000000000c1"),
     }];
-    let state_digest = cokret_sdk::state_digest_from_items(&items).unwrap();
-    let built = cokret_sdk::build_snapshot_chunks(
+    let state_digest = arkret_sdk::state_digest_from_items(&items).unwrap();
+    let built = arkret_sdk::build_snapshot_chunks(
         &snapshot_id,
-        cokret_sdk::SNAPSHOT_REDUCER_PROFILE_V1,
+        arkret_sdk::SNAPSHOT_REDUCER_PROFILE_V1,
         items,
         4096,
     )
     .unwrap();
     let created_at = Utc::now();
-    let mut manifest = cokret_sdk::SnapshotManifest {
+    let mut manifest = arkret_sdk::SnapshotManifest {
         id: snapshot_id,
         realm_id,
-        reducer_profile: cokret_sdk::SNAPSHOT_REDUCER_PROFILE_V1.to_owned(),
+        reducer_profile: arkret_sdk::SNAPSHOT_REDUCER_PROFILE_V1.to_owned(),
         schema_profile_refs: vec!["ck.profile.core_event_store.v1".to_owned()],
         state_digest,
-        frontier: cokret_sdk::SnapshotFrontier {
+        frontier: arkret_sdk::SnapshotFrontier {
             event_ids: vec![snapshot_contract_event_id("0000000000c1")],
-            timeline_hlc: cokret_sdk::Hlc::new("01970e589d21-0004-a13f9c2e").unwrap(),
+            timeline_hlc: arkret_sdk::Hlc::new("01970e589d21-0004-a13f9c2e").unwrap(),
         },
-        event_set_commitment: cokret_sdk::EventSetCommitment {
-            algorithm: cokret_sdk::EventSetCommitmentAlgorithm::MerkleEventSetV1,
+        event_set_commitment: arkret_sdk::EventSetCommitment {
+            algorithm: arkret_sdk::EventSetCommitmentAlgorithm::MerkleEventSetV1,
             root: snapshot_contract_hash(9),
             covered_event_count: 1,
             covered_seals: vec![snapshot_contract_event_id("0000000000c1")],
             actor_seq_ranges: Vec::new(),
         },
         chunks: built.into_iter().map(|chunk| chunk.descriptor).collect(),
-        security_class: cokret_sdk::SnapshotSecurityClass::Standard,
+        security_class: arkret_sdk::SnapshotSecurityClass::Standard,
         verification_hints: None,
         created_by: service_did.clone(),
         created_at,
-        authority_binding: cokret_sdk::AuthorityBinding {
+        authority_binding: arkret_sdk::AuthorityBinding {
             issuer: service_did,
-            authority_kind: cokret_sdk::SnapshotAuthorityKind::RealmPolicySnapshotIssuer,
+            authority_kind: arkret_sdk::SnapshotAuthorityKind::RealmPolicySnapshotIssuer,
             auth_state_digest: snapshot_contract_hash(1),
             auth_frontier: vec![snapshot_contract_event_id("0000000000c1")],
             checked_at: created_at,
             witness_attestations: Vec::new(),
         },
-        signature: cokret_sdk::DetachedJwsProof::eddsa(
+        signature: arkret_sdk::DetachedJwsProof::eddsa(
             "did:web:server.local#snapshot".to_owned(),
             snapshot_contract_hash(2),
             created_at,
@@ -125,7 +125,7 @@ fn inkson_accepts_server_contract_payloads() {
             "ck.edge.push.command.unregister_device",
             "ck.self.moderation.command.report"
         ],
-        "supported_bindings": [{"kind": "http_json", "base_url": "/_cokret"}],
+        "supported_bindings": [{"kind": "http_json", "base_url": "/_arkret"}],
         "supported_reducer_profiles": ["ck.reducer.v1"],
         "supported_schema_profiles": ["ck.schema.core.v1"],
         "auth_metadata": {"mode": "development"},
@@ -147,7 +147,7 @@ fn inkson_accepts_server_contract_payloads() {
     );
     assert_eq!(
         describe.supported_bindings[0].base_url.as_deref(),
-        Some("/_cokret")
+        Some("/_arkret")
     );
 
     let identity: inkson::models::IdentityDescribeOutcome = serde_json::from_value(json!({
@@ -287,7 +287,7 @@ fn inkson_accepts_server_contract_payloads() {
         }]
     }))
     .unwrap();
-    assert_eq!(resolved.join_rule, Some(cokret_sdk::JoinRule::Public));
+    assert_eq!(resolved.join_rule, Some(arkret_sdk::JoinRule::Public));
     assert_eq!(
         resolved.join_candidates[0].service_did.as_str(),
         "did:web:server.local"
@@ -310,11 +310,11 @@ fn inkson_accepts_server_contract_payloads() {
     );
     assert_eq!(submit.cursor, "sx:1760000000000");
 
-    let snapshot_head: cokret_sdk::SnapshotManifest =
+    let snapshot_head: arkret_sdk::SnapshotManifest =
         serde_json::from_value(snapshot_contract_manifest_payload()).unwrap();
     assert_eq!(
         snapshot_head.reducer_profile,
-        cokret_sdk::SNAPSHOT_REDUCER_PROFILE_V1
+        arkret_sdk::SNAPSHOT_REDUCER_PROFILE_V1
     );
     assert_eq!(snapshot_head.created_by.as_str(), "did:web:server.local");
     assert!(
@@ -325,7 +325,7 @@ fn inkson_accepts_server_contract_payloads() {
             .starts_with("sha256:")
     );
     assert!(
-        serde_json::from_value::<cokret_sdk::SnapshotManifest>(json!({
+        serde_json::from_value::<arkret_sdk::SnapshotManifest>(json!({
             "seal": "ak:seal:sha256:00",
             "chunk_count": 1,
             "merkle_root": format!("sha256:{}", "00".repeat(32)),
@@ -341,7 +341,7 @@ fn inkson_accepts_server_contract_payloads() {
         "obligations": []
     }))
     .unwrap();
-    assert_eq!(authz.decision, cokret_sdk::models::AuthzDecision::Allow);
+    assert_eq!(authz.decision, arkret_sdk::models::AuthzDecision::Allow);
 
     // `GrantList` is the SDK authoritative wire type (soland serialises it
     // verbatim), so rows must be full `ck.schema.capability_grant.v1`
@@ -456,7 +456,7 @@ fn inkson_accepts_server_contract_payloads() {
     assert_eq!(report.routed_to.len(), 1);
     assert_eq!(report.routed_to[0].as_str(), "did:web:server.local");
 
-    let error = decode_cokret_error(
+    let error = decode_arkret_error(
         StatusCode::CONFLICT,
         br#"{"ok":false,"error":{"code":"expected_head_mismatch","message":"expected_head mismatch","retry_after_ms":null}}"#,
     );
@@ -502,8 +502,8 @@ fn server_description_gates_event_envelope_write_plane() {
     );
 
     let external_compat_surface = serde_json::to_value(
-        cokret_sdk::CompatSurfaceEntry::external_interop("external_mimi_provider")
-            .with_extra_string("base_path", "https://mimi.example.com/_cokret/open/mimi")
+        arkret_sdk::CompatSurfaceEntry::external_interop("external_mimi_provider")
+            .with_extra_string("base_path", "https://mimi.example.com/_arkret/open/mimi")
             .with_extra_string("status", "external_interop")
             .with_notes("external interop surfaces must not redefine principal-server routes"),
     )
@@ -650,15 +650,15 @@ fn inkson_accepts_v1_sync_buckets_and_subscribe_ndjson_contract() {
     .unwrap();
     assert_eq!(
         frames[0].kind,
-        cokret_sdk::EventsSubscribeFrameKind::Heartbeat
+        arkret_sdk::EventsSubscribeFrameKind::Heartbeat
     );
     assert_eq!(
         frames[1].kind,
-        cokret_sdk::EventsSubscribeFrameKind::Frontier
+        arkret_sdk::EventsSubscribeFrameKind::Frontier
     );
     assert_eq!(
         frames[2].kind,
-        cokret_sdk::EventsSubscribeFrameKind::CatchupComplete
+        arkret_sdk::EventsSubscribeFrameKind::CatchupComplete
     );
 }
 
@@ -704,7 +704,7 @@ fn local_remarks_do_not_leak_into_event_push_search_log_or_directory_surfaces() 
     let event = OperationBuilder::new(
         realm_id,
         "did:web:local.example",
-        cokret_sdk::events::kinds::EventKind::MessageCreate,
+        arkret_sdk::events::kinds::EventKind::MessageCreate,
     )
     .body(json!({
         "body": "hello",
@@ -752,9 +752,9 @@ fn local_remarks_do_not_leak_into_event_push_search_log_or_directory_surfaces() 
     );
     assert_no_secret("log", &log_entry, secret);
 
-    let directory = cokret_sdk::models::DirectoryRealmSearchOutcome {
-        realms: vec![cokret_sdk::models::RealmPreview {
-            realm_id: cokret_sdk::RealmId::new(
+    let directory = arkret_sdk::models::DirectoryRealmSearchOutcome {
+        realms: vec![arkret_sdk::models::RealmPreview {
+            realm_id: arkret_sdk::RealmId::new(
                 "ak:realm:01904100-0000-7000-8000-000000000001".to_owned(),
             )
             .unwrap(),
@@ -763,8 +763,8 @@ fn local_remarks_do_not_leak_into_event_push_search_log_or_directory_surfaces() 
             avatar_blob_ref: None,
             organization_did: None,
             join_rule: Some("public".to_owned()),
-            member_count_bucket: Some(cokret_sdk::models::RealmMemberCountBucket::Bucket(
-                cokret_sdk::models::RealmMemberCountBucketLabel::OneToTen,
+            member_count_bucket: Some(arkret_sdk::models::RealmMemberCountBucket::Bucket(
+                arkret_sdk::models::RealmMemberCountBucketLabel::OneToTen,
             )),
             summary: Some("Public description".to_owned()),
             owning_organizations: Vec::new(),
@@ -832,7 +832,7 @@ fn inkson_e2ee_workflow_matches_protocol_mls_envelope_behavior() {
     );
 
     let decrypted = bob.decrypt_or_preserve(encrypted).unwrap();
-    let cokret_sdk::MessageCryptoDecrypt::Plaintext { plaintext, .. } = decrypted else {
+    let arkret_sdk::MessageCryptoDecrypt::Plaintext { plaintext, .. } = decrypted else {
         panic!("joined device should decrypt protocol MLS payload");
     };
     assert_eq!(
@@ -854,7 +854,7 @@ fn inkson_e2ee_workflow_matches_protocol_mls_envelope_behavior() {
 fn bare_401_does_not_count_as_session_loss() {
     let bare: anyhow::Error = CokretApiError {
         status: StatusCode::UNAUTHORIZED,
-        error: decode_cokret_error(StatusCode::UNAUTHORIZED, b""),
+        error: decode_arkret_error(StatusCode::UNAUTHORIZED, b""),
     }
     .into();
     assert!(!is_auth_expired_error(&bare));
@@ -869,7 +869,7 @@ fn bare_401_does_not_count_as_session_loss() {
             format!(r#"{{"ok":false,"error":{{"code":"{code}","message":"unknown token"}}}}"#);
         let envelope: anyhow::Error = CokretApiError {
             status: StatusCode::UNAUTHORIZED,
-            error: decode_cokret_error(StatusCode::UNAUTHORIZED, body.as_bytes()),
+            error: decode_arkret_error(StatusCode::UNAUTHORIZED, body.as_bytes()),
         }
         .into();
         assert!(
@@ -880,7 +880,7 @@ fn bare_401_does_not_count_as_session_loss() {
 
     let unrelated: anyhow::Error = CokretApiError {
         status: StatusCode::UNAUTHORIZED,
-        error: decode_cokret_error(
+        error: decode_arkret_error(
             StatusCode::UNAUTHORIZED,
             br#"{"ok":false,"error":{"code":"rate_limited","message":"slow down"}}"#,
         ),
@@ -889,7 +889,7 @@ fn bare_401_does_not_count_as_session_loss() {
     assert!(!is_auth_expired_error(&unrelated));
 }
 
-/// Regression: `decode_cokret_error` MUST tolerate the current
+/// Regression: `decode_arkret_error` MUST tolerate the current
 /// on-the-wire shapes (canonical wrapped and plain envelope without
 /// `request_id`) and synthesise a stable `http_status` envelope when
 /// none match. A regression here silently degrades every error message
@@ -899,7 +899,7 @@ fn decoder_handles_all_envelope_shapes() {
     // 1. Canonical wrapped: { "error": ErrorEnvelope }. Extra hints (e.g. the cell ref the server
     //    is reporting the conflict on) must strand through the `details` map so the conflict UI can
     //    surface them.
-    let wrapped = decode_cokret_error(
+    let wrapped = decode_arkret_error(
         StatusCode::CONFLICT,
         br#"{"ok":false,"error":{"code":"expected_head_mismatch","message":"head mismatch","retry_after_ms":250,"details":{"cell":"ak:cell:ck.component.strand.position.v1:demo"}}}"#,
     );
@@ -911,14 +911,14 @@ fn decoder_handles_all_envelope_shapes() {
     );
 
     // 2. Plain envelope without `request_id`.
-    let plain = decode_cokret_error(
+    let plain = decode_arkret_error(
         StatusCode::BAD_REQUEST,
         br#"{"ok":false,"error":{"code":"invalid_param","message":"bad did"}}"#,
     );
     assert_eq!(plain.code(), "invalid_param");
 
     // 3. Garbage / non-JSON: synthesised fallback.
-    let fallback = decode_cokret_error(StatusCode::SERVICE_UNAVAILABLE, b"<html>busy</html>");
+    let fallback = decode_arkret_error(StatusCode::SERVICE_UNAVAILABLE, b"<html>busy</html>");
     assert_eq!(fallback.code(), "http_status");
     assert!(fallback.message().contains("503"));
 }

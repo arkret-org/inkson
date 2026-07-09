@@ -12,16 +12,16 @@ use crate::secure_key_store::SecureKeyStore;
 pub(crate) const CROSS_SIGNING_PUBLISH_LATEST_KEY: &str = "cross_signing.publish.latest";
 
 pub(crate) struct RealmMlsAdmissionEvents {
-    pub(crate) commit: cokret_sdk::Event,
-    pub(crate) welcome: cokret_sdk::Event,
+    pub(crate) commit: arkret_sdk::Event,
+    pub(crate) welcome: arkret_sdk::Event,
     #[cfg(test)]
-    pub(crate) welcome_envelope: cokret_sdk::MlsWelcomeEnvelope,
+    pub(crate) welcome_envelope: arkret_sdk::MlsWelcomeEnvelope,
     pub(crate) snapshot: MlsSnapshotEnvelope,
 }
 
 pub(crate) struct RealmMlsBatchAdmissionEvents {
-    pub(crate) commit: cokret_sdk::Event,
-    pub(crate) welcomes: Vec<cokret_sdk::Event>,
+    pub(crate) commit: arkret_sdk::Event,
+    pub(crate) welcomes: Vec<arkret_sdk::Event>,
     pub(crate) snapshot: MlsSnapshotEnvelope,
 }
 
@@ -31,7 +31,7 @@ pub(crate) fn build_realm_mls_admission_events_from_claim(
     realm_id: &str,
     actor_id: &str,
     device_id: &str,
-    claim: &cokret_sdk::KeyPackageClaimRecord,
+    claim: &arkret_sdk::KeyPackageClaimRecord,
     claim_nonce: &str,
 ) -> Result<RealmMlsAdmissionEvents, String> {
     let member_key_package = crate::mls_api_helpers::keypackage_claim_record_to_mls_record(claim)
@@ -94,7 +94,7 @@ pub(crate) fn build_realm_mls_admission_events_from_claims(
     realm_id: &str,
     actor_id: &str,
     device_id: &str,
-    claims: &[(cokret_sdk::KeyPackageClaimRecord, String)],
+    claims: &[(arkret_sdk::KeyPackageClaimRecord, String)],
 ) -> Result<RealmMlsBatchAdmissionEvents, String> {
     if claims.is_empty() {
         return Err("MLS admission batch requires at least one claim".to_owned());
@@ -189,12 +189,12 @@ pub(crate) fn build_realm_key_share_event(
     to_epoch: u64,
     policy_digest: String,
     sealed_ciphertext: String,
-) -> Result<cokret_sdk::Event, String> {
-    let recipient_did = cokret_sdk::Did::new(recipient_principal_id.trim().to_owned())
+) -> Result<arkret_sdk::Event, String> {
+    let recipient_did = arkret_sdk::Did::new(recipient_principal_id.trim().to_owned())
         .map_err(|err| format!("invalid realm_key.share recipient DID: {err:?}"))?;
-    let policy_digest = cokret_sdk::Hash::new(policy_digest.trim().to_owned())
+    let policy_digest = arkret_sdk::Hash::new(policy_digest.trim().to_owned())
         .map_err(|err| format!("invalid realm_key.share policy_digest: {err:?}"))?;
-    let key_scope = cokret_sdk::RealmKeyScope {
+    let key_scope = arkret_sdk::RealmKeyScope {
         effective_scope: crate::operation::realm_effective_scope_value(realm_id)?,
         policy_digest: Value::String(policy_digest.as_str().to_owned()),
         membership_frontier_digest: None,
@@ -202,8 +202,8 @@ pub(crate) fn build_realm_key_share_event(
         to_epoch: Some(to_epoch),
         history_visibility: None,
     };
-    let mut payload = cokret_sdk::RealmKeySharePayload {
-        share_class: cokret_sdk::RealmKeyShareClass::MemberDevice,
+    let mut payload = arkret_sdk::RealmKeySharePayload {
+        share_class: arkret_sdk::RealmKeyShareClass::MemberDevice,
         recipient_principal_id: recipient_did,
         recipient_device_id: Some(recipient_device_id.trim().to_owned()),
         recipient_verification_method: None,
@@ -236,16 +236,16 @@ pub(crate) fn build_realm_key_share_event(
     crate::operation::OperationBuilder::new(
         realm_id,
         actor_id,
-        cokret_sdk::events::kinds::EventKind::RealmKeyShare,
+        arkret_sdk::events::kinds::EventKind::RealmKeyShare,
     )
     .body(body)
     .build_sdk_event("inkson")
     .map_err(|err| format!("ck.realm_key.share SDK Event conversion failed: {err}"))
 }
 
-/// Wrap an already-constructed [`cokret_sdk::RealmKeySharePayload`] (e.g. the
+/// Wrap an already-constructed [`arkret_sdk::RealmKeySharePayload`] (e.g. the
 /// provider-initiated RRK seal produced by
-/// `cokret_sdk::history_recovery::seal_history_secrets_to_recovery_recipient`)
+/// `arkret_sdk::history_recovery::seal_history_secrets_to_recovery_recipient`)
 /// into a durable `ck.realm_key.share` Event, filling the
 /// `sender_device_signature` with this device's active Ed25519 signer. The
 /// registered payload schema requires this signature, so this fails closed when
@@ -257,8 +257,8 @@ pub(crate) fn build_realm_key_share_event(
 pub(crate) fn wrap_realm_key_share_payload_event(
     realm_id: &str,
     actor_id: &str,
-    mut payload: cokret_sdk::RealmKeySharePayload,
-) -> Result<cokret_sdk::Event, String> {
+    mut payload: arkret_sdk::RealmKeySharePayload,
+) -> Result<arkret_sdk::Event, String> {
     payload.sender_device_signature = sign_realm_key_share_sender_signature(&payload)
         .ok_or_else(|| "ck.realm_key.share requires an active sender device signer".to_owned())?;
     let body = serde_json::to_value(&payload)
@@ -266,7 +266,7 @@ pub(crate) fn wrap_realm_key_share_payload_event(
     crate::operation::OperationBuilder::new(
         realm_id,
         actor_id,
-        cokret_sdk::events::kinds::EventKind::RealmKeyShare,
+        arkret_sdk::events::kinds::EventKind::RealmKeyShare,
     )
     .body(body)
     .build_sdk_event("inkson")
@@ -284,7 +284,7 @@ pub(crate) fn wrap_realm_key_share_payload_event(
 /// ```
 /// or `None` when no raw-capable signer is installed.
 pub(crate) fn sign_realm_key_share_sender_signature(
-    payload: &cokret_sdk::RealmKeySharePayload,
+    payload: &arkret_sdk::RealmKeySharePayload,
 ) -> Option<Value> {
     let signer = crate::event_signer::active_signer()?;
     let pubkey_multibase = signer.public_key_multibase()?;
@@ -304,18 +304,18 @@ pub(crate) fn build_mls_welcome_payload_value(
     realm_id: &str,
     actor_id: &str,
     sender_device_id: &str,
-    claim: &cokret_sdk::KeyPackageClaimRecord,
+    claim: &arkret_sdk::KeyPackageClaimRecord,
     _key_package_id: &str,
-    welcome: &cokret_sdk::MlsWelcomeEnvelope,
-    commit_event: &cokret_sdk::Event,
+    welcome: &arkret_sdk::MlsWelcomeEnvelope,
+    commit_event: &arkret_sdk::Event,
     governance_binding: Value,
     claim_nonce: &str,
 ) -> Result<Value, String> {
-    let intended_realm_id = cokret_sdk::RealmId::new(trim_realm_id(realm_id))
+    let intended_realm_id = arkret_sdk::RealmId::new(trim_realm_id(realm_id))
         .map_err(|err| format!("invalid MLS Welcome Realm id: {err:?}"))?;
-    let requester_did = cokret_sdk::Did::new(actor_id.trim().to_owned())
+    let requester_did = arkret_sdk::Did::new(actor_id.trim().to_owned())
         .map_err(|err| format!("invalid MLS Welcome requester DID: {err:?}"))?;
-    let mut envelope = cokret_sdk::MlsWelcomeClaimEnvelope {
+    let mut envelope = arkret_sdk::MlsWelcomeClaimEnvelope {
         keypackage_ref: claim.keypackage_ref.clone(),
         keypackage_digest: claim.keypackage_digest.clone(),
         intended_realm_id,
@@ -326,7 +326,7 @@ pub(crate) fn build_mls_welcome_payload_value(
         nonce: claim_nonce.trim().to_owned(),
         welcome_digest: welcome.welcome_hash.clone(),
         created_at: crate::clock::now_utc(),
-        signature: cokret_sdk::KeyOperationSignature {
+        signature: arkret_sdk::KeyOperationSignature {
             kid: String::new(),
             alg: Some("EdDSA".to_owned()),
             sig: String::new(),
@@ -339,7 +339,7 @@ pub(crate) fn build_mls_welcome_payload_value(
         sender_device_id,
         &mut envelope,
     )?;
-    let claim_ref = cokret_sdk::MlsWelcomePayloadClaimRef {
+    let claim_ref = arkret_sdk::MlsWelcomePayloadClaimRef {
         claim_id: claim.claim_id.clone(),
         keypackage_ref: claim.keypackage_ref.clone(),
         keypackage_digest: claim.keypackage_digest.clone(),
@@ -371,7 +371,7 @@ fn sign_welcome_claim_envelope(
     secure_store: &dyn SecureKeyStore,
     actor_id: &str,
     sender_device_id: &str,
-    envelope: &mut cokret_sdk::MlsWelcomeClaimEnvelope,
+    envelope: &mut arkret_sdk::MlsWelcomeClaimEnvelope,
 ) -> Result<(), String> {
     if let Some(publish) = load_latest_cross_signing_publish(state_store, actor_id)? {
         envelope.ssk_generation = Some(publish.generation);
@@ -417,7 +417,7 @@ fn sign_welcome_claim_envelope(
 fn load_latest_cross_signing_publish(
     state_store: &LocalStateStore,
     actor_id: &str,
-) -> Result<Option<cokret_sdk::CrossSigningPublishContent>, String> {
+) -> Result<Option<arkret_sdk::CrossSigningPublishContent>, String> {
     let Some(raw) = state_store.load_private_data(actor_id, CROSS_SIGNING_PUBLISH_LATEST_KEY)
     else {
         return Ok(None);
@@ -462,11 +462,11 @@ mod tests {
         secure: &MemorySecureKeyStore,
         actor: &str,
         device: &str,
-    ) -> cokret_sdk::CrossSigningPublishContent {
+    ) -> arkret_sdk::CrossSigningPublishContent {
         let plan = CrossSigningSetupPlan::build_initial(actor, device);
-        let principal = cokret_sdk::Did::new(actor.to_owned()).unwrap();
+        let principal = arkret_sdk::Did::new(actor.to_owned()).unwrap();
         let trust_domain =
-            cokret_sdk::TypedTrustDomainId::new("ak:trust_domain:example.test").unwrap();
+            arkret_sdk::TypedTrustDomainId::new("ak:trust_domain:example.test").unwrap();
         let output = CrossSigningExecutor::new(plan, principal, trust_domain)
             .run()
             .unwrap();
@@ -480,10 +480,10 @@ mod tests {
     }
 
     fn claim_from_key_package(
-        record: &cokret_sdk::MlsKeyPackageRecord,
+        record: &arkret_sdk::MlsKeyPackageRecord,
         ssk_generation: u64,
-    ) -> cokret_sdk::KeyPackageClaimRecord {
-        cokret_sdk::KeyPackageClaimRecord {
+    ) -> arkret_sdk::KeyPackageClaimRecord {
+        arkret_sdk::KeyPackageClaimRecord {
             claim_id: "ak:mls_keypackage:test:Y2xhaW0tbm9uY2U".to_owned(),
             keypackage_ref: record.keypackage_ref.as_str().to_owned(),
             keypackage_digest: record.keypackage_ref.clone(),
@@ -495,7 +495,7 @@ mod tests {
             ssk_generation: Some(ssk_generation),
             device_authorize_event_id: None,
             expires_at: crate::clock::now_utc() + chrono::Duration::hours(1),
-            device_signature: cokret_sdk::KeyOperationSignature {
+            device_signature: arkret_sdk::KeyOperationSignature {
                 kid: format!("{}#device", record.principal_id.as_str()),
                 alg: Some("EdDSA".to_owned()),
                 sig: "test-signature".to_owned(),
@@ -518,28 +518,28 @@ mod tests {
         let previous = crate::event_signer::replace_active_signer(Some(active_signer));
         let actor = "did:web:alice.example";
         let device = "ak:device:01904100-0000-7000-8000-0000000000a1";
-        let mut envelope = cokret_sdk::MlsWelcomeClaimEnvelope {
+        let mut envelope = arkret_sdk::MlsWelcomeClaimEnvelope {
             keypackage_ref:
                 "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa".to_owned(),
-            keypackage_digest: cokret_sdk::Hash::new(
+            keypackage_digest: arkret_sdk::Hash::new(
                 "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
             )
             .unwrap(),
-            intended_realm_id: cokret_sdk::RealmId::new(
+            intended_realm_id: arkret_sdk::RealmId::new(
                 "ak:realm:01904100-0000-7000-8000-0000000000d1",
             )
             .unwrap(),
             claim_id: "ak:mls:kp:test:nonce".to_owned(),
-            requester_did: cokret_sdk::Did::new(actor.to_owned()).unwrap(),
+            requester_did: arkret_sdk::Did::new(actor.to_owned()).unwrap(),
             ssk_generation: None,
             requester_device_id: None,
             nonce: "nonce".to_owned(),
-            welcome_digest: cokret_sdk::Hash::new(
+            welcome_digest: arkret_sdk::Hash::new(
                 "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
             )
             .unwrap(),
             created_at: crate::clock::now_utc(),
-            signature: cokret_sdk::KeyOperationSignature {
+            signature: arkret_sdk::KeyOperationSignature {
                 kid: String::new(),
                 alg: Some("EdDSA".to_owned()),
                 sig: String::new(),
@@ -580,7 +580,7 @@ mod tests {
         )
         .unwrap();
 
-        let catalog = cokret_sdk::schema::event_payload_validator_catalog().unwrap();
+        let catalog = arkret_sdk::schema::event_payload_validator_catalog().unwrap();
         catalog
             .validate_payload(event.kind.as_str(), &event.payload)
             .unwrap_or_else(|err| {
@@ -597,7 +597,7 @@ mod tests {
         let created_at = event.payload["created_at"]
             .as_str()
             .expect("realm_key.share created_at is a string");
-        cokret_sdk::canonical::validate_timestamp_canonical(created_at)
+        arkret_sdk::canonical::validate_timestamp_canonical(created_at)
             .expect("realm_key.share created_at is canonical RFC3339 UTC");
     }
 
@@ -629,9 +629,9 @@ mod tests {
         .expect("creator genesis event");
         alice_state.mark_mls_genesis_emitted_with_event(realm, &genesis_event.event_id);
 
-        let bob_identity = cokret_sdk::CokretMlsIdentity::new_basic(
-            cokret_sdk::Did::new(bob.to_owned()).unwrap(),
-            cokret_sdk::DeviceId::new(bob_device.to_owned()).unwrap(),
+        let bob_identity = arkret_sdk::CokretMlsIdentity::new_basic(
+            arkret_sdk::Did::new(bob.to_owned()).unwrap(),
+            arkret_sdk::DeviceId::new(bob_device.to_owned()).unwrap(),
         )
         .unwrap();
         let bob_key_package = bob_identity.key_package_record().unwrap();
@@ -674,7 +674,7 @@ mod tests {
                 .as_str()
                 .is_some_and(|sig| !sig.is_empty())
         );
-        let catalog = cokret_sdk::schema::event_payload_validator_catalog().unwrap();
+        let catalog = arkret_sdk::schema::event_payload_validator_catalog().unwrap();
         catalog
             .validate_payload(admission.welcome.kind.as_str(), &admission.welcome.payload)
             .unwrap_or_else(|err| {
@@ -755,9 +755,9 @@ mod tests {
         );
         alice_state.set_realm_seal_view(realm, advanced);
 
-        let bob_identity = cokret_sdk::CokretMlsIdentity::new_basic(
-            cokret_sdk::Did::new(bob.to_owned()).unwrap(),
-            cokret_sdk::DeviceId::new(bob_device.to_owned()).unwrap(),
+        let bob_identity = arkret_sdk::CokretMlsIdentity::new_basic(
+            arkret_sdk::Did::new(bob.to_owned()).unwrap(),
+            arkret_sdk::DeviceId::new(bob_device.to_owned()).unwrap(),
         )
         .unwrap();
         let bob_key_package = bob_identity.key_package_record().unwrap();

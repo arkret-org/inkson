@@ -13,12 +13,12 @@ pub(super) enum CardAssignmentMutation {
     Create {
         actor_id: String,
         relation_id: String,
-        operation: cokret_sdk::Event,
+        operation: arkret_sdk::Event,
     },
     Tombstone {
         actor_id: String,
         relation_id: String,
-        operation: cokret_sdk::Event,
+        operation: arkret_sdk::Event,
     },
 }
 
@@ -35,7 +35,7 @@ impl CardAssignmentMutation {
         }
     }
 
-    pub(super) fn operation(&self) -> &cokret_sdk::Event {
+    pub(super) fn operation(&self) -> &arkret_sdk::Event {
         match self {
             Self::Create { operation, .. } | Self::Tombstone { operation, .. } => operation,
         }

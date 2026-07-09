@@ -181,13 +181,13 @@ pub(crate) fn calendar_patch_entries(
         patch,
         "metadata.fields.profile",
         current_profile_value(current),
-        Some(json!(cokret_sdk::PROFILE_CALENDAR_EVENT)),
+        Some(json!(arkret_sdk::PROFILE_CALENDAR_EVENT)),
     );
     set_if_changed(
         patch,
         "metadata.fields.profile_refs",
         current_profile_refs_value(current),
-        Some(json!([cokret_sdk::PROFILE_CALENDAR_EVENT])),
+        Some(json!([arkret_sdk::PROFILE_CALENDAR_EVENT])),
     );
     set_string_if_changed(patch, "metadata.fields.start", &current.start, &draft.start);
     set_string_if_changed(patch, "metadata.fields.end", &current.end, &draft.end);
@@ -220,12 +220,12 @@ pub(crate) fn calendar_patch_entries(
 
 pub(crate) fn calendar_event_fields_from_draft(
     draft: &CalendarCardFields,
-) -> Result<cokret_sdk::CalendarEventFields, String> {
+) -> Result<arkret_sdk::CalendarEventFields, String> {
     let start = required_calendar_field("start", &draft.start)?;
     let end = required_calendar_field("end", &draft.end)?;
     let timezone = required_calendar_field("timezone", &draft.timezone)?;
     validate_calendar_time_order(&start, &end, draft.all_day)?;
-    Ok(cokret_sdk::CalendarEventFields {
+    Ok(arkret_sdk::CalendarEventFields {
         start,
         end,
         timezone,
@@ -243,7 +243,7 @@ pub(crate) fn calendar_rsvp_operation(
     strand_id: &str,
     status: &str,
     occurrence: &str,
-) -> anyhow::Result<cokret_sdk::Event> {
+) -> anyhow::Result<arkret_sdk::Event> {
     crate::operation::ck_ops::rsvp_set(
         realm_id,
         actor_id,
@@ -319,7 +319,7 @@ fn validate_calendar_time_order(start: &str, end: &str, all_day: bool) -> Result
 
 fn recurrence_from_card(
     calendar: &CalendarCardFields,
-) -> Result<Option<cokret_sdk::CalendarRecurrence>, String> {
+) -> Result<Option<arkret_sdk::CalendarRecurrence>, String> {
     let frequency = calendar.recurrence_frequency.trim();
     let has_recurrence = !frequency.is_empty()
         || !calendar.recurrence_interval.trim().is_empty()
@@ -352,7 +352,7 @@ fn recurrence_from_card(
     if count.is_some() && expires_at.is_some() {
         return Err("recurrence count and expires_at are mutually exclusive".to_owned());
     }
-    Ok(Some(cokret_sdk::CalendarRecurrence {
+    Ok(Some(arkret_sdk::CalendarRecurrence {
         frequency,
         interval,
         by_day,
@@ -368,17 +368,17 @@ fn recurrence_value_from_card(calendar: &CalendarCardFields) -> Result<Option<Va
         .map_err(|err| format!("recurrence serialize failed: {err}"))
 }
 
-fn parse_recurrence_frequency(value: &str) -> Result<cokret_sdk::RecurrenceFrequency, String> {
+fn parse_recurrence_frequency(value: &str) -> Result<arkret_sdk::RecurrenceFrequency, String> {
     match value.trim().to_ascii_uppercase().as_str() {
-        "DAILY" => Ok(cokret_sdk::RecurrenceFrequency::Daily),
-        "WEEKLY" => Ok(cokret_sdk::RecurrenceFrequency::Weekly),
-        "MONTHLY" => Ok(cokret_sdk::RecurrenceFrequency::Monthly),
-        "YEARLY" => Ok(cokret_sdk::RecurrenceFrequency::Yearly),
+        "DAILY" => Ok(arkret_sdk::RecurrenceFrequency::Daily),
+        "WEEKLY" => Ok(arkret_sdk::RecurrenceFrequency::Weekly),
+        "MONTHLY" => Ok(arkret_sdk::RecurrenceFrequency::Monthly),
+        "YEARLY" => Ok(arkret_sdk::RecurrenceFrequency::Yearly),
         _ => Err("recurrence frequency must be DAILY, WEEKLY, MONTHLY, or YEARLY".to_owned()),
     }
 }
 
-fn parse_recurrence_weekdays(value: &str) -> Result<Vec<cokret_sdk::RecurrenceWeekday>, String> {
+fn parse_recurrence_weekdays(value: &str) -> Result<Vec<arkret_sdk::RecurrenceWeekday>, String> {
     let mut days = Vec::new();
     for day in value
         .split(',')
@@ -386,13 +386,13 @@ fn parse_recurrence_weekdays(value: &str) -> Result<Vec<cokret_sdk::RecurrenceWe
         .filter(|day| !day.is_empty())
     {
         let parsed = match day.as_str() {
-            "MO" => cokret_sdk::RecurrenceWeekday::Mo,
-            "TU" => cokret_sdk::RecurrenceWeekday::Tu,
-            "WE" => cokret_sdk::RecurrenceWeekday::We,
-            "TH" => cokret_sdk::RecurrenceWeekday::Th,
-            "FR" => cokret_sdk::RecurrenceWeekday::Fr,
-            "SA" => cokret_sdk::RecurrenceWeekday::Sa,
-            "SU" => cokret_sdk::RecurrenceWeekday::Su,
+            "MO" => arkret_sdk::RecurrenceWeekday::Mo,
+            "TU" => arkret_sdk::RecurrenceWeekday::Tu,
+            "WE" => arkret_sdk::RecurrenceWeekday::We,
+            "TH" => arkret_sdk::RecurrenceWeekday::Th,
+            "FR" => arkret_sdk::RecurrenceWeekday::Fr,
+            "SA" => arkret_sdk::RecurrenceWeekday::Sa,
+            "SU" => arkret_sdk::RecurrenceWeekday::Su,
             _ => return Err(format!("unsupported recurrence weekday {day}")),
         };
         if !days.contains(&parsed) {
@@ -416,10 +416,10 @@ fn parse_optional_u64(field: &str, value: &str) -> Result<Option<u64>, String> {
     Ok(Some(parsed))
 }
 
-fn location_value_from_text(value: &str) -> Option<cokret_sdk::CalendarEventLocation> {
+fn location_value_from_text(value: &str) -> Option<arkret_sdk::CalendarEventLocation> {
     let trimmed = value.trim();
     (!trimmed.is_empty()).then(|| {
-        cokret_sdk::CalendarEventLocation::Plaintext(cokret_sdk::CalendarLocation {
+        arkret_sdk::CalendarEventLocation::Plaintext(arkret_sdk::CalendarLocation {
             title: Some(trimmed.to_owned()),
             address: None,
             geo_uri: None,
@@ -480,8 +480,8 @@ fn calendar_location_plaintext_label(value: &Value) -> String {
 }
 
 fn validate_calendar_event_value(value: &Value) -> Result<(), String> {
-    cokret_sdk::ProtocolSchemaRegistry::default()
-        .validate_value(cokret_sdk::CALENDAR_EVENT_SCHEMA, value)
+    arkret_sdk::ProtocolSchemaRegistry::default()
+        .validate_value(arkret_sdk::CALENDAR_EVENT_SCHEMA, value)
         .map_err(|err| format!("calendar schedule does not match schema: {err}"))
 }
 
@@ -535,11 +535,11 @@ fn set_location_if_changed(
 fn current_profile_value(current: &CalendarCardFields) -> Option<Value> {
     current
         .has_schedule()
-        .then(|| json!(cokret_sdk::PROFILE_CALENDAR_EVENT))
+        .then(|| json!(arkret_sdk::PROFILE_CALENDAR_EVENT))
 }
 
 fn current_profile_refs_value(current: &CalendarCardFields) -> Option<Value> {
     current
         .has_schedule()
-        .then(|| json!([cokret_sdk::PROFILE_CALENDAR_EVENT]))
+        .then(|| json!([arkret_sdk::PROFILE_CALENDAR_EVENT]))
 }

@@ -16,14 +16,14 @@ fn parses_events_subscribe_ndjson_frames() {
 
     assert_eq!(
         frames[0].kind,
-        cokret_sdk::EventsSubscribeFrameKind::Heartbeat
+        arkret_sdk::EventsSubscribeFrameKind::Heartbeat
     );
     assert_eq!(
         frames[1].kind,
-        cokret_sdk::EventsSubscribeFrameKind::Frontier
+        arkret_sdk::EventsSubscribeFrameKind::Frontier
     );
     assert_eq!(
         frames[2].kind,
-        cokret_sdk::EventsSubscribeFrameKind::CatchupComplete
+        arkret_sdk::EventsSubscribeFrameKind::CatchupComplete
     );
 }

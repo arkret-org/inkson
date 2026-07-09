@@ -1,14 +1,14 @@
 //! U4 - "who can invite me" receive-policy settings (`/settings/invite-policy`).
 //!
 //! Edits the actor `invite_receive_policy` (spec `invite-addressing.md` §5,
-//! authoritative `cokret_sdk::InviteReceivePolicy`):
+//! authoritative `arkret_sdk::InviteReceivePolicy`):
 //! - `allowed_introduction_kinds` — which introduction-evidence kinds are accepted at all
 //!   (consent_grant / locator_ref / shared_realm / same_principal_server / explicit_address).
 //! - `explicit_address_behavior` — drop / quarantine / notify for raw-address invites.
 //! - `disclosure.high_trust` — whether contacts learn the invite outcome.
 //! - `blocked_subjects` — list of subjects barred from inviting, with removal.
 //!
-//! YOU-01-006: the form edits a `cokret_sdk::InviteReceivePolicy` held whole in
+//! YOU-01-006: the form edits a `arkret_sdk::InviteReceivePolicy` held whole in
 //! a signal. On GET we keep the *entire* server policy (including the
 //! `trusted_*` / `blocked_principal_services` lists this form does not surface);
 //! on SET we stamp the required `schema` constant and `subject_id = account_did`
@@ -16,7 +16,7 @@
 //! and the body satisfies the soland handler (which deserialises the SDK type
 //! with `deny_unknown_fields` and enforces `subject_id == session actor`).
 //!
-//! The soland self-plane endpoint (`/_cokret/self/invite-receive-policy`)
+//! The soland self-plane endpoint (`/_arkret/self/invite-receive-policy`)
 //! degrades gracefully — on a 404/501/405 GET it seeds the form with defaults,
 //! and a failed save is surfaced inline without losing the user's edits.
 //!
@@ -115,7 +115,7 @@ fn parse_list(value: &str) -> Vec<String> {
     list
 }
 
-fn constraints_lines(constraints: &cokret_sdk::models::ReceivePolicyConstraints) -> Vec<String> {
+fn constraints_lines(constraints: &arkret_sdk::models::ReceivePolicyConstraints) -> Vec<String> {
     let mut lines = Vec::new();
     if let Some(kinds) = constraints.permitted_introduction_kinds.as_ref() {
         lines.push(format!("permitted: {}", kinds.join(", ")));
@@ -162,7 +162,7 @@ pub fn InvitePolicySettingsCard(
     let mut loading = use_signal(|| true);
     let mut status = use_signal(String::new);
     let mut saving = use_signal(|| false);
-    let mut constraints = use_signal(|| None::<cokret_sdk::models::ReceivePolicyConstraints>);
+    let mut constraints = use_signal(|| None::<arkret_sdk::models::ReceivePolicyConstraints>);
 
     // Hydrate from the server once. 404/501/405 → keep defaults (the endpoint
     // isn't wired on this deployment yet); any other error surfaces inline but
@@ -450,7 +450,7 @@ pub fn InvitePolicySettingsCard(
                         // lists from the GET hydrate, so they round-trip intact.
                         let mut to_save = policy.read().clone();
                         to_save.schema = INVITE_RECEIVE_POLICY_SCHEMA.to_owned();
-                        match cokret_sdk::Did::new(subject.clone()) {
+                        match arkret_sdk::Did::new(subject.clone()) {
                             Ok(did) => to_save.subject_id = did,
                             Err(_) => {
                                 status.set(

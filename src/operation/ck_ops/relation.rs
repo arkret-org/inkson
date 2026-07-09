@@ -17,7 +17,7 @@ pub fn relation_create(
     Ok(OperationBuilder::new(
         realm_id,
         actor,
-        cokret_sdk::events::kinds::EventKind::RelationCreate,
+        arkret_sdk::events::kinds::EventKind::RelationCreate,
     )
     .target_ref(from_ref)
     .body(relation_create_payload_value(kind, from_ref, to_ref)?))
@@ -28,7 +28,7 @@ pub fn relation_tombstone(realm_id: &str, actor: &str, relation_id: &str) -> Ope
     OperationBuilder::new(
         realm_id,
         actor,
-        cokret_sdk::events::kinds::EventKind::RelationTombstone,
+        arkret_sdk::events::kinds::EventKind::RelationTombstone,
     )
     .target_ref(relation_id)
     .body(json!({ "relation_id": relation_id }))

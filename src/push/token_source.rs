@@ -25,7 +25,7 @@ pub(crate) fn push_preferences() -> PushPreferences {
 /// F-BUILD-FIX-1: chime's `build_register_device_request` moved the push
 /// gateway URL off `PushPreferences` and onto a per-call `GatewayBinding`.
 /// Inkson only registers against a single configured gateway (the floria
-/// `/_cokret/edge/push/notify` endpoint by default), so this helper resolves the
+/// `/_arkret/edge/push/notify` endpoint by default), so this helper resolves the
 /// runtime gateway URL into a freshly-constructed binding for every
 /// register / state-rebuild call site.
 pub(crate) fn default_gateway_binding() -> GatewayBinding {

@@ -4,7 +4,7 @@
 //! decision, orthogonal to capability + membership: the holder grants or
 //! revokes scoped permission for a peer to initiate a contact action
 //! (`direct_message` / `invite` / `voice_call`). The cells are read from the
-//! holder-private projection at `/_cokret/self/consent/cells` and mutated via
+//! holder-private projection at `/_arkret/self/consent/cells` and mutated via
 //! the `grant` / `revoke` / `request` self-plane commands.
 //!
 //! Surfaces (testids consumed by `cotest/e2e/.../consent-grant.spec.ts`):
@@ -107,7 +107,7 @@ fn parse_valid_until(raw: &str) -> Option<chrono::DateTime<chrono::Utc>> {
         .map(|dt| dt.with_timezone(&chrono::Utc))
 }
 
-fn parse_consent_rows(value: &cokret_sdk::ConsentCellList) -> Vec<ConsentRow> {
+fn parse_consent_rows(value: &arkret_sdk::ConsentCellList) -> Vec<ConsentRow> {
     value
         .cells
         .iter()

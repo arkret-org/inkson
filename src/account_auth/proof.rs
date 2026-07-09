@@ -4,7 +4,7 @@ use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use serde::Serialize;
 
 /// Convenience helper: build the full
-/// [`cokret_sdk::SessionGrantIntrospectionProof`] (challenge + proof_jwt
+/// [`arkret_sdk::SessionGrantIntrospectionProof`] (challenge + proof_jwt
 /// bundle) ready to attach to a soland `session-grant/exchange` request.
 /// The challenge is freshly minted from `current_time + grant_id`.
 pub fn build_session_grant_introspection_proof_bundle(
@@ -12,7 +12,7 @@ pub fn build_session_grant_introspection_proof_bundle(
     grant_jwt: &str,
     audience: &str,
     signing_key: &ed25519_dalek::SigningKey,
-) -> anyhow::Result<cokret_sdk::SessionGrantIntrospectionProof> {
+) -> anyhow::Result<arkret_sdk::SessionGrantIntrospectionProof> {
     let challenge = format!(
         "{ts}-{grant_id}",
         ts = chrono::Utc::now().timestamp_millis()
@@ -24,7 +24,7 @@ pub fn build_session_grant_introspection_proof_bundle(
         &challenge,
         signing_key,
     )?;
-    Ok(cokret_sdk::SessionGrantIntrospectionProof {
+    Ok(arkret_sdk::SessionGrantIntrospectionProof {
         challenge,
         proof_jwt,
     })
@@ -72,8 +72,8 @@ pub fn build_session_grant_introspection_proof(
         anyhow::bail!("challenge is required");
     }
     let now = chrono::Utc::now();
-    let claims = cokret_sdk::SessionGrantIntrospectionProofClaims {
-        kind: cokret_sdk::SESSION_GRANT_INTROSPECTION_PROOF_CLAIMS_TYPE.to_owned(),
+    let claims = arkret_sdk::SessionGrantIntrospectionProofClaims {
+        kind: arkret_sdk::SESSION_GRANT_INTROSPECTION_PROOF_CLAIMS_TYPE.to_owned(),
         grant_id: grant_id.to_owned(),
         grant_jwt_hash: session_grant_jwt_hash(grant_jwt),
         audience: audience.to_owned(),
@@ -87,7 +87,7 @@ pub fn build_session_grant_introspection_proof(
 /// Deterministic `sha256:<hex>` digest binding the OIDC code-exchange request
 /// fields. The Account Authority does not consult this for the
 /// `oidc_code_exchange` branch (it re-validates against the issuer), but the
-/// SDK [`cokret_sdk::SessionGrantRequestProof`] requires a valid [`Hash`], so
+/// SDK [`arkret_sdk::SessionGrantRequestProof`] requires a valid [`Hash`], so
 /// we compute a real content digest of the binding fields rather than ship a
 /// placeholder.
 pub(crate) fn oidc_request_canonical_digest(
@@ -95,10 +95,10 @@ pub(crate) fn oidc_request_canonical_digest(
     client_id: &str,
     authorization_code: &str,
     state: &str,
-) -> anyhow::Result<cokret_sdk::Hash> {
+) -> anyhow::Result<arkret_sdk::Hash> {
     let canonical = format!("oidc_code_exchange|{issuer}|{client_id}|{authorization_code}|{state}");
-    let digest = cokret_sdk::canonical::sha256_digest(canonical.as_bytes());
-    cokret_sdk::Hash::new(digest)
+    let digest = arkret_sdk::canonical::sha256_digest(canonical.as_bytes());
+    arkret_sdk::Hash::new(digest)
         .map_err(|error| anyhow::anyhow!("invalid oidc request digest: {error}"))
 }
 
@@ -106,7 +106,7 @@ pub(crate) fn oidc_request_canonical_digest(
 /// (`"sha256:" + hex(sha256(grant_jwt))`). Public so callers can verify
 /// their proof binding before sending.
 pub fn session_grant_jwt_hash(grant_jwt: &str) -> String {
-    cokret_sdk::canonical::sha256_digest(grant_jwt.as_bytes())
+    arkret_sdk::canonical::sha256_digest(grant_jwt.as_bytes())
 }
 
 /// Internal helper: serialize claims to canonical JSON, base64url-encode

@@ -1,4 +1,4 @@
-use cokret_sdk::models::KeyBackupContentItem;
+use arkret_sdk::models::KeyBackupContentItem;
 use ed25519_dalek::SigningKey;
 use serde_json::{Value, json};
 
@@ -152,7 +152,7 @@ fn key_backup_auth_data_sign_verify_service_attested_round_trip() {
         DEVICE_AUTHORIZE_EVENT
     );
     assert!(body["auth_data"].get("ssk_generation").is_none());
-    let parsed: cokret_sdk::KeyBackup = serde_json::from_value(body.clone()).unwrap();
+    let parsed: arkret_sdk::KeyBackup = serde_json::from_value(body.clone()).unwrap();
     assert_eq!(
         parsed
             .auth_data

@@ -45,8 +45,8 @@ pub(crate) fn safe_blob_filename_header(filename: &str) -> Option<String> {
 }
 
 /// Validate a wire cursor through the SDK-owned identifier type.
-pub(crate) fn validate_cursor(cursor: &str) -> anyhow::Result<cokret_sdk::identifiers::Cursor> {
-    cokret_sdk::identifiers::Cursor::new(cursor.to_owned())
+pub(crate) fn validate_cursor(cursor: &str) -> anyhow::Result<arkret_sdk::identifiers::Cursor> {
+    arkret_sdk::identifiers::Cursor::new(cursor.to_owned())
         .map_err(|err| anyhow::anyhow!("invalid cursor `{cursor}`: {err}"))
 }
 

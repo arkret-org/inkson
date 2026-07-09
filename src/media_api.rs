@@ -20,13 +20,13 @@ use crate::ephemeral::{attach_broadcast_ephemeral_proof, build_call_signal_envel
 use crate::event_submit::EventSubmitter;
 use crate::models::{MediaIceConfigOutcome, MediaIceConfigRequestBody, SubmitEventResult};
 
-/// `POST /_cokret/self/rtc/ice-config` using the SDK's authoritative
+/// `POST /_arkret/self/rtc/ice-config` using the SDK's authoritative
 /// wire types (YOU-05-004). NB: when the WebRTC surface consumes the
 /// outcome, each `ice_servers` entry MUST be parsed through
-/// `cokret_sdk::IceServer` and pass
+/// `arkret_sdk::IceServer` and pass
 /// `IceServer::validate_credential_privacy()` before use.
 pub async fn ice_config(
-    http: &cokret_sdk::http_client::Client,
+    http: &arkret_sdk::http_client::Client,
     request: &MediaIceConfigRequestBody,
 ) -> anyhow::Result<MediaIceConfigOutcome> {
     http.media_ice_config(request)
@@ -34,15 +34,15 @@ pub async fn ice_config(
         .map_err(anyhow::Error::from)
 }
 
-/// `POST /_cokret/self/rtc/token` — `ck.self.call.media.exchange.issue_token`.
+/// `POST /_arkret/self/rtc/token` — `ck.self.call.media.exchange.issue_token`.
 /// Returns the raw outcome (backend connect URL + token + participant
 /// binding). Callers MUST run the response through
-/// `cokret_sdk::verify_call_media_token_outcome` against the realm
+/// `arkret_sdk::verify_call_media_token_outcome` against the realm
 /// media-service anchors before trusting the backend token.
 pub async fn media_token_exchange(
-    http: &cokret_sdk::http_client::Client,
-    request: &cokret_sdk::CallMediaTokenExchangeRequestBody,
-) -> anyhow::Result<cokret_sdk::CallMediaTokenExchangeOutcome> {
+    http: &arkret_sdk::http_client::Client,
+    request: &arkret_sdk::CallMediaTokenExchangeRequestBody,
+) -> anyhow::Result<arkret_sdk::CallMediaTokenExchangeOutcome> {
     http.media_token_exchange(request)
         .await
         .map_err(anyhow::Error::from)
@@ -52,10 +52,10 @@ pub async fn media_token_exchange(
 //
 // Spec (`crypto-media/webrtc-signaling.md` §5): call signaling frames
 // are `ck.schema.ephemeral_envelope.v1` broadcast envelopes carried on
-// `POST /_cokret/self/ephemeral`; the `ck.call.signal` branch MUST carry
+// `POST /_arkret/self/ephemeral`; the `ck.call.signal` branch MUST carry
 // `device_id` + `proof` (a detached signature over the canonical
 // envelope bytes, excluding `proof`). Recording is a durable
-// `ck.call.recording.start` event. There is NO `/_cokret/self/webrtc/*`
+// `ck.call.recording.start` event. There is NO `/_arkret/self/webrtc/*`
 // session or signal endpoint in the spec OpenAPI.
 
 /// Build, device-sign, and submit a `ck.call.signal` ephemeral
@@ -72,7 +72,7 @@ pub async fn submit_call_signal_v1(
     signal_type: &str,
     seq: u64,
     data: Value,
-) -> anyhow::Result<cokret_sdk::EphemeralSubmitOutcome> {
+) -> anyhow::Result<arkret_sdk::EphemeralSubmitOutcome> {
     let mut envelope = build_call_signal_envelope_v1(
         realm_id,
         actor_id,
@@ -102,7 +102,7 @@ pub async fn submit_call_recording_start(
     actor_id: &str,
     call_id: &str,
     recording_id: &str,
-    mode: cokret_sdk::RecordingMode,
+    mode: arkret_sdk::RecordingMode,
 ) -> anyhow::Result<SubmitEventResult> {
     submit_call_capture_start(
         submitter,
@@ -110,7 +110,7 @@ pub async fn submit_call_recording_start(
         actor_id,
         call_id,
         recording_id,
-        cokret_sdk::RecordingCaptureKind::Recording,
+        arkret_sdk::RecordingCaptureKind::Recording,
         mode,
     )
     .await
@@ -125,7 +125,7 @@ pub async fn submit_call_transcription_start(
     actor_id: &str,
     call_id: &str,
     transcript_id: &str,
-    mode: cokret_sdk::RecordingMode,
+    mode: arkret_sdk::RecordingMode,
 ) -> anyhow::Result<SubmitEventResult> {
     submit_call_capture_start(
         submitter,
@@ -133,7 +133,7 @@ pub async fn submit_call_transcription_start(
         actor_id,
         call_id,
         transcript_id,
-        cokret_sdk::RecordingCaptureKind::Transcript,
+        arkret_sdk::RecordingCaptureKind::Transcript,
         mode,
     )
     .await
@@ -146,8 +146,8 @@ async fn submit_call_capture_start(
     actor_id: &str,
     call_id: &str,
     recording_id: &str,
-    capture_kind: cokret_sdk::RecordingCaptureKind,
-    mode: cokret_sdk::RecordingMode,
+    capture_kind: arkret_sdk::RecordingCaptureKind,
+    mode: arkret_sdk::RecordingMode,
 ) -> anyhow::Result<SubmitEventResult> {
     let event = crate::webrtc::build_call_recording_start(
         realm_id,

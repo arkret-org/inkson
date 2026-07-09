@@ -54,7 +54,7 @@ pub fn build_audit_accessed(
     OperationBuilder::new(
         realm_id,
         actor,
-        cokret_sdk::events::kinds::EventKind::AuditAccessed,
+        arkret_sdk::events::kinds::EventKind::AuditAccessed,
     )
     .target_ref(target_event_id)
     .body(json!({
@@ -90,7 +90,7 @@ pub fn build_audit_ryw_receipt(
     OperationBuilder::new(
         realm_id,
         actor,
-        cokret_sdk::events::kinds::EventKind::AuditRywReceipt,
+        arkret_sdk::events::kinds::EventKind::AuditRywReceipt,
     )
     .target_ref(source_event_id)
     .body(json!({
@@ -109,7 +109,7 @@ pub fn build_disclosure_policy(realm_id: &str, actor: &str, policy: Value) -> Op
     OperationBuilder::new(
         realm_id,
         actor,
-        cokret_sdk::events::kinds::EventKind::IdentityDisclosurePolicy,
+        arkret_sdk::events::kinds::EventKind::IdentityDisclosurePolicy,
     )
     .body(json!({
         "policy": policy,
@@ -127,7 +127,7 @@ pub fn build_presentation_request(
     OperationBuilder::new(
         realm_id,
         actor,
-        cokret_sdk::events::kinds::EventKind::IdentityPresentationRequest,
+        arkret_sdk::events::kinds::EventKind::IdentityPresentationRequest,
     )
     .target_ref(target)
     .body(json!({
@@ -147,7 +147,7 @@ pub fn build_presentation_response(
     OperationBuilder::new(
         realm_id,
         actor,
-        cokret_sdk::events::kinds::EventKind::IdentityPresentationResponse,
+        arkret_sdk::events::kinds::EventKind::IdentityPresentationResponse,
     )
     .target_ref(request_id)
     .body(json!({
@@ -168,7 +168,7 @@ pub fn build_disclosure_receipt(
     OperationBuilder::new(
         realm_id,
         actor,
-        cokret_sdk::events::kinds::EventKind::IdentityDisclosureReceipt,
+        arkret_sdk::events::kinds::EventKind::IdentityDisclosureReceipt,
     )
     .target_ref(request_id)
     .body(json!({

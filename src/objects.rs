@@ -6,7 +6,7 @@
 //! `ck.relation.*`, and `ck.container.*` operations without each call site
 //! re-discovering the SDK's struct layout.
 
-pub use cokret_sdk::{Morph, RealmId, Relation, RelationProfile};
+pub use arkret_sdk::{Morph, RealmId, Relation, RelationProfile};
 use serde_json::{Value, json};
 
 use crate::operation::OperationBuilder;
@@ -22,13 +22,13 @@ pub fn build_morph_create(
     // Morph under the canonical `object` key — NOT `morph`. Build the
     // `{object}` envelope via the SDK's shared `ObjectCreatePayload` so the
     // key/shape stays aligned with the schema.
-    let body = cokret_sdk::ObjectCreatePayload::new(morph)
+    let body = arkret_sdk::ObjectCreatePayload::new(morph)
         .to_value()
         .map_err(|e| anyhow::anyhow!("ck.morph.create payload serialize: {e}"))?;
     Ok(OperationBuilder::new(
         realm_id,
         actor,
-        cokret_sdk::events::kinds::EventKind::MorphCreate,
+        arkret_sdk::events::kinds::EventKind::MorphCreate,
     )
     .target_ref(morph.id.as_str())
     .body(body))
@@ -47,17 +47,17 @@ pub fn build_morph_update(
     morph_id: &str,
     patch: Value,
 ) -> anyhow::Result<OperationBuilder> {
-    let patch: cokret_sdk::Patch = serde_json::from_value(patch)
+    let patch: arkret_sdk::Patch = serde_json::from_value(patch)
         .map_err(|err| anyhow::anyhow!("ck.morph.update patch must match ck.patch.v1: {err}"))?;
-    let typed_morph_id = cokret_sdk::MorphId::new(morph_id.to_owned())
+    let typed_morph_id = arkret_sdk::MorphId::new(morph_id.to_owned())
         .map_err(|err| anyhow::anyhow!("invalid morph id {morph_id:?}: {err:?}"))?;
-    let body = cokret_sdk::MorphUpdatePayload::for_morph(typed_morph_id, patch)
+    let body = arkret_sdk::MorphUpdatePayload::for_morph(typed_morph_id, patch)
         .and_then(|payload| payload.to_value())
         .map_err(|err| anyhow::anyhow!("invalid morph_update_payload: {err}"))?;
     Ok(OperationBuilder::new(
         realm_id,
         actor,
-        cokret_sdk::events::kinds::EventKind::MorphUpdate,
+        arkret_sdk::events::kinds::EventKind::MorphUpdate,
     )
     .target_ref(morph_id)
     .body(body))
@@ -81,13 +81,13 @@ pub fn build_relation_create(
     from_ref: &str,
     to_ref: &str,
 ) -> anyhow::Result<OperationBuilder> {
-    let body = cokret_sdk::RelationCreatePayload::new(kind, from_ref.to_owned(), to_ref.to_owned())
+    let body = arkret_sdk::RelationCreatePayload::new(kind, from_ref.to_owned(), to_ref.to_owned())
         .to_value()
         .map_err(|err| anyhow::anyhow!("invalid relation_create_payload: {err}"))?;
     Ok(OperationBuilder::new(
         realm_id,
         actor,
-        cokret_sdk::events::kinds::EventKind::RelationCreate,
+        arkret_sdk::events::kinds::EventKind::RelationCreate,
     )
     .target_ref(relation_id)
     .body(body))
@@ -98,7 +98,7 @@ pub fn build_relation_delete(realm_id: &str, actor: &str, relation_id: &str) -> 
     OperationBuilder::new(
         realm_id,
         actor,
-        cokret_sdk::events::kinds::EventKind::RelationTombstone,
+        arkret_sdk::events::kinds::EventKind::RelationTombstone,
     )
     .target_ref(relation_id)
     .body(json!({"relation_id": relation_id}))
@@ -115,7 +115,7 @@ pub fn build_container_move_item(
     target_ref: &str,
     rank: &str,
 ) -> anyhow::Result<OperationBuilder> {
-    let body = serde_json::to_value(cokret_sdk::ContainerPositionPayload {
+    let body = serde_json::to_value(arkret_sdk::ContainerPositionPayload {
         source_ref: source_ref.to_owned(),
         target_ref: target_ref.to_owned(),
         container_ref: container_ref.to_owned(),
@@ -126,7 +126,7 @@ pub fn build_container_move_item(
     Ok(OperationBuilder::new(
         realm_id,
         actor,
-        cokret_sdk::events::kinds::EventKind::ContainerMoveItem,
+        arkret_sdk::events::kinds::EventKind::ContainerMoveItem,
     )
     .target_ref(container_ref)
     .body(body))
@@ -150,7 +150,7 @@ pub fn build_container_rebalance(
     OperationBuilder::new(
         realm_id,
         actor,
-        cokret_sdk::events::kinds::EventKind::ContainerRebalance,
+        arkret_sdk::events::kinds::EventKind::ContainerRebalance,
     )
     .target_ref(container_ref)
     .body(json!({

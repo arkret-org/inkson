@@ -30,8 +30,8 @@ use crate::operation::{OperationBuilder, sdk_event_local_operation_id, trim_real
 
 /// The structured MLS payload + the canonical AAD it was bound to.
 pub(crate) type LocalEncryptedMessage = (
-    cokret_sdk::EncryptedPayload,
-    cokret_sdk::EncryptedEnvelopeAadV1,
+    arkret_sdk::EncryptedPayload,
+    arkret_sdk::EncryptedEnvelopeAadV1,
 );
 
 /// Result of the local MLS encrypt step.
@@ -44,10 +44,10 @@ pub(crate) type LocalEncryptedMessage = (
 /// * snapshot — post-commit snapshot, persisted by the caller ONLY after the server accepts the
 ///   `ck.mls.commit` (persist-on-accept).
 pub(crate) type LocalMlsEncryptResult = (
-    Option<cokret_sdk::Hash>,
-    Vec<cokret_sdk::Did>,
+    Option<arkret_sdk::Hash>,
+    Vec<arkret_sdk::Did>,
     Option<LocalEncryptedMessage>,
-    Option<cokret_sdk::MlsCommitEnvelope>,
+    Option<arkret_sdk::MlsCommitEnvelope>,
     Option<crate::mls::persistence::MlsSnapshotEnvelope>,
 );
 
@@ -70,7 +70,7 @@ pub(crate) fn run_local_mls_encrypt(
 ) -> LocalMlsEncryptResult {
     let empty = (None, Vec::new(), None, None, None);
     let secure_store = crate::secure_key_store::default_secure_key_store("inkson");
-    let aad = cokret_sdk::EncryptedEnvelopeAadV1::hidden(realm_id, "ck.message.create");
+    let aad = arkret_sdk::EncryptedEnvelopeAadV1::hidden(realm_id, "ck.message.create");
     let Ok(aad_value) = serde_json::to_value(&aad) else {
         return empty;
     };
@@ -113,7 +113,7 @@ pub(crate) fn mls_base_epoch_ref(seal_view: &LocalSealView, realm_id: &str) -> S
         .chain(seal_view.leaves.iter())
         .chain(seal_view.state_root.iter())
         .find_map(|value| {
-            if value.starts_with("ak:event:") && cokret_sdk::EventId::new(value.clone()).is_ok() {
+            if value.starts_with("ak:event:") && arkret_sdk::EventId::new(value.clone()).is_ok() {
                 Some(value.clone())
             } else {
                 mls_sha256_hash_from_ref(value)
@@ -140,8 +140,8 @@ pub(crate) fn mls_base_epoch_ref(seal_view: &LocalSealView, realm_id: &str) -> S
 /// Commit carries forward.
 pub(crate) fn mls_membership_frontier(
     base_group_state_ref: &str,
-) -> Result<Vec<cokret_sdk::EventId>, String> {
-    cokret_sdk::EventId::new(base_group_state_ref.to_owned())
+) -> Result<Vec<arkret_sdk::EventId>, String> {
+    arkret_sdk::EventId::new(base_group_state_ref.to_owned())
         .map(|event_id| vec![event_id])
         .map_err(|_| {
             "MLS self-update membership_frontier requires a ck:event base group-state ref"
@@ -154,8 +154,8 @@ pub(crate) fn mls_membership_frontier(
 pub(crate) fn mls_policy_root(
     seal_view: &LocalSealView,
     realm_id: &str,
-    schedule_hash: &cokret_sdk::Hash,
-) -> Result<cokret_sdk::Hash, String> {
+    schedule_hash: &arkret_sdk::Hash,
+) -> Result<arkret_sdk::Hash, String> {
     let hash = seal_view
         .state_root
         .as_deref()
@@ -172,7 +172,7 @@ pub(crate) fn mls_policy_root(
                 "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855".to_owned()
             })
         });
-    cokret_sdk::Hash::new(hash).map_err(|err| format!("invalid MLS policy root hash: {err:?}"))
+    arkret_sdk::Hash::new(hash).map_err(|err| format!("invalid MLS policy root hash: {err:?}"))
 }
 
 /// The built (but not yet submitted) secure-send artifacts: the optional
@@ -181,14 +181,14 @@ pub(crate) fn mls_policy_root(
 pub(crate) struct SecureSendBuild {
     /// Forced `ck.mls.commit` to submit BEFORE the message, when the encrypt
     /// advanced the epoch. `None` rides the current epoch.
-    pub commit_event: Option<cokret_sdk::Event>,
+    pub commit_event: Option<arkret_sdk::Event>,
     /// The encrypted `ck.message.create` event.
-    pub message_event: cokret_sdk::Event,
+    pub message_event: arkret_sdk::Event,
     /// Post-commit snapshot — persisted by the caller ONLY after the server
     /// accepts the commit (persist-on-accept).
     pub new_mls_snapshot: Option<crate::mls::persistence::MlsSnapshotEnvelope>,
     /// Every principal DID in the post-encrypt group (audit RYW delivered set).
-    pub member_dids: Vec<cokret_sdk::Did>,
+    pub member_dids: Vec<arkret_sdk::Did>,
     /// The Realm move-seal ref captured at build time (covered-seals binding).
     pub seal_ref: String,
 }
@@ -214,7 +214,7 @@ pub(crate) fn build_secure_send(
     message_id: &str,
     reply_to: Option<&str>,
     plaintext_bytes: &[u8],
-    expiry: Option<cokret_sdk::DisappearingMessageExpiry>,
+    expiry: Option<arkret_sdk::DisappearingMessageExpiry>,
 ) -> Result<SecureSendBuild, String> {
     let seal_ref = seal_view.move_seal_ref();
     let (
@@ -245,9 +245,9 @@ pub(crate) fn build_secure_send(
             // `real_commit_envelope.epoch` is the POST-commit epoch.
             let prev_epoch = mls_commit_epoch.saturating_sub(1);
             let commit_event_id = format!("ak:event:{}", uuid_v7());
-            let commit_event_id_typed = cokret_sdk::EventId::new(commit_event_id.clone())
+            let commit_event_id_typed = arkret_sdk::EventId::new(commit_event_id.clone())
                 .map_err(|err| format!("MLS commit event id invalid: {err:?}"))?;
-            let realm_id_typed = cokret_sdk::RealmId::new(trim_realm_id(realm_id))
+            let realm_id_typed = arkret_sdk::RealmId::new(trim_realm_id(realm_id))
                 .map_err(|err| format!("MLS commit Realm id invalid: {err:?}"))?;
             // Reuse the genesis-locked `policy_root` (soland carries it forward
             // unchanged and rejects a drifted binding with
@@ -258,22 +258,22 @@ pub(crate) fn build_secure_send(
                 .read()
                 .genesis_policy_root_for_effective_scope(realm_id, None)
             {
-                Some(stored) => cokret_sdk::Hash::new(stored)
+                Some(stored) => arkret_sdk::Hash::new(stored)
                     .map_err(|err| format!("stored MLS genesis policy_root invalid: {err:?}"))?,
                 None => mls_policy_root(seal_view, realm_id, &local_schedule_hash)?,
             };
-            let governance_binding = cokret_sdk::MlsGovernanceBindingPayload::realm(
+            let governance_binding = arkret_sdk::MlsGovernanceBindingPayload::realm(
                 realm_id_typed,
                 real_commit_envelope.group_id.clone(),
                 prev_epoch,
                 mls_commit_epoch,
                 mls_membership_frontier(&base_group_state_ref)?,
                 policy_root,
-                cokret_sdk::MLS_GOVERNANCE_BINDING_FULL_PROFILE,
-                cokret_sdk::CORE_REDUCER_PROFILE,
+                arkret_sdk::MLS_GOVERNANCE_BINDING_FULL_PROFILE,
+                arkret_sdk::CORE_REDUCER_PROFILE,
             )
             .map_err(|err| format!("MLS governance binding failed: {err}"))?;
-            let mls_commit_payload = cokret_sdk::MlsCommitPayload::new(
+            let mls_commit_payload = arkret_sdk::MlsCommitPayload::new(
                 real_commit_envelope.group_id.clone(),
                 prev_epoch,
                 base_group_state_ref.clone(),
@@ -302,18 +302,18 @@ pub(crate) fn build_secure_send(
     // Wrap the MLS payload in the spec-canonical
     // `ck.schema.encrypted_envelope.v1` wire shape, binding
     // key_ref.group_state_ref to the current MLS group state.
-    let encrypted_envelope = cokret_sdk::EncryptedEnvelopeV1::from_payload(
+    let encrypted_envelope = arkret_sdk::EncryptedEnvelopeV1::from_payload(
         &encrypted_payload,
         envelope_aad,
-        cokret_sdk::AadVisibility::Hidden,
+        arkret_sdk::AadVisibility::Hidden,
         &group_state_ref,
     )
     .map_err(|err| format!("MLS encrypted envelope build failed: {err}"))?;
     let encrypted_payload_json = serde_json::to_value(&encrypted_envelope)
         .map_err(|err| format!("MLS encrypted envelope encode failed: {err}"))?;
-    let typed_strand_id = cokret_sdk::StrandId::new(strand_id.to_owned())
+    let typed_strand_id = arkret_sdk::StrandId::new(strand_id.to_owned())
         .map_err(|err| format!("Send Secure strand id invalid: {err:?}"))?;
-    let mut message_payload = cokret_sdk::MessageCreatePayload::with_encrypted_content(
+    let mut message_payload = arkret_sdk::MessageCreatePayload::with_encrypted_content(
         typed_strand_id,
         "discussion",
         encrypted_payload_json,
@@ -331,7 +331,7 @@ pub(crate) fn build_secure_send(
     let message_envelope = OperationBuilder::new(
         realm_id,
         actor,
-        cokret_sdk::events::kinds::EventKind::MessageCreate,
+        arkret_sdk::events::kinds::EventKind::MessageCreate,
     )
     .body(msg_payload_value)
     .build_sdk_event("inkson");

@@ -20,14 +20,14 @@
 //! Round 4 (spec a77b995) — the banner is now sourced from the
 //! `ck.audit.policy_access` event whose `access_kind ==
 //! e2ee_late_recovery` carries
-//! [`late_recovery_original_event_id`](cokret_sdk::AuditPolicyAccessPayload::late_recovery_original_event_id).
+//! [`late_recovery_original_event_id`](arkret_sdk::AuditPolicyAccessPayload::late_recovery_original_event_id).
 //! See [`LateRecoveredEvent::from_audit_policy_access`] for the typed
 //! construction path; the renderer prefers this entry point so the
 //! banner is bound to the audited recovery event id (and therefore
 //! auditable).
 
 use chrono::{DateTime, Duration, Utc};
-pub use cokret_sdk::{
+pub use arkret_sdk::{
     REASON_LATE_RECOVERY_REJECTED_EXPIRED, REASON_LATE_RECOVERY_REJECTED_MEMBERSHIP,
     REASON_LATE_RECOVERY_SHARE_NOT_AUTHORIZED,
 };
@@ -241,7 +241,7 @@ pub fn late_recovered_event_from_audit_policy_access_event(
     }
 
     let Ok(payload) =
-        serde_json::from_value::<cokret_sdk::AuditPolicyAccessPayload>(payload_value.clone())
+        serde_json::from_value::<arkret_sdk::AuditPolicyAccessPayload>(payload_value.clone())
     else {
         return LateRecoveryAuditAccessConversion::NotLateRecovery;
     };
@@ -408,7 +408,7 @@ impl LateRecoveredEvent {
 impl LateRecoveredEvent {
     /// Round 4 — construct from a `ck.audit.policy_access` payload
     /// whose `access_kind` is
-    /// [`AccessKind::E2EELateRecovery`](cokret_sdk::AccessKind::E2EELateRecovery).
+    /// [`AccessKind::E2EELateRecovery`](arkret_sdk::AccessKind::E2EELateRecovery).
     /// Returns `None` if the access_kind is not e2ee_late_recovery or
     /// the required `late_recovery_original_event_id` is missing — the
     /// SDK validator already rejects malformed payloads so callers
@@ -420,13 +420,13 @@ impl LateRecoveredEvent {
     /// it from the local ingest cache because the SDK payload carries
     /// only the recovery timestamp.
     pub fn from_audit_policy_access(
-        payload: &cokret_sdk::AuditPolicyAccessPayload,
+        payload: &arkret_sdk::AuditPolicyAccessPayload,
         original_received_at: DateTime<Utc>,
         actor_revoked_at_recovery: bool,
     ) -> Option<Self> {
         if !matches!(
             payload.access_kind,
-            cokret_sdk::AccessKind::E2EELateRecovery
+            arkret_sdk::AccessKind::E2EELateRecovery
         ) {
             return None;
         }
@@ -500,7 +500,7 @@ mod tests {
 
     #[test]
     fn from_audit_policy_access_carries_late_recovery_original_event_id() {
-        use cokret_sdk::{AccessKind, AuditPolicyAccessPayload, Did, EventId, RealmId};
+        use arkret_sdk::{AccessKind, AuditPolicyAccessPayload, Did, EventId, RealmId};
         let base = Utc.with_ymd_and_hms(2026, 5, 20, 0, 0, 0).unwrap();
         let payload = AuditPolicyAccessPayload {
             realm_id: RealmId::new("ak:realm:01904100-0000-7000-8000-000000000001").unwrap(),
@@ -519,7 +519,7 @@ mod tests {
 
     #[test]
     fn from_audit_policy_access_rejects_wrong_access_kind() {
-        use cokret_sdk::{AccessKind, AuditPolicyAccessPayload, Did, RealmId};
+        use arkret_sdk::{AccessKind, AuditPolicyAccessPayload, Did, RealmId};
         let base = Utc.with_ymd_and_hms(2026, 5, 20, 0, 0, 0).unwrap();
         let payload = AuditPolicyAccessPayload {
             realm_id: RealmId::new("ak:realm:01904100-0000-7000-8000-000000000001").unwrap(),

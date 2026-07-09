@@ -12,7 +12,7 @@
 //! - `authz/capabilities.md` §3.3 — revoke + cascade.
 //! - `authz/capabilities.md` §3.4 — audit trail.
 
-use cokret_sdk::models::{Capability, CapabilitySubject};
+use arkret_sdk::models::{Capability, CapabilitySubject};
 use dioxus::prelude::*;
 
 use crate::components::{EmptyState, EmptyStateKind};
@@ -106,7 +106,7 @@ pub fn CapabilitiesSettingsCard(
                 }
                 Err(err) => {
                     // TODO(G3.Y3-followup): when soland adds the per-actor
-                    // `GET /_cokret/self/authz/capabilities/{actor}` endpoint with
+                    // `GET /_arkret/self/authz/capabilities/{actor}` endpoint with
                     // the full delegation chain (spec §3.2), prefer that
                     // over effective-grants — the latter projects only the
                     // resolved leaf, not the hop history needed for the

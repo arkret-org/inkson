@@ -126,7 +126,7 @@ pub(crate) fn local_redaction_tombstone_for_message(
             Value::String(message_id.to_owned()),
         );
     }
-    cokret_sdk::events::redaction_tombstone_message_value(&mut event, redacted_at, redaction_ref);
+    arkret_sdk::events::redaction_tombstone_message_value(&mut event, redacted_at, redaction_ref);
     event
 }
 
@@ -757,7 +757,7 @@ pub(crate) fn chat_message_from_event(realm_id: &str, event: &Value) -> Option<C
 /// envelope into a plaintext chat body.
 ///
 /// Parses the canonical `ck.schema.encrypted_envelope.v1` shape, unwraps it
-/// to the typed [`cokret_sdk::EncryptedPayload`], and hands it to the shared
+/// to the typed [`arkret_sdk::EncryptedPayload`], and hands it to the shared
 /// MLS decrypt core. The decrypted bytes are the canonical Content Block JSON
 /// (see the secure send path), so we parse them and extract the display text.
 /// Returns `None` on any soft failure (no local MLS snapshot, wrong/absent
@@ -772,7 +772,7 @@ pub(crate) fn decrypt_chat_encrypted_content(
     encrypted_content: &Value,
 ) -> Option<String> {
     let envelope =
-        serde_json::from_value::<cokret_sdk::EncryptedEnvelopeV1>(encrypted_content.clone())
+        serde_json::from_value::<arkret_sdk::EncryptedEnvelopeV1>(encrypted_content.clone())
             .ok()?;
     let payload_value = serde_json::to_value(envelope.to_payload().ok()?).ok()?;
     let plaintext = crate::projection::try_local_mls_decrypt_core(
@@ -1605,7 +1605,7 @@ pub(crate) fn sync_presence_state(event: &Value) -> Option<String> {
         .iter()
         .find_map(|field| event.get(*field).and_then(Value::as_str))
         .map(str::trim)
-        .and_then(cokret_sdk::PresenceStatus::parse_wire)
+        .and_then(arkret_sdk::PresenceStatus::parse_wire)
         .map(|state| state.as_wire().to_owned())
 }
 
@@ -1618,7 +1618,7 @@ pub(crate) fn sync_presence_status_message(event: &Value) -> Option<String> {
         .and_then(Value::as_str)
         .map(str::trim)
         .filter(|message| !message.is_empty())
-        .filter(|message| cokret_sdk::validate_status_message(message).is_ok())
+        .filter(|message| arkret_sdk::validate_status_message(message).is_ok())
         .map(ToOwned::to_owned)
 }
 

@@ -141,7 +141,7 @@ fn message_raw_operation_from_event(realm_id: &str, event: &Value) -> Option<Raw
 }
 
 fn typed_message_raw_operation_from_event(event: &Value) -> Option<RawOperationRecord> {
-    let sdk_event: cokret_sdk::Event = serde_json::from_value(event.clone()).ok()?;
+    let sdk_event: arkret_sdk::Event = serde_json::from_value(event.clone()).ok()?;
     let decoded = garth::InboundDecoder::new()
         .try_decode_event(sdk_event)
         .ok()?;
@@ -162,18 +162,18 @@ mod tests {
 
     use super::*;
 
-    fn typed_event(kind: &str, payload: Value) -> cokret_sdk::Event {
-        let mut event = cokret_sdk::Event::new(
+    fn typed_event(kind: &str, payload: Value) -> arkret_sdk::Event {
+        let mut event = arkret_sdk::Event::new(
             kind,
-            cokret_sdk::RealmId::new("ak:realm:01904100-0000-7000-8000-000000000001").unwrap(),
-            cokret_sdk::Did::new("did:webvh:z6mkfixture:alice.example").unwrap(),
+            arkret_sdk::RealmId::new("ak:realm:01904100-0000-7000-8000-000000000001").unwrap(),
+            arkret_sdk::Did::new("did:webvh:z6mkfixture:alice.example").unwrap(),
             1,
-            cokret_sdk::Hlc::new("01970e589d21-0004-a13f9c2e").unwrap(),
+            arkret_sdk::Hlc::new("01970e589d21-0004-a13f9c2e").unwrap(),
             payload,
         )
         .unwrap();
         event.event_id =
-            cokret_sdk::EventId::new("ak:event:01904100-0000-7000-8000-000000000101").unwrap();
+            arkret_sdk::EventId::new("ak:event:01904100-0000-7000-8000-000000000101").unwrap();
         event.created_at = "2026-07-08T00:00:00Z".parse().unwrap();
         event
     }
@@ -181,7 +181,7 @@ mod tests {
     #[test]
     fn typed_message_raw_operation_uses_client_core_decoder() {
         let event = typed_event(
-            cokret_sdk::events::kinds::MESSAGE_CREATE,
+            arkret_sdk::events::kinds::MESSAGE_CREATE,
             json!({
                 "strand_id": "ak:strand:01904100-0000-7000-8000-000000000201",
                 "track_name": "discussion",
@@ -207,7 +207,7 @@ mod tests {
     #[test]
     fn typed_message_raw_operation_ignores_non_message_events() {
         let event = typed_event(
-            cokret_sdk::events::kinds::PRESENCE,
+            arkret_sdk::events::kinds::PRESENCE,
             json!({"state": "online"}),
         );
         let value = serde_json::to_value(&event).unwrap();

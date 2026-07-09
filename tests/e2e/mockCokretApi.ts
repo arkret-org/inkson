@@ -458,13 +458,13 @@ export async function mockCokretApi(
         body: '<!doctype html><main data-testid="coauth-login"><h1>Sign in</h1><p>coauth</p><a href="/register">Create account</a><a href="/recovery">Lost password or account</a></main>',
       });
     }
-    if (!url.pathname.startsWith("/_cokret/")) {
+    if (!url.pathname.startsWith("/_arkret/")) {
       return route.continue();
     }
     if (
       options.enableDeviceEnrollment &&
       url.hostname === "auth.local.host" &&
-      url.pathname === "/_cokret/gate/account/device-enroll" &&
+      url.pathname === "/_arkret/gate/account/device-enroll" &&
       route.request().method() === "POST"
     ) {
       const body = await route.request().postDataJSON();
@@ -520,7 +520,7 @@ export async function mockCokretApi(
     }
 
     if (
-      url.pathname === "/_cokret/describe" &&
+      url.pathname === "/_arkret/describe" &&
       route.request().method() === "GET"
     ) {
       if (url.hostname === "auth.local.host") {
@@ -533,7 +533,7 @@ export async function mockCokretApi(
             mode: "development",
             account_authority: {
               origin: "https://auth.local.host",
-              gate_account_base: "https://auth.local.host/_cokret/gate/account",
+              gate_account_base: "https://auth.local.host/_arkret/gate/account",
             },
             methods: [
               {
@@ -675,7 +675,7 @@ export async function mockCokretApi(
           mode: "development",
           account_authority: {
             origin: "https://auth.local.host",
-            gate_account_base: "https://auth.local.host/_cokret/gate/account",
+            gate_account_base: "https://auth.local.host/_arkret/gate/account",
           },
           methods: [
             {
@@ -709,7 +709,7 @@ export async function mockCokretApi(
     }
 
     if (
-      url.pathname.startsWith("/_cokret/self/realms/") &&
+      url.pathname.startsWith("/_arkret/self/realms/") &&
       url.pathname.endsWith("/spaces") &&
       route.request().method() === "GET"
     ) {
@@ -722,7 +722,7 @@ export async function mockCokretApi(
     }
 
     if (
-      url.pathname.startsWith("/_cokret/self/realms/") &&
+      url.pathname.startsWith("/_arkret/self/realms/") &&
       url.pathname.endsWith("/strands") &&
       route.request().method() === "GET"
     ) {
@@ -735,7 +735,7 @@ export async function mockCokretApi(
     }
 
     if (
-      url.pathname === "/_cokret/self/circles" &&
+      url.pathname === "/_arkret/self/circles" &&
       route.request().method() === "GET"
     ) {
       const realmId = url.searchParams.get("realm_id") ?? DEMO_REALM;
@@ -746,7 +746,7 @@ export async function mockCokretApi(
     }
 
     const circleLifecycle = url.pathname.match(
-      /^\/_cokret\/self\/circles\/([^/]+)\/(archive|restore|tombstone)$/,
+      /^\/_arkret\/self\/circles\/([^/]+)\/(archive|restore|tombstone)$/,
     );
     if (circleLifecycle && route.request().method() === "POST") {
       const [, circleId, action] = circleLifecycle;
@@ -774,7 +774,7 @@ export async function mockCokretApi(
     }
 
     if (
-      url.pathname === "/_cokret/self/events/describe" &&
+      url.pathname === "/_arkret/self/events/describe" &&
       route.request().method() === "GET"
     ) {
       // Spec ck.self.events.query.describe -> canonical ServiceDescribe shape
@@ -795,7 +795,7 @@ export async function mockCokretApi(
           mode: "development",
           account_authority: {
             origin: "https://auth.local.host",
-            gate_account_base: "https://auth.local.host/_cokret/gate/account",
+            gate_account_base: "https://auth.local.host/_arkret/gate/account",
           },
           methods: [
             {
@@ -831,7 +831,7 @@ export async function mockCokretApi(
     }
 
     if (
-      url.pathname === "/_cokret/self/events" &&
+      url.pathname === "/_arkret/self/events" &&
       route.request().method() === "POST"
     ) {
       const body = await route.request().postDataJSON();
@@ -1018,14 +1018,14 @@ export async function mockCokretApi(
     }
 
     if (
-      url.pathname === "/_cokret/open/mimi/provider-directory" &&
+      url.pathname === "/_arkret/open/mimi/provider-directory" &&
       route.request().method() === "GET"
     ) {
       return json(route, mimiProviderDirectory());
     }
 
     if (
-      url.pathname === "/_cokret/open/mimi/key-material" &&
+      url.pathname === "/_arkret/open/mimi/key-material" &&
       route.request().method() === "POST"
     ) {
       return json(route, {
@@ -1044,7 +1044,7 @@ export async function mockCokretApi(
     }
 
     if (
-      url.pathname.match(/^\/_cokret\/open\/mimi\/strands\/[^/]+\/update$/) &&
+      url.pathname.match(/^\/_arkret\/open\/mimi\/strands\/[^/]+\/update$/) &&
       route.request().method() === "POST"
     ) {
       const roomId = decodeURIComponent(url.pathname.split("/")[5]);
@@ -1059,7 +1059,7 @@ export async function mockCokretApi(
     }
 
     if (
-      url.pathname.match(/^\/_cokret\/open\/mimi\/strands\/[^/]+\/notify$/) &&
+      url.pathname.match(/^\/_arkret\/open\/mimi\/strands\/[^/]+\/notify$/) &&
       route.request().method() === "POST"
     ) {
       return json(route, {
@@ -1073,7 +1073,7 @@ export async function mockCokretApi(
     }
 
     if (
-      url.pathname.match(/^\/_cokret\/open\/mimi\/strands\/[^/]+\/messages$/) &&
+      url.pathname.match(/^\/_arkret\/open\/mimi\/strands\/[^/]+\/messages$/) &&
       route.request().method() === "POST"
     ) {
       return json(route, {
@@ -1094,7 +1094,7 @@ export async function mockCokretApi(
 
     if (
       url.pathname.match(
-        /^\/_cokret\/open\/mimi\/strands\/[^/]+\/group-info$/,
+        /^\/_arkret\/open\/mimi\/strands\/[^/]+\/group-info$/,
       ) &&
       route.request().method() === "GET"
     ) {
@@ -1115,7 +1115,7 @@ export async function mockCokretApi(
     }
 
     if (
-      url.pathname === "/_cokret/open/mimi/consent/request" &&
+      url.pathname === "/_arkret/open/mimi/consent/request" &&
       route.request().method() === "POST"
     ) {
       return json(route, {
@@ -1127,7 +1127,7 @@ export async function mockCokretApi(
     }
 
     if (
-      url.pathname === "/_cokret/open/mimi/consent/update" &&
+      url.pathname === "/_arkret/open/mimi/consent/update" &&
       route.request().method() === "POST"
     ) {
       return json(route, {
@@ -1139,7 +1139,7 @@ export async function mockCokretApi(
     }
 
     if (
-      url.pathname === "/_cokret/open/mimi/identifiers/query" &&
+      url.pathname === "/_arkret/open/mimi/identifiers/query" &&
       route.request().method() === "POST"
     ) {
       const body = await route.request().postDataJSON();
@@ -1164,7 +1164,7 @@ export async function mockCokretApi(
     }
 
     if (
-      url.pathname === "/_cokret/open/mimi/report-abuse" &&
+      url.pathname === "/_arkret/open/mimi/report-abuse" &&
       route.request().method() === "POST"
     ) {
       return json(route, {
@@ -1176,7 +1176,7 @@ export async function mockCokretApi(
     }
 
     if (
-      url.pathname === "/_cokret/open/mimi/proxy-download" &&
+      url.pathname === "/_arkret/open/mimi/proxy-download" &&
       route.request().method() === "POST"
     ) {
       return json(route, {
@@ -1187,7 +1187,7 @@ export async function mockCokretApi(
     }
 
     if (
-      url.pathname === "/_cokret/gate/account/register" &&
+      url.pathname === "/_arkret/gate/account/register" &&
       route.request().method() === "POST"
     ) {
       const body = await route.request().postDataJSON();
@@ -1221,7 +1221,7 @@ export async function mockCokretApi(
     }
 
     if (
-      url.pathname === "/_cokret/self/account/profile" &&
+      url.pathname === "/_arkret/self/account/profile" &&
       route.request().method() === "POST"
     ) {
       const body = await route.request().postDataJSON();
@@ -1254,14 +1254,14 @@ export async function mockCokretApi(
     }
 
     if (
-      url.pathname === "/_cokret/gate/account/session-grants/revoke" &&
+      url.pathname === "/_arkret/gate/account/session-grants/revoke" &&
       route.request().method() === "POST"
     ) {
       return json(route, { revoked_count: 1, revoked_grant_ids: [] });
     }
 
     if (
-      url.pathname === "/_cokret/self/account/subscribe" &&
+      url.pathname === "/_arkret/self/account/subscribe" &&
       route.request().method() === "GET"
     ) {
       const demoProjectionEvents = projectionEvents.filter(
@@ -1394,7 +1394,7 @@ export async function mockCokretApi(
     }
 
     if (
-      url.pathname === "/_cokret/find/directory/search-realms" &&
+      url.pathname === "/_arkret/find/directory/search-realms" &&
       route.request().method() === "POST"
     ) {
       return json(route, {
@@ -1405,7 +1405,7 @@ export async function mockCokretApi(
     }
 
     if (
-      url.pathname === "/_cokret/find/directory/search-organizations" &&
+      url.pathname === "/_arkret/find/directory/search-organizations" &&
       route.request().method() === "POST"
     ) {
       return json(route, {
@@ -1425,7 +1425,7 @@ export async function mockCokretApi(
     }
 
     if (
-      url.pathname === "/_cokret/find/directory/search-actors" &&
+      url.pathname === "/_arkret/find/directory/search-actors" &&
       route.request().method() === "POST"
     ) {
       return json(route, {
@@ -1446,7 +1446,7 @@ export async function mockCokretApi(
     }
 
     if (
-      url.pathname === "/_cokret/open/invite-locators/resolve" &&
+      url.pathname === "/_arkret/open/invite-locators/resolve" &&
       route.request().method() === "POST"
     ) {
       expect(url.search).toBe("");
@@ -1476,7 +1476,7 @@ export async function mockCokretApi(
     }
 
     if (
-      url.pathname === "/_cokret/find/directory/resolve-handle" &&
+      url.pathname === "/_arkret/find/directory/resolve-handle" &&
       route.request().method() === "POST"
     ) {
       const body = await route.request().postDataJSON();
@@ -1512,7 +1512,7 @@ export async function mockCokretApi(
     }
 
     if (
-      url.pathname === "/_cokret/find/directory/list-handles-for-subject" &&
+      url.pathname === "/_arkret/find/directory/list-handles-for-subject" &&
       route.request().method() === "POST"
     ) {
       const body = await route.request().postDataJSON();
@@ -1551,7 +1551,7 @@ export async function mockCokretApi(
     }
 
     if (
-      url.pathname === "/_cokret/find/directory/resolve-realm" &&
+      url.pathname === "/_arkret/find/directory/resolve-realm" &&
       route.request().method() === "POST"
     ) {
       return json(route, {
@@ -1563,7 +1563,7 @@ export async function mockCokretApi(
     }
 
     if (
-      url.pathname === "/_cokret/find/directory/describe" &&
+      url.pathname === "/_arkret/find/directory/describe" &&
       route.request().method() === "GET"
     ) {
       return json(route, {
@@ -1600,7 +1600,7 @@ export async function mockCokretApi(
     }
 
     if (
-      url.pathname === "/_cokret/self/events" &&
+      url.pathname === "/_arkret/self/events" &&
       route.request().method() === "GET"
     ) {
       const requestedRealms = (url.searchParams.get("realms") ?? "")
@@ -1615,14 +1615,14 @@ export async function mockCokretApi(
       return json(route, { events, next_cursor: null, has_more: false });
     }
 
-    // NB: no `/_cokret/self/snapshot/head` route. The mock's describe does
+    // NB: no `/_arkret/self/snapshot/head` route. The mock's describe does
     // not advertise `ck.self.snapshot.query.manifest_head`, so the client falls back to
     // event replay before issuing the request. The current wire shape is the
     // full signed `ck.schema.snapshot.v1` manifest (self-id field `id`); the
     // removed `snapshot_ref` pointer DTO is hard-rejected and MUST NOT be
     // reintroduced here.
     if (
-      url.pathname === "/_cokret/root/identity/describe" &&
+      url.pathname === "/_arkret/root/identity/describe" &&
       route.request().method() === "GET"
     ) {
       return json(route, {
@@ -1635,7 +1635,7 @@ export async function mockCokretApi(
     }
 
     if (
-      url.pathname === "/_cokret/root/identity/resolve" &&
+      url.pathname === "/_arkret/root/identity/resolve" &&
       route.request().method() === "POST"
     ) {
       const body = await route.request().postDataJSON();
@@ -1649,7 +1649,7 @@ export async function mockCokretApi(
     }
 
     if (
-      url.pathname === "/_cokret/self/account/describe" &&
+      url.pathname === "/_arkret/self/account/describe" &&
       route.request().method() === "GET"
     ) {
       return json(route, {
@@ -1661,7 +1661,7 @@ export async function mockCokretApi(
     }
 
     if (
-      url.pathname === "/_cokret/self/authz/check" &&
+      url.pathname === "/_arkret/self/authz/check" &&
       route.request().method() === "POST"
     ) {
       return json(route, {
@@ -1673,7 +1673,7 @@ export async function mockCokretApi(
     }
 
     if (
-      url.pathname === "/_cokret/self/authz/effective-grants" &&
+      url.pathname === "/_arkret/self/authz/effective-grants" &&
       route.request().method() === "GET"
     ) {
       return json(route, {
@@ -1707,14 +1707,14 @@ export async function mockCokretApi(
     }
 
     if (
-      url.pathname === "/_cokret/self/authz/invites" &&
+      url.pathname === "/_arkret/self/authz/invites" &&
       route.request().method() === "GET"
     ) {
       return json(route, { invites: [], next_cursor: null });
     }
 
     if (
-      url.pathname === "/_cokret/self/contacts" &&
+      url.pathname === "/_arkret/self/contacts" &&
       route.request().method() === "GET"
     ) {
       return json(route, {
@@ -1780,7 +1780,7 @@ export async function mockCokretApi(
 
     // U2 — contact request (now accepts an optional `message`).
     if (
-      url.pathname === "/_cokret/self/contacts/request" &&
+      url.pathname === "/_arkret/self/contacts/request" &&
       route.request().method() === "POST"
     ) {
       return json(route, {
@@ -1792,7 +1792,7 @@ export async function mockCokretApi(
 
     // U1 — accept / reject an incoming contact request.
     if (
-      url.pathname === "/_cokret/self/contacts/respond" &&
+      url.pathname === "/_arkret/self/contacts/respond" &&
       route.request().method() === "POST"
     ) {
       const body = await route.request().postDataJSON();
@@ -1808,7 +1808,7 @@ export async function mockCokretApi(
 
     // U5 — tombstone / block a contact.
     if (
-      url.pathname === "/_cokret/self/contacts/tombstone" &&
+      url.pathname === "/_arkret/self/contacts/tombstone" &&
       route.request().method() === "POST"
     ) {
       return json(route, {
@@ -1820,10 +1820,10 @@ export async function mockCokretApi(
     }
 
     // U4 — invite_receive_policy ("谁可以邀请我"). Spec invite-addressing.md
-    // §5: GET/SET carry the bare `cokret_sdk::InviteReceivePolicy` (required
+    // §5: GET/SET carry the bare `arkret_sdk::InviteReceivePolicy` (required
     // `schema` + `subject_id`, typed enums, trust lists) — no `ok` wrapper.
     if (
-      url.pathname === "/_cokret/self/invite-receive-policy" &&
+      url.pathname === "/_arkret/self/invite-receive-policy" &&
       route.request().method() === "PUT"
     ) {
       // The real soland handler echoes the stored policy back verbatim;
@@ -1832,7 +1832,7 @@ export async function mockCokretApi(
       return json(route, body);
     }
     if (
-      url.pathname === "/_cokret/self/invite-receive-policy" &&
+      url.pathname === "/_arkret/self/invite-receive-policy" &&
       route.request().method() === "GET"
     ) {
       return json(route, {
@@ -1851,7 +1851,7 @@ export async function mockCokretApi(
     }
 
     if (
-      url.pathname === "/_cokret/self/direct-conversations/resolve" &&
+      url.pathname === "/_arkret/self/direct-conversations/resolve" &&
       route.request().method() === "POST"
     ) {
       return json(route, {
@@ -1864,7 +1864,7 @@ export async function mockCokretApi(
     }
 
     if (
-      url.pathname === "/_cokret/self/keys/upload" &&
+      url.pathname === "/_arkret/self/keys/upload" &&
       route.request().method() === "POST"
     ) {
       return json(route, {
@@ -1874,21 +1874,21 @@ export async function mockCokretApi(
     }
 
     if (
-      url.pathname === "/_cokret/self/keys/query" &&
+      url.pathname === "/_arkret/self/keys/query" &&
       route.request().method() === "POST"
     ) {
       return json(route, { device_keys: {}, failures: {} });
     }
 
     if (
-      url.pathname === "/_cokret/self/keys/claim" &&
+      url.pathname === "/_arkret/self/keys/claim" &&
       route.request().method() === "POST"
     ) {
       return json(route, { one_time_keys: {}, failures: {} });
     }
 
     if (
-      url.pathname === "/_cokret/self/account/viewer" &&
+      url.pathname === "/_arkret/self/account/viewer" &&
       route.request().method() === "GET"
     ) {
       const viewer: Record<string, unknown> = {
@@ -1916,7 +1916,7 @@ export async function mockCokretApi(
     }
 
     if (
-      url.pathname === "/_cokret/self/agents" &&
+      url.pathname === "/_arkret/self/agents" &&
       route.request().method() === "GET"
     ) {
       return json(route, {
@@ -1926,7 +1926,7 @@ export async function mockCokretApi(
     }
 
     if (
-      url.pathname === "/_cokret/self/agents" &&
+      url.pathname === "/_arkret/self/agents" &&
       route.request().method() === "POST"
     ) {
       const body = ((await contractRequestBody(route)) ?? {}) as Record<
@@ -1969,7 +1969,7 @@ export async function mockCokretApi(
     }
 
     const agentGrantsMatch = url.pathname.match(
-      /^\/_cokret\/self\/agents\/([^/]+)\/grants$/,
+      /^\/_arkret\/self\/agents\/([^/]+)\/grants$/,
     );
     if (agentGrantsMatch && route.request().method() === "POST") {
       const agentPrincipalId = decodeURIComponent(agentGrantsMatch[1]);
@@ -1992,7 +1992,7 @@ export async function mockCokretApi(
       });
     }
 
-    const agentGetMatch = url.pathname.match(/^\/_cokret\/self\/agents\/([^/]+)$/);
+    const agentGetMatch = url.pathname.match(/^\/_arkret\/self\/agents\/([^/]+)$/);
     if (agentGetMatch && route.request().method() === "GET") {
       const agentPrincipalId = decodeURIComponent(agentGetMatch[1]);
       const agent = personalAgents.get(agentPrincipalId);
@@ -2015,7 +2015,7 @@ export async function mockCokretApi(
     }
 
     if (
-      url.pathname === "/_cokret/gate/account/agent-key-pair" &&
+      url.pathname === "/_arkret/gate/account/agent-key-pair" &&
       route.request().method() === "POST"
     ) {
       const body = ((await contractRequestBody(route)) ?? {}) as Record<
@@ -2056,7 +2056,7 @@ export async function mockCokretApi(
     }
 
     if (
-      url.pathname === "/_cokret/gate/account/device-pair" &&
+      url.pathname === "/_arkret/gate/account/device-pair" &&
       route.request().method() === "POST"
     ) {
       const body = await route.request().postDataJSON();
@@ -2072,7 +2072,7 @@ export async function mockCokretApi(
     }
 
     if (
-      url.pathname === "/_cokret/self/device_messages" &&
+      url.pathname === "/_arkret/self/device_messages" &&
       route.request().method() === "GET"
     ) {
       return json(route, {
@@ -2085,7 +2085,7 @@ export async function mockCokretApi(
     }
 
     if (
-      url.pathname === "/_cokret/self/device_messages" &&
+      url.pathname === "/_arkret/self/device_messages" &&
       route.request().method() === "POST"
     ) {
       return json(route, {
@@ -2096,14 +2096,14 @@ export async function mockCokretApi(
     }
 
     if (
-      url.pathname === "/_cokret/self/device_messages/ack" &&
+      url.pathname === "/_arkret/self/device_messages/ack" &&
       route.request().method() === "POST"
     ) {
       return json(route, { ok: true, pruned_count: 0 });
     }
 
     if (
-      url.pathname === "/_cokret/self/ephemeral" &&
+      url.pathname === "/_arkret/self/ephemeral" &&
       route.request().method() === "POST"
     ) {
       const body = await route.request().postDataJSON();
@@ -2136,7 +2136,7 @@ export async function mockCokretApi(
     }
 
     if (
-      url.pathname === "/_cokret/edge/push/register-device" &&
+      url.pathname === "/_arkret/edge/push/register-device" &&
       route.request().method() === "POST"
     ) {
       return json(route, {
@@ -2147,14 +2147,14 @@ export async function mockCokretApi(
     }
 
     if (
-      url.pathname === "/_cokret/edge/push/unregister-device" &&
+      url.pathname === "/_arkret/edge/push/unregister-device" &&
       route.request().method() === "POST"
     ) {
       return json(route, { ok: true });
     }
 
     if (
-      url.pathname === "/_cokret/self/blob/upload" &&
+      url.pathname === "/_arkret/self/blob/upload" &&
       route.request().method() === "POST"
     ) {
       return json(route, {
@@ -2171,7 +2171,7 @@ export async function mockCokretApi(
     }
 
     if (
-      url.pathname === "/_cokret/self/rtc/ice-config" &&
+      url.pathname === "/_arkret/self/rtc/ice-config" &&
       route.request().method() === "POST"
     ) {
       const body = await route.request().postDataJSON();
@@ -2201,7 +2201,7 @@ export async function mockCokretApi(
     }
 
     if (
-      url.pathname === "/_cokret/self/blob/get" &&
+      url.pathname === "/_arkret/self/blob/get" &&
       route.request().method() === "GET"
     ) {
       return route.fulfill({
@@ -2212,7 +2212,7 @@ export async function mockCokretApi(
     }
 
     if (
-      url.pathname === "/_cokret/self/moderation/report" &&
+      url.pathname === "/_arkret/self/moderation/report" &&
       route.request().method() === "POST"
     ) {
       return json(route, {
@@ -2225,7 +2225,7 @@ export async function mockCokretApi(
     // Recovery bootstrap publishes a signed policy and then uploads an
     // encrypted did_recovery backup. The server mock stores only the public
     // policy summary plus opaque backup bodies.
-    if (url.pathname === "/_cokret/root/identity/recovery-policy") {
+    if (url.pathname === "/_arkret/root/identity/recovery-policy") {
       const method = route.request().method().toUpperCase();
       if (method === "GET") {
         return json(route, { active_policy: recoveryPolicy });
@@ -2255,7 +2255,7 @@ export async function mockCokretApi(
     }
 
     const keyBackupMatch = url.pathname.match(
-      /^\/_cokret\/self\/keys\/backups\/([^/]+)$/,
+      /^\/_arkret\/self\/keys\/backups\/([^/]+)$/,
     );
     if (keyBackupMatch) {
       if (route.request().method() === "PUT") {
@@ -2279,7 +2279,7 @@ export async function mockCokretApi(
       }
     }
     if (
-      url.pathname === "/_cokret/self/keys/backups" &&
+      url.pathname === "/_arkret/self/keys/backups" &&
       route.request().method() === "GET"
     ) {
       const backupClass = url.searchParams.get("backup_class");
@@ -2376,7 +2376,7 @@ function mimiProviderDirectory() {
         service_did: "did:web:mimi.example.com",
         service_type: "mimi_provider_facade",
         provider_id: "mimi://mimi.example.com",
-        base_url: "https://mimi.example.com/_cokret/open/mimi",
+        base_url: "https://mimi.example.com/_arkret/open/mimi",
         supported_profiles: ["ck.profile.mimi_interop.v1"],
       },
     ],

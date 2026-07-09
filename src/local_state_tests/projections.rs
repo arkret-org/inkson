@@ -46,7 +46,7 @@ fn minimal_metadata_projection_detected_from_profiles_arrays() {
     let top = "ak:realm:0196419b-0000-7000-8000-0000000000a1";
     store.save_realm_tree_projection(
         top.to_owned(),
-        json!({ "profiles": [cokret_sdk::mls::MINIMAL_METADATA_REALM_PROFILE] }),
+        json!({ "profiles": [arkret_sdk::mls::MINIMAL_METADATA_REALM_PROFILE] }),
     );
     assert!(store.realm_projection_is_minimal_metadata(top));
 
@@ -57,7 +57,7 @@ fn minimal_metadata_projection_detected_from_profiles_arrays() {
             "summary": {
                 "active_profiles": [
                     "ck.profile.core.v1",
-                    cokret_sdk::mls::MINIMAL_METADATA_REALM_PROFILE
+                    arkret_sdk::mls::MINIMAL_METADATA_REALM_PROFILE
                 ]
             }
         }),
@@ -167,13 +167,13 @@ fn apply_snapshot_chunks_imports_projection_status_and_encrypted_payload() {
         }
     });
     let items = vec![
-        cokret_sdk::SnapshotMaterializedItem {
+        arkret_sdk::SnapshotMaterializedItem {
             kind: "ck.schema.encrypted_envelope.v1".to_owned(),
             id: message_id.to_owned(),
             object: encrypted_message.clone(),
             source_event_id: snapshot_event_id("0000000000a1"),
         },
-        cokret_sdk::SnapshotMaterializedItem {
+        arkret_sdk::SnapshotMaterializedItem {
             kind: "realm".to_owned(),
             id: realm_id.to_owned(),
             object: json!({

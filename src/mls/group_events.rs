@@ -15,11 +15,11 @@ use crate::local_state::{LocalSealView, LocalStateStore};
 use crate::operation::{trim_realm_id, uuid_v7};
 
 /// Restrict a state/seal ref to the canonical `sha256:` digest grammar used
-/// by this MLS surface (`cokret_sdk::Hash::new` also accepts blake3, which is
+/// by this MLS surface (`arkret_sdk::Hash::new` also accepts blake3, which is
 /// not a state/seal ref here). Single source — the secure-send path re-exports
 /// this instead of forking the digest grammar.
 pub(crate) fn mls_sha256_hash_from_ref(value: &str) -> Option<String> {
-    if value.starts_with("sha256:") && cokret_sdk::Hash::new(value).is_ok() {
+    if value.starts_with("sha256:") && arkret_sdk::Hash::new(value).is_ok() {
         return Some(value.to_owned());
     }
     for prefix in ["ak:seal:", "ak:state:"] {
@@ -44,7 +44,7 @@ fn json_path_string(value: &Value, path: &[&str]) -> Option<String> {
 }
 
 fn object_ref_from_seal_ref(value: &str) -> Option<String> {
-    if value.starts_with("ak:event:") && cokret_sdk::EventId::new(value.to_owned()).is_ok() {
+    if value.starts_with("ak:event:") && arkret_sdk::EventId::new(value.to_owned()).is_ok() {
         return Some(value.to_owned());
     }
     if value.starts_with("ak:blob:sha256:")
@@ -87,13 +87,13 @@ fn mls_base_epoch_ref_for_scope(
 
 fn mls_membership_frontier_from_seal_view(
     seal_view: &LocalSealView,
-    fallback_event_id: &cokret_sdk::EventId,
-) -> Vec<cokret_sdk::EventId> {
+    fallback_event_id: &arkret_sdk::EventId,
+) -> Vec<arkret_sdk::EventId> {
     let mut frontier = seal_view
         .frontier
         .iter()
         .chain(seal_view.leaves.iter())
-        .filter_map(|value| cokret_sdk::EventId::new(value.clone()).ok())
+        .filter_map(|value| arkret_sdk::EventId::new(value.clone()).ok())
         .collect::<Vec<_>>();
     if frontier.is_empty() {
         frontier.push(fallback_event_id.clone());
@@ -105,8 +105,8 @@ fn mls_membership_frontier_from_seal_view(
 
 fn mls_self_update_membership_frontier(
     base_group_state_ref: &str,
-) -> Result<Vec<cokret_sdk::EventId>, String> {
-    cokret_sdk::EventId::new(base_group_state_ref.to_owned())
+) -> Result<Vec<arkret_sdk::EventId>, String> {
+    arkret_sdk::EventId::new(base_group_state_ref.to_owned())
         .map(|event_id| vec![event_id])
         .map_err(|_| {
             "MLS self-update membership_frontier requires a ck:event base group-state ref"
@@ -117,7 +117,7 @@ fn mls_self_update_membership_frontier(
 pub(crate) fn mls_policy_root_from_seal_view(
     seal_view: &LocalSealView,
     realm_id: &str,
-) -> Result<cokret_sdk::Hash, String> {
+) -> Result<arkret_sdk::Hash, String> {
     let hash = seal_view
         .state_root
         .as_deref()
@@ -133,7 +133,7 @@ pub(crate) fn mls_policy_root_from_seal_view(
                 "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855".to_owned()
             })
         });
-    cokret_sdk::Hash::new(hash).map_err(|err| format!("invalid MLS policy root hash: {err:?}"))
+    arkret_sdk::Hash::new(hash).map_err(|err| format!("invalid MLS policy root hash: {err:?}"))
 }
 
 /// Resolve the `policy_root` a `ck.mls.commit` MUST declare for this group.
@@ -152,9 +152,9 @@ fn mls_commit_policy_root(
     seal_view: &LocalSealView,
     realm_id: &str,
     circle_id: Option<&str>,
-) -> Result<cokret_sdk::Hash, String> {
+) -> Result<arkret_sdk::Hash, String> {
     if let Some(stored) = state_store.genesis_policy_root_for_effective_scope(realm_id, circle_id) {
-        return cokret_sdk::Hash::new(stored)
+        return arkret_sdk::Hash::new(stored)
             .map_err(|err| format!("stored MLS genesis policy_root invalid: {err:?}"));
     }
     mls_policy_root_from_seal_view(seal_view, realm_id)
@@ -190,11 +190,11 @@ fn projection_creator_matches_actor(projection: &Value, actor_id: &str) -> bool 
 fn circle_effective_scope(
     realm_id: &str,
     circle_id: &str,
-) -> Result<cokret_sdk::models::EffectiveScope, String> {
-    Ok(cokret_sdk::models::EffectiveScope::Circle {
-        realm_id: cokret_sdk::RealmId::new(trim_realm_id(realm_id))
+) -> Result<arkret_sdk::models::EffectiveScope, String> {
+    Ok(arkret_sdk::models::EffectiveScope::Circle {
+        realm_id: arkret_sdk::RealmId::new(trim_realm_id(realm_id))
             .map_err(|err| format!("invalid Circle scope Realm id: {err:?}"))?,
-        circle_id: cokret_sdk::CircleId::new(circle_id.to_owned())
+        circle_id: arkret_sdk::CircleId::new(circle_id.to_owned())
             .map_err(|err| format!("invalid Circle scope Circle id: {err:?}"))?,
     })
 }
@@ -249,7 +249,7 @@ pub(crate) fn build_creator_mls_genesis_event(
     actor_id: &str,
     device_id: &str,
     fresh_summary: Option<&crate::mls::runtime::InitialMlsSnapshotSummary>,
-) -> Result<Option<cokret_sdk::Event>, String> {
+) -> Result<Option<arkret_sdk::Event>, String> {
     build_creator_mls_genesis_event_for_effective_scope(
         state_store,
         realm_id,
@@ -267,7 +267,7 @@ pub(crate) fn build_creator_mls_genesis_event_for_effective_scope(
     actor_id: &str,
     device_id: &str,
     fresh_summary: Option<&crate::mls::runtime::InitialMlsSnapshotSummary>,
-) -> Result<Option<cokret_sdk::Event>, String> {
+) -> Result<Option<arkret_sdk::Event>, String> {
     let circle = circle_id
         .map(str::trim)
         .filter(|circle_id| !circle_id.is_empty());
@@ -287,9 +287,9 @@ pub(crate) fn build_creator_mls_genesis_event_for_effective_scope(
     }
     let seal_view = state_store.seal_view_for_realm(realm_id);
     let event_id = format!("ak:event:{}", uuid_v7());
-    let event_id_typed = cokret_sdk::EventId::new(event_id.clone())
+    let event_id_typed = arkret_sdk::EventId::new(event_id.clone())
         .map_err(|err| format!("invalid MLS genesis event id: {err:?}"))?;
-    let typed_realm_id = cokret_sdk::RealmId::new(trim_realm_id(realm_id))
+    let typed_realm_id = arkret_sdk::RealmId::new(trim_realm_id(realm_id))
         .map_err(|err| format!("invalid MLS genesis Realm id: {err:?}"))?;
     let membership_frontier = mls_membership_frontier_from_seal_view(&seal_view, &event_id_typed);
     let policy_root = mls_policy_root_from_seal_view(&seal_view, realm_id)?;
@@ -305,9 +305,9 @@ pub(crate) fn build_creator_mls_genesis_event_for_effective_scope(
     );
     let governance_binding = match circle {
         Some(circle_id) => {
-            let typed_circle_id = cokret_sdk::CircleId::new(circle_id.to_owned())
+            let typed_circle_id = arkret_sdk::CircleId::new(circle_id.to_owned())
                 .map_err(|err| format!("invalid MLS genesis Circle id: {err:?}"))?;
-            cokret_sdk::MlsGovernanceBindingPayload::circle(
+            arkret_sdk::MlsGovernanceBindingPayload::circle(
                 typed_realm_id,
                 typed_circle_id,
                 summary.group_id.clone(),
@@ -315,19 +315,19 @@ pub(crate) fn build_creator_mls_genesis_event_for_effective_scope(
                 0,
                 membership_frontier,
                 policy_root,
-                cokret_sdk::MLS_GOVERNANCE_BINDING_FULL_PROFILE,
-                cokret_sdk::CORE_REDUCER_PROFILE,
+                arkret_sdk::MLS_GOVERNANCE_BINDING_FULL_PROFILE,
+                arkret_sdk::CORE_REDUCER_PROFILE,
             )
         }
-        None => cokret_sdk::MlsGovernanceBindingPayload::realm(
+        None => arkret_sdk::MlsGovernanceBindingPayload::realm(
             typed_realm_id,
             summary.group_id.clone(),
             0,
             0,
             membership_frontier,
             policy_root,
-            cokret_sdk::MLS_GOVERNANCE_BINDING_FULL_PROFILE,
-            cokret_sdk::CORE_REDUCER_PROFILE,
+            arkret_sdk::MLS_GOVERNANCE_BINDING_FULL_PROFILE,
+            arkret_sdk::CORE_REDUCER_PROFILE,
         ),
     }
     .map_err(|err| format!("MLS genesis governance binding failed: {err}"))?;
@@ -363,9 +363,9 @@ pub(crate) fn mls_commit_event_from_store(
     state_store: &LocalStateStore,
     realm_id: &str,
     actor_id: &str,
-    _schedule_hash: &cokret_sdk::Hash,
-    commit_envelope: &cokret_sdk::MlsCommitEnvelope,
-) -> Result<cokret_sdk::Event, String> {
+    _schedule_hash: &arkret_sdk::Hash,
+    commit_envelope: &arkret_sdk::MlsCommitEnvelope,
+) -> Result<arkret_sdk::Event, String> {
     mls_commit_event_from_store_for_effective_scope(
         state_store,
         realm_id,
@@ -380,8 +380,8 @@ pub(crate) fn mls_commit_event_from_store_for_effective_scope(
     realm_id: &str,
     circle_id: Option<&str>,
     actor_id: &str,
-    commit_envelope: &cokret_sdk::MlsCommitEnvelope,
-) -> Result<cokret_sdk::Event, String> {
+    commit_envelope: &arkret_sdk::MlsCommitEnvelope,
+) -> Result<arkret_sdk::Event, String> {
     mls_commit_event_from_store_for_effective_scope_with_proposal_refs(
         state_store,
         realm_id,
@@ -397,9 +397,9 @@ pub(crate) fn mls_commit_event_from_store_for_effective_scope_with_proposal_refs
     realm_id: &str,
     circle_id: Option<&str>,
     actor_id: &str,
-    commit_envelope: &cokret_sdk::MlsCommitEnvelope,
-    proposal_refs: Vec<cokret_sdk::EventId>,
-) -> Result<cokret_sdk::Event, String> {
+    commit_envelope: &arkret_sdk::MlsCommitEnvelope,
+    proposal_refs: Vec<arkret_sdk::EventId>,
+) -> Result<arkret_sdk::Event, String> {
     mls_commit_event_from_store_for_effective_scope_with_membership_frontier(
         state_store,
         realm_id,
@@ -416,10 +416,10 @@ pub(crate) fn mls_remove_commit_event_from_store_for_effective_scope_with_propos
     realm_id: &str,
     circle_id: Option<&str>,
     actor_id: &str,
-    commit_envelope: &cokret_sdk::MlsCommitEnvelope,
-    proposal_refs: Vec<cokret_sdk::EventId>,
-    revocation_membership_frontier: &[cokret_sdk::EventId],
-) -> Result<cokret_sdk::Event, String> {
+    commit_envelope: &arkret_sdk::MlsCommitEnvelope,
+    proposal_refs: Vec<arkret_sdk::EventId>,
+    revocation_membership_frontier: &[arkret_sdk::EventId],
+) -> Result<arkret_sdk::Event, String> {
     let membership_frontier = crate::mls::runtime::canonical_mls_remove_membership_frontier(
         revocation_membership_frontier,
     )
@@ -440,10 +440,10 @@ fn mls_commit_event_from_store_for_effective_scope_with_membership_frontier(
     realm_id: &str,
     circle_id: Option<&str>,
     actor_id: &str,
-    commit_envelope: &cokret_sdk::MlsCommitEnvelope,
-    proposal_refs: Vec<cokret_sdk::EventId>,
-    explicit_membership_frontier: Option<Vec<cokret_sdk::EventId>>,
-) -> Result<cokret_sdk::Event, String> {
+    commit_envelope: &arkret_sdk::MlsCommitEnvelope,
+    proposal_refs: Vec<arkret_sdk::EventId>,
+    explicit_membership_frontier: Option<Vec<arkret_sdk::EventId>>,
+) -> Result<arkret_sdk::Event, String> {
     let circle = circle_id
         .map(str::trim)
         .filter(|circle_id| !circle_id.is_empty());
@@ -458,9 +458,9 @@ fn mls_commit_event_from_store_for_effective_scope_with_membership_frontier(
     // tripped `mls_commit_payload.next_epoch must equal base_epoch + 1`.
     let prev_epoch = commit_envelope.epoch.saturating_sub(1);
     let event_id = format!("ak:event:{}", uuid_v7());
-    let event_id_typed = cokret_sdk::EventId::new(event_id.clone())
+    let event_id_typed = arkret_sdk::EventId::new(event_id.clone())
         .map_err(|err| format!("invalid MLS commit event id: {err:?}"))?;
-    let typed_realm_id = cokret_sdk::RealmId::new(trim_realm_id(realm_id))
+    let typed_realm_id = arkret_sdk::RealmId::new(trim_realm_id(realm_id))
         .map_err(|err| format!("invalid MLS commit Realm id: {err:?}"))?;
     let base_group_state_ref = mls_base_epoch_ref_for_scope(&seal_view, realm_id, circle);
     let membership_frontier = explicit_membership_frontier
@@ -469,9 +469,9 @@ fn mls_commit_event_from_store_for_effective_scope_with_membership_frontier(
     let policy_root = mls_commit_policy_root(state_store, &seal_view, realm_id, circle)?;
     let governance_binding = match circle {
         Some(circle_id) => {
-            let typed_circle_id = cokret_sdk::CircleId::new(circle_id.to_owned())
+            let typed_circle_id = arkret_sdk::CircleId::new(circle_id.to_owned())
                 .map_err(|err| format!("invalid MLS commit Circle id: {err:?}"))?;
-            cokret_sdk::MlsGovernanceBindingPayload::circle(
+            arkret_sdk::MlsGovernanceBindingPayload::circle(
                 typed_realm_id,
                 typed_circle_id,
                 commit_envelope.group_id.clone(),
@@ -479,23 +479,23 @@ fn mls_commit_event_from_store_for_effective_scope_with_membership_frontier(
                 commit_envelope.epoch,
                 membership_frontier,
                 policy_root,
-                cokret_sdk::MLS_GOVERNANCE_BINDING_FULL_PROFILE,
-                cokret_sdk::CORE_REDUCER_PROFILE,
+                arkret_sdk::MLS_GOVERNANCE_BINDING_FULL_PROFILE,
+                arkret_sdk::CORE_REDUCER_PROFILE,
             )
         }
-        None => cokret_sdk::MlsGovernanceBindingPayload::realm(
+        None => arkret_sdk::MlsGovernanceBindingPayload::realm(
             typed_realm_id,
             commit_envelope.group_id.clone(),
             prev_epoch,
             commit_envelope.epoch,
             membership_frontier,
             policy_root,
-            cokret_sdk::MLS_GOVERNANCE_BINDING_FULL_PROFILE,
-            cokret_sdk::CORE_REDUCER_PROFILE,
+            arkret_sdk::MLS_GOVERNANCE_BINDING_FULL_PROFILE,
+            arkret_sdk::CORE_REDUCER_PROFILE,
         ),
     }
     .map_err(|err| format!("MLS governance binding failed: {err}"))?;
-    let payload = cokret_sdk::MlsCommitPayload::new(
+    let payload = arkret_sdk::MlsCommitPayload::new(
         commit_envelope.group_id.clone(),
         prev_epoch,
         base_group_state_ref,

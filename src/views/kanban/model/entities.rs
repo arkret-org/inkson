@@ -359,7 +359,7 @@ pub(crate) fn card_state_from_write_state(write_state: &str) -> CardState {
 /// `ck.strand.create` /
 /// `ck.strand.position`) so the tracker UI can decorate state pills.
 ///
-/// `signed_move_json` is the typed [`cokret_sdk::Move`] serialised to
+/// `signed_move_json` is the typed [`arkret_sdk::Move`] serialised to
 /// JSON. We persist it on the queued record so that Replay can re-POST
 /// the exact same signed payload — server-side dedup is content-addressed
 /// on `move_id`, making replay idempotent. None means the record cannot

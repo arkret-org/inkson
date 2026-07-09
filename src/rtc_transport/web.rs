@@ -608,7 +608,7 @@ impl MediaTransport for WebRtcTransport {
 }
 
 /// Build the JSON `iceServers` array web-sys's `RtcConfiguration` expects
-/// from the verified [`cokret_sdk::IceConfig`].
+/// from the verified [`arkret_sdk::IceConfig`].
 fn ice_servers_to_json(session: &JoinedMediaSession) -> String {
     let entries: Vec<serde_json::Value> = session
         .ice_config

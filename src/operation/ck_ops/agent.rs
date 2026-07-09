@@ -36,16 +36,16 @@ fn value_object_list(
 }
 
 /// Round 4 — validate an `agent_id` against the canonical
-/// [`cokret_sdk::AgentId`] shape (strict DID). Wire-breaking: the
+/// [`arkret_sdk::AgentId`] shape (strict DID). Wire-breaking: the
 /// pre-round-4 permissive plain-string form is rejected.
-pub fn parse_agent_identifier(agent_id: &str) -> Result<cokret_sdk::AgentId, String> {
-    cokret_sdk::Did::new(agent_id).map_err(|e| format!("invalid agent DID: {e}"))
+pub fn parse_agent_identifier(agent_id: &str) -> Result<arkret_sdk::AgentId, String> {
+    arkret_sdk::Did::new(agent_id).map_err(|e| format!("invalid agent DID: {e}"))
 }
 
 /// Map a wire `protocol` token onto the closed SDK enum. Fail-closed: an
 /// unknown token (which the spec schema would also reject) surfaces here
 /// instead of shipping an out-of-enum string to soland.
-fn parse_interop_protocol(protocol: &str) -> anyhow::Result<cokret_sdk::AgentInteropProtocol> {
+fn parse_interop_protocol(protocol: &str) -> anyhow::Result<arkret_sdk::AgentInteropProtocol> {
     serde_json::from_value(Value::String(protocol.to_owned())).map_err(|_| {
         anyhow::anyhow!(
             "unknown agent interop protocol {protocol:?} (spec enum: a2a|acp|mcp_bridge|http_custom)"
@@ -55,7 +55,7 @@ fn parse_interop_protocol(protocol: &str) -> anyhow::Result<cokret_sdk::AgentInt
 
 /// Map a wire session `status` token onto the closed SDK enum. Fail-closed:
 /// unknown tokens are rejected rather than forwarded as free-form strings.
-fn parse_session_status(status: &str) -> anyhow::Result<cokret_sdk::AgentInteropSessionStatus> {
+fn parse_session_status(status: &str) -> anyhow::Result<arkret_sdk::AgentInteropSessionStatus> {
     serde_json::from_value(Value::String(status.to_owned()))
         .map_err(|_| anyhow::anyhow!("unknown agent interop session status {status:?}"))
 }
@@ -71,7 +71,7 @@ pub fn agent_endpoint(
     let mut endpoint = BTreeMap::new();
     endpoint.insert("protocol".to_owned(), json!(protocol));
     endpoint.insert("capabilities".to_owned(), json!(capabilities));
-    let payload = cokret_sdk::AgentEndpointPayload {
+    let payload = arkret_sdk::AgentEndpointPayload {
         agent_id: parse_agent_identifier(agent_id).map_err(|err| anyhow::anyhow!("{err}"))?,
         endpoints: vec![endpoint],
     };
@@ -80,7 +80,7 @@ pub fn agent_endpoint(
     Ok(OperationBuilder::new(
         realm_id,
         actor,
-        cokret_sdk::events::kinds::EventKind::AgentEndpoint,
+        arkret_sdk::events::kinds::EventKind::AgentEndpoint,
     )
     .target_ref(agent_id)
     .body(body))
@@ -98,11 +98,11 @@ pub fn agent_interop_session_start(
     _params: serde_json::Value,
     capability_grant: &str,
 ) -> anyhow::Result<OperationBuilder> {
-    let counterparty_agent = cokret_sdk::Did::new(counterparty_agent.to_owned())
+    let counterparty_agent = arkret_sdk::Did::new(counterparty_agent.to_owned())
         .map_err(|err| anyhow::anyhow!("invalid counterparty agent DID: {err}"))?;
-    let capability_grant = cokret_sdk::GrantId::new(capability_grant.to_owned())
+    let capability_grant = arkret_sdk::GrantId::new(capability_grant.to_owned())
         .map_err(|err| anyhow::anyhow!("invalid capability grant id: {err}"))?;
-    let body = cokret_sdk::AgentInteropSessionStartPayload::new(
+    let body = arkret_sdk::AgentInteropSessionStartPayload::new(
         session_id.to_owned(),
         counterparty_agent,
         parse_interop_protocol(protocol)?,
@@ -113,7 +113,7 @@ pub fn agent_interop_session_start(
     Ok(OperationBuilder::new(
         realm_id,
         actor,
-        cokret_sdk::events::kinds::EventKind::AgentInteropSessionStart,
+        arkret_sdk::events::kinds::EventKind::AgentInteropSessionStart,
     )
     .target_ref(session_id)
     .body(body))
@@ -154,7 +154,7 @@ pub fn agent_interop_session_status(
     status: &str,
     _detail: serde_json::Value,
 ) -> anyhow::Result<OperationBuilder> {
-    let body = cokret_sdk::AgentInteropSessionStatusPayload::new(
+    let body = arkret_sdk::AgentInteropSessionStatusPayload::new(
         session_id.to_owned(),
         parse_session_status(status)?,
     )
@@ -163,7 +163,7 @@ pub fn agent_interop_session_status(
     Ok(OperationBuilder::new(
         realm_id,
         actor,
-        cokret_sdk::events::kinds::EventKind::AgentInteropSessionStatus,
+        arkret_sdk::events::kinds::EventKind::AgentInteropSessionStatus,
     )
     .target_ref(session_id)
     .body(body))
@@ -182,9 +182,9 @@ pub fn agent_interop_session_result(
     // anyOf (at least one of result_objects / artifacts / reason_code). Only
     // attach the optional collections when they carry entries so the omission
     // rule matches the previous `skip_serializing_if` behavior.
-    let mut payload = cokret_sdk::AgentInteropSessionResultPayload::new(
+    let mut payload = arkret_sdk::AgentInteropSessionResultPayload::new(
         session_id.to_owned(),
-        cokret_sdk::AgentInteropResultStatus::Completed,
+        arkret_sdk::AgentInteropResultStatus::Completed,
     );
     if let Some(result_objects) = value_object_list(result, "agent result_objects")? {
         payload = payload.with_result_objects(result_objects);
@@ -198,7 +198,7 @@ pub fn agent_interop_session_result(
     Ok(OperationBuilder::new(
         realm_id,
         actor,
-        cokret_sdk::events::kinds::EventKind::AgentInteropSessionResult,
+        arkret_sdk::events::kinds::EventKind::AgentInteropSessionResult,
     )
     .target_ref(session_id)
     .body(body))
@@ -223,26 +223,26 @@ pub fn agent_publish_attribution_strand(
     result_object_ref: &str,
     artifact_object_ref: &str,
 ) -> anyhow::Result<OperationBuilder> {
-    let typed_realm_id = cokret_sdk::RealmId::new(trim_realm_id(realm_id))
+    let typed_realm_id = arkret_sdk::RealmId::new(trim_realm_id(realm_id))
         .map_err(|e| anyhow::anyhow!("invalid realm_id: {e:?}"))?;
-    let did = cokret_sdk::Did::new(actor.to_owned())
+    let did = arkret_sdk::Did::new(actor.to_owned())
         .map_err(|e| anyhow::anyhow!("invalid actor DID: {e:?}"))?;
-    let typed_strand_id = cokret_sdk::StrandId::new(strand_id.to_owned())
+    let typed_strand_id = arkret_sdk::StrandId::new(strand_id.to_owned())
         .map_err(|e| anyhow::anyhow!("invalid strand_id: {e:?}"))?;
-    let strand = cokret_sdk::StrandCreateObject::new(typed_strand_id, typed_realm_id, did)
+    let strand = arkret_sdk::StrandCreateObject::new(typed_strand_id, typed_realm_id, did)
         .with_metadata_title(title)
         .with_metadata_field("workflow_type", json!("synthesis"))
         .with_metadata_field("result_object_ref", json!(result_object_ref))
         .with_metadata_field("artifact_object_ref", json!(artifact_object_ref))
-        .with_track("synthesis", cokret_sdk::StrandTrackConfig::synthesis())
+        .with_track("synthesis", arkret_sdk::StrandTrackConfig::synthesis())
         .with_extra("attribution", json!(attribution_agent));
-    let payload = cokret_sdk::ObjectCreatePayload::new(strand)
+    let payload = arkret_sdk::ObjectCreatePayload::new(strand)
         .to_value()
         .map_err(|e| anyhow::anyhow!("ck.strand.create attribution payload serialize: {e}"))?;
     Ok(OperationBuilder::new(
         realm_id,
         actor,
-        cokret_sdk::events::kinds::EventKind::StrandCreate,
+        arkret_sdk::events::kinds::EventKind::StrandCreate,
     )
     .target_ref(strand_id)
     .body(payload))

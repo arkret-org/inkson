@@ -1,7 +1,7 @@
 use reqwest::StatusCode;
 
 use crate::api_error::{
-    CokretApiError, decode_cokret_error, is_actor_frontier_absent_error,
+    CokretApiError, decode_arkret_error, is_actor_frontier_absent_error,
     is_actor_seq_cas_conflict_error, is_auth_expired_error, is_device_not_authorized_error,
     is_invalid_cursor_error, is_plaintext_visibility_policy_error, is_snapshot_unavailable_error,
     is_space_membership_denied_error, is_terminal_session_grant_error,
@@ -9,16 +9,16 @@ use crate::api_error::{
 };
 
 fn sdk_api_error(status: StatusCode, body: &'static [u8]) -> anyhow::Error {
-    cokret_sdk::Error::Api {
+    arkret_sdk::Error::Api {
         status: status.as_u16(),
-        error: Box::new(decode_cokret_error(status, body)),
+        error: Box::new(decode_arkret_error(status, body)),
     }
     .into()
 }
 
 #[test]
-fn decodes_wrapped_cokret_error_envelope() {
-    let decoded = decode_cokret_error(
+fn decodes_wrapped_arkret_error_envelope() {
+    let decoded = decode_arkret_error(
         StatusCode::CONFLICT,
         br#"{"ok":false,"error":{"code":"expected_head_mismatch","message":"expected_head mismatch","retry_after_ms":250,"details":{"scope":"repo"}}}"#,
     );
@@ -30,7 +30,7 @@ fn decodes_wrapped_cokret_error_envelope() {
 
 #[test]
 fn decodes_plain_error_envelope_and_falls_back() {
-    let decoded = decode_cokret_error(
+    let decoded = decode_arkret_error(
         StatusCode::BAD_REQUEST,
         br#"{"ok":false,"error":{"code":"invalid_param","message":"invalid did"}}"#,
     );
@@ -39,14 +39,14 @@ fn decodes_plain_error_envelope_and_falls_back() {
     // The SDK's ErrorEnvelope::new strips the `ck.error.` prefix in
     // `canonical_error_code` and we depend on that canonicalization so
     // downstream comparisons against the registry shape match.
-    let fallback = decode_cokret_error(StatusCode::SERVICE_UNAVAILABLE, b"busy");
+    let fallback = decode_arkret_error(StatusCode::SERVICE_UNAVAILABLE, b"busy");
     assert_eq!(fallback.code(), "http_status");
     assert!(fallback.message().contains("503 Service Unavailable"));
 }
 
 #[test]
 fn decodes_canonical_error_envelope_with_request_id() {
-    let decoded = decode_cokret_error(
+    let decoded = decode_arkret_error(
         StatusCode::FORBIDDEN,
         br#"{"ok":false,"error":{"code":"capability_denied","message":"actor is not a member of the event Space"},"request_id":"ak:request:01964137-0000-7000-8000-000000000010"}"#,
     );
@@ -64,7 +64,7 @@ fn decodes_canonical_error_envelope_with_request_id() {
 
 #[test]
 fn decodes_wrapped_error_envelope_without_inner_request_id() {
-    let decoded = decode_cokret_error(
+    let decoded = decode_arkret_error(
         StatusCode::UNAUTHORIZED,
         br#"{"ok":false,"error":{"ok":false,"error":{"code":"auth_expired","message":"session expired"}},"request_id":"ak:request:01964137-0000-7000-8000-000000000011"}"#,
     );
@@ -147,7 +147,7 @@ fn recognizes_device_not_authorized_errors() {
     // nothing else.
     let device_not_authorized: anyhow::Error = CokretApiError {
         status: StatusCode::FORBIDDEN,
-        error: decode_cokret_error(
+        error: decode_arkret_error(
             StatusCode::FORBIDDEN,
             br#"{"ok":false,"error":{"code":"device_not_authorized","message":"key backup write requires the authenticated session device to be verified"}}"#,
         ),
@@ -161,7 +161,7 @@ fn recognizes_device_not_authorized_errors() {
     // raw long-error fallback that overflows the modal.
     let recovery_policy_denial: anyhow::Error = CokretApiError {
         status: StatusCode::CONFLICT,
-        error: decode_cokret_error(
+        error: decode_arkret_error(
             StatusCode::CONFLICT,
             br#"{"ok":false,"error":{"code":"recovery_policy_device_not_authorized","message":"recovery policy genesis requires an authorized device for did:webvh:..."}}"#,
         ),
@@ -174,7 +174,7 @@ fn recognizes_device_not_authorized_errors() {
     // point of view.
     let authority_denial: anyhow::Error = CokretApiError {
         status: StatusCode::FORBIDDEN,
-        error: decode_cokret_error(
+        error: decode_arkret_error(
             StatusCode::FORBIDDEN,
             br#"{"ok":false,"error":{"code":"device_enrollment_authority_not_designated","message":"no enrollment authority designated"}}"#,
         ),
@@ -187,7 +187,7 @@ fn recognizes_device_not_authorized_errors() {
     // route the user away from generating their first Recovery Key.
     let other_denial: anyhow::Error = CokretApiError {
         status: StatusCode::FORBIDDEN,
-        error: decode_cokret_error(
+        error: decode_arkret_error(
             StatusCode::FORBIDDEN,
             br#"{"ok":false,"error":{"code":"capability_denied","message":"not a member"}}"#,
         ),
@@ -200,7 +200,7 @@ fn recognizes_device_not_authorized_errors() {
 fn recognizes_auth_expired_errors() {
     let error: anyhow::Error = CokretApiError {
         status: StatusCode::UNAUTHORIZED,
-        error: decode_cokret_error(
+        error: decode_arkret_error(
             StatusCode::UNAUTHORIZED,
             br#"{"ok":false,"error":{"code":"auth_expired","message":"session expired"}}"#,
         ),
@@ -216,7 +216,7 @@ fn recognizes_auth_expired_errors() {
     // the session and forcing a fresh sign-in.
     let bare: anyhow::Error = CokretApiError {
         status: StatusCode::UNAUTHORIZED,
-        error: decode_cokret_error(StatusCode::UNAUTHORIZED, b""),
+        error: decode_arkret_error(StatusCode::UNAUTHORIZED, b""),
     }
     .into();
     assert!(!is_auth_expired_error(&bare));
@@ -227,7 +227,7 @@ fn recognizes_auth_expired_errors() {
             format!(r#"{{"ok":false,"error":{{"code":"{code}","message":"unknown token"}}}}"#);
         let aliased: anyhow::Error = CokretApiError {
             status: StatusCode::UNAUTHORIZED,
-            error: decode_cokret_error(StatusCode::UNAUTHORIZED, body.as_bytes()),
+            error: decode_arkret_error(StatusCode::UNAUTHORIZED, body.as_bytes()),
         }
         .into();
         assert!(is_auth_expired_error(&aliased), "code {code} should match");
@@ -237,7 +237,7 @@ fn recognizes_auth_expired_errors() {
     // wrapped in 401, etc.) must not be misclassified as session death.
     let unrelated: anyhow::Error = CokretApiError {
         status: StatusCode::UNAUTHORIZED,
-        error: decode_cokret_error(
+        error: decode_arkret_error(
             StatusCode::UNAUTHORIZED,
             br#"{"ok":false,"error":{"code":"rate_limited","message":"slow down"}}"#,
         ),
@@ -247,7 +247,7 @@ fn recognizes_auth_expired_errors() {
 
     let forbidden: anyhow::Error = CokretApiError {
         status: StatusCode::FORBIDDEN,
-        error: decode_cokret_error(
+        error: decode_arkret_error(
             StatusCode::FORBIDDEN,
             br#"{"ok":false,"error":{"code":"auth_expired","message":"session expired"}}"#,
         ),
@@ -257,7 +257,7 @@ fn recognizes_auth_expired_errors() {
 
     let revoked_session_grant: anyhow::Error = CokretApiError {
         status: StatusCode::FORBIDDEN,
-        error: decode_cokret_error(
+        error: decode_arkret_error(
             StatusCode::FORBIDDEN,
             br#"{"ok":false,"error":{"code":"capability_denied","message":"session grant is not active: revoked"}}"#,
         ),
@@ -268,7 +268,7 @@ fn recognizes_auth_expired_errors() {
 
     let unrelated_capability_denied: anyhow::Error = CokretApiError {
         status: StatusCode::FORBIDDEN,
-        error: decode_cokret_error(
+        error: decode_arkret_error(
             StatusCode::FORBIDDEN,
             br#"{"ok":false,"error":{"code":"capability_denied","message":"actor is not a member of the event Space"}}"#,
         ),
@@ -284,7 +284,7 @@ fn recognizes_auth_expired_errors() {
 fn recognizes_plaintext_visibility_policy_errors() {
     let error: anyhow::Error = CokretApiError {
         status: StatusCode::FORBIDDEN,
-        error: decode_cokret_error(
+        error: decode_arkret_error(
             StatusCode::FORBIDDEN,
             br#"{"ok":false,"error":{"code":"policy_denied","message":"private plaintext message operations require this service in plaintext_visible_services"}}"#,
         ),
@@ -294,7 +294,7 @@ fn recognizes_plaintext_visibility_policy_errors() {
 
     let capability_error: anyhow::Error = CokretApiError {
         status: StatusCode::FORBIDDEN,
-        error: decode_cokret_error(
+        error: decode_arkret_error(
             StatusCode::FORBIDDEN,
             br#"{"ok":false,"error":{"code":"capability_denied","message":"private plaintext message operations require this service in plaintext_visible_services"}}"#,
         ),
@@ -304,7 +304,7 @@ fn recognizes_plaintext_visibility_policy_errors() {
 
     let other_policy: anyhow::Error = CokretApiError {
         status: StatusCode::FORBIDDEN,
-        error: decode_cokret_error(
+        error: decode_arkret_error(
             StatusCode::FORBIDDEN,
             br#"{"ok":false,"error":{"code":"policy_denied","message":"only the space owner can update policy"}}"#,
         ),
@@ -317,7 +317,7 @@ fn recognizes_plaintext_visibility_policy_errors() {
 fn recognizes_space_membership_denied_errors() {
     let error: anyhow::Error = CokretApiError {
         status: StatusCode::FORBIDDEN,
-        error: decode_cokret_error(
+        error: decode_arkret_error(
             StatusCode::FORBIDDEN,
             br#"{"ok":false,"error":{"code":"capability_denied","message":"actor is not a member of the event Space"},"request_id":"ak:request:01964137-0000-7000-8000-000000000010"}"#,
         ),

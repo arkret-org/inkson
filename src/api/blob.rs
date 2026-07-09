@@ -10,12 +10,12 @@ impl CokretApi {
         content_digest: Option<&str>,
         filename: Option<&str>,
         purpose: Option<&str>,
-    ) -> anyhow::Result<cokret_sdk::models::BlobUploadMetadata> {
+    ) -> anyhow::Result<arkret_sdk::models::BlobUploadMetadata> {
         let realm_id = realm_id
             .map(str::trim)
             .filter(|value| !value.is_empty())
             .map(|value| {
-                cokret_sdk::RealmId::new(value.to_owned()).map_err(|err| {
+                arkret_sdk::RealmId::new(value.to_owned()).map_err(|err| {
                     anyhow::anyhow!("invalid realm_id for /blob/upload `{value}`: {err}")
                 })
             })
@@ -24,7 +24,7 @@ impl CokretApi {
             .map(str::trim)
             .filter(|value| !value.is_empty())
             .map(|value| {
-                cokret_sdk::Hash::new(value.to_owned()).map_err(|err| {
+                arkret_sdk::Hash::new(value.to_owned()).map_err(|err| {
                     anyhow::anyhow!("invalid content_digest for /blob/upload `{value}`: {err}")
                 })
             })
@@ -34,7 +34,7 @@ impl CokretApi {
         } else {
             Some(media_type.trim().to_owned())
         };
-        Ok(cokret_sdk::models::BlobUploadMetadata {
+        Ok(arkret_sdk::models::BlobUploadMetadata {
             realm_id,
             content_digest,
             size_bytes: size_bytes as u64,
@@ -93,7 +93,7 @@ impl CokretApi {
 
     async fn download_blob_verified(
         &self,
-        descriptor: &cokret_sdk::SnapshotChunkDescriptor,
+        descriptor: &arkret_sdk::SnapshotChunkDescriptor,
     ) -> anyhow::Result<Vec<u8>> {
         let max_bytes = blob_download_max_bytes_for_declared_size(descriptor.size_bytes)?;
         let bytes = self
@@ -102,20 +102,20 @@ impl CokretApi {
         if bytes.len() as u64 > descriptor.size_bytes {
             anyhow::bail!(
                 "{}: snapshot chunk response exceeded declared size",
-                cokret_sdk::SnapshotValidationCode::DigestMismatch.as_str()
+                arkret_sdk::SnapshotValidationCode::DigestMismatch.as_str()
             );
         }
-        cokret_sdk::verify_snapshot_chunk_bytes(descriptor, &bytes)
+        arkret_sdk::verify_snapshot_chunk_bytes(descriptor, &bytes)
             .map_err(snapshot_validation_error)?;
         Ok(bytes)
     }
 
     pub async fn download_snapshot_chunk_verified(
         &self,
-        descriptor: &cokret_sdk::SnapshotChunkDescriptor,
-    ) -> anyhow::Result<cokret_sdk::SnapshotChunkPayload> {
+        descriptor: &arkret_sdk::SnapshotChunkDescriptor,
+    ) -> anyhow::Result<arkret_sdk::SnapshotChunkPayload> {
         let bytes = self.download_blob_verified(descriptor).await?;
-        cokret_sdk::parse_verified_snapshot_chunk_bytes(descriptor, &bytes)
+        arkret_sdk::parse_verified_snapshot_chunk_bytes(descriptor, &bytes)
             .map_err(snapshot_validation_error)
     }
 
@@ -130,9 +130,9 @@ impl CokretApi {
         purpose: &str,
         max_bytes: usize,
     ) -> anyhow::Result<Vec<u8>> {
-        let blob_ref = cokret_sdk::BlobRef::new(canonical_blob_ref(blob_ref).to_owned())
+        let blob_ref = arkret_sdk::BlobRef::new(canonical_blob_ref(blob_ref).to_owned())
             .map_err(|err| anyhow::anyhow!("invalid blob_ref for /blob/get: {err}"))?;
-        let options = cokret_sdk::http_client::BlobDownloadOptions::new()
+        let options = arkret_sdk::http_client::BlobDownloadOptions::new()
             .purpose(purpose.to_owned())
             .max_bytes(max_bytes);
         let request_options = self.blob_download_request_options();
@@ -142,17 +142,17 @@ impl CokretApi {
             .map_err(anyhow::Error::from)
     }
 
-    fn blob_download_request_options(&self) -> cokret_sdk::http_client::ClientRequestOptions {
+    fn blob_download_request_options(&self) -> arkret_sdk::http_client::ClientRequestOptions {
         match self.wait_for_sync_token.as_deref() {
             Some(sync_token) => {
-                cokret_sdk::http_client::ClientRequestOptions::new().wait_for(sync_token.to_owned())
+                arkret_sdk::http_client::ClientRequestOptions::new().wait_for(sync_token.to_owned())
             }
-            None => cokret_sdk::http_client::ClientRequestOptions::new(),
+            None => arkret_sdk::http_client::ClientRequestOptions::new(),
         }
     }
 }
 
-fn snapshot_validation_error(error: cokret_sdk::SnapshotValidationError) -> anyhow::Error {
+fn snapshot_validation_error(error: arkret_sdk::SnapshotValidationError) -> anyhow::Error {
     anyhow::anyhow!("{}: {}", error.code.as_str(), error.message)
 }
 

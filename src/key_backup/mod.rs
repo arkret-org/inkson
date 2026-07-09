@@ -17,7 +17,7 @@ pub const KEY_BACKUP_PLAINTEXT_SCHEMA: &str = "ck.schema.key_backup_plaintext.v1
 pub const KEY_BACKUP_ACTIVE_SERIES_SCHEMA: &str = "ck.schema.key_backup_active_series.v1";
 pub const DEFAULT_SSK_GENERATION: u64 = 1;
 
-pub use cokret_sdk::BackupClass as KeyBackupClass;
+pub use arkret_sdk::BackupClass as KeyBackupClass;
 
 /// Envelope fields the backup `auth_data.signature` MUST cover (key-management.md
 /// §7.4.1 / §7.6 + the `ck.schema.key_backup.v1` `signed_fields.allOf`). Optional
@@ -131,13 +131,13 @@ pub(crate) fn is_base64url_token(value: &str) -> bool {
 }
 
 /// Protocol digest check: delegates to the single canonical validator
-/// `cokret_sdk::Hash::new`, which accepts only the registered `sha256:` /
+/// `arkret_sdk::Hash::new`, which accepts only the registered `sha256:` /
 /// `blake3:` forms with lowercase-hex digests (digest-suite-registry). The
 /// previous hand-rolled version additionally accepted `sha3_256:` / `sha512:`
 /// and uppercase hex — both rejected by the protocol — so it has been removed
 /// to avoid forking the digest grammar.
 pub(crate) fn is_sha_digest(value: &str) -> bool {
-    cokret_sdk::Hash::new(value).is_ok()
+    arkret_sdk::Hash::new(value).is_ok()
 }
 
 #[cfg(test)]

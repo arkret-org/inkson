@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 /// Generic wrapper for soland's
-/// `/_cokret/self/realms/{realm_id}/{spaces|strands}` lifecycle endpoints. Keeps
+/// `/_arkret/self/realms/{realm_id}/{spaces|strands}` lifecycle endpoints. Keeps
 /// the query response shape symmetric across the two surfaces so the kanban
 /// hydrate path can pluck projection rows with the same code. The decoder
 /// normalizes spec `spaces` / `strands` / `morphs` collection keys into `items`.
@@ -25,7 +25,7 @@ pub struct LifecycleProjectionView<T> {
 /// Server-side Space-container projection row.
 ///
 /// Soland serves these rows from
-/// `GET /_cokret/self/realms/{realm_id}/spaces`.
+/// `GET /_arkret/self/realms/{realm_id}/spaces`.
 #[derive(Clone, Debug, PartialEq, Deserialize)]
 pub struct SpaceContainerProjectionView {
     pub space_id: String,
@@ -43,7 +43,7 @@ pub struct SpaceContainerProjectionView {
     pub parent_space_id: Option<String>,
 }
 
-/// Server-side Strand row from `GET /_cokret/self/realms/{realm_id}/strands`.
+/// Server-side Strand row from `GET /_arkret/self/realms/{realm_id}/strands`.
 #[derive(Clone, Debug, PartialEq, Deserialize)]
 pub struct StrandProjectionView {
     pub strand_id: String,
@@ -87,7 +87,7 @@ pub struct AssignedToRelationProjectionView {
 }
 
 /// UI view model for the SDK `CollectionProjectionView` response.
-/// Network decode uses `cokret_sdk::CollectionProjectionView`; this shape
+/// Network decode uses `arkret_sdk::CollectionProjectionView`; this shape
 /// keeps the kanban renderer's lenient `Value` accessors local to the UI.
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct CollectionProjectionView {
@@ -195,8 +195,8 @@ fn non_null_value(value: Value) -> Option<Value> {
     if value.is_null() { None } else { Some(value) }
 }
 
-impl From<cokret_sdk::StateFrontier> for StateFrontierView {
-    fn from(frontier: cokret_sdk::StateFrontier) -> Self {
+impl From<arkret_sdk::StateFrontier> for StateFrontierView {
+    fn from(frontier: arkret_sdk::StateFrontier) -> Self {
         Self {
             state_digest: frontier.state_digest.as_str().to_owned(),
             event_ids: frontier
@@ -213,8 +213,8 @@ impl From<cokret_sdk::StateFrontier> for StateFrontierView {
     }
 }
 
-impl From<cokret_sdk::ProjectionItem> for ProjectionItemView {
-    fn from(item: cokret_sdk::ProjectionItem) -> Self {
+impl From<arkret_sdk::ProjectionItem> for ProjectionItemView {
+    fn from(item: arkret_sdk::ProjectionItem) -> Self {
         Self {
             object: serde_json::to_value(item.object).unwrap_or(Value::Null),
             render: item.render.as_ref().and_then(sdk_wire_string),
@@ -225,8 +225,8 @@ impl From<cokret_sdk::ProjectionItem> for ProjectionItemView {
     }
 }
 
-impl From<cokret_sdk::CollectionProjectionGroupView> for CollectionProjectionGroupView {
-    fn from(group: cokret_sdk::CollectionProjectionGroupView) -> Self {
+impl From<arkret_sdk::CollectionProjectionGroupView> for CollectionProjectionGroupView {
+    fn from(group: arkret_sdk::CollectionProjectionGroupView) -> Self {
         Self {
             key: group.key,
             title: group.title,
@@ -243,8 +243,8 @@ impl From<cokret_sdk::CollectionProjectionGroupView> for CollectionProjectionGro
     }
 }
 
-impl From<cokret_sdk::CollectionProjectionView> for CollectionProjectionView {
-    fn from(view: cokret_sdk::CollectionProjectionView) -> Self {
+impl From<arkret_sdk::CollectionProjectionView> for CollectionProjectionView {
+    fn from(view: arkret_sdk::CollectionProjectionView) -> Self {
         Self {
             projection: view.projection,
             renderer: view.renderer.as_ref().and_then(sdk_wire_string),
@@ -270,8 +270,8 @@ fn projection_state_wire_string<T: Serialize>(state: &T) -> String {
         .unwrap_or_default()
 }
 
-impl From<cokret_sdk::ProjectionSpaceRow> for SpaceContainerProjectionView {
-    fn from(row: cokret_sdk::ProjectionSpaceRow) -> Self {
+impl From<arkret_sdk::ProjectionSpaceRow> for SpaceContainerProjectionView {
+    fn from(row: arkret_sdk::ProjectionSpaceRow) -> Self {
         Self {
             space_id: row.space_id.as_str().to_owned(),
             realm_id: row.realm_id.as_str().to_owned(),
@@ -286,10 +286,10 @@ impl From<cokret_sdk::ProjectionSpaceRow> for SpaceContainerProjectionView {
     }
 }
 
-impl From<cokret_sdk::ProjectionSpaceList>
+impl From<arkret_sdk::ProjectionSpaceList>
     for LifecycleProjectionView<SpaceContainerProjectionView>
 {
-    fn from(list: cokret_sdk::ProjectionSpaceList) -> Self {
+    fn from(list: arkret_sdk::ProjectionSpaceList) -> Self {
         Self {
             realm_id: list.realm_id.as_str().to_owned(),
             total: list.total as u32,
@@ -298,8 +298,8 @@ impl From<cokret_sdk::ProjectionSpaceList>
     }
 }
 
-impl From<cokret_sdk::ProjectionAssignedToRelation> for AssignedToRelationProjectionView {
-    fn from(relation: cokret_sdk::ProjectionAssignedToRelation) -> Self {
+impl From<arkret_sdk::ProjectionAssignedToRelation> for AssignedToRelationProjectionView {
+    fn from(relation: arkret_sdk::ProjectionAssignedToRelation) -> Self {
         Self {
             relation_id: relation.relation_id.as_str().to_owned(),
             actor_id: relation.actor_id.as_str().to_owned(),
@@ -307,8 +307,8 @@ impl From<cokret_sdk::ProjectionAssignedToRelation> for AssignedToRelationProjec
     }
 }
 
-impl From<cokret_sdk::ProjectionStrandRow> for StrandProjectionView {
-    fn from(row: cokret_sdk::ProjectionStrandRow) -> Self {
+impl From<arkret_sdk::ProjectionStrandRow> for StrandProjectionView {
+    fn from(row: arkret_sdk::ProjectionStrandRow) -> Self {
         Self {
             strand_id: row.strand_id.as_str().to_owned(),
             realm_id: row.realm_id.as_str().to_owned(),
@@ -350,8 +350,8 @@ impl From<cokret_sdk::ProjectionStrandRow> for StrandProjectionView {
     }
 }
 
-impl From<cokret_sdk::ProjectionStrandList> for LifecycleProjectionView<StrandProjectionView> {
-    fn from(list: cokret_sdk::ProjectionStrandList) -> Self {
+impl From<arkret_sdk::ProjectionStrandList> for LifecycleProjectionView<StrandProjectionView> {
+    fn from(list: arkret_sdk::ProjectionStrandList) -> Self {
         Self {
             realm_id: list.realm_id.as_str().to_owned(),
             total: list.total as u32,

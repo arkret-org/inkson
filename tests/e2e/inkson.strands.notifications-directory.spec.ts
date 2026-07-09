@@ -53,7 +53,7 @@ test("notifications are derived from index projections and respect per-realm mut
   );
   const acceptInvite = page.waitForRequest(
     (request) =>
-      request.url().endsWith("/_cokret/self/events") &&
+      request.url().endsWith("/_arkret/self/events") &&
       request.method() === "POST",
   );
   await page

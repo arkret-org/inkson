@@ -32,12 +32,12 @@ async function ensureLivekit() {
   throw new Error("livekit_shim: vendored LivekitClient global unavailable");
 }
 
-// cokretLivekitJoin(connectUrl, token, opts) -> Promise<handle string>
+// arkretLivekitJoin(connectUrl, token, opts) -> Promise<handle string>
 //
 // Constructs a real `LivekitClient.Room` (wiring an ExternalE2EEKeyProvider so
 // the MLS-derived frame key can be injected before/after connect) and calls
 // the genuine `room.connect(connectUrl, token)`. Returns an opaque handle id.
-export async function cokretLivekitJoin(connectUrl, token, opts) {
+export async function arkretLivekitJoin(connectUrl, token, opts) {
   const LK = await ensureLivekit();
 
   // Real LiveKit E2EE key provider. `ExternalE2EEKeyProvider` lets the
@@ -80,10 +80,10 @@ function lookup(handle) {
   return entry;
 }
 
-// cokretLivekitPublish(handle, {audio, video}) -> Promise<void>
+// arkretLivekitPublish(handle, {audio, video}) -> Promise<void>
 //
 // Drives the real localParticipant publish toggles.
-export async function cokretLivekitPublish(handle, media) {
+export async function arkretLivekitPublish(handle, media) {
   const { room } = lookup(handle);
   const lp = room.localParticipant;
   if (media && typeof media.audio === "boolean") {
@@ -99,11 +99,11 @@ export async function cokretLivekitPublish(handle, media) {
   }
 }
 
-// cokretLivekitSetMuted(handle, kind, muted) -> Promise<void>
+// arkretLivekitSetMuted(handle, kind, muted) -> Promise<void>
 //
 // `kind` is "audio" | "video" | "screen". Mute == disable the publish; the
 // SDK stops sending that track. Uses the same real enable APIs inverted.
-export async function cokretLivekitSetMuted(handle, kind, muted) {
+export async function arkretLivekitSetMuted(handle, kind, muted) {
   const { room } = lookup(handle);
   const lp = room.localParticipant;
   const enabled = !muted;
@@ -118,7 +118,7 @@ export async function cokretLivekitSetMuted(handle, kind, muted) {
   }
 }
 
-// cokretLivekitSetE2EEKey(handle, participantIdentity, keyBytes, keyIndex)
+// arkretLivekitSetE2EEKey(handle, participantIdentity, keyBytes, keyIndex)
 //   -> Promise<void>
 //
 // Injects a sender-bound MLS-exporter-derived 32-byte frame key into the real
@@ -134,7 +134,7 @@ export async function cokretLivekitSetMuted(handle, kind, muted) {
 // decrypts that sender's frames. `participantIdentity` is therefore ALWAYS
 // passed (local identity for our own publish, the remote's identity for a
 // recomputed remote key), never undefined.
-export async function cokretLivekitSetE2EEKey(
+export async function arkretLivekitSetE2EEKey(
   handle,
   participantIdentity,
   keyBytes,
@@ -149,12 +149,12 @@ export async function cokretLivekitSetE2EEKey(
   await room.setE2EEEnabled(true);
 }
 
-// cokretLivekitOnParticipant(handle, cb) -> void
+// arkretLivekitOnParticipant(handle, cb) -> void
 //
 // Subscribes to the real ParticipantConnected event and forwards the SFU
 // participant identity string to the Rust callback, which cross-checks it
 // against ck.call.state.participants[] (fail-closed on mismatch).
-export function cokretLivekitOnParticipant(handle, cb) {
+export function arkretLivekitOnParticipant(handle, cb) {
   const { room, LK } = lookup(handle);
   room.on(LK.RoomEvent.ParticipantConnected, (participant) => {
     try {
@@ -174,10 +174,10 @@ export function cokretLivekitOnParticipant(handle, cb) {
   }
 }
 
-// cokretLivekitLeave(handle) -> Promise<void>
+// arkretLivekitLeave(handle) -> Promise<void>
 //
 // Real room.disconnect() and registry cleanup.
-export async function cokretLivekitLeave(handle) {
+export async function arkretLivekitLeave(handle) {
   const entry = rooms.get(String(handle));
   if (!entry) {
     return;

@@ -65,7 +65,7 @@ fn stamp_real_proof_and_anchor(envelope: &mut EventEnvelope) {
     hasher.update(b":seal_staleness_drill");
     let digest = hasher.finalize();
     envelope.seal_ref = Some(
-        cokret_sdk::SealId::new(format!("ak:seal:sha256:{}", hex_encode(&digest)))
+        arkret_sdk::SealId::new(format!("ak:seal:sha256:{}", hex_encode(&digest)))
             .expect("test seal ref is valid"),
     );
 

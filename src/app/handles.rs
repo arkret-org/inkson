@@ -1,7 +1,7 @@
 use super::*;
 
 pub(super) fn display_handles_from_directory_response(
-    res: &cokret_sdk::models::DirectorySubjectHandleList,
+    res: &arkret_sdk::models::DirectorySubjectHandleList,
 ) -> Vec<String> {
     let mut seen = BTreeSet::<String>::new();
     let mut handles = Vec::<String>::new();

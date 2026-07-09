@@ -281,7 +281,7 @@ pub fn ActionApproveDialog(
                                 let op = crate::operation::OperationBuilder::new(
                                     &space,
                                     &actor,
-                                    cokret_sdk::events::kinds::EventKind::AgentActionApprove,
+                                    arkret_sdk::events::kinds::EventKind::AgentActionApprove,
                                 )
                                 .body(payload)
                                 .build_sdk_event("inkson");
@@ -358,9 +358,9 @@ pub fn DraftApprovalPanel(
 
     // Controller-private events (action_approve / action_reject) author
     // in the controller's principal-control realm.
-    let principal_realm = cokret_sdk::Did::new(controller_did.clone())
+    let principal_realm = arkret_sdk::Did::new(controller_did.clone())
         .ok()
-        .map(|principal| cokret_sdk::auth::principal_control_realm_id(&principal).to_string());
+        .map(|principal| arkret_sdk::auth::principal_control_realm_id(&principal).to_string());
 
     rsx! {
         div { class: "event", "data-testid": "agent-draft-approval",
@@ -510,7 +510,7 @@ pub fn DraftApprovalPanel(
                                                     let op = crate::operation::OperationBuilder::new(
                                                         &realm,
                                                         &actor,
-                                                        cokret_sdk::events::kinds::EventKind::AgentActionApprove,
+                                                        arkret_sdk::events::kinds::EventKind::AgentActionApprove,
                                                     )
                                                     .body(payload)
                                                     .build_sdk_event("inkson");
@@ -573,7 +573,7 @@ pub fn DraftApprovalPanel(
                                                     let op = crate::operation::OperationBuilder::new(
                                                         &realm,
                                                         &actor,
-                                                        cokret_sdk::events::kinds::EventKind::AgentActionReject,
+                                                        arkret_sdk::events::kinds::EventKind::AgentActionReject,
                                                     )
                                                     .body(payload)
                                                     .build_sdk_event("inkson");

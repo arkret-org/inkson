@@ -14,7 +14,7 @@ impl CokretApi {
         let resolved =
             crate::directory_api::resolve_realm(&self.sdk_http_client()?, realm_id).await?;
         let candidate =
-            select_join_candidate(&resolved, cokret_sdk::models::RealmJoinMethod::InviteAccept)?;
+            select_join_candidate(&resolved, arkret_sdk::models::RealmJoinMethod::InviteAccept)?;
         stamp_invite_join_seal_basis(&mut event, candidate)?;
         self.submit_built_event_via_join_candidate(candidate, &event)
             .await
@@ -23,7 +23,7 @@ impl CokretApi {
     async fn submit_built_event_via_join_candidate(
         &self,
         candidate: &RealmJoinCandidate,
-        event: &cokret_sdk::Event,
+        event: &arkret_sdk::Event,
     ) -> anyhow::Result<SubmitEventResult> {
         let Some(endpoint) = candidate
             .endpoint
@@ -53,7 +53,7 @@ impl CokretApi {
 /// join candidate.
 ///
 /// The invitee is not yet a member, so it cannot read the membership-gated
-/// `GET /_cokret/self/events/frontier?realm_id=` Realm Seal view (it answers
+/// `GET /_arkret/self/events/frontier?realm_id=` Realm Seal view (it answers
 /// `404 realm not found`). The current Seal basis is instead disclosed by
 /// resolve-realm, authorized by the invite, in the join candidate. Stamp it
 /// before signing so the join submitter does not fall back to the 404-prone
@@ -62,7 +62,7 @@ impl CokretApi {
 /// Only stamps when the event actually needs a Control Move basis: it carries
 /// effects and has no CBA basis yet.
 fn stamp_invite_join_seal_basis(
-    event: &mut cokret_sdk::Event,
+    event: &mut arkret_sdk::Event,
     candidate: &RealmJoinCandidate,
 ) -> anyhow::Result<()> {
     if event.effects.is_empty() || event.seal_basis.is_some() {

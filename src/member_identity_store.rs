@@ -8,7 +8,7 @@
 //! events that already arrived via `state.events`), the renderer copies
 //! the raw envelopes into [`MemberIdentityStore`] keyed by
 //! `(realm_id, actor_id, segment)`. The effective set is computed via
-//! the SDK's [`cokret_sdk::effective_identity_events`] helper (MID-3).
+//! the SDK's [`arkret_sdk::effective_identity_events`] helper (MID-3).
 //!
 //! MID-4 (MLS decryption) is still a carrier-level concern (an encrypted
 //! carrier surfaces as `decryption_pending`). MID-5 (proof signature
@@ -26,7 +26,7 @@
 
 use std::collections::BTreeMap;
 
-use cokret_sdk::{
+use arkret_sdk::{
     Did, EventId, IdentityPayloadCarrier, MemberIdentity, MemberIdentityProof,
     MemberIdentitySegment, MemberIdentitySignatureAlgorithm, MemberIdentityUpdatePayload, RealmId,
     effective_identity_events,
@@ -311,7 +311,7 @@ fn verify_member_identity_proof(identity: &MemberIdentity) -> bool {
     let Ok(signing_bytes) = identity.canonical_payload_bytes() else {
         return false;
     };
-    let Ok(sig_bytes) = cokret_sdk::base64url_decode(proof.signature.as_bytes()) else {
+    let Ok(sig_bytes) = arkret_sdk::base64url_decode(proof.signature.as_bytes()) else {
         return false;
     };
     let Ok(signature) = Signature::from_slice(&sig_bytes) else {
@@ -322,8 +322,8 @@ fn verify_member_identity_proof(identity: &MemberIdentity) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use cokret_sdk::DisplayProfile;
-    use cokret_sdk::signatures::PublicKeyMaterial;
+    use arkret_sdk::DisplayProfile;
+    use arkret_sdk::signatures::PublicKeyMaterial;
     use ed25519_dalek::{Signer as _, SigningKey};
     use serde_json::json;
 
@@ -337,7 +337,7 @@ mod tests {
     /// signed by `signer`. `verification_method` selects `actor#device`.
     fn signed_payload(actor_id: &str, device_id: &str, name: &str, signer: &SigningKey) -> Value {
         let mut identity = MemberIdentity {
-            schema: cokret_sdk::MEMBER_IDENTITY_SCHEMA.to_owned(),
+            schema: arkret_sdk::MEMBER_IDENTITY_SCHEMA.to_owned(),
             realm_id: RealmId::new(TEST_REALM).unwrap(),
             actor_id: Did::new(actor_id.to_owned()).unwrap(),
             subject_id: Did::new(actor_id.to_owned()).unwrap(),
@@ -352,7 +352,7 @@ mod tests {
             proof: MemberIdentityProof {
                 verification_method: format!("{actor_id}#{device_id}"),
                 signature_algorithm: MemberIdentitySignatureAlgorithm::Ed25519,
-                payload_digest: cokret_sdk::Hash::new(
+                payload_digest: arkret_sdk::Hash::new(
                     "sha256:0000000000000000000000000000000000000000000000000000000000000000",
                 )
                 .unwrap(),
@@ -361,9 +361,9 @@ mod tests {
         };
         let canonical_bytes = identity.canonical_payload_bytes().unwrap();
         let digest = identity.canonical_payload_sha256().unwrap();
-        identity.proof.payload_digest = cokret_sdk::Hash::new(digest).unwrap();
+        identity.proof.payload_digest = arkret_sdk::Hash::new(digest).unwrap();
         let signature = signer.sign(&canonical_bytes);
-        identity.proof.signature = cokret_sdk::base64url_encode(&signature.to_bytes());
+        identity.proof.signature = arkret_sdk::base64url_encode(&signature.to_bytes());
         json!({
             "realm_id": TEST_REALM,
             "actor_id": actor_id,
@@ -497,7 +497,7 @@ mod tests {
         // itself — it consumes ingested events — but a smoke test here
         // keeps the SDK surface honest.
         let identity = MemberIdentity {
-            schema: cokret_sdk::MEMBER_IDENTITY_SCHEMA.to_owned(),
+            schema: arkret_sdk::MEMBER_IDENTITY_SCHEMA.to_owned(),
             realm_id: RealmId::new("ak:realm:01904100-0000-7000-8000-000000000001").unwrap(),
             actor_id: Did::new("did:web:alice.example".to_owned()).unwrap(),
             subject_id: Did::new("did:web:alice.example".to_owned()).unwrap(),
@@ -510,7 +510,7 @@ mod tests {
             proof: MemberIdentityProof {
                 verification_method: "did:web:alice.example#key-1".to_owned(),
                 signature_algorithm: MemberIdentitySignatureAlgorithm::Ed25519,
-                payload_digest: cokret_sdk::Hash::new(
+                payload_digest: arkret_sdk::Hash::new(
                     "sha256:0000000000000000000000000000000000000000000000000000000000000000",
                 )
                 .unwrap(),

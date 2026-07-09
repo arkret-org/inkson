@@ -1,6 +1,6 @@
 use std::collections::{BTreeMap, BTreeSet};
 
-use cokret_sdk::models::{AgentParticipation, AgentParticipationEntry, AgentParticipationScope};
+use arkret_sdk::models::{AgentParticipation, AgentParticipationEntry, AgentParticipationScope};
 use dioxus::prelude::*;
 use dioxus_primitives::checkbox::CheckboxState;
 use dioxus_router::Link;
@@ -191,7 +191,7 @@ struct MemberGroup {
 }
 
 fn member_agent_row_from_value(
-    row: cokret_sdk::models::AgentProjection,
+    row: arkret_sdk::models::AgentProjection,
     fallback_controller_did: &str,
 ) -> Option<MemberAgentRow> {
     let agent_principal_id = row.agent_principal_id.as_str().trim();
@@ -228,7 +228,7 @@ fn member_agent_row_from_value(
 }
 
 async fn fetch_owned_agent_rows(
-    http: &cokret_sdk::http_client::Client,
+    http: &arkret_sdk::http_client::Client,
     realm: &str,
     fallback_controller_did: &str,
 ) -> anyhow::Result<Vec<MemberAgentRow>> {
@@ -1843,7 +1843,7 @@ pub(crate) async fn submit_mls_admission_for_invitee(
 pub(crate) struct ParsedRealmKeyRequestEnvelope {
     pub(crate) realm_id: String,
     pub(crate) request_id: Option<String>,
-    pub(crate) payload: cokret_sdk::RealmKeyRequestPayload,
+    pub(crate) payload: arkret_sdk::RealmKeyRequestPayload,
 }
 
 fn realm_key_request_payload_candidate(value: &Value) -> Option<&Value> {
@@ -1851,7 +1851,7 @@ fn realm_key_request_payload_candidate(value: &Value) -> Option<&Value> {
 }
 
 pub(crate) fn realm_key_request_scope_realm_id(
-    request: &cokret_sdk::RealmKeyRequestPayload,
+    request: &arkret_sdk::RealmKeyRequestPayload,
 ) -> Option<String> {
     request
         .key_scope
@@ -1936,7 +1936,7 @@ pub(crate) fn parse_realm_key_request_envelope(
                 .and_then(|payload| payload.get("content"))
                 .and_then(realm_key_request_payload_candidate)
         })?;
-    let payload: cokret_sdk::RealmKeyRequestPayload =
+    let payload: arkret_sdk::RealmKeyRequestPayload =
         serde_json::from_value(payload_value.clone()).ok()?;
     let realm_id = realm_key_request_scope_realm_id(&payload)?;
     if let Some(envelope_realm) = realm_key_request_envelope_realm_id(envelope)
@@ -1991,7 +1991,7 @@ pub(crate) async fn share_history_to_requester(
     realm_id: String,
     actor_id: String,
     device_id: String,
-    request: &cokret_sdk::RealmKeyRequestPayload,
+    request: &arkret_sdk::RealmKeyRequestPayload,
 ) -> anyhow::Result<bool> {
     let Some(request_realm_id) = realm_key_request_scope_realm_id(request) else {
         return Ok(false);
@@ -2021,7 +2021,7 @@ pub(crate) async fn share_history_to_requester(
         let store = state_store.read();
         let policy_digest = match store.genesis_policy_root_for_effective_scope(&realm_id, None) {
             Some(stored) => {
-                cokret_sdk::Hash::new(stored.clone()).map_err(|err| {
+                arkret_sdk::Hash::new(stored.clone()).map_err(|err| {
                     anyhow::anyhow!("stored MLS genesis policy_root invalid: {err:?}")
                 })?;
                 stored
@@ -2049,10 +2049,10 @@ pub(crate) async fn share_history_to_requester(
         return Ok(false);
     }
     let recipient_pubkey =
-        cokret_sdk::base64url_decode(request.recipient_hpke_public_key.trim().as_bytes())
+        arkret_sdk::base64url_decode(request.recipient_hpke_public_key.trim().as_bytes())
             .map_err(|err| anyhow::anyhow!("decode requester HPKE public key: {err}"))?;
     let sealed =
-        cokret_sdk::secret_share::seal_history_secret_to_device_pubkey(&recipient_pubkey, &range)
+        arkret_sdk::secret_share::seal_history_secret_to_device_pubkey(&recipient_pubkey, &range)
             .map_err(|err| anyhow::anyhow!("seal history secrets: {err}"))?;
     let (min_epoch, max_epoch) = range
         .iter()
@@ -2329,7 +2329,7 @@ fn provider_candidates_from_inbox(
         let is_history_bearing = matches!(
             kind,
             "ck.mls.welcome" | "ck.mls.commit" | "ck.realm_key.share"
-        ) || kind == cokret_sdk::events::kinds::REALM_KEY_SHARE;
+        ) || kind == arkret_sdk::events::kinds::REALM_KEY_SHARE;
         if !is_history_bearing {
             continue;
         }
@@ -2511,7 +2511,7 @@ pub(crate) async fn request_history_keys_for_realm(
         &device_id,
     )
     .map_err(|err| anyhow::anyhow!("load device HPKE keypair for history request: {err}"))?;
-    let recipient_hpke_public_key = cokret_sdk::base64url_encode(&pubkey);
+    let recipient_hpke_public_key = arkret_sdk::base64url_encode(&pubkey);
     crate::keys_api::submit_realm_key_request(
         &api.sdk_http_client()?,
         &realm_id,
@@ -2803,7 +2803,7 @@ pub(crate) async fn submit_mls_admission_for_invitees(
     )
     .await?;
 
-    let mut claims = Vec::<(cokret_sdk::KeyPackageClaimRecord, String)>::new();
+    let mut claims = Vec::<(arkret_sdk::KeyPackageClaimRecord, String)>::new();
     for invitee_did in invitees {
         let claim_nonce = crate::mls_api_helpers::generate_mls_claim_nonce()?;
         let claim_outcome = api
@@ -2874,7 +2874,7 @@ fn mls_group_state_event_ref_ready(store: &LocalStateStore, realm_id: &str) -> b
         .frontier
         .iter()
         .chain(seal_view.leaves.iter())
-        .any(|value| cokret_sdk::EventId::new(value.clone()).is_ok())
+        .any(|value| arkret_sdk::EventId::new(value.clone()).is_ok())
 }
 
 async fn ensure_mls_genesis_frontier_for_invite(
@@ -4175,9 +4175,9 @@ pub fn RealmMembersPanel(
                                                                                         let api_token = token();
                                                                                         let next_mention = !matches!(policy, AgentMentionPolicy::Allowed);
                                                                                         spawn(async move {
-                                                                                            let body = cokret_sdk::models::AgentParticipationSetRequestBody {
+                                                                                            let body = arkret_sdk::models::AgentParticipationSetRequestBody {
                                                                                                 scope: AgentParticipationScope::Realm {
-                                                                                                    realm_id: match cokret_sdk::RealmId::new(realm.clone()) {
+                                                                                                    realm_id: match arkret_sdk::RealmId::new(realm.clone()) {
                                                                                                         Ok(realm_id) => realm_id,
                                                                                                         Err(err) => {
                                                                                                             status_msg.set(format!("invalid realm id: {err:?}"));
@@ -4986,7 +4986,7 @@ mod tests {
     #[test]
     fn mention_policy_reads_realm_effective_bit() {
         let realm_id =
-            cokret_sdk::RealmId::new("ak:realm:01904100-0000-7000-8000-000000000001".to_owned())
+            arkret_sdk::RealmId::new("ak:realm:01904100-0000-7000-8000-000000000001".to_owned())
                 .unwrap();
         let entries = vec![AgentParticipationEntry {
             scope: AgentParticipationScope::Realm { realm_id },
@@ -5211,8 +5211,8 @@ mod tests {
     #[test]
     fn parses_projected_realm_key_request_payload_envelope() {
         let realm = "ak:realm:abc";
-        let request = cokret_sdk::RealmKeyRequestPayload {
-            key_scope: cokret_sdk::RealmKeyRequestScope {
+        let request = arkret_sdk::RealmKeyRequestPayload {
+            key_scope: arkret_sdk::RealmKeyRequestScope {
                 effective_scope: json!({ "kind": "realm", "realm_id": realm }),
                 policy_digest: None,
                 membership_frontier_digest: None,
@@ -5220,12 +5220,12 @@ mod tests {
                 to_epoch: 0,
                 history_visibility: None,
             },
-            recipient_principal_id: cokret_sdk::Did::new(SELF_DID.to_owned()).unwrap(),
+            recipient_principal_id: arkret_sdk::Did::new(SELF_DID.to_owned()).unwrap(),
             recipient_device_id: "ak:device:self".to_owned(),
             recipient_hpke_public_key: "Ikuf_h0tiOTpwnUEEZZeY4p_OIaixaYHYcT6GnmJOmE".to_owned(),
-            requested_source_class: cokret_sdk::HistoryKeySource::VerifiedMemberDevice,
+            requested_source_class: arkret_sdk::HistoryKeySource::VerifiedMemberDevice,
             target_source_ref: PROVIDER_DEVICE.to_owned(),
-            target_principal_id: cokret_sdk::Did::new(PROVIDER_DID.to_owned()).unwrap(),
+            target_principal_id: arkret_sdk::Did::new(PROVIDER_DID.to_owned()).unwrap(),
             created_at: chrono::DateTime::parse_from_rfc3339("2026-06-30T01:31:33Z")
                 .unwrap()
                 .with_timezone(&chrono::Utc),
@@ -5251,8 +5251,8 @@ mod tests {
     #[test]
     fn realm_key_request_answer_dedup_key_prefers_request_id() {
         let realm = "ak:realm:abc";
-        let request = cokret_sdk::RealmKeyRequestPayload {
-            key_scope: cokret_sdk::RealmKeyRequestScope {
+        let request = arkret_sdk::RealmKeyRequestPayload {
+            key_scope: arkret_sdk::RealmKeyRequestScope {
                 effective_scope: json!({ "kind": "realm", "realm_id": realm }),
                 policy_digest: None,
                 membership_frontier_digest: None,
@@ -5260,12 +5260,12 @@ mod tests {
                 to_epoch: 2,
                 history_visibility: None,
             },
-            recipient_principal_id: cokret_sdk::Did::new(SELF_DID.to_owned()).unwrap(),
+            recipient_principal_id: arkret_sdk::Did::new(SELF_DID.to_owned()).unwrap(),
             recipient_device_id: "ak:device:self".to_owned(),
             recipient_hpke_public_key: "Ikuf_h0tiOTpwnUEEZZeY4p_OIaixaYHYcT6GnmJOmE".to_owned(),
-            requested_source_class: cokret_sdk::HistoryKeySource::VerifiedMemberDevice,
+            requested_source_class: arkret_sdk::HistoryKeySource::VerifiedMemberDevice,
             target_source_ref: PROVIDER_DEVICE.to_owned(),
-            target_principal_id: cokret_sdk::Did::new(PROVIDER_DID.to_owned()).unwrap(),
+            target_principal_id: arkret_sdk::Did::new(PROVIDER_DID.to_owned()).unwrap(),
             created_at: chrono::DateTime::parse_from_rfc3339("2026-06-30T01:31:33Z")
                 .unwrap()
                 .with_timezone(&chrono::Utc),
@@ -5287,8 +5287,8 @@ mod tests {
     #[test]
     fn realm_key_request_answer_dedup_key_falls_back_to_payload() {
         let realm = "ak:realm:abc";
-        let request = cokret_sdk::RealmKeyRequestPayload {
-            key_scope: cokret_sdk::RealmKeyRequestScope {
+        let request = arkret_sdk::RealmKeyRequestPayload {
+            key_scope: arkret_sdk::RealmKeyRequestScope {
                 effective_scope: json!({ "kind": "realm", "realm_id": realm }),
                 policy_digest: None,
                 membership_frontier_digest: None,
@@ -5296,12 +5296,12 @@ mod tests {
                 to_epoch: 3,
                 history_visibility: None,
             },
-            recipient_principal_id: cokret_sdk::Did::new(SELF_DID.to_owned()).unwrap(),
+            recipient_principal_id: arkret_sdk::Did::new(SELF_DID.to_owned()).unwrap(),
             recipient_device_id: "ak:device:self".to_owned(),
             recipient_hpke_public_key: "Ikuf_h0tiOTpwnUEEZZeY4p_OIaixaYHYcT6GnmJOmE".to_owned(),
-            requested_source_class: cokret_sdk::HistoryKeySource::VerifiedMemberDevice,
+            requested_source_class: arkret_sdk::HistoryKeySource::VerifiedMemberDevice,
             target_source_ref: PROVIDER_DEVICE.to_owned(),
-            target_principal_id: cokret_sdk::Did::new(PROVIDER_DID.to_owned()).unwrap(),
+            target_principal_id: arkret_sdk::Did::new(PROVIDER_DID.to_owned()).unwrap(),
             created_at: chrono::DateTime::parse_from_rfc3339("2026-06-30T01:31:33Z")
                 .unwrap()
                 .with_timezone(&chrono::Utc),
@@ -5321,8 +5321,8 @@ mod tests {
 
     #[test]
     fn rejects_realm_key_request_when_envelope_realm_mismatches_payload() {
-        let request = cokret_sdk::RealmKeyRequestPayload {
-            key_scope: cokret_sdk::RealmKeyRequestScope {
+        let request = arkret_sdk::RealmKeyRequestPayload {
+            key_scope: arkret_sdk::RealmKeyRequestScope {
                 effective_scope: json!({ "kind": "realm", "realm_id": "ak:realm:abc" }),
                 policy_digest: None,
                 membership_frontier_digest: None,
@@ -5330,12 +5330,12 @@ mod tests {
                 to_epoch: 0,
                 history_visibility: None,
             },
-            recipient_principal_id: cokret_sdk::Did::new(SELF_DID.to_owned()).unwrap(),
+            recipient_principal_id: arkret_sdk::Did::new(SELF_DID.to_owned()).unwrap(),
             recipient_device_id: "ak:device:self".to_owned(),
             recipient_hpke_public_key: "Ikuf_h0tiOTpwnUEEZZeY4p_OIaixaYHYcT6GnmJOmE".to_owned(),
-            requested_source_class: cokret_sdk::HistoryKeySource::VerifiedMemberDevice,
+            requested_source_class: arkret_sdk::HistoryKeySource::VerifiedMemberDevice,
             target_source_ref: PROVIDER_DEVICE.to_owned(),
-            target_principal_id: cokret_sdk::Did::new(PROVIDER_DID.to_owned()).unwrap(),
+            target_principal_id: arkret_sdk::Did::new(PROVIDER_DID.to_owned()).unwrap(),
             created_at: chrono::DateTime::parse_from_rfc3339("2026-06-30T01:31:33Z")
                 .unwrap()
                 .with_timezone(&chrono::Utc),
@@ -5352,7 +5352,7 @@ mod tests {
     #[test]
     fn mention_state_uses_realm_participation_entry() {
         let realm = "ak:realm:0196419b-0000-7000-8000-000000000000";
-        let realm_id = cokret_sdk::RealmId::new(realm.to_owned()).unwrap();
+        let realm_id = arkret_sdk::RealmId::new(realm.to_owned()).unwrap();
         let entry = AgentParticipationEntry {
             scope: AgentParticipationScope::Realm { realm_id },
             selection: AgentParticipation {

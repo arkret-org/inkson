@@ -1,7 +1,7 @@
 //! Build, decrypt, and classify the on-wire account-recovery backup envelopes.
 
 use anyhow::{Result, anyhow};
-use cokret_sdk::models::KeyBackupContentItem;
+use arkret_sdk::models::KeyBackupContentItem;
 use serde_json::Value;
 
 use super::selection::mls_account_secret_backup_version;

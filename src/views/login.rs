@@ -1,5 +1,5 @@
 use chrono::Utc;
-use cokret_sdk::http_client::{Auth, ClientBuilder};
+use arkret_sdk::http_client::{Auth, ClientBuilder};
 use dioxus::prelude::*;
 use garth::{LoginKind, OidcLogin, SessionEngine, SessionGrantState};
 
@@ -33,7 +33,7 @@ struct CompletedLogin {
     dpop_device_key: crate::local_state::DpopDeviceKeyRecord,
     session_credential: String,
     /// Persisted principal session grant. This is the live credential for
-    /// `/_cokret/self/*`; refresh rotates this grant before its own expiry.
+    /// `/_arkret/self/*`; refresh rotates this grant before its own expiry.
     session_grant: Option<PersistedSessionGrant>,
 }
 
@@ -566,7 +566,7 @@ pub(crate) async fn start_oidc_strand(
     principal_actor_id: &str,
 ) -> Result<(), String> {
     // T1.Y1 — discover the Account Authority + auth methods from the Principal
-    // Server's root `/_cokret/describe` (service-surface §2.5.1).
+    // Server's root `/_arkret/describe` (service-surface §2.5.1).
     let principal = CokretApi::new(principal_server_url)
         .map_err(|error| format!("Invalid principal server URL: {error}"))?;
     let description = principal
@@ -612,7 +612,7 @@ pub(crate) async fn start_oidc_strand(
 
 /// Standard OIDC discovery URL for an auth method: the explicit
 /// `openid_configuration` when present, else `{issuer}/.well-known/openid-configuration`.
-fn oidc_discovery_url(method: &cokret_sdk::AuthMethod) -> Option<String> {
+fn oidc_discovery_url(method: &arkret_sdk::AuthMethod) -> Option<String> {
     if let Some(config) = method
         .openid_configuration
         .as_deref()
@@ -734,11 +734,11 @@ async fn finish_oidc_callback(
         None
     } else {
         Some(
-            cokret_sdk::Did::new(actor_hint.clone())
+            arkret_sdk::Did::new(actor_hint.clone())
                 .map_err(|error| format!("invalid principal_id DID: {error}"))?,
         )
     };
-    let device_id = cokret_sdk::DeviceId::new(device.clone())
+    let device_id = arkret_sdk::DeviceId::new(device.clone())
         .map_err(|error| format!("invalid device_id: {error}"))?;
     let request_canonical_digest = oidc_request_canonical_digest(
         &scaffold.issuer,
@@ -793,7 +793,7 @@ async fn finish_oidc_callback(
         return Err("Account Authority did not return an account DID.".to_owned());
     }
     // ②(A+②): the held credential is the `ck.session.grant` itself; every
-    // `/_cokret/self/*` request presents it as `Authorization: Bearer <grant>` +
+    // `/_arkret/self/*` request presents it as `Authorization: Bearer <grant>` +
     // a per-request `DPoP` proof bound to the grant's `cnf.jkt`. Verify the
     // credential up front by reading the account viewer through a grant+DPoP
     // client (api-conventions.md §3.3).
@@ -1055,9 +1055,9 @@ mod tests {
         let device_id = "ak:device:01964137-0000-7000-8000-000000000001";
         let grant_id = "ak:grant:01964137-0000-7000-8000-000000000001";
         let grant = SessionGrantState {
-            principal_id: cokret_sdk::Did::new("did:web:alice.example".to_owned()).unwrap(),
-            device_id: Some(cokret_sdk::DeviceId::new(device_id.to_owned()).unwrap()),
-            grant_id: cokret_sdk::GrantId::new(grant_id.to_owned()).unwrap(),
+            principal_id: arkret_sdk::Did::new("did:web:alice.example".to_owned()).unwrap(),
+            device_id: Some(arkret_sdk::DeviceId::new(device_id.to_owned()).unwrap()),
+            grant_id: arkret_sdk::GrantId::new(grant_id.to_owned()).unwrap(),
             grant_jwt: "grant.jwt".to_owned(),
             expires_at: "2026-05-29T12:00:00Z".parse().unwrap(),
             audience: "https://local.host/api".to_owned(),

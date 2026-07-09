@@ -33,14 +33,14 @@ fn read_stdin_json() -> Result<Value> {
 
 fn canonical_json(input: Value) -> Result<Value> {
     let input: CanonicalInput = serde_json::from_value(input).context("parse canonical input")?;
-    let canonical = cokret_sdk::canonical::canonical_json_string(&input.value)
+    let canonical = arkret_sdk::canonical::canonical_json_string(&input.value)
         .map_err(|err| anyhow::anyhow!("canonical JSON encode: {err}"))?;
     Ok(json!({ "canonical": canonical }))
 }
 
 fn sha256_canonical_json(input: Value) -> Result<Value> {
     let input: CanonicalInput = serde_json::from_value(input).context("parse digest input")?;
-    let digest = cokret_sdk::canonical::canonical_sha256(&input.value)
+    let digest = arkret_sdk::canonical::canonical_sha256(&input.value)
         .map_err(|err| anyhow::anyhow!("canonical JSON digest: {err}"))?;
     Ok(json!({ "digest": digest }))
 }

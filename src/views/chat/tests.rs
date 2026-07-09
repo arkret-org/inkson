@@ -266,7 +266,7 @@ fn chat_message_create_operation_emits_schema_canonical_content() {
     assert!(op.payload.get("mention_relations").is_none());
     assert!(op.payload.get("reply_to").is_none());
     assert!(op.payload.get("thread_id").is_none());
-    cokret_sdk::schema::event_payload_validator_catalog()
+    arkret_sdk::schema::event_payload_validator_catalog()
         .unwrap()
         .validate_payload(op.kind.as_str(), &op.payload)
         .unwrap();
@@ -310,7 +310,7 @@ fn chat_message_create_operation_keeps_public_update_notification_projection_out
         op.payload["content"]["body"].as_str(),
         Some("SEV-1 public update: checkout latency is recovering")
     );
-    cokret_sdk::schema::event_payload_validator_catalog()
+    arkret_sdk::schema::event_payload_validator_catalog()
         .unwrap()
         .validate_payload(op.kind.as_str(), &op.payload)
         .unwrap();
@@ -318,9 +318,9 @@ fn chat_message_create_operation_keeps_public_update_notification_projection_out
 
 #[test]
 fn chat_message_create_operation_with_expiry_puts_contract_at_payload_top_level() {
-    let expiry = cokret_sdk::DisappearingMessageExpiry::new(
+    let expiry = arkret_sdk::DisappearingMessageExpiry::new(
         60_000,
-        cokret_sdk::DisappearingMessageExpiryTrigger::OnFirstRead,
+        arkret_sdk::DisappearingMessageExpiryTrigger::OnFirstRead,
     )
     .unwrap()
     .with_grace_ms(5_000);
@@ -341,7 +341,7 @@ fn chat_message_create_operation_with_expiry_puts_contract_at_payload_top_level(
     assert_eq!(op.payload["expiry"]["trigger"], "on_first_read");
     assert_eq!(op.payload["expiry"]["grace_ms"], 5_000);
     assert!(op.payload["content"].get("expiry").is_none());
-    cokret_sdk::schema::event_payload_validator_catalog()
+    arkret_sdk::schema::event_payload_validator_catalog()
         .unwrap()
         .validate_payload(op.kind.as_str(), &op.payload)
         .unwrap();
@@ -369,7 +369,7 @@ fn chat_message_create_operation_embeds_audience_mentions_in_content_only() {
     assert!(op.payload.get("audience_mentions").is_none());
     assert!(op.payload.get("mentions").is_none());
     assert!(op.payload.get("mention_relations").is_none());
-    cokret_sdk::schema::event_payload_validator_catalog()
+    arkret_sdk::schema::event_payload_validator_catalog()
         .unwrap()
         .validate_payload(op.kind.as_str(), &op.payload)
         .unwrap();
@@ -378,10 +378,10 @@ fn chat_message_create_operation_embeds_audience_mentions_in_content_only() {
 #[test]
 fn chat_message_create_operation_embeds_agent_selector_mention_metadata() {
     let mentions = vec![MentionNode::mention(
-        cokret_sdk::Mention::new(cokret_sdk::Did::new("did:web:agent.example".to_owned()).unwrap())
+        arkret_sdk::Mention::new(arkret_sdk::Did::new("did:web:agent.example".to_owned()).unwrap())
             .with_agent_selector_metadata(
-                cokret_sdk::Did::new("did:web:example.com:users:alice".to_owned()).unwrap(),
-                cokret_sdk::Handle::parse("alice:example.com").unwrap(),
+                arkret_sdk::Did::new("did:web:example.com:users:alice".to_owned()).unwrap(),
+                arkret_sdk::Handle::parse("alice:example.com").unwrap(),
                 "summary",
             )
             .with_mention_text_original("@alice:example.com/summary")
@@ -420,7 +420,7 @@ fn chat_message_create_operation_embeds_agent_selector_mention_metadata() {
     assert_eq!(mention["agent_slug_at_time"].as_str(), Some("summary"));
     assert!(mention.get("target").is_none());
     assert!(op.payload.get("mentions").is_none());
-    cokret_sdk::schema::event_payload_validator_catalog()
+    arkret_sdk::schema::event_payload_validator_catalog()
         .unwrap()
         .validate_payload(op.kind.as_str(), &op.payload)
         .unwrap();
@@ -445,7 +445,7 @@ fn chat_message_create_operation_includes_reply_fields_only_when_present() {
         Some("ak:message:01904100-0000-7000-8000-000000000004")
     );
     assert!(op.payload.get("thread_id").is_none());
-    cokret_sdk::schema::event_payload_validator_catalog()
+    arkret_sdk::schema::event_payload_validator_catalog()
         .unwrap()
         .validate_payload(op.kind.as_str(), &op.payload)
         .unwrap();
@@ -561,11 +561,11 @@ fn shared_pin_operations_use_pin_events_not_account_data() {
     assert_eq!(remove.kind.as_str(), "ck.pin.remove");
     assert_eq!(remove.payload["target_ref"], target_ref);
     assert!(remove.payload.get("key").is_none());
-    cokret_sdk::schema::event_payload_validator_catalog()
+    arkret_sdk::schema::event_payload_validator_catalog()
         .unwrap()
         .validate_payload(add.kind.as_str(), &add.payload)
         .unwrap();
-    cokret_sdk::schema::event_payload_validator_catalog()
+    arkret_sdk::schema::event_payload_validator_catalog()
         .unwrap()
         .validate_payload(remove.kind.as_str(), &remove.payload)
         .unwrap();
@@ -590,7 +590,7 @@ fn default_discussion_shared_pin_uses_realm_scope() {
     assert_eq!(add.payload["pin_scope"]["kind"], "realm");
     assert_eq!(add.payload["pin_scope"]["id"], realm_id);
     assert_eq!(add.payload["target_ref"], target_ref);
-    cokret_sdk::schema::event_payload_validator_catalog()
+    arkret_sdk::schema::event_payload_validator_catalog()
         .unwrap()
         .validate_payload(add.kind.as_str(), &add.payload)
         .unwrap();
@@ -1473,7 +1473,7 @@ fn local_redaction_tombstone_replaces_raw_message_without_plaintext() {
     assert_eq!(tombstone["redaction_ref"], "ak:event:redact-1");
     assert_eq!(
         tombstone["content"]["body"],
-        cokret_sdk::events::REDACTED_MESSAGE_PLACEHOLDER
+        arkret_sdk::events::REDACTED_MESSAGE_PLACEHOLDER
     );
     assert!(tombstone.get("body").is_none());
 
@@ -2069,11 +2069,11 @@ fn mention_label_for_participant_requires_handle() {
 #[test]
 fn mention_inline_parts_styles_only_full_handles() {
     let mention = MentionNode::mention(
-        cokret_sdk::Mention::new(
-            cokret_sdk::Did::new("did:web:local.host:users:alice".to_owned()).unwrap(),
+        arkret_sdk::Mention::new(
+            arkret_sdk::Did::new("did:web:local.host:users:alice".to_owned()).unwrap(),
         )
         .with_display_name_at_time("alice:local.host")
-        .with_handle_at_time(cokret_sdk::Handle::parse("alice:local.host").unwrap())
+        .with_handle_at_time(arkret_sdk::Handle::parse("alice:local.host").unwrap())
         .with_mention_text_original("@alice:local.host"),
     );
 
@@ -2097,11 +2097,11 @@ fn mention_inline_parts_styles_only_full_handles() {
 #[test]
 fn mention_inline_parts_marks_external_handles_remote() {
     let mention = MentionNode::mention(
-        cokret_sdk::Mention::new(
-            cokret_sdk::Did::new("did:web:example.com:users:bob".to_owned()).unwrap(),
+        arkret_sdk::Mention::new(
+            arkret_sdk::Did::new("did:web:example.com:users:bob".to_owned()).unwrap(),
         )
         .with_display_name_at_time("bob:example.com")
-        .with_handle_at_time(cokret_sdk::Handle::parse("bob:example.com").unwrap())
+        .with_handle_at_time(arkret_sdk::Handle::parse("bob:example.com").unwrap())
         .with_mention_text_original("@bob:example.com"),
     );
 
@@ -2269,13 +2269,13 @@ fn agent_metadata_from_mentions_recovers_selector_audit_metadata() {
         failed: false,
         error: None,
         mentions: vec![MentionNode::mention(
-            cokret_sdk::Mention::new(
-                cokret_sdk::Did::new("did:web:agents.example:summary".to_owned()).unwrap(),
+            arkret_sdk::Mention::new(
+                arkret_sdk::Did::new("did:web:agents.example:summary".to_owned()).unwrap(),
             )
             .with_display_name_at_time("Summary Assistant")
             .with_agent_selector_metadata(
-                cokret_sdk::Did::new("did:web:example.com:users:alice".to_owned()).unwrap(),
-                cokret_sdk::Handle::parse("alice:example.com").unwrap(),
+                arkret_sdk::Did::new("did:web:example.com:users:alice".to_owned()).unwrap(),
+                arkret_sdk::Handle::parse("alice:example.com").unwrap(),
                 "summary",
             )
             .with_mention_text_original("@alice:example.com/summary")
@@ -2656,7 +2656,7 @@ fn secure_content_block_round_trips_back_to_text() {
     // back out via `text_body_from_value`. This locks that symmetry without
     // standing up a full MLS group.
     let body = "secret hello with spaces";
-    let content_value = cokret_sdk::ContentBlock::text(body)
+    let content_value = arkret_sdk::ContentBlock::text(body)
         .to_value()
         .expect("content block serializes");
     let bytes = serde_json::to_vec(&content_value).expect("content block bytes");
@@ -2794,7 +2794,7 @@ fn chat_message_revise_operation_uses_schema_target_ref() {
     assert_eq!(op.payload["content"]["body"], "edited");
     assert!(op.payload.get("body").is_none());
     assert!(op.payload.get("target_event_id").is_none());
-    cokret_sdk::schema::event_payload_validator_catalog()
+    arkret_sdk::schema::event_payload_validator_catalog()
         .unwrap()
         .validate_payload(op.kind.as_str(), &op.payload)
         .unwrap();
@@ -2821,7 +2821,7 @@ fn chat_message_revise_operation_addresses_message_target_via_message_id() {
     assert!(op.payload.get("target_ref").is_none());
     assert_eq!(op.payload["content"]["kind"], "ck.content.text");
     assert_eq!(op.payload["content"]["body"], "edited");
-    cokret_sdk::schema::event_payload_validator_catalog()
+    arkret_sdk::schema::event_payload_validator_catalog()
         .unwrap()
         .validate_payload(op.kind.as_str(), &op.payload)
         .unwrap();
@@ -2843,7 +2843,7 @@ fn chat_message_redact_operation_uses_event_target_for_event_id() {
     );
     assert_eq!(op.payload["reason"], "author_redaction");
     assert!(op.payload.get("message_id").is_none());
-    cokret_sdk::schema::event_payload_validator_catalog()
+    arkret_sdk::schema::event_payload_validator_catalog()
         .unwrap()
         .validate_payload(op.kind.as_str(), &op.payload)
         .unwrap();
@@ -2865,7 +2865,7 @@ fn chat_message_redact_operation_uses_message_id_for_message_target() {
     );
     assert_eq!(op.payload["reason"], "author_redaction");
     assert!(op.payload.get("target_event_id").is_none());
-    cokret_sdk::schema::event_payload_validator_catalog()
+    arkret_sdk::schema::event_payload_validator_catalog()
         .unwrap()
         .validate_payload(op.kind.as_str(), &op.payload)
         .unwrap();
@@ -2888,7 +2888,7 @@ fn chat_reaction_add_operation_uses_schema_target_ref() {
     assert_eq!(op.payload["key"], "+1");
     assert!(op.payload.get("event_id").is_none());
     assert!(op.payload.get("actor").is_none());
-    cokret_sdk::schema::event_payload_validator_catalog()
+    arkret_sdk::schema::event_payload_validator_catalog()
         .unwrap()
         .validate_payload(op.kind.as_str(), &op.payload)
         .unwrap();

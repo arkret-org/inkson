@@ -319,7 +319,7 @@ impl LocalStateStore {
     pub fn mark_mls_genesis_emitted_with_event(
         &mut self,
         realm_id: impl Into<String>,
-        genesis_event_id: &cokret_sdk::EventId,
+        genesis_event_id: &arkret_sdk::EventId,
     ) {
         self.mark_mls_genesis_emitted_for_effective_scope_with_event(
             realm_id,
@@ -345,7 +345,7 @@ impl LocalStateStore {
         &mut self,
         realm_id: impl Into<String>,
         circle_id: Option<&str>,
-        genesis_event_id: &cokret_sdk::EventId,
+        genesis_event_id: &arkret_sdk::EventId,
     ) {
         self.ensure_cached_loaded();
         let realm_id = realm_id.into();

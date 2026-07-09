@@ -52,12 +52,12 @@ impl std::error::Error for AccountSubscribeReconnectAfter {}
 
 /// Round 4 (spec a77b995) — parse the round-4 typed
 /// `/events/subscribe` NDJSON stream. The frame body is
-/// [`cokret_sdk::EventsSubscribeFrame`] (tag = "kind",
+/// [`arkret_sdk::EventsSubscribeFrame`] (tag = "kind",
 /// snake_case-discriminated). Wire-breaking: the pre-round-4 untyped
 /// string-line parser is deleted.
 pub fn parse_events_subscribe_ndjson_text(
     input: &str,
-) -> anyhow::Result<Vec<cokret_sdk::EventsSubscribeFrame>> {
+) -> anyhow::Result<Vec<arkret_sdk::EventsSubscribeFrame>> {
     let mut frames = Vec::new();
     for line in input.lines() {
         if let Some(frame) = parse_events_subscribe_ndjson_line(line.as_bytes())? {
@@ -80,7 +80,7 @@ pub(crate) const MAX_NDJSON_STREAM_FRAME_BYTES: usize = 16 * 1024 * 1024;
 
 pub(crate) fn parse_events_subscribe_ndjson_line(
     line: &[u8],
-) -> anyhow::Result<Option<cokret_sdk::EventsSubscribeFrame>> {
+) -> anyhow::Result<Option<arkret_sdk::EventsSubscribeFrame>> {
     let trimmed = trim_ascii(line);
     if trimmed.is_empty() {
         return Ok(None);
@@ -137,7 +137,7 @@ struct AccountSubscribeFolder {
 impl AccountSubscribeFolder {
     /// Feed one frame. Returns `true` when the outcome is decided and the
     /// caller can stop reading the stream.
-    fn push(&mut self, frame: cokret_sdk::AccountSubscribeFrame) -> bool {
+    fn push(&mut self, frame: arkret_sdk::AccountSubscribeFrame) -> bool {
         if self.done.is_some() {
             return true;
         }
@@ -145,17 +145,17 @@ impl AccountSubscribeFolder {
             self.latest_cursor = Some(cursor.to_owned());
         }
         match frame.kind {
-            cokret_sdk::AccountSubscribeFrameKind::ResyncRequired
-            | cokret_sdk::AccountSubscribeFrameKind::Unauthorized => {
+            arkret_sdk::AccountSubscribeFrameKind::ResyncRequired
+            | arkret_sdk::AccountSubscribeFrameKind::Unauthorized => {
                 self.done = Some(AccountSubscribeSnapshotResult::ReconnectAfter {
                     reconnect_after_ms: clamp_reconnect_after_ms(frame.reconnect_after_ms()),
                     reason: frame.reason,
                     reset_cursor: frame.kind
-                        == cokret_sdk::AccountSubscribeFrameKind::ResyncRequired,
+                        == arkret_sdk::AccountSubscribeFrameKind::ResyncRequired,
                 });
                 return true;
             }
-            cokret_sdk::AccountSubscribeFrameKind::Dropped => {
+            arkret_sdk::AccountSubscribeFrameKind::Dropped => {
                 if self.merged.is_none() {
                     self.done = Some(AccountSubscribeSnapshotResult::ReconnectAfter {
                         reconnect_after_ms: clamp_reconnect_after_ms(frame.reconnect_after_ms()),
@@ -168,7 +168,7 @@ impl AccountSubscribeFolder {
                 // cursor as resume point; otherwise it surfaces ReconnectAfter.
                 return true;
             }
-            cokret_sdk::AccountSubscribeFrameKind::CatchupComplete => {
+            arkret_sdk::AccountSubscribeFrameKind::CatchupComplete => {
                 // catchup_complete marks the baseline as complete; whatever
                 // was folded is valid up to `latest_cursor`.
                 return true;
@@ -227,7 +227,7 @@ pub(crate) fn parse_account_subscribe_snapshot_outcome(
         if trimmed.is_empty() {
             continue;
         }
-        let frame: cokret_sdk::AccountSubscribeFrame = serde_json::from_slice(trimmed)?;
+        let frame: arkret_sdk::AccountSubscribeFrame = serde_json::from_slice(trimmed)?;
         if folder.push(frame) {
             break;
         }
@@ -268,7 +268,7 @@ pub(crate) async fn drain_account_subscribe_response(
             if trimmed.is_empty() {
                 continue;
             }
-            let frame: cokret_sdk::AccountSubscribeFrame = serde_json::from_slice(trimmed)?;
+            let frame: arkret_sdk::AccountSubscribeFrame = serde_json::from_slice(trimmed)?;
             if folder.push(frame) {
                 break 'stream;
             }
@@ -277,7 +277,7 @@ pub(crate) async fn drain_account_subscribe_response(
     // Flush a final unterminated line (server closed without trailing \n).
     let trimmed = trim_ascii(&pending);
     if !trimmed.is_empty() {
-        let frame: cokret_sdk::AccountSubscribeFrame = serde_json::from_slice(trimmed)?;
+        let frame: arkret_sdk::AccountSubscribeFrame = serde_json::from_slice(trimmed)?;
         folder.push(frame);
     }
     folder.finish()

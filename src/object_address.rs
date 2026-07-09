@@ -3,7 +3,7 @@
 //!
 //! A user can share a Realm / Strand / Message as a link. This module is the
 //! inkson-side glue on top of the SDK's client-agnostic addressing grammar
-//! ([`cokret_sdk::models::parse_address`] / [`build_address`] /
+//! ([`arkret_sdk::models::parse_address`] / [`build_address`] /
 //! [`build_https_landing`]) plus the [`target_digest`] invite / preview token binding:
 //!
 //! * [`ShareTarget`] — a typed "thing I want to share" (realm / strand / message) plus routing
@@ -21,7 +21,7 @@
 //!   collapses to a single friendly `object_link.error.unavailable` message (anti-enumeration).
 //! * Reference links carry no authorization. Invite and preview links bind the [`TargetDescriptor`]
 //!   digest so a token minted for object A cannot be replayed onto object B (scope-confusion
-//!   defence lives in the SDK's [`cokret_sdk::models::verify_token_target`]).
+//!   defence lives in the SDK's [`arkret_sdk::models::verify_token_target`]).
 //!
 //! ## Web protocol-handler registration — design choice
 //! inkson deliberately ships the **HTTPS-fragment-only** landing path and does
@@ -40,7 +40,7 @@
 //! Windows `HKCR\web+arkret` registry) is out of scope here.
 // TODO(R3.3.1): native OS deep-link registration for the `web+arkret:` scheme.
 
-use cokret_sdk::models::{
+use arkret_sdk::models::{
     AddressAction, LinkType, ParsedAddress, RealmRef, TargetDescriptor, TargetKind, build_address,
     build_https_landing, parse_address, target_digest,
 };
@@ -156,7 +156,7 @@ impl ShareTarget {
         let parsed = self.to_parsed_address(via, action, link_type, token);
         ShareLinks {
             https_landing: build_https_landing(landing, &parsed),
-            web_cokret: build_address(&parsed),
+            web_arkret: build_address(&parsed),
             link_type,
         }
     }
@@ -224,7 +224,7 @@ pub struct ShareLinks {
     /// token live in the `#` fragment and never reach the landing server.
     pub https_landing: String,
     /// `web+arkret:` URI — the "open in app" form for OS / browser handlers.
-    pub web_cokret: String,
+    pub web_arkret: String,
     /// The link type both forms encode.
     pub link_type: LinkType,
 }
@@ -387,7 +387,7 @@ mod tests {
         );
         assert!(links.https_landing.contains(R));
         // The web+arkret: form is the canonical scheme.
-        assert_eq!(links.web_cokret, format!("web+arkret:realm/{R}"));
+        assert_eq!(links.web_arkret, format!("web+arkret:realm/{R}"));
         assert_eq!(links.link_type, LinkType::Reference);
     }
 
@@ -395,11 +395,11 @@ mod tests {
     fn strand_links_ignore_via_and_roundtrip() {
         let target = ShareTarget::strand(&format!("ak:realm:{R}"), &format!("ak:strand:{F}"));
         let links = target.build_reference_links(LANDING, &[VIA.to_owned()], AddressAction::View);
-        assert!(links.web_cokret.contains(&format!("realm/{R}/strand/{F}")));
-        assert!(!links.web_cokret.contains("via="));
+        assert!(links.web_arkret.contains(&format!("realm/{R}/strand/{F}")));
+        assert!(!links.web_arkret.contains("via="));
         // Both forms reparse to the same address.
         let from_https = OpenedLink::parse(&links.https_landing).unwrap();
-        let from_web = OpenedLink::parse(&links.web_cokret).unwrap();
+        let from_web = OpenedLink::parse(&links.web_arkret).unwrap();
         assert_eq!(from_https.address, from_web.address);
         assert!(from_web.address.is_strand());
     }
@@ -418,7 +418,7 @@ mod tests {
             LinkType::Reference,
             None,
         );
-        let opened = OpenedLink::parse(&links.web_cokret).unwrap();
+        let opened = OpenedLink::parse(&links.web_arkret).unwrap();
         assert!(opened.address.is_message());
         match opened.route_for(TargetKind::Message) {
             Route::Chat { realm_id, .. } => {
@@ -453,9 +453,9 @@ mod tests {
             LinkType::Invite,
             Some("opaque-tok-123".to_owned()),
         );
-        assert!(links.web_cokret.contains("lt=invite"));
-        assert!(links.web_cokret.contains("tok=opaque-tok-123"));
-        let opened = OpenedLink::parse(&links.web_cokret).unwrap();
+        assert!(links.web_arkret.contains("lt=invite"));
+        assert!(links.web_arkret.contains("tok=opaque-tok-123"));
+        let opened = OpenedLink::parse(&links.web_arkret).unwrap();
         assert_eq!(opened.token.as_deref(), Some("opaque-tok-123"));
         // The digest is stable and prefixed.
         let digest = target.invite_target_digest().unwrap();
@@ -471,9 +471,9 @@ mod tests {
             AddressAction::View,
             "preview-token-123".to_owned(),
         );
-        assert!(links.web_cokret.contains("lt=preview"));
-        assert!(links.web_cokret.contains("tok=preview-token-123"));
-        let opened = OpenedLink::parse(&links.web_cokret).unwrap();
+        assert!(links.web_arkret.contains("lt=preview"));
+        assert!(links.web_arkret.contains("tok=preview-token-123"));
+        let opened = OpenedLink::parse(&links.web_arkret).unwrap();
         assert_eq!(opened.address.link_type, LinkType::Preview);
         assert_eq!(opened.token.as_deref(), Some("preview-token-123"));
 
@@ -501,8 +501,8 @@ mod tests {
             LinkType::Reference,
             Some("should-be-dropped".to_owned()),
         );
-        assert!(!links.web_cokret.contains("tok="));
-        assert!(!links.web_cokret.contains("should-be-dropped"));
+        assert!(!links.web_arkret.contains("tok="));
+        assert!(!links.web_arkret.contains("should-be-dropped"));
     }
 
     #[test]

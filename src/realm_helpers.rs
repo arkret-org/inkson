@@ -14,7 +14,7 @@ pub(crate) fn canonical_space_join_rule_v1(join_rule: &str) -> &str {
 
 pub(crate) fn select_join_candidate(
     resolved: &ResolveRealmOutcome,
-    join_method: cokret_sdk::models::RealmJoinMethod,
+    join_method: arkret_sdk::models::RealmJoinMethod,
 ) -> anyhow::Result<&RealmJoinCandidate> {
     let realm_id = trim_realm_id(resolved.realm_preview.realm_id.as_str());
     resolved

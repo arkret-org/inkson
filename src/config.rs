@@ -4,7 +4,7 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use cokret_sdk::DeviceId;
+use arkret_sdk::DeviceId;
 use serde::{Deserialize, Serialize};
 use url::Url;
 

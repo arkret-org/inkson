@@ -1,6 +1,6 @@
 //! `ck.space.create` form + Space lifecycle actions section component.
 
-use cokret_sdk::events::EventKind;
+use arkret_sdk::events::EventKind;
 use dioxus::prelude::*;
 use serde_json::Value;
 

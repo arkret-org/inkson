@@ -20,9 +20,9 @@ pub fn capability_revoke(
     grant_id: &str,
     reason: Option<&str>,
 ) -> anyhow::Result<OperationBuilder> {
-    let grant_id_typed = cokret_sdk::GrantId::new(grant_id.to_owned())
+    let grant_id_typed = arkret_sdk::GrantId::new(grant_id.to_owned())
         .map_err(|err| anyhow::anyhow!("capability revoke grant_id {grant_id:?}: {err}"))?;
-    let payload = cokret_sdk::CapabilityRevokePayload {
+    let payload = arkret_sdk::CapabilityRevokePayload {
         grant_ref: None,
         grant_id: grant_id_typed,
         reason: reason.map(ToOwned::to_owned),
@@ -30,7 +30,7 @@ pub fn capability_revoke(
     Ok(OperationBuilder::new(
         realm_id,
         actor,
-        cokret_sdk::events::kinds::EventKind::CapabilityRevoke,
+        arkret_sdk::events::kinds::EventKind::CapabilityRevoke,
     )
     .target_ref(grant_id)
     .body(payload_value(&payload, "capability_revoke payload")?))
@@ -82,7 +82,7 @@ pub fn capability_grant_actions(
     OperationBuilder::new(
         &realm,
         actor,
-        cokret_sdk::events::kinds::EventKind::CapabilityGrant,
+        arkret_sdk::events::kinds::EventKind::CapabilityGrant,
     )
     .target_ref(grant_id)
     .body(json!({

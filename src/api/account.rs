@@ -23,7 +23,7 @@ impl CokretApi {
     pub async fn request_contact(
         &self,
         target: &str,
-    ) -> anyhow::Result<cokret_sdk::ContactRequestOutcome> {
+    ) -> anyhow::Result<arkret_sdk::ContactRequestOutcome> {
         self.request_contact_scoped(target, "direct_message").await
     }
 
@@ -31,7 +31,7 @@ impl CokretApi {
         &self,
         target: &str,
         scope: &str,
-    ) -> anyhow::Result<cokret_sdk::ContactRequestOutcome> {
+    ) -> anyhow::Result<arkret_sdk::ContactRequestOutcome> {
         self.request_contact_with_message(target, &[scope.to_owned()], None, None)
             .await
     }
@@ -57,7 +57,7 @@ impl CokretApi {
         scopes: &[String],
         message: Option<&str>,
         recipient_service_did: Option<&str>,
-    ) -> anyhow::Result<cokret_sdk::ContactRequestOutcome> {
+    ) -> anyhow::Result<arkret_sdk::ContactRequestOutcome> {
         let requested_scopes: Vec<String> = scopes
             .iter()
             .map(|scope| scope.trim())
@@ -67,7 +67,7 @@ impl CokretApi {
         let addressing = self
             .contact_request_addressing(target, recipient_service_did)
             .await?;
-        let body = cokret_sdk::ContactRequestRequestBody {
+        let body = arkret_sdk::ContactRequestRequestBody {
             target: addressing.target,
             requested_scopes,
             message: message

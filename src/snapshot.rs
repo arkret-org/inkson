@@ -18,10 +18,10 @@ impl SnapshotFallbackReason {
     }
 
     pub fn unavailable(message: impl Into<String>) -> Self {
-        Self::new(cokret_sdk::ERROR_CODE_SNAPSHOT_UNAVAILABLE, message)
+        Self::new(arkret_sdk::ERROR_CODE_SNAPSHOT_UNAVAILABLE, message)
     }
 
-    pub fn from_validation(error: cokret_sdk::SnapshotValidationError) -> Self {
+    pub fn from_validation(error: arkret_sdk::SnapshotValidationError) -> Self {
         Self::new(error.code.as_str(), error.message)
     }
 }
@@ -46,12 +46,12 @@ pub async fn download_verify_and_apply_snapshot<R>(
     api: &CokretApi,
     store: &mut LocalStateStore,
     realm_id: &str,
-    service_did: &cokret_sdk::Did,
+    service_did: &arkret_sdk::Did,
     resolver: &R,
     now: DateTime<Utc>,
 ) -> Result<SnapshotBootstrapResult, SnapshotFallbackReason>
 where
-    R: cokret_sdk::DidResolver + ?Sized,
+    R: arkret_sdk::DidResolver + ?Sized,
 {
     let manifest = match api.snapshot_head(realm_id).await {
         Ok(Some(manifest)) => manifest,
@@ -74,7 +74,7 @@ where
             .await
             .map_err(|error| {
                 SnapshotFallbackReason::new(
-                    cokret_sdk::SnapshotValidationCode::DigestMismatch.as_str(),
+                    arkret_sdk::SnapshotValidationCode::DigestMismatch.as_str(),
                     format!("snapshot chunk download failed: {error}"),
                 )
             })?;
@@ -86,7 +86,7 @@ where
         .apply_snapshot_chunks(&manifest, &chunks, result.trust_state.clone())
         .map_err(|error| {
             SnapshotFallbackReason::new(
-                cokret_sdk::SnapshotValidationCode::DigestMismatch.as_str(),
+                arkret_sdk::SnapshotValidationCode::DigestMismatch.as_str(),
                 format!("snapshot import failed: {error}"),
             )
         })?;
@@ -94,25 +94,25 @@ where
 }
 
 pub fn verify_snapshot_package<R>(
-    manifest: &cokret_sdk::SnapshotManifest,
-    chunks: &[cokret_sdk::SnapshotChunkPayload],
-    service_did: &cokret_sdk::Did,
+    manifest: &arkret_sdk::SnapshotManifest,
+    chunks: &[arkret_sdk::SnapshotChunkPayload],
+    service_did: &arkret_sdk::Did,
     resolver: &R,
     now: DateTime<Utc>,
 ) -> Result<SnapshotBootstrapResult, SnapshotFallbackReason>
 where
-    R: cokret_sdk::DidResolver + ?Sized,
+    R: arkret_sdk::DidResolver + ?Sized,
 {
     verify_snapshot_signature_and_authority(manifest, service_did, resolver, now)?;
-    let report = cokret_sdk::verify_snapshot_manifest(
+    let report = arkret_sdk::verify_snapshot_manifest(
         manifest,
         chunks,
-        &cokret_sdk::SnapshotVerifyOptions::standard(now, cokret_sdk::SNAPSHOT_REDUCER_PROFILE_V1),
+        &arkret_sdk::SnapshotVerifyOptions::standard(now, arkret_sdk::SNAPSHOT_REDUCER_PROFILE_V1),
     )
     .map_err(SnapshotFallbackReason::from_validation)?;
     let trust_state = match manifest.security_class {
-        cokret_sdk::SnapshotSecurityClass::Standard => SnapshotTrustState::LowerTrust,
-        cokret_sdk::SnapshotSecurityClass::HighAssurance => SnapshotTrustState::Verified,
+        arkret_sdk::SnapshotSecurityClass::Standard => SnapshotTrustState::LowerTrust,
+        arkret_sdk::SnapshotSecurityClass::HighAssurance => SnapshotTrustState::Verified,
     };
     Ok(SnapshotBootstrapResult {
         manifest_id: manifest.id.to_string(),
@@ -128,47 +128,47 @@ where
 }
 
 pub fn verify_snapshot_signature_and_authority<R>(
-    manifest: &cokret_sdk::SnapshotManifest,
-    service_did: &cokret_sdk::Did,
+    manifest: &arkret_sdk::SnapshotManifest,
+    service_did: &arkret_sdk::Did,
     resolver: &R,
     now: DateTime<Utc>,
 ) -> Result<(), SnapshotFallbackReason>
 where
-    R: cokret_sdk::DidResolver + ?Sized,
+    R: arkret_sdk::DidResolver + ?Sized,
 {
     if &manifest.created_by != service_did {
         return Err(SnapshotFallbackReason::new(
-            cokret_sdk::SnapshotValidationCode::SnapshotAuthorityUnverified.as_str(),
+            arkret_sdk::SnapshotValidationCode::SnapshotAuthorityUnverified.as_str(),
             "snapshot created_by does not match the principal server service_did",
         ));
     }
     if manifest.authority_binding.issuer != manifest.created_by {
         return Err(SnapshotFallbackReason::new(
-            cokret_sdk::SnapshotValidationCode::SnapshotAuthorityUnverified.as_str(),
+            arkret_sdk::SnapshotValidationCode::SnapshotAuthorityUnverified.as_str(),
             "snapshot authority_binding.issuer does not match created_by",
         ));
     }
 
     let canonical_bytes = manifest.signature_payload_bytes().map_err(|error| {
         SnapshotFallbackReason::new(
-            cokret_sdk::SnapshotValidationCode::DigestMismatch.as_str(),
+            arkret_sdk::SnapshotValidationCode::DigestMismatch.as_str(),
             format!("snapshot manifest canonicalization failed: {error}"),
         )
     })?;
     let expected_digest = manifest.expected_signature_digest().map_err(|error| {
         SnapshotFallbackReason::new(
-            cokret_sdk::SnapshotValidationCode::DigestMismatch.as_str(),
+            arkret_sdk::SnapshotValidationCode::DigestMismatch.as_str(),
             format!("snapshot signature digest failed: {error}"),
         )
     })?;
     let proof = manifest.signature_as_proof();
-    let mut context = cokret_sdk::signatures::ProofVerificationContext::new(
+    let mut context = arkret_sdk::signatures::ProofVerificationContext::new(
         manifest.created_by.clone(),
         expected_digest,
     );
     context.now = now;
     context.replay_window = snapshot_replay_window(manifest.security_class.clone());
-    let verification = cokret_sdk::verify_canonical_proof_with_did_resolver(
+    let verification = arkret_sdk::verify_canonical_proof_with_did_resolver(
         &canonical_bytes,
         &proof,
         &manifest.created_by,
@@ -177,26 +177,26 @@ where
     )
     .map_err(|error| {
         SnapshotFallbackReason::new(
-            cokret_sdk::SnapshotValidationCode::SnapshotAuthorityUnverified.as_str(),
+            arkret_sdk::SnapshotValidationCode::SnapshotAuthorityUnverified.as_str(),
             format!("snapshot signature verification failed: {error}"),
         )
     })?;
     if !verification.valid {
         return Err(SnapshotFallbackReason::new(
-            cokret_sdk::SnapshotValidationCode::SnapshotAuthorityUnverified.as_str(),
+            arkret_sdk::SnapshotValidationCode::SnapshotAuthorityUnverified.as_str(),
             "snapshot signature verification returned valid=false",
         ));
     }
     Ok(())
 }
 
-fn snapshot_replay_window(security_class: cokret_sdk::SnapshotSecurityClass) -> Duration {
+fn snapshot_replay_window(security_class: arkret_sdk::SnapshotSecurityClass) -> Duration {
     match security_class {
-        cokret_sdk::SnapshotSecurityClass::Standard => {
-            Duration::milliseconds(cokret_sdk::SNAPSHOT_V1_STANDARD_MAX_ACCEPTANCE_AGE_MS)
+        arkret_sdk::SnapshotSecurityClass::Standard => {
+            Duration::milliseconds(arkret_sdk::SNAPSHOT_V1_STANDARD_MAX_ACCEPTANCE_AGE_MS)
         }
-        cokret_sdk::SnapshotSecurityClass::HighAssurance => {
-            Duration::milliseconds(cokret_sdk::SNAPSHOT_V1_HIGH_ASSURANCE_MAX_ACCEPTANCE_AGE_MS)
+        arkret_sdk::SnapshotSecurityClass::HighAssurance => {
+            Duration::milliseconds(arkret_sdk::SNAPSHOT_V1_HIGH_ASSURANCE_MAX_ACCEPTANCE_AGE_MS)
         }
     }
 }
@@ -208,19 +208,19 @@ mod tests {
     #[test]
     fn fallback_reason_preserves_registry_code() {
         let reason =
-            SnapshotFallbackReason::from_validation(cokret_sdk::SnapshotValidationError::new(
-                cokret_sdk::SnapshotValidationCode::DigestMismatch,
+            SnapshotFallbackReason::from_validation(arkret_sdk::SnapshotValidationError::new(
+                arkret_sdk::SnapshotValidationCode::DigestMismatch,
                 "chunk digest mismatch",
             ));
-        assert_eq!(reason.code, cokret_sdk::ERROR_CODE_DIGEST_MISMATCH);
+        assert_eq!(reason.code, arkret_sdk::ERROR_CODE_DIGEST_MISMATCH);
         assert!(reason.message.contains("digest"));
     }
 
     #[test]
     fn standard_snapshot_is_lower_trust_until_replayed() {
         assert_eq!(
-            snapshot_replay_window(cokret_sdk::SnapshotSecurityClass::Standard),
-            Duration::milliseconds(cokret_sdk::SNAPSHOT_V1_STANDARD_MAX_ACCEPTANCE_AGE_MS)
+            snapshot_replay_window(arkret_sdk::SnapshotSecurityClass::Standard),
+            Duration::milliseconds(arkret_sdk::SNAPSHOT_V1_STANDARD_MAX_ACCEPTANCE_AGE_MS)
         );
     }
 }

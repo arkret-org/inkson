@@ -38,16 +38,16 @@ impl LocalStateStore {
 
     pub fn apply_snapshot_chunks(
         &mut self,
-        manifest: &cokret_sdk::SnapshotManifest,
-        chunks: &[cokret_sdk::SnapshotChunkPayload],
+        manifest: &arkret_sdk::SnapshotManifest,
+        chunks: &[arkret_sdk::SnapshotChunkPayload],
         trust_state: crate::snapshot::SnapshotTrustState,
     ) -> anyhow::Result<()> {
-        let report = cokret_sdk::verify_snapshot_manifest(
+        let report = arkret_sdk::verify_snapshot_manifest(
             manifest,
             chunks,
-            &cokret_sdk::SnapshotVerifyOptions::standard(
+            &arkret_sdk::SnapshotVerifyOptions::standard(
                 Utc::now(),
-                cokret_sdk::SNAPSHOT_REDUCER_PROFILE_V1,
+                arkret_sdk::SNAPSHOT_REDUCER_PROFILE_V1,
             ),
         )
         .map_err(|error| anyhow::anyhow!("{}: {}", error.code.as_str(), error.message))?;
@@ -212,7 +212,7 @@ impl LocalStateStore {
     pub fn realm_durability_policy(
         &self,
         realm_id: &str,
-    ) -> Option<cokret_sdk::models::DurabilityPolicy> {
+    ) -> Option<arkret_sdk::models::DurabilityPolicy> {
         self.load()
             .realm_tree_projections
             .get(realm_id.trim())

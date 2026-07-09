@@ -485,7 +485,7 @@ pub fn OnboardingPanel(
                     // unrecoverable. The UI hard-blocks the
                     // "Authorize device" → retirement transition
                     // until the first did_recovery envelope is
-                    // observed via `GET /_cokret/self/keys/backups`.
+                    // observed via `GET /_arkret/self/keys/backups`.
                     FirstBackupGate {
                         base_url: base_url.clone(),
                         token,

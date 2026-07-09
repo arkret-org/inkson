@@ -5,22 +5,22 @@
 //! (D2), persists the organization control private key locally (D1), then signs
 //! `ck.realm.organization` relationship statements binding the organization to a
 //! Realm (D3). The organization-side statement proof is produced with the
-//! organization control key via [`cokret_sdk::realm_organization_statement_sign`],
+//! organization control key via [`arkret_sdk::realm_organization_statement_sign`],
 //! NOT with the human login / device signer.
 //!
 //! Upstream the entire DID-minting + statement-signing cryptography lives in the
-//! SDK (`cokret_sdk::webvh::*`, `cokret_sdk::realm_organization_statement_sign`);
+//! SDK (`arkret_sdk::webvh::*`, `arkret_sdk::realm_organization_statement_sign`);
 //! this module only orchestrates RNG sourcing, secure-key persistence, and the
 //! payload assembly the SDK signs.
 
 use base64::Engine as _;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
-use cokret_sdk::models::{
+use arkret_sdk::models::{
     RealmOrganizationAuthorization, RealmOrganizationControlScope, RealmOrganizationIssuerRole,
     RealmOrganizationPayload, RealmOrganizationRelationship, RealmOrganizationStatus,
     SignatureMaterial,
 };
-use cokret_sdk::webvh::{InceptionInput, PreparedInception, prepare_inception};
+use arkret_sdk::webvh::{InceptionInput, PreparedInception, prepare_inception};
 use ed25519_dalek::SigningKey;
 use rand_core_06::{CryptoRng, RngCore};
 
@@ -136,7 +136,7 @@ pub enum OrganizationError {
     #[error("organization local_id must not be empty")]
     EmptyLocalId,
     #[error("webvh inception failed: {0}")]
-    Inception(#[from] cokret_sdk::webvh::WebvhInceptionError),
+    Inception(#[from] arkret_sdk::webvh::WebvhInceptionError),
 }
 
 /// Build a `did:webvh` inception for a new organization (D2, client side).
@@ -229,10 +229,10 @@ pub fn sign_organization_statement(
     input: &OrganizationStatementInput,
     control_key: &SigningKey,
 ) -> anyhow::Result<RealmOrganizationPayload> {
-    let realm_id = cokret_sdk::RealmId::new(input.realm_id.trim().to_owned())
+    let realm_id = arkret_sdk::RealmId::new(input.realm_id.trim().to_owned())
         .map_err(|err| anyhow::anyhow!("invalid realm id `{}`: {err}", input.realm_id))?;
     let organization_id =
-        cokret_sdk::Did::new(input.organization_did.trim().to_owned()).map_err(|err| {
+        arkret_sdk::Did::new(input.organization_did.trim().to_owned()).map_err(|err| {
             anyhow::anyhow!(
                 "invalid organization DID `{}`: {err}",
                 input.organization_did
@@ -280,7 +280,7 @@ pub fn sign_organization_statement(
         },
     };
 
-    cokret_sdk::realm_organization_statement_sign(&payload, control_key)
+    arkret_sdk::realm_organization_statement_sign(&payload, control_key)
         .map_err(|err| anyhow::anyhow!("organization statement signing failed: {err}"))
 }
 
@@ -346,7 +346,7 @@ mod tests {
             .decode(proof.as_bytes())
             .expect("base64url decode");
         let signature = ed25519_dalek::Signature::from_slice(&sig_bytes).expect("64-byte sig");
-        let signing_bytes = cokret_sdk::models::realm_organization_statement_signing_bytes(&signed)
+        let signing_bytes = arkret_sdk::models::realm_organization_statement_signing_bytes(&signed)
             .expect("signing bytes");
         use ed25519_dalek::Verifier;
         control_key

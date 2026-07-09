@@ -4,7 +4,7 @@
 //! local session credential minted by soland. After login, the client
 //! holds the `ck.session.grant` (issued by the Account Authority) plus the
 //! grant-binding (DPoP) key whose thumbprint is the grant's `cnf.jkt`. The grant
-//! itself is the live credential for `/_cokret/self/*`: every request presents
+//! itself is the live credential for `/_arkret/self/*`: every request presents
 //! `Authorization: Bearer <grant>` + a per-request `DPoP` proof.
 //!
 //! This module's only job is therefore to keep that grant fresh:
@@ -23,7 +23,7 @@ use anyhow::Context as _;
 use base64::Engine as _;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use chrono::Utc;
-use cokret_sdk::http_client::{Auth, ClientBuilder};
+use arkret_sdk::http_client::{Auth, ClientBuilder};
 use garth::{SessionEngine, SessionGrantState, SessionRefreshOptions};
 use serde::Serialize;
 use url::Url;
@@ -269,7 +269,7 @@ async fn rotate_session_grant(
         .map_err(|error| anyhow::anyhow!("build session refresh HTTP client: {error}"))?;
     let refresh_proof = mint_session_grant_refresh_proof(grant)
         .map_err(|error| anyhow::anyhow!("mint rotation DID proof: {error}"))?;
-    let device_id = cokret_sdk::DeviceId::new(grant.device_id.trim().to_owned())
+    let device_id = arkret_sdk::DeviceId::new(grant.device_id.trim().to_owned())
         .map_err(|error| anyhow::anyhow!("invalid refresh device_id: {error}"))?;
     let engine = SessionEngine::with_state(
         http,
@@ -318,13 +318,13 @@ fn session_grant_state_from_persisted(
         .filter(|expires_at| *expires_at > now)
         .unwrap_or_else(|| now + chrono::Duration::seconds(REFRESH_SKEW_SECS));
     Ok(SessionGrantState {
-        principal_id: cokret_sdk::Did::new(grant.principal_id.trim().to_owned())
+        principal_id: arkret_sdk::Did::new(grant.principal_id.trim().to_owned())
             .map_err(|error| anyhow::anyhow!("invalid refresh principal_id: {error}"))?,
         device_id: Some(
-            cokret_sdk::DeviceId::new(grant.device_id.trim().to_owned())
+            arkret_sdk::DeviceId::new(grant.device_id.trim().to_owned())
                 .map_err(|error| anyhow::anyhow!("invalid refresh device_id: {error}"))?,
         ),
-        grant_id: cokret_sdk::GrantId::new(grant.grant_id.trim().to_owned())
+        grant_id: arkret_sdk::GrantId::new(grant.grant_id.trim().to_owned())
             .map_err(|error| anyhow::anyhow!("invalid refresh grant_id: {error}"))?,
         grant_jwt: grant.grant_jwt.clone(),
         expires_at,
@@ -342,7 +342,7 @@ pub(crate) fn sdk_base_url_from_gate_account_base(gate_account_base: &str) -> an
     url.set_fragment(None);
 
     let path = url.path().trim_end_matches('/');
-    if let Some(prefix) = path.strip_suffix("/_cokret/gate/account") {
+    if let Some(prefix) = path.strip_suffix("/_arkret/gate/account") {
         let root_path = if prefix.is_empty() {
             "/".to_owned()
         } else {
@@ -379,7 +379,7 @@ struct SoftLogoutRestoreRequestDigest<'a> {
 
 fn mint_session_grant_refresh_proof(
     grant: &PersistedSessionGrant,
-) -> anyhow::Result<cokret_sdk::SessionGrantRefreshProof> {
+) -> anyhow::Result<arkret_sdk::SessionGrantRefreshProof> {
     let principal_id = required_trimmed(&grant.principal_id, "principal_id")?;
     let device_id = required_trimmed(&grant.device_id, "device_id")?;
     let audience = required_trimmed(&grant.audience, "audience")?;
@@ -391,7 +391,7 @@ fn mint_session_grant_refresh_proof(
         audience,
         &verification_method,
     )?;
-    let request_canonical_digest_hash = cokret_sdk::Hash::new(request_canonical_digest.clone())
+    let request_canonical_digest_hash = arkret_sdk::Hash::new(request_canonical_digest.clone())
         .map_err(|error| anyhow::anyhow!("soft logout restore request digest: {error}"))?;
     let challenge = soft_logout_refresh_challenge()?;
     let issued_at = Utc::now();
@@ -412,8 +412,8 @@ fn mint_session_grant_refresh_proof(
     let signature = signer
         .detached_jws_over_payload_with_kid(&verification_method, &payload)
         .map_err(|error| anyhow::anyhow!("sign soft logout restore proof: {error}"))?;
-    Ok(cokret_sdk::SessionGrantRefreshProof {
-        proof_kind: Some(cokret_sdk::SessionGrantProofKind::DidBoundSignature),
+    Ok(arkret_sdk::SessionGrantRefreshProof {
+        proof_kind: Some(arkret_sdk::SessionGrantProofKind::DidBoundSignature),
         challenge: Some(challenge),
         request_canonical_digest: Some(request_canonical_digest_hash),
         audience: Some(audience.to_owned()),
@@ -625,7 +625,7 @@ mod tests {
         store.set_session_grant(Some(grant_with_expiry(86400)));
         let error: anyhow::Error = crate::api_error::CokretApiError {
             status: reqwest::StatusCode::FORBIDDEN,
-            error: crate::api_error::decode_cokret_error(
+            error: crate::api_error::decode_arkret_error(
                 reqwest::StatusCode::FORBIDDEN,
                 br#"{"ok":false,"error":{"code":"capability_denied","message":"session grant is not active: revoked"},"request_id":"ak:request:01964137-0000-7000-8000-000000000012"}"#,
             ),
@@ -644,7 +644,7 @@ mod tests {
         store.set_session_grant(Some(grant_with_expiry(86400)));
         let error: anyhow::Error = crate::api_error::CokretApiError {
             status: reqwest::StatusCode::BAD_REQUEST,
-            error: crate::api_error::decode_cokret_error(
+            error: crate::api_error::decode_arkret_error(
                 reqwest::StatusCode::BAD_REQUEST,
                 br#"{"ok":false,"error":{"code":"grant_already_consumed","message":"session grant already consumed; its rotation chain cannot continue"}}"#,
             ),
@@ -663,7 +663,7 @@ mod tests {
         store.set_session_grant(Some(grant_with_expiry(86400)));
         let error: anyhow::Error = crate::api_error::CokretApiError {
             status: reqwest::StatusCode::UNAUTHORIZED,
-            error: crate::api_error::decode_cokret_error(
+            error: crate::api_error::decode_arkret_error(
                 reqwest::StatusCode::UNAUTHORIZED,
                 br#"{"ok":false,"error":{"code":"invalid_signature","message":"DPoP proof key does not match grant cnf.jkt"}}"#,
             ),
@@ -682,7 +682,7 @@ mod tests {
         store.set_session_grant(Some(grant_with_expiry(86400)));
         let error: anyhow::Error = crate::api_error::CokretApiError {
             status: reqwest::StatusCode::FORBIDDEN,
-            error: crate::api_error::decode_cokret_error(
+            error: crate::api_error::decode_arkret_error(
                 reqwest::StatusCode::FORBIDDEN,
                 br#"{"ok":false,"error":{"code":"capability_denied","message":"actor is not a member of the event Space"},"request_id":"ak:request:01964137-0000-7000-8000-000000000012"}"#,
             ),
@@ -701,7 +701,7 @@ mod tests {
         store.set_session_grant(Some(grant_with_expiry(86400)));
         let error: anyhow::Error = crate::api_error::CokretApiError {
             status: reqwest::StatusCode::UNAUTHORIZED,
-            error: crate::api_error::decode_cokret_error(
+            error: crate::api_error::decode_arkret_error(
                 reqwest::StatusCode::UNAUTHORIZED,
                 br#"{"ok":false,"error":{"code":"auth_expired","message":"temporary auth gateway denial"}}"#,
             ),

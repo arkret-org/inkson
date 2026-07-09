@@ -66,7 +66,7 @@ pub fn build_call_state(
     OperationBuilder::new(
         realm_id,
         actor,
-        cokret_sdk::events::kinds::EventKind::CallState,
+        arkret_sdk::events::kinds::EventKind::CallState,
     )
     .target_ref(call_id)
     .body(json!({
@@ -78,14 +78,14 @@ pub fn build_call_state(
 
 /// Round 4 — outcome of feeding an incoming `ck.call.signal` envelope
 /// through the receiver. Carries the canonical
-/// [`cokret_sdk::CallSignalPayload`] when accepted; on a seq rollback
+/// [`arkret_sdk::CallSignalPayload`] when accepted; on a seq rollback
 /// the renderer SHOULD emit a local `hangup` for the offending call.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum CallSignalIngestOutcome {
     /// Envelope passed Round 4 validation, the proof was present, and the
     /// per-`(realm, call, actor, device)` seq advanced strictly forward.
     Accepted {
-        payload: cokret_sdk::CallSignalPayload,
+        payload: arkret_sdk::CallSignalPayload,
     },
     /// `payload.seq` rolled back or repeated — the receiver drops the
     /// signal and SHOULD emit a local `hangup` for `call_id`. The
@@ -99,25 +99,25 @@ pub enum CallSignalIngestOutcome {
 
 /// Round 4 — typed receiver for incoming `ck.call.signal` envelopes.
 ///
-/// Wraps [`cokret_sdk::CallSignalState`] so the renderer can plug a
+/// Wraps [`arkret_sdk::CallSignalState`] so the renderer can plug a
 /// single state into the signal stream and get back a typed outcome
 /// without touching the SDK's mutable `observe` method directly.
 pub struct CallSignalReceiver {
-    state: cokret_sdk::CallSignalState,
+    state: arkret_sdk::CallSignalState,
 }
 
 impl CallSignalReceiver {
     pub fn new() -> Self {
         Self {
-            state: cokret_sdk::CallSignalState::new(),
+            state: arkret_sdk::CallSignalState::new(),
         }
     }
 
     /// Run the Round 4 envelope validator + per-key monotonicity guard. The
     /// caller is responsible for the proof-verification step BEFORE
     /// invoking this (the SDK only asserts `proof.is_some()`).
-    pub fn ingest(&mut self, envelope: &cokret_sdk::EphemeralEnvelope) -> CallSignalIngestOutcome {
-        let payload = match cokret_sdk::validate_call_signal_envelope(envelope) {
+    pub fn ingest(&mut self, envelope: &arkret_sdk::EphemeralEnvelope) -> CallSignalIngestOutcome {
+        let payload = match arkret_sdk::validate_call_signal_envelope(envelope) {
             Ok(p) => p,
             Err(err) => {
                 return CallSignalIngestOutcome::Rejected {
@@ -133,7 +133,7 @@ impl CallSignalReceiver {
                 };
             }
         };
-        let key = cokret_sdk::CallSignalSeqKey::new(
+        let key = arkret_sdk::CallSignalSeqKey::new(
             envelope.realm_id.clone(),
             payload.call_id.clone(),
             envelope.actor_id.clone(),
@@ -167,14 +167,14 @@ pub fn build_call_recording_start(
     actor: &str,
     call_id: &str,
     recording_id: &str,
-    capture_kind: cokret_sdk::RecordingCaptureKind,
-    mode: cokret_sdk::RecordingMode,
+    capture_kind: arkret_sdk::RecordingCaptureKind,
+    mode: arkret_sdk::RecordingMode,
     visible_notice: bool,
 ) -> OperationBuilder {
     OperationBuilder::new(
         realm_id,
         actor,
-        cokret_sdk::events::kinds::EventKind::CallRecordingStart,
+        arkret_sdk::events::kinds::EventKind::CallRecordingStart,
     )
     .target_ref(call_id)
     .body(json!({
@@ -230,8 +230,8 @@ mod tests {
             "did:web:alice",
             "ak:call:c1",
             "rtc-recording-r1",
-            cokret_sdk::RecordingCaptureKind::Recording,
-            cokret_sdk::RecordingMode::AudioVideo,
+            arkret_sdk::RecordingCaptureKind::Recording,
+            arkret_sdk::RecordingMode::AudioVideo,
             true,
         )
         .build("node");
@@ -250,8 +250,8 @@ mod tests {
             "did:web:alice",
             "ak:call:c1",
             "rtc-transcript-t1",
-            cokret_sdk::RecordingCaptureKind::Transcript,
-            cokret_sdk::RecordingMode::AudioOnly,
+            arkret_sdk::RecordingCaptureKind::Transcript,
+            arkret_sdk::RecordingMode::AudioOnly,
             true,
         )
         .build("node");
@@ -260,7 +260,7 @@ mod tests {
         assert_eq!(op.payload["mode"], "audio");
     }
 
-    fn make_v1_envelope(seq: u64, signal_type: &str) -> cokret_sdk::EphemeralEnvelope {
+    fn make_v1_envelope(seq: u64, signal_type: &str) -> arkret_sdk::EphemeralEnvelope {
         let mut env = crate::ephemeral::build_call_signal_envelope_v1(
             "ak:realm:01904100-0000-7000-8000-000000000001",
             "did:web:alice.example",
@@ -280,7 +280,7 @@ mod tests {
 
     #[test]
     fn v1_builder_accepts_canonical_signal_types() {
-        for st in cokret_sdk::CALL_SIGNAL_TYPES {
+        for st in arkret_sdk::CALL_SIGNAL_TYPES {
             let env = make_v1_envelope(1, st);
             assert_eq!(env.kind, "ck.call.signal");
             assert!(env.device_id.is_some());
@@ -322,12 +322,12 @@ mod tests {
     fn receiver_rejects_envelope_without_device_id_or_proof() {
         // Hand-build an envelope without proof to verify the receiver
         // rejects it (the Round 4 schema requires proof).
-        let env = cokret_sdk::EphemeralEnvelope::new(
+        let env = arkret_sdk::EphemeralEnvelope::new(
             "ck.call.signal",
-            cokret_sdk::RealmId::new("ak:realm:01904100-0000-7000-8000-000000000001").unwrap(),
-            cokret_sdk::Did::new("did:web:alice.example").unwrap(),
+            arkret_sdk::RealmId::new("ak:realm:01904100-0000-7000-8000-000000000001").unwrap(),
+            arkret_sdk::Did::new("did:web:alice.example").unwrap(),
             Some(
-                cokret_sdk::DeviceId::new("ak:device:01904100-0000-7000-8000-000000000002")
+                arkret_sdk::DeviceId::new("ak:device:01904100-0000-7000-8000-000000000002")
                     .unwrap(),
             ),
             chrono::Utc::now(),

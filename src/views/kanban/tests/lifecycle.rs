@@ -37,7 +37,7 @@ fn try_load_api_columns_returns_none_in_sync_init_context() {
 }
 
 /// Wire state strings emitted by soland's
-/// `/_cokret/self/realms/{realm_id}/{spaces|strands}` round-trip into the
+/// `/_arkret/self/realms/{realm_id}/{spaces|strands}` round-trip into the
 /// renderer enums. Unknown values stay at the safe `Active` default.
 #[test]
 fn lifecycle_wire_strings_decode_to_enums() {

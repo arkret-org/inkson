@@ -25,7 +25,7 @@ fn optional_object(value: Value, context: &str) -> anyhow::Result<Option<BTreeMa
 
 /// Map a wire `runtime_status` token onto the closed SDK enum. Fail-closed:
 /// unknown tokens are rejected rather than forwarded as free-form strings.
-fn parse_runtime_status(runtime_status: &str) -> anyhow::Result<cokret_sdk::AppletRuntimeStatus> {
+fn parse_runtime_status(runtime_status: &str) -> anyhow::Result<arkret_sdk::AppletRuntimeStatus> {
     serde_json::from_value(Value::String(runtime_status.to_owned())).map_err(|_| {
         anyhow::anyhow!(
             "unknown applet runtime status {runtime_status:?} \
@@ -46,7 +46,7 @@ pub fn applet_registration(
     OperationBuilder::new(
         realm_id,
         actor,
-        cokret_sdk::events::kinds::EventKind::AppletRegistration,
+        arkret_sdk::events::kinds::EventKind::AppletRegistration,
     )
     .target_ref(service_did)
     .body(json!({
@@ -68,7 +68,7 @@ pub fn applet_discovery(
     OperationBuilder::new(
         realm_id,
         actor,
-        cokret_sdk::events::kinds::EventKind::AppletDiscovery,
+        arkret_sdk::events::kinds::EventKind::AppletDiscovery,
     )
     .target_ref(service_did)
     .body(json!({
@@ -78,18 +78,18 @@ pub fn applet_discovery(
 }
 
 /// Round 4 (spec a77b995) — validate an `applet_id` against the
-/// canonical [`cokret_sdk::AppletIdentifier`] shape (DID *or*
+/// canonical [`arkret_sdk::AppletIdentifier`] shape (DID *or*
 /// `ck:applet:<uuidv7>`). Returns the typed identifier so callers
 /// can stash it without re-parsing. Wire-breaking: plain strings
 /// outside these two forms are rejected.
-pub fn parse_applet_identifier(applet_id: &str) -> Result<cokret_sdk::AppletIdentifier, String> {
+pub fn parse_applet_identifier(applet_id: &str) -> Result<arkret_sdk::AppletIdentifier, String> {
     if applet_id.starts_with("did:") {
-        cokret_sdk::Did::new(applet_id)
-            .map(cokret_sdk::AppletIdentifier::Did)
+        arkret_sdk::Did::new(applet_id)
+            .map(arkret_sdk::AppletIdentifier::Did)
             .map_err(|e| format!("invalid applet DID: {e}"))
     } else if applet_id.starts_with("ak:applet:") {
-        cokret_sdk::AppletId::new(applet_id)
-            .map(cokret_sdk::AppletIdentifier::Cx)
+        arkret_sdk::AppletId::new(applet_id)
+            .map(arkret_sdk::AppletIdentifier::Cx)
             .map_err(|e| format!("invalid ck:applet:<uuidv7>: {e}"))
     } else {
         Err(format!(
@@ -111,7 +111,7 @@ pub fn applet_interop_session_start(
 ) -> anyhow::Result<OperationBuilder> {
     let applet_id = parse_applet_identifier(applet_id).map_err(|err| anyhow::anyhow!("{err}"))?;
     let mut payload =
-        cokret_sdk::AppletInteropSessionStartPayload::new(applet_id, session_id.to_owned());
+        arkret_sdk::AppletInteropSessionStartPayload::new(applet_id, session_id.to_owned());
     if let Some(params) = optional_object(params, "applet session params")? {
         payload = payload.with_params(params);
     }
@@ -121,7 +121,7 @@ pub fn applet_interop_session_start(
     Ok(OperationBuilder::new(
         realm_id,
         actor,
-        cokret_sdk::events::kinds::EventKind::AppletInteropSessionStart,
+        arkret_sdk::events::kinds::EventKind::AppletInteropSessionStart,
     )
     .target_ref(session_id)
     .body(body))
@@ -138,7 +138,7 @@ pub fn applet_interop_session_status(
     detail: serde_json::Value,
 ) -> anyhow::Result<OperationBuilder> {
     let applet_id = parse_applet_identifier(applet_id).map_err(|err| anyhow::anyhow!("{err}"))?;
-    let mut payload = cokret_sdk::AppletInteropSessionStatusPayload::new(
+    let mut payload = arkret_sdk::AppletInteropSessionStatusPayload::new(
         applet_id,
         session_id.to_owned(),
         parse_runtime_status(runtime_status)?,
@@ -152,7 +152,7 @@ pub fn applet_interop_session_status(
     Ok(OperationBuilder::new(
         realm_id,
         actor,
-        cokret_sdk::events::kinds::EventKind::AppletInteropSessionStatus,
+        arkret_sdk::events::kinds::EventKind::AppletInteropSessionStatus,
     )
     .target_ref(session_id)
     .body(body))
@@ -171,9 +171,9 @@ pub fn applet_bridge_error(
     visibility_scope: &str,
     message: &str,
 ) -> anyhow::Result<OperationBuilder> {
-    let payload = cokret_sdk::AppletBridgeErrorPayload {
+    let payload = arkret_sdk::AppletBridgeErrorPayload {
         applet_id: json!(applet_id),
-        realm_id: cokret_sdk::RealmId::new(realm_id.to_owned())
+        realm_id: arkret_sdk::RealmId::new(realm_id.to_owned())
             .map_err(|err| anyhow::anyhow!("invalid realm id {realm_id:?}: {err}"))?,
         failed_transaction_ref: json!(failed_transaction_ref),
         error_class: error_class.to_owned(),
@@ -189,7 +189,7 @@ pub fn applet_bridge_error(
     Ok(OperationBuilder::new(
         realm_id,
         actor,
-        cokret_sdk::events::kinds::EventKind::AppletBridgeError,
+        arkret_sdk::events::kinds::EventKind::AppletBridgeError,
     )
     .target_ref(failed_transaction_ref)
     .body(body))

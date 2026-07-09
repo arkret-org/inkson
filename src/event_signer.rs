@@ -24,7 +24,7 @@
 //! ## Canonical bytes alignment
 //!
 //! The SDK's `EventProofBuilder` operates over an opaque `T: Serialize`.
-//! The builder now emits `cokret_sdk::Event` directly, so this module derives
+//! The builder now emits `arkret_sdk::Event` directly, so this module derives
 //! `Event::event_digest()` from the SDK event in place.
 //!
 //! ## Wiring contract
@@ -53,7 +53,7 @@ use std::sync::{Arc, Mutex, OnceLock};
 use base64::Engine as _;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use chrono::{DateTime, Utc};
-use cokret_sdk::signatures::proof::{EventSigner as SdkEventSigner, ProofType};
+use arkret_sdk::signatures::proof::{EventSigner as SdkEventSigner, ProofType};
 use ed25519_dalek::{Signer as _, SigningKey};
 
 use crate::operation::{EventEnvelope, EventProofAudience, ProofMode, current_proof_mode};
@@ -258,10 +258,10 @@ impl InksonEventSigner {
     }
 
     /// Sign a SDK-typed Event in place. This is the single event proof path for
-    /// modules that build `cokret_sdk::Event` through the operation builder.
+    /// modules that build `arkret_sdk::Event` through the operation builder.
     pub fn sign_sdk_event_with_context(
         &self,
-        event: &mut cokret_sdk::Event,
+        event: &mut arkret_sdk::Event,
         context: EventProofContext,
     ) -> Result<(), EventSignerError> {
         use base64::Engine;
@@ -288,20 +288,20 @@ impl InksonEventSigner {
             .audience
             .as_ref()
             .map(|audience| {
-                serde_json::from_value::<cokret_sdk::Audience>(
+                serde_json::from_value::<arkret_sdk::Audience>(
                     serde_json::to_value(audience)
                         .map_err(|err| EventSignerError::Encoding(err.to_string()))?,
                 )
                 .map_err(|err| EventSignerError::Encoding(err.to_string()))
             })
             .transpose()?;
-        let actor_did = cokret_sdk::Did::new(actor_id.to_owned())
+        let actor_did = arkret_sdk::Did::new(actor_id.to_owned())
             .map_err(|err| EventSignerError::Encoding(err.to_string()))?;
-        let mut proof = cokret_sdk::Proof {
+        let mut proof = arkret_sdk::Proof {
             kind: "detached_jws".to_owned(),
             alg: self.algorithm().to_owned(),
             verification_method,
-            event_digest: cokret_sdk::Hash::new(event_digest)
+            event_digest: arkret_sdk::Hash::new(event_digest)
                 .map_err(|err| EventSignerError::Encoding(err.to_string()))?,
             created_at: proof_created_at,
             domain: context.domain,
@@ -397,7 +397,7 @@ impl InksonEventSigner {
         Ok(format!("{header_b64}..{sig_b64}"))
     }
 
-    fn verification_method_for_sdk_event(&self, event: &cokret_sdk::Event) -> String {
+    fn verification_method_for_sdk_event(&self, event: &arkret_sdk::Event) -> String {
         let controller = event
             .executed_by
             .as_ref()
@@ -586,7 +586,7 @@ pub fn build_ed25519_signer_with_verification_method(
     signer_did: impl Into<String>,
     verification_method: impl Into<String>,
 ) -> InksonEventSigner {
-    use cokret_sdk::signatures::proof::Ed25519DetachedJwsSigner;
+    use arkret_sdk::signatures::proof::Ed25519DetachedJwsSigner;
     let signer_did = signer_did.into();
     let verification_method = verification_method.into();
     let raw_signing_key = SigningKey::from_bytes(&seed);
@@ -613,7 +613,7 @@ pub fn bind_active_signer_device_id(
             "device_id is required for device-bound event proofs"
         ));
     };
-    cokret_sdk::DeviceId::new(device_id.clone())
+    arkret_sdk::DeviceId::new(device_id.clone())
         .map_err(|err| anyhow::anyhow!("invalid device_id for event signer: {err}"))?;
     if active.device_id.as_deref() == Some(device_id.as_str()) {
         return Ok(Some(active));
@@ -736,7 +736,7 @@ pub fn sign_with_active_context(
 }
 
 pub fn sign_sdk_event_with_active_context(
-    event: &mut cokret_sdk::Event,
+    event: &mut arkret_sdk::Event,
     context: EventProofContext,
 ) -> Result<(), EventSignerError> {
     let mode = current_proof_mode();
@@ -820,7 +820,7 @@ pub fn bootstrap_default_signer_for_device(
 ) -> Result<Arc<InksonEventSigner>, anyhow::Error> {
     let device_id = normalize_signer_device_id(Some(device_id))
         .ok_or_else(|| anyhow::anyhow!("device_id is required for device-bound event signer"))?;
-    cokret_sdk::DeviceId::new(device_id.clone())
+    arkret_sdk::DeviceId::new(device_id.clone())
         .map_err(|err| anyhow::anyhow!("invalid device_id for event signer: {err}"))?;
     let store = crate::secure_key_store::default_secure_key_store(service_name);
     let material = crate::secure_key_store::ensure_signing_seed(&*store)
@@ -974,7 +974,7 @@ mod tests {
         let mut event = OperationBuilder::new(
             TEST_REALM_ID,
             "did:web:bob.example",
-            cokret_sdk::events::kinds::EventKind::MessageCreate,
+            arkret_sdk::events::kinds::EventKind::MessageCreate,
         )
         .body(json!({"body": "hi"}))
         .build("test_node");
@@ -1017,7 +1017,7 @@ mod tests {
         let mut event = OperationBuilder::new(
             TEST_REALM_ID,
             "did:web:alice.example",
-            cokret_sdk::events::kinds::EventKind::MessageCreate,
+            arkret_sdk::events::kinds::EventKind::MessageCreate,
         )
         .body(json!({"body": "actor-rooted"}))
         .build("test_node");
@@ -1035,7 +1035,7 @@ mod tests {
 
     #[test]
     fn sign_envelope_round_trips_through_sdk_verifier() {
-        use cokret_sdk::signatures::proof::{
+        use arkret_sdk::signatures::proof::{
             Ed25519DetachedJwsSigner, Ed25519DetachedJwsVerifier, EventVerifier, PublicKeyMaterial,
         };
         let _g = reset();
@@ -1056,7 +1056,7 @@ mod tests {
         let mut event = OperationBuilder::new(
             TEST_REALM_ID,
             "did:web:carol.example",
-            cokret_sdk::events::kinds::EventKind::MessageCreate,
+            arkret_sdk::events::kinds::EventKind::MessageCreate,
         )
         .body(json!({"body": "verifiable"}))
         .build("test_node");
@@ -1076,7 +1076,7 @@ mod tests {
         // The binding transcript is the SDK's authoritative `canonical_binding_bytes`
         // (folds in the `context = "ck-event-proof-v1"` domain tag), matching the
         // production signer.
-        let did = cokret_sdk::Did::new(event.actor_id.as_str().to_owned()).unwrap();
+        let did = arkret_sdk::Did::new(event.actor_id.as_str().to_owned()).unwrap();
         let proof_binding_bytes = proof.canonical_binding_bytes(&did).unwrap();
 
         use base64::Engine;
@@ -1093,7 +1093,7 @@ mod tests {
 
     #[test]
     fn sign_envelope_with_context_binds_domain_and_audience() {
-        use cokret_sdk::signatures::proof::{
+        use arkret_sdk::signatures::proof::{
             Ed25519DetachedJwsSigner, Ed25519DetachedJwsVerifier, EventVerifier, PublicKeyMaterial,
         };
         let _g = reset();
@@ -1112,7 +1112,7 @@ mod tests {
         let mut event = OperationBuilder::new(
             TEST_REALM_ID,
             "did:web:carol.example",
-            cokret_sdk::events::kinds::EventKind::MessageCreate,
+            arkret_sdk::events::kinds::EventKind::MessageCreate,
         )
         .body(json!({"body": "bound"}))
         .build("test_node");
@@ -1145,7 +1145,7 @@ mod tests {
         );
         // Binding transcript via the SDK's authoritative `canonical_binding_bytes`
         // (context tag + domain + audience folded in), matching the production signer.
-        let did = cokret_sdk::Did::new(event.actor_id.as_str().to_owned()).unwrap();
+        let did = arkret_sdk::Did::new(event.actor_id.as_str().to_owned()).unwrap();
         let proof_binding_bytes = proof.canonical_binding_bytes(&did).unwrap();
 
         use base64::Engine;
@@ -1161,7 +1161,7 @@ mod tests {
     fn sign_sdk_event_with_context_attaches_typed_proof() {
         let _g = reset();
         let signer = build_ed25519_device_signer([10u8; 32], "did:web:sdk.example", TEST_DEVICE_ID);
-        let mut event: cokret_sdk::Event = serde_json::from_value(json!({
+        let mut event: arkret_sdk::Event = serde_json::from_value(json!({
             "event_id": "ak:event:01904100-0000-7000-8000-000000000001",
             "kind": "ck.message.create",
             "realm_id": TEST_REALM_ID,
@@ -1291,7 +1291,7 @@ mod tests {
         let mut event = OperationBuilder::new(
             TEST_REALM_ID,
             "did:web:dave.example",
-            cokret_sdk::events::kinds::EventKind::MessageCreate,
+            arkret_sdk::events::kinds::EventKind::MessageCreate,
         )
         .body(json!({"body": "auto"}))
         .build("test_node");
@@ -1315,7 +1315,7 @@ mod tests {
         let mut event = OperationBuilder::new(
             TEST_REALM_ID,
             "did:web:eve.example",
-            cokret_sdk::events::kinds::EventKind::MessageCreate,
+            arkret_sdk::events::kinds::EventKind::MessageCreate,
         )
         .body(json!({"body": "no"}))
         .build("test_node");

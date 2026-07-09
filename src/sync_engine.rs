@@ -1,7 +1,7 @@
 //! Background account subscribe sync loop.
 //!
 //! Background engine that keeps the local store + UI signals continuously
-//! aligned with `/_cokret/self/account/subscribe` instead of refreshing only on
+//! aligned with `/_arkret/self/account/subscribe` instead of refreshing only on
 //! app boot, the Refresh button, or a server switch.
 //!
 //! Design contract (matches the intended approach laid out in the design
@@ -103,7 +103,7 @@ const MIN_BACKOFF_SECS: u64 = 1;
 const MIN_INTER_ITERATION_MS: u64 = 5_000;
 
 /// How many successful delta iterations may pass before the engine
-/// re-pulls `GET /_cokret/self/authz/invites`.
+/// re-pulls `GET /_arkret/self/authz/invites`.
 ///
 /// Pending invites are low-churn, so refetching the full list on *every*
 /// sync delta (~`MIN_INTER_ITERATION_MS` apart) just floods the network
@@ -260,7 +260,7 @@ impl ClientProjector for AccountClientEventProjector {
     fn project(
         &self,
         batch: Vec<ClientEvent>,
-    ) -> impl std::future::Future<Output = cokret_sdk::Result<()>> + '_ {
+    ) -> impl std::future::Future<Output = arkret_sdk::Result<()>> + '_ {
         async move {
             for event in batch {
                 self.record(event);
@@ -274,7 +274,7 @@ impl ClientProjector for AccountClientEventProjector {
 fn push_decoded_account_event(
     decoder: &InboundDecoder,
     batch: &mut Vec<ClientEvent>,
-    event: cokret_sdk::Event,
+    event: arkret_sdk::Event,
 ) {
     match decoder.decode_event(event) {
         DecodedInbound::Message(message) => batch.push(ClientEvent::Message(message)),
@@ -291,7 +291,7 @@ fn push_account_event_payload(
     batch: &mut Vec<ClientEvent>,
     payload: &Value,
 ) {
-    match serde_json::from_value::<cokret_sdk::Event>(payload.clone()) {
+    match serde_json::from_value::<arkret_sdk::Event>(payload.clone()) {
         Ok(event) => push_decoded_account_event(decoder, batch, event),
         Err(error) => {
             tracing::debug!(
@@ -306,7 +306,7 @@ fn push_account_event_payload(
 fn push_account_realm_update_events(
     decoder: &InboundDecoder,
     batch: &mut Vec<ClientEvent>,
-    update: &cokret_sdk::RealmUpdate,
+    update: &arkret_sdk::RealmUpdate,
 ) {
     for payload in &update.state {
         push_account_event_payload(decoder, batch, payload);
@@ -327,7 +327,7 @@ async fn project_account_response_client_events<P>(
 where
     P: ClientProjector + ?Sized,
 {
-    let mut processor = cokret_sdk::SyncResponseProcessor::new();
+    let mut processor = arkret_sdk::SyncResponseProcessor::new();
     let updates = processor.process(response.clone())?;
     let realm_updates = updates.realm_updates.clone();
     let mut batch = garth::account_updates_to_events(updates);
@@ -567,8 +567,8 @@ async fn run_circle_scope_rotate_pass(
                 return;
             }
             let circle_id = circle.circle_id.to_string();
-            if circle.state != cokret_sdk::CircleState::Active
-                || circle.encryption_profile != cokret_sdk::EncryptionProfile::MlsRfc9420
+            if circle.state != arkret_sdk::CircleState::Active
+                || circle.encryption_profile != arkret_sdk::EncryptionProfile::MlsRfc9420
                 || circle.pending_mls_removals.is_empty()
             {
                 continue;
@@ -2031,7 +2031,7 @@ fn invalidate_cache_for_revocation_events(
                 continue;
             }
             if let Some(did_str) = actor_id_str(event, fallback)
-                && let Ok(did) = cokret_sdk::Did::new(did_str.to_owned())
+                && let Ok(did) = arkret_sdk::Did::new(did_str.to_owned())
             {
                 cache.invalidate(&did);
             }
@@ -2244,21 +2244,21 @@ mod tests {
         LocalStateStore::with_path(path)
     }
 
-    fn sdk_realm_id() -> cokret_sdk::RealmId {
-        cokret_sdk::RealmId::new("ak:realm:0196419b-0000-7000-8000-000000000000").unwrap()
+    fn sdk_realm_id() -> arkret_sdk::RealmId {
+        arkret_sdk::RealmId::new("ak:realm:0196419b-0000-7000-8000-000000000000").unwrap()
     }
 
-    fn sdk_actor_id() -> cokret_sdk::Did {
-        cokret_sdk::Did::new("did:webvh:z6mkfixture:alice.example").unwrap()
+    fn sdk_actor_id() -> arkret_sdk::Did {
+        arkret_sdk::Did::new("did:webvh:z6mkfixture:alice.example").unwrap()
     }
 
-    fn sdk_event(kind: &str, payload: Value) -> cokret_sdk::Event {
-        cokret_sdk::Event::new(
+    fn sdk_event(kind: &str, payload: Value) -> arkret_sdk::Event {
+        arkret_sdk::Event::new(
             kind,
             sdk_realm_id(),
             sdk_actor_id(),
             1,
-            cokret_sdk::Hlc::new("01970e589d21-0004-a13f9c2e").unwrap(),
+            arkret_sdk::Hlc::new("01970e589d21-0004-a13f9c2e").unwrap(),
             payload,
         )
         .unwrap()
@@ -2267,7 +2267,7 @@ mod tests {
     #[tokio::test]
     async fn account_response_projects_client_events_and_decodes_realm_payloads() {
         let message_event = sdk_event(
-            cokret_sdk::events::kinds::MESSAGE_CREATE,
+            arkret_sdk::events::kinds::MESSAGE_CREATE,
             json!({
                 "strand_id": "ak:strand:0196419b-0000-7000-8000-000000000011",
                 "track_name": "discussion",
@@ -2331,7 +2331,7 @@ mod tests {
     /// re-delivers history never double-inserts.
     #[test]
     fn realm_subscribe_frames_ingest_into_raw_operations_and_dedupe() {
-        use cokret_sdk::EventsSubscribeFrameKind;
+        use arkret_sdk::EventsSubscribeFrameKind;
 
         let realm_id = "ak:realm:0196419b-0000-7000-8000-000000000000";
         let board_id = "ak:space:0196419b-0000-7000-8000-000000000001";
@@ -2773,7 +2773,7 @@ mod tests {
 
     // ── Y2 invalidation hook ──────────────────────────────────────────
 
-    use cokret_sdk::{Did, DidDocument};
+    use arkret_sdk::{Did, DidDocument};
 
     use crate::did_resolver::DidResolutionCache;
 

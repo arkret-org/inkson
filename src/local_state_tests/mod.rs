@@ -38,29 +38,29 @@ pub(super) fn temp_state_path(name: &str) -> PathBuf {
     std::env::temp_dir().join(format!("inkson-state-{name}-{stamp}.json"))
 }
 
-pub(super) fn snapshot_event_id(suffix: &str) -> cokret_sdk::EventId {
-    cokret_sdk::EventId::new(format!("ak:event:01904100-0000-7000-8000-{suffix}")).unwrap()
+pub(super) fn snapshot_event_id(suffix: &str) -> arkret_sdk::EventId {
+    arkret_sdk::EventId::new(format!("ak:event:01904100-0000-7000-8000-{suffix}")).unwrap()
 }
 
-pub(super) fn snapshot_hash(seed: u8) -> cokret_sdk::Hash {
-    cokret_sdk::Hash::new(format!("sha256:{}", format!("{seed:02x}").repeat(32))).unwrap()
+pub(super) fn snapshot_hash(seed: u8) -> arkret_sdk::Hash {
+    arkret_sdk::Hash::new(format!("sha256:{}", format!("{seed:02x}").repeat(32))).unwrap()
 }
 
 pub(super) fn snapshot_manifest_for_items(
-    items: Vec<cokret_sdk::SnapshotMaterializedItem>,
+    items: Vec<arkret_sdk::SnapshotMaterializedItem>,
 ) -> (
-    cokret_sdk::SnapshotManifest,
-    Vec<cokret_sdk::SnapshotChunkPayload>,
+    arkret_sdk::SnapshotManifest,
+    Vec<arkret_sdk::SnapshotChunkPayload>,
 ) {
     let snapshot_id =
-        cokret_sdk::SnapshotId::new("ak:snapshot:01904100-0000-7000-8000-0000000000aa").unwrap();
+        arkret_sdk::SnapshotId::new("ak:snapshot:01904100-0000-7000-8000-0000000000aa").unwrap();
     let realm_id =
-        cokret_sdk::RealmId::new("ak:realm:01904100-0000-7000-8000-0000000000aa").unwrap();
-    let service_did = cokret_sdk::Did::new("did:web:server.example").unwrap();
-    let state_digest = cokret_sdk::state_digest_from_items(&items).unwrap();
-    let built = cokret_sdk::build_snapshot_chunks(
+        arkret_sdk::RealmId::new("ak:realm:01904100-0000-7000-8000-0000000000aa").unwrap();
+    let service_did = arkret_sdk::Did::new("did:web:server.example").unwrap();
+    let state_digest = arkret_sdk::state_digest_from_items(&items).unwrap();
+    let built = arkret_sdk::build_snapshot_chunks(
         &snapshot_id,
-        cokret_sdk::SNAPSHOT_REDUCER_PROFILE_V1,
+        arkret_sdk::SNAPSHOT_REDUCER_PROFILE_V1,
         items,
         4096,
     )
@@ -74,37 +74,37 @@ pub(super) fn snapshot_manifest_for_items(
         .map(|chunk| chunk.descriptor)
         .collect::<Vec<_>>();
     let created_at = Utc::now();
-    let mut manifest = cokret_sdk::SnapshotManifest {
+    let mut manifest = arkret_sdk::SnapshotManifest {
         id: snapshot_id,
         realm_id,
-        reducer_profile: cokret_sdk::SNAPSHOT_REDUCER_PROFILE_V1.to_owned(),
+        reducer_profile: arkret_sdk::SNAPSHOT_REDUCER_PROFILE_V1.to_owned(),
         schema_profile_refs: vec!["ck.profile.core_event_store.v1".to_owned()],
         state_digest,
-        frontier: cokret_sdk::SnapshotFrontier {
+        frontier: arkret_sdk::SnapshotFrontier {
             event_ids: vec![snapshot_event_id("0000000000a2")],
-            timeline_hlc: cokret_sdk::Hlc::new("01970e589d21-0004-a13f9c2e").unwrap(),
+            timeline_hlc: arkret_sdk::Hlc::new("01970e589d21-0004-a13f9c2e").unwrap(),
         },
-        event_set_commitment: cokret_sdk::EventSetCommitment {
-            algorithm: cokret_sdk::EventSetCommitmentAlgorithm::MerkleEventSetV1,
+        event_set_commitment: arkret_sdk::EventSetCommitment {
+            algorithm: arkret_sdk::EventSetCommitmentAlgorithm::MerkleEventSetV1,
             root: snapshot_hash(9),
             covered_event_count: 2,
             covered_seals: vec![snapshot_event_id("0000000000a2")],
             actor_seq_ranges: Vec::new(),
         },
         chunks,
-        security_class: cokret_sdk::SnapshotSecurityClass::Standard,
+        security_class: arkret_sdk::SnapshotSecurityClass::Standard,
         verification_hints: None,
         created_by: service_did.clone(),
         created_at,
-        authority_binding: cokret_sdk::AuthorityBinding {
+        authority_binding: arkret_sdk::AuthorityBinding {
             issuer: service_did,
-            authority_kind: cokret_sdk::SnapshotAuthorityKind::RealmPolicySnapshotIssuer,
+            authority_kind: arkret_sdk::SnapshotAuthorityKind::RealmPolicySnapshotIssuer,
             auth_state_digest: snapshot_hash(1),
             auth_frontier: vec![snapshot_event_id("0000000000a2")],
             checked_at: created_at,
             witness_attestations: Vec::new(),
         },
-        signature: cokret_sdk::DetachedJwsProof::eddsa(
+        signature: arkret_sdk::DetachedJwsProof::eddsa(
             "did:web:server.example#snapshot".to_owned(),
             snapshot_hash(2),
             created_at,

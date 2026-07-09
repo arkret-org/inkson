@@ -14,7 +14,7 @@
 //! This component is shared between `views/directory.rs`, `views/realm_admin.rs`,
 //! `views/kanban.rs`, and the rest of the UI.
 
-pub use cokret_sdk::{Discoverability, HistoryVisibility, JoinRule};
+pub use arkret_sdk::{Discoverability, HistoryVisibility, JoinRule};
 use dioxus::prelude::*;
 
 pub trait DiscoverabilityUi {

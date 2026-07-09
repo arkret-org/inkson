@@ -6,24 +6,24 @@ use crate::mls_api_helpers::{
 
 impl CokretApi {
     /// Publish an MLS `MlsKeyPackageRecord` to
-    /// soland's `/_cokret/self/keys/keypackages/upload` endpoint so peers can
+    /// soland's `/_arkret/self/keys/keypackages/upload` endpoint so peers can
     /// fetch it via `query_keys` and `add_member()` against it. The
     /// `device_signature` is a real EdDSA signature produced by the local
     /// event-signer over the published KeyPackage batch (no placeholder).
     pub async fn publish_mls_key_package(
         &self,
         device_id: &str,
-        record: &cokret_sdk::MlsKeyPackageRecord,
-    ) -> anyhow::Result<cokret_sdk::KeyPackagesUploadOutcome> {
+        record: &arkret_sdk::MlsKeyPackageRecord,
+    ) -> anyhow::Result<arkret_sdk::KeyPackagesUploadOutcome> {
         let device_id = device_id.trim();
         let entry = mls_key_package_record_upload_entry(record)?;
         // The signing input covers the exact serialized wire entries so the
         // server can recompute it from the received body.
         let key_package_values = vec![serde_json::to_value(&entry)?];
         let device_signature = sign_keypackage_upload_batch(device_id, &key_package_values)?;
-        let body = cokret_sdk::KeyPackagesUploadRequestBody {
+        let body = arkret_sdk::KeyPackagesUploadRequestBody {
             principal_id: record.principal_id.clone(),
-            device_id: cokret_sdk::DeviceId::new(device_id.to_owned())?,
+            device_id: arkret_sdk::DeviceId::new(device_id.to_owned())?,
             key_packages: vec![entry],
             device_signature,
             expires_at: None,
@@ -44,7 +44,7 @@ impl CokretApi {
         claim_nonce: &str,
         target_device_id: Option<&str>,
         mls_group_id: Option<&str>,
-    ) -> anyhow::Result<cokret_sdk::KeyPackagesClaimOutcome> {
+    ) -> anyhow::Result<arkret_sdk::KeyPackagesClaimOutcome> {
         let body = build_mls_keypackage_claim_request(
             target_principal_id,
             intended_realm_id,
@@ -60,7 +60,7 @@ impl CokretApi {
     }
 
     // YOU-01-009: the former `rotate_mls_epoch` helper (non-spec
-    // `POST /_cokret/self/mls/rotate` shim) was removed — epoch rotation
+    // `POST /_arkret/self/mls/rotate` shim) was removed — epoch rotation
     // is carried by the canonical `ck.mls.commit` event built from a
     // local `self_update_commit`
     // (`crate::mls::runtime::force_epoch_rotation_commit`).

@@ -5,15 +5,15 @@ use crate::wire_helpers::{path_component, query_component, safe_blob_filename_he
 fn endpoint_join_keeps_api_paths_under_base_url() {
     let api = CokretApi::new("http://127.0.0.1:8787/").unwrap();
     assert_eq!(
-        api.endpoint("/_cokret/describe").unwrap().as_str(),
-        "http://127.0.0.1:8787/_cokret/describe"
+        api.endpoint("/_arkret/describe").unwrap().as_str(),
+        "http://127.0.0.1:8787/_arkret/describe"
     );
 }
 
 #[test]
 fn endpoint_enforces_private_path_redline() {
     let api = CokretApi::new("http://127.0.0.1:8787/").unwrap();
-    assert!(api.endpoint("_cokret/self/events").is_ok());
+    assert!(api.endpoint("_arkret/self/events").is_ok());
     let private_prefix = concat!("_so", "land");
     let private_consent = [private_prefix, "self", "consent", "cells", "alice", "grant"].join("/");
     assert!(api.endpoint(&private_consent).is_err());
@@ -58,21 +58,21 @@ fn blob_upload_filename_header_is_ascii_safe() {
 fn event_frontier_selectors_preserve_did_percent_escapes() {
     let actor = "did:webvh:zQmExampleScid:127.0.0.1%3A22375:webvh:01kvsk95qeev5t63b5njft1xzk";
     let actor_selector = format!(
-        "_cokret/self/events/frontier?actor_id={}",
+        "_arkret/self/events/frontier?actor_id={}",
         query_component(actor)
     );
     assert_eq!(
         actor_selector,
-        "_cokret/self/events/frontier?actor_id=did%3Awebvh%3AzQmExampleScid%3A127.0.0.1%253A22375%3Awebvh%3A01kvsk95qeev5t63b5njft1xzk"
+        "_arkret/self/events/frontier?actor_id=did%3Awebvh%3AzQmExampleScid%3A127.0.0.1%253A22375%3Awebvh%3A01kvsk95qeev5t63b5njft1xzk"
     );
 
     let realm_selector = format!(
-        "_cokret/self/events/frontier?realm_id={}",
+        "_arkret/self/events/frontier?realm_id={}",
         query_component("ak:realm:0196419b-0000-7000-8000-000000000000")
     );
     assert_eq!(
         realm_selector,
-        "_cokret/self/events/frontier?realm_id=ck%3Arealm%3A0196419b-0000-7000-8000-000000000000"
+        "_arkret/self/events/frontier?realm_id=ck%3Arealm%3A0196419b-0000-7000-8000-000000000000"
     );
 }
 

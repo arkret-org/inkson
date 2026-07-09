@@ -9,7 +9,7 @@
 //! compares the `pairing_code` shown on both devices and approves or rejects,
 //! instead of having to navigate to Settings → Devices → Pair and refresh.
 //!
-//! Approval finalizes through `POST /_cokret/gate/account/device-pair`
+//! Approval finalizes through `POST /_arkret/gate/account/device-pair`
 //! (`CokretApi::account_device_pair`); rejection dismisses locally. Both clear
 //! the request from the inbox so the prompt does not nag again. The spec MUST
 //! that the request alone never marks the new device trusted is honored: nothing

@@ -2,8 +2,8 @@
 
 use crate::mls::runtime::*;
 
-fn event_id(value: &str) -> cokret_sdk::EventId {
-    cokret_sdk::EventId::new(value.to_owned()).unwrap()
+fn event_id(value: &str) -> arkret_sdk::EventId {
+    arkret_sdk::EventId::new(value.to_owned()).unwrap()
 }
 
 #[test]

@@ -28,7 +28,7 @@
 
 use std::collections::BTreeSet;
 
-use cokret_sdk::models::{
+use arkret_sdk::models::{
     AppletActorPolicy, AppletApprovalRequest, AppletBotMembership, AppletGhostActorMode,
     AppletInstallPreviewRequestBody, AppletInstallRequestBody, AppletRevokeMode,
     AppletRevokeRequestBody, EffectiveScope, ScopeGrant,
@@ -68,11 +68,11 @@ pub fn applet_effective_scope(
     circle_id: Option<&str>,
 ) -> Result<EffectiveScope, String> {
     let realm_id = crate::operation::trim_realm_id(realm_id);
-    let realm = cokret_sdk::RealmId::new(realm_id.clone())
+    let realm = arkret_sdk::RealmId::new(realm_id.clone())
         .map_err(|err| format!("invalid Realm id {realm_id:?}: {err:?}"))?;
     match circle_id.map(str::trim).filter(|value| !value.is_empty()) {
         None => Ok(EffectiveScope::Realm { realm_id: realm }),
-        Some(circle) => cokret_sdk::CircleId::new(circle.to_owned())
+        Some(circle) => arkret_sdk::CircleId::new(circle.to_owned())
             .map(|circle_id| EffectiveScope::Circle {
                 realm_id: realm,
                 circle_id,
@@ -139,7 +139,7 @@ pub fn applets_enabled() -> bool {
 pub fn manifest_hash_for(manifest: &str) -> String {
     // Delegate to the SDK sha256-hex helper, then keep the leading 8 bytes
     // (16 hex chars) as the short manifest pin.
-    let full = cokret_sdk::canonical::sha256_hex(manifest.as_bytes());
+    let full = arkret_sdk::canonical::sha256_hex(manifest.as_bytes());
     format!("sha256:{}", &full[..16])
 }
 
@@ -709,7 +709,7 @@ pub fn AppletsPanel(
                                         let allow_ghost_actors = install_allow_ghost_actors();
                                         install_status.set("installing applet…".to_owned());
                                         spawn(async move {
-                                            let digest_typed = match cokret_sdk::Hash::new(digest.clone()) {
+                                            let digest_typed = match arkret_sdk::Hash::new(digest.clone()) {
                                                 Ok(h) => h,
                                                 Err(err) => {
                                                     install_status.set(format!("bad plan_digest: {err:?}"));
@@ -753,7 +753,7 @@ pub fn AppletsPanel(
                                                     // distinctly: a Rejected outcome is an orphan
                                                     // registration (registration landed, no active
                                                     // grant) and grants the applet nothing.
-                                                    use cokret_sdk::models::AppletInstallEffectiveStatus as Status;
+                                                    use arkret_sdk::models::AppletInstallEffectiveStatus as Status;
                                                     let aid = short_protocol_id(&outcome.applet_id);
                                                     let line = match outcome.effective_status {
                                                         Status::Installed => {
@@ -1040,7 +1040,7 @@ mod tests {
             applet_effective_scope("ak:realm:01904100-0000-7000-8000-000000000010", None).unwrap();
         assert!(matches!(
             scope,
-            cokret_sdk::models::EffectiveScope::Realm { ref realm_id }
+            arkret_sdk::models::EffectiveScope::Realm { ref realm_id }
                 if realm_id.as_str() == "ak:realm:01904100-0000-7000-8000-000000000010"
         ));
     }
@@ -1054,7 +1054,7 @@ mod tests {
         .unwrap();
         assert!(matches!(
             scope,
-            cokret_sdk::models::EffectiveScope::Circle { ref realm_id, ref circle_id }
+            arkret_sdk::models::EffectiveScope::Circle { ref realm_id, ref circle_id }
                 if realm_id.as_str() == "ak:realm:01904100-0000-7000-8000-000000000010"
                     && circle_id.as_str() == "ak:circle:01904100-0000-7000-8000-0000000000c1"
         ));
@@ -1062,7 +1062,7 @@ mod tests {
         assert!(matches!(
             applet_effective_scope("ak:realm:01904100-0000-7000-8000-000000000010", Some("  "))
                 .unwrap(),
-            cokret_sdk::models::EffectiveScope::Realm { .. }
+            arkret_sdk::models::EffectiveScope::Realm { .. }
         ));
     }
 
@@ -1104,10 +1104,10 @@ mod tests {
     fn classify_manifest_input_detects_url_and_json_and_invalid() {
         assert_eq!(
             classify_manifest_input(
-                "https://mock-applet-registry.local/_cokret/edge/applet/bridge.demo/manifest"
+                "https://mock-applet-registry.local/_arkret/edge/applet/bridge.demo/manifest"
             ),
             ManifestInputKind::Url(
-                "https://mock-applet-registry.local/_cokret/edge/applet/bridge.demo/manifest"
+                "https://mock-applet-registry.local/_arkret/edge/applet/bridge.demo/manifest"
                     .to_owned(),
             )
         );

@@ -14,7 +14,7 @@ pub(super) fn submit_kanban_operation_event(
     base_url: String,
     token: Signal<String>,
     realm_id: String,
-    operation: cokret_sdk::Event,
+    operation: arkret_sdk::Event,
     // R4: three-state security signal (see `kanban_plaintext_block_reason`).
     scope_security_encrypted: Option<bool>,
     mut state_store: Signal<LocalStateStore>,
@@ -810,7 +810,7 @@ pub(super) fn dispatch_board_archive_cascade(
 
     // Build every archive event up front so a build error aborts before any
     // optimistic op is appended.
-    let mut events: Vec<cokret_sdk::Event> = Vec::new();
+    let mut events: Vec<arkret_sdk::Event> = Vec::new();
     for strand_id in &active_card_ids {
         match crate::operation::ck_ops::strand_archive(&realm_id, &actor_id, strand_id)
             .and_then(|builder| builder.build_sdk_event("inkson"))

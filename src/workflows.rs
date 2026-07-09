@@ -31,7 +31,7 @@ pub fn production_release_workflows() -> Vec<ClientWorkflow> {
             name: "Development account bootstrap",
             stage: WorkflowStage::Supported,
             client_surface: "Settings + Connect",
-            server_dependency: "POST /_cokret/gate/account/session-grants",
+            server_dependency: "POST /_arkret/gate/account/session-grants",
         },
         ClientWorkflow {
             id: "account.registration",
@@ -59,14 +59,14 @@ pub fn production_release_workflows() -> Vec<ClientWorkflow> {
             name: "Recovery Key (24 words) backup upload",
             stage: WorkflowStage::ClientReady,
             client_surface: "Recovery panel: 24-word Recovery Key + Argon2id KDF + XChaCha20-Poly1305 AEAD",
-            server_dependency: "PUT /_cokret/self/keys/backups/{backup_id} (ck.schema.key_backup.v1 envelope)",
+            server_dependency: "PUT /_arkret/self/keys/backups/{backup_id} (ck.schema.key_backup.v1 envelope)",
         },
         ClientWorkflow {
             id: "recovery.key_backup_restore",
             name: "Encrypted backup history",
             stage: WorkflowStage::ClientReady,
             client_surface: "Recovery panel: backup history timestamp summary and latest-backup status",
-            server_dependency: "GET /_cokret/self/keys/backups",
+            server_dependency: "GET /_arkret/self/keys/backups",
         },
         ClientWorkflow {
             id: "identity.cross_signing_setup",
@@ -80,7 +80,7 @@ pub fn production_release_workflows() -> Vec<ClientWorkflow> {
             name: "Discover and resolve public realms",
             stage: WorkflowStage::Supported,
             client_surface: "Directory panel",
-            server_dependency: "POST /_cokret/find/directory/search-realms and resolve-realm",
+            server_dependency: "POST /_arkret/find/directory/search-realms and resolve-realm",
         },
         ClientWorkflow {
             id: "space.create",
@@ -115,7 +115,7 @@ pub fn production_release_workflows() -> Vec<ClientWorkflow> {
             name: "Moderation report",
             stage: WorkflowStage::Supported,
             client_surface: "Report / Queue",
-            server_dependency: "POST /_cokret/self/moderation/report",
+            server_dependency: "POST /_arkret/self/moderation/report",
         },
         ClientWorkflow {
             id: "release.packaging",

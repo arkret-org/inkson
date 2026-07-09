@@ -22,7 +22,7 @@ pub(crate) struct ResolveHandleContext<'a> {
 pub(crate) fn resolve_handle_request_body(
     handle: &str,
     context: ResolveHandleContext<'_>,
-) -> anyhow::Result<cokret_sdk::models::DirectoryResolveHandleRequestBody> {
+) -> anyhow::Result<arkret_sdk::models::DirectoryResolveHandleRequestBody> {
     let non_empty = |value: Option<&str>| {
         value
             .map(str::trim)
@@ -31,21 +31,21 @@ pub(crate) fn resolve_handle_request_body(
     };
     let realm_id = match non_empty(context.realm_id) {
         Some(realm_id) => Some(
-            cokret_sdk::RealmId::new(&realm_id)
+            arkret_sdk::RealmId::new(&realm_id)
                 .map_err(|err| anyhow::anyhow!("invalid realm_id `{realm_id}`: {err}"))?,
         ),
         None => None,
     };
     let expected_did = match non_empty(context.expected_did) {
         Some(did) => Some(
-            cokret_sdk::Did::new(did.clone())
+            arkret_sdk::Did::new(did.clone())
                 .map_err(|err| anyhow::anyhow!("invalid expected_did `{did}`: {err}"))?,
         ),
         None => None,
     };
     let requester = match non_empty(context.requester) {
         Some(did) => Some(
-            cokret_sdk::Did::new(did.clone())
+            arkret_sdk::Did::new(did.clone())
                 .map_err(|err| anyhow::anyhow!("invalid requester `{did}`: {err}"))?,
         ),
         None => None,
@@ -53,12 +53,12 @@ pub(crate) fn resolve_handle_request_body(
     let intent = match non_empty(context.intent) {
         Some(intent) => Some(
             intent
-                .parse::<cokret_sdk::models::DirectoryIntent>()
+                .parse::<arkret_sdk::models::DirectoryIntent>()
                 .map_err(|err| anyhow::anyhow!("invalid directory intent `{intent}`: {err}"))?,
         ),
         None => None,
     };
-    Ok(cokret_sdk::models::DirectoryResolveHandleRequestBody {
+    Ok(arkret_sdk::models::DirectoryResolveHandleRequestBody {
         handle: handle.to_owned(),
         expected_did,
         proof_challenge: non_empty(context.proof_challenge),

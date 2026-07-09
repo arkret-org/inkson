@@ -6,7 +6,7 @@ use crate::mls::runtime::*;
 
 #[test]
 fn minimal_metadata_aad_enforcement_is_fail_closed() {
-    use cokret_sdk::AadVisibility;
+    use arkret_sdk::AadVisibility;
     // Hidden is always accepted.
     assert_minimal_metadata_aad(&AadVisibility::Hidden, true).unwrap();
     assert_minimal_metadata_aad(&AadVisibility::Hidden, false).unwrap();
@@ -22,9 +22,9 @@ fn minimal_metadata_aad_enforcement_is_fail_closed() {
 
 #[test]
 fn aad_visibility_inferred_from_canonical_aad_shape() {
-    use cokret_sdk::AadVisibility;
+    use arkret_sdk::AadVisibility;
     // hidden() omits both event-id fields ⇒ Hidden.
-    let hidden = serde_json::to_value(cokret_sdk::EncryptedEnvelopeAadV1::hidden(
+    let hidden = serde_json::to_value(arkret_sdk::EncryptedEnvelopeAadV1::hidden(
         "ak:realm:r",
         "ck.message.create",
     ))

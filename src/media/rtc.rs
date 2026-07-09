@@ -4,15 +4,15 @@
 //! plane. The flow is:
 //!
 //! 1. **CALL-1** — `media_token_exchange` POSTs `ck.self.call.media.exchange.issue_token` to
-//!    soland's `/_cokret/self/rtc/token`, then anchors + verifies the response via
-//!    [`cokret_sdk::verify_call_media_token_outcome`] (issuer anchoring, ≤600s TTL, six-tuple
+//!    soland's `/_arkret/self/rtc/token`, then anchors + verifies the response via
+//!    [`arkret_sdk::verify_call_media_token_outcome`] (issuer anchoring, ≤600s TTL, six-tuple
 //!    binding).
-//! 2. **ICE** — `ice_config` POSTs to `/_cokret/self/rtc/ice-config` and runs
-//!    [`cokret_sdk::verify_ice_config_outcome`] (issuer anchoring, TURN credential privacy,
+//! 2. **ICE** — `ice_config` POSTs to `/_arkret/self/rtc/ice-config` and runs
+//!    [`arkret_sdk::verify_ice_config_outcome`] (issuer anchoring, TURN credential privacy,
 //!    refresh-lead invariants).
 //! 3. **MEDIA-1** — the SFrame frame key is derived from the live MLS exporter via
-//!    [`cokret_sdk::derive_frame_key`]. Any non-MLS key source is unrepresentable: the helper only
-//!    accepts a [`cokret_sdk::MlsExporterSource`], so a backend KMS key can never be installed
+//!    [`arkret_sdk::derive_frame_key`]. Any non-MLS key source is unrepresentable: the helper only
+//!    accepts a [`arkret_sdk::MlsExporterSource`], so a backend KMS key can never be installed
 //!    (fail-closed → `e2ee_key_source_unauthorised`).
 //!
 //! The platform RTC transport (`crate::rtc_transport`) consumes the
@@ -22,8 +22,8 @@
 /// Stable label registered on the `ck.profile.media_service_binding.v1`
 /// profile for the SFrame frame key derivation (`media-service-binding.md
 /// §8.1`). Re-exported from the SDK so the renderer pins exactly one value.
-pub use cokret_sdk::FRAME_KEY_LABEL as SFRAME_FRAME_KEY_LABEL;
-use cokret_sdk::{
+pub use arkret_sdk::FRAME_KEY_LABEL as SFRAME_FRAME_KEY_LABEL;
+use arkret_sdk::{
     CallId, CallMediaDesiredMedia, CallMediaParticipantBinding, CallMediaTokenExchangeOutcome,
     CallMediaTokenExchangeRequestBody, DeviceId, Did, DidDocument, FrameKeyContext, IceConfig,
     MediaDecryptPolicyValue, MediaIceConfigRequestBody, MediaIceMode, MediaPlaintextService,
@@ -40,7 +40,7 @@ use crate::api::CokretApi;
 /// Spec-mandated TTL ceiling for media tokens
 /// (`ck.self.call.media.exchange.issue_token`). Soland defaults to 300s; the
 /// ceiling is 600s.
-pub const MEDIA_TOKEN_TTL_MAX_SECS: u64 = cokret_sdk::MEDIA_TOKEN_TTL_MAX_SECS;
+pub const MEDIA_TOKEN_TTL_MAX_SECS: u64 = arkret_sdk::MEDIA_TOKEN_TTL_MAX_SECS;
 
 /// Error reasons surfaced by the RTC client integration. These map 1:1
 /// to the error code enum landed in arkret-spec round R3 (§0.7).
@@ -411,19 +411,19 @@ fn recompute_media_policy_root(
     media_service_payload: &Value,
     policy_components_payload: Option<&Value>,
     plaintext_visible_services_payload: Option<&PlaintextVisibleServicesPayload>,
-) -> Result<cokret_sdk::Hash, RtcClientError> {
+) -> Result<arkret_sdk::Hash, RtcClientError> {
     let realm_id = RealmId::new(realm_id.to_owned())
         .map_err(|_| RtcClientError::MediaServiceBindingUncovered)?;
     let subject = realm_id.as_str();
     let mut cells = std::collections::BTreeMap::new();
     cells.insert(
         media_policy_cell("ck.component.realm.media_service.v1", subject)?,
-        cokret_sdk::lattice::CellState::Value(media_service_payload.clone()),
+        arkret_sdk::lattice::CellState::Value(media_service_payload.clone()),
     );
     if let Some(payload) = policy_components_payload {
         cells.insert(
             media_policy_cell("ck.component.realm.policy_components.v1", subject)?,
-            cokret_sdk::lattice::CellState::Value(payload.clone()),
+            arkret_sdk::lattice::CellState::Value(payload.clone()),
         );
     }
     if let Some(payload) = plaintext_visible_services_payload {
@@ -431,15 +431,15 @@ fn recompute_media_policy_root(
             serde_json::to_value(payload).map_err(|_| RtcClientError::MlsGovernanceBindingStale)?;
         cells.insert(
             media_policy_cell("ck.component.realm.plaintext_visible_services.v1", subject)?,
-            cokret_sdk::lattice::CellState::Value(value),
+            arkret_sdk::lattice::CellState::Value(value),
         );
     }
-    cokret_sdk::state::compute_state_root(&cells)
+    arkret_sdk::state::compute_state_root(&cells)
         .map_err(|_| RtcClientError::MlsGovernanceBindingStale)
 }
 
-fn media_policy_cell(family: &str, realm_id: &str) -> Result<cokret_sdk::CellRef, RtcClientError> {
-    cokret_sdk::CellRef::new(format!("ak:cell:{family}:{realm_id}"))
+fn media_policy_cell(family: &str, realm_id: &str) -> Result<arkret_sdk::CellRef, RtcClientError> {
+    arkret_sdk::CellRef::new(format!("ak:cell:{family}:{realm_id}"))
         .map_err(|_| RtcClientError::MlsGovernanceBindingStale)
 }
 
@@ -753,7 +753,7 @@ pub fn cross_check_participant_identity(
 
 /// MLS exporter backing the SFrame frame-key derivation.
 ///
-/// This wraps the live [`cokret_sdk::CokretMlsGroup`] restored from this
+/// This wraps the live [`arkret_sdk::CokretMlsGroup`] restored from this
 /// device's persisted per-realm MLS snapshot — the same synchronised group
 /// (full membership, applied Welcomes/commits) the message E2EE send/receive
 /// path uses via `crate::mls::runtime`. The exported secret is therefore a
@@ -775,7 +775,7 @@ pub fn cross_check_participant_identity(
 /// every other member's device — instead of relying on an external host MLS
 /// bridge or a self-minted key.
 pub struct RealmMlsExporter {
-    group: cokret_sdk::CokretMlsGroup,
+    group: arkret_sdk::CokretMlsGroup,
 }
 
 impl RealmMlsExporter {
@@ -826,17 +826,17 @@ impl MlsExporterSource for RealmMlsExporter {
         label: &str,
         context: &[u8],
         length: usize,
-    ) -> cokret_sdk::Result<zeroize::Zeroizing<Vec<u8>>> {
+    ) -> arkret_sdk::Result<zeroize::Zeroizing<Vec<u8>>> {
         self.group.export_secret(label, context, length)
     }
 }
 
-/// Map an SDK [`cokret_sdk::Error`]'s protocol message into the typed
+/// Map an SDK [`arkret_sdk::Error`]'s protocol message into the typed
 /// reason. The SDK helpers stamp the wire code into the message
 /// (`participant_binding_invalid: …` / `token_issuer_unauthorised: …` /
 /// `ice_config_denied: …`); scan for the first known code substring so a
 /// `Display` prefix from the `Error` enum does not shadow it.
-fn classify_protocol_error(err: &cokret_sdk::Error) -> RtcClientError {
+fn classify_protocol_error(err: &arkret_sdk::Error) -> RtcClientError {
     let message = err.to_string();
     const CODES: &[RtcClientError] = &[
         RtcClientError::TokenIssuerUnauthorised,
@@ -993,12 +993,12 @@ mod tests {
     ) -> MediaGovernanceEvidence {
         let media_service_payload = json!({
             "service_id": "did:web:media.example",
-            "ice_config_endpoint": "https://media.example/_cokret/self/rtc/ice-config",
+            "ice_config_endpoint": "https://media.example/_arkret/self/rtc/ice-config",
             "foci": [
                 {
                     "focus_id": "fra-1",
                     "type": "livekit",
-                    "token_endpoint": "https://media.example/_cokret/self/rtc/token"
+                    "token_endpoint": "https://media.example/_arkret/self/rtc/token"
                 }
             ]
         });
@@ -1009,12 +1009,12 @@ mod tests {
             })
         });
         let plaintext_visible_services_payload = media_service_decrypts.then(|| {
-            PlaintextVisibleServicesPayload::new(vec![cokret_sdk::PlaintextVisibleService::new(
+            PlaintextVisibleServicesPayload::new(vec![arkret_sdk::PlaintextVisibleService::new(
                 Did::new("did:web:media.example".to_owned()).unwrap(),
                 "media_service",
                 vec![PlaintextDataClassKind::MediaPlaintext],
                 vec!["media_plaintext".to_owned()],
-                cokret_sdk::PlaintextServiceVisibility::PrivatePlaintext,
+                arkret_sdk::PlaintextServiceVisibility::PrivatePlaintext,
             )])
         });
         let policy_root = recompute_media_policy_root(
@@ -1030,13 +1030,13 @@ mod tests {
             6,
             7,
             vec![
-                cokret_sdk::EventId::new(
+                arkret_sdk::EventId::new(
                     "ak:event:01904100-0000-7000-8000-000000000001".to_owned(),
                 )
                 .unwrap(),
             ],
             policy_root,
-            cokret_sdk::MLS_GOVERNANCE_BINDING_FULL_PROFILE,
+            arkret_sdk::MLS_GOVERNANCE_BINDING_FULL_PROFILE,
             "ck.reducer.realm.v1",
         )
         .unwrap();
@@ -1068,14 +1068,14 @@ mod tests {
 
     #[test]
     fn classify_protocol_error_reads_wire_prefix() {
-        let err = cokret_sdk::Error::Protocol(
+        let err = arkret_sdk::Error::Protocol(
             "token_issuer_unauthorised: issuer not anchored".to_owned(),
         );
         assert_eq!(
             classify_protocol_error(&err),
             RtcClientError::TokenIssuerUnauthorised
         );
-        let err = cokret_sdk::Error::Protocol(
+        let err = arkret_sdk::Error::Protocol(
             "e2ee_key_source_unauthorised: frame key context missing".to_owned(),
         );
         assert_eq!(
@@ -1110,7 +1110,7 @@ mod tests {
     fn seed_realm_snapshot(
         store: &crate::secure_key_store::MemorySecureKeyStore,
     ) -> crate::mls::persistence::MlsSnapshotEnvelope {
-        use cokret_sdk::{CokretMlsIdentity, DeviceId, Did};
+        use arkret_sdk::{CokretMlsIdentity, DeviceId, Did};
 
         let secret = crate::mls::runtime::load_or_create_device_snapshot_secret(
             store,
@@ -1155,11 +1155,11 @@ mod tests {
             epoch_id: exporter.epoch(),
             participant_identity: "ak:rtc_participant:00000000-0000-0000-0000-000000000001"
                 .to_owned(),
-            device_id: cokret_sdk::DeviceId::new(EXPORTER_DEVICE.to_owned()).unwrap(),
+            device_id: arkret_sdk::DeviceId::new(EXPORTER_DEVICE.to_owned()).unwrap(),
         };
         let key = derive_frame_key(&exporter, &ctx).expect("frame key derivation");
 
-        assert_eq!(key.len(), cokret_sdk::MEDIA_KEY_LEN);
+        assert_eq!(key.len(), arkret_sdk::MEDIA_KEY_LEN);
         assert_eq!(key.len(), 32);
         // Not a placeholder: a real exporter secret is not all-zero.
         assert!(key.iter().any(|&b| b != 0));
@@ -1238,7 +1238,7 @@ mod tests {
     /// builds at join time.
     fn exporter_from_group(
         store: &crate::secure_key_store::MemorySecureKeyStore,
-        group: &cokret_sdk::CokretMlsGroup,
+        group: &arkret_sdk::CokretMlsGroup,
         actor: &str,
         device: &str,
     ) -> RealmMlsExporter {
@@ -1260,7 +1260,7 @@ mod tests {
 
     #[test]
     fn receiver_recomputes_remote_sender_frame_key_cross_member() {
-        use cokret_sdk::{CokretMlsIdentity, DeviceId, Did};
+        use arkret_sdk::{CokretMlsIdentity, DeviceId, Did};
 
         // Build a REAL two-member MLS group: Alice creates, Bob joins via Welcome.
         let alice_identity = CokretMlsIdentity::new_basic(
@@ -1280,7 +1280,7 @@ mod tests {
             .unwrap();
         let add = alice_group.add_member(&bob_key_package).unwrap();
         let bob_group =
-            cokret_sdk::CokretMlsGroup::join_from_welcome(bob_identity, &add.welcome).unwrap();
+            arkret_sdk::CokretMlsGroup::join_from_welcome(bob_identity, &add.welcome).unwrap();
 
         // Both members are now on the same epoch with the same exporter secret.
         assert_eq!(alice_group.epoch(), bob_group.epoch());
@@ -1308,7 +1308,7 @@ mod tests {
             device_id: DeviceId::new(ALICE_DEVICE.to_owned()).unwrap(),
         };
         let key_alice_self = derive_frame_key(&alice_exporter, &alice_self_ctx).unwrap();
-        assert_eq!(key_alice_self.len(), cokret_sdk::MEDIA_KEY_LEN);
+        assert_eq!(key_alice_self.len(), arkret_sdk::MEDIA_KEY_LEN);
         assert!(key_alice_self.iter().any(|&b| b != 0));
 
         // THE FIX: Bob (the RECEIVER, a different member) recomputes ALICE's

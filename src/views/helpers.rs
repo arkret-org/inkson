@@ -1,4 +1,4 @@
-pub use cokret_sdk::MentionNode;
+pub use arkret_sdk::MentionNode;
 use dioxus::prelude::*;
 
 use crate::api_error::normalize_wait_for_sync_token;
@@ -314,7 +314,7 @@ pub fn parse_agent_selector_mention_tokens(input: &str) -> Vec<AgentSelectorMent
             continue;
         };
         if controller_handle.is_empty()
-            || cokret_sdk::models::validate_agent_slug(agent_slug).is_err()
+            || arkret_sdk::models::validate_agent_slug(agent_slug).is_err()
         {
             continue;
         }
@@ -355,7 +355,7 @@ pub fn parse_mention_nodes(input: &str) -> Vec<MentionNode> {
     for token in input.split_whitespace() {
         let normalized = normalize_inline_token(token);
         if normalized.strip_prefix('@').is_some()
-            && let Some(audience) = cokret_sdk::AudienceMention::from_ui_token(normalized)
+            && let Some(audience) = arkret_sdk::AudienceMention::from_ui_token(normalized)
         {
             mentions.push(MentionNode::audience_mention(audience));
         }
@@ -376,7 +376,7 @@ pub fn parse_mention_nodes(input: &str) -> Vec<MentionNode> {
 
 /// R3.2 §3.8.2 — resolved render of an actor mention plus the visual
 /// degradation tier the UI MUST surface. Wraps the SDK
-/// [`cokret_sdk::MentionRender`] so the chat view can drive a distinct
+/// [`arkret_sdk::MentionRender`] so the chat view can drive a distinct
 /// CSS class / badge per fallback level.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct RenderedMention {
@@ -395,7 +395,7 @@ pub struct RenderedMention {
 /// R3.2 §3.8.2 mention render path (YG-MENT-2).
 ///
 /// Resolves the *current* display value for an actor mention by running
-/// the shared SDK [`cokret_sdk::render_mention`] helper off the
+/// the shared SDK [`arkret_sdk::render_mention`] helper off the
 /// authoritative `subject_id` — it MUST NOT use the audit-only
 /// `handle_at_time` / `display_name_at_time` as the current value (those
 /// are passed only as the degraded fallback inputs the SDK ladder steps
@@ -416,14 +416,14 @@ pub struct RenderedMention {
 /// → `display_name_at_time` → truncated DID.
 pub fn render_actor_mention(
     subject_id: &str,
-    claim_set_snapshot: &[cokret_sdk::models::HandleClaim],
+    claim_set_snapshot: &[arkret_sdk::models::HandleClaim],
     accepted_issuers: &[String],
     context: Option<&str>,
-    cached_handle: Option<&cokret_sdk::Handle>,
+    cached_handle: Option<&arkret_sdk::Handle>,
     display_name_at_time: Option<&str>,
 ) -> RenderedMention {
-    use cokret_sdk::Did;
-    use cokret_sdk::identity::{MentionRender, PrimaryHandleSelectInput, render_mention};
+    use arkret_sdk::Did;
+    use arkret_sdk::identity::{MentionRender, PrimaryHandleSelectInput, render_mention};
 
     // A malformed subject_id can't be resolved; fall straight to the
     // unresolved tier with a truncated form of the raw string.
@@ -489,7 +489,7 @@ pub struct HandleClaimRow {
 /// rows (YG-DIR-2). The primary handle (per §3.2.1, computed server-side
 /// and echoed in `primary_handle`) is flagged so the UI can mark it.
 pub fn handle_claim_rows(
-    res: &cokret_sdk::models::DirectorySubjectHandleList,
+    res: &arkret_sdk::models::DirectorySubjectHandleList,
 ) -> Vec<HandleClaimRow> {
     let primary = res
         .primary_handle
@@ -503,7 +503,7 @@ pub fn handle_claim_rows(
                 .as_ref()
                 .map(|h| h.canonical().to_owned())
                 .unwrap_or_default();
-            let digest = cokret_sdk::identity::claim_digest(claim).unwrap_or_default();
+            let digest = arkret_sdk::identity::claim_digest(claim).unwrap_or_default();
             HandleClaimRow {
                 is_primary: primary.as_deref() == Some(handle.as_str()) && !handle.is_empty(),
                 handle,
@@ -664,12 +664,12 @@ mod tests {
 
         assert!(mentions.iter().any(|mention| {
             mention.as_audience_mention().is_some_and(|mention| {
-                mention.audience == cokret_sdk::AudienceMentionAudience::StrandEngaged
+                mention.audience == arkret_sdk::AudienceMentionAudience::StrandEngaged
             })
         }));
         assert!(mentions.iter().any(|mention| {
             mention.as_audience_mention().is_some_and(|mention| {
-                mention.audience == cokret_sdk::AudienceMentionAudience::EffectiveScopeMembers
+                mention.audience == arkret_sdk::AudienceMentionAudience::EffectiveScopeMembers
             })
         }));
         assert!(
@@ -697,13 +697,13 @@ mod tests {
 
     #[test]
     fn render_actor_mention_runs_3_2_1_for_verified_handle() {
-        use cokret_sdk::Handle;
-        use cokret_sdk::models::{HandleBindingState, HandleClaim};
+        use arkret_sdk::Handle;
+        use arkret_sdk::models::{HandleBindingState, HandleClaim};
         let now = chrono::Utc::now();
         let claim = HandleClaim {
             handle: Some(Handle::parse("alice:acme.example").unwrap()),
             subject: Some(
-                cokret_sdk::Did::new("did:web:acme.example:principals:alice".to_owned()).unwrap(),
+                arkret_sdk::Did::new("did:web:acme.example:principals:alice".to_owned()).unwrap(),
             ),
             issuer: Some("did:web:issuer.acme.example".to_owned()),
             binding_state: Some(HandleBindingState::Verified),
@@ -757,11 +757,11 @@ mod tests {
 
     #[test]
     fn handle_claim_rows_flags_primary_and_projects_fields() {
-        use cokret_sdk::Handle;
-        use cokret_sdk::models::{DirectorySubjectHandleList, HandleBindingState, HandleClaim};
+        use arkret_sdk::Handle;
+        use arkret_sdk::models::{DirectorySubjectHandleList, HandleBindingState, HandleClaim};
         let now = chrono::Utc::now();
         let subject =
-            cokret_sdk::Did::new("did:web:acme.example:principals:alice".to_owned()).unwrap();
+            arkret_sdk::Did::new("did:web:acme.example:principals:alice".to_owned()).unwrap();
         let claim = HandleClaim {
             handle: Some(Handle::parse("alice:acme.example").unwrap()),
             subject: Some(subject.clone()),
@@ -792,7 +792,7 @@ mod tests {
 
     #[test]
     fn render_actor_mention_uses_local_cache_before_name() {
-        use cokret_sdk::Handle;
+        use arkret_sdk::Handle;
         let cached = Handle::parse("bob:acme.example").unwrap();
         let rendered = render_actor_mention(
             "did:web:acme.example:principals:bob",

@@ -122,9 +122,9 @@ pub enum AppView {
     /// identity-handles + device-lifecycle §1-§13)
     Onboarding,
     /// Invite-quarantine list. Admins see all entries from coauth's
-    /// `GET /_cokret/local/admin/invite-quarantine`; non-admins see their own
+    /// `GET /_arkret/local/admin/invite-quarantine`; non-admins see their own
     /// quarantined invites. Approve / reject buttons POST
-    /// `/_cokret/local/admin/invite-quarantine/{id}/resolve`.
+    /// `/_arkret/local/admin/invite-quarantine/{id}/resolve`.
     Quarantine,
     /// Agent endpoint + interop_session monitor.
     /// Spec `extensions/agent-integration.md`. Writes `ck.agent.endpoint` /

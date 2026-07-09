@@ -110,10 +110,10 @@ pub fn build_request_content(
     req: &SecretShareRequester,
     requesting_device_id: &str,
 ) -> Result<Value> {
-    let content = cokret_sdk::SecretShareRequestContent {
+    let content = arkret_sdk::SecretShareRequestContent {
         request_id: req.request_id.clone(),
         secret_id: SECRET_SHARE_SECRET_ID.to_owned(),
-        from_device: cokret_sdk::DeviceId::new(requesting_device_id.to_owned())
+        from_device: arkret_sdk::DeviceId::new(requesting_device_id.to_owned())
             .map_err(|err| anyhow!("invalid secret-share requesting device id: {err}"))?,
         recipient_hpke_public_key: req.recipient_public_b64.clone(),
     };
@@ -123,7 +123,7 @@ pub fn build_request_content(
 
 /// Parse and validate an inbound `ck.secret.request.content`.
 pub fn parse_request_content(content: &Value) -> Result<ParsedSecretRequest> {
-    let content: cokret_sdk::SecretShareRequestContent = serde_json::from_value(content.clone())
+    let content: arkret_sdk::SecretShareRequestContent = serde_json::from_value(content.clone())
         .map_err(|err| anyhow!("decode ck.secret.request.content: {err}"))?;
     let request_id = content.request_id;
     let secret_id = content.secret_id;
@@ -171,10 +171,10 @@ pub fn build_send_content(
         expires_at,
     )?;
     let sealed = hpke_backup::hpke_seal(&recipient_pk, SECRET_SHARE_HPKE_INFO, &aad, &plaintext)?;
-    let content = cokret_sdk::SecretShareSendContent {
+    let content = arkret_sdk::SecretShareSendContent {
         request_id: request.request_id.clone(),
         secret_id: SECRET_SHARE_SECRET_ID.to_owned(),
-        from_device: cokret_sdk::DeviceId::new(self_device_id.to_owned())
+        from_device: arkret_sdk::DeviceId::new(self_device_id.to_owned())
             .map_err(|err| anyhow!("invalid secret-share sending device id: {err}"))?,
         scheme: SECRET_SHARE_SCHEME.to_owned(),
         enc: URL_SAFE_NO_PAD.encode(sealed.enc),
@@ -198,7 +198,7 @@ pub fn open_send_content(
     our_device_id: &str,
     expires_at: &str,
 ) -> Result<OpenedSecret> {
-    let send_content: cokret_sdk::SecretShareSendContent =
+    let send_content: arkret_sdk::SecretShareSendContent =
         serde_json::from_value(send_content.clone())
             .map_err(|err| anyhow!("decode ck.secret.send.content: {err}"))?;
     let outer_request_id = send_content.request_id;
@@ -391,7 +391,7 @@ fn send_aad(
         "recipient_device_id": recipient_device_id,
         "expires_at_unix": expires_at_unix,
     });
-    cokret_sdk::canonical::canonical_json_bytes(&aad)
+    arkret_sdk::canonical::canonical_json_bytes(&aad)
         .map_err(|err| anyhow!("canonicalize secret-share AAD: {err}"))
 }
 
@@ -402,7 +402,7 @@ fn secret_plaintext(secret: &str, secret_version: u32, request_id: &str) -> Resu
         "request_id": request_id,
         "secret_id": SECRET_SHARE_SECRET_ID,
     });
-    cokret_sdk::canonical::canonical_json_bytes(&plaintext)
+    arkret_sdk::canonical::canonical_json_bytes(&plaintext)
         .map_err(|err| anyhow!("canonicalize secret-share plaintext: {err}"))
 }
 

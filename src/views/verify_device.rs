@@ -172,7 +172,7 @@ pub fn VerifyDevicePanel(
     let persisted_publish_label = state_store
         .read()
         .load_private_data(&account_did, "cross_signing.publish.latest")
-        .and_then(|json| serde_json::from_str::<cokret_sdk::CrossSigningPublishContent>(&json).ok())
+        .and_then(|json| serde_json::from_str::<arkret_sdk::CrossSigningPublishContent>(&json).ok())
         .map(|p| {
             format!(
                 "Last cross-signing publish for {} (generation {})",
@@ -196,7 +196,7 @@ pub fn VerifyDevicePanel(
     // instead of the `target_device_did + sas_code` placeholder
     // info.
     let mut ephemeral_keypair = use_signal(|| {
-        Option::<std::sync::Arc<cokret_sdk::key_verification::EphemeralX25519Keypair>>::None
+        Option::<std::sync::Arc<arkret_sdk::key_verification::EphemeralX25519Keypair>>::None
     });
     let mut peer_public_b64 = use_signal(String::new);
     let mut sas_send_status = use_signal(String::new);
@@ -443,7 +443,7 @@ pub fn VerifyDevicePanel(
                         }
                         // X25519 key exchange controls. Generate
                         // this side's ephemeral keypair, ship the
-                        // public half via `/_cokret/self/device_messages`
+                        // public half via `/_arkret/self/device_messages`
                         // (type=`ck.key.verification.key`), and
                         // accept the peer's public key (either
                         // pasted manually or auto-filled by the
@@ -464,7 +464,7 @@ pub fn VerifyDevicePanel(
                                     variant: ButtonVariant::Secondary,
                                     "data-testid": "sas-generate-keypair-button",
                                     onclick: move |_| {
-                                        match cokret_sdk::key_verification::EphemeralX25519Keypair::generate() {
+                                        match arkret_sdk::key_verification::EphemeralX25519Keypair::generate() {
                                             Ok(keypair) => {
                                                 ephemeral_keypair.set(Some(std::sync::Arc::new(keypair)));
                                                 sas_send_status.set(
@@ -613,7 +613,7 @@ pub fn VerifyDevicePanel(
                                     (Some(pair), Some(peer_pub)) => {
                                         match pair.compute_shared_secret(&peer_pub) {
                                             Ok(shared) => (
-                                                cokret_sdk::key_verification::derive_sas_bytes(
+                                                arkret_sdk::key_verification::derive_sas_bytes(
                                                     shared.as_ref(),
                                                     info.as_bytes(),
                                                 ),
@@ -621,7 +621,7 @@ pub fn VerifyDevicePanel(
                                                 true,
                                             ),
                                             Err(_) => (
-                                                cokret_sdk::key_verification::derive_sas_bytes(
+                                                arkret_sdk::key_verification::derive_sas_bytes(
                                                     target.as_bytes(),
                                                     info.as_bytes(),
                                                 ),
@@ -631,7 +631,7 @@ pub fn VerifyDevicePanel(
                                         }
                                     }
                                     _ => (
-                                        cokret_sdk::key_verification::derive_sas_bytes(
+                                        arkret_sdk::key_verification::derive_sas_bytes(
                                             target.as_bytes(),
                                             info.as_bytes(),
                                         ),
@@ -866,7 +866,7 @@ pub fn VerifyDevicePanel(
                                     // build_initial caller had no actor
                                     // context; the executor uses this
                                     // canonical DID instead.
-                                    let principal = match cokret_sdk::Did::new(actor.clone()) {
+                                    let principal = match arkret_sdk::Did::new(actor.clone()) {
                                         Ok(d) => d,
                                         Err(err) => {
                                             cross_signing_state.set(format!(
@@ -901,10 +901,10 @@ pub fn VerifyDevicePanel(
                                             .load()
                                             .server_trust_domain
                                             .clone()
-                                            .and_then(|s| cokret_sdk::TypedTrustDomainId::new(s).ok())
+                                            .and_then(|s| arkret_sdk::TypedTrustDomainId::new(s).ok())
                                         {
                                             Some(trust_domain) => trust_domain,
-                                            None => match cokret_sdk::TypedTrustDomainId::new(
+                                            None => match arkret_sdk::TypedTrustDomainId::new(
                                                 "ak:trust_domain:unknown.local",
                                             ) {
                                                 Ok(trust_domain) => trust_domain,
@@ -956,7 +956,7 @@ pub fn VerifyDevicePanel(
                                         //    through it so the server-side
                                         //    pinning check accepts the write.
                                         let control_realm =
-                                            cokret_sdk::auth::principal_control_realm_id(
+                                            arkret_sdk::auth::principal_control_realm_id(
                                                 &principal,
                                             );
                                         let envelope = match output

@@ -30,7 +30,7 @@ use crate::projection_views::{
 /// `Result::Err` arm should surface a clear "endpoint unavailable"
 /// message rather than blocking the page.
 pub async fn admin_notary_describe(
-    http: &cokret_sdk::http_client::Client,
+    http: &arkret_sdk::http_client::Client,
     realm_id: &str,
 ) -> anyhow::Result<serde_json::Value> {
     let _ = (http, realm_id);
@@ -38,13 +38,13 @@ pub async fn admin_notary_describe(
 }
 
 pub async fn authz_check_resource(
-    http: &cokret_sdk::http_client::Client,
+    http: &arkret_sdk::http_client::Client,
     actor: &str,
     action: &str,
     resource: Option<Value>,
 ) -> anyhow::Result<AuthzCheckOutcome> {
-    let body = cokret_sdk::models::AuthzCheckRequestBody {
-        actor_id: cokret_sdk::Did::new(actor.trim().to_owned())?,
+    let body = arkret_sdk::models::AuthzCheckRequestBody {
+        actor_id: arkret_sdk::Did::new(actor.trim().to_owned())?,
         action: action.trim().to_owned(),
         resource,
         context: None,
@@ -53,7 +53,7 @@ pub async fn authz_check_resource(
 }
 
 pub async fn authz_check_resource_raw(
-    http: &cokret_sdk::http_client::Client,
+    http: &arkret_sdk::http_client::Client,
     actor: &str,
     action: &str,
     resource: Option<Value>,
@@ -63,7 +63,7 @@ pub async fn authz_check_resource_raw(
 }
 
 pub async fn authz_check_raw(
-    http: &cokret_sdk::http_client::Client,
+    http: &arkret_sdk::http_client::Client,
     actor: &str,
     action: &str,
     realm_id: &str,
@@ -79,7 +79,7 @@ pub async fn authz_check_raw(
 }
 
 pub async fn effective_grants(
-    http: &cokret_sdk::http_client::Client,
+    http: &arkret_sdk::http_client::Client,
     subject: &str,
 ) -> anyhow::Result<GrantList> {
     http.authz_effective_grants_for_subject(subject, None)
@@ -90,17 +90,17 @@ pub async fn effective_grants(
 // ── Views — collection projection (T20 / YOU-01-009 subtask 3) ──────
 //
 // Spec-registered operation `ck.self.views.collection_projection.command.materialize`
-// (`POST /_cokret/self/views/{view_id}/projection`, spec commit
+// (`POST /_arkret/self/views/{view_id}/projection`, spec commit
 // b0cfa89). The request body is the registered
 // `view_projection_request_body` (`{cursor?, limit?}` — an empty
 // object is valid) and the response is parsed as the registered
 // `collection_projection_view` shape.
 pub async fn collection_projection(
-    http: &cokret_sdk::http_client::Client,
+    http: &arkret_sdk::http_client::Client,
     view_id: &str,
 ) -> anyhow::Result<CollectionProjectionView> {
-    let body = cokret_sdk::models::ViewProjectionRequestBody::default();
-    let view: cokret_sdk::CollectionProjectionView = http
+    let body = arkret_sdk::models::ViewProjectionRequestBody::default();
+    let view: arkret_sdk::CollectionProjectionView = http
         .collection_projection(view_id, &body)
         .await
         .map_err(anyhow::Error::from)?;
@@ -108,11 +108,11 @@ pub async fn collection_projection(
 }
 
 pub async fn list_strand_projections(
-    http: &cokret_sdk::http_client::Client,
+    http: &arkret_sdk::http_client::Client,
     realm_id: &str,
 ) -> anyhow::Result<LifecycleProjectionView<StrandProjectionView>> {
     let realm_id = trim_realm_id(realm_id);
-    let list: cokret_sdk::ProjectionStrandList = http
+    let list: arkret_sdk::ProjectionStrandList = http
         .realm_strands(&realm_id)
         .await
         .map_err(anyhow::Error::from)?;
@@ -121,7 +121,7 @@ pub async fn list_strand_projections(
 
 /// Read the verified Realm ↔ organization relationships projection
 /// (`ck.self.realm_organization.query.list`,
-/// `GET /_cokret/self/realms/{realm_id}/organizations`).
+/// `GET /_arkret/self/realms/{realm_id}/organizations`).
 ///
 /// The server only returns `verified_active` / `revoked_or_expired`
 /// lifecycle rows plus `declared_organization_hints` (owning-organization
@@ -129,9 +129,9 @@ pub async fn list_strand_projections(
 /// bind-flow state and is never projected here. This is read-only: binding
 /// and organization-side signing happen in the admin console (sodmin).
 pub async fn list_realm_organizations(
-    http: &cokret_sdk::http_client::Client,
+    http: &arkret_sdk::http_client::Client,
     realm_id: &str,
-) -> anyhow::Result<cokret_sdk::models::RealmOrganizationRelationshipList> {
+) -> anyhow::Result<arkret_sdk::models::RealmOrganizationRelationshipList> {
     let realm_id = trim_realm_id(realm_id);
     http.realm_organizations(&realm_id)
         .await

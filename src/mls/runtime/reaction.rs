@@ -23,7 +23,7 @@ pub struct EncryptedReaction {
     /// `sha256:<hex>` keyed-HMAC routing tag for `reaction_payload.key`.
     pub routing_tag: String,
     /// MLS application-message payload carrying the real emoji JSON.
-    pub encrypted_payload: cokret_sdk::EncryptedPayload,
+    pub encrypted_payload: arkret_sdk::EncryptedPayload,
     /// SEC-08 (`encryption-and-audit.md` §2.9) — present ONLY when this
     /// reaction force-advanced the MLS epoch because the
     /// `minimal_metadata_realm` 1h cap was exceeded. The caller MUST submit
@@ -31,7 +31,7 @@ pub struct EncryptedReaction {
     /// [`Self::forced_commit_snapshot`] (X14 persist-on-accept). When `None`
     /// the reaction rode the current epoch and its snapshot was already
     /// persisted internally (epoch unchanged ⇒ no epoch-skew risk).
-    pub forced_commit: Option<cokret_sdk::MlsCommitEnvelope>,
+    pub forced_commit: Option<arkret_sdk::MlsCommitEnvelope>,
     /// Post-forced-commit snapshot the caller persists on server-accept. Set
     /// iff [`Self::forced_commit`] is `Some`.
     pub forced_commit_snapshot: Option<crate::mls::persistence::MlsSnapshotEnvelope>,
@@ -128,7 +128,7 @@ pub fn encrypt_reaction_with_device_snapshot(
     // soland rejects with) so any future edit that widens visibility on a
     // minimal Realm fails loudly here instead of leaking message-id metadata.
     let is_minimal_metadata = state_store.realm_projection_is_minimal_metadata(realm_id);
-    assert_minimal_metadata_aad(&cokret_sdk::AadVisibility::Hidden, is_minimal_metadata)?;
+    assert_minimal_metadata_aad(&arkret_sdk::AadVisibility::Hidden, is_minimal_metadata)?;
 
     // SEC-08 (§2.9) — minimal-metadata epoch lifetime ≤ 1h. A reaction normally
     // reuses the current epoch (no commit), so on a minimal Realm we MUST roll
@@ -170,7 +170,7 @@ pub fn encrypt_reaction_with_device_snapshot(
     // a JSON object whose `key` is the real emoji / short tag.
     let plaintext = serde_json::to_vec(&serde_json::json!({ "key": canonical_emoji }))
         .map_err(|err| MlsRuntimeError::Serialize(err.to_string()))?;
-    let aad = cokret_sdk::EncryptedEnvelopeAadV1::hidden(realm_id, "ck.reaction.add");
+    let aad = arkret_sdk::EncryptedEnvelopeAadV1::hidden(realm_id, "ck.reaction.add");
     let aad_value =
         serde_json::to_value(&aad).map_err(|err| MlsRuntimeError::Serialize(err.to_string()))?;
     let encrypted_payload = group

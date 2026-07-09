@@ -47,17 +47,17 @@ extern "C" {
     /// `new Room(...)` + `room.connect(connectUrl, token)`. Resolves to an
     /// opaque room handle string. `opts` is a JS object (e.g.
     /// `{ autoSubscribe: true }`).
-    #[wasm_bindgen(js_name = cokretLivekitJoin, catch)]
+    #[wasm_bindgen(js_name = arkretLivekitJoin, catch)]
     pub fn join(connect_url: &str, token: &str, opts: &JsValue)
     -> Result<js_sys::Promise, JsValue>;
 
     /// `room.localParticipant.setMicrophoneEnabled / setCameraEnabled /
     /// setScreenShareEnabled`. `media` is `{ audio?, video?, screen? }`.
-    #[wasm_bindgen(js_name = cokretLivekitPublish, catch)]
+    #[wasm_bindgen(js_name = arkretLivekitPublish, catch)]
     pub fn publish(handle: &str, media: &JsValue) -> Result<js_sys::Promise, JsValue>;
 
     /// Mute/unmute a published track (`kind` = "audio" | "video" | "screen").
-    #[wasm_bindgen(js_name = cokretLivekitSetMuted, catch)]
+    #[wasm_bindgen(js_name = arkretLivekitSetMuted, catch)]
     pub fn set_muted(handle: &str, kind: &str, muted: bool) -> Result<js_sys::Promise, JsValue>;
 
     /// Inject a sender-bound MLS-exporter-derived frame key into the LiveKit
@@ -65,7 +65,7 @@ extern "C" {
     /// E2EE. `participant_identity` is the sender the key belongs to (the local
     /// participant for our own publish, or a remote participant whose key we
     /// recomputed from the shared MLS exporter so we can decrypt its frames).
-    #[wasm_bindgen(js_name = cokretLivekitSetE2EEKey, catch)]
+    #[wasm_bindgen(js_name = arkretLivekitSetE2EEKey, catch)]
     pub fn set_e2ee_key(
         handle: &str,
         participant_identity: &str,
@@ -75,10 +75,10 @@ extern "C" {
 
     /// Subscribe to `RoomEvent.ParticipantConnected`; `cb` receives the
     /// participant identity string.
-    #[wasm_bindgen(js_name = cokretLivekitOnParticipant, catch)]
+    #[wasm_bindgen(js_name = arkretLivekitOnParticipant, catch)]
     pub fn on_participant(handle: &str, cb: &JsValue) -> Result<(), JsValue>;
 
     /// `room.disconnect()`.
-    #[wasm_bindgen(js_name = cokretLivekitLeave, catch)]
+    #[wasm_bindgen(js_name = arkretLivekitLeave, catch)]
     pub fn leave(handle: &str) -> Result<js_sys::Promise, JsValue>;
 }

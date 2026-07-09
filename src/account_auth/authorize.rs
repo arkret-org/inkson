@@ -23,7 +23,7 @@ pub fn active_oidc_redirect_uri() -> String {
 /// inkson client id.
 pub fn build_oidc_authorize_scaffold(
     discovery: &OidcDiscoveryDocument,
-    method: &cokret_sdk::AuthMethod,
+    method: &arkret_sdk::AuthMethod,
     redirect_uri: &str,
     login_hint: &str,
     device_id: &str,
@@ -74,7 +74,7 @@ pub fn build_oidc_authorize_scaffold(
 #[allow(clippy::too_many_arguments)]
 fn build_standard_authorize_url(
     discovery: &OidcDiscoveryDocument,
-    method: &cokret_sdk::AuthMethod,
+    method: &arkret_sdk::AuthMethod,
     client_id: &str,
     redirect_uri: &str,
     login_hint: &str,

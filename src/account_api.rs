@@ -28,15 +28,15 @@ use crate::models::{
     IdentityResolveOutcome, SubmitEventResult,
 };
 
-pub(crate) fn did_for_request_field(field: &str, value: &str) -> anyhow::Result<cokret_sdk::Did> {
+pub(crate) fn did_for_request_field(field: &str, value: &str) -> anyhow::Result<arkret_sdk::Did> {
     let value = value.trim();
-    cokret_sdk::Did::new(value.to_owned())
+    arkret_sdk::Did::new(value.to_owned())
         .map_err(|err| anyhow::anyhow!("invalid {field} DID `{value}`: {err}"))
 }
 
-fn device_id_for_request_field(field: &str, value: &str) -> anyhow::Result<cokret_sdk::DeviceId> {
+fn device_id_for_request_field(field: &str, value: &str) -> anyhow::Result<arkret_sdk::DeviceId> {
     let value = value.trim();
-    cokret_sdk::DeviceId::new(value.to_owned())
+    arkret_sdk::DeviceId::new(value.to_owned())
         .map_err(|err| anyhow::anyhow!("invalid {field} `{value}`: {err}"))
 }
 
@@ -50,7 +50,7 @@ fn contact_response_action(action: &str) -> anyhow::Result<String> {
 fn optional_did_for_request_field(
     field: &str,
     value: Option<&str>,
-) -> anyhow::Result<Option<cokret_sdk::Did>> {
+) -> anyhow::Result<Option<arkret_sdk::Did>> {
     value
         .map(str::trim)
         .filter(|value| !value.is_empty())
@@ -59,13 +59,13 @@ fn optional_did_for_request_field(
 }
 
 pub async fn register_account(
-    http: &cokret_sdk::http_client::Client,
+    http: &arkret_sdk::http_client::Client,
     did: &str,
     _handle: &str,
     display_name: Option<&str>,
     device_id: Option<&str>,
-) -> anyhow::Result<cokret_sdk::models::AccountRegisterOutcome> {
-    let body = cokret_sdk::models::AccountRegisterRequestBody {
+) -> anyhow::Result<arkret_sdk::models::AccountRegisterOutcome> {
+    let body = arkret_sdk::models::AccountRegisterRequestBody {
         principal_id: did_for_request_field("principal_id", did)?,
         // Canonical registration handle is asserted by the Account Authority
         // on the coauth -> soland register path; this direct client path
@@ -90,14 +90,14 @@ pub async fn register_account(
 }
 
 pub async fn account_viewer(
-    http: &cokret_sdk::http_client::Client,
-) -> anyhow::Result<cokret_sdk::models::AccountView> {
+    http: &arkret_sdk::http_client::Client,
+) -> anyhow::Result<arkret_sdk::models::AccountView> {
     http.account_viewer()
         .await
         .map_err(|error| anyhow::anyhow!("account viewer: {error}"))
 }
 
-pub async fn account_me(http: &cokret_sdk::http_client::Client) -> anyhow::Result<CurrentAccount> {
+pub async fn account_me(http: &arkret_sdk::http_client::Client) -> anyhow::Result<CurrentAccount> {
     let viewer = account_viewer(http).await?;
     Ok(current_account_from_viewer(viewer))
 }
@@ -109,16 +109,16 @@ pub async fn account_me(http: &cokret_sdk::http_client::Client) -> anyhow::Resul
 /// `Some("")` explicitly clears it. The server normalises empty
 /// strings to `None` on write.
 pub async fn update_profile(
-    http: &cokret_sdk::http_client::Client,
+    http: &arkret_sdk::http_client::Client,
     display_name: Option<&str>,
     bio: Option<&str>,
     avatar_blob_ref: Option<&str>,
-) -> anyhow::Result<cokret_sdk::models::AccountUpdateProfileOutcome> {
-    let mut patch = cokret_sdk::Patch::new();
+) -> anyhow::Result<arkret_sdk::models::AccountUpdateProfileOutcome> {
+    let mut patch = arkret_sdk::Patch::new();
     if let Some(display_name) = display_name {
         let display_name = display_name.trim();
         if display_name.is_empty() {
-            patch.insert_op("display_name", cokret_sdk::PatchOp::unset())?;
+            patch.insert_op("display_name", arkret_sdk::PatchOp::unset())?;
         } else {
             patch.insert("display_name", display_name)?;
         }
@@ -126,7 +126,7 @@ pub async fn update_profile(
     if let Some(bio) = bio {
         let bio = bio.trim();
         if bio.is_empty() {
-            patch.insert_op("profile_fields.bio", cokret_sdk::PatchOp::unset())?;
+            patch.insert_op("profile_fields.bio", arkret_sdk::PatchOp::unset())?;
         } else {
             patch.insert("profile_fields.bio", bio)?;
         }
@@ -134,9 +134,9 @@ pub async fn update_profile(
     if let Some(avatar_blob_ref) = avatar_blob_ref {
         let avatar_blob_ref = avatar_blob_ref.trim();
         if avatar_blob_ref.is_empty() {
-            patch.insert_op("avatar_blob_ref", cokret_sdk::PatchOp::unset())?;
+            patch.insert_op("avatar_blob_ref", arkret_sdk::PatchOp::unset())?;
         } else {
-            cokret_sdk::BlobRef::new(avatar_blob_ref.to_owned()).map_err(|err| {
+            arkret_sdk::BlobRef::new(avatar_blob_ref.to_owned()).map_err(|err| {
                 anyhow::anyhow!("invalid avatar_blob_ref `{avatar_blob_ref}`: {err}")
             })?;
             patch.insert("avatar_blob_ref", avatar_blob_ref)?;
@@ -148,7 +148,7 @@ pub async fn update_profile(
     patch
         .validate()
         .map_err(|err| anyhow::anyhow!("invalid profile patch: {err}"))?;
-    let body = cokret_sdk::models::AccountUpdateProfileRequestBody {
+    let body = arkret_sdk::models::AccountUpdateProfileRequestBody {
         patch: serde_json::to_value(&patch)?,
     };
     http.account_update_profile(&body)
@@ -157,15 +157,15 @@ pub async fn update_profile(
 }
 
 pub async fn respond_contact(
-    http: &cokret_sdk::http_client::Client,
+    http: &arkret_sdk::http_client::Client,
     requester: &str,
     action: &str,
-) -> anyhow::Result<cokret_sdk::ContactRespondOutcome> {
+) -> anyhow::Result<arkret_sdk::ContactRespondOutcome> {
     respond_contact_with_service(http, requester, action, None).await
 }
 
 async fn contact_request_event_id_for_requester(
-    http: &cokret_sdk::http_client::Client,
+    http: &arkret_sdk::http_client::Client,
     requester: &str,
 ) -> anyhow::Result<String> {
     let requester = requester.trim();
@@ -188,11 +188,11 @@ async fn contact_request_event_id_for_requester(
 /// empty; cross-PS responses pass the originating PS so soland can route the
 /// accept/reject back. Empty / whitespace-only values are dropped.
 pub async fn respond_contact_with_service(
-    http: &cokret_sdk::http_client::Client,
+    http: &arkret_sdk::http_client::Client,
     requester: &str,
     action: &str,
     requester_service_did: Option<&str>,
-) -> anyhow::Result<cokret_sdk::ContactRespondOutcome> {
+) -> anyhow::Result<arkret_sdk::ContactRespondOutcome> {
     let request_event_ref = contact_request_event_id_for_requester(http, requester).await?;
     respond_contact_with_request_id_and_service(
         http,
@@ -205,14 +205,14 @@ pub async fn respond_contact_with_service(
 }
 
 pub async fn respond_contact_with_request_id_and_service(
-    http: &cokret_sdk::http_client::Client,
+    http: &arkret_sdk::http_client::Client,
     requester: &str,
     request_event_ref: &str,
     action: &str,
     requester_service_did: Option<&str>,
-) -> anyhow::Result<cokret_sdk::ContactRespondOutcome> {
-    let body = cokret_sdk::ContactRespondRequestBody {
-        request_id: cokret_sdk::EventId::new(request_event_ref.trim().to_owned()).map_err(
+) -> anyhow::Result<arkret_sdk::ContactRespondOutcome> {
+    let body = arkret_sdk::ContactRespondRequestBody {
+        request_id: arkret_sdk::EventId::new(request_event_ref.trim().to_owned()).map_err(
             |err| anyhow::anyhow!("invalid contact request_id `{request_event_ref}`: {err}"),
         )?,
         requester: did_for_request_field("requester", requester)?,
@@ -228,8 +228,8 @@ pub async fn respond_contact_with_request_id_and_service(
         .map_err(anyhow::Error::from)
 }
 
-pub async fn contacts(http: &cokret_sdk::http_client::Client) -> anyhow::Result<ContactListView> {
-    let response: cokret_sdk::ContactList =
+pub async fn contacts(http: &arkret_sdk::http_client::Client) -> anyhow::Result<ContactListView> {
+    let response: arkret_sdk::ContactList =
         http.contacts_list().await.map_err(anyhow::Error::from)?;
     ContactListView::from_sdk(response)
 }
@@ -238,15 +238,15 @@ pub async fn contacts(http: &cokret_sdk::http_client::Client) -> anyhow::Result<
 ///
 /// Spec `invite-addressing.md` §5 / OpenAPI
 /// `ck.self.invite_receive_policy.resource.get`: served from the self plane at
-/// `GET /_cokret/self/invite-receive-policy` and returns the bare
-/// `cokret_sdk::InviteReceivePolicy` (soland echoes the stored override or
+/// `GET /_arkret/self/invite-receive-policy` and returns the bare
+/// `arkret_sdk::InviteReceivePolicy` (soland echoes the stored override or
 /// its recommended default). When the deployment does not yet wire this
 /// surface the caller treats 404/501/405 as "use defaults" rather than a
 /// hard error (see [`crate::models::default_invite_receive_policy`]).
 pub async fn get_invite_receive_policy(
-    http: &cokret_sdk::http_client::Client,
+    http: &arkret_sdk::http_client::Client,
 ) -> anyhow::Result<crate::models::InviteReceivePolicy> {
-    http.get("/_cokret/self/invite-receive-policy")
+    http.get("/_arkret/self/invite-receive-policy")
         .await
         .map_err(anyhow::Error::from)
 }
@@ -254,26 +254,26 @@ pub async fn get_invite_receive_policy(
 /// Persist the actor's `invite_receive_policy` (U4).
 ///
 /// Spec `ck.self.invite_receive_policy.resource.replace`:
-/// `PUT /_cokret/self/invite-receive-policy` with the bare
-/// `cokret_sdk::InviteReceivePolicy` as the body. The handler enforces
+/// `PUT /_arkret/self/invite-receive-policy` with the bare
+/// `arkret_sdk::InviteReceivePolicy` as the body. The handler enforces
 /// `subject_id == session actor` and requires the `schema` constant, so the
 /// caller MUST stamp both before calling (see the U4 view); the server
 /// echoes the stored policy back.
 pub async fn set_invite_receive_policy(
-    http: &cokret_sdk::http_client::Client,
+    http: &arkret_sdk::http_client::Client,
     policy: &crate::models::InviteReceivePolicy,
 ) -> anyhow::Result<crate::models::InviteReceivePolicy> {
-    http.put("/_cokret/self/invite-receive-policy", policy)
+    http.put("/_arkret/self/invite-receive-policy", policy)
         .await
         .map_err(anyhow::Error::from)
 }
 
 pub async fn direct_conversation_resolve(
-    http: &cokret_sdk::http_client::Client,
+    http: &arkret_sdk::http_client::Client,
     peer: &str,
     create: bool,
-) -> anyhow::Result<cokret_sdk::DirectConversationResolveOutcome> {
-    let body = cokret_sdk::DirectConversationResolveRequestBody {
+) -> anyhow::Result<arkret_sdk::DirectConversationResolveOutcome> {
+    let body = arkret_sdk::DirectConversationResolveRequestBody {
         peer: did_for_request_field("peer", peer)?,
         create,
         idempotency_key: None,
@@ -287,15 +287,15 @@ pub async fn direct_conversation_resolve(
 /// actor (cells where the actor is either holder or peer). Spec
 /// `identity/consent-model.md` §3 / OpenAPI `ck.self.consent.query.list`.
 pub async fn consent_cells(
-    http: &cokret_sdk::http_client::Client,
-) -> anyhow::Result<cokret_sdk::ConsentCellList> {
-    http.get(cokret_sdk::http::PATH_SELF_CONSENT_CELLS)
+    http: &arkret_sdk::http_client::Client,
+) -> anyhow::Result<arkret_sdk::ConsentCellList> {
+    http.get(arkret_sdk::http::PATH_SELF_CONSENT_CELLS)
         .await
         .map_err(anyhow::Error::from)
 }
 
 pub async fn identity_describe(
-    http: &cokret_sdk::http_client::Client,
+    http: &arkret_sdk::http_client::Client,
 ) -> anyhow::Result<IdentityDescribeOutcome> {
     http.identity_describe()
         .await
@@ -303,12 +303,12 @@ pub async fn identity_describe(
 }
 
 pub async fn identity_resolve(
-    http: &cokret_sdk::http_client::Client,
+    http: &arkret_sdk::http_client::Client,
     did: &str,
 ) -> anyhow::Result<IdentityResolveOutcome> {
-    let subject = cokret_sdk::Did::new(did.to_owned())
+    let subject = arkret_sdk::Did::new(did.to_owned())
         .map_err(|err| anyhow::anyhow!("invalid did `{did}`: {err}"))?;
-    let body = cokret_sdk::models::IdentityResolveRequestBody {
+    let body = arkret_sdk::models::IdentityResolveRequestBody {
         did: subject,
         requested_evidence_kinds: Vec::new(),
     };
@@ -318,21 +318,21 @@ pub async fn identity_resolve(
 }
 
 pub async fn sync_describe(
-    http: &cokret_sdk::http_client::Client,
-) -> anyhow::Result<cokret_sdk::models::SyncDescription> {
+    http: &arkret_sdk::http_client::Client,
+) -> anyhow::Result<arkret_sdk::models::SyncDescription> {
     http.account_describe().await.map_err(anyhow::Error::from)
 }
 
 pub async fn invites(
-    http: &cokret_sdk::http_client::Client,
-) -> anyhow::Result<cokret_sdk::AuthzInviteList> {
+    http: &arkret_sdk::http_client::Client,
+) -> anyhow::Result<arkret_sdk::AuthzInviteList> {
     let subject = account_me(http).await?.did;
     http.authz_invites(&subject, None, None)
         .await
         .map_err(anyhow::Error::from)
 }
 
-fn current_account_from_viewer(viewer: cokret_sdk::models::AccountView) -> CurrentAccount {
+fn current_account_from_viewer(viewer: arkret_sdk::models::AccountView) -> CurrentAccount {
     let display_name = viewer.profile.as_ref().and_then(|profile| {
         let value = profile.display_name.trim();
         (!value.is_empty()).then(|| value.to_owned())
@@ -354,7 +354,7 @@ fn current_account_from_viewer(viewer: cokret_sdk::models::AccountView) -> Curre
     }
 }
 
-fn primary_handle_from_viewer(viewer: &cokret_sdk::models::AccountView) -> String {
+fn primary_handle_from_viewer(viewer: &arkret_sdk::models::AccountView) -> String {
     viewer
         .primary_handle_claim
         .as_ref()
@@ -373,11 +373,11 @@ fn primary_handle_from_viewer(viewer: &cokret_sdk::models::AccountView) -> Strin
 /// Protocol contract: `contacts/tombstone` body carries `contact` and an
 /// optional `block_peer: true`.
 pub async fn tombstone_contact(
-    http: &cokret_sdk::http_client::Client,
+    http: &arkret_sdk::http_client::Client,
     peer: &str,
     block_peer: bool,
-) -> anyhow::Result<cokret_sdk::ContactTombstone> {
-    let body = cokret_sdk::ContactTombstoneRequestBody {
+) -> anyhow::Result<arkret_sdk::ContactTombstone> {
+    let body = arkret_sdk::ContactTombstoneRequestBody {
         contact: did_for_request_field("contact", peer)?,
         revoke_scopes: Vec::new(),
         full_peer_revoke: false,
@@ -393,20 +393,20 @@ pub async fn tombstone_contact(
 /// optional RFC 3339 time window upper bound. Spec OpenAPI
 /// `ck.self.consent.command.grant`.
 pub async fn grant_consent(
-    http: &cokret_sdk::http_client::Client,
+    http: &arkret_sdk::http_client::Client,
     holder: &str,
     peer: &str,
     scope: &str,
     expires_at: Option<chrono::DateTime<chrono::Utc>>,
-) -> anyhow::Result<cokret_sdk::ConsentCellView> {
-    let body = cokret_sdk::ConsentUpdateRequestBody {
+) -> anyhow::Result<arkret_sdk::ConsentCellView> {
+    let body = arkret_sdk::ConsentUpdateRequestBody {
         peer_did: did_for_request_field("peer", peer)?,
         consent_scope: Some(scope.trim().to_owned()),
         expires_at,
     };
     let path = format!(
         "{}/{}/grant",
-        cokret_sdk::http::PATH_SELF_CONSENT_CELLS,
+        arkret_sdk::http::PATH_SELF_CONSENT_CELLS,
         crate::wire_helpers::path_component(holder.trim()),
     );
     http.post(&path, &body).await.map_err(anyhow::Error::from)
@@ -415,19 +415,19 @@ pub async fn grant_consent(
 /// Revoke scoped consent from `peer`. Spec OpenAPI
 /// `ck.self.consent.command.revoke`.
 pub async fn revoke_consent(
-    http: &cokret_sdk::http_client::Client,
+    http: &arkret_sdk::http_client::Client,
     holder: &str,
     peer: &str,
     scope: &str,
-) -> anyhow::Result<cokret_sdk::ConsentCellView> {
-    let body = cokret_sdk::ConsentUpdateRequestBody {
+) -> anyhow::Result<arkret_sdk::ConsentCellView> {
+    let body = arkret_sdk::ConsentUpdateRequestBody {
         peer_did: did_for_request_field("peer", peer)?,
         consent_scope: Some(scope.trim().to_owned()),
         expires_at: None,
     };
     let path = format!(
         "{}/{}/revoke",
-        cokret_sdk::http::PATH_SELF_CONSENT_CELLS,
+        arkret_sdk::http::PATH_SELF_CONSENT_CELLS,
         crate::wire_helpers::path_component(holder.trim()),
     );
     http.post(&path, &body).await.map_err(anyhow::Error::from)
@@ -437,17 +437,17 @@ pub async fn revoke_consent(
 /// authenticated actor (`peer`) the given scope. Produces a holder-side
 /// pending cell. Spec OpenAPI `ck.self.consent.command.request`.
 pub async fn request_consent(
-    http: &cokret_sdk::http_client::Client,
+    http: &arkret_sdk::http_client::Client,
     holder: &str,
     peer: &str,
     scope: &str,
-) -> anyhow::Result<cokret_sdk::ConsentCellView> {
-    let body = cokret_sdk::ConsentRequestRequestBody {
+) -> anyhow::Result<arkret_sdk::ConsentCellView> {
+    let body = arkret_sdk::ConsentRequestRequestBody {
         holder_did: did_for_request_field("holder", holder)?,
         peer_did: Some(did_for_request_field("peer", peer)?),
         consent_scope: Some(scope.trim().to_owned()),
     };
-    http.post(cokret_sdk::http::PATH_SELF_CONSENT_REQUEST, &body)
+    http.post(arkret_sdk::http::PATH_SELF_CONSENT_REQUEST, &body)
         .await
         .map_err(anyhow::Error::from)
 }
@@ -455,24 +455,24 @@ pub async fn request_consent(
 /// Submit a `did:webvh` DID operation (inception / rotation) to soland's
 /// embedded identity provider. Spec op
 /// `ck.root.identity.command.submit_did_operation`
-/// (`POST /_cokret/root/identity/submit-did-operation`). The body is the
-/// SDK-built `submit_body` from `cokret_sdk::webvh::prepare_inception`.
+/// (`POST /_arkret/root/identity/submit-did-operation`). The body is the
+/// SDK-built `submit_body` from `arkret_sdk::webvh::prepare_inception`.
 pub async fn submit_did_operation(
-    http: &cokret_sdk::http_client::Client,
-    body: &cokret_sdk::models::DidOperationSubmitRequestBody,
-) -> anyhow::Result<cokret_sdk::models::DidOperationSubmitOutcome> {
+    http: &arkret_sdk::http_client::Client,
+    body: &arkret_sdk::models::DidOperationSubmitRequestBody,
+) -> anyhow::Result<arkret_sdk::models::DidOperationSubmitOutcome> {
     http.identity_submit_did_operation(body)
         .await
         .map_err(anyhow::Error::from)
 }
 
 async fn account_data_actor_scope(
-    http: &cokret_sdk::http_client::Client,
+    http: &arkret_sdk::http_client::Client,
 ) -> anyhow::Result<(String, String)> {
     let account = account_me(http).await?;
-    let principal = cokret_sdk::Did::new(account.did.clone())
+    let principal = arkret_sdk::Did::new(account.did.clone())
         .map_err(|err| anyhow::anyhow!("invalid account DID `{}`: {err}", account.did))?;
-    let realm_id = cokret_sdk::auth::principal_control_realm_id(&principal);
+    let realm_id = arkret_sdk::auth::principal_control_realm_id(&principal);
     Ok((account.did, realm_id.to_string()))
 }
 
@@ -613,7 +613,7 @@ mod tests {
 
     #[test]
     fn account_viewer_projection_uses_signed_handle_claim() {
-        let viewer: cokret_sdk::models::AccountView = serde_json::from_value(json!({
+        let viewer: arkret_sdk::models::AccountView = serde_json::from_value(json!({
             "principal_id": "did:web:alice.example",
             "state": "active",
             "devices": [],
@@ -643,7 +643,7 @@ mod tests {
 
     #[test]
     fn account_viewer_projection_does_not_invent_handle() {
-        let viewer: cokret_sdk::models::AccountView = serde_json::from_value(json!({
+        let viewer: arkret_sdk::models::AccountView = serde_json::from_value(json!({
             "principal_id": "did:web:alice.example",
             "state": "active",
             "devices": []

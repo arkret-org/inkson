@@ -2,7 +2,7 @@
 //!
 //! Daily moderation governance is authored as self-signed protocol
 //! events submitted via `ck.self.events.command.submit`
-//! (`POST /_cokret/self/events`); the product-admin moderation write path
+//! (`POST /_arkret/self/events`); the product-admin moderation write path
 //! is retired. The soland P2 reducer (`apply_moderation`) projects
 //! these into `ck.component.moderation_state.v1` /
 //! `ck.component.moderation.appeal.v1` and enforces the §5.5.2
@@ -18,10 +18,10 @@ use super::{OperationBuilder, did_id, payload_value, trim_realm_id};
 /// request to hash — so the binding is a deterministic canonical digest
 /// over the moderated target preview. It is stable and reproducible for
 /// the exact `target_ref` being sealed.
-fn decision_request_digest(target_ref: &str) -> anyhow::Result<cokret_sdk::Hash> {
-    let digest = cokret_sdk::canonical::canonical_sha256(&json!({ "target_ref": target_ref }))
+fn decision_request_digest(target_ref: &str) -> anyhow::Result<arkret_sdk::Hash> {
+    let digest = arkret_sdk::canonical::canonical_sha256(&json!({ "target_ref": target_ref }))
         .map_err(|err| anyhow::anyhow!("moderation decision request digest: {err}"))?;
-    cokret_sdk::Hash::new(digest)
+    arkret_sdk::Hash::new(digest)
         .map_err(|err| anyhow::anyhow!("moderation decision request digest is not a Hash: {err}"))
 }
 
@@ -42,7 +42,7 @@ pub fn moderation_decision(
     reason_code: &str,
 ) -> anyhow::Result<OperationBuilder> {
     let realm = trim_realm_id(realm_id);
-    let payload = cokret_sdk::ModerationDecisionPayload {
+    let payload = arkret_sdk::ModerationDecisionPayload {
         target_ref: Value::String(target_ref.to_owned()),
         decision: decision.to_owned(),
         issuer: did_id(actor)?,
@@ -58,7 +58,7 @@ pub fn moderation_decision(
     Ok(OperationBuilder::new(
         &realm,
         actor,
-        cokret_sdk::events::kinds::EventKind::ModerationDecision,
+        arkret_sdk::events::kinds::EventKind::ModerationDecision,
     )
     .target_ref(target_ref)
     .body(payload_value(&payload, "moderation_decision payload")?))
@@ -78,7 +78,7 @@ pub fn moderation_decision_lift(
     reason_code: &str,
 ) -> anyhow::Result<OperationBuilder> {
     let realm = trim_realm_id(realm_id);
-    let payload = cokret_sdk::ModerationDecisionLiftPayload {
+    let payload = arkret_sdk::ModerationDecisionLiftPayload {
         target_ref: Value::String(target_ref.to_owned()),
         decision_ref: Value::String(decision_ref.to_owned()),
         reason_code: Some(reason_code.to_owned()),
@@ -88,7 +88,7 @@ pub fn moderation_decision_lift(
     Ok(OperationBuilder::new(
         &realm,
         actor,
-        cokret_sdk::events::kinds::EventKind::ModerationDecisionLift,
+        arkret_sdk::events::kinds::EventKind::ModerationDecisionLift,
     )
     .target_ref(target_ref)
     .body(payload_value(&payload, "moderation_decision_lift payload")?))
@@ -117,7 +117,7 @@ pub fn moderation_appeal_review(
     OperationBuilder::new(
         &realm,
         actor,
-        cokret_sdk::events::kinds::EventKind::ModerationAppealReview,
+        arkret_sdk::events::kinds::EventKind::ModerationAppealReview,
     )
     .target_ref(appeal_id)
     .body(body)
@@ -153,7 +153,7 @@ pub fn moderation_appeal_decision(
     OperationBuilder::new(
         &realm,
         actor,
-        cokret_sdk::events::kinds::EventKind::ModerationAppealDecision,
+        arkret_sdk::events::kinds::EventKind::ModerationAppealDecision,
     )
     .target_ref(appeal_id)
     .body(body)
@@ -182,7 +182,7 @@ pub fn moderation_appeal_close(
     OperationBuilder::new(
         &realm,
         actor,
-        cokret_sdk::events::kinds::EventKind::ModerationAppealClose,
+        arkret_sdk::events::kinds::EventKind::ModerationAppealClose,
     )
     .target_ref(appeal_id)
     .body(body)

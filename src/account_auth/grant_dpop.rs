@@ -129,11 +129,11 @@ impl DpopHandle {
         htu: &str,
         ath: Option<&str>,
     ) -> Result<String, AuthDpopError> {
-        let mut request = cokret_sdk::dpop::DpopProofRequest::new(htm, htu);
+        let mut request = arkret_sdk::dpop::DpopProofRequest::new(htm, htu);
         if let Some(ath) = ath {
             request = request.access_token(ath);
         }
-        cokret_sdk::dpop::build_dpop_proof(&request, &self.signing_key)
+        arkret_sdk::dpop::build_dpop_proof(&request, &self.signing_key)
             .map(|proof| proof.header_value)
             .map_err(|error| AuthDpopError::Mint(error.to_string()))
     }
@@ -143,12 +143,12 @@ impl DpopHandle {
     pub fn sdk_dpop_auth_for_access_token(
         &self,
         access_token: impl Into<String>,
-    ) -> cokret_sdk::http_client::DpopAuth {
+    ) -> arkret_sdk::http_client::DpopAuth {
         garth::session::dpop::access_token_auth(access_token, self.signing_key.clone())
     }
 
     /// Build SDK http-client DPoP auth for proof-only requests.
-    pub fn sdk_dpop_proof_only_auth(&self) -> cokret_sdk::http_client::DpopAuth {
+    pub fn sdk_dpop_proof_only_auth(&self) -> arkret_sdk::http_client::DpopAuth {
         garth::session::dpop::proof_only_auth(self.signing_key.clone())
     }
 
@@ -160,7 +160,7 @@ impl DpopHandle {
         grant_id: &str,
         grant_jwt: &str,
         audience: &str,
-    ) -> Result<cokret_sdk::SessionGrantIntrospectionProof, AuthDpopError> {
+    ) -> Result<arkret_sdk::SessionGrantIntrospectionProof, AuthDpopError> {
         crate::account_auth::build_session_grant_introspection_proof_bundle(
             grant_id,
             grant_jwt,
@@ -174,7 +174,7 @@ impl DpopHandle {
 /// RFC 9449 `ath` hash:
 /// `base64url-no-pad(sha256(authorization_credential))`.
 pub fn dpop_authorization_credential_hash(authorization_credential: &str) -> String {
-    cokret_sdk::dpop::dpop_access_token_hash(authorization_credential)
+    arkret_sdk::dpop::dpop_access_token_hash(authorization_credential)
 }
 
 /// Generate or load the device DPoP key. Calls return the same handle
@@ -459,8 +459,8 @@ pub fn dpop_device_key_record_from_seed(
 fn jwk_thumbprint_ed25519(
     verifying_key: &ed25519_dalek::VerifyingKey,
 ) -> Result<String, AuthDpopError> {
-    let jwk = cokret_sdk::dpop::DpopJwk::from_ed25519_verifying_key(verifying_key);
-    cokret_sdk::dpop::dpop_jwk_thumbprint(&jwk)
+    let jwk = arkret_sdk::dpop::DpopJwk::from_ed25519_verifying_key(verifying_key);
+    arkret_sdk::dpop::dpop_jwk_thumbprint(&jwk)
         .map_err(|error| AuthDpopError::Mint(error.to_string()))
 }
 
@@ -508,7 +508,7 @@ mod tests {
         let proof = handle
             .mint_proof(
                 "POST",
-                "https://example.test/_cokret/gate/account/session-grants",
+                "https://example.test/_arkret/gate/account/session-grants",
                 None,
             )
             .unwrap();
@@ -545,7 +545,7 @@ mod tests {
     fn authorization_credential_hash_matches_rfc9449_ath_encoding() {
         assert_eq!(
             dpop_authorization_credential_hash("session-credential-1"),
-            cokret_sdk::dpop::dpop_access_token_hash("session-credential-1")
+            arkret_sdk::dpop::dpop_access_token_hash("session-credential-1")
         );
     }
 
@@ -556,7 +556,7 @@ mod tests {
         let proof = handle
             .mint_proof(
                 "POST",
-                "https://example.test/_cokret/gate/account/session-grants",
+                "https://example.test/_arkret/gate/account/session-grants",
                 Some("session-credential-1"),
             )
             .unwrap();
@@ -574,7 +574,7 @@ mod tests {
         let proof = handle
             .mint_proof(
                 "POST",
-                "https://example.test/_cokret/gate/account/session-grants",
+                "https://example.test/_arkret/gate/account/session-grants",
                 None,
             )
             .unwrap();
@@ -638,7 +638,7 @@ mod tests {
         let mut store = isolated_store("convenience");
         let proof = mint_dpop_proof(
             &mut store,
-            "https://example.test/_cokret/gate/account/session-grants",
+            "https://example.test/_arkret/gate/account/session-grants",
             "POST",
             None,
         )

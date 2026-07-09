@@ -99,7 +99,7 @@ fn realm_member_roster_ignores_bare_did_strings() {
 
 #[test]
 fn member_display_label_prefers_handle_shaped_user_label() {
-    use cokret_sdk::{
+    use arkret_sdk::{
         DisplayProfile, MemberIdentity, MemberIdentityProof, MemberIdentitySignatureAlgorithm,
     };
 
@@ -107,11 +107,11 @@ fn member_display_label_prefers_handle_shaped_user_label() {
     // only; the roster label still prefers a handle-shaped label when
     // roster handle evidence or a materialized subject DID exposes one.
     let identity = MemberIdentity {
-        schema: cokret_sdk::MEMBER_IDENTITY_SCHEMA.to_owned(),
-        realm_id: cokret_sdk::RealmId::new("ak:realm:01904100-0000-7000-8000-000000000001")
+        schema: arkret_sdk::MEMBER_IDENTITY_SCHEMA.to_owned(),
+        realm_id: arkret_sdk::RealmId::new("ak:realm:01904100-0000-7000-8000-000000000001")
             .unwrap(),
-        actor_id: cokret_sdk::Did::new("did:web:acme.example:users:alice".to_owned()).unwrap(),
-        subject_id: cokret_sdk::Did::new("did:web:acme.example:users:alice".to_owned()).unwrap(),
+        actor_id: arkret_sdk::Did::new("did:web:acme.example:users:alice".to_owned()).unwrap(),
+        subject_id: arkret_sdk::Did::new("did:web:acme.example:users:alice".to_owned()).unwrap(),
         display_profile: DisplayProfile {
             display_name: "Alice".to_owned(),
             avatar_blob_ref: None,
@@ -121,7 +121,7 @@ fn member_display_label_prefers_handle_shaped_user_label() {
         proof: MemberIdentityProof {
             verification_method: "did:web:acme.example#key-1".to_owned(),
             signature_algorithm: MemberIdentitySignatureAlgorithm::Ed25519,
-            payload_digest: cokret_sdk::Hash::new(
+            payload_digest: arkret_sdk::Hash::new(
                 "sha256:0000000000000000000000000000000000000000000000000000000000000000",
             )
             .unwrap(),

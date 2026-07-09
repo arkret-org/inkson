@@ -277,7 +277,7 @@ async fn fetch_pending_agent_runtime_approval(
     with_authed_sdk_client(base_url, token, move |http| async move {
         let list = http.agent_list().await?;
         for row in list.agents {
-            if row.status != cokret_sdk::models::AgentStatus::PendingRuntimeKey {
+            if row.status != arkret_sdk::models::AgentStatus::PendingRuntimeKey {
                 continue;
             }
             let agent_principal_id = row.agent_principal_id.as_str();
@@ -299,7 +299,7 @@ async fn fetch_pending_agent_runtime_approval(
 }
 
 fn pending_runtime_approval_from_view(
-    view: &cokret_sdk::AgentView,
+    view: &arkret_sdk::AgentView,
 ) -> Option<PendingAgentRuntimeApproval> {
     if view.status != "pending_runtime_key" {
         return None;
@@ -335,7 +335,7 @@ fn pending_runtime_approval_from_view(
     })
 }
 
-fn agent_field(view: &cokret_sdk::AgentView, key: &str) -> Option<String> {
+fn agent_field(view: &arkret_sdk::AgentView, key: &str) -> Option<String> {
     view.agent
         .get(key)
         .and_then(Value::as_str)

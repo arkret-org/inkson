@@ -1,6 +1,6 @@
 //! Realm lifecycle / update / organization / message-revise builders.
 
-use cokret_sdk::models::{
+use arkret_sdk::models::{
     RealmOrganizationAuthorization, RealmOrganizationControlScope, RealmOrganizationIssuerRole,
     RealmOrganizationPayload, RealmOrganizationRelationship, RealmOrganizationStatus,
     SignatureMaterial,
@@ -23,12 +23,12 @@ pub fn realm_archive(
     Ok(OperationBuilder::new(
         realm_id,
         actor,
-        cokret_sdk::events::kinds::EventKind::SpaceArchive,
+        arkret_sdk::events::kinds::EventKind::SpaceArchive,
     )
     .target_ref(container_space_id)
     .body(space_state_transition_payload_value(
         container_space_id,
-        cokret_sdk::ObjectState::Archived,
+        arkret_sdk::ObjectState::Archived,
     )?))
 }
 
@@ -38,9 +38,9 @@ pub fn message_revise_content(
     realm_id: &str,
     actor: &str,
     target_ref: &str,
-    content: cokret_sdk::ContentBlock,
+    content: arkret_sdk::ContentBlock,
 ) -> anyhow::Result<OperationBuilder> {
-    let mut payload = cokret_sdk::MessageRevisePayload {
+    let mut payload = arkret_sdk::MessageRevisePayload {
         message_id: None,
         target_ref: None,
         revision_of: None,
@@ -53,7 +53,7 @@ pub fn message_revise_content(
     };
     if target_ref.starts_with("ak:message:") {
         payload.message_id = Some(
-            cokret_sdk::MessageId::new(target_ref.to_owned())
+            arkret_sdk::MessageId::new(target_ref.to_owned())
                 .map_err(|err| anyhow::anyhow!("invalid message_id {target_ref:?}: {err}"))?,
         );
     } else {
@@ -65,7 +65,7 @@ pub fn message_revise_content(
     Ok(OperationBuilder::new(
         realm_id,
         actor,
-        cokret_sdk::events::kinds::EventKind::MessageRevise,
+        arkret_sdk::events::kinds::EventKind::MessageRevise,
     )
     .target_ref(target_ref)
     .body(body))
@@ -85,7 +85,7 @@ pub fn realm_update_patch(
     Ok(OperationBuilder::new(
         envelope_realm_id,
         actor,
-        cokret_sdk::events::kinds::EventKind::RealmUpdate,
+        arkret_sdk::events::kinds::EventKind::RealmUpdate,
     )
     .target_ref(realm_id)
     .body(object_patch_payload_value(realm_id, patch)?))
@@ -232,7 +232,7 @@ pub fn realm_organization_statement(
     Ok(OperationBuilder::new(
         realm_id,
         actor,
-        cokret_sdk::events::kinds::EventKind::RealmOrganization,
+        arkret_sdk::events::kinds::EventKind::RealmOrganization,
     )
     .target_ref(organization_did)
     .body(body))

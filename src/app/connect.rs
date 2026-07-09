@@ -6,7 +6,7 @@ use crate::api_error::{is_auth_expired_error, is_terminal_session_grant_error};
 /// Project the SDK `AuthzInviteList.invites` (typed `Invite` rows) into the
 /// `Vec<serde_json::Value>` shape the bootstrap invite-notification pipeline
 /// folds through lenient JSON accessors.
-fn invite_rows_to_values(invites: Vec<cokret_sdk::models::Invite>) -> Vec<serde_json::Value> {
+fn invite_rows_to_values(invites: Vec<arkret_sdk::models::Invite>) -> Vec<serde_json::Value> {
     invites
         .into_iter()
         .filter_map(|invite| serde_json::to_value(invite).ok())
@@ -61,7 +61,7 @@ async fn bootstrap_session_refresh() -> crate::session::CurrentSessionRefresh {
 async fn client_core_events_describe(
     authed: &crate::api::CokretApi,
     state_store: Signal<LocalStateStore>,
-) -> anyhow::Result<cokret_sdk::ServiceDescribe> {
+) -> anyhow::Result<arkret_sdk::ServiceDescribe> {
     let http = authed.sdk_http_client()?;
     let local_state = state_store.read().clone();
     let secure_store = crate::secure_key_store::default_secure_key_store("inkson");
@@ -319,7 +319,7 @@ fn current_authed_api(
     Ok(attach_current_session_material(api, &mut store))
 }
 
-/// ②(A+②) — build a `/_cokret/self/*`-ready client: the credential
+/// ②(A+②) — build a `/_arkret/self/*`-ready client: the credential
 /// (`ck.session.grant` JWT) in the HTTP Bearer authorization slot plus the
 /// grant-binding (DPoP) key so each request carries a per-request `DPoP` proof
 /// (api-conventions.md §3.3).
@@ -359,7 +359,7 @@ pub(super) fn adopt_live_token_for_api(
 /// signing seed, reads the next `actor_seq` from the principal control stream,
 /// asks the Account Authority to mint a signed `service_attested`
 /// `ck.device.authorize`, and submits it via `principal_api`
-/// (`POST /_cokret/self/events`).
+/// (`POST /_arkret/self/events`).
 async fn enroll_current_session_device(
     base: &str,
     actor: &str,
@@ -422,9 +422,9 @@ async fn enroll_current_session_device(
     let account_client = {
         let sdk_base_url =
             crate::session_refresh::sdk_base_url_from_gate_account_base(&gate_account_base)?;
-        cokret_sdk::http_client::ClientBuilder::new(sdk_base_url)
+        arkret_sdk::http_client::ClientBuilder::new(sdk_base_url)
             .allow_insecure_localhost()
-            .auth(cokret_sdk::http_client::Auth::Dpop(
+            .auth(arkret_sdk::http_client::Auth::Dpop(
                 device_key.sdk_dpop_auth_for_access_token(grant_jwt),
             ))
             .build()
@@ -569,7 +569,7 @@ pub(super) fn connect(base: String, actor: String, device: String, ctx: ConnectC
         // A (re)connect may point at a different / re-provisioned Account
         // Authority, so drop the cached authority resolution and let the first
         // describe below repopulate it. Steady-state session refreshes then
-        // reuse that cache instead of re-probing `/_cokret/describe`.
+        // reuse that cache instead of re-probing `/_arkret/describe`.
         crate::account_auth::clear_authority_resolver_cache();
         did_resolution_health.set(crate::components::DidResolutionHealth::healthy());
         needs_device_authorization.set(false);
@@ -1378,7 +1378,7 @@ pub(super) fn connect(base: String, actor: String, device: String, ctx: ConnectC
                                     continue;
                                 }
                                 if crate::account_data::private_account_data_key_prefix(data_type)
-                                    == Some(cokret_sdk::ACCOUNT_DATA_TYPE_SAVED)
+                                    == Some(arkret_sdk::ACCOUNT_DATA_TYPE_SAVED)
                                 {
                                     if let Some(content) = entry
                                         .get("content")

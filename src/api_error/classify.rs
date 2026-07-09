@@ -2,7 +2,7 @@
 //! session-loss / device-authorization / cursor / frontier / rate-limit /
 //! visibility-policy predicates, and the `wait_for` sync-token normalizer.
 
-use cokret_sdk::ErrorEnvelope;
+use arkret_sdk::ErrorEnvelope;
 use reqwest::StatusCode;
 
 use super::api_error_status_and_envelope;
@@ -22,7 +22,7 @@ use super::api_error_status_and_envelope;
 /// often a reverse-proxy hiccup, a clock skew, or a server-side temp deny
 /// — not a permanently dead token.
 pub fn is_auth_expired_error(error: &anyhow::Error) -> bool {
-    use cokret_sdk::error::{
+    use arkret_sdk::error::{
         ERROR_CODE_AUTH_EXPIRED, ERROR_CODE_SOFT_LOGGED_OUT, ERROR_CODE_UNAUTHENTICATED,
     };
 
@@ -93,7 +93,7 @@ pub fn is_terminal_session_grant_refresh_error(error: &anyhow::Error) -> bool {
 }
 
 fn is_terminal_session_grant_api_error(status: StatusCode, envelope: &ErrorEnvelope) -> bool {
-    use cokret_sdk::error::{
+    use arkret_sdk::error::{
         ERROR_CODE_AUTH_EXPIRED, ERROR_CODE_CAPABILITY_DENIED, ERROR_CODE_UNAUTHENTICATED,
     };
 
@@ -108,7 +108,7 @@ fn is_terminal_session_grant_api_error(status: StatusCode, envelope: &ErrorEnvel
 }
 
 fn terminal_session_grant_refresh_code(code: &str) -> bool {
-    use cokret_sdk::error::{
+    use arkret_sdk::error::{
         ERROR_CODE_AUTHORIZED_GRANT_REVOKED, ERROR_CODE_DID_PROOF_REQUIRED,
         ERROR_CODE_GRANT_ALREADY_CONSUMED, ERROR_CODE_INVALID_SIGNATURE,
         ERROR_CODE_SESSION_GRANT_NOT_FOUND, ERROR_CODE_SESSION_LOGGED_OUT,
@@ -152,7 +152,7 @@ pub fn is_actor_frontier_absent_error(error: &anyhow::Error) -> bool {
 }
 
 pub fn is_actor_seq_cas_conflict_error(error: &anyhow::Error) -> bool {
-    use cokret_sdk::error::ERROR_CODE_CAS_CONFLICT;
+    use arkret_sdk::error::ERROR_CODE_CAS_CONFLICT;
 
     api_error_status_and_envelope(error).is_some_and(|(status, envelope)| {
         status == StatusCode::CONFLICT
@@ -164,13 +164,13 @@ pub fn is_actor_seq_cas_conflict_error(error: &anyhow::Error) -> bool {
 /// Recognise a `rate_limited` (HTTP 429) error envelope from the
 /// server and return its advertised `retry_after_ms` so callers can
 /// sleep for the server-suggested duration instead of the generic
-/// exponential backoff. Wire constant is pulled from `cokret_sdk`
+/// exponential backoff. Wire constant is pulled from `arkret_sdk`
 /// so a spec rename can't silently de-recognise the code.
 ///
 /// Returns `Some(retry_after_ms)` on match (with 0 when the server
 /// omitted the hint), `None` otherwise.
 pub fn rate_limited_retry_after(error: &anyhow::Error) -> Option<u64> {
-    use cokret_sdk::error::ERROR_CODE_RATE_LIMITED;
+    use arkret_sdk::error::ERROR_CODE_RATE_LIMITED;
     let (_, envelope) = api_error_status_and_envelope(error)?;
     if envelope.code() != ERROR_CODE_RATE_LIMITED {
         return None;
@@ -185,8 +185,8 @@ pub fn rate_limited_retry_after(error: &anyhow::Error) -> Option<u64> {
 /// `cursor_integrity_invalid` / `cursor_unrecognized` all recover by
 /// clearing the local cursor and redoing initial sync.
 pub fn is_invalid_cursor_error(error: &anyhow::Error) -> bool {
-    use cokret_sdk::error::{ERROR_CODE_CURSOR_INTEGRITY_INVALID, ERROR_CODE_CURSOR_UNRECOGNIZED};
-    use cokret_sdk::{
+    use arkret_sdk::error::{ERROR_CODE_CURSOR_INTEGRITY_INVALID, ERROR_CODE_CURSOR_UNRECOGNIZED};
+    use arkret_sdk::{
         ERROR_CODE_CURSOR_EXPIRED, ERROR_CODE_CURSOR_INVALID, ERROR_CODE_INVALID_PARAM,
     };
     api_error_status_and_envelope(error).is_some_and(|(_, envelope)| {
@@ -210,13 +210,13 @@ pub fn is_invalid_cursor_error(error: &anyhow::Error) -> bool {
 /// fetch the current frontier via `account/describe` / `snapshot/head`
 /// (§12.3 step 2) and retry / backfill with the SAME cursor.
 pub fn is_stale_frontier_error(error: &anyhow::Error) -> bool {
-    use cokret_sdk::error::ERROR_CODE_STALE_FRONTIER;
+    use arkret_sdk::error::ERROR_CODE_STALE_FRONTIER;
     api_error_status_and_envelope(error)
         .is_some_and(|(_, envelope)| envelope.code() == ERROR_CODE_STALE_FRONTIER)
 }
 
 pub(crate) fn is_snapshot_unavailable_error(error: &anyhow::Error) -> bool {
-    use cokret_sdk::error::{
+    use arkret_sdk::error::{
         ERROR_CODE_NOT_FOUND, ERROR_CODE_NOT_IMPLEMENTED, ERROR_CODE_SNAPSHOT_UNAVAILABLE,
         ERROR_CODE_UNRECOGNIZED_ENDPOINT, ERROR_CODE_UNSUPPORTED_FEATURE,
     };
@@ -236,7 +236,7 @@ pub(crate) fn is_snapshot_unavailable_error(error: &anyhow::Error) -> bool {
 }
 
 pub fn is_plaintext_visibility_policy_error(error: &anyhow::Error) -> bool {
-    use cokret_sdk::error::{ERROR_CODE_CAPABILITY_DENIED, ERROR_CODE_POLICY_DENIED};
+    use arkret_sdk::error::{ERROR_CODE_CAPABILITY_DENIED, ERROR_CODE_POLICY_DENIED};
 
     api_error_status_and_envelope(error).is_some_and(|(status, envelope)| {
         let code = envelope.code();
@@ -249,7 +249,7 @@ pub fn is_plaintext_visibility_policy_error(error: &anyhow::Error) -> bool {
 }
 
 pub fn is_space_membership_denied_error(error: &anyhow::Error) -> bool {
-    use cokret_sdk::error::ERROR_CODE_CAPABILITY_DENIED;
+    use arkret_sdk::error::ERROR_CODE_CAPABILITY_DENIED;
 
     api_error_status_and_envelope(error).is_some_and(|(status, envelope)| {
         let code = envelope.code();
@@ -270,7 +270,7 @@ pub fn normalize_wait_for_sync_token(sync_token: &str) -> Option<String> {
         if candidate.is_empty() {
             continue;
         }
-        let cursor = cokret_sdk::identifiers::Cursor::new(candidate.to_owned()).ok()?;
+        let cursor = arkret_sdk::identifiers::Cursor::new(candidate.to_owned()).ok()?;
         tokens.push(cursor.into_string());
     }
     if tokens.is_empty() {

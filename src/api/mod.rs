@@ -26,13 +26,13 @@ pub struct CokretApi {
     authorization_credential: Option<String>,
     wait_for_sync_token: Option<String>,
     /// ②(A+②) — grant-binding (DPoP) key. When set together with a grant in
-    /// `authorization_credential`, every `/_cokret/self/*` request carries a freshly-minted
+    /// `authorization_credential`, every `/_arkret/self/*` request carries a freshly-minted
     /// per-request `DPoP` proof (RFC 9449) bound to `htm`/`htu`/`ath=hash(grant)`
-    /// (api-conventions.md §3.3). This is the default `/_cokret/self/*` session
+    /// (api-conventions.md §3.3). This is the default `/_arkret/self/*` session
     /// presentation: the held credential is the
     /// grant in `authorization_credential`, sender-constrained by this DPoP key.
     dpop_device: Option<crate::account_auth::grant_dpop::DpopHandle>,
-    /// Cached `GET /_cokret/describe` response used to bind durable
+    /// Cached `GET /_arkret/describe` response used to bind durable
     /// EventProof signatures to this service's trust domain and audience.
     service_describe_cache: Arc<OnceCell<ServerDescription>>,
 }

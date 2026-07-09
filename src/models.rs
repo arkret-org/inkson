@@ -1,4 +1,4 @@
-pub use cokret_sdk::{
+pub use arkret_sdk::{
     ClaimedProfileEntry, CompatSurfaceEntry, ServerDescription, VerifiedProfileEntry,
 };
 use serde::{Deserialize, Serialize};
@@ -64,7 +64,7 @@ pub struct ContactListRow {
     /// another PS. Passed through to `contacts/respond` as
     /// `requester_service_did`.
     ///
-    /// `GET /_cokret/self/contacts` now surfaces the peer's originating
+    /// `GET /_arkret/self/contacts` now surfaces the peer's originating
     /// Principal Server on cross-PS rows, so this is populated whenever soland
     /// learned it from a cross-PS delivery; it stays `None` for same-PS
     /// contacts, where respond correctly falls back to same-PS behaviour.
@@ -76,7 +76,7 @@ pub struct ContactListRow {
     /// path can build `IntroductionEvidence::ConsentGrant { consent_grant_ref }`
     /// instead of requiring a locator URL.
     ///
-    /// soland's `GET /_cokret/self/contacts` now surfaces this field directly
+    /// soland's `GET /_arkret/self/contacts` now surfaces this field directly
     /// (a legal `ck:event` ref when the peer granted me invite/any consent,
     /// otherwise empty/absent). When it is empty the contact has not authorised
     /// me to invite them, so the UI disables the row rather than guessing a ref.
@@ -115,7 +115,7 @@ pub struct ContactListView {
 }
 
 impl ContactListView {
-    pub fn from_sdk(list: cokret_sdk::ContactList) -> anyhow::Result<Self> {
+    pub fn from_sdk(list: arkret_sdk::ContactList) -> anyhow::Result<Self> {
         Ok(Self {
             contacts: list
                 .contacts
@@ -129,7 +129,7 @@ impl ContactListView {
 }
 
 impl ContactListRow {
-    pub fn from_sdk(row: cokret_sdk::ContactListRow) -> Self {
+    pub fn from_sdk(row: arkret_sdk::ContactListRow) -> Self {
         Self {
             peer: row.peer.to_string(),
             state: contact_state_wire(row.state).to_owned(),
@@ -150,7 +150,7 @@ impl ContactListRow {
 }
 
 impl DirectConversationSummary {
-    pub fn from_sdk(summary: cokret_sdk::DirectConversationSummary) -> Self {
+    pub fn from_sdk(summary: arkret_sdk::DirectConversationSummary) -> Self {
         Self {
             realm_id: summary.realm_id.to_string(),
             main_strand_id: summary.main_strand_id.to_string(),
@@ -160,24 +160,24 @@ impl DirectConversationSummary {
     }
 }
 
-fn contact_state_wire(state: cokret_sdk::ContactState) -> &'static str {
+fn contact_state_wire(state: arkret_sdk::ContactState) -> &'static str {
     match state {
-        cokret_sdk::ContactState::PendingOutgoing => "pending_outgoing",
-        cokret_sdk::ContactState::PendingIncoming => "pending_incoming",
-        cokret_sdk::ContactState::Accepted => "accepted",
-        cokret_sdk::ContactState::Rejected => "rejected",
-        cokret_sdk::ContactState::Tombstoned => "tombstoned",
+        arkret_sdk::ContactState::PendingOutgoing => "pending_outgoing",
+        arkret_sdk::ContactState::PendingIncoming => "pending_incoming",
+        arkret_sdk::ContactState::Accepted => "accepted",
+        arkret_sdk::ContactState::Rejected => "rejected",
+        arkret_sdk::ContactState::Tombstoned => "tombstoned",
     }
 }
 
 fn direct_conversation_binding_state_wire(
-    state: cokret_sdk::DirectConversationBindingState,
+    state: arkret_sdk::DirectConversationBindingState,
 ) -> &'static str {
     match state {
-        cokret_sdk::DirectConversationBindingState::Active => "active",
-        cokret_sdk::DirectConversationBindingState::Retired => "retired",
-        cokret_sdk::DirectConversationBindingState::Duplicate => "duplicate",
-        cokret_sdk::DirectConversationBindingState::NonCanonical => "non_canonical",
+        arkret_sdk::DirectConversationBindingState::Active => "active",
+        arkret_sdk::DirectConversationBindingState::Retired => "retired",
+        arkret_sdk::DirectConversationBindingState::Duplicate => "duplicate",
+        arkret_sdk::DirectConversationBindingState::NonCanonical => "non_canonical",
     }
 }
 
@@ -186,13 +186,13 @@ fn direct_conversation_binding_state_wire(
 /// YOU-01-006: this used to be a bespoke local mirror with all-`String`
 /// enum fields and **no** `schema`/`subject_id` — which made the SET body
 /// fail closed against the real soland handler (it deserialises
-/// `cokret_sdk::InviteReceivePolicy`, `deny_unknown_fields`, with both
+/// `arkret_sdk::InviteReceivePolicy`, `deny_unknown_fields`, with both
 /// fields required and `subject_id == session.actor` enforced) and dropped
 /// the server-stored `trusted_*` / `blocked_principal_services` lists on
 /// every round-trip. We now use the SDK authoritative type, which carries
 /// the required `schema`/`subject_id`, typed enums, and the trust lists, so
 /// a GET→edit→SET cycle preserves fields the U4 form does not touch.
-pub use cokret_sdk::models::{
+pub use arkret_sdk::models::{
     DisclosureLevel, DisclosurePolicy as InviteDisclosurePolicy, INVITE_RECEIVE_POLICY_SCHEMA,
     InviteReceiveAction, InviteReceivePolicy, UnknownInviteAction,
 };
@@ -207,8 +207,8 @@ pub use cokret_sdk::models::{
 pub fn default_invite_receive_policy(subject_id: &str) -> InviteReceivePolicy {
     InviteReceivePolicy {
         schema: INVITE_RECEIVE_POLICY_SCHEMA.to_owned(),
-        subject_id: cokret_sdk::Did::new(subject_id).unwrap_or_else(|_| {
-            cokret_sdk::Did::new("did:web:unknown").expect("valid placeholder did")
+        subject_id: arkret_sdk::Did::new(subject_id).unwrap_or_else(|_| {
+            arkret_sdk::Did::new("did:web:unknown").expect("valid placeholder did")
         }),
         allowed_introduction_kinds: vec![
             "consent_grant".to_owned(),
@@ -378,7 +378,7 @@ impl ServerDescriptionExt for ServerDescription {
         // Vacuous (all-default) declaration carries no usable plaintext-boundary
         // signal — treat as untrusted / fail-closed, matching the v1 receiver
         // rule for an absent value.
-        self.plaintext_visibility == cokret_sdk::PlaintextVisibility::none()
+        self.plaintext_visibility == arkret_sdk::PlaintextVisibility::none()
     }
 }
 
@@ -389,30 +389,30 @@ impl ServerDescriptionExt for ServerDescription {
 // name so call sites (`registry_mode` read in `views/dashboard.rs`) stay
 // unchanged while the field shapes are now SDK-owned.
 // `ck.self.account.query.describe` decodes into the SDK's authoritative
-// `cokret_sdk::models::SyncDescription`; the former inkson-local
+// `arkret_sdk::models::SyncDescription`; the former inkson-local
 // `SyncDescribeView` mirror was removed in favor of the wire type.
 /// Directory `describe` response. The SDK's `DirectoryDescribeOutcome` is a
 /// transparent wrapper over this exact wire body, so inkson consumes the SDK
 /// authority directly instead of maintaining a flat local mirror.
-pub use cokret_sdk::models::DirectoryDescription;
+pub use arkret_sdk::models::DirectoryDescription;
 /// Wire-shape sync response — re-exports the SDK's canonical
-/// [`cokret_sdk::models::SyncOutcome`] so client + server can never
+/// [`arkret_sdk::models::SyncOutcome`] so client + server can never
 /// drift on field names / per-realm body shape. Spec source of truth
 /// at `arkret-spec/spec/v1/zh/sync/client-sync.md §2`. Inkson used to
 /// own a custom `ClientSyncOutcome` with a bucketed-`spaces`
 /// deserializer; that was an older Matrix-style transcript that
 /// disagreed with what soland actually emits.
-pub use cokret_sdk::models::SyncOutcome as ClientSyncOutcome;
+pub use arkret_sdk::models::SyncOutcome as ClientSyncOutcome;
 // `resolve-realm` decodes into the canonical SDK wire types so the client stays
 // byte-compatible with soland's `DirectoryRealmResolutionOutcome` response. A
 // inkson-local duplicate previously drifted from the wire (a required
 // `public`/`title` on the preview node, a non-optional `join_rule`) and broke
 // invite-accept with "error decoding response body" whenever the server omitted
 // those fields. The SDK type is the single source of truth.
-pub use cokret_sdk::models::{
+pub use arkret_sdk::models::{
     DirectoryRealmResolutionOutcome as ResolveRealmOutcome, RealmJoinCandidate,
 };
-pub use cokret_sdk::models::{
+pub use arkret_sdk::models::{
     IdentityDescription as IdentityDescribeOutcome, IdentityResolveOutcome,
 };
 
@@ -790,7 +790,7 @@ impl From<Value> for SnapshotBootstrapJson {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct BackfillView {
     #[serde(default)]
-    pub events: Vec<cokret_sdk::Event>,
+    pub events: Vec<arkret_sdk::Event>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub snapshot_bootstrap: Option<SnapshotBootstrapJson>,
     pub prev_cursor: Option<String>,
@@ -812,8 +812,8 @@ impl BackfillView {
     }
 }
 
-impl From<cokret_sdk::EventsQueryOutcome> for BackfillView {
-    fn from(outcome: cokret_sdk::EventsQueryOutcome) -> Self {
+impl From<arkret_sdk::EventsQueryOutcome> for BackfillView {
+    fn from(outcome: arkret_sdk::EventsQueryOutcome) -> Self {
         Self {
             events: outcome.events,
             snapshot_bootstrap: outcome.snapshot_bootstrap.map(Into::into),
@@ -827,17 +827,17 @@ impl From<cokret_sdk::EventsQueryOutcome> for BackfillView {
 // `ck.self.snapshot.query.manifest_head` returns the full signed
 // `ck.schema.snapshot.v1` manifest. See `api::CokretApi::snapshot_head`.
 
-pub use cokret_sdk::models::AuthzCheckOutcome;
+pub use arkret_sdk::models::AuthzCheckOutcome;
 /// `ck.self.authz.invites` decodes into the SDK's authoritative
 /// `AuthzInviteList` (`invites: Vec<Invite>`, `next_cursor`, `has_more`); the
 /// former inkson-local `InvitesView` mirror was removed in favor of the wire
 /// type.
-pub use cokret_sdk::models::AuthzInviteList;
+pub use arkret_sdk::models::AuthzInviteList;
 /// `ck.self.authz.grants.query.effective` response. soland serialises the SDK
 /// `GrantList` (`grants: Vec<CapabilityGrant>`) verbatim, so the client
 /// decodes the same authoritative wire contract instead of a weakly-typed
 /// local mirror.
-pub use cokret_sdk::models::GrantList;
+pub use arkret_sdk::models::GrantList;
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct PushRegisterView {
@@ -847,12 +847,12 @@ pub struct PushRegisterView {
     pub expires_at: Option<String>,
 }
 
-/// `POST /_cokret/self/moderation/report` response. soland emits the SDK
+/// `POST /_arkret/self/moderation/report` response. soland emits the SDK
 /// `ModerationReportOutcome` wire shape verbatim (`status: "submitted"`,
 /// `routed_to: Vec<Did>` — scalar DIDs only, no fragments, per
 /// `service-operation-dtos.schema.json#/$defs/ModerationReportOutcome`).
-pub use cokret_sdk::models::ModerationReportOutcome;
-pub use cokret_sdk::models::{
+pub use arkret_sdk::models::ModerationReportOutcome;
+pub use arkret_sdk::models::{
     BlobUploadOutcome, DeviceMessageEnvelope, DeviceMessagesAckOutcome,
     DeviceMessagesAckRequestBody, DeviceMessagesGetOutcome, DeviceMessagesSendOutcome,
     KeysClaimOutcome, KeysQueryOutcome, KeysUploadOutcome, OkOutcome,
@@ -860,8 +860,8 @@ pub use cokret_sdk::models::{
 
 // ── Directory ───────────────────────────────────────────────────
 
-pub type SearchOrganizationsView = cokret_sdk::models::DirectoryOrganizationSearchOutcome;
-pub type SearchActorsView = cokret_sdk::models::DirectoryActorSearchOutcome;
+pub type SearchOrganizationsView = arkret_sdk::models::DirectoryOrganizationSearchOutcome;
+pub type SearchActorsView = arkret_sdk::models::DirectoryActorSearchOutcome;
 
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 #[serde(transparent)]
@@ -902,10 +902,10 @@ pub struct ResolveHandleView {
     /// Some directory implementations expose this top-level; others carry
     /// the same object inside `handle_claim.member_delivery_binding`.
     #[serde(default)]
-    pub member_delivery_binding: Option<cokret_sdk::models::DeliveryBindingHint>,
+    pub member_delivery_binding: Option<arkret_sdk::models::DeliveryBindingHint>,
     /// Typed handle claim envelope when the directory issued one.
     #[serde(default)]
-    pub handle_claim: Option<cokret_sdk::models::HandleClaim>,
+    pub handle_claim: Option<arkret_sdk::models::HandleClaim>,
     /// §9.1 common resolve metadata.
     #[serde(default)]
     pub as_of: Option<String>,
@@ -945,7 +945,7 @@ impl ResolveHandleView {
         self.member_delivery_binding_ref().is_some()
     }
 
-    pub fn member_delivery_binding_ref(&self) -> Option<&cokret_sdk::models::DeliveryBindingHint> {
+    pub fn member_delivery_binding_ref(&self) -> Option<&arkret_sdk::models::DeliveryBindingHint> {
         self.member_delivery_binding.as_ref().or_else(|| {
             self.handle_claim
                 .as_ref()
@@ -954,8 +954,8 @@ impl ResolveHandleView {
     }
 }
 
-impl From<cokret_sdk::models::DirectoryHandleResolutionOutcome> for ResolveHandleView {
-    fn from(outcome: cokret_sdk::models::DirectoryHandleResolutionOutcome) -> Self {
+impl From<arkret_sdk::models::DirectoryHandleResolutionOutcome> for ResolveHandleView {
+    fn from(outcome: arkret_sdk::models::DirectoryHandleResolutionOutcome) -> Self {
         // The server-side `DirectoryHandleResolutionOutcome` has no
         // `did_document` field (this resolve endpoint never emits one), so it
         // is always `None` here — behavior-equivalent to the prior wire decode.
@@ -989,7 +989,7 @@ impl From<cokret_sdk::models::DirectoryHandleResolutionOutcome> for ResolveHandl
 /// declaration order. Re-export the SDK type; `subject_id` (principal
 /// DID) remains the ONLY authoritative field — the `*_at_time` fields
 /// are compose-time audit metadata only.
-pub use cokret_sdk::models::Mention;
+pub use arkret_sdk::models::Mention;
 
 // ── Realm / Space Management ────────────────────────────────────
 
@@ -1044,8 +1044,8 @@ pub struct SubmitEventResult {
     pub receipt: Value,
 }
 
-impl From<cokret_sdk::EventsSubmitOutcome> for SubmitEventResult {
-    fn from(outcome: cokret_sdk::EventsSubmitOutcome) -> Self {
+impl From<arkret_sdk::EventsSubmitOutcome> for SubmitEventResult {
+    fn from(outcome: arkret_sdk::EventsSubmitOutcome) -> Self {
         let accepted: Vec<String> = outcome
             .accepted
             .into_iter()
@@ -1062,10 +1062,10 @@ impl From<cokret_sdk::EventsSubmitOutcome> for SubmitEventResult {
             .or_else(|| duplicate.first().cloned())
             .unwrap_or_default();
         let status = match outcome.status {
-            cokret_sdk::EventsSubmitStatus::Accepted => "accepted",
-            cokret_sdk::EventsSubmitStatus::Duplicate => "duplicate",
-            cokret_sdk::EventsSubmitStatus::Partial => "partial",
-            cokret_sdk::EventsSubmitStatus::HistoricalOnly => "historical_only",
+            arkret_sdk::EventsSubmitStatus::Accepted => "accepted",
+            arkret_sdk::EventsSubmitStatus::Duplicate => "duplicate",
+            arkret_sdk::EventsSubmitStatus::Partial => "partial",
+            arkret_sdk::EventsSubmitStatus::HistoricalOnly => "historical_only",
         }
         .to_owned();
         let receipt = serde_json::json!({
@@ -1105,15 +1105,15 @@ impl<'de> Deserialize<'de> for SubmitEventResult {
                 "removed flat submit-outcome wire shape (event_id/sync_token) is not accepted",
             ));
         }
-        let outcome = cokret_sdk::EventsSubmitOutcome::deserialize(value)
+        let outcome = arkret_sdk::EventsSubmitOutcome::deserialize(value)
             .map_err(serde::de::Error::custom)?;
         Ok(outcome.into())
     }
 }
 
 /// Round R2/R3 (T02) — server response shape for the
-// The `POST /_cokret/self/ephemeral` channel is fire-and-forget; its response
-// decodes into the SDK's authoritative `cokret_sdk::EphemeralSubmitOutcome`
+// The `POST /_arkret/self/ephemeral` channel is fire-and-forget; its response
+// decodes into the SDK's authoritative `arkret_sdk::EphemeralSubmitOutcome`
 // (`accepted`, `dispatched_to`, `server_received_at`). The former inkson-local
 // `EphemeralSubmitResult` mirror was removed in favor of the wire type.
 
@@ -1124,13 +1124,13 @@ impl<'de> Deserialize<'de> for SubmitEventResult {
 // `expires_at` / `force_turn`, `ttl_seconds: u64` vs the authoritative
 // `u32`) and bypassed the TURN credential privacy guard. Re-export the
 // SDK's authoritative types instead. When the WebRTC surface is wired up,
-// each `ice_servers` entry MUST be parsed through `cokret_sdk::IceServer`
+// each `ice_servers` entry MUST be parsed through `arkret_sdk::IceServer`
 // and pass `IceServer::validate_credential_privacy()` (rejects TURN
 // usernames embedding cross-Realm stable DIDs, B-14).
-pub use cokret_sdk::models::{MediaIceConfigOutcome, MediaIceConfigRequestBody};
+pub use arkret_sdk::models::{MediaIceConfigOutcome, MediaIceConfigRequestBody};
 
 // WebRTC call signaling/recording no longer round-trips through bespoke
-// `/_cokret/self/webrtc/*` outcomes: signaling is a `ck.call.signal`
+// `/_arkret/self/webrtc/*` outcomes: signaling is a `ck.call.signal`
 // ephemeral envelope (EphemeralSubmitResult) and recording is a durable
 // `ck.call.recording.start` event (SubmitEventResult). See
 // `crypto-media/webrtc-signaling.md` §5/§7. The former
@@ -1144,7 +1144,7 @@ pub use cokret_sdk::models::{MediaIceConfigOutcome, MediaIceConfigRequestBody};
 // mirrors drifted from `agent-operations.schema.json` (extra required
 // fields, non-spec `todos`, wrong outcome shapes) and were removed. The
 // agent surface now uses the SDK's authoritative types
-// (`cokret_sdk::AgentProvisionOutcome` / `AgentList` / `AgentView` /
+// (`arkret_sdk::AgentProvisionOutcome` / `AgentList` / `AgentView` /
 // `AgentRotateKeyOutcome` / `AgentGrantAttachOutcome` /
 // `AgentSidecarThreadEnsureOutcome` / ...) directly in `views::agents`
 // (via `with_authed_sdk_client`).

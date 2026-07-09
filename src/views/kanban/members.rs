@@ -55,7 +55,7 @@ pub(super) struct RealmMemberRow {
 /// either case we render the compact DID instead of a raw `did:...`.
 pub(super) fn member_display_label(
     row: &RealmMemberRow,
-    identity: Option<&cokret_sdk::MemberIdentity>,
+    identity: Option<&arkret_sdk::MemberIdentity>,
     cached_primary_handle: Option<&str>,
 ) -> String {
     if let Some(handle) = member_inline_handle_label(row) {
@@ -109,7 +109,7 @@ pub(super) fn member_fallback_handle_label(row: &RealmMemberRow) -> Option<Strin
 
 pub(super) fn member_handle_lookup_subject(
     row: &RealmMemberRow,
-    identity: Option<&cokret_sdk::MemberIdentity>,
+    identity: Option<&arkret_sdk::MemberIdentity>,
 ) -> Option<String> {
     if let Some(subject) = row
         .subject_id

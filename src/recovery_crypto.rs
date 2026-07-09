@@ -4,7 +4,7 @@
 //! (the normalized 24-word Recovery Key, or an internal secret such as the
 //! account MLS secret) is stretched on-device with Argon2id and the resulting
 //! KEK encrypts the backup payload with XChaCha20-Poly1305 before it is
-//! uploaded to `PUT /_cokret/self/keys/backups/{backup_id}`. The server never
+//! uploaded to `PUT /_arkret/self/keys/backups/{backup_id}`. The server never
 //! sees the plaintext or the credential. (`VAULT_*` constant names are kept —
 //! they describe the sealed-envelope "vault" primitive, not the removed
 //! vault-passphrase UI.)

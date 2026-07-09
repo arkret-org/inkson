@@ -256,7 +256,7 @@ pub fn RouterView() -> Element {
 
     // Dev-only (wasm + `wasm-localstorage-secrets-test`) real-grant injection
     // for the cotest joint e2e harness. Runs once, synchronously, ahead of the
-    // bootstrap `connect()` below so the first `/_cokret/self/*` request already
+    // bootstrap `connect()` below so the first `/_arkret/self/*` request already
     // carries a valid grant + DPoP proof. Not compiled into production builds.
     #[cfg(all(target_arch = "wasm32", feature = "wasm-localstorage-secrets-test"))]
     {
@@ -2335,7 +2335,7 @@ pub fn RouterView() -> Element {
                         .or_else(|| message.get("type"))
                         .and_then(serde_json::Value::as_str)
                         .unwrap_or_default();
-                    if kind != cokret_sdk::events::kinds::REALM_KEY_SHARE {
+                    if kind != arkret_sdk::events::kinds::REALM_KEY_SHARE {
                         continue;
                     }
                     if let Some(share_realm_id) =
@@ -2886,9 +2886,9 @@ pub fn RouterView() -> Element {
     // the sidebar realm list. Derive its canonical id from the account DID and
     // hide that node plus its descendants, mirroring the direct-conversation
     // filter below.
-    let self_realm_id: Option<String> = cokret_sdk::Did::new(account_did())
+    let self_realm_id: Option<String> = arkret_sdk::Did::new(account_did())
         .ok()
-        .map(|did| cokret_sdk::auth::principal_control_realm_id(&did));
+        .map(|did| arkret_sdk::auth::principal_control_realm_id(&did));
     let hidden_realm_tree_node_ids: BTreeSet<String> = loaded_realm_tree_nodes
         .iter()
         .filter(|node| {
@@ -3347,7 +3347,7 @@ pub fn RouterView() -> Element {
             }
             // ToastHost: stacked transient toasts. Drains the generic
             // toast queue plus the policy-deny queue (fed by
-            // `api_error::decode_cokret_error`'s policy-deny dispatch,
+            // `api_error::decode_arkret_error`'s policy-deny dispatch,
             // G3.Y3) and the CKP-0007 circle-error queue (fed by
             // `maybe_dispatch_circle_error`), so any 403 / Circle error
             // is surfaced without each call site wiring its own UI.
@@ -4064,8 +4064,8 @@ pub fn RouterView() -> Element {
                                                                 Ok(response) => {
                                                                     if matches!(
                                                                         response.state,
-                                                                        cokret_sdk::DirectConversationResolveState::Found
-                                                                            | cokret_sdk::DirectConversationResolveState::Created
+                                                                        arkret_sdk::DirectConversationResolveState::Found
+                                                                            | arkret_sdk::DirectConversationResolveState::Created
                                                                     )
                                                                         && let (Some(realm_id), Some(strand_id)) = (response.realm_id, response.main_strand_id)
                                                                     {

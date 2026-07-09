@@ -32,12 +32,12 @@ pub(crate) fn sign_keypackage_upload_batch_with_signer(
     signer: &crate::event_signer::InksonEventSigner,
     device_id: &str,
     key_packages: &[Value],
-) -> anyhow::Result<cokret_sdk::KeyOperationSignature> {
+) -> anyhow::Result<arkret_sdk::KeyOperationSignature> {
     let input = keypackage_upload_signing_input(device_id, key_packages)?;
     let sig = signer
         .sign_raw(&input)
         .map_err(|err| anyhow::anyhow!("keypackages/upload device_signature sign failed: {err}"))?;
-    Ok(cokret_sdk::KeyOperationSignature {
+    Ok(arkret_sdk::KeyOperationSignature {
         kid: signer.verification_method().to_owned(),
         alg: Some(signer.algorithm().to_owned()),
         sig: URL_SAFE_NO_PAD.encode(sig),
@@ -47,7 +47,7 @@ pub(crate) fn sign_keypackage_upload_batch_with_signer(
 pub(crate) fn sign_keypackage_upload_batch(
     device_id: &str,
     key_packages: &[Value],
-) -> anyhow::Result<cokret_sdk::KeyOperationSignature> {
+) -> anyhow::Result<arkret_sdk::KeyOperationSignature> {
     let signer = crate::event_signer::active_signer().ok_or_else(|| {
         anyhow::anyhow!(
             "keypackages/upload device_signature requires an active event-signer (fail-closed)"
@@ -63,9 +63,9 @@ pub(crate) fn sign_keypackage_upload_batch(
 /// canonical KeyPackage hash; a missing `expires_at` falls back to the SDK
 /// default KeyPackage lifetime (`created_at` + 7 days).
 pub(crate) fn mls_key_package_record_upload_entry(
-    record: &cokret_sdk::MlsKeyPackageRecord,
-) -> anyhow::Result<cokret_sdk::KeyPackageUploadEntry> {
-    Ok(cokret_sdk::KeyPackageUploadEntry {
+    record: &arkret_sdk::MlsKeyPackageRecord,
+) -> anyhow::Result<arkret_sdk::KeyPackageUploadEntry> {
+    Ok(arkret_sdk::KeyPackageUploadEntry {
         keypackage_id: record.keypackage_id.clone(),
         keypackage_ref: record.keypackage_ref.as_str().to_owned(),
         keypackage_digest: record.keypackage_ref.clone(),
@@ -89,17 +89,17 @@ pub(crate) fn generate_mls_claim_nonce() -> anyhow::Result<String> {
 }
 
 pub(crate) fn keypackage_claim_record_to_mls_record(
-    claim: &cokret_sdk::KeyPackageClaimRecord,
-) -> anyhow::Result<cokret_sdk::MlsKeyPackageRecord> {
-    Ok(cokret_sdk::MlsKeyPackageRecord {
+    claim: &arkret_sdk::KeyPackageClaimRecord,
+) -> anyhow::Result<arkret_sdk::MlsKeyPackageRecord> {
+    Ok(arkret_sdk::MlsKeyPackageRecord {
         keypackage_id: claim.keypackage_ref.as_str().to_owned(),
         principal_id: claim.principal_id.clone(),
-        device_id: cokret_sdk::DeviceId::new(claim.device_id.clone())?,
+        device_id: arkret_sdk::DeviceId::new(claim.device_id.clone())?,
         key_package: claim.key_package.clone(),
         keypackage_ref: claim.keypackage_digest.clone(),
         cipher_suites: Vec::new(),
         capabilities: claim.capabilities.clone(),
-        state: cokret_sdk::MlsKeyPackageState::Published,
+        state: arkret_sdk::MlsKeyPackageState::Published,
         claim_id: Some(claim.claim_id.clone()),
         created_at: crate::clock::now_utc(),
         expires_at: Some(claim.expires_at),
@@ -112,7 +112,7 @@ pub(crate) fn keypackage_claim_record_to_mls_record(
 }
 
 pub(crate) fn mls_keypackage_claim_required_capabilities() -> Vec<String> {
-    cokret_sdk::ARKRET_MLS_KEY_PACKAGE_CAPABILITIES
+    arkret_sdk::ARKRET_MLS_KEY_PACKAGE_CAPABILITIES
         .iter()
         .map(|capability| (*capability).to_owned())
         .collect()
@@ -125,20 +125,20 @@ pub(crate) fn build_mls_keypackage_claim_request(
     claim_nonce: &str,
     target_device_id: Option<&str>,
     mls_group_id: Option<&str>,
-) -> anyhow::Result<cokret_sdk::KeyPackagesClaimRequestBody> {
+) -> anyhow::Result<arkret_sdk::KeyPackagesClaimRequestBody> {
     let target_device_ids = target_device_id
         .map(str::trim)
         .filter(|value| !value.is_empty())
-        .map(|value| cokret_sdk::DeviceId::new(value.to_owned()))
+        .map(|value| arkret_sdk::DeviceId::new(value.to_owned()))
         .transpose()?
         .into_iter()
         .collect::<Vec<_>>();
-    Ok(cokret_sdk::KeyPackagesClaimRequestBody {
-        target_principal_id: cokret_sdk::Did::new(target_principal_id.trim().to_owned())?,
-        intended_realm_id: cokret_sdk::RealmId::new(crate::operation::trim_realm_id(
+    Ok(arkret_sdk::KeyPackagesClaimRequestBody {
+        target_principal_id: arkret_sdk::Did::new(target_principal_id.trim().to_owned())?,
+        intended_realm_id: arkret_sdk::RealmId::new(crate::operation::trim_realm_id(
             intended_realm_id,
         ))?,
-        requester: cokret_sdk::Did::new(requester.trim().to_owned())?,
+        requester: arkret_sdk::Did::new(requester.trim().to_owned())?,
         required_capabilities: mls_keypackage_claim_required_capabilities(),
         claim_nonce: claim_nonce.trim().to_owned(),
         expires_at: crate::clock::now_utc() + chrono::Duration::minutes(10),

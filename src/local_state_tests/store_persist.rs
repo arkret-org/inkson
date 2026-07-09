@@ -503,7 +503,7 @@ fn local_state_store_persists_push_registration_state() {
         device_id: "dev_inkson".to_owned(),
         platform: Some("desktop".to_owned()),
         app_id: Some("inkson".to_owned()),
-        push_gateway: "https://push.example/_cokret/edge/push/notify".to_owned(),
+        push_gateway: "https://push.example/_arkret/edge/push/notify".to_owned(),
         push_key_hash: "sha256:abc".to_owned(),
         push_key_preview: "desktop:<redacted,len=5>".to_owned(),
         registered_at: Some("2026-04-29T00:00:00Z".to_owned()),

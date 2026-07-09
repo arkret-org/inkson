@@ -506,12 +506,12 @@ mod tests {
             .collect()
     }
 
-    fn sdk_realm_id() -> cokret_sdk::RealmId {
-        cokret_sdk::RealmId::new(REALM).unwrap()
+    fn sdk_realm_id() -> arkret_sdk::RealmId {
+        arkret_sdk::RealmId::new(REALM).unwrap()
     }
 
-    fn sdk_actor_id() -> cokret_sdk::Did {
-        cokret_sdk::Did::new("did:webvh:z6mkfixture:alice.example").unwrap()
+    fn sdk_actor_id() -> arkret_sdk::Did {
+        arkret_sdk::Did::new("did:webvh:z6mkfixture:alice.example").unwrap()
     }
 
     fn sdk_event(
@@ -520,17 +520,17 @@ mod tests {
         actor_seq: u64,
         created_at: &str,
         payload: Value,
-    ) -> cokret_sdk::Event {
-        let mut event = cokret_sdk::Event::new(
+    ) -> arkret_sdk::Event {
+        let mut event = arkret_sdk::Event::new(
             kind,
             sdk_realm_id(),
             sdk_actor_id(),
             actor_seq,
-            cokret_sdk::Hlc::new("01970e589d21-0004-a13f9c2e").unwrap(),
+            arkret_sdk::Hlc::new("01970e589d21-0004-a13f9c2e").unwrap(),
             payload,
         )
         .unwrap();
-        event.event_id = cokret_sdk::EventId::new(event_id).unwrap();
+        event.event_id = arkret_sdk::EventId::new(event_id).unwrap();
         event.created_at = created_at.parse().unwrap();
         event
     }
@@ -543,9 +543,9 @@ mod tests {
     impl garth::projection::DomainProjector for ClientCoreKanbanProjector {
         fn apply_domain_events(
             &mut self,
-            _realm_id: &cokret_sdk::RealmId,
-            events: &[cokret_sdk::Event],
-        ) -> cokret_sdk::Result<()> {
+            _realm_id: &arkret_sdk::RealmId,
+            events: &[arkret_sdk::Event],
+        ) -> arkret_sdk::Result<()> {
             let values: Vec<_> = events
                 .iter()
                 .map(|event| serde_json::to_value(event).unwrap())

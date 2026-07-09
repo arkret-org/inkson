@@ -2,7 +2,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use chime::PushRegistrationState;
 use chrono::{DateTime, Utc};
-use cokret_sdk::EncryptedPayload;
+use arkret_sdk::EncryptedPayload;
 use ed25519_dalek::SigningKey;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
@@ -687,7 +687,7 @@ pub struct ClientLocalState {
     #[serde(default)]
     pub read_cursors: BTreeMap<String, ReadMarkerRecord>,
     /// Persisted coauth `session_grant` payload. It is the client-visible
-    /// session credential for `/_cokret/self/*` and is rotated through the
+    /// session credential for `/_arkret/self/*` and is rotated through the
     /// Account Authority refresh endpoint when it nears expiry.
     #[serde(default)]
     pub session_grant: Option<PersistedSessionGrant>,
@@ -1023,7 +1023,7 @@ pub struct UserActionLogEntry {
 /// Persisted `ck.session.grant` issued by the Account Authority during login.
 ///
 /// ②(A+②) model (api-conventions.md §3.3): the grant itself is the live
-/// credential for `/_cokret/self/*`; soland does not mint a second
+/// credential for `/_arkret/self/*`; soland does not mint a second
 /// client-visible local session credential. Each request presents `Authorization: Bearer
 /// <grant_jwt>` + a per-request `DPoP` proof bound to the device key. Keeping
 /// the grant on disk lets the client keep using it directly and rotate it (DPoP
@@ -1049,7 +1049,7 @@ pub struct PersistedSessionGrant {
     pub principal_id: String,
     /// Device id bound to the grant.
     pub device_id: String,
-    /// Principal-server base URL whose `/_cokret/self/*` surface accepts this grant.
+    /// Principal-server base URL whose `/_arkret/self/*` surface accepts this grant.
     pub principal_server_url: String,
     /// When the grant itself stops being usable. Once we pass this the
     /// next refresh attempt will fail and the user must re-login.

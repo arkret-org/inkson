@@ -156,7 +156,7 @@ pub(super) const TEST_SESSION_INJECTION_KEY: &str = "inkson.test.session_injecti
 ///
 /// Timing: this MUST run before the bootstrap `connect()` block reads `token`
 /// and `state_store` (the DPoP key + persisted grant) so the very first
-/// `/_cokret/self/*` request carries a valid grant + DPoP proof. It is
+/// `/_arkret/self/*` request carries a valid grant + DPoP proof. It is
 /// driven from a `use_hook` placed ahead of that block so it executes once,
 /// synchronously, on first render.
 ///

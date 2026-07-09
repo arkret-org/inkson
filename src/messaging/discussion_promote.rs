@@ -72,7 +72,7 @@ pub fn build_discussion_circle_create_op(
     actor: &str,
     ids: &PromoteIds,
     title: &str,
-) -> anyhow::Result<cokret_sdk::Event> {
+) -> anyhow::Result<arkret_sdk::Event> {
     ck_ops::discussion_circle_create(realm_id, actor, &ids.circle_id, title)?
         .build_sdk_event("inkson")
 }
@@ -83,7 +83,7 @@ pub fn build_discussion_strand_create_op(
     actor: &str,
     ids: &PromoteIds,
     title: &str,
-) -> anyhow::Result<cokret_sdk::Event> {
+) -> anyhow::Result<arkret_sdk::Event> {
     ck_ops::scoped_discussion_strand_create(
         realm_id,
         actor,
@@ -101,7 +101,7 @@ pub fn build_confidential_discussion_relation_op(
     actor: &str,
     source_id: &str,
     ids: &PromoteIds,
-) -> anyhow::Result<cokret_sdk::Event> {
+) -> anyhow::Result<arkret_sdk::Event> {
     ck_ops::confidential_discussion_relation_create(
         realm_id,
         actor,
@@ -119,7 +119,7 @@ pub fn build_promote_ops(
     source_id: &str,
     ids: &PromoteIds,
     title: &str,
-) -> anyhow::Result<Vec<cokret_sdk::Event>> {
+) -> anyhow::Result<Vec<arkret_sdk::Event>> {
     Ok(vec![
         build_discussion_circle_create_op(realm_id, actor, ids, title)?,
         build_discussion_strand_create_op(realm_id, actor, ids, title)?,
@@ -186,7 +186,7 @@ mod tests {
             "ak:strand:0196419b-0000-7000-8000-000000000003"
         );
         for event in &ops {
-            cokret_sdk::schema::event_payload_validator_catalog()
+            arkret_sdk::schema::event_payload_validator_catalog()
                 .unwrap()
                 .validate_payload(event.kind.as_str(), &event.payload)
                 .unwrap_or_else(|err| {

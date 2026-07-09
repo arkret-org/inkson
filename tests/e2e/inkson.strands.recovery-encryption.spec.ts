@@ -120,12 +120,12 @@ test("first registered device opens 24-word recovery setup instead of existing-d
 
   const deviceEnrollResponsePromise = page.waitForResponse(
     (response) =>
-      response.url().includes("/_cokret/gate/account/device-enroll") &&
+      response.url().includes("/_arkret/gate/account/device-enroll") &&
       response.request().method() === "POST",
   );
   const eventSubmitResponsePromise = page.waitForResponse(
     (response) =>
-      response.url().endsWith("/_cokret/self/events") &&
+      response.url().endsWith("/_arkret/self/events") &&
       response.request().method() === "POST",
   );
   await page.reload({ waitUntil: "domcontentloaded" });
@@ -327,7 +327,7 @@ test("encrypted Realm creation without recovery is gated, then proceeds on overr
   let realmCreateRequests = 0;
   page.on("request", (request) => {
     if (
-      request.url().endsWith("/_cokret/self/events") &&
+      request.url().endsWith("/_arkret/self/events") &&
       request.method() === "POST" &&
       (request.postData() ?? "").includes("ck.realm.create")
     ) {
@@ -350,7 +350,7 @@ test("encrypted Realm creation without recovery is gated, then proceeds on overr
 
   const realmCreateRequest = page.waitForRequest(
     (request) =>
-      request.url().endsWith("/_cokret/self/events") &&
+      request.url().endsWith("/_arkret/self/events") &&
       request.method() === "POST" &&
       (request.postData() ?? "").includes("ck.realm.create"),
   );
@@ -381,7 +381,7 @@ test("mls recovery backup generates 24 recovery words", async ({ page }) => {
 
   const realmCreateRequest = page.waitForRequest(
     (request) =>
-      request.url().endsWith("/_cokret/self/events") &&
+      request.url().endsWith("/_arkret/self/events") &&
       request.method() === "POST" &&
       (request.postData() ?? "").includes("ck.realm.create"),
   );
@@ -438,7 +438,7 @@ test("encrypted Realm backup uses existing Recovery Key instead of generating an
 
   const realmCreateRequest = page.waitForRequest(
     (request) =>
-      request.url().endsWith("/_cokret/self/events") &&
+      request.url().endsWith("/_arkret/self/events") &&
       request.method() === "POST" &&
       (request.postData() ?? "").includes("ck.realm.create"),
   );

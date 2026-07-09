@@ -27,7 +27,7 @@ use crate::realm_helpers::{
 
 /// Build + submit the spec-canonical `ck.realm.create` event bundle
 /// (and its facet follow-ups) via `ck.self.events.command.submit`
-/// (`POST /_cokret/self/events`).
+/// (`POST /_arkret/self/events`).
 ///
 /// Per spec realm-and-space.md §2.5 the create event itself is the
 /// genesis-member declaration for `created_by`. The
@@ -374,7 +374,7 @@ pub async fn set_realm_policy_events(
 /// `ck.realm.policy_components` event (realm-and-space.md §2.3.1 write path —
 /// no new event kind; durability is a policy component).
 ///
-/// `policy` is the SDK-typed [`cokret_sdk::models::DurabilityPolicy`]
+/// `policy` is the SDK-typed [`arkret_sdk::models::DurabilityPolicy`]
 /// so the client never re-defines the spec shape. `policy_revision` MUST be a
 /// monotonic increment of the Realm's current policy revision (the reducer
 /// rejects a stale revision). After this lands, a subsequent `ck.mls.commit`
@@ -390,7 +390,7 @@ pub async fn set_realm_durability_policy(
     submitter: &EventSubmitter,
     realm_id: &str,
     actor_id: &str,
-    policy: &cokret_sdk::models::DurabilityPolicy,
+    policy: &arkret_sdk::models::DurabilityPolicy,
     policy_revision: u64,
 ) -> anyhow::Result<()> {
     let actor_id = actor_id.trim();
@@ -490,7 +490,7 @@ pub async fn ban_member(
 //
 // Setting / revoking Realm admins, sealing moderation decisions, and
 // running the appeal loop are now self-authored protocol Moves submitted
-// via `ck.self.events.command.submit` (`POST /_cokret/self/events`) —
+// via `ck.self.events.command.submit` (`POST /_arkret/self/events`) —
 // mirroring `transition_member_state` / `ban_member`. P1 (capability)
 // and P2 (moderation) projected the matching reducers in soland and the
 // sodmin-side admin write paths were retired; these are the inkson-side
@@ -635,7 +635,7 @@ pub async fn appeal_overturn_atomic(
     decision_ref: &str,
     reason_text_ref: &str,
     lift_reason_code: &str,
-) -> anyhow::Result<cokret_sdk::EventsSubmitOutcome> {
+) -> anyhow::Result<arkret_sdk::EventsSubmitOutcome> {
     let appeal_event = ck_ops::moderation_appeal_decision(
         realm_id,
         actor_id,
@@ -675,14 +675,14 @@ pub async fn appeal_modify_atomic(
     new_verdict: &str,
     new_reason_code: &str,
     appeal_reason_text_ref: &str,
-) -> anyhow::Result<(String, cokret_sdk::EventsSubmitOutcome)> {
+) -> anyhow::Result<(String, arkret_sdk::EventsSubmitOutcome)> {
     let new_decision_id = format!("ak:event:{}", crate::operation::uuid_v7());
     let mut new_decision =
         ck_ops::moderation_decision(realm_id, actor_id, target_ref, new_verdict, new_reason_code)?
             .build_sdk_event("inkson")?;
     // The reducer matches `modify_decision_ref` against the new decision's
     // EVENT id, so pin the SDK Event id to the same value we report.
-    new_decision.event_id = cokret_sdk::EventId::new(new_decision_id.clone())
+    new_decision.event_id = arkret_sdk::EventId::new(new_decision_id.clone())
         .map_err(|err| anyhow::anyhow!("replacement decision id is invalid: {err}"))?;
     let appeal_event = ck_ops::moderation_appeal_decision(
         realm_id,
@@ -707,8 +707,8 @@ pub async fn appeal_modify_atomic(
 async fn sign_and_submit_moderation_batch(
     submitter: &EventSubmitter,
     _realm_id: &str,
-    mut events: Vec<cokret_sdk::Event>,
-) -> anyhow::Result<cokret_sdk::EventsSubmitOutcome> {
+    mut events: Vec<arkret_sdk::Event>,
+) -> anyhow::Result<arkret_sdk::EventsSubmitOutcome> {
     for event in &mut events {
         submitter.stamp_cba_basis_for_sdk_event(event).await?;
     }

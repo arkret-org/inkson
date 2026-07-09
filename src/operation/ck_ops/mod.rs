@@ -51,8 +51,8 @@ pub use relation::*;
 pub use space::*;
 pub use strand::*;
 
-pub(super) fn did_id(value: &str) -> anyhow::Result<cokret_sdk::Did> {
-    cokret_sdk::Did::new(value.to_owned())
+pub(super) fn did_id(value: &str) -> anyhow::Result<arkret_sdk::Did> {
+    arkret_sdk::Did::new(value.to_owned())
         .map_err(|err| anyhow::anyhow!("invalid DID {value:?}: {err:?}"))
 }
 
@@ -62,9 +62,9 @@ pub(super) fn invite_ref_payload_value(
     invite_id: &str,
     reason: Option<&str>,
 ) -> anyhow::Result<Value> {
-    let invite_id_typed = cokret_sdk::InviteId::new(invite_id.to_owned())
+    let invite_id_typed = arkret_sdk::InviteId::new(invite_id.to_owned())
         .map_err(|err| anyhow::anyhow!("invite_id not canonical {invite_id:?}: {err}"))?;
-    let mut payload = cokret_sdk::models::InviteRefPayload::new(invite_id_typed);
+    let mut payload = arkret_sdk::models::InviteRefPayload::new(invite_id_typed);
     if let Some(reason) = reason {
         payload = payload.with_reason(reason);
     }
@@ -73,23 +73,23 @@ pub(super) fn invite_ref_payload_value(
         .map_err(|err| anyhow::anyhow!("invite ref payload: {err}"))
 }
 
-pub(super) fn realm_id_value(value: &str) -> anyhow::Result<cokret_sdk::RealmId> {
-    cokret_sdk::RealmId::new(value.to_owned())
+pub(super) fn realm_id_value(value: &str) -> anyhow::Result<arkret_sdk::RealmId> {
+    arkret_sdk::RealmId::new(value.to_owned())
         .map_err(|err| anyhow::anyhow!("invalid realm id {value:?}: {err:?}"))
 }
 
-pub(super) fn space_id_value(value: &str) -> anyhow::Result<cokret_sdk::SpaceId> {
-    cokret_sdk::SpaceId::new(value.to_owned())
+pub(super) fn space_id_value(value: &str) -> anyhow::Result<arkret_sdk::SpaceId> {
+    arkret_sdk::SpaceId::new(value.to_owned())
         .map_err(|err| anyhow::anyhow!("invalid space id {value:?}: {err:?}"))
 }
 
-pub(super) fn circle_id_value(value: &str) -> anyhow::Result<cokret_sdk::CircleId> {
-    cokret_sdk::CircleId::new(value.to_owned())
+pub(super) fn circle_id_value(value: &str) -> anyhow::Result<arkret_sdk::CircleId> {
+    arkret_sdk::CircleId::new(value.to_owned())
         .map_err(|err| anyhow::anyhow!("invalid circle id {value:?}: {err:?}"))
 }
 
-pub(super) fn morph_id_value(value: &str) -> anyhow::Result<cokret_sdk::MorphId> {
-    cokret_sdk::MorphId::new(value.to_owned())
+pub(super) fn morph_id_value(value: &str) -> anyhow::Result<arkret_sdk::MorphId> {
+    arkret_sdk::MorphId::new(value.to_owned())
         .map_err(|err| anyhow::anyhow!("invalid morph id {value:?}: {err:?}"))
 }
 
@@ -98,34 +98,34 @@ pub(super) fn object_create_payload_value<T: serde::Serialize>(
     context: &str,
 ) -> anyhow::Result<Value> {
     sdk_payload_value(
-        cokret_sdk::ObjectCreatePayload::new(object).to_value(),
+        arkret_sdk::ObjectCreatePayload::new(object).to_value(),
         context,
     )
 }
 
 pub(super) fn object_patch_payload_value(
     object_ref: &str,
-    patch: cokret_sdk::Patch,
+    patch: arkret_sdk::Patch,
 ) -> anyhow::Result<Value> {
-    cokret_sdk::ObjectPatchPayload::for_target(object_ref, patch)
+    arkret_sdk::ObjectPatchPayload::for_target(object_ref, patch)
         .and_then(|payload| payload.to_value())
         .map_err(|err| anyhow::anyhow!("invalid object_patch_payload for {object_ref}: {err}"))
 }
 
 pub(super) fn morph_update_payload_value(
     morph_id: &str,
-    patch: cokret_sdk::Patch,
+    patch: arkret_sdk::Patch,
 ) -> anyhow::Result<Value> {
-    cokret_sdk::MorphUpdatePayload::for_morph(morph_id_value(morph_id)?, patch)
+    arkret_sdk::MorphUpdatePayload::for_morph(morph_id_value(morph_id)?, patch)
         .and_then(|payload| payload.to_value())
         .map_err(|err| anyhow::anyhow!("invalid morph_update_payload for {morph_id}: {err}"))
 }
 
 pub(super) fn space_patch_payload_value(
     space_id: &str,
-    patch: cokret_sdk::Patch,
+    patch: arkret_sdk::Patch,
 ) -> anyhow::Result<Value> {
-    let payload = cokret_sdk::SpacePatchPayload {
+    let payload = arkret_sdk::SpacePatchPayload {
         space_id: space_id_value(space_id)?,
         patch,
         expected_state_digest: None,
@@ -138,9 +138,9 @@ pub(super) fn space_patch_payload_value(
 
 pub(super) fn space_state_transition_payload_value(
     space_id: &str,
-    _new_state: cokret_sdk::ObjectState,
+    _new_state: arkret_sdk::ObjectState,
 ) -> anyhow::Result<Value> {
-    let payload = cokret_sdk::SpaceStateTransitionPayload {
+    let payload = arkret_sdk::SpaceStateTransitionPayload {
         space_id: space_id_value(space_id)?,
         reason: None,
         effective_at: None,
@@ -153,16 +153,16 @@ pub(super) fn space_state_transition_payload_value(
 
 pub(super) fn strand_object_patch_payload_value(
     strand_id: &str,
-    patch: cokret_sdk::Patch,
+    patch: arkret_sdk::Patch,
 ) -> anyhow::Result<Value> {
     object_patch_payload_value(strand_id, patch)
 }
 
 pub(super) fn strand_tracks_update_payload_value(
     strand_id: &str,
-    patch: cokret_sdk::Patch,
+    patch: arkret_sdk::Patch,
 ) -> anyhow::Result<Value> {
-    cokret_sdk::StrandTracksUpdatePayload::with_patch(strand_id_value(strand_id)?, patch)
+    arkret_sdk::StrandTracksUpdatePayload::with_patch(strand_id_value(strand_id)?, patch)
         .and_then(|payload| payload.to_value())
         .map_err(|err| {
             anyhow::anyhow!("invalid ck.strand.tracks.update payload for {strand_id}: {err}")
@@ -171,12 +171,12 @@ pub(super) fn strand_tracks_update_payload_value(
 
 pub(super) fn strand_watch_level_value(
     level: &str,
-) -> anyhow::Result<cokret_sdk::StrandWatchLevel> {
+) -> anyhow::Result<arkret_sdk::StrandWatchLevel> {
     match level {
-        "mentions_only" => Ok(cokret_sdk::StrandWatchLevel::MentionsOnly),
-        "participating" => Ok(cokret_sdk::StrandWatchLevel::Participating),
-        "all" => Ok(cokret_sdk::StrandWatchLevel::All),
-        "muted" => Ok(cokret_sdk::StrandWatchLevel::Muted),
+        "mentions_only" => Ok(arkret_sdk::StrandWatchLevel::MentionsOnly),
+        "participating" => Ok(arkret_sdk::StrandWatchLevel::Participating),
+        "all" => Ok(arkret_sdk::StrandWatchLevel::All),
+        "muted" => Ok(arkret_sdk::StrandWatchLevel::Muted),
         other => Err(anyhow::anyhow!(
             "unknown ck.strand.watch.set level {other:?}"
         )),
@@ -193,13 +193,13 @@ pub(super) fn strand_watch_set_payload_value(
     level_public: Option<bool>,
 ) -> anyhow::Result<Value> {
     let payload = match level {
-        Some(level) => cokret_sdk::StrandWatchSetPayload::set(
+        Some(level) => arkret_sdk::StrandWatchSetPayload::set(
             strand_id_value(strand_id)?,
             did_id(watcher_actor_id)?,
             strand_watch_level_value(level)?,
             level_public,
         ),
-        None => cokret_sdk::StrandWatchSetPayload::clear(
+        None => arkret_sdk::StrandWatchSetPayload::clear(
             strand_id_value(strand_id)?,
             did_id(watcher_actor_id)?,
         ),
@@ -221,7 +221,7 @@ pub(super) fn strand_move_payload_value(
     from_space_id: Option<&str>,
     expected: Option<(Option<&str>, Option<&str>)>,
 ) -> anyhow::Result<Value> {
-    let mut payload = cokret_sdk::StrandMovePayload::new(
+    let mut payload = arkret_sdk::StrandMovePayload::new(
         space_id_value(board_space_id)?,
         strand_id_value(strand_id)?,
         space_id_value(target_space_id)?,
@@ -231,7 +231,7 @@ pub(super) fn strand_move_payload_value(
         payload = payload.with_from_space_id(space_id_value(from)?);
     }
     if let Some((expected_space, expected_rank)) = expected {
-        payload = payload.with_expected_position(cokret_sdk::StrandMoveExpectedPosition {
+        payload = payload.with_expected_position(arkret_sdk::StrandMoveExpectedPosition {
             space_id: expected_space.map(space_id_value).transpose()?,
             rank: expected_rank.map(ToOwned::to_owned),
             relation_id: None,
@@ -252,14 +252,14 @@ pub(super) fn strand_reorder_payload_value(
     rank: &str,
     expected_rank: Option<&str>,
 ) -> anyhow::Result<Value> {
-    let mut payload = cokret_sdk::StrandReorderPayload::new(
+    let mut payload = arkret_sdk::StrandReorderPayload::new(
         space_id_value(board_space_id)?,
         strand_id_value(strand_id)?,
         space_id_value(space_id)?,
         rank.to_owned(),
     );
     if let Some(expected_rank) = expected_rank {
-        payload = payload.with_expected_position(cokret_sdk::StrandReorderExpectedPosition {
+        payload = payload.with_expected_position(arkret_sdk::StrandReorderExpectedPosition {
             rank: Some(expected_rank.to_owned()),
             relation_id: None,
         });
@@ -272,7 +272,7 @@ pub(super) fn strand_reorder_payload_value(
 /// Build the canonical `object_lifecycle_payload` body via the SDK strong
 /// type. Single truth source `target_ref` (`additionalProperties:false`).
 pub(super) fn object_lifecycle_payload_value(target_ref: &str) -> anyhow::Result<Value> {
-    cokret_sdk::ObjectLifecyclePayload::new(target_ref.to_owned())
+    arkret_sdk::ObjectLifecyclePayload::new(target_ref.to_owned())
         .to_value()
         .map_err(|err| anyhow::anyhow!("invalid object_lifecycle_payload for {target_ref}: {err}"))
 }
@@ -289,15 +289,15 @@ pub(super) fn relation_create_payload_value(
     from_ref: &str,
     to_ref: &str,
 ) -> anyhow::Result<Value> {
-    cokret_sdk::RelationCreatePayload::new(kind, from_ref.to_owned(), to_ref.to_owned())
+    arkret_sdk::RelationCreatePayload::new(kind, from_ref.to_owned(), to_ref.to_owned())
         .to_value()
         .map_err(|err| {
             anyhow::anyhow!("invalid relation_create_payload ({kind} {from_ref}->{to_ref}): {err}")
         })
 }
 
-pub(super) fn patch_from_value(patch: Value) -> anyhow::Result<cokret_sdk::Patch> {
-    let patch: cokret_sdk::Patch = serde_json::from_value(patch)
+pub(super) fn patch_from_value(patch: Value) -> anyhow::Result<arkret_sdk::Patch> {
+    let patch: arkret_sdk::Patch = serde_json::from_value(patch)
         .map_err(|err| anyhow::anyhow!("ck.strand.update patch must match ck.patch.v1: {err}"))?;
     patch
         .validate()

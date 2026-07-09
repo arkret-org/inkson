@@ -19,7 +19,7 @@ use super::*;
 /// when the server advertises it. Below it the single-shot POST wins on
 /// round-trips.
 pub const RESUMABLE_UPLOAD_THRESHOLD_BYTES: usize =
-    cokret_sdk::http_client::RESUMABLE_UPLOAD_THRESHOLD_BYTES;
+    arkret_sdk::http_client::RESUMABLE_UPLOAD_THRESHOLD_BYTES;
 
 impl CokretApi {
     /// Describe-gated tus endpoint discovery. Returns the binding
@@ -28,7 +28,7 @@ impl CokretApi {
     /// `ck.self.blob.upload.create`.
     pub async fn resumable_upload_base_url(&self) -> Option<Url> {
         let describe = self.describe_cached().await.ok()?;
-        cokret_sdk::http_client::blob_resumable_upload_base_url(describe)
+        arkret_sdk::http_client::blob_resumable_upload_base_url(describe)
     }
 
     /// File-transfer ciphertext upload with automatic resumable/canonical
@@ -44,7 +44,7 @@ impl CokretApi {
         if ciphertext.len() >= RESUMABLE_UPLOAD_THRESHOLD_BYTES
             && let Some(base_url) = self.resumable_upload_base_url().await
         {
-            let options = cokret_sdk::http_client::BlobResumableUploadOptions::new()
+            let options = arkret_sdk::http_client::BlobResumableUploadOptions::new()
                 .metadata("purpose", "file_transfer")
                 .metadata("encrypted", "true")
                 .metadata("content_digest", content_digest);

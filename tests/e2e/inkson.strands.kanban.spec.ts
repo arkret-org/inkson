@@ -55,14 +55,14 @@ test("kanban card detail embeds discussion without boundary copy", async ({ page
 });
 
 test("kanban hides list creation until a board exists", async ({ page }) => {
-  await page.route("**/_cokret/self/realms/*/spaces", async (route) => {
+  await page.route("**/_arkret/self/realms/*/spaces", async (route) => {
     return route.fulfill({
       status: 200,
       contentType: "application/json",
       body: JSON.stringify({ items: [], total: 0, spaces: [] }),
     });
   });
-  await page.route("**/_cokret/self/realms/*/strands", async (route) => {
+  await page.route("**/_arkret/self/realms/*/strands", async (route) => {
     return route.fulfill({
       status: 200,
       contentType: "application/json",
@@ -101,7 +101,7 @@ test("kanban queues canonical event submissions and quarantines manual replay", 
   await page.getByTestId("add-card-button").first().click();
   await page.getByTestId("new-card-title-input").fill("Move-backed card");
   const eventSubmit = page.waitForRequest(
-    (request) => request.url().includes("/_cokret/self/events") && request.method() === "POST",
+    (request) => request.url().includes("/_arkret/self/events") && request.method() === "POST",
   );
   await page.getByTestId("save-card-button").click();
   const eventBody = await eventSubmit.then((request) => request.postDataJSON());
@@ -157,7 +157,7 @@ test("kanban projections use home Realm for nested Spaces", async ({ page }) => 
   page.on("request", (request) => {
     const url = new URL(request.url());
     const projectionMatch = url.pathname.match(
-      /^\/_cokret\/self\/realms\/([^/]+)\/(spaces|strands)$/,
+      /^\/_arkret\/self\/realms\/([^/]+)\/(spaces|strands)$/,
     );
     if (projectionMatch) {
       projectionRealmIds.push(projectionMatch[1]);
@@ -188,7 +188,7 @@ test("card detail embeds discussion directly without discussion chrome", async (
   await expect(page.getByTestId("discussion-main-panel")).not.toContainText("Launch board discussion");
   await expect(page.getByTestId("discussion-main-panel")).not.toContainText("Primary discussion");
 
-  const chatSend = page.waitForRequest("**/_cokret/self/events");
+  const chatSend = page.waitForRequest("**/_arkret/self/events");
   await page.getByTestId("chat-input").fill("hello @did:web:bob.example about #ck:task:123");
   await page.getByTestId("send-chat-button").click();
   const chatBody = await chatSend.then((request) => request.postDataJSON());

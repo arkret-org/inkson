@@ -228,7 +228,7 @@ pub(super) struct SidebarRowRealmPerms {
     pub(super) can_settings: bool,
 }
 
-/// Parse a `_cokret/self/authz/check` body into a simple allow boolean.
+/// Parse a `_arkret/self/authz/check` body into a simple allow boolean.
 /// Mirrors `realm_admin::authz_json_allowed`. Fail-closed: any shape we do
 /// not recognise reads as denied.
 pub(super) fn sidebar_authz_allowed(value: &Value) -> bool {

@@ -77,10 +77,10 @@ async fn join_via_api(
     // transport can recompute every remote sender's frame key on
     // ParticipantConnected (§8.1). Building the deriver here keeps the exporter
     // alive past the local-key derivation instead of dropping it.
-    let realm_id = cokret_sdk::RealmId::new(join.realm_id.clone())
+    let realm_id = arkret_sdk::RealmId::new(join.realm_id.clone())
         .map_err(|_| RtcClientError::FocusMismatch)?;
     let call_id =
-        cokret_sdk::CallId::new(join.call_id.clone()).map_err(|_| RtcClientError::FocusMismatch)?;
+        arkret_sdk::CallId::new(join.call_id.clone()).map_err(|_| RtcClientError::FocusMismatch)?;
     let per_sender_keys = PerSenderFrameKeys::new(
         exporter,
         realm_id,
@@ -151,7 +151,7 @@ pub(super) async fn submit_call_state_participant(
     let op = crate::operation::OperationBuilder::new(
         realm_id,
         actor,
-        cokret_sdk::events::kinds::EventKind::CallState,
+        arkret_sdk::events::kinds::EventKind::CallState,
     )
     .target_ref(call_id)
     .body(body)

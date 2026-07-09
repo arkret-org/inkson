@@ -19,7 +19,7 @@
 //! (single-shot seq=0) and is NOT carried on the wire.
 //!
 //! The seal/open crypto is delegated to
-//! `cokret_sdk::secret_share::{seal_base_mode_to_x25519_pubkey,
+//! `arkret_sdk::secret_share::{seal_base_mode_to_x25519_pubkey,
 //! open_base_mode_with_x25519_privkey}` (the SDK's RFC 9180 SetupBase, validated
 //! byte-for-byte against the RFC 9180 CFRG KAT). This module keeps the
 //! recovery-keypair derivation and re-frames the SDK's single
@@ -120,7 +120,7 @@ pub fn hpke_seal(
 ) -> Result<HpkeSealed> {
     // Validate the key length up front for a clearer error than the SDK's.
     let _ = x25519_32(recipient_public_key, "recovery HPKE public key")?;
-    let blob_b64 = cokret_sdk::secret_share::seal_base_mode_to_x25519_pubkey(
+    let blob_b64 = arkret_sdk::secret_share::seal_base_mode_to_x25519_pubkey(
         recipient_public_key,
         plaintext,
         info,
@@ -155,7 +155,7 @@ pub fn hpke_open(
     blob.extend_from_slice(enc);
     blob.extend_from_slice(ciphertext);
     let blob_b64 = URL_SAFE_NO_PAD.encode(&blob);
-    cokret_sdk::secret_share::open_base_mode_with_x25519_privkey(
+    arkret_sdk::secret_share::open_base_mode_with_x25519_privkey(
         recipient_private_key,
         &blob_b64,
         info,

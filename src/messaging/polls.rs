@@ -310,19 +310,19 @@ pub fn build_poll_create_op(
     actor: &str,
     strand_id: &str,
     draft: &PollDraft,
-) -> anyhow::Result<cokret_sdk::Event> {
-    let answers: Vec<cokret_sdk::models::PollAnswer> = draft
+) -> anyhow::Result<arkret_sdk::Event> {
+    let answers: Vec<arkret_sdk::models::PollAnswer> = draft
         .options
         .iter()
         .filter(|opt| !opt.trim().is_empty())
         .enumerate()
-        .map(|(idx, label)| cokret_sdk::models::PollAnswer {
+        .map(|(idx, label)| arkret_sdk::models::PollAnswer {
             id: format!("opt-{idx}"),
-            text: cokret_sdk::ContentBlock::text(label.trim()),
+            text: arkret_sdk::ContentBlock::text(label.trim()),
         })
         .collect();
-    let block = cokret_sdk::models::PollBlock {
-        kind: cokret_sdk::models::PollBlockKind::Poll,
+    let block = arkret_sdk::models::PollBlock {
+        kind: arkret_sdk::models::PollBlockKind::Poll,
         // `body` is the fallback text for clients without poll rendering;
         // `poll.question` is omitted so the question is read from `body`
         // (content-types.md §4.9).
@@ -330,14 +330,14 @@ pub fn build_poll_create_op(
         format: None,
         formatted_body: None,
         reply_context: None,
-        poll: cokret_sdk::models::PollBody {
-            kind: cokret_sdk::models::PollDisclosureKind::Disclosed,
+        poll: arkret_sdk::models::PollBody {
+            kind: arkret_sdk::models::PollDisclosureKind::Disclosed,
             max_selections: u64::from(draft.max_selections.max(1)),
             question: None,
             answers,
         },
     };
-    let payload = cokret_sdk::MessageCreatePayload::with_content(
+    let payload = arkret_sdk::MessageCreatePayload::with_content(
         strand_id_value(strand_id)?,
         "discussion",
         serde_json::to_value(&block)
@@ -346,7 +346,7 @@ pub fn build_poll_create_op(
     let mut event = OperationBuilder::new(
         realm_id,
         actor,
-        cokret_sdk::events::kinds::EventKind::MessageCreate,
+        arkret_sdk::events::kinds::EventKind::MessageCreate,
     )
     .target_ref(strand_id)
     .body(sdk_payload_value(
@@ -365,7 +365,7 @@ pub fn build_poll_create_op(
 /// Read the stamped wire message id (`ck:message:<uuid7>`) back from a
 /// freshly built poll-create event — the identity later
 /// `poll_response.poll_ref`s point at.
-pub fn poll_message_ref(event: &cokret_sdk::Event) -> Option<String> {
+pub fn poll_message_ref(event: &arkret_sdk::Event) -> Option<String> {
     event
         .payload
         .get("message_id")
@@ -384,24 +384,24 @@ pub fn build_poll_vote_op(
     strand_id: &str,
     poll_ref: &str,
     selections: &[String],
-) -> anyhow::Result<cokret_sdk::Event> {
+) -> anyhow::Result<arkret_sdk::Event> {
     if selections.is_empty() {
         anyhow::bail!("poll response requires at least one selection");
     }
-    let poll_ref = cokret_sdk::MessageId::new(poll_ref.trim().to_owned())
+    let poll_ref = arkret_sdk::MessageId::new(poll_ref.trim().to_owned())
         .map_err(|err| anyhow::anyhow!("invalid poll_ref {poll_ref:?}: {err:?}"))?;
-    let block = cokret_sdk::models::PollResponseBlock {
-        kind: cokret_sdk::models::PollResponseBlockKind::PollResponse,
+    let block = arkret_sdk::models::PollResponseBlock {
+        kind: arkret_sdk::models::PollResponseBlockKind::PollResponse,
         body: "poll response".to_owned(),
         format: None,
         formatted_body: None,
         reply_context: None,
-        poll_response: cokret_sdk::models::PollResponseBody {
+        poll_response: arkret_sdk::models::PollResponseBody {
             poll_ref,
             selections: selections.to_vec(),
         },
     };
-    let payload = cokret_sdk::MessageCreatePayload::with_content(
+    let payload = arkret_sdk::MessageCreatePayload::with_content(
         strand_id_value(strand_id)?,
         "discussion",
         serde_json::to_value(&block)
@@ -410,7 +410,7 @@ pub fn build_poll_vote_op(
     OperationBuilder::new(
         realm_id,
         actor,
-        cokret_sdk::events::kinds::EventKind::MessageCreate,
+        arkret_sdk::events::kinds::EventKind::MessageCreate,
     )
     .target_ref(strand_id)
     .body(sdk_payload_value(
@@ -520,7 +520,7 @@ mod tests {
         // The stamped wire message id is readable back for poll_ref use.
         let message_ref = poll_message_ref(&op).unwrap();
         assert!(message_ref.starts_with("ak:message:"));
-        cokret_sdk::schema::event_payload_validator_catalog()
+        arkret_sdk::schema::event_payload_validator_catalog()
             .unwrap()
             .validate_payload(op.kind.as_str(), &op.payload)
             .unwrap();
@@ -545,7 +545,7 @@ mod tests {
             "ak:message:01904100-0000-7000-8000-000000000012"
         );
         assert_eq!(block["poll_response"]["selections"], json!(["opt-1"]));
-        cokret_sdk::schema::event_payload_validator_catalog()
+        arkret_sdk::schema::event_payload_validator_catalog()
             .unwrap()
             .validate_payload(op.kind.as_str(), &op.payload)
             .unwrap();

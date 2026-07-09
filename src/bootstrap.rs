@@ -487,11 +487,11 @@ pub(crate) async fn ensure_local_mls_key_package_published(
         }
     }
 
-    let principal = cokret_sdk::Did::new(actor_id.trim().to_owned())
+    let principal = arkret_sdk::Did::new(actor_id.trim().to_owned())
         .map_err(|error| format!("MLS principal_id: {error:?}"))?;
-    let device = cokret_sdk::DeviceId::new(device_id.trim().to_owned())
+    let device = arkret_sdk::DeviceId::new(device_id.trim().to_owned())
         .map_err(|error| format!("MLS device_id: {error:?}"))?;
-    let identity = cokret_sdk::CokretMlsIdentity::new_basic(principal, device)
+    let identity = arkret_sdk::CokretMlsIdentity::new_basic(principal, device)
         .map_err(|error| format!("create MLS identity: {error}"))?;
     // Publish a reusable last-resort KeyPackage. Single-use KeyPackages are
     // consumed on claim, so once an admission claims it the member has no

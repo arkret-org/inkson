@@ -47,20 +47,20 @@ pub fn parse_user_handle(input: &str) -> Option<ParsedUserHandle> {
     Some(parsed_from_sdk_handle(handle))
 }
 
-fn parse_sdk_handle(input: &str) -> cokret_sdk::Result<cokret_sdk::models::Handle> {
+fn parse_sdk_handle(input: &str) -> arkret_sdk::Result<arkret_sdk::models::Handle> {
     let trimmed = input.trim();
     let body = trimmed.strip_prefix('@').unwrap_or(trimmed);
     if body.starts_with("acct:") {
-        return cokret_sdk::models::Handle::from_acct(body);
+        return arkret_sdk::models::Handle::from_acct(body);
     }
     if body.contains('@') {
         let acct = format!("acct:{body}");
-        return cokret_sdk::models::Handle::from_acct(&acct);
+        return arkret_sdk::models::Handle::from_acct(&acct);
     }
-    cokret_sdk::models::Handle::parse(body)
+    arkret_sdk::models::Handle::parse(body)
 }
 
-fn parsed_from_sdk_handle(handle: cokret_sdk::models::Handle) -> ParsedUserHandle {
+fn parsed_from_sdk_handle(handle: arkret_sdk::models::Handle) -> ParsedUserHandle {
     ParsedUserHandle {
         localpart: handle.localpart().to_owned(),
         domain: handle.domain().to_owned(),
@@ -91,7 +91,7 @@ pub fn principal_did_from_identifier(input: &str) -> Option<String> {
 
 /// Client-side wrapper around the SDK's canonical localpart normalizer.
 pub fn detect_handle_homograph_risk(localpart: &str) -> Option<HandleHomographRisk> {
-    cokret_sdk::models::normalize_handle_localpart(localpart)
+    arkret_sdk::models::normalize_handle_localpart(localpart)
         .is_err()
         .then_some(HandleHomographRisk)
 }

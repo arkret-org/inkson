@@ -9,7 +9,7 @@ use std::{
 
 use chime::PushRegistrationState;
 use chrono::{DateTime, Utc};
-use cokret_sdk::EncryptedPayload;
+use arkret_sdk::EncryptedPayload;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
@@ -200,11 +200,11 @@ fn realm_tree_projection_value_is_mls_encrypted(body: &Value) -> bool {
 /// Extract the effective `durability_policy` (RRK, realm-and-space.md §2.3.1)
 /// from a cached realm-tree projection body, if present. Scans the same nested
 /// containers as the encryption-state reader since the local projection nests
-/// the realm body. Returns the SDK-typed [`cokret_sdk::models::DurabilityPolicy`]
+/// the realm body. Returns the SDK-typed [`arkret_sdk::models::DurabilityPolicy`]
 /// so the client never re-defines the spec shape; `None` when absent or malformed.
 fn realm_tree_projection_value_durability_policy(
     body: &Value,
-) -> Option<cokret_sdk::models::DurabilityPolicy> {
+) -> Option<arkret_sdk::models::DurabilityPolicy> {
     let null = Value::Null;
     for container in [
         body,
@@ -216,7 +216,7 @@ fn realm_tree_projection_value_durability_policy(
         if let Some(policy) = container.get("durability_policy")
             && !policy.is_null()
             && let Ok(parsed) =
-                serde_json::from_value::<cokret_sdk::models::DurabilityPolicy>(policy.clone())
+                serde_json::from_value::<arkret_sdk::models::DurabilityPolicy>(policy.clone())
         {
             return Some(parsed);
         }
@@ -260,7 +260,7 @@ fn realm_tree_projection_value_is_minimal_metadata(body: &Value) -> bool {
                 .and_then(Value::as_array)
                 .is_some_and(|profiles| {
                     profiles.iter().any(|profile| {
-                        profile.as_str() == Some(cokret_sdk::mls::MINIMAL_METADATA_REALM_PROFILE)
+                        profile.as_str() == Some(arkret_sdk::mls::MINIMAL_METADATA_REALM_PROFILE)
                     })
                 })
         })

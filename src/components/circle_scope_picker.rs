@@ -179,7 +179,7 @@ mod tests {
             color_token: "indigo".to_owned(),
             symbol: "shield".to_owned(),
             member_count: 3,
-            state: cokret_sdk::CircleState::Active,
+            state: arkret_sdk::CircleState::Active,
             viewer_is_member: true,
         }
     }

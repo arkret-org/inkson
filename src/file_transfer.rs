@@ -8,7 +8,7 @@ use base64::Engine as _;
 use base64::engine::general_purpose::{STANDARD as BASE64_STANDARD, URL_SAFE_NO_PAD};
 use chacha20poly1305::aead::{Aead, KeyInit, Payload};
 use chacha20poly1305::{XChaCha20Poly1305, XNonce};
-pub use cokret_sdk::{
+pub use arkret_sdk::{
     FileTransferAad, FileTransferAccess, FileTransferAccessVisibility, FileTransferEncryption,
     FileTransferKeyDelivery, FileTransferKeyEnvelope, FileTransferKeyMessage, FileTransferRecord,
     FileTransferState,
@@ -77,7 +77,7 @@ pub struct FileTransferRecipientDevice {
 pub struct FileTransferDeviceBoundUploadResult {
     pub item: FileTransferItem,
     pub server_response: Value,
-    pub device_message_responses: Vec<cokret_sdk::DeviceMessagesSendOutcome>,
+    pub device_message_responses: Vec<arkret_sdk::DeviceMessagesSendOutcome>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -148,7 +148,7 @@ pub async fn upload_actor_private_file(
         prepare_actor_private_file(crypto, actor_id, device_id, filename, media_type, plaintext)?;
     let account_data_key = prepared.account_data_key.clone();
     // Auto-dispatch: large ciphertexts take the resumable (tus) binding
-    // when the server advertises it in /_cokret/describe, with automatic
+    // when the server advertises it in /_arkret/describe, with automatic
     // fallback to the canonical single-shot upload. Outcome shape and
     // blob_ref are identical either way (media-and-blob.md §2.1).
     let upload = api
@@ -309,7 +309,7 @@ pub fn try_decrypt_file_transfer_from_device_message(
     recipient_device_id: &str,
 ) -> anyhow::Result<Option<Vec<u8>>> {
     if envelope.get("kind").and_then(Value::as_str)
-        != Some(cokret_sdk::FILE_TRANSFER_KEY_MESSAGE_KIND)
+        != Some(arkret_sdk::FILE_TRANSFER_KEY_MESSAGE_KIND)
     {
         return Ok(None);
     }
@@ -515,10 +515,10 @@ impl PreparedFileTransfer {
         for recipient in recipient_devices {
             let actor_id = recipient.actor_id.trim().to_owned();
             let device_id = recipient.device_id.trim().to_owned();
-            cokret_sdk::Did::new(actor_id.clone()).map_err(|error| {
+            arkret_sdk::Did::new(actor_id.clone()).map_err(|error| {
                 anyhow::anyhow!("invalid file-transfer recipient actor: {error}")
             })?;
-            cokret_sdk::DeviceId::new(device_id.clone()).map_err(|error| {
+            arkret_sdk::DeviceId::new(device_id.clone()).map_err(|error| {
                 anyhow::anyhow!("invalid file-transfer recipient device_id: {error}")
             })?;
             if !seen_devices.insert(device_id.clone()) {
@@ -559,7 +559,7 @@ impl PreparedFileTransfer {
                 nonce,
                 aad: self.aad,
                 key_delivery: FileTransferKeyDelivery::ToDeviceWrappedKey {
-                    key_message_kind: cokret_sdk::FILE_TRANSFER_KEY_MESSAGE_KIND.to_owned(),
+                    key_message_kind: arkret_sdk::FILE_TRANSFER_KEY_MESSAGE_KIND.to_owned(),
                 },
             },
             origin_device_id: self.origin_device_id,
@@ -623,7 +623,7 @@ fn build_file_transfer_device_key_dispatch(
         nonce: record.encryption.nonce.clone(),
         content_digest: record.content_digest.clone(),
         key_envelope: FileTransferKeyEnvelope {
-            scheme: cokret_sdk::FILE_TRANSFER_KEY_ENVELOPE_SCHEME.to_owned(),
+            scheme: arkret_sdk::FILE_TRANSFER_KEY_ENVELOPE_SCHEME.to_owned(),
             enc: URL_SAFE_NO_PAD.encode(sealed.enc),
             ciphertext: URL_SAFE_NO_PAD.encode(sealed.ciphertext),
             aad_digest: crate::canonical::sha256_digest(&aad),
@@ -643,7 +643,7 @@ fn build_file_transfer_device_key_dispatch(
             &recipient.actor_id,
             &recipient.device_id,
         ),
-        kind: cokret_sdk::FILE_TRANSFER_KEY_MESSAGE_KIND.to_owned(),
+        kind: arkret_sdk::FILE_TRANSFER_KEY_MESSAGE_KIND.to_owned(),
         expires_at: expires_at.to_owned(),
         content,
     })
@@ -663,9 +663,9 @@ fn open_file_transfer_device_key_message(
         .map_err(|error| anyhow::anyhow!("file-transfer key message binding failed: {error}"))?;
     let recipient_actor_id = recipient_actor_id.trim();
     let recipient_device_id = recipient_device_id.trim();
-    cokret_sdk::Did::new(recipient_actor_id.to_owned())
+    arkret_sdk::Did::new(recipient_actor_id.to_owned())
         .map_err(|error| anyhow::anyhow!("invalid file-transfer recipient actor: {error}"))?;
-    cokret_sdk::DeviceId::new(recipient_device_id.to_owned())
+    arkret_sdk::DeviceId::new(recipient_device_id.to_owned())
         .map_err(|error| anyhow::anyhow!("invalid file-transfer recipient device_id: {error}"))?;
     if !record
         .access
@@ -713,7 +713,7 @@ fn file_transfer_key_message_aad(
     expires_at: &str,
 ) -> anyhow::Result<Vec<u8>> {
     let aad = json!({
-        "kind": cokret_sdk::FILE_TRANSFER_KEY_MESSAGE_KIND,
+        "kind": arkret_sdk::FILE_TRANSFER_KEY_MESSAGE_KIND,
         "transfer_id": record.transfer_id.as_str(),
         "blob_ref": record.blob_ref.as_str(),
         "aead_profile": record.encryption.aead_profile.as_str(),
@@ -731,7 +731,7 @@ fn file_transfer_device_key_txn_id(
     recipient_actor_id: &str,
     recipient_device_id: &str,
 ) -> String {
-    let digest_hex = cokret_sdk::canonical::sha256_hex(
+    let digest_hex = arkret_sdk::canonical::sha256_hex(
         format!("{transfer_id}\n{recipient_actor_id}\n{recipient_device_id}").as_bytes(),
     );
     format!("file-transfer-key-{transfer_id}-{}", &digest_hex[..16])
@@ -747,7 +747,7 @@ fn file_transfer_item_from_account_data(
         .and_then(Value::as_str)
         .ok_or_else(|| anyhow::anyhow!("account_data entry missing data_type"))?;
     if !data_type
-        .strip_prefix(cokret_sdk::ACCOUNT_DATA_TYPE_FILE_TRANSFER)
+        .strip_prefix(arkret_sdk::ACCOUNT_DATA_TYPE_FILE_TRANSFER)
         .is_some_and(|rest| rest.starts_with(':'))
     {
         anyhow::bail!("not a file-transfer account_data entry");
@@ -1080,7 +1080,7 @@ mod tests {
         assert_eq!(dispatches.len(), 1);
         assert_eq!(
             dispatches[0].kind,
-            cokret_sdk::FILE_TRANSFER_KEY_MESSAGE_KIND
+            arkret_sdk::FILE_TRANSFER_KEY_MESSAGE_KIND
         );
         (
             record,
@@ -1156,7 +1156,7 @@ mod tests {
     fn device_bound_file_opens_from_to_device_inbox_envelope() {
         let (record, ciphertext, recipient_sk, key_message) = device_bound_fixture();
         let envelope = json!({
-            "kind": cokret_sdk::FILE_TRANSFER_KEY_MESSAGE_KIND,
+            "kind": arkret_sdk::FILE_TRANSFER_KEY_MESSAGE_KIND,
             "recipient_device_id": RECIPIENT_DEVICE,
             "content": key_message,
         });

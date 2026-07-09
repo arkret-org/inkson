@@ -33,10 +33,10 @@ impl InksonLocalStateStoreAdapter {
 
     fn lock(
         &self,
-    ) -> cokret_sdk::Result<std::sync::MutexGuard<'_, crate::local_state::LocalStateStore>> {
+    ) -> arkret_sdk::Result<std::sync::MutexGuard<'_, crate::local_state::LocalStateStore>> {
         self.inner
             .lock()
-            .map_err(|err| cokret_sdk::Error::Protocol(format!("local state lock poisoned: {err}")))
+            .map_err(|err| arkret_sdk::Error::Protocol(format!("local state lock poisoned: {err}")))
     }
 
     fn realm_id(scope: &garth::CursorScope) -> Option<String> {
@@ -51,7 +51,7 @@ impl garth::CursorStore for InksonLocalStateStoreAdapter {
     async fn load(
         &self,
         scope: garth::CursorScope,
-    ) -> cokret_sdk::Result<Option<garth::OpaqueCursor>> {
+    ) -> arkret_sdk::Result<Option<garth::OpaqueCursor>> {
         let store = self.lock()?;
         match scope {
             // Normalize the legacy "-" reset sentinel (and empty strings) that
@@ -71,7 +71,7 @@ impl garth::CursorStore for InksonLocalStateStoreAdapter {
         &self,
         scope: garth::CursorScope,
         cursor: garth::OpaqueCursor,
-    ) -> cokret_sdk::Result<()> {
+    ) -> arkret_sdk::Result<()> {
         let mut store = self.lock()?;
         match scope {
             garth::CursorScope::Account { .. } => store.save_sync_cursor(cursor),
@@ -82,7 +82,7 @@ impl garth::CursorStore for InksonLocalStateStoreAdapter {
         Ok(())
     }
 
-    async fn clear(&self, scope: garth::CursorScope) -> cokret_sdk::Result<()> {
+    async fn clear(&self, scope: garth::CursorScope) -> arkret_sdk::Result<()> {
         let mut store = self.lock()?;
         match scope {
             garth::CursorScope::Account { .. } => store.clear_sync_cursor(),
@@ -97,12 +97,12 @@ impl garth::CursorStore for InksonLocalStateStoreAdapter {
 }
 
 impl garth::EventCacheStore for InksonLocalStateStoreAdapter {
-    async fn seen(&self, event_id: cokret_sdk::EventId) -> cokret_sdk::Result<bool> {
+    async fn seen(&self, event_id: arkret_sdk::EventId) -> arkret_sdk::Result<bool> {
         let store = self.lock()?;
         Ok(store.client_core_event_seen(event_id.as_str()))
     }
 
-    async fn remember(&self, event_id: cokret_sdk::EventId) -> cokret_sdk::Result<()> {
+    async fn remember(&self, event_id: arkret_sdk::EventId) -> arkret_sdk::Result<()> {
         let mut store = self.lock()?;
         store.remember_client_core_event(event_id.as_str());
         Ok(())
@@ -242,7 +242,7 @@ impl garth::SecureKeyStore for InksonSecureKeyStoreAdapter {
 
 #[derive(Clone)]
 pub struct ClientCoreState<E, C, D, S> {
-    pub http: cokret_sdk::http_client::Client,
+    pub http: arkret_sdk::http_client::Client,
     pub secure_key_store: S,
     core: garth::CokretClient<E, C, D>,
 }
@@ -254,7 +254,7 @@ where
     D: garth::EventCacheStore,
 {
     pub fn new(
-        http: cokret_sdk::http_client::Client,
+        http: arkret_sdk::http_client::Client,
         secure_key_store: S,
         core: garth::CokretClient<E, C, D>,
     ) -> Self {
@@ -284,11 +284,11 @@ pub type InksonClientCore<E> = ClientCoreState<
 >;
 
 pub struct BufferedRealmEventsFrameSource {
-    frames: VecDeque<cokret_sdk::EventsSubscribeFrame>,
+    frames: VecDeque<arkret_sdk::EventsSubscribeFrame>,
 }
 
 impl BufferedRealmEventsFrameSource {
-    fn new(frames: Vec<cokret_sdk::EventsSubscribeFrame>) -> Self {
+    fn new(frames: Vec<arkret_sdk::EventsSubscribeFrame>) -> Self {
         Self {
             frames: VecDeque::from(frames),
         }
@@ -298,7 +298,7 @@ impl BufferedRealmEventsFrameSource {
 impl RealmEventsFrameSource for BufferedRealmEventsFrameSource {
     fn next_frame<'a>(
         &'a mut self,
-    ) -> garth::subscribe::realm::BoxRealmStreamFuture<'a, Option<cokret_sdk::EventsSubscribeFrame>>
+    ) -> garth::subscribe::realm::BoxRealmStreamFuture<'a, Option<arkret_sdk::EventsSubscribeFrame>>
     {
         let frame = self.frames.pop_front();
         Box::pin(async move { Ok(frame) })
@@ -307,13 +307,13 @@ impl RealmEventsFrameSource for BufferedRealmEventsFrameSource {
 
 #[derive(Clone, Debug)]
 pub struct InksonRealmEventsTransport {
-    http: cokret_sdk::http_client::Client,
+    http: arkret_sdk::http_client::Client,
     max_duration_ms: Option<u64>,
     heartbeat_ms: Option<u64>,
 }
 
 impl InksonRealmEventsTransport {
-    pub fn new(http: cokret_sdk::http_client::Client) -> Self {
+    pub fn new(http: arkret_sdk::http_client::Client) -> Self {
         Self {
             http,
             max_duration_ms: None,
@@ -339,11 +339,11 @@ impl RealmEventsTransport for InksonRealmEventsTransport {
 
     fn open_realm_events<'a>(
         &'a self,
-        realm_id: &'a cokret_sdk::RealmId,
+        realm_id: &'a arkret_sdk::RealmId,
         after: Option<&'a str>,
     ) -> garth::subscribe::realm::BoxRealmStreamFuture<'a, Self::Source> {
         Box::pin(async move {
-            let mut options = cokret_sdk::http_client::EventsSubscribeOptions::new()
+            let mut options = arkret_sdk::http_client::EventsSubscribeOptions::new()
                 .realm(realm_id.as_str().to_owned())
                 .include_history(after.is_none());
             if let Some(after) = after {
@@ -362,18 +362,18 @@ impl RealmEventsTransport for InksonRealmEventsTransport {
             let bytes = response
                 .bytes()
                 .await
-                .map_err(|error| cokret_sdk::Error::Http(error.to_string()))?;
+                .map_err(|error| arkret_sdk::Error::Http(error.to_string()))?;
             let text = std::str::from_utf8(&bytes)
-                .map_err(|error| cokret_sdk::Error::Protocol(error.to_string()))?;
+                .map_err(|error| arkret_sdk::Error::Protocol(error.to_string()))?;
             let frames = crate::sync_parse::parse_events_subscribe_ndjson_text(text)
-                .map_err(|error| cokret_sdk::Error::Protocol(error.to_string()))?;
+                .map_err(|error| arkret_sdk::Error::Protocol(error.to_string()))?;
             Ok(BufferedRealmEventsFrameSource::new(frames))
         })
     }
 }
 
 pub async fn account_subscribe_snapshot(
-    http: &cokret_sdk::http_client::Client,
+    http: &arkret_sdk::http_client::Client,
     after: Option<&str>,
 ) -> anyhow::Result<crate::models::ClientSyncOutcome> {
     match account_subscribe_snapshot_outcome(http, after).await? {
@@ -392,21 +392,21 @@ pub async fn account_subscribe_snapshot(
 }
 
 pub async fn account_subscribe_snapshot_outcome(
-    http: &cokret_sdk::http_client::Client,
+    http: &arkret_sdk::http_client::Client,
     after: Option<&str>,
 ) -> anyhow::Result<AccountSubscribeSnapshotResult> {
     account_subscribe_snapshot_outcome_with_options(
         http,
         after,
-        &cokret_sdk::http_client::ClientRequestOptions::default(),
+        &arkret_sdk::http_client::ClientRequestOptions::default(),
     )
     .await
 }
 
 pub async fn account_subscribe_snapshot_with_options(
-    http: &cokret_sdk::http_client::Client,
+    http: &arkret_sdk::http_client::Client,
     after: Option<&str>,
-    options: &cokret_sdk::http_client::ClientRequestOptions,
+    options: &arkret_sdk::http_client::ClientRequestOptions,
 ) -> anyhow::Result<crate::models::ClientSyncOutcome> {
     match account_subscribe_snapshot_outcome_with_options(http, after, options).await? {
         AccountSubscribeSnapshotResult::Delta(response) => Ok(*response),
@@ -424,9 +424,9 @@ pub async fn account_subscribe_snapshot_with_options(
 }
 
 pub async fn account_subscribe_snapshot_outcome_with_options(
-    http: &cokret_sdk::http_client::Client,
+    http: &arkret_sdk::http_client::Client,
     after: Option<&str>,
-    options: &cokret_sdk::http_client::ClientRequestOptions,
+    options: &arkret_sdk::http_client::ClientRequestOptions,
 ) -> anyhow::Result<AccountSubscribeSnapshotResult> {
     let after = after
         .map(crate::wire_helpers::validate_cursor)
@@ -436,7 +436,7 @@ pub async fn account_subscribe_snapshot_outcome_with_options(
     let _subscribe_gate = crate::sync_parse::ACCOUNT_SUBSCRIBE_NETWORK_GATE
         .lock()
         .await;
-    let request = cokret_sdk::SyncRequestBody {
+    let request = arkret_sdk::SyncRequestBody {
         after,
         catchup: Some(true),
         filter: None,
@@ -478,7 +478,7 @@ pub type DefaultClientCore = MemoryClientCore<garth::NativeExecutor>;
 pub type DefaultClientCore = MemoryClientCore<garth::WasmExecutor>;
 
 #[cfg(not(target_arch = "wasm32"))]
-pub fn build_memory_client_core(http: cokret_sdk::http_client::Client) -> DefaultClientCore {
+pub fn build_memory_client_core(http: arkret_sdk::http_client::Client) -> DefaultClientCore {
     let secure_key_store = garth::MemorySecureKeyStore::new();
     ClientCoreState::new(
         http,
@@ -493,7 +493,7 @@ pub fn build_memory_client_core(http: cokret_sdk::http_client::Client) -> Defaul
 
 #[cfg(not(target_arch = "wasm32"))]
 pub fn build_client_core(
-    http: cokret_sdk::http_client::Client,
+    http: arkret_sdk::http_client::Client,
     local_state: crate::local_state::LocalStateStore,
     secure_key_store: Arc<dyn crate::secure_key_store::SecureKeyStore>,
 ) -> InksonClientCore<garth::NativeExecutor> {
@@ -508,7 +508,7 @@ pub fn build_client_core(
 
 #[cfg(target_arch = "wasm32")]
 pub fn build_client_core(
-    http: cokret_sdk::http_client::Client,
+    http: arkret_sdk::http_client::Client,
     local_state: crate::local_state::LocalStateStore,
     secure_key_store: Arc<dyn crate::secure_key_store::SecureKeyStore>,
 ) -> InksonClientCore<garth::WasmExecutor> {
@@ -522,7 +522,7 @@ pub fn build_client_core(
 }
 
 #[cfg(target_arch = "wasm32")]
-pub fn build_memory_client_core(http: cokret_sdk::http_client::Client) -> DefaultClientCore {
+pub fn build_memory_client_core(http: arkret_sdk::http_client::Client) -> DefaultClientCore {
     let secure_key_store = garth::MemorySecureKeyStore::new();
     ClientCoreState::new(
         http,
@@ -541,7 +541,7 @@ mod tests {
 
     #[test]
     fn memory_client_core_exposes_host_session_and_subscription_engines() {
-        let http = cokret_sdk::http_client::Client::new("https://service.example".parse().unwrap())
+        let http = arkret_sdk::http_client::Client::new("https://service.example".parse().unwrap())
             .unwrap();
         let client = super::build_memory_client_core(http.clone());
 
@@ -560,17 +560,17 @@ mod tests {
         );
         let account_scope = garth::CursorScope::Account {
             service_did: None,
-            actor_id: cokret_sdk::Did::new("did:webvh:z6mkfixture:alice.example").unwrap(),
-            device_id: cokret_sdk::DeviceId::new("ak:device:01904100-0000-7000-8000-000000000001")
+            actor_id: arkret_sdk::Did::new("did:webvh:z6mkfixture:alice.example").unwrap(),
+            device_id: arkret_sdk::DeviceId::new("ak:device:01904100-0000-7000-8000-000000000001")
                 .unwrap(),
         };
         let realm_scope = garth::CursorScope::RealmEvents {
             service_did: None,
-            realm_id: cokret_sdk::RealmId::new("ak:realm:01904100-0000-7000-8000-000000000001")
+            realm_id: arkret_sdk::RealmId::new("ak:realm:01904100-0000-7000-8000-000000000001")
                 .unwrap(),
         };
         let event_id =
-            cokret_sdk::EventId::new("ak:event:01904100-0000-7000-8000-000000000001").unwrap();
+            arkret_sdk::EventId::new("ak:event:01904100-0000-7000-8000-000000000001").unwrap();
 
         adapter
             .save(account_scope.clone(), "ak:cursor:account".to_owned())
@@ -602,8 +602,8 @@ mod tests {
             adapter
                 .load(garth::CursorScope::Account {
                     service_did: None,
-                    actor_id: cokret_sdk::Did::new("did:webvh:z6mkfixture:alice.example").unwrap(),
-                    device_id: cokret_sdk::DeviceId::new(
+                    actor_id: arkret_sdk::Did::new("did:webvh:z6mkfixture:alice.example").unwrap(),
+                    device_id: arkret_sdk::DeviceId::new(
                         "ak:device:01904100-0000-7000-8000-000000000001",
                     )
                     .unwrap(),
@@ -625,8 +625,8 @@ mod tests {
         );
         let account_scope = garth::CursorScope::Account {
             service_did: None,
-            actor_id: cokret_sdk::Did::new("did:webvh:z6mkfixture:alice.example").unwrap(),
-            device_id: cokret_sdk::DeviceId::new("ak:device:01904100-0000-7000-8000-000000000001")
+            actor_id: arkret_sdk::Did::new("did:webvh:z6mkfixture:alice.example").unwrap(),
+            device_id: arkret_sdk::DeviceId::new("ak:device:01904100-0000-7000-8000-000000000001")
                 .unwrap(),
         };
 

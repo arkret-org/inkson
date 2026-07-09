@@ -3,7 +3,7 @@
 
 use std::sync::LazyLock;
 
-use cokret_sdk::Discoverability;
+use arkret_sdk::Discoverability;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
@@ -29,8 +29,8 @@ pub const PROFILE_PUSH_GATEWAY: &str = "ck.profile.push_gateway.v1";
 /// MLS Governance Binding hardening profile (`encryption-and-audit.md` §10).
 ///
 /// Inkson ships the canonical event payload through
-/// [`cokret_sdk::MlsGovernanceBindingPayload`] / [`cokret_sdk::MlsCommitPayload`],
-/// and the `covered_seals_cell` add-effect through [`cokret_sdk::mls_move`].
+/// [`arkret_sdk::MlsGovernanceBindingPayload`] / [`arkret_sdk::MlsCommitPayload`],
+/// and the `covered_seals_cell` add-effect through [`arkret_sdk::mls_move`].
 /// The commit submit path remains gated on server features advertised via
 /// [`crate::api::Api::events_describe`] before the profile reports `ready`.
 pub const PROFILE_MLS_GOVERNANCE_BINDING_FULL: &str = "ck.profile.mls_governance_binding.full.v1";
@@ -224,7 +224,7 @@ pub fn local_supported_profile_ids() -> Vec<&'static str> {
 /// `extensions/agent-protocol-interop.md`, `extensions/mimi-interop.md`.
 /// Canonical registry: `artifacts/registry/event-kind-registry.json`.
 pub fn known_event_kinds() -> Vec<&'static str> {
-    cokret_sdk::events::kinds::STANDARD_EVENT_KINDS.to_vec()
+    arkret_sdk::events::kinds::STANDARD_EVENT_KINDS.to_vec()
 }
 /// `wire_scope` classification for canonical event kinds — mirrors
 /// `wire_scope_definitions` in `event-kind-registry.json`.
@@ -235,7 +235,7 @@ pub fn known_event_kinds() -> Vec<&'static str> {
 ///
 /// The chat / call / verification views use this to keep ephemeral signals
 /// from being rendered as durable history. The classification delegates to
-/// `cokret_sdk::events::kinds::event_wire_scope`, so wire-scope facts come
+/// `arkret_sdk::events::kinds::event_wire_scope`, so wire-scope facts come
 /// from the SDK's spec-sync surface instead of a inkson-local mirror.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum EventKindWireScope {
@@ -269,17 +269,17 @@ fn known_event_kind_slice() -> &'static [&'static str] {
 }
 
 fn sdk_wire_scope(event_kind: &str) -> Option<EventKindWireScope> {
-    match cokret_sdk::events::kinds::event_wire_scope(event_kind) {
-        cokret_sdk::events::kinds::EventWireScope::DurableEvent => {
+    match arkret_sdk::events::kinds::event_wire_scope(event_kind) {
+        arkret_sdk::events::kinds::EventWireScope::DurableEvent => {
             Some(EventKindWireScope::Durable)
         }
-        cokret_sdk::events::kinds::EventWireScope::ActorPrivateEvent => {
+        arkret_sdk::events::kinds::EventWireScope::ActorPrivateEvent => {
             Some(EventKindWireScope::ActorPrivate)
         }
-        cokret_sdk::events::kinds::EventWireScope::EphemeralEvent => {
+        arkret_sdk::events::kinds::EventWireScope::EphemeralEvent => {
             Some(EventKindWireScope::Ephemeral)
         }
-        cokret_sdk::events::kinds::EventWireScope::Custom => None,
+        arkret_sdk::events::kinds::EventWireScope::Custom => None,
     }
 }
 
@@ -400,7 +400,7 @@ pub fn profile_ready(server: Option<&ServerDescription>, profile_id: &str) -> bo
 /// not what the server has to expose. The server-side gate is about
 /// "can I call the endpoints I'd need" only.
 fn missing_requirements(profile_id: &str, server: &ServerDescription) -> Vec<String> {
-    let Some(req) = cokret_sdk::generated::profile_requirements::requirements_for(profile_id)
+    let Some(req) = arkret_sdk::generated::profile_requirements::requirements_for(profile_id)
     else {
         return vec![format!("unknown profile {profile_id}")];
     };
@@ -509,7 +509,7 @@ fn validate_encrypted_envelope_schema(value: &Value) -> Result<(), ValidationErr
     if !value.is_object() {
         return Err(ValidationError::ExpectedObject("encrypted-envelope".into()));
     }
-    cokret_sdk::EncryptedEnvelopeV1::parse_and_validate(value.clone())
+    arkret_sdk::EncryptedEnvelopeV1::parse_and_validate(value.clone())
         .map(|_| ())
         .map_err(|_| ValidationError::InvalidValue {
             field: "encrypted-envelope".into(),

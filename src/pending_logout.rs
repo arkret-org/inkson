@@ -30,7 +30,7 @@
 //! own 8h TTL means the chain self-heals well before the 24h record TTL.
 
 use chrono::{DateTime, Duration, Utc};
-use cokret_sdk::http_client::{Auth, ClientBuilder};
+use arkret_sdk::http_client::{Auth, ClientBuilder};
 use serde::{Deserialize, Serialize};
 use zeroize::Zeroize as _;
 
@@ -225,10 +225,10 @@ async fn hard_logout_at_authority(
     }
 }
 
-fn account_logout_error_is_terminal(error: &cokret_sdk::Error) -> bool {
+fn account_logout_error_is_terminal(error: &arkret_sdk::Error) -> bool {
     match error {
-        cokret_sdk::Error::Api { status: 404, .. } => true,
-        cokret_sdk::Error::Api { error, .. } => matches!(
+        arkret_sdk::Error::Api { status: 404, .. } => true,
+        arkret_sdk::Error::Api { error, .. } => matches!(
             error.code(),
             "grant_already_consumed"
                 | "session_logged_out"
@@ -322,7 +322,7 @@ mod tests {
             device_seed_b64: Some("seed".to_owned()),
             device_jkt: Some("jkt".to_owned()),
             principal_server_url: Some("https://soland.example".to_owned()),
-            gate_account_base: Some("https://soland.example/_cokret/gate/account".to_owned()),
+            gate_account_base: Some("https://soland.example/_arkret/gate/account".to_owned()),
             base_url: "https://soland.example".to_owned(),
             session_credential: "session-credential".to_owned(),
             account_did: "did:web:soland.example:users:01".to_owned(),
@@ -414,9 +414,9 @@ mod tests {
             (404, "session_grant_not_found"),
             (403, "authorized_grant_revoked"),
         ] {
-            let error = cokret_sdk::Error::Api {
+            let error = arkret_sdk::Error::Api {
                 status,
-                error: Box::new(cokret_sdk::ErrorEnvelope::new(code, "terminal")),
+                error: Box::new(arkret_sdk::ErrorEnvelope::new(code, "terminal")),
             };
             assert!(
                 account_logout_error_is_terminal(&error),
@@ -432,9 +432,9 @@ mod tests {
             (401, "auth_expired"),
             (403, "capability_denied"),
         ] {
-            let error = cokret_sdk::Error::Api {
+            let error = arkret_sdk::Error::Api {
                 status,
-                error: Box::new(cokret_sdk::ErrorEnvelope::new(code, "retryable")),
+                error: Box::new(arkret_sdk::ErrorEnvelope::new(code, "retryable")),
             };
             assert!(
                 !account_logout_error_is_terminal(&error),
@@ -442,7 +442,7 @@ mod tests {
             );
         }
         assert!(!account_logout_error_is_terminal(
-            &cokret_sdk::Error::Protocol("network boundary".to_owned())
+            &arkret_sdk::Error::Protocol("network boundary".to_owned())
         ));
     }
 }

@@ -9,7 +9,7 @@
 //! ## SDK contract boundary
 //!
 //! The authoritative recovery-recipient resolution + seal are owned by the SDK
-//! (`cokret_sdk::history_recovery`): [`resolve_realm_history_recovery_key`] and
+//! (`arkret_sdk::history_recovery`): [`resolve_realm_history_recovery_key`] and
 //! [`seal_history_secrets_to_recovery_recipient`]. This module is the **thin
 //! inkson adapter** both the eager seal hook (§2.10.8) and the disclosure banner
 //! route through — it never re-implements the RRK crypto or the
@@ -23,11 +23,11 @@
 //!
 //! If the SDK signatures move, only this file changes.
 
-use cokret_sdk::history_recovery::{
+use arkret_sdk::history_recovery::{
     RealmHistoryRecoveryKeyError, ResolvedRealmHistoryRecoveryKey,
     resolve_realm_history_recovery_key, rrk_key_scope, seal_history_secrets_to_recovery_recipient,
 };
-use cokret_sdk::models::{DurabilityMode, DurabilityPolicy, RealmRecoveryRecipient};
+use arkret_sdk::models::{DurabilityMode, DurabilityPolicy, RealmRecoveryRecipient};
 use serde_json::Value;
 
 /// Effective disclosure mode label (encryption-and-audit.md §2.10.8): the banner
@@ -124,7 +124,7 @@ pub fn seal_history_secrets(
     policy_digest: Value,
     sender_device_id: &str,
     sender_device_signature: Value,
-) -> Result<cokret_sdk::RealmKeySharePayload, String> {
+) -> Result<arkret_sdk::RealmKeySharePayload, String> {
     let scope = rrk_key_scope(realm_id, from_epoch, to_epoch, policy_digest, None);
     seal_history_secrets_to_recovery_recipient(
         recovery_key,
@@ -181,7 +181,7 @@ pub fn open_rrk_share(
     rrk_private_key: &[u8; 32],
     sealed_ciphertext: &str,
 ) -> Result<Vec<(u64, Vec<u8>)>, String> {
-    cokret_sdk::secret_share::open_history_secret_with_device_privkey(
+    arkret_sdk::secret_share::open_history_secret_with_device_privkey(
         rrk_private_key,
         sealed_ciphertext,
     )
@@ -226,7 +226,7 @@ pub fn recover_history_from_rrk_shares(
 pub enum RecipientSealOutcome {
     Sealed {
         recipient_id: String,
-        event: cokret_sdk::Event,
+        event: arkret_sdk::Event,
     },
     Unverified {
         recipient_id: String,
@@ -320,8 +320,8 @@ pub fn build_eager_seal_events(
 
 #[cfg(test)]
 mod tests {
-    use cokret_sdk::Did;
-    use cokret_sdk::models::DurabilityThreshold;
+    use arkret_sdk::Did;
+    use arkret_sdk::models::DurabilityThreshold;
     use serde_json::json;
 
     use super::*;
@@ -369,7 +369,7 @@ mod tests {
     fn x25519_multibase(pubkey: &[u8; 32]) -> String {
         let mut bytes = vec![0xecu8, 0x01];
         bytes.extend_from_slice(pubkey);
-        cokret_sdk::encode_multibase_base58btc(bytes)
+        arkret_sdk::encode_multibase_base58btc(bytes)
     }
 
     fn did_document(recipient: &RealmRecoveryRecipient, pubkey: &[u8; 32]) -> Value {
@@ -422,7 +422,7 @@ mod tests {
         )
         .unwrap();
 
-        let opened = cokret_sdk::secret_share::open_history_secret_with_device_privkey(
+        let opened = arkret_sdk::secret_share::open_history_secret_with_device_privkey(
             &sk,
             payload.ciphertext.as_ref().unwrap(),
         )
@@ -463,7 +463,7 @@ mod tests {
         let (rrk_sk, rrk_pk) = derive_rrk_keypair_from_recovery_key(RRK_MNEMONIC).unwrap();
         let rows = vec![(11u64, vec![0xau8; 32]), (12u64, vec![0xbu8; 32])];
         let sealed =
-            cokret_sdk::secret_share::seal_history_secret_to_device_pubkey(&rrk_pk, &rows).unwrap();
+            arkret_sdk::secret_share::seal_history_secret_to_device_pubkey(&rrk_pk, &rows).unwrap();
         let share = json!({
             "kind": "ck.realm_key.share",
             "content": { "ciphertext": sealed }
@@ -480,7 +480,7 @@ mod tests {
         // A share sealed to a DIFFERENT key cannot be opened.
         let (_other_sk, other_pk) = crate::hpke_backup::generate_recovery_keypair().unwrap();
         let other_pk32: [u8; 32] = other_pk.as_slice().try_into().unwrap();
-        let sealed = cokret_sdk::secret_share::seal_history_secret_to_device_pubkey(
+        let sealed = arkret_sdk::secret_share::seal_history_secret_to_device_pubkey(
             &other_pk32,
             &[(9u64, vec![9u8; 32])],
         )

@@ -5,7 +5,7 @@ use crate::secure_key_store::SecureKeyStore;
 
 #[derive(Clone, Debug)]
 pub struct CircleScopeRotateDraft {
-    pub events: Vec<cokret_sdk::Event>,
+    pub events: Vec<arkret_sdk::Event>,
     pub post_commit_snapshot: crate::mls::persistence::MlsSnapshotEnvelope,
     pub removed_leaves: Vec<u32>,
     pub removed_principals: Vec<String>,
@@ -13,7 +13,7 @@ pub struct CircleScopeRotateDraft {
 
 #[derive(Clone, Debug, Default)]
 pub struct CircleScopeRotateDrainOutcome {
-    pub submitted: Vec<cokret_sdk::CircleScopeRotateOutcome>,
+    pub submitted: Vec<arkret_sdk::CircleScopeRotateOutcome>,
     pub skipped: Vec<CircleScopeRotateDrainSkip>,
     pub failed: Vec<CircleScopeRotateDrainFailure>,
 }
@@ -35,11 +35,11 @@ pub struct CircleScopeRotateDrainFailure {
 fn circle_effective_scope(
     realm_id: &str,
     circle_id: &str,
-) -> Result<cokret_sdk::models::EffectiveScope, String> {
-    Ok(cokret_sdk::models::EffectiveScope::Circle {
-        realm_id: cokret_sdk::RealmId::new(realm_id.to_owned())
+) -> Result<arkret_sdk::models::EffectiveScope, String> {
+    Ok(arkret_sdk::models::EffectiveScope::Circle {
+        realm_id: arkret_sdk::RealmId::new(realm_id.to_owned())
             .map_err(|err| format!("invalid Circle scope Realm id: {err:?}"))?,
-        circle_id: cokret_sdk::CircleId::new(circle_id.to_owned())
+        circle_id: arkret_sdk::CircleId::new(circle_id.to_owned())
             .map_err(|err| format!("invalid Circle scope Circle id: {err:?}"))?,
     })
 }
@@ -49,11 +49,11 @@ fn build_circle_remove_proposal_event(
     circle_id: &str,
     actor_id: &str,
     target_principal_id: &str,
-    proposal: &cokret_sdk::MlsProposalEnvelope,
-) -> Result<cokret_sdk::Event, String> {
-    let target_principal = cokret_sdk::Did::new(target_principal_id.to_owned())
+    proposal: &arkret_sdk::MlsProposalEnvelope,
+) -> Result<arkret_sdk::Event, String> {
+    let target_principal = arkret_sdk::Did::new(target_principal_id.to_owned())
         .map_err(|err| format!("invalid remove target principal id: {err:?}"))?;
-    let proposal_payload = cokret_sdk::MlsProposalPayload {
+    let proposal_payload = arkret_sdk::MlsProposalPayload {
         mls_group_id: proposal.group_id.clone(),
         base_epoch: proposal.epoch,
         proposal_type: json!(proposal.proposal_type),
@@ -84,7 +84,7 @@ pub fn build_circle_remove_scope_rotate_draft(
     actor_id: &str,
     device_id: &str,
     target_principal_id: &str,
-    revocation_membership_frontier: &[cokret_sdk::EventId],
+    revocation_membership_frontier: &[arkret_sdk::EventId],
 ) -> Result<CircleScopeRotateDraft, String> {
     let circle = circle_id.trim();
     if circle.is_empty() {
@@ -147,7 +147,7 @@ pub async fn submit_circle_scope_rotate_draft(
     realm_id: &str,
     circle_id: &str,
     draft: CircleScopeRotateDraft,
-) -> anyhow::Result<cokret_sdk::CircleScopeRotateOutcome> {
+) -> anyhow::Result<arkret_sdk::CircleScopeRotateOutcome> {
     let outcome = crate::circle_api::submit_circle_scope_rotate_events(
         &api.event_submitter()?,
         circle_id,
@@ -177,7 +177,7 @@ pub async fn drain_circle_scope_rotate_obligations(
     let mut outcome = CircleScopeRotateDrainOutcome::default();
     for circle in circles.circles {
         let circle_id = circle.circle_id.to_string();
-        if circle.state != cokret_sdk::CircleState::Active {
+        if circle.state != arkret_sdk::CircleState::Active {
             outcome.skipped.push(CircleScopeRotateDrainSkip {
                 circle_id,
                 target_principal_id: None,
@@ -185,7 +185,7 @@ pub async fn drain_circle_scope_rotate_obligations(
             });
             continue;
         }
-        if circle.encryption_profile != cokret_sdk::EncryptionProfile::MlsRfc9420 {
+        if circle.encryption_profile != arkret_sdk::EncryptionProfile::MlsRfc9420 {
             outcome.skipped.push(CircleScopeRotateDrainSkip {
                 circle_id,
                 target_principal_id: None,

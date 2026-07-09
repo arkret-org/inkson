@@ -1,6 +1,6 @@
 // Pull in (and re-export to children) the symbols that `kanban/mod.rs`
 // brought into scope via its own glob imports (`Value`, `json!`, `BTreeSet`,
-// `dioxus`, `cokret_sdk`, `crate::api::*`, `crate::local_state::*`,
+// `dioxus`, `arkret_sdk`, `crate::api::*`, `crate::local_state::*`,
 // `crate::operation::*`, etc.). Re-exporting the glob makes those names
 // reachable as `crate::views::kanban::model::<name>`, so every child
 // sub-module's `use super::*;` resolves them transitively.

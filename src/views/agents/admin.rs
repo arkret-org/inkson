@@ -6,8 +6,8 @@
 
 use std::time::Duration;
 
-use cokret_sdk::RealmId;
-use cokret_sdk::models::{
+use arkret_sdk::RealmId;
+use arkret_sdk::models::{
     AgentDeactivateRequestBody, AgentGrantAttachRequestBody, AgentParticipation,
     AgentParticipationEntry, AgentParticipationScope, AgentParticipationSetRequestBody,
     AgentPauseRequestBody, AgentProvisionRequestBody, AgentResumeRequestBody, AgentView,
@@ -1018,7 +1018,7 @@ pub fn PersonalAgentAdminPanel(
                                                                         let id = id.clone();
                                                                         let grant_id = grant_id.clone();
                                                                         async move {
-                                                                            let grant_id = cokret_sdk::GrantId::new(grant_id)
+                                                                            let grant_id = arkret_sdk::GrantId::new(grant_id)
                                                                                 .map_err(|err| anyhow::anyhow!("invalid agent grant id: {err}"))?;
                                                                             http.agent_grant_detach(&id, &grant_id).await.map_err(anyhow::Error::from)
                                                                         }

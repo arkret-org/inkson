@@ -18,7 +18,7 @@ test("chat reloads sent messages and keeps actor sequence increasing", async ({ 
   await createDiscussion(page, "Reload Discussion");
 
   const firstSend = page.waitForRequest(
-    (request) => request.url().endsWith("/_cokret/self/events") && request.method() === "POST",
+    (request) => request.url().endsWith("/_arkret/self/events") && request.method() === "POST",
   );
   await page.getByTestId("chat-input").fill("message before reload");
   await page.getByTestId("send-chat-button").click();
@@ -38,7 +38,7 @@ test("chat reloads sent messages and keeps actor sequence increasing", async ({ 
   await expect(reloadedMessage).not.toContainText("did:web:alice.example");
 
   const secondSend = page.waitForRequest(
-    (request) => request.url().endsWith("/_cokret/self/events") && request.method() === "POST",
+    (request) => request.url().endsWith("/_arkret/self/events") && request.method() === "POST",
   );
   await page.getByTestId("chat-input").fill("message after reload");
   await page.getByTestId("send-chat-button").click();
@@ -78,7 +78,7 @@ test("chat send failures mark the message and keep actions quiet until hover", a
   await refreshServer(page);
   await openDiscussion(page);
   await createDiscussion(page, "Failure Discussion");
-  await page.route("**/_cokret/self/events", async (route) => {
+  await page.route("**/_arkret/self/events", async (route) => {
     if (route.request().method() !== "POST") {
       return route.fallback();
     }
@@ -120,7 +120,7 @@ test("chat send failures mark the message and keep actions quiet until hover", a
 test("chat membership denial restores draft without panicking", async ({ page }) => {
   await openDiscussion(page);
   await createDiscussion(page, "Membership Denied Discussion");
-  await page.route("**/_cokret/self/events", async (route) => {
+  await page.route("**/_arkret/self/events", async (route) => {
     if (route.request().method() !== "POST") {
       return route.fallback();
     }
@@ -157,7 +157,7 @@ test("chat retries plaintext sends after granting current service visibility", a
   await createDiscussion(page, "Policy Discussion");
 
   let attempts = 0;
-  await page.route("**/_cokret/self/events", async (route) => {
+  await page.route("**/_arkret/self/events", async (route) => {
     if (route.request().method() !== "POST") {
       return route.fallback();
     }
@@ -189,7 +189,7 @@ test("chat retries plaintext sends after granting current service visibility", a
 
   const policyUpdate = page.waitForRequest(
     (request) =>
-      request.url().endsWith("/_cokret/self/events") &&
+      request.url().endsWith("/_arkret/self/events") &&
       request.method() === "POST" &&
       request.postDataJSON().kind === "ck.realm.update",
   );
@@ -220,7 +220,7 @@ test("chat separates shared pins from private saved account-data", async ({ page
   });
   await expect(page.getByTestId("message-context-menu")).toBeVisible();
   const sharedPinRequest = page.waitForRequest((request) => {
-    if (!request.url().endsWith("/_cokret/self/events") || request.method() !== "POST") {
+    if (!request.url().endsWith("/_arkret/self/events") || request.method() !== "POST") {
       return false;
     }
     return request.postDataJSON().kind === "ck.pin.add";
@@ -240,7 +240,7 @@ test("chat separates shared pins from private saved account-data", async ({ page
   });
   await expect(page.getByTestId("message-context-menu")).toBeVisible();
   const savedRequest = page.waitForRequest((request) => {
-    if (!request.url().endsWith("/_cokret/self/events") || request.method() !== "POST") {
+    if (!request.url().endsWith("/_arkret/self/events") || request.method() !== "POST") {
       return false;
     }
     const body = request.postDataJSON();

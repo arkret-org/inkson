@@ -12,12 +12,12 @@
 
 use base64::Engine as _;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD as B64;
-use cokret_sdk::models::{
+use arkret_sdk::models::{
     RecoveryPolicyActiveOutcome, RecoveryPolicyRef, RecoveryPolicySummary,
     RecoverySessionCompleteRequestBody, RecoverySessionCreateRequestBody,
     RecoverySessionProofSubmitRequestBody,
 };
-use cokret_sdk::{DeviceId, Did, EventId, PolicyId, TypedTrustDomainId};
+use arkret_sdk::{DeviceId, Did, EventId, PolicyId, TypedTrustDomainId};
 use ed25519_dalek::SigningKey;
 use serde_json::{Map, Value, json};
 
@@ -613,7 +613,7 @@ pub async fn run_principal_signing_recovery(
 
 #[cfg(test)]
 mod tests {
-    use cokret_sdk::models::RecoveryProofKind;
+    use arkret_sdk::models::RecoveryProofKind;
     use serde_json::json;
 
     use super::*;

@@ -56,10 +56,10 @@ fn summarizes_push_bridge_contract() {
     let summary = summarize_push_gateway_bridge(&PushBridgeDescribeOutcome {
         contract: "ck.push.bridge.describe".to_owned(),
         version: "2026-05-03".to_owned(),
-        api_base_path: "/_cokret/edge/push".to_owned(),
+        api_base_path: "/_arkret/edge/push".to_owned(),
         gateway: Default::default(),
         notify: chime::PushBridgeDescribeNotifyDescriptor {
-            notify_path: "/_cokret/edge/push/notify".to_owned(),
+            notify_path: "/_arkret/edge/push/notify".to_owned(),
             ..Default::default()
         },
         privacy: chime::PushBridgeDescribePrivacyDescriptor {
@@ -75,7 +75,7 @@ fn summarizes_push_bridge_contract() {
     });
 
     assert!(summary.contains("ck.push.bridge.describe"));
-    assert!(summary.contains("/_cokret/edge/push/notify"));
+    assert!(summary.contains("/_arkret/edge/push/notify"));
     assert!(summary.contains("e2ee_blind_wakeup"));
 }
 

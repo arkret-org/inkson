@@ -47,7 +47,7 @@ impl LocalStateStore {
         let _ = self.flush();
     }
 
-    /// R3.1 MID-3 — return the resolved [`cokret_sdk::MemberIdentity`]
+    /// R3.1 MID-3 — return the resolved [`arkret_sdk::MemberIdentity`]
     /// for `(realm_id, actor_id)`, or `None` when no plaintext identity
     /// has been observed (decryption pending or no events ingested
     /// yet). UI surfaces SHOULD fall back to a muted placeholder when
@@ -57,7 +57,7 @@ impl LocalStateStore {
         &self,
         realm_id: &str,
         actor_id: &str,
-    ) -> Option<cokret_sdk::MemberIdentity> {
+    ) -> Option<arkret_sdk::MemberIdentity> {
         let envelopes = self.member_identity_envelopes(realm_id, actor_id);
         if envelopes.is_empty() {
             return None;

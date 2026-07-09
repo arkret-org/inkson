@@ -105,9 +105,9 @@ pub(crate) fn account_needs_recommended_encryption_prompt_for_projections(
         return false;
     }
 
-    let pcr_realm_id = cokret_sdk::Did::new(actor.to_owned())
+    let pcr_realm_id = arkret_sdk::Did::new(actor.to_owned())
         .ok()
-        .map(|did| cokret_sdk::auth::principal_control_realm_id(&did));
+        .map(|did| arkret_sdk::auth::principal_control_realm_id(&did));
     if let Some(pcr) = pcr_realm_id
         .as_deref()
         .and_then(|realm_id| projections.get(realm_id))
@@ -211,8 +211,8 @@ mod tests {
     #[test]
     fn pcr_projection_controls_prompt_when_present() {
         let actor = "did:web:alice.example";
-        let pcr_id = cokret_sdk::auth::principal_control_realm_id(
-            &cokret_sdk::Did::new(actor.to_owned()).unwrap(),
+        let pcr_id = arkret_sdk::auth::principal_control_realm_id(
+            &arkret_sdk::Did::new(actor.to_owned()).unwrap(),
         );
         let mut projections = BTreeMap::new();
         projections.insert(

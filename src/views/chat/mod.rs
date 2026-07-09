@@ -1,4 +1,4 @@
-use cokret_sdk::push_rule_core::WatchLevel;
+use arkret_sdk::push_rule_core::WatchLevel;
 use dioxus::html::HasFileData;
 use dioxus::prelude::*;
 use dioxus_primitives::checkbox::CheckboxState;
@@ -85,10 +85,10 @@ async fn resolve_agent_selector_mentions(
         else {
             continue;
         };
-        let Ok(controller_handle) = cokret_sdk::Handle::parse(&token.controller_handle) else {
+        let Ok(controller_handle) = arkret_sdk::Handle::parse(&token.controller_handle) else {
             continue;
         };
-        let mention = cokret_sdk::Mention::new(outcome.subject)
+        let mention = arkret_sdk::Mention::new(outcome.subject)
             .with_agent_selector_metadata(
                 outcome.controller_subject,
                 controller_handle,
@@ -4652,7 +4652,7 @@ pub fn ChatPanel(
                                                 mention.subject_id.as_str() == chip.did
                                             })
                                         }) {
-                                            let Ok(subject_id) = cokret_sdk::Did::new(chip.did.clone()) else {
+                                            let Ok(subject_id) = arkret_sdk::Did::new(chip.did.clone()) else {
                                                 continue;
                                             };
                                             let insert_label = chip.insert_label().to_owned();
@@ -4662,20 +4662,20 @@ pub fn ChatPanel(
                                                         &insert_label,
                                                     )
                                                 }).flatten();
-                                            let mut mention = cokret_sdk::Mention::new(subject_id)
+                                            let mut mention = arkret_sdk::Mention::new(subject_id)
                                                 .with_mention_text_original(format!("@{insert_label}"));
                                             if !chip.display_name.trim().is_empty() {
                                                 mention = mention
                                                     .with_display_name_at_time(chip.display_name.clone());
                                             }
                                             if let Some(handle) = parsed_handle
-                                                .and_then(|parsed| cokret_sdk::Handle::parse(&parsed.handle).ok())
+                                                .and_then(|parsed| arkret_sdk::Handle::parse(&parsed.handle).ok())
                                             {
                                                 mention = mention.with_handle_at_time(handle);
                                             }
                                             if let (Ok(controller_subject_id), Ok(controller_handle)) = (
-                                                cokret_sdk::Did::new(chip.controller_subject_id.clone()),
-                                                cokret_sdk::Handle::parse(&chip.controller_handle_at_time),
+                                                arkret_sdk::Did::new(chip.controller_subject_id.clone()),
+                                                arkret_sdk::Handle::parse(&chip.controller_handle_at_time),
                                             ) && !chip.agent_slug_at_time.trim().is_empty() {
                                                 mention = mention.with_agent_selector_metadata(
                                                     controller_subject_id,

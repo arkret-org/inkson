@@ -1,4 +1,4 @@
-use cokret_sdk::EncryptedPayload;
+use arkret_sdk::EncryptedPayload;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ClientEncryptedMessage {
@@ -8,7 +8,7 @@ pub struct ClientEncryptedMessage {
 
 #[cfg(not(target_arch = "wasm32"))]
 mod native {
-    use cokret_sdk::{
+    use arkret_sdk::{
         CokretMlsGroup, CokretMlsIdentity, DeviceId, Did, EncryptedMessage, MessageCrypto,
         MessageCryptoDecrypt, MlsAddMemberResult, MlsCommitEnvelope, MlsKeyPackageRecord,
         MlsProposalEnvelope, MlsRemoveMemberResult, MlsWelcomeEnvelope,
@@ -242,7 +242,7 @@ fn compose_local_encrypted_message_inner(
 
 #[cfg(all(test, not(target_arch = "wasm32")))]
 mod tests {
-    use cokret_sdk::{MessageCryptoDecrypt, MessageCryptoUnavailable};
+    use arkret_sdk::{MessageCryptoDecrypt, MessageCryptoUnavailable};
 
     use super::*;
 

@@ -154,7 +154,7 @@ pub fn trust_cache_state(entry: Option<&CachedDidEntry>, now: DateTime<Utc>) -> 
 pub fn TrustCacheBadge(peer: String) -> Element {
     let cache = use_context::<Signal<crate::did_resolver::DidResolutionCache>>();
     let now = Utc::now();
-    let state = match cokret_sdk::Did::new(peer.clone()) {
+    let state = match arkret_sdk::Did::new(peer.clone()) {
         Ok(did) => {
             let guard = cache.read();
             trust_cache_state(guard.peek(&did), now)
@@ -189,7 +189,7 @@ pub fn TrustCacheBadge(peer: String) -> Element {
 #[cfg(test)]
 mod tests {
     use chrono::Duration;
-    use cokret_sdk::{Did, DidDocument};
+    use arkret_sdk::{Did, DidDocument};
 
     use super::*;
 

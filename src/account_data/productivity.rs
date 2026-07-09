@@ -30,14 +30,14 @@ pub enum AccountDataMergeChoice {
 #[derive(Clone, Debug, PartialEq)]
 pub struct DraftMergeOutcome {
     pub choice: AccountDataMergeChoice,
-    pub winner: cokret_sdk::DraftSyncValue,
-    pub conflict_copy: Option<cokret_sdk::DraftSyncValue>,
+    pub winner: arkret_sdk::DraftSyncValue,
+    pub conflict_copy: Option<arkret_sdk::DraftSyncValue>,
 }
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct DraftAccountDataItem {
     pub account_data_key: String,
-    pub value: cokret_sdk::DraftSyncValue,
+    pub value: arkret_sdk::DraftSyncValue,
     pub state_digest: String,
     pub legacy_scope_id: Option<String>,
 }
@@ -54,7 +54,7 @@ pub struct LegacySavedItem {
 #[derive(Clone, Debug, PartialEq)]
 pub struct SavedAccountDataItem {
     pub account_data_key: String,
-    pub value: cokret_sdk::SavedItemValue,
+    pub value: arkret_sdk::SavedItemValue,
     pub state_digest: String,
 }
 
@@ -80,22 +80,22 @@ pub fn draft_slot_for_strand_field_path(field_path: &Value) -> anyhow::Result<St
     Ok(format!("{DRAFT_STRAND_FIELD_SLOT_PREFIX}{hex}"))
 }
 
-pub fn validate_draft_slot(kind: cokret_sdk::DraftKind, draft_slot: &str) -> anyhow::Result<()> {
+pub fn validate_draft_slot(kind: arkret_sdk::DraftKind, draft_slot: &str) -> anyhow::Result<()> {
     match kind {
-        cokret_sdk::DraftKind::Message => {
+        arkret_sdk::DraftKind::Message => {
             if draft_slot != DRAFT_MESSAGE_SLOT {
                 anyhow::bail!("message draft_slot must be compose");
             }
         }
-        cokret_sdk::DraftKind::StrandField => {
+        arkret_sdk::DraftKind::StrandField => {
             let Some(hex) = draft_slot.strip_prefix(DRAFT_STRAND_FIELD_SLOT_PREFIX) else {
                 anyhow::bail!("strand_field draft_slot must start with field_");
             };
             // The slot carries a bare 64-char lowercase sha256 hex; validate the
-            // hex/casing grammar via the canonical `cokret_sdk::Hash::new` by
+            // hex/casing grammar via the canonical `arkret_sdk::Hash::new` by
             // re-attaching the `sha256:` prefix it expects, rather than
             // re-deriving the rule inline.
-            if cokret_sdk::Hash::new(format!("sha256:{hex}")).is_err() {
+            if arkret_sdk::Hash::new(format!("sha256:{hex}")).is_err() {
                 anyhow::bail!("strand_field draft_slot must carry a lowercase sha256 hex digest");
             }
         }
@@ -103,7 +103,7 @@ pub fn validate_draft_slot(kind: cokret_sdk::DraftKind, draft_slot: &str) -> any
     Ok(())
 }
 
-pub fn validate_draft_sync_value(value: &cokret_sdk::DraftSyncValue) -> anyhow::Result<()> {
+pub fn validate_draft_sync_value(value: &arkret_sdk::DraftSyncValue) -> anyhow::Result<()> {
     if value.content.is_null() {
         anyhow::bail!("draft content must not be null");
     }
@@ -122,24 +122,24 @@ pub fn validate_draft_sync_value(value: &cokret_sdk::DraftSyncValue) -> anyhow::
 
 pub fn draft_sync_value_from_account_data(
     value: &Value,
-) -> anyhow::Result<cokret_sdk::DraftSyncValue> {
-    let draft: cokret_sdk::DraftSyncValue = serde_json::from_value(value.clone())?;
+) -> anyhow::Result<arkret_sdk::DraftSyncValue> {
+    let draft: arkret_sdk::DraftSyncValue = serde_json::from_value(value.clone())?;
     validate_draft_sync_value(&draft)?;
     Ok(draft)
 }
 
 pub fn saved_item_value_from_account_data(
     value: &Value,
-) -> anyhow::Result<cokret_sdk::SavedItemValue> {
+) -> anyhow::Result<arkret_sdk::SavedItemValue> {
     let saved = match serde_json::from_value(value.clone())? {
-        cokret_sdk::PersonalProductivityValue::SavedItem(saved) => saved,
+        arkret_sdk::PersonalProductivityValue::SavedItem(saved) => saved,
         _ => anyhow::bail!("account-data value is not a saved_item"),
     };
     validate_saved_item_value(&saved)?;
     Ok(saved)
 }
 
-pub fn validate_saved_item_value(value: &cokret_sdk::SavedItemValue) -> anyhow::Result<()> {
+pub fn validate_saved_item_value(value: &arkret_sdk::SavedItemValue) -> anyhow::Result<()> {
     if value.collection_title.trim().is_empty() {
         anyhow::bail!("saved item collection_title must not be empty");
     }
@@ -158,14 +158,14 @@ pub fn build_message_draft_sync_value(
     updated_hlc: &str,
     origin_device_id: &str,
     retention_expires_at: &str,
-) -> anyhow::Result<cokret_sdk::DraftSyncValue> {
-    let value = cokret_sdk::DraftSyncValue {
+) -> anyhow::Result<arkret_sdk::DraftSyncValue> {
+    let value = arkret_sdk::DraftSyncValue {
         target_ref: target_ref.to_owned(),
-        kind: cokret_sdk::DraftKind::Message,
+        kind: arkret_sdk::DraftKind::Message,
         draft_slot: DRAFT_MESSAGE_SLOT.to_owned(),
         content,
         updated_hlc: updated_hlc.to_owned(),
-        origin_device_id: cokret_sdk::DeviceId::new(origin_device_id.to_owned())
+        origin_device_id: arkret_sdk::DeviceId::new(origin_device_id.to_owned())
             .map_err(|error| anyhow::anyhow!("origin_device_id is invalid: {error:?}"))?,
         retention_expires_at: retention_expires_at.to_owned(),
     };
@@ -175,7 +175,7 @@ pub fn build_message_draft_sync_value(
 
 pub fn draft_account_data_item(
     namespace_key: &[u8],
-    value: cokret_sdk::DraftSyncValue,
+    value: arkret_sdk::DraftSyncValue,
     legacy_scope_id: Option<String>,
 ) -> anyhow::Result<DraftAccountDataItem> {
     validate_draft_sync_value(&value)?;
@@ -196,7 +196,7 @@ pub fn draft_account_data_item(
 
 pub fn saved_account_data_item(
     namespace_key: &[u8],
-    value: cokret_sdk::SavedItemValue,
+    value: arkret_sdk::SavedItemValue,
 ) -> anyhow::Result<SavedAccountDataItem> {
     validate_saved_item_value(&value)?;
     let account_data_key =
@@ -209,10 +209,10 @@ pub fn saved_account_data_item(
     })
 }
 
-pub fn saved_item_account_data_value(value: &cokret_sdk::SavedItemValue) -> anyhow::Result<Value> {
+pub fn saved_item_account_data_value(value: &arkret_sdk::SavedItemValue) -> anyhow::Result<Value> {
     validate_saved_item_value(value)?;
     Ok(serde_json::to_value(
-        cokret_sdk::PersonalProductivityValue::SavedItem(value.clone()),
+        arkret_sdk::PersonalProductivityValue::SavedItem(value.clone()),
     )?)
 }
 
@@ -223,7 +223,7 @@ pub fn migrate_legacy_local_drafts(
     updated_hlc: &str,
     retention_expires_at: &str,
 ) -> anyhow::Result<Vec<DraftAccountDataItem>> {
-    cokret_sdk::DeviceId::new(origin_device_id.to_owned())
+    arkret_sdk::DeviceId::new(origin_device_id.to_owned())
         .map_err(|error| anyhow::anyhow!("origin_device_id is invalid: {error:?}"))?;
     Hlc::parse(updated_hlc)?;
     validate_timestamp_canonical(retention_expires_at)
@@ -262,7 +262,7 @@ pub fn migrate_legacy_saved_items(
         if item.collection_title.trim().is_empty() || item.target_ref.trim().is_empty() {
             continue;
         }
-        let value = cokret_sdk::SavedItemValue {
+        let value = arkret_sdk::SavedItemValue {
             collection_title: item.collection_title.clone(),
             target_ref: item.target_ref.clone(),
             note: item
@@ -279,8 +279,8 @@ pub fn migrate_legacy_saved_items(
 }
 
 pub fn compare_draft_versions(
-    local: &cokret_sdk::DraftSyncValue,
-    remote: &cokret_sdk::DraftSyncValue,
+    local: &arkret_sdk::DraftSyncValue,
+    remote: &arkret_sdk::DraftSyncValue,
 ) -> anyhow::Result<Ordering> {
     validate_same_draft_cell(local, remote)?;
     validate_draft_sync_value(local)?;
@@ -297,8 +297,8 @@ pub fn compare_draft_versions(
 }
 
 pub fn merge_draft_values(
-    local: Option<&cokret_sdk::DraftSyncValue>,
-    remote: cokret_sdk::DraftSyncValue,
+    local: Option<&arkret_sdk::DraftSyncValue>,
+    remote: arkret_sdk::DraftSyncValue,
 ) -> anyhow::Result<DraftMergeOutcome> {
     validate_draft_sync_value(&remote)?;
     let Some(local) = local else {
@@ -338,8 +338,8 @@ pub fn merge_draft_values(
 }
 
 fn validate_same_draft_cell(
-    local: &cokret_sdk::DraftSyncValue,
-    remote: &cokret_sdk::DraftSyncValue,
+    local: &arkret_sdk::DraftSyncValue,
+    remote: &arkret_sdk::DraftSyncValue,
 ) -> anyhow::Result<()> {
     if local.target_ref != remote.target_ref
         || local.kind != remote.kind

@@ -21,7 +21,7 @@ pub fn morph_update_patch(
     Ok(OperationBuilder::new(
         realm_id,
         actor,
-        cokret_sdk::events::kinds::EventKind::MorphUpdate,
+        arkret_sdk::events::kinds::EventKind::MorphUpdate,
     )
     .target_ref(morph_id)
     .body(morph_update_payload_value(morph_id, patch)?))

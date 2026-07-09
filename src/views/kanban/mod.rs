@@ -1004,7 +1004,7 @@ pub fn KanbanPanel(
 
     // T20 — auto-refresh-on-mount. The component renders empty or explicit
     // SeedFallback synchronously, then fires an async fetch against soland's
-    // `/_cokret/self/views/:id/projection` when a View id is provided. Success
+    // `/_arkret/self/views/:id/projection` when a View id is provided. Success
     // promotes the board to ApiDerived; failure leaves the current server
     // projection / empty state in place with a status note.
     // The `bootstrapped` guard ensures we run this only once per mount —
@@ -1446,7 +1446,7 @@ pub fn KanbanPanel(
     }
 
     // Hydrate Space-container / Strand lifecycle state from the soland
-    // `/_cokret/self/realms/{realm_id}/{spaces|strands}` endpoints so
+    // `/_arkret/self/realms/{realm_id}/{spaces|strands}` endpoints so
     // an Archive accepted on the server stays archived after a page
     // refresh. The probe is fire-and-forget; a 404 / 401 just leaves
     // columns/cards in their `Active` default and the user is no worse
@@ -2043,7 +2043,7 @@ pub fn KanbanPanel(
                                         "data-testid": "board-projection-refresh",
                                         onclick: {
                                             // T20 — real API call to soland's
-                                            // POST /_cokret/self/views/:id/projection. Demo seed is
+                                            // POST /_arkret/self/views/:id/projection. Demo seed is
                                             // opt-in so normal boards never show fake cards.
                                             let base = base_url.clone();
                                             let onclick_lifecycle_realm_id = local_realm_id.clone();

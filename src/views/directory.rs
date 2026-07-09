@@ -31,27 +31,27 @@ struct PaginationState {
     loading_more: bool,
 }
 
-fn realm_member_count_bucket_text(bucket: &cokret_sdk::models::RealmMemberCountBucket) -> String {
+fn realm_member_count_bucket_text(bucket: &arkret_sdk::models::RealmMemberCountBucket) -> String {
     match bucket {
-        cokret_sdk::models::RealmMemberCountBucket::Bucket(label) => match label {
-            cokret_sdk::models::RealmMemberCountBucketLabel::OneToTen => "1-10".to_owned(),
-            cokret_sdk::models::RealmMemberCountBucketLabel::ElevenToFifty => "11-50".to_owned(),
-            cokret_sdk::models::RealmMemberCountBucketLabel::FiftyOneToOneHundred => {
+        arkret_sdk::models::RealmMemberCountBucket::Bucket(label) => match label {
+            arkret_sdk::models::RealmMemberCountBucketLabel::OneToTen => "1-10".to_owned(),
+            arkret_sdk::models::RealmMemberCountBucketLabel::ElevenToFifty => "11-50".to_owned(),
+            arkret_sdk::models::RealmMemberCountBucketLabel::FiftyOneToOneHundred => {
                 "51-100".to_owned()
             }
-            cokret_sdk::models::RealmMemberCountBucketLabel::OneHundredOneToFiveHundred => {
+            arkret_sdk::models::RealmMemberCountBucketLabel::OneHundredOneToFiveHundred => {
                 "101-500".to_owned()
             }
-            cokret_sdk::models::RealmMemberCountBucketLabel::FiveHundredOneToTwoThousand => {
+            arkret_sdk::models::RealmMemberCountBucketLabel::FiveHundredOneToTwoThousand => {
                 "501-2000".to_owned()
             }
-            cokret_sdk::models::RealmMemberCountBucketLabel::TwoThousandPlus => "2000+".to_owned(),
+            arkret_sdk::models::RealmMemberCountBucketLabel::TwoThousandPlus => "2000+".to_owned(),
         },
-        cokret_sdk::models::RealmMemberCountBucket::Exact(count) => count.to_string(),
+        arkret_sdk::models::RealmMemberCountBucket::Exact(count) => count.to_string(),
     }
 }
 
-fn realm_tree_node_from_preview(preview: cokret_sdk::models::RealmPreview) -> RealmTreeNode {
+fn realm_tree_node_from_preview(preview: arkret_sdk::models::RealmPreview) -> RealmTreeNode {
     let id = preview.realm_id.as_str().to_owned();
     let alias = preview.alias.clone();
     let title = preview
@@ -97,7 +97,7 @@ fn realm_tree_node_from_preview(preview: cokret_sdk::models::RealmPreview) -> Re
     }
 }
 
-fn organization_preview_value(preview: cokret_sdk::models::OrganizationPreview) -> Value {
+fn organization_preview_value(preview: arkret_sdk::models::OrganizationPreview) -> Value {
     serde_json::to_value(preview).unwrap_or(Value::Null)
 }
 
@@ -1105,7 +1105,7 @@ pub fn DirectoryPanel(
                             // TODO(G3.Y3-followup): replace the route-only
                             // hop with an in-place block confirmation
                             // overlay once the soland account_data
-                            // `POST /_cokret/self/account-data/blocklist`
+                            // `POST /_arkret/self/account-data/blocklist`
                             // endpoint exists; today the click is just a
                             // shortcut into `/settings/blocklist`.
                             {

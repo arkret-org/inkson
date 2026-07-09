@@ -17,12 +17,12 @@ use serde_json::Value;
 use super::token_provider::vapid_public_key_from_describe;
 
 /// P4 (CKP-0007 hygiene): the previous hard-coded
-/// `https://push.example/_cokret/edge/push/notify` placeholder is gone.
+/// `https://push.example/_arkret/edge/push/notify` placeholder is gone.
 /// We now read `INKSON_FLORIA_URL` at the call site (see
 /// [`floria_gateway_url`]); when it's unset in dev we point at
 /// localhost, when it's unset in prod we return an empty string and
 /// the registration code no-ops rather than POSTing to a fake host.
-const DEV_FLORIA_GATEWAY: &str = "http://localhost:9001/_cokret/edge/push/notify";
+const DEV_FLORIA_GATEWAY: &str = "http://localhost:9001/_arkret/edge/push/notify";
 /// Returned by [`floria_gateway_url`] when the env var is unset and
 /// we're NOT in a debug build. The chime register-device path treats
 /// an empty gateway URL as "no push registration" and short-circuits

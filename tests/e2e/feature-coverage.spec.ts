@@ -158,11 +158,11 @@ test.describe("feature coverage placeholders", () => {
 
     const requestPromise = page.waitForRequest((request) => {
       const url = new URL(request.url());
-      return url.pathname === "/_cokret/gate/account/device-pair" && request.method() === "POST";
+      return url.pathname === "/_arkret/gate/account/device-pair" && request.method() === "POST";
     });
     const responsePromise = page.waitForResponse((response) => {
       const url = new URL(response.url());
-      return url.pathname === "/_cokret/gate/account/device-pair";
+      return url.pathname === "/_arkret/gate/account/device-pair";
     });
     await page.getByTestId("accept-pairing-button").click();
     const [request, response] = await Promise.all([requestPromise, responsePromise]);
@@ -211,7 +211,7 @@ test.describe("feature coverage placeholders", () => {
     // Step 2: capture the ck.cross_signing.publish submission before
     // it fires so we don't race the spawn task.
     const publishPromise = page.waitForRequest((request) => {
-      if (request.method() !== "POST" || !request.url().endsWith("/_cokret/self/events")) {
+      if (request.method() !== "POST" || !request.url().endsWith("/_arkret/self/events")) {
         return false;
       }
       const body = request.postDataJSON?.() as Record<string, unknown> | undefined;
@@ -285,7 +285,7 @@ test.describe("feature coverage placeholders", () => {
   test("recovery: encrypted vault rekey rewrites cipher blob client-side", async ({ page }) => {
     // D1 — formerly skipped. The recovery view stretches the passphrase
     // with Argon2id on the device and uploads ONLY the ciphertext blob
-    // (+ random salt + nonce) to PUT /_cokret/self/keys/backups/{id}. The
+    // (+ random salt + nonce) to PUT /_arkret/self/keys/backups/{id}. The
     // server never witnesses the plaintext passphrase. We assert this
     // by intercepting the upload and checking the wire body.
     const PASSPHRASE = "correct-horse-battery-staple-7";
@@ -299,7 +299,7 @@ test.describe("feature coverage placeholders", () => {
     // reaches the success branch.
     const uploadPromise = page.waitForRequest((request) => {
       return (
-        request.method() === "PUT" && /\/_cokret\/self\/keys\/backups\//.test(request.url())
+        request.method() === "PUT" && /\/_arkret\/self\/keys\/backups\//.test(request.url())
       );
     });
 
@@ -356,7 +356,7 @@ test.describe("feature coverage placeholders", () => {
 
   test("recovery: backup history emphasizes the latest backup time", async ({ page }) => {
     await dismissBlockingDialog(page);
-    await page.route("**/_cokret/self/keys/backups", async (route) => {
+    await page.route("**/_arkret/self/keys/backups", async (route) => {
       await route.fulfill({
         status: 200,
         contentType: "application/json",
@@ -406,7 +406,7 @@ test.describe("feature coverage placeholders", () => {
     // The keyword-search path must respect
     // `discoverability=invite_only` - the spec (discovery/discovery-
     // directory.md §2) requires that searches MUST NOT enumerate
-    // invite-only Realms. Soland's `/_cokret/find/directory/search-realms`
+    // invite-only Realms. Soland's `/_arkret/find/directory/search-realms`
     // filters them out; the mock surface returns the same shape so the
     // contract holds without a live server.
     await page.goto("/directory", { waitUntil: "domcontentloaded", timeout: 120_000 });
@@ -528,7 +528,7 @@ test.describe("feature coverage placeholders", () => {
   // spec: discovery/push-notifications.md, crypto-media/devices-and-auth.md §5
   test("push gateway only ships background_sync_needed payload", async ({ page }) => {
     // the push-register payload inkson sends to
-    // soland (`POST /_cokret/edge/push/register-device`) MUST NOT carry any
+    // soland (`POST /_arkret/edge/push/register-device`) MUST NOT carry any
     // body / title / sender / collapse_key fields — only the minimal
     // device registration metadata. The downstream gateway then ships
     // a `background_sync_needed` opaque payload to FCM/APNS, so any
@@ -536,7 +536,7 @@ test.describe("feature coverage placeholders", () => {
     // Spec: `discovery/push-notifications.md`.
     const pushRequestPromise = page.waitForRequest(
       (request) =>
-        request.url().endsWith("/_cokret/edge/push/register-device")
+        request.url().endsWith("/_arkret/edge/push/register-device")
         && request.method() === "POST",
       { timeout: 60_000 },
     );

@@ -6,7 +6,7 @@
 //! (`submit_signed_*`, ephemeral, frontier, backfill) never fetch it.
 
 #[cfg(test)]
-use cokret_sdk::ErrorEnvelope;
+use arkret_sdk::ErrorEnvelope;
 #[cfg(test)]
 use reqwest::StatusCode;
 use serde_json::Value;
@@ -31,12 +31,12 @@ use crate::wire_helpers::query_component;
 /// former `CokretApi` events surface. Constructed per authenticated call from
 /// the shared SDK http-client (see `crate::authed_api::with_event_submitter`).
 pub struct EventSubmitter {
-    http: cokret_sdk::http_client::Client,
+    http: arkret_sdk::http_client::Client,
     describe_cache: OnceCell<ServerDescription>,
 }
 
 impl EventSubmitter {
-    pub fn new(http: cokret_sdk::http_client::Client) -> Self {
+    pub fn new(http: arkret_sdk::http_client::Client) -> Self {
         Self {
             http,
             describe_cache: OnceCell::new(),
@@ -47,7 +47,7 @@ impl EventSubmitter {
     /// functions that also need a plain transport call (for example the
     /// account-data actor-scope lookup preceding a `ck.account_data.set`) reach
     /// it through here instead of holding a second `Client`.
-    pub(crate) fn http(&self) -> &cokret_sdk::http_client::Client {
+    pub(crate) fn http(&self) -> &arkret_sdk::http_client::Client {
         &self.http
     }
 
@@ -72,7 +72,7 @@ impl EventSubmitter {
         let view = self.events_frontier_realm_seal_view(realm_id).await?;
         Ok(view.seal_id.to_string())
     }
-    /// Query durable events through the current `/_cokret/self/events` surface,
+    /// Query durable events through the current `/_arkret/self/events` surface,
     /// following pagination to completion (COR-07).
     pub async fn backfill(&self, realm_id: &str) -> anyhow::Result<BackfillView> {
         let outcome = self
@@ -86,7 +86,7 @@ impl EventSubmitter {
     pub(crate) async fn find_mls_genesis_event_id(
         &self,
         realm_id: &str,
-    ) -> anyhow::Result<Option<cokret_sdk::EventId>> {
+    ) -> anyhow::Result<Option<arkret_sdk::EventId>> {
         // COR-07: the MLS genesis event may sit past the first page; paginate so
         // it is never silently judged "absent" because of front-page noise.
         let outcome = self
@@ -97,12 +97,12 @@ impl EventSubmitter {
         Ok(mls_genesis_event_id_from_events(&outcome, realm_id))
     }
 
-    /// Stream the canonical `/_cokret/self/events/subscribe` NDJSON response and
+    /// Stream the canonical `/_arkret/self/events/subscribe` NDJSON response and
     /// invoke `on_frame` once per parsed frame.
     ///
     /// Round R2/R3 (T02) — typing notifications are wire-scope-ephemeral
     /// (`ck.typing`). They MUST strand through the canonical
-    /// `ck.self.ephemeral.command.send` operation (`POST /_cokret/self/ephemeral`), never
+    /// `ck.self.ephemeral.command.send` operation (`POST /_arkret/self/ephemeral`), never
     /// through `ck.self.events.command.submit` or a deployment-local typing shim.
     pub async fn send_typing(
         &self,
@@ -172,7 +172,7 @@ impl EventSubmitter {
         })
     }
 
-    /// `GET /_cokret/self/events/frontier?realm_id=` — Realm Seal view
+    /// `GET /_arkret/self/events/frontier?realm_id=` — Realm Seal view
     /// `{realm_id, seal_id, control_event_set_root, state_root, hlc?}`.
     ///
     /// This is the spec-registered account-client sourcing for minting a
@@ -183,16 +183,16 @@ impl EventSubmitter {
     pub async fn events_frontier_realm_seal_view(
         &self,
         realm_id: &str,
-    ) -> anyhow::Result<cokret_sdk::RealmSealFrontierView> {
+    ) -> anyhow::Result<arkret_sdk::RealmSealFrontierView> {
         let realm_id_query = query_component(realm_id);
-        let state: cokret_sdk::EventsFrontierAccountClientState = self
+        let state: arkret_sdk::EventsFrontierAccountClientState = self
             .http
             .get(&format!(
-                "/_cokret/self/events/frontier?realm_id={realm_id_query}"
+                "/_arkret/self/events/frontier?realm_id={realm_id_query}"
             ))
             .await
             .map_err(anyhow::Error::from)?;
-        let cokret_sdk::EventsFrontierView::RealmSealView(view) = state.frontier else {
+        let arkret_sdk::EventsFrontierView::RealmSealView(view) = state.frontier else {
             anyhow::bail!(
                 "events/frontier for realm_id={realm_id} did not return a Realm Seal view — \
                  cannot mint seal_basis / seal_ref"
@@ -207,22 +207,22 @@ impl EventSubmitter {
         Ok(view)
     }
 
-    /// `GET /_cokret/self/events/frontier?actor_id=` — actor frontier
+    /// `GET /_arkret/self/events/frontier?actor_id=` — actor frontier
     /// `{actor_id, actor_seq, event_id}` (highest accepted actor_seq
     /// visible to the caller).
     pub async fn events_frontier_actor(
         &self,
         actor_id: &str,
-    ) -> anyhow::Result<cokret_sdk::ActorFrontierView> {
+    ) -> anyhow::Result<arkret_sdk::ActorFrontierView> {
         let actor_id_query = query_component(actor_id);
-        let state: cokret_sdk::EventsFrontierAccountClientState = self
+        let state: arkret_sdk::EventsFrontierAccountClientState = self
             .http
             .get(&format!(
-                "/_cokret/self/events/frontier?actor_id={actor_id_query}"
+                "/_arkret/self/events/frontier?actor_id={actor_id_query}"
             ))
             .await
             .map_err(anyhow::Error::from)?;
-        let cokret_sdk::EventsFrontierView::Actor(view) = state.frontier else {
+        let arkret_sdk::EventsFrontierView::Actor(view) = state.frontier else {
             anyhow::bail!(
                 "events/frontier for actor_id={actor_id} did not return an actor frontier"
             );
@@ -230,11 +230,11 @@ impl EventSubmitter {
         Ok(view)
     }
 
-    /// `GET /_cokret/self/events/describe` — spec binds the response to the
+    /// `GET /_arkret/self/events/describe` — spec binds the response to the
     /// canonical `ServiceDescribe` shape (OpenAPI `ck.self.events.query.describe`).
     /// YOU-01-016: the former soland-private `SolandEventsDescribeResBody`
     /// mirror (with its non-spec `capabilities` blob) was removed.
-    pub async fn events_describe(&self) -> anyhow::Result<cokret_sdk::ServiceDescribe> {
+    pub async fn events_describe(&self) -> anyhow::Result<arkret_sdk::ServiceDescribe> {
         self.http
             .events_describe()
             .await
@@ -248,20 +248,20 @@ impl EventSubmitter {
         Ok(event_proof_context_from_description(describe))
     }
 
-    /// Wire-submit a fully-prepared, already-signed SDK [`cokret_sdk::Event`].
+    /// Wire-submit a fully-prepared, already-signed SDK [`arkret_sdk::Event`].
     /// This is the only single-event HTTP tail that serialises onto
-    /// `POST /_cokret/self/events`.
+    /// `POST /_arkret/self/events`.
     async fn post_signed_sdk_event(
         &self,
-        signed: &cokret_sdk::Event,
+        signed: &arkret_sdk::Event,
         idempotency_key: String,
     ) -> anyhow::Result<SubmitEventResult> {
         validate_signed_sdk_event_for_submit(signed)?;
-        let response: cokret_sdk::EventsSubmitOutcome = self
+        let response: arkret_sdk::EventsSubmitOutcome = self
             .http
             .events_submit_with_options(
                 signed,
-                &cokret_sdk::http_client::ClientRequestOptions::new()
+                &arkret_sdk::http_client::ClientRequestOptions::new()
                     .request_id(idempotency_key.clone())
                     .idempotency_key(idempotency_key),
             )
@@ -271,7 +271,7 @@ impl EventSubmitter {
         Ok(SubmitEventResult::from(response))
     }
 
-    /// Submit a fully-prepared, already-signed SDK [`cokret_sdk::Event`]
+    /// Submit a fully-prepared, already-signed SDK [`arkret_sdk::Event`]
     /// without passing through the local builder path.
     ///
     /// This is for service-returned Events that are already the authoritative
@@ -280,7 +280,7 @@ impl EventSubmitter {
     /// signed transcript.
     pub(crate) async fn submit_signed_sdk_event(
         &self,
-        signed: &cokret_sdk::Event,
+        signed: &arkret_sdk::Event,
     ) -> anyhow::Result<SubmitEventResult> {
         self.post_signed_sdk_event(signed, uuid_v7()).await
     }
@@ -288,7 +288,7 @@ impl EventSubmitter {
     /// Submit a SDK-typed Event, signing it with the active signer when needed.
     pub(crate) async fn submit_sdk_event(
         &self,
-        event: &cokret_sdk::Event,
+        event: &arkret_sdk::Event,
     ) -> anyhow::Result<SubmitEventResult> {
         let retry_actor_seq_cas = event.proofs.is_empty();
         let (signed, idempotency_key) = self.prepare_sdk_event_for_submit(event).await?;
@@ -316,8 +316,8 @@ impl EventSubmitter {
 
     pub(crate) async fn prepare_sdk_event_for_submit(
         &self,
-        event: &cokret_sdk::Event,
-    ) -> anyhow::Result<(cokret_sdk::Event, String)> {
+        event: &arkret_sdk::Event,
+    ) -> anyhow::Result<(arkret_sdk::Event, String)> {
         let mut signed = event.clone();
         self.refresh_unsigned_sdk_event_actor_frontier(&mut signed)
             .await?;
@@ -342,7 +342,7 @@ impl EventSubmitter {
 
     pub(crate) async fn stamp_cba_basis_for_sdk_event(
         &self,
-        event: &mut cokret_sdk::Event,
+        event: &mut arkret_sdk::Event,
     ) -> anyhow::Result<()> {
         if event.seal_ref.is_some()
             || event.auth_context.is_some()
@@ -368,7 +368,7 @@ impl EventSubmitter {
                 }
                 let seal = self.current_seal_for(event.realm_id.as_str()).await?;
                 event.seal_ref = Some(
-                    cokret_sdk::SealId::new(seal)
+                    arkret_sdk::SealId::new(seal)
                         .map_err(|err| anyhow::anyhow!("current seal id is invalid: {err}"))?,
                 );
                 event.auth_context = Some(data_event_auth_context(event)?);
@@ -379,7 +379,7 @@ impl EventSubmitter {
 
     async fn refresh_unsigned_sdk_event_actor_frontier(
         &self,
-        event: &mut cokret_sdk::Event,
+        event: &mut arkret_sdk::Event,
     ) -> anyhow::Result<()> {
         if !event.proofs.is_empty() {
             return Ok(());
@@ -405,10 +405,10 @@ impl EventSubmitter {
     }
 
     /// `ck.self.events.command.submit` in batch form over typed envelopes. Spec binds
-    /// events.submit to `POST /_cokret/self/events` and distinguishes the three
+    /// events.submit to `POST /_arkret/self/events` and distinguishes the three
     /// accepted body shapes (single envelope,
-    /// [`cokret_sdk::EventsSubmitBatchRequestBody`],
-    /// [`cokret_sdk::EventsSubmitFederationRequestBody`]) by JSON shape, not
+    /// [`arkret_sdk::EventsSubmitBatchRequestBody`],
+    /// [`arkret_sdk::EventsSubmitFederationRequestBody`]) by JSON shape, not
     /// by URL suffix. The federation shape is S2S only and inkson MUST
     /// NEVER serialise it.
     ///
@@ -418,9 +418,9 @@ impl EventSubmitter {
     /// sign sequence the per-event helper cannot replicate.
     pub(crate) async fn submit_signed_sdk_events_batch(
         &self,
-        sdk_events: &[cokret_sdk::Event],
+        sdk_events: &[arkret_sdk::Event],
         idempotency_key: Option<&str>,
-    ) -> anyhow::Result<cokret_sdk::EventsSubmitOutcome> {
+    ) -> anyhow::Result<arkret_sdk::EventsSubmitOutcome> {
         // YOU-01-016: the former `capabilities.batch_submit` probe (a
         // non-spec soland capability field) was removed. The batch request
         // body is one of the three spec-defined `ck.self.events.command.submit`
@@ -429,19 +429,19 @@ impl EventSubmitter {
         for sdk_event in sdk_events {
             validate_signed_sdk_event_for_submit(sdk_event)?;
         }
-        let body = cokret_sdk::EventsSubmitBatchRequestBody {
+        let body = arkret_sdk::EventsSubmitBatchRequestBody {
             events: sdk_events.to_vec(),
             idempotency_key: idempotency_key.map(ToOwned::to_owned),
         };
         let idem = idempotency_key
             .map(ToOwned::to_owned)
             .unwrap_or_else(uuid_v7);
-        let response: cokret_sdk::EventsSubmitOutcome = self
+        let response: arkret_sdk::EventsSubmitOutcome = self
             .http
             .post_with_options(
-                "/_cokret/self/events",
+                "/_arkret/self/events",
                 &body,
-                &cokret_sdk::http_client::ClientRequestOptions::new()
+                &arkret_sdk::http_client::ClientRequestOptions::new()
                     .request_id(idem.clone())
                     .idempotency_key(idem),
             )
@@ -454,9 +454,9 @@ impl EventSubmitter {
     pub(crate) async fn submit_sdk_events_batch(
         &self,
         _realm_id: &str,
-        mut events: Vec<cokret_sdk::Event>,
+        mut events: Vec<arkret_sdk::Event>,
         idempotency_key: Option<&str>,
-    ) -> anyhow::Result<cokret_sdk::EventsSubmitOutcome> {
+    ) -> anyhow::Result<arkret_sdk::EventsSubmitOutcome> {
         for event in &mut events {
             self.stamp_cba_basis_for_sdk_event(event).await?;
         }
@@ -479,8 +479,8 @@ impl EventSubmitter {
     }
 
     /// Round R2/R3 (T02) — POST a broadcast ephemeral signal to the
-    /// canonical ephemeral channel (`POST /_cokret/self/ephemeral`) instead of the
-    /// durable `/_cokret/self/events` endpoint. The envelope MUST validate against
+    /// canonical ephemeral channel (`POST /_arkret/self/ephemeral`) instead of the
+    /// durable `/_arkret/self/events` endpoint. The envelope MUST validate against
     /// `ck.schema.ephemeral_envelope.v1` (kind in
     /// {`ck.call.signal`, `ck.presence`, `ck.typing`, `ck.receipt.read`}, and
     /// `expires_at - sent_at <= 300_000` ms). The four broadcast ephemeral
@@ -488,13 +488,13 @@ impl EventSubmitter {
     /// the single approved network path.
     pub async fn submit_ephemeral_envelope(
         &self,
-        envelope: &cokret_sdk::EphemeralEnvelope,
-    ) -> anyhow::Result<cokret_sdk::EphemeralSubmitOutcome> {
+        envelope: &arkret_sdk::EphemeralEnvelope,
+    ) -> anyhow::Result<arkret_sdk::EphemeralSubmitOutcome> {
         // Defensive re-validation. The constructor already enforced this,
         // but a caller could mutate a raw envelope in place between build
         // and submit. Fail fast with the canonical error code rather than
         // shipping a non-conformant payload to the wire.
-        if !cokret_sdk::events::is_ephemeral_kind(&envelope.kind) {
+        if !arkret_sdk::events::is_ephemeral_kind(&envelope.kind) {
             anyhow::bail!(
                 "ephemeral submit: kind {:?} is not in the broadcast ephemeral allowlist",
                 envelope.kind
@@ -505,26 +505,26 @@ impl EventSubmitter {
             .signed_duration_since(envelope.sent_at)
             .num_milliseconds();
         if window_ms <= 0
-            || (window_ms as u64) > cokret_sdk::EPHEMERAL_ABSOLUTE_HARD_CEILING_MS as u64
+            || (window_ms as u64) > arkret_sdk::EPHEMERAL_ABSOLUTE_HARD_CEILING_MS as u64
         {
             anyhow::bail!(
                 "ephemeral submit: expires_at - sent_at = {window_ms} ms violates 5-minute ceiling"
             );
         }
         self.http
-            .post("/_cokret/self/ephemeral", envelope)
+            .post("/_arkret/self/ephemeral", envelope)
             .await
             .map_err(anyhow::Error::from)
     }
 
-    /// `POST /_cokret/gate/account/agent-key-pair` —
+    /// `POST /_arkret/gate/account/agent-key-pair` —
     /// `ck.gate.account.command.pair_agent_key`. The runtime generated the
     /// key and PoP; the controller signs `authorize_event` locally before this
     /// method submits the pairing request.
     async fn agent_key_pair(
         &self,
-        body: &cokret_sdk::models::AgentKeyPairRequestBody,
-    ) -> anyhow::Result<cokret_sdk::models::AgentKeyPairOutcome> {
+        body: &arkret_sdk::models::AgentKeyPairRequestBody,
+    ) -> anyhow::Result<arkret_sdk::models::AgentKeyPairOutcome> {
         self.http
             .agent_key_pair(body)
             .await
@@ -533,16 +533,16 @@ impl EventSubmitter {
 
     pub(crate) async fn agent_key_pair_with_authorize_event(
         &self,
-        mut body: cokret_sdk::models::AgentKeyPairRequestBody,
-        authorize_event: &cokret_sdk::Event,
-    ) -> anyhow::Result<cokret_sdk::models::AgentKeyPairOutcome> {
+        mut body: arkret_sdk::models::AgentKeyPairRequestBody,
+        authorize_event: &arkret_sdk::Event,
+    ) -> anyhow::Result<arkret_sdk::models::AgentKeyPairOutcome> {
         let (signed, _) = self.prepare_sdk_event_for_submit(authorize_event).await?;
         body.authorize_event = serde_json::to_value(signed)?;
         self.agent_key_pair(&body).await
     }
 }
 
-fn ensure_sdk_event_proofs_are_domain_bound(event: &cokret_sdk::Event) -> anyhow::Result<()> {
+fn ensure_sdk_event_proofs_are_domain_bound(event: &arkret_sdk::Event) -> anyhow::Result<()> {
     for proof in &event.proofs {
         if proof
             .domain
@@ -564,7 +564,7 @@ fn ensure_sdk_event_proofs_are_domain_bound(event: &cokret_sdk::Event) -> anyhow
     Ok(())
 }
 
-fn validate_signed_sdk_event_for_submit(event: &cokret_sdk::Event) -> anyhow::Result<()> {
+fn validate_signed_sdk_event_for_submit(event: &arkret_sdk::Event) -> anyhow::Result<()> {
     if event.proofs.is_empty() {
         anyhow::bail!(
             "submit refuses unsigned SDK Event (event_id={}, kind={})",
@@ -580,8 +580,8 @@ fn validate_signed_sdk_event_for_submit(event: &cokret_sdk::Event) -> anyhow::Re
 }
 
 fn apply_actor_frontier_to_sdk_event(
-    event: &mut cokret_sdk::Event,
-    frontier: &cokret_sdk::ActorFrontierView,
+    event: &mut arkret_sdk::Event,
+    frontier: &arkret_sdk::ActorFrontierView,
 ) -> anyhow::Result<()> {
     if frontier.actor_id.as_str() != event.actor_id.as_str() {
         anyhow::bail!(
@@ -598,15 +598,15 @@ fn apply_actor_frontier_to_sdk_event(
 }
 
 fn mls_genesis_event_id_from_events(
-    outcome: &cokret_sdk::EventsQueryOutcome,
+    outcome: &arkret_sdk::EventsQueryOutcome,
     realm_id: &str,
-) -> Option<cokret_sdk::EventId> {
+) -> Option<arkret_sdk::EventId> {
     outcome
         .events
         .iter()
         .find(|event| {
             event.realm_id.as_str() == realm_id
-                && event.kind.as_str() == cokret_sdk::events::kinds::MLS_GENESIS
+                && event.kind.as_str() == arkret_sdk::events::kinds::MLS_GENESIS
         })
         .map(|event| event.event_id.clone())
 }
@@ -623,20 +623,20 @@ const DATA_PLANE_CELL_FAMILIES: &[&str] = &[
     "ck.component.pin.v1",
 ];
 
-fn cba_exempt_reducer_kind(kind: &cokret_sdk::events::kinds::EventKind) -> bool {
+fn cba_exempt_reducer_kind(kind: &arkret_sdk::events::kinds::EventKind) -> bool {
     matches!(
         kind,
-        cokret_sdk::events::kinds::EventKind::RealmCreate
-            | cokret_sdk::events::kinds::EventKind::MemberState
-            | cokret_sdk::events::kinds::EventKind::RealmDiscovery
-            | cokret_sdk::events::kinds::EventKind::RealmHistoryVisibility
-            | cokret_sdk::events::kinds::EventKind::RealmJoinRule
-            | cokret_sdk::events::kinds::EventKind::RealmPlaintextVisibleServices
-            | cokret_sdk::events::kinds::EventKind::RealmPolicyComponents
+        arkret_sdk::events::kinds::EventKind::RealmCreate
+            | arkret_sdk::events::kinds::EventKind::MemberState
+            | arkret_sdk::events::kinds::EventKind::RealmDiscovery
+            | arkret_sdk::events::kinds::EventKind::RealmHistoryVisibility
+            | arkret_sdk::events::kinds::EventKind::RealmJoinRule
+            | arkret_sdk::events::kinds::EventKind::RealmPlaintextVisibleServices
+            | arkret_sdk::events::kinds::EventKind::RealmPolicyComponents
     )
 }
 
-fn cba_effect_plane_for_event(event: &cokret_sdk::Event) -> anyhow::Result<CbaEffectPlane> {
+fn cba_effect_plane_for_event(event: &arkret_sdk::Event) -> anyhow::Result<CbaEffectPlane> {
     let mut observed = None;
     for effect in &event.effects {
         let plane = if DATA_PLANE_CELL_FAMILIES.contains(&cba_cell_family(effect.cell.as_str())?) {
@@ -671,7 +671,7 @@ fn cba_cell_family(cell: &str) -> anyhow::Result<&str> {
     Ok(family)
 }
 
-fn data_event_auth_context(event: &cokret_sdk::Event) -> anyhow::Result<cokret_sdk::AuthContext> {
+fn data_event_auth_context(event: &arkret_sdk::Event) -> anyhow::Result<arkret_sdk::AuthContext> {
     let Some(authorization_ref) = event.authorization_ref.as_deref() else {
         anyhow::bail!(
             "DataEvent {} requires authorization_ref so auth_context.capability_refs can be pinned",
@@ -689,7 +689,7 @@ fn data_event_auth_context(event: &cokret_sdk::Event) -> anyhow::Result<cokret_s
         .clone()
         .unwrap_or_else(|| event.actor_id.clone());
     let key_id = data_event_key_id_for(event);
-    Ok(cokret_sdk::AuthContext {
+    Ok(arkret_sdk::AuthContext {
         did,
         key_id,
         key_epoch: 0,
@@ -698,7 +698,7 @@ fn data_event_auth_context(event: &cokret_sdk::Event) -> anyhow::Result<cokret_s
     })
 }
 
-fn data_event_key_id_for(event: &cokret_sdk::Event) -> String {
+fn data_event_key_id_for(event: &arkret_sdk::Event) -> String {
     let controller = event
         .executed_by
         .as_ref()
@@ -742,7 +742,7 @@ mod tests {
 
     use super::*;
 
-    fn sdk_event_without_proof(actor_id: &str) -> cokret_sdk::Event {
+    fn sdk_event_without_proof(actor_id: &str) -> arkret_sdk::Event {
         serde_json::from_value(json!({
             "event_id": "ak:event:01904100-0000-7000-8000-000000000001",
             "kind": "ck.presence",
@@ -766,7 +766,7 @@ mod tests {
         realm_id: &str,
         kind: &str,
         actor_id: &str,
-    ) -> cokret_sdk::Event {
+    ) -> arkret_sdk::Event {
         serde_json::from_value(json!({
             "event_id": event_id,
             "kind": kind,
@@ -785,10 +785,10 @@ mod tests {
     #[test]
     fn apply_actor_frontier_stamps_next_sequence_and_predecessor() {
         let mut event = sdk_event_without_proof("did:web:alice.example");
-        let frontier = cokret_sdk::ActorFrontierView {
-            actor_id: cokret_sdk::Did::new("did:web:alice.example").unwrap(),
+        let frontier = arkret_sdk::ActorFrontierView {
+            actor_id: arkret_sdk::Did::new("did:web:alice.example").unwrap(),
             actor_seq: 7,
-            event_id: cokret_sdk::EventId::new("ak:event:01904100-0000-7000-8000-000000000002")
+            event_id: arkret_sdk::EventId::new("ak:event:01904100-0000-7000-8000-000000000002")
                 .unwrap(),
         };
 
@@ -801,10 +801,10 @@ mod tests {
     #[test]
     fn apply_actor_frontier_rejects_wrong_actor() {
         let mut event = sdk_event_without_proof("did:web:alice.example");
-        let frontier = cokret_sdk::ActorFrontierView {
-            actor_id: cokret_sdk::Did::new("did:web:bob.example").unwrap(),
+        let frontier = arkret_sdk::ActorFrontierView {
+            actor_id: arkret_sdk::Did::new("did:web:bob.example").unwrap(),
             actor_seq: 7,
-            event_id: cokret_sdk::EventId::new("ak:event:01904100-0000-7000-8000-000000000002")
+            event_id: arkret_sdk::EventId::new("ak:event:01904100-0000-7000-8000-000000000002")
                 .unwrap(),
         };
 
@@ -842,8 +842,8 @@ mod tests {
         let realm = "ak:realm:01904100-0000-7000-8000-000000000001";
         let other_realm = "ak:realm:01904100-0000-7000-8000-000000000099";
         let expected =
-            cokret_sdk::EventId::new("ak:event:01904100-0000-7000-8000-000000000003").unwrap();
-        let outcome = cokret_sdk::EventsQueryOutcome {
+            arkret_sdk::EventId::new("ak:event:01904100-0000-7000-8000-000000000003").unwrap();
+        let outcome = arkret_sdk::EventsQueryOutcome {
             events: vec![
                 sdk_event_with_kind(
                     "ak:event:01904100-0000-7000-8000-000000000001",
@@ -924,7 +924,7 @@ mod tests {
         );
     }
 
-    fn sdk_event_with_proof(domain: Option<&str>, audience: Option<&str>) -> cokret_sdk::Event {
+    fn sdk_event_with_proof(domain: Option<&str>, audience: Option<&str>) -> arkret_sdk::Event {
         let mut proof = json!({
             "kind": "detached_jws",
             "alg": "EdDSA",

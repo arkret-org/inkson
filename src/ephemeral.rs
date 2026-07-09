@@ -12,7 +12,7 @@ pub(crate) fn validate_outgoing_registered_event_payload(
     kind: &str,
     payload: &Value,
 ) -> anyhow::Result<()> {
-    let catalog = cokret_sdk::schema::event_payload_validator_catalog()?;
+    let catalog = arkret_sdk::schema::event_payload_validator_catalog()?;
     if !catalog
         .missing_payload_validators_for(std::iter::once(kind))
         .is_empty()
@@ -29,7 +29,7 @@ pub(crate) fn validate_outgoing_registered_event_payload(
 
 pub fn build_read_cursor_advance_event(
     marker: &crate::local_state::ReadMarkerRecord,
-) -> anyhow::Result<cokret_sdk::Event> {
+) -> anyhow::Result<arkret_sdk::Event> {
     let kind = EventKind::try_new(&marker.marker_type).ok_or_else(|| {
         anyhow::anyhow!(
             "read marker kind {:?} is not in the SDK event-kind registry",
@@ -42,12 +42,12 @@ pub fn build_read_cursor_advance_event(
 }
 
 pub(crate) fn ensure_events_submit_accepted(
-    response: &cokret_sdk::EventsSubmitOutcome,
+    response: &arkret_sdk::EventsSubmitOutcome,
 ) -> anyhow::Result<()> {
     if response.rejected.is_empty()
         && matches!(
             response.status,
-            cokret_sdk::EventsSubmitStatus::Accepted | cokret_sdk::EventsSubmitStatus::Duplicate
+            arkret_sdk::EventsSubmitStatus::Accepted | arkret_sdk::EventsSubmitStatus::Duplicate
         )
     {
         return Ok(());
@@ -69,10 +69,10 @@ pub(crate) fn ensure_events_submit_accepted(
         .collect::<Vec<_>>()
         .join("; ");
     let status = match response.status {
-        cokret_sdk::EventsSubmitStatus::Accepted => "accepted",
-        cokret_sdk::EventsSubmitStatus::Duplicate => "duplicate",
-        cokret_sdk::EventsSubmitStatus::Partial => "partial",
-        cokret_sdk::EventsSubmitStatus::HistoricalOnly => "historical_only",
+        arkret_sdk::EventsSubmitStatus::Accepted => "accepted",
+        arkret_sdk::EventsSubmitStatus::Duplicate => "duplicate",
+        arkret_sdk::EventsSubmitStatus::Partial => "partial",
+        arkret_sdk::EventsSubmitStatus::HistoricalOnly => "historical_only",
     };
     anyhow::bail!("events submit was not fully accepted: status={status}, rejected=[{details}]");
 }
@@ -91,23 +91,23 @@ pub fn build_typing_envelope(
     device_id: &str,
     strand_id: &str,
     typing: bool,
-) -> anyhow::Result<cokret_sdk::EphemeralEnvelope> {
+) -> anyhow::Result<arkret_sdk::EphemeralEnvelope> {
     let now = chrono::Utc::now();
     let expires_at = now + chrono::Duration::seconds(TYPING_EPHEMERAL_TTL_SECS);
     let realm_id_wire = trim_realm_id(realm_id);
-    let realm = cokret_sdk::RealmId::new(realm_id_wire.clone())
+    let realm = arkret_sdk::RealmId::new(realm_id_wire.clone())
         .map_err(|err| anyhow::anyhow!("invalid realm_id for ck.typing: {err}"))?;
-    let actor = cokret_sdk::Did::new(actor_id)
+    let actor = arkret_sdk::Did::new(actor_id)
         .map_err(|err| anyhow::anyhow!("invalid actor_id for ck.typing: {err}"))?;
-    let strand = cokret_sdk::StrandId::new(strand_id.trim().to_owned())
+    let strand = arkret_sdk::StrandId::new(strand_id.trim().to_owned())
         .map_err(|err| anyhow::anyhow!("invalid strand_id for ck.typing: {err}"))?;
     // ephemeral-envelope.schema.json: device_id is REQUIRED for every
     // broadcast ephemeral kind; the proof binds to `{actor_id}#{device_id}`.
     let device = Some(
-        cokret_sdk::DeviceId::new(device_id)
+        arkret_sdk::DeviceId::new(device_id)
             .map_err(|err| anyhow::anyhow!("invalid device_id for ck.typing: {err}"))?,
     );
-    cokret_sdk::EphemeralEnvelope::new(
+    arkret_sdk::EphemeralEnvelope::new(
         "ck.typing",
         realm,
         actor,
@@ -136,31 +136,31 @@ pub fn build_receipt_read_envelope(
     device_id: &str,
     strand_id: &str,
     event_id: &str,
-) -> anyhow::Result<cokret_sdk::EphemeralEnvelope> {
+) -> anyhow::Result<arkret_sdk::EphemeralEnvelope> {
     let now = chrono::Utc::now();
     let expires_at = now + chrono::Duration::seconds(EPHEMERAL_DEFAULT_TTL_SECS);
     let realm_id_wire = trim_realm_id(realm_id);
-    let realm = cokret_sdk::RealmId::new(realm_id_wire.clone())
+    let realm = arkret_sdk::RealmId::new(realm_id_wire.clone())
         .map_err(|err| anyhow::anyhow!("invalid realm_id for ck.receipt.read: {err}"))?;
-    let actor = cokret_sdk::Did::new(actor_id)
+    let actor = arkret_sdk::Did::new(actor_id)
         .map_err(|err| anyhow::anyhow!("invalid actor_id for ck.receipt.read: {err}"))?;
-    let strand = cokret_sdk::StrandId::new(strand_id.trim().to_owned())
+    let strand = arkret_sdk::StrandId::new(strand_id.trim().to_owned())
         .map_err(|err| anyhow::anyhow!("invalid strand_id for ck.receipt.read: {err}"))?;
-    let event = cokret_sdk::EventId::new(event_id.trim().to_owned())
+    let event = arkret_sdk::EventId::new(event_id.trim().to_owned())
         .map_err(|err| anyhow::anyhow!("invalid event_id for ck.receipt.read: {err}"))?;
-    let receipt = cokret_sdk::ReadReceipt {
+    let receipt = arkret_sdk::ReadReceipt {
         receipt_type: "read".to_owned(),
-        schema: cokret_sdk::READ_RECEIPT_SCHEMA.to_owned(),
+        schema: arkret_sdk::READ_RECEIPT_SCHEMA.to_owned(),
         realm_id: realm.clone(),
         actor_id: actor.clone(),
         event_id: event,
         hlc: None,
-        read_scope: cokret_sdk::ReadScope::strand(strand.as_str().to_owned(), Some("discussion")),
+        read_scope: arkret_sdk::ReadScope::strand(strand.as_str().to_owned(), Some("discussion")),
         created_at: now,
     };
-    let device = cokret_sdk::DeviceId::new(device_id)
+    let device = arkret_sdk::DeviceId::new(device_id)
         .map_err(|err| anyhow::anyhow!("invalid device_id for ck.receipt.read: {err}"))?;
-    cokret_sdk::EphemeralEnvelope::new(
+    arkret_sdk::EphemeralEnvelope::new(
         "ck.receipt.read",
         realm,
         actor,
@@ -181,16 +181,16 @@ pub fn build_presence_envelope(
     state: &str,
     status_message: Option<&str>,
     last_active_at: Option<chrono::DateTime<chrono::Utc>>,
-) -> anyhow::Result<cokret_sdk::EphemeralEnvelope> {
-    if cokret_sdk::PresenceStatus::parse_wire(state).is_none() {
+) -> anyhow::Result<arkret_sdk::EphemeralEnvelope> {
+    if arkret_sdk::PresenceStatus::parse_wire(state).is_none() {
         anyhow::bail!("ck.presence state {state:?} is not a canonical presence state");
     }
     let now = chrono::Utc::now();
     let expires_at = now + chrono::Duration::seconds(EPHEMERAL_DEFAULT_TTL_SECS);
     let realm_id_wire = trim_realm_id(realm_id);
-    let realm = cokret_sdk::RealmId::new(realm_id_wire.clone())
+    let realm = arkret_sdk::RealmId::new(realm_id_wire.clone())
         .map_err(|err| anyhow::anyhow!("invalid realm_id for ck.presence: {err}"))?;
-    let actor = cokret_sdk::Did::new(actor_id)
+    let actor = arkret_sdk::Did::new(actor_id)
         .map_err(|err| anyhow::anyhow!("invalid actor_id for ck.presence: {err}"))?;
     let mut payload = serde_json::Map::new();
     payload.insert("realm_id".into(), Value::String(realm_id_wire));
@@ -200,8 +200,8 @@ pub fn build_presence_envelope(
         // Sender-side fail-closed: the same constraint the server
         // enforces at admission (≤256 code points, NFC, no control
         // chars). NFC-normalize proactively for free-typed text.
-        let message = cokret_sdk::canonical::to_nfc(message);
-        cokret_sdk::validate_status_message(&message)
+        let message = arkret_sdk::canonical::to_nfc(message);
+        arkret_sdk::validate_status_message(&message)
             .map_err(|err| anyhow::anyhow!("ck.presence status_message rejected: {err}"))?;
         payload.insert("status_message".into(), Value::String(message));
     }
@@ -215,9 +215,9 @@ pub fn build_presence_envelope(
         "ttl_ms".into(),
         Value::Number((EPHEMERAL_DEFAULT_TTL_SECS * 1000).into()),
     );
-    let device = cokret_sdk::DeviceId::new(device_id)
+    let device = arkret_sdk::DeviceId::new(device_id)
         .map_err(|err| anyhow::anyhow!("invalid device_id for ck.presence: {err}"))?;
-    cokret_sdk::EphemeralEnvelope::new(
+    arkret_sdk::EphemeralEnvelope::new(
         "ck.presence",
         realm,
         actor,
@@ -242,14 +242,14 @@ fn bucket_presence_timestamp(ts: chrono::DateTime<chrono::Utc>) -> String {
 ///
 /// Wire-breaking vs. the round R2/R3 form: the payload shape moved from
 /// `{call_id, kind, payload}` to the canonical
-/// [`cokret_sdk::CallSignalPayload`] `{call_id, signal_type, seq, data}`
-/// where `signal_type` MUST be one of [`cokret_sdk::CALL_SIGNAL_TYPES`]
+/// [`arkret_sdk::CallSignalPayload`] `{call_id, signal_type, seq, data}`
+/// where `signal_type` MUST be one of [`arkret_sdk::CALL_SIGNAL_TYPES`]
 /// (13 values: `invite`, `answer`, `candidate`, `renegotiate`, `hangup`,
 /// `ack`, `reject`, `mute_state`, `media_state`, `speaking`, `focus_join`,
 /// `focus_leave`, `error`). `device_id` + `proof` are REQUIRED on the
 /// envelope; `seq` is strictly monotonic per
 /// `(realm_id, call_id, actor, device)` (callers manage the counter via
-/// [`cokret_sdk::CallSignalState`]).
+/// [`arkret_sdk::CallSignalState`]).
 ///
 /// The caller MUST attach a device-signed proof via the active
 /// [`crate::event_signer`] before submit — the bare envelope returned
@@ -264,26 +264,26 @@ pub fn build_call_signal_envelope_v1(
     signal_type: &str,
     seq: u64,
     data: Value,
-) -> anyhow::Result<cokret_sdk::EphemeralEnvelope> {
+) -> anyhow::Result<arkret_sdk::EphemeralEnvelope> {
     let now = chrono::Utc::now();
     let expires_at = now + chrono::Duration::seconds(EPHEMERAL_DEFAULT_TTL_SECS);
-    let realm = cokret_sdk::RealmId::new(realm_id)
+    let realm = arkret_sdk::RealmId::new(realm_id)
         .map_err(|err| anyhow::anyhow!("invalid realm_id for ck.call.signal: {err}"))?;
-    let actor = cokret_sdk::Did::new(actor_id)
+    let actor = arkret_sdk::Did::new(actor_id)
         .map_err(|err| anyhow::anyhow!("invalid actor_id for ck.call.signal: {err}"))?;
     if device_id.trim().is_empty() {
         anyhow::bail!("ck.call.signal requires non-empty device_id (round 4 schema_violation)");
     }
     let device = Some(
-        cokret_sdk::DeviceId::new(device_id)
+        arkret_sdk::DeviceId::new(device_id)
             .map_err(|err| anyhow::anyhow!("invalid device_id for ck.call.signal: {err}"))?,
     );
-    if !cokret_sdk::CALL_SIGNAL_TYPES.contains(&signal_type) {
+    if !arkret_sdk::CALL_SIGNAL_TYPES.contains(&signal_type) {
         anyhow::bail!("ck.call.signal signal_type {signal_type:?} not in canonical 13-value enum");
     }
-    let call = cokret_sdk::CallId::new(call_id)
+    let call = arkret_sdk::CallId::new(call_id)
         .map_err(|err| anyhow::anyhow!("invalid call_id for ck.call.signal: {err}"))?;
-    let payload = cokret_sdk::CallSignalPayload {
+    let payload = arkret_sdk::CallSignalPayload {
         call_id: call,
         signal_type: signal_type.to_owned(),
         seq,
@@ -292,7 +292,7 @@ pub fn build_call_signal_envelope_v1(
     payload
         .validate_signal_type()
         .map_err(|err| anyhow::anyhow!("ck.call.signal payload rejected: {err}"))?;
-    cokret_sdk::EphemeralEnvelope::new(
+    arkret_sdk::EphemeralEnvelope::new(
         "ck.call.signal",
         realm,
         actor,
@@ -313,7 +313,7 @@ pub fn build_call_signal_envelope_v1(
 /// Fails closed when no signer is installed — an unsigned broadcast ephemeral
 /// never goes on the wire.
 pub(crate) fn attach_broadcast_ephemeral_proof(
-    envelope: &mut cokret_sdk::EphemeralEnvelope,
+    envelope: &mut arkret_sdk::EphemeralEnvelope,
 ) -> anyhow::Result<()> {
     let kind = envelope.kind.clone();
     let device_id = envelope
@@ -328,17 +328,17 @@ pub(crate) fn attach_broadcast_ephemeral_proof(
 
     // event_digest covers the canonical envelope bytes without `proof`.
     envelope.proof = None;
-    let canonical_bytes = cokret_sdk::signatures::proof::EventProofBuilder::new()
+    let canonical_bytes = arkret_sdk::signatures::proof::EventProofBuilder::new()
         .canonical_bytes(&serde_json::to_value(&*envelope)?)
         .map_err(|err| anyhow::anyhow!("{kind} canonical encoding failed: {err}"))?;
-    let event_digest = cokret_sdk::Hash::new(crate::canonical::sha256_digest(&canonical_bytes))
+    let event_digest = arkret_sdk::Hash::new(crate::canonical::sha256_digest(&canonical_bytes))
         .map_err(|err| anyhow::anyhow!("{kind} event digest is not a typed Hash: {err}"))?;
 
     // Typed `Proof` + the SDK's canonical binding-object constructor — the
     // same transcript the receiver-side verifier rebuilds, so producer and
     // verifier can never drift.
-    let mut proof = cokret_sdk::Proof {
-        kind: cokret_sdk::proof_kind::DETACHED_JWS.to_owned(),
+    let mut proof = arkret_sdk::Proof {
+        kind: arkret_sdk::proof_kind::DETACHED_JWS.to_owned(),
         alg: signer.algorithm().to_owned(),
         verification_method: format!("{}#{device_id}", envelope.actor_id),
         event_digest,

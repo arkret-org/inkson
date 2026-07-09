@@ -30,7 +30,7 @@ pub fn build_account_data_set(
     OperationBuilder::new(
         realm_id,
         actor,
-        cokret_sdk::events::kinds::EventKind::AccountDataSet,
+        arkret_sdk::events::kinds::EventKind::AccountDataSet,
     )
     .body(payload)
 }
@@ -43,7 +43,7 @@ pub fn build_account_data_tombstone(
     OperationBuilder::new(
         realm_id,
         actor,
-        cokret_sdk::events::kinds::EventKind::AccountDataSet,
+        arkret_sdk::events::kinds::EventKind::AccountDataSet,
     )
     .body(serde_json::json!({
         "key": key.as_wire(),
@@ -55,8 +55,8 @@ pub fn build_account_data_tombstone(
 
 pub fn private_account_data_key_prefix(key: &str) -> Option<&'static str> {
     if let Some(prefix) = [
-        cokret_sdk::ACCOUNT_DATA_TYPE_CONTACTS_ACTOR,
-        cokret_sdk::ACCOUNT_DATA_TYPE_CONTACTS_REALM,
+        arkret_sdk::ACCOUNT_DATA_TYPE_CONTACTS_ACTOR,
+        arkret_sdk::ACCOUNT_DATA_TYPE_CONTACTS_REALM,
     ]
     .into_iter()
     .find(|prefix| {
@@ -67,13 +67,13 @@ pub fn private_account_data_key_prefix(key: &str) -> Option<&'static str> {
     }
 
     [
-        cokret_sdk::ACCOUNT_DATA_TYPE_REMINDER,
-        cokret_sdk::ACCOUNT_DATA_TYPE_SCHEDULED_SEND,
-        cokret_sdk::ACCOUNT_DATA_TYPE_SNOOZE,
-        cokret_sdk::ACCOUNT_DATA_TYPE_SAVED,
-        cokret_sdk::ACCOUNT_DATA_TYPE_DRAFT,
-        cokret_sdk::ACCOUNT_DATA_TYPE_FILE_TRANSFER,
-        cokret_sdk::ACCOUNT_DATA_TYPE_SEARCH_INDEX_MANIFEST,
+        arkret_sdk::ACCOUNT_DATA_TYPE_REMINDER,
+        arkret_sdk::ACCOUNT_DATA_TYPE_SCHEDULED_SEND,
+        arkret_sdk::ACCOUNT_DATA_TYPE_SNOOZE,
+        arkret_sdk::ACCOUNT_DATA_TYPE_SAVED,
+        arkret_sdk::ACCOUNT_DATA_TYPE_DRAFT,
+        arkret_sdk::ACCOUNT_DATA_TYPE_FILE_TRANSFER,
+        arkret_sdk::ACCOUNT_DATA_TYPE_SEARCH_INDEX_MANIFEST,
     ]
     .into_iter()
     .find(|prefix| {
@@ -83,24 +83,24 @@ pub fn private_account_data_key_prefix(key: &str) -> Option<&'static str> {
 }
 
 pub fn validate_private_account_data_key(key: &str) -> anyhow::Result<()> {
-    cokret_sdk::validate_private_account_data_key(key)
+    arkret_sdk::validate_private_account_data_key(key)
         .map_err(|error| anyhow::anyhow!(error.to_string()))
 }
 
 pub fn reminder_account_data_key(id: &str) -> anyhow::Result<String> {
-    cokret_sdk::reminder_account_data_key(id).map_err(|error| anyhow::anyhow!(error.to_string()))
+    arkret_sdk::reminder_account_data_key(id).map_err(|error| anyhow::anyhow!(error.to_string()))
 }
 
 pub fn scheduled_send_account_data_key(planned_message_id: &str) -> anyhow::Result<String> {
-    let planned_message_id = cokret_sdk::MessageId::new(planned_message_id.to_owned())
+    let planned_message_id = arkret_sdk::MessageId::new(planned_message_id.to_owned())
         .map_err(|error| anyhow::anyhow!(error.to_string()))?;
-    Ok(cokret_sdk::scheduled_send_account_data_key(
+    Ok(arkret_sdk::scheduled_send_account_data_key(
         &planned_message_id,
     ))
 }
 
 pub fn snooze_account_data_key(namespace_key: &[u8], target_ref: &str) -> anyhow::Result<String> {
-    cokret_sdk::snooze_account_data_key(namespace_key, target_ref)
+    arkret_sdk::snooze_account_data_key(namespace_key, target_ref)
         .map_err(|error| anyhow::anyhow!(error.to_string()))
 }
 
@@ -109,17 +109,17 @@ pub fn saved_account_data_key(
     collection_title: &str,
     target_ref: &str,
 ) -> anyhow::Result<String> {
-    cokret_sdk::saved_account_data_key(namespace_key, collection_title, target_ref)
+    arkret_sdk::saved_account_data_key(namespace_key, collection_title, target_ref)
         .map_err(|error| anyhow::anyhow!(error.to_string()))
 }
 
 pub fn draft_account_data_key(
     namespace_key: &[u8],
-    kind: cokret_sdk::DraftKind,
+    kind: arkret_sdk::DraftKind,
     target_ref: &str,
     draft_slot: &str,
 ) -> anyhow::Result<String> {
-    cokret_sdk::draft_account_data_key(namespace_key, kind, target_ref, draft_slot)
+    arkret_sdk::draft_account_data_key(namespace_key, kind, target_ref, draft_slot)
         .map_err(|error| anyhow::anyhow!(error.to_string()))
 }
 
@@ -127,9 +127,9 @@ pub fn search_index_manifest_account_data_key(
     namespace_key: &[u8],
     realm_id: &str,
 ) -> anyhow::Result<String> {
-    let realm_id = cokret_sdk::RealmId::new(realm_id.to_owned())
+    let realm_id = arkret_sdk::RealmId::new(realm_id.to_owned())
         .map_err(|error| anyhow::anyhow!(error.to_string()))?;
-    cokret_sdk::search_index_manifest_account_data_key(namespace_key, &realm_id)
+    arkret_sdk::search_index_manifest_account_data_key(namespace_key, &realm_id)
         .map_err(|error| anyhow::anyhow!(error.to_string()))
 }
 
@@ -137,7 +137,7 @@ pub fn file_transfer_account_data_key(
     namespace_key: &[u8],
     transfer_id: &str,
 ) -> anyhow::Result<String> {
-    cokret_sdk::file_transfer_account_data_key(namespace_key, transfer_id)
+    arkret_sdk::file_transfer_account_data_key(namespace_key, transfer_id)
         .map_err(|error| anyhow::anyhow!(error.to_string()))
 }
 
@@ -171,7 +171,7 @@ pub fn build_private_account_data_set_with_cas(
     Ok(OperationBuilder::new(
         realm_id,
         actor,
-        cokret_sdk::events::kinds::EventKind::AccountDataSet,
+        arkret_sdk::events::kinds::EventKind::AccountDataSet,
     )
     .body(payload))
 }
@@ -185,7 +185,7 @@ pub fn build_private_account_data_tombstone(
     Ok(OperationBuilder::new(
         realm_id,
         actor,
-        cokret_sdk::events::kinds::EventKind::AccountDataSet,
+        arkret_sdk::events::kinds::EventKind::AccountDataSet,
     )
     .body(serde_json::json!({
         "key": key,
@@ -198,11 +198,11 @@ pub fn build_private_account_data_tombstone(
 fn validate_sha256_digest(value: &str) -> anyhow::Result<()> {
     // State digests are pinned to sha256 here, so require that prefix, then
     // delegate the hex/casing grammar to the single canonical validator
-    // `cokret_sdk::Hash::new` instead of re-deriving the rule locally.
+    // `arkret_sdk::Hash::new` instead of re-deriving the rule locally.
     if value.strip_prefix("sha256:").is_none() {
         anyhow::bail!("expected_state_digest must use sha256:<hex>");
     }
-    if cokret_sdk::Hash::new(value).is_err() {
+    if arkret_sdk::Hash::new(value).is_err() {
         anyhow::bail!("expected_state_digest must be a lowercase sha256 digest");
     }
     Ok(())

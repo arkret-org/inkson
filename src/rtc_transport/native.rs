@@ -431,17 +431,17 @@ mod tests {
             connect_url: "wss://livekit.example".to_owned(),
             backend_token: "jwt".to_owned(),
             participant_identity: "ak:rtc_participant:self".to_owned(),
-            participant_binding: cokret_sdk::CallMediaParticipantBinding {
-                scheme: cokret_sdk::PARTICIPANT_BINDING_SCHEMA.to_owned(),
+            participant_binding: arkret_sdk::CallMediaParticipantBinding {
+                scheme: arkret_sdk::PARTICIPANT_BINDING_SCHEMA.to_owned(),
                 sig: "sig".to_owned(),
                 issuer_kid: "did:web:media.example#key-1".to_owned(),
-                realm_id: cokret_sdk::RealmId::new("ak:realm:01904100-0000-7000-8000-9b64700c6ee8")
+                realm_id: arkret_sdk::RealmId::new("ak:realm:01904100-0000-7000-8000-9b64700c6ee8")
                     .unwrap(),
-                call_id: cokret_sdk::CallId::new("ak:call:0196441c-0000-7000-8000-000000000000")
+                call_id: arkret_sdk::CallId::new("ak:call:0196441c-0000-7000-8000-000000000000")
                     .unwrap(),
                 focus_id: "fra-1".to_owned(),
-                actor_id: cokret_sdk::Did::new("did:web:alice.example").unwrap(),
-                device_id: cokret_sdk::DeviceId::new(
+                actor_id: arkret_sdk::Did::new("did:web:alice.example").unwrap(),
+                device_id: arkret_sdk::DeviceId::new(
                     "ak:device:01904100-0000-7000-8000-000000000005",
                 )
                 .unwrap(),
@@ -463,17 +463,17 @@ mod tests {
         }
     }
 
-    fn ice_config() -> cokret_sdk::IceConfig {
-        cokret_sdk::IceConfig {
-            realm_id: cokret_sdk::RealmId::new("ak:realm:01904100-0000-7000-8000-9b64700c6ee8")
+    fn ice_config() -> arkret_sdk::IceConfig {
+        arkret_sdk::IceConfig {
+            realm_id: arkret_sdk::RealmId::new("ak:realm:01904100-0000-7000-8000-9b64700c6ee8")
                 .unwrap(),
             call_id: "ak:call:0196441c-0000-7000-8000-000000000000".to_owned(),
-            actor_id: cokret_sdk::Did::new("did:web:alice.example").unwrap(),
+            actor_id: arkret_sdk::Did::new("did:web:alice.example").unwrap(),
             ice_servers: Vec::new(),
             ttl_seconds: 300,
             refresh_lead_seconds: 60,
             force_turn: false,
-            issuer_did: cokret_sdk::Did::new("did:web:media.example").unwrap(),
+            issuer_did: arkret_sdk::Did::new("did:web:media.example").unwrap(),
         }
     }
 

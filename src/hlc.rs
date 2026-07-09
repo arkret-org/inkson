@@ -1,5 +1,5 @@
 //! Hybrid Logical Clock (HLC) per arkret-spec section 6.4 — thin wrapper
-//! over `cokret_sdk::hlc`.
+//! over `arkret_sdk::hlc`.
 //!
 //! Format: `<physical_hex_12>-<logical_hex_4>-<node_hex_8>`
 //! - 48-bit millisecond timestamp (12 hex chars)
@@ -8,7 +8,7 @@
 //!
 //! All HLC kernel responsibilities are delegated to the SDK:
 //! - format validation / parsing: `validate_hlc_format` / `parse_hlc`,
-//! - encode + overflow semantics: `cokret_sdk::Hlc::new`,
+//! - encode + overflow semantics: `arkret_sdk::Hlc::new`,
 //! - node-id derivation: `HlcGenerator::compute_node_id` (`encoding.md` §7, `SHA256("arkret-hlc-v1"
 //!   || realm_id || device_id || secret)[0:4]`), reached through generator construction because the
 //!   helper is private.
@@ -23,8 +23,8 @@
 use std::fmt;
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use cokret_sdk::Hlc as SdkHlc;
-use cokret_sdk::hlc::{HlcGenerator, parse_hlc, validate_hlc_format};
+use arkret_sdk::Hlc as SdkHlc;
+use arkret_sdk::hlc::{HlcGenerator, parse_hlc, validate_hlc_format};
 use serde::{Deserialize, Serialize};
 
 /// A Hybrid Logical Clock timestamp.
@@ -95,7 +95,7 @@ impl Hlc {
     ///
     /// Format and overflow semantics are delegated to the SDK's `Hlc` newtype
     /// via [`Self::try_encode`]: the candidate string is validated by
-    /// `cokret_sdk::Hlc::new`, which rejects out-of-range components (e.g. a
+    /// `arkret_sdk::Hlc::new`, which rejects out-of-range components (e.g. a
     /// logical counter that does not fit the 4-hex field) instead of silently
     /// truncating it.
     ///
@@ -164,7 +164,7 @@ pub fn observe_seq(seq: u64) {
 #[derive(Clone, Debug, PartialEq, Eq, thiserror::Error)]
 pub enum HlcError {
     /// The string is not a valid canonical v1 HLC. Format validation is
-    /// delegated to the SDK (`validate_hlc_format` / `cokret_sdk::Hlc::new`),
+    /// delegated to the SDK (`validate_hlc_format` / `arkret_sdk::Hlc::new`),
     /// which enforces the strict `^[0-9a-f]{12}-[0-9a-f]{4}-[0-9a-f]{8}$` form;
     /// this variant carries the offending input.
     #[error("invalid HLC format: {0}")]

@@ -13,8 +13,8 @@
 use std::collections::BTreeMap;
 use std::sync::atomic::{AtomicU8, Ordering};
 
-pub use cokret_sdk::events::kinds::EventKind;
-pub use cokret_sdk::{
+pub use arkret_sdk::events::kinds::EventKind;
+pub use arkret_sdk::{
     Audience as EventProofAudience, CriticalExtension, Effect, Event as EventEnvelope,
     EventRef as SemanticRef, EventRequirements, LatticeOp, LatticeOpType, Precondition, Predicate,
     PredicateOp, Proof as EventProof, SealBasis,
@@ -100,9 +100,9 @@ pub(crate) fn trim_realm_id(value: &str) -> String {
 }
 
 pub(crate) fn realm_effective_scope_value(realm_id: &str) -> Result<Value, String> {
-    let realm_id = cokret_sdk::RealmId::new(trim_realm_id(realm_id))
+    let realm_id = arkret_sdk::RealmId::new(trim_realm_id(realm_id))
         .map_err(|err| format!("invalid realm effective_scope realm_id: {err:?}"))?;
-    serde_json::to_value(cokret_sdk::EffectiveScope::Realm { realm_id })
+    serde_json::to_value(arkret_sdk::EffectiveScope::Realm { realm_id })
         .map_err(|err| format!("serialize realm effective_scope: {err}"))
 }
 
@@ -126,7 +126,7 @@ pub struct OperationBuilder {
     seal_ref: Option<String>,
     seal_basis: Option<SealBasis>,
     requirements: Option<EventRequirements>,
-    redacts: Option<cokret_sdk::EventId>,
+    redacts: Option<arkret_sdk::EventId>,
 }
 
 impl OperationBuilder {
@@ -211,7 +211,7 @@ impl OperationBuilder {
     pub fn redacts(mut self, redacts: impl Into<String>) -> Self {
         let redacts = redacts.into();
         self.redacts = Some(
-            cokret_sdk::EventId::new(redacts).expect("redacts must be a canonical ck:event id"),
+            arkret_sdk::EventId::new(redacts).expect("redacts must be a canonical ck:event id"),
         );
         self
     }
@@ -222,7 +222,7 @@ impl OperationBuilder {
             .expect("OperationBuilder emitted an invalid SDK Event")
     }
 
-    pub fn build_sdk_event(self, node_id: &str) -> anyhow::Result<cokret_sdk::Event> {
+    pub fn build_sdk_event(self, node_id: &str) -> anyhow::Result<arkret_sdk::Event> {
         self.build_sdk_event_with_deps(node_id, Vec::new())
     }
 
@@ -236,7 +236,7 @@ impl OperationBuilder {
         self,
         node_id: &str,
         deps: Vec<String>,
-    ) -> anyhow::Result<cokret_sdk::Event> {
+    ) -> anyhow::Result<arkret_sdk::Event> {
         let hlc = Hlc::now(node_id);
         let operation_id = typed_operation_id(&uuid_v7());
         let mut unsigned = BTreeMap::new();
@@ -255,32 +255,32 @@ impl OperationBuilder {
         let prev_refs = deps
             .into_iter()
             .map(|dep| {
-                cokret_sdk::EventId::new(dep)
+                arkret_sdk::EventId::new(dep)
                     .map_err(|err| anyhow::anyhow!("invalid prev_refs event id: {err}"))
             })
             .collect::<anyhow::Result<Vec<_>>>()?;
         let created_at = chrono::DateTime::parse_from_rfc3339(&crate::clock::now_rfc3339_secs())
             .map_err(|err| anyhow::anyhow!("event timestamp is not canonical RFC3339: {err}"))?
             .with_timezone(&chrono::Utc);
-        Ok(cokret_sdk::Event {
-            event_id: cokret_sdk::EventId::new(format!("ak:event:{}", uuid_v7()))
+        Ok(arkret_sdk::Event {
+            event_id: arkret_sdk::EventId::new(format!("ak:event:{}", uuid_v7()))
                 .map_err(|err| anyhow::anyhow!("generated event_id is invalid: {err}"))?,
             kind: self.op_type,
-            realm_id: cokret_sdk::RealmId::new(realm_id)
+            realm_id: arkret_sdk::RealmId::new(realm_id)
                 .map_err(|err| anyhow::anyhow!("invalid realm_id: {err}"))?,
             effective_scope: None,
-            actor_id: cokret_sdk::Did::new(self.actor)
+            actor_id: arkret_sdk::Did::new(self.actor)
                 .map_err(|err| anyhow::anyhow!("invalid actor_id DID: {err}"))?,
             executed_by: self
                 .executed_by
-                .map(cokret_sdk::Did::new)
+                .map(arkret_sdk::Did::new)
                 .transpose()
                 .map_err(|err| anyhow::anyhow!("invalid executed_by DID: {err}"))?,
             authorization_ref: self.authorization_ref,
             actor_kind: None,
             actor_seq,
             created_at,
-            hlc: cokret_sdk::Hlc::new(hlc.encode())
+            hlc: arkret_sdk::Hlc::new(hlc.encode())
                 .map_err(|err| anyhow::anyhow!("generated HLC is invalid: {err}"))?,
             prev_refs,
             refs: self.refs,
@@ -289,7 +289,7 @@ impl OperationBuilder {
             effects: self.effects,
             seal_ref: self
                 .seal_ref
-                .map(cokret_sdk::SealId::new)
+                .map(arkret_sdk::SealId::new)
                 .transpose()
                 .map_err(|err| anyhow::anyhow!("invalid seal_ref: {err}"))?,
             auth_context: None,
@@ -353,7 +353,7 @@ impl EventEnvelopeExt for EventEnvelope {
 
     fn refresh_proof_hashes(&mut self) -> anyhow::Result<()> {
         let digest = self.canonical_digest()?;
-        let digest = cokret_sdk::Hash::new(digest)
+        let digest = arkret_sdk::Hash::new(digest)
             .map_err(|err| anyhow::anyhow!("event digest is not a SDK Hash: {err}"))?;
         for proof in &mut self.proofs {
             proof.event_digest = digest.clone();
@@ -369,7 +369,7 @@ impl EventEnvelopeExt for EventEnvelope {
     ) -> anyhow::Result<()> {
         use std::sync::Arc;
 
-        use cokret_sdk::signatures::proof::Ed25519DetachedJwsSigner;
+        use arkret_sdk::signatures::proof::Ed25519DetachedJwsSigner;
 
         let signer_did = signer_did.into();
         let sdk_signer =
@@ -407,7 +407,7 @@ fn typed_operation_id(operation_id: &str) -> String {
 /// etc.). Replaces the previous hand-rolled bit-packing helper, which had no
 /// same-millisecond monotonic guarantee.
 pub fn uuid_v7() -> String {
-    cokret_sdk::identifiers::new_prefixed_uuid7("")
+    arkret_sdk::identifiers::new_prefixed_uuid7("")
 }
 
 /// Canonical helper constructors used by the current UI.

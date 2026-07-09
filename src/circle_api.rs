@@ -11,9 +11,9 @@ use crate::event_submit::EventSubmitter;
 use crate::operation::uuid_v7;
 
 pub async fn list_circles(
-    http: &cokret_sdk::http_client::Client,
+    http: &arkret_sdk::http_client::Client,
     realm_id: &str,
-) -> anyhow::Result<cokret_sdk::CircleList> {
+) -> anyhow::Result<arkret_sdk::CircleList> {
     http.circle_list(realm_id)
         .await
         .map_err(anyhow::Error::from)
@@ -22,9 +22,9 @@ pub async fn list_circles(
 pub async fn submit_circle_scope_rotate_events(
     submitter: &EventSubmitter,
     circle_id: &str,
-    events: &[cokret_sdk::Event],
+    events: &[arkret_sdk::Event],
     idempotency_key: Option<String>,
-) -> anyhow::Result<cokret_sdk::CircleScopeRotateOutcome> {
+) -> anyhow::Result<arkret_sdk::CircleScopeRotateOutcome> {
     let circle_id = circle_id.trim();
     if circle_id.is_empty() {
         anyhow::bail!("circle_id is required for scope rotate");
@@ -48,7 +48,7 @@ pub async fn submit_circle_scope_rotate_events(
         signed_events.push(signed);
     }
     let idem = idempotency_key.unwrap_or_else(uuid_v7);
-    let body = cokret_sdk::CircleScopeRotateRequestBody {
+    let body = arkret_sdk::CircleScopeRotateRequestBody {
         events: signed_events,
         idempotency_key: Some(idem.clone()),
     };

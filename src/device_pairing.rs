@@ -5,7 +5,7 @@
 //! sending a `ck.key.verification.request` to-device message whose
 //! `content.purpose == "same_principal_device_authorization"`. The receiving
 //! device MUST surface the `pairing_code` for user comparison and only finalize
-//! through `POST /_cokret/gate/account/device-pair` after explicit approval — it
+//! through `POST /_arkret/gate/account/device-pair` after explicit approval — it
 //! must not trust the new device merely because the request arrived.
 //!
 //! Both the settings "Requests awaiting this device" card and the global
@@ -114,7 +114,7 @@ pub fn parse_pending_pairing_requests(inbox: &[Value]) -> Vec<PendingPairingRequ
 /// required pairing material is missing or malformed.
 pub fn pairing_request_body(
     payload: &Value,
-) -> anyhow::Result<cokret_sdk::AccountDevicePairRequestBody> {
+) -> anyhow::Result<arkret_sdk::AccountDevicePairRequestBody> {
     let pairing_code = payload
         .get("pairing_code")
         .and_then(Value::as_str)
@@ -143,7 +143,7 @@ pub fn pairing_request_body(
         .get("device_metadata")
         .cloned()
         .unwrap_or_else(|| json!({}));
-    Ok(cokret_sdk::AccountDevicePairRequestBody {
+    Ok(arkret_sdk::AccountDevicePairRequestBody {
         pairing_code,
         new_device_pubkey,
         challenge_signature,

@@ -23,7 +23,7 @@ use crate::views::helpers::{short_protocol_id, with_authed_api, with_event_submi
 /// Project the SDK `AuthzInviteList.invites` (typed `Invite` rows) into the
 /// `Vec<Value>` shape the local notification pipeline folds through lenient
 /// JSON accessors.
-fn invites_to_values(invites: Vec<cokret_sdk::models::Invite>) -> Vec<Value> {
+fn invites_to_values(invites: Vec<arkret_sdk::models::Invite>) -> Vec<Value> {
     invites
         .into_iter()
         .filter_map(|invite| serde_json::to_value(invite).ok())
@@ -321,7 +321,7 @@ fn accept_invite_notification(
             let read_api = api.clone();
             let sync = match read_api.sdk_http_client() {
                 Ok(http) => {
-                    let options = cokret_sdk::http_client::ClientRequestOptions::new()
+                    let options = arkret_sdk::http_client::ClientRequestOptions::new()
                         .wait_for(submit.cursor);
                     crate::client_core::account_subscribe_snapshot_with_options(
                         &http, None, &options,

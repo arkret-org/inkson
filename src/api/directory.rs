@@ -9,28 +9,28 @@ use crate::models::ServerDescriptionExt;
 pub struct InviteeResolution {
     pub did: String,
     pub handle: Option<String>,
-    pub invite_delivery_target: cokret_sdk::InviteDeliveryTarget,
-    pub introduction_evidence: cokret_sdk::IntroductionEvidence,
+    pub invite_delivery_target: arkret_sdk::InviteDeliveryTarget,
+    pub introduction_evidence: arkret_sdk::IntroductionEvidence,
     pub introduction_evidence_digest: String,
 }
 
 pub(crate) struct ContactRequestAddressing {
-    pub(crate) target: cokret_sdk::Did,
-    pub(crate) recipient_service_did: Option<cokret_sdk::Did>,
-    pub(crate) introduction_evidence: cokret_sdk::ContactIntroductionEvidence,
+    pub(crate) target: arkret_sdk::Did,
+    pub(crate) recipient_service_did: Option<arkret_sdk::Did>,
+    pub(crate) introduction_evidence: arkret_sdk::ContactIntroductionEvidence,
 }
 
 fn invitee_resolution(
-    invite_address: cokret_sdk::InviteAddress,
+    invite_address: arkret_sdk::InviteAddress,
     handle: Option<String>,
-    introduction_evidence: cokret_sdk::IntroductionEvidence,
+    introduction_evidence: arkret_sdk::IntroductionEvidence,
 ) -> anyhow::Result<InviteeResolution> {
     invite_address
         .validate()
         .map_err(|err| anyhow::anyhow!("invalid invite_address: {err}"))?;
     let did = invite_address.subject_id.to_string();
     let invite_delivery_target =
-        cokret_sdk::InviteDeliveryTarget::from_invite_address(&invite_address);
+        arkret_sdk::InviteDeliveryTarget::from_invite_address(&invite_address);
     invite_delivery_target
         .validate()
         .map_err(|err| anyhow::anyhow!("invalid invite_delivery_target: {err}"))?;
@@ -47,27 +47,27 @@ fn invitee_resolution(
 }
 
 fn explicit_invitee_resolution(
-    invite_address: cokret_sdk::InviteAddress,
+    invite_address: arkret_sdk::InviteAddress,
     handle: Option<String>,
 ) -> anyhow::Result<InviteeResolution> {
     invitee_resolution(
         invite_address,
         handle,
-        cokret_sdk::IntroductionEvidence::ExplicitAddress,
+        arkret_sdk::IntroductionEvidence::ExplicitAddress,
     )
 }
 
 fn invite_address(
     subject_id: &str,
     recipient_service_did: &str,
-) -> anyhow::Result<cokret_sdk::InviteAddress> {
-    let subject = cokret_sdk::Did::new(subject_id.trim().to_owned())
+) -> anyhow::Result<arkret_sdk::InviteAddress> {
+    let subject = arkret_sdk::Did::new(subject_id.trim().to_owned())
         .map_err(|err| anyhow::anyhow!("invalid invite subject DID `{subject_id}`: {err}"))?;
     let recipient_service =
-        cokret_sdk::Did::new(recipient_service_did.trim().to_owned()).map_err(|err| {
+        arkret_sdk::Did::new(recipient_service_did.trim().to_owned()).map_err(|err| {
             anyhow::anyhow!("invalid invite recipient service DID `{recipient_service_did}`: {err}")
         })?;
-    Ok(cokret_sdk::InviteAddress::principal_server(
+    Ok(arkret_sdk::InviteAddress::principal_server(
         subject,
         recipient_service,
     ))
@@ -97,7 +97,7 @@ fn contact_consent_evidence_digest(consent_grant_ref: &str) -> anyhow::Result<St
 }
 
 fn invitee_from_principal_locator(
-    locator: cokret_sdk::PrincipalLocator,
+    locator: arkret_sdk::PrincipalLocator,
 ) -> anyhow::Result<InviteeResolution> {
     locator
         .validate_minimal()
@@ -106,7 +106,7 @@ fn invitee_from_principal_locator(
     invitee_resolution(
         address,
         None,
-        cokret_sdk::IntroductionEvidence::LocatorRef {
+        arkret_sdk::IntroductionEvidence::LocatorRef {
             principal_locator: locator,
         },
     )
@@ -117,12 +117,12 @@ fn invitee_from_target_json(target: &str) -> anyhow::Result<Option<InviteeResolu
         Ok(value) => value,
         Err(_) => return Ok(None),
     };
-    if value.get("schema").and_then(Value::as_str) == Some(cokret_sdk::PRINCIPAL_LOCATOR_SCHEMA) {
-        let locator: cokret_sdk::PrincipalLocator = serde_json::from_value(value)?;
+    if value.get("schema").and_then(Value::as_str) == Some(arkret_sdk::PRINCIPAL_LOCATOR_SCHEMA) {
+        let locator: arkret_sdk::PrincipalLocator = serde_json::from_value(value)?;
         return invitee_from_principal_locator(locator).map(Some);
     }
     if value.get("subject_id").is_some() && value.get("recipient_service_did").is_some() {
-        let address: cokret_sdk::InviteAddress = serde_json::from_value(value)?;
+        let address: arkret_sdk::InviteAddress = serde_json::from_value(value)?;
         return explicit_invitee_resolution(address, None).map(Some);
     }
     anyhow::bail!("invite target JSON must be a principal locator or invite address")
@@ -166,8 +166,8 @@ fn parse_invite_locator_url(target: &str) -> anyhow::Result<Option<(String, Stri
         Ok(url) => url,
         Err(_) => return Ok(None),
     };
-    if url.path() != "/_cokret/open/invite-locators/resolve" {
-        anyhow::bail!("invite locator URL path must be /_cokret/open/invite-locators/resolve");
+    if url.path() != "/_arkret/open/invite-locators/resolve" {
+        anyhow::bail!("invite locator URL path must be /_arkret/open/invite-locators/resolve");
     }
     let token = locator_url_token(&url)?;
     Ok(Some((locator_url_origin(&url)?, token)))
@@ -206,7 +206,7 @@ fn parse_explicit_invite_target(target: &str) -> anyhow::Result<Option<InviteeRe
     let dids: Vec<&str> = tokens
         .iter()
         .copied()
-        .filter(|token| cokret_sdk::Did::new((*token).to_owned()).is_ok())
+        .filter(|token| arkret_sdk::Did::new((*token).to_owned()).is_ok())
         .collect();
     if dids.len() == 2 {
         let (subject, server) = if dids[1].contains(":users:") && !dids[0].contains(":users:") {
@@ -221,7 +221,7 @@ fn parse_explicit_invite_target(target: &str) -> anyhow::Result<Option<InviteeRe
 
 fn resolved_handle_claim(
     resolved: &ResolveHandleView,
-) -> anyhow::Result<Option<cokret_sdk::models::HandleClaim>> {
+) -> anyhow::Result<Option<arkret_sdk::models::HandleClaim>> {
     let Some(claim) = resolved.handle_claim.clone() else {
         return Ok(None);
     };
@@ -233,15 +233,15 @@ fn resolved_handle_claim(
 
 fn resolved_member_delivery_binding(
     resolved: &ResolveHandleView,
-) -> anyhow::Result<Option<cokret_sdk::models::DeliveryBindingHint>> {
+) -> anyhow::Result<Option<arkret_sdk::models::DeliveryBindingHint>> {
     Ok(resolved.member_delivery_binding_ref().cloned())
 }
 
-fn resolved_by_did(resolved: &ResolveHandleView) -> Option<cokret_sdk::Did> {
+fn resolved_by_did(resolved: &ResolveHandleView) -> Option<arkret_sdk::Did> {
     resolved
         .via_services
         .iter()
-        .find_map(|did| cokret_sdk::Did::new(did.clone()).ok())
+        .find_map(|did| arkret_sdk::Did::new(did.clone()).ok())
 }
 
 fn resolved_at(resolved: &ResolveHandleView) -> Option<chrono::DateTime<chrono::Utc>> {
@@ -261,7 +261,7 @@ impl CokretApi {
     pub async fn snapshot_head(
         &self,
         realm_id: &str,
-    ) -> anyhow::Result<Option<cokret_sdk::SnapshotManifest>> {
+    ) -> anyhow::Result<Option<arkret_sdk::SnapshotManifest>> {
         let describe = self.describe_cached().await?;
         if !describe.supports_operation(OP_SNAPSHOT_HEAD) {
             return Ok(None);
@@ -283,7 +283,7 @@ impl CokretApi {
         context: ResolveHandleContext<'_>,
     ) -> anyhow::Result<ResolveHandleView> {
         let body = resolve_handle_request_body(handle, context)?;
-        let outcome: cokret_sdk::DirectoryHandleResolutionOutcome = self
+        let outcome: arkret_sdk::DirectoryHandleResolutionOutcome = self
             .sdk_http_client()?
             .directory_resolve_handle(&body)
             .await
@@ -297,28 +297,28 @@ impl CokretApi {
         agent_slug: &str,
         realm_id: &str,
         requester: &str,
-    ) -> anyhow::Result<cokret_sdk::models::DirectoryAgentSelectorResolutionOutcome> {
+    ) -> anyhow::Result<arkret_sdk::models::DirectoryAgentSelectorResolutionOutcome> {
         let controller_handle =
-            cokret_sdk::models::Handle::parse(controller_handle).map_err(|err| {
+            arkret_sdk::models::Handle::parse(controller_handle).map_err(|err| {
                 anyhow::anyhow!("invalid controller handle `{controller_handle}`: {err}")
             })?;
-        cokret_sdk::models::validate_agent_slug(agent_slug)
+        arkret_sdk::models::validate_agent_slug(agent_slug)
             .map_err(|err| anyhow::anyhow!("invalid agent_slug `{agent_slug}`: {err}"))?;
-        let requester = cokret_sdk::Did::new(requester.trim().to_owned())
+        let requester = arkret_sdk::Did::new(requester.trim().to_owned())
             .map_err(|err| anyhow::anyhow!("invalid requester DID `{requester}`: {err}"))?;
-        let realm_id = cokret_sdk::RealmId::new(realm_id.trim().to_owned())
+        let realm_id = arkret_sdk::RealmId::new(realm_id.trim().to_owned())
             .map_err(|err| anyhow::anyhow!("invalid realm_id `{realm_id}`: {err}"))?;
-        let body = cokret_sdk::models::DirectoryResolveAgentSelectorRequestBody {
+        let body = arkret_sdk::models::DirectoryResolveAgentSelectorRequestBody {
             controller_handle,
             agent_slug: agent_slug.to_owned(),
             expected_agent_did: None,
             proof_challenge: None,
-            intent: cokret_sdk::models::DirectoryIntent::Mention,
+            intent: arkret_sdk::models::DirectoryIntent::Mention,
             realm_id: Some(realm_id),
             requester,
             proofs: Vec::new(),
         };
-        let outcome: cokret_sdk::models::DirectoryAgentSelectorResolutionOutcome = self
+        let outcome: arkret_sdk::models::DirectoryAgentSelectorResolutionOutcome = self
             .sdk_http_client()?
             .directory_resolve_agent_selector(&body)
             .await
@@ -358,7 +358,7 @@ impl CokretApi {
                 )
             })?;
         let address = invite_address(subject, recipient_service.as_str())?;
-        let handle = cokret_sdk::models::Handle::parse(&resolved.handle)
+        let handle = arkret_sdk::models::Handle::parse(&resolved.handle)
             .map_err(|err| anyhow::anyhow!("directory returned invalid handle: {err}"))?;
         let fallback_resolved_by = self
             .describe_cached()
@@ -367,14 +367,14 @@ impl CokretApi {
             .map(|description| description.service_did.clone());
         let resolved_by = resolved_by_did(&resolved).or(fallback_resolved_by);
         let evidence = match resolved_handle_claim(&resolved)? {
-            Some(handle_claim) => cokret_sdk::IntroductionEvidence::HandleClaim {
+            Some(handle_claim) => arkret_sdk::IntroductionEvidence::HandleClaim {
                 handle: handle.clone(),
                 handle_claim: Box::new(handle_claim),
                 member_delivery_binding_candidate: None,
                 resolved_by,
                 resolved_at: resolved_at(&resolved),
             },
-            None => cokret_sdk::IntroductionEvidence::ExplicitAddress,
+            None => arkret_sdk::IntroductionEvidence::ExplicitAddress,
         };
         invitee_resolution(address, Some(handle.canonical().to_owned()), evidence)
     }
@@ -406,7 +406,7 @@ impl CokretApi {
             let subject = resolved.subject_did().ok_or_else(|| {
                 anyhow::anyhow!("directory resolve_handle response did not include subject DID")
             })?;
-            let target_did = cokret_sdk::Did::new(subject.to_owned()).map_err(|err| {
+            let target_did = arkret_sdk::Did::new(subject.to_owned()).map_err(|err| {
                 anyhow::anyhow!("directory resolved invalid DID `{subject}`: {err}")
             })?;
             let resolved_service = resolved_member_delivery_binding(&resolved)?
@@ -415,13 +415,13 @@ impl CokretApi {
                 .map(str::trim)
                 .filter(|value| !value.is_empty())
                 .map(|value| {
-                    cokret_sdk::Did::new(value.to_owned()).map_err(|err| {
+                    arkret_sdk::Did::new(value.to_owned()).map_err(|err| {
                         anyhow::anyhow!("invalid recipient_service_did `{value}`: {err}")
                     })
                 })
                 .transpose()?;
             let recipient_service_did = explicit_service.or(resolved_service);
-            let handle = cokret_sdk::models::Handle::parse(&resolved.handle)
+            let handle = arkret_sdk::models::Handle::parse(&resolved.handle)
                 .map_err(|err| anyhow::anyhow!("directory returned invalid handle: {err}"))?;
             let fallback_resolved_by = self
                 .describe_cached()
@@ -430,13 +430,13 @@ impl CokretApi {
                 .map(|description| description.service_did.clone());
             let resolved_by = resolved_by_did(&resolved).or(fallback_resolved_by);
             let introduction_evidence = match resolved_handle_claim(&resolved)? {
-                Some(handle_claim) => cokret_sdk::ContactIntroductionEvidence::HandleClaim {
+                Some(handle_claim) => arkret_sdk::ContactIntroductionEvidence::HandleClaim {
                     handle,
                     handle_claim: Box::new(handle_claim),
                     resolved_by,
                     resolved_at: resolved_at(&resolved),
                 },
-                None => cokret_sdk::ContactIntroductionEvidence::ExplicitAddress,
+                None => arkret_sdk::ContactIntroductionEvidence::ExplicitAddress,
             };
             return Ok(ContactRequestAddressing {
                 target: target_did,
@@ -444,13 +444,13 @@ impl CokretApi {
                 introduction_evidence,
             });
         }
-        let target_did = cokret_sdk::Did::new(target.to_owned())
+        let target_did = arkret_sdk::Did::new(target.to_owned())
             .map_err(|err| anyhow::anyhow!("invalid contact target DID `{target}`: {err}"))?;
         let recipient_service_did = recipient_service_did
             .map(str::trim)
             .filter(|value| !value.is_empty())
             .map(|value| {
-                cokret_sdk::Did::new(value.to_owned()).map_err(|err| {
+                arkret_sdk::Did::new(value.to_owned()).map_err(|err| {
                     anyhow::anyhow!("invalid recipient_service_did `{value}`: {err}")
                 })
             })
@@ -458,7 +458,7 @@ impl CokretApi {
         Ok(ContactRequestAddressing {
             target: target_did,
             recipient_service_did,
-            introduction_evidence: cokret_sdk::ContactIntroductionEvidence::ExplicitAddress,
+            introduction_evidence: arkret_sdk::ContactIntroductionEvidence::ExplicitAddress,
         })
     }
 
@@ -481,7 +481,7 @@ impl CokretApi {
         contact_did: &str,
         realm_id: &str,
         actor_id: &str,
-    ) -> anyhow::Result<cokret_sdk::Did> {
+    ) -> anyhow::Result<arkret_sdk::Did> {
         let handle = crate::views::helpers::handle_display_from_did(contact_did).ok_or_else(|| {
             anyhow::anyhow!(
                 "cannot address contact `{contact_did}` by handle; use the invite link path instead"
@@ -537,13 +537,13 @@ impl CokretApi {
         consent_grant_ref: &str,
     ) -> anyhow::Result<(String, String)> {
         let contact_did = contact_did.trim();
-        cokret_sdk::Did::new(contact_did.to_owned())
+        arkret_sdk::Did::new(contact_did.to_owned())
             .map_err(|err| anyhow::anyhow!("invalid contact DID `{contact_did}`: {err}"))?;
         let recipient_did = self
             .contact_recipient_service_via_directory(contact_did, realm_id, actor_id)
             .await?;
         let invite_delivery_target =
-            cokret_sdk::InviteDeliveryTarget::principal_server(recipient_did);
+            arkret_sdk::InviteDeliveryTarget::principal_server(recipient_did);
         invite_delivery_target
             .validate()
             .map_err(|err| anyhow::anyhow!("invalid invite_delivery_target: {err}"))?;
@@ -581,14 +581,14 @@ impl CokretApi {
             // an invite locator resolves against a local dev / joint-e2e
             // resolver on `http://127.0.0.1`.
             let resolver =
-                cokret_sdk::http_client::ClientBuilder::new(Url::parse(&resolver_origin)?)
+                arkret_sdk::http_client::ClientBuilder::new(Url::parse(&resolver_origin)?)
                     .allow_insecure_localhost()
                     .build()?;
-            let body = cokret_sdk::InviteLocatorResolveRequestBody::new(locator_token);
+            let body = arkret_sdk::InviteLocatorResolveRequestBody::new(locator_token);
             body.validate_minimal()
                 .map_err(|err| anyhow::anyhow!("invalid invite locator token: {err}"))?;
-            let locator: cokret_sdk::PrincipalLocator = resolver
-                .post(cokret_sdk::INVITE_LOCATOR_RESOLVE_PATH, &body)
+            let locator: arkret_sdk::PrincipalLocator = resolver
+                .post(arkret_sdk::INVITE_LOCATOR_RESOLVE_PATH, &body)
                 .await
                 .map_err(anyhow::Error::from)?;
             return invitee_from_principal_locator(locator);
@@ -602,7 +602,7 @@ impl CokretApi {
         if let Some(invitee) = parse_explicit_invite_target(target)? {
             return Ok(invitee);
         }
-        if cokret_sdk::Did::new(target.to_owned()).is_ok() {
+        if arkret_sdk::Did::new(target.to_owned()).is_ok() {
             anyhow::bail!("raw DID invite target also needs a recipient server DID");
         }
         anyhow::bail!(
@@ -618,7 +618,7 @@ mod invite_addressing_tests {
     #[test]
     fn locator_url_reads_token_from_fragment() {
         let (origin, token) = parse_invite_locator_url(
-            "https://ps.bob.example:9443/_cokret/open/invite-locators/resolve#token=abc%20123",
+            "https://ps.bob.example:9443/_arkret/open/invite-locators/resolve#token=abc%20123",
         )
         .expect("valid locator url")
         .expect("locator url parsed");
@@ -629,7 +629,7 @@ mod invite_addressing_tests {
     #[test]
     fn locator_url_rejects_query_token() {
         let err = parse_invite_locator_url(
-            "https://ps.bob.example/_cokret/open/invite-locators/resolve?locator_token=abc",
+            "https://ps.bob.example/_arkret/open/invite-locators/resolve?locator_token=abc",
         )
         .expect_err("query token must be rejected");
         assert!(err.to_string().contains("fragment"));
@@ -638,7 +638,7 @@ mod invite_addressing_tests {
     #[test]
     fn principal_locator_builds_locator_ref_evidence() {
         let locator = json!({
-            "schema": cokret_sdk::PRINCIPAL_LOCATOR_SCHEMA,
+            "schema": arkret_sdk::PRINCIPAL_LOCATOR_SCHEMA,
             "subject_id": "did:web:bob.example",
             "recipient_service_did": "did:web:ps.bob.example",
             "issued_at": "2026-06-07T00:00:00Z",

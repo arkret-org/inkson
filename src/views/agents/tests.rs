@@ -1,6 +1,6 @@
 #[cfg(test)]
 mod personal_agent_tests {
-    use cokret_sdk::models::AgentParticipation;
+    use arkret_sdk::models::AgentParticipation;
 
     use super::super::*;
     use crate::views::agents::model::{
@@ -223,8 +223,8 @@ mod personal_agent_tests {
 
     #[test]
     fn bootstrap_serializes_spec_six_fields_without_scope_or_private_key() {
-        let outcome = cokret_sdk::AgentProvisionOutcome {
-            agent_principal_id: cokret_sdk::Did::new("did:web:agents.example:summary").unwrap(),
+        let outcome = arkret_sdk::AgentProvisionOutcome {
+            agent_principal_id: arkret_sdk::Did::new("did:web:agents.example:summary").unwrap(),
             pairing_request_id: "0197-req".to_owned(),
             pairing_code: Some("123456".to_owned()),
             expires_at: chrono::DateTime::parse_from_rfc3339("2026-06-26T00:00:00Z")
@@ -241,7 +241,7 @@ mod personal_agent_tests {
         let value: serde_json::Value = serde_json::from_str(&raw).unwrap();
 
         // CKP-0008 §4.4: exactly the six pairing fields, no scope payload.
-        assert_eq!(value["cokret_base_url"], "https://arkret.example");
+        assert_eq!(value["arkret_base_url"], "https://arkret.example");
         assert_eq!(value["service_did"], "did:web:arkret.example");
         assert_eq!(
             value["agent_principal_id"],
@@ -260,8 +260,8 @@ mod personal_agent_tests {
 
     #[test]
     fn deep_link_is_https_universal_link_wrapping_a_short_pairing_token() {
-        let outcome = cokret_sdk::AgentProvisionOutcome {
-            agent_principal_id: cokret_sdk::Did::new("did:web:agents.example:summary").unwrap(),
+        let outcome = arkret_sdk::AgentProvisionOutcome {
+            agent_principal_id: arkret_sdk::Did::new("did:web:agents.example:summary").unwrap(),
             pairing_request_id: "0197-req".to_owned(),
             pairing_code: Some("123456".to_owned()),
             expires_at: chrono::DateTime::parse_from_rfc3339("2026-06-26T00:00:00Z")
@@ -278,10 +278,10 @@ mod personal_agent_tests {
         let token = build_agent_pairing_handoff_token("0197-req", "123456");
         let deep_link = build_agent_pairing_deep_link("https://arkret.example/", &token);
         let encoded = deep_link
-            .strip_prefix("https://arkret.example/_cokret/open/agent-pairing/resolve#token=")
+            .strip_prefix("https://arkret.example/_arkret/open/agent-pairing/resolve#token=")
             .expect("deep link is an https universal link with the token in the fragment");
         let decoded: serde_json::Value =
-            serde_json::from_slice(&cokret_sdk::base64url_decode(encoded).unwrap()).unwrap();
+            serde_json::from_slice(&arkret_sdk::base64url_decode(encoded).unwrap()).unwrap();
 
         assert_eq!(
             decoded,
@@ -296,7 +296,7 @@ mod personal_agent_tests {
     #[test]
     fn pairing_qr_renders_deep_link_svg() {
         let svg = render_agent_pairing_qr_svg(
-            "https://arkret.example/_cokret/open/agent-pairing/resolve#token=abc",
+            "https://arkret.example/_arkret/open/agent-pairing/resolve#token=abc",
         );
 
         assert!(svg.contains("<svg"));
@@ -314,21 +314,21 @@ mod personal_agent_tests {
                 "kty": "OKP",
                 "kid": verification_method,
                 "alg": "Ed25519",
-                "key": cokret_sdk::base64url_encode([9u8; 32]),
+                "key": arkret_sdk::base64url_encode([9u8; 32]),
             },
             "proof_of_possession": {
                 "challenge": "agent_pairing_request:01999999-0000-7000-8000-00000000feed",
                 "audience": "did:web:arkret.example",
                 "request_canonical_digest": format!("sha256:{}", "0".repeat(64)),
                 "expires_at": "2026-07-06T00:15:00.000Z",
-                "signature": cokret_sdk::base64url_encode([1u8; 64]),
+                "signature": arkret_sdk::base64url_encode([1u8; 64]),
             },
         })
         .to_string();
         let summary = summarize_runtime_key_approval_request(&raw).unwrap();
         let request = parse_runtime_key_approval_request(&raw).unwrap();
         let expected =
-            cokret_sdk::agent::agent_runtime_public_key_digest(&request.public_key).unwrap();
+            arkret_sdk::agent::agent_runtime_public_key_digest(&request.public_key).unwrap();
 
         assert_eq!(summary.public_key_fingerprint, expected.as_str());
         assert_eq!(summary.verification_method, verification_method);
@@ -379,14 +379,14 @@ mod personal_agent_tests {
                 "kty": "OKP",
                 "kid": verification_method,
                 "alg": "Ed25519",
-                "key": cokret_sdk::base64url_encode([9u8; 32]),
+                "key": arkret_sdk::base64url_encode([9u8; 32]),
             },
             "proof_of_possession": {
                 "challenge": "agent_pairing_request:01999999-0000-7000-8000-00000000feed",
                 "audience": service_did,
                 "request_canonical_digest": format!("sha256:{}", "0".repeat(64)),
                 "expires_at": "2026-07-06T00:15:00.000Z",
-                "signature": cokret_sdk::base64url_encode([1u8; 64]),
+                "signature": arkret_sdk::base64url_encode([1u8; 64]),
             },
         })
         .to_string();
@@ -401,9 +401,9 @@ mod personal_agent_tests {
         .unwrap();
 
         let runtime_digest =
-            cokret_sdk::agent::agent_runtime_public_key_digest(&request.public_key).unwrap();
-        let expected_pairing_digest = cokret_sdk::agent::agent_key_pairing_request_binding_digest(
-            &cokret_sdk::Did::new(controller.to_owned()).unwrap(),
+            arkret_sdk::agent::agent_runtime_public_key_digest(&request.public_key).unwrap();
+        let expected_pairing_digest = arkret_sdk::agent::agent_key_pairing_request_binding_digest(
+            &arkret_sdk::Did::new(controller.to_owned()).unwrap(),
             &request.agent_principal_id,
             verification_method,
             &runtime_digest,
@@ -414,7 +414,7 @@ mod personal_agent_tests {
         )
         .unwrap();
 
-        assert_eq!(event.kind.as_str(), cokret_sdk::OP_AGENT_KEY_AUTHORIZE);
+        assert_eq!(event.kind.as_str(), arkret_sdk::OP_AGENT_KEY_AUTHORIZE);
         assert_eq!(event.payload["agent_principal_id"], agent);
         assert_eq!(event.payload["verification_method"], verification_method);
         assert_eq!(event.payload["public_key_digest"], runtime_digest.as_str());
@@ -601,7 +601,7 @@ mod tests {
         actor: &str,
         seed: &[u8; 32],
     ) -> serde_json::Value {
-        let signed = cokret_sdk::agent_binding::sign_ed25519_audit_binding(
+        let signed = arkret_sdk::agent_binding::sign_ed25519_audit_binding(
             seed, session_id, agent_id, &echo, actor,
         );
         json!({
@@ -1004,7 +1004,7 @@ mod tests {
         let agent_id = "did:web:agent.example";
         let echo = json!({"op": "ping"});
         let actor = "did:web:alice.example";
-        let signed = cokret_sdk::agent_binding::sign_ed25519_audit_binding(
+        let signed = arkret_sdk::agent_binding::sign_ed25519_audit_binding(
             &seed, session_id, agent_id, &echo, actor,
         );
         let result_payload = json!({

@@ -3,7 +3,7 @@ use serde_json::{Value, json};
 use super::*;
 
 fn assert_registered_payload_valid(event: &EventEnvelope) {
-    let catalog = cokret_sdk::schema::event_payload_validator_catalog().unwrap();
+    let catalog = arkret_sdk::schema::event_payload_validator_catalog().unwrap();
     catalog
         .validate_payload(event.kind.as_str(), &event.payload)
         .unwrap_or_else(|err| {
@@ -70,7 +70,7 @@ fn operation_builder_generates_valid_envelope() {
     let op = OperationBuilder::new(
         "ak:realm:0196419b-0000-7000-8000-0000000000aa",
         "did:web:alice",
-        cokret_sdk::events::kinds::EventKind::MessageCreate,
+        arkret_sdk::events::kinds::EventKind::MessageCreate,
     )
     .body(json!({"content": {"kind": "ck.content.text", "body": "hello"}}))
     .build("test_node");
@@ -94,7 +94,7 @@ fn operation_round_trip_serde() {
     let op = OperationBuilder::new(
         "ak:realm:0196419b-0000-7000-8000-0000000000ab",
         "did:web:bob",
-        cokret_sdk::events::kinds::EventKind::MessageCreate,
+        arkret_sdk::events::kinds::EventKind::MessageCreate,
     )
     .body(json!({"content": {"kind": "ck.content.text", "body": "hello world"}}))
     .build("node");
@@ -108,7 +108,7 @@ fn operation_builder_can_emit_signed_authorization_binding() {
     let op = OperationBuilder::new(
         "ak:realm:0196419b-0000-7000-8000-0000000000ab",
         "did:web:bob",
-        cokret_sdk::events::kinds::EventKind::MessageCreate,
+        arkret_sdk::events::kinds::EventKind::MessageCreate,
     )
     .body(json!({"content": {"kind": "ck.content.text", "body": "hello world"}}))
     .executed_by("did:web:agent.example")
@@ -142,7 +142,7 @@ fn event_envelope_accepts_current_optional_top_level_fields() {
     let op = OperationBuilder::new(
         "ak:realm:0196419b-0000-7000-8000-0000000000ab",
         "did:web:bob",
-        cokret_sdk::events::kinds::EventKind::MessageCreate,
+        arkret_sdk::events::kinds::EventKind::MessageCreate,
     )
     .body(json!({"content": {"kind": "ck.content.text", "body": "hello world"}}))
     .build("node");
@@ -162,8 +162,8 @@ fn event_envelope_accepts_current_optional_top_level_fields() {
     let parsed: EventEnvelope = serde_json::from_value(value).unwrap();
     assert_eq!(
         parsed.effective_scope,
-        Some(cokret_sdk::models::EffectiveScope::Realm {
-            realm_id: cokret_sdk::RealmId::new(
+        Some(arkret_sdk::models::EffectiveScope::Realm {
+            realm_id: arkret_sdk::RealmId::new(
                 "ak:realm:0196419b-0000-7000-8000-0000000000ab".to_owned()
             )
             .unwrap(),
@@ -179,7 +179,7 @@ fn event_envelope_accepts_current_optional_top_level_fields() {
     );
     assert_eq!(
         parsed.actor_kind,
-        Some(cokret_sdk::EnvelopeActorKind::Agent)
+        Some(arkret_sdk::EnvelopeActorKind::Agent)
     );
 }
 
@@ -188,7 +188,7 @@ fn event_envelope_rejects_unknown_top_level_fields() {
     let op = OperationBuilder::new(
         "ak:realm:0196419b-0000-7000-8000-0000000000ab",
         "did:web:bob",
-        cokret_sdk::events::kinds::EventKind::MessageCreate,
+        arkret_sdk::events::kinds::EventKind::MessageCreate,
     )
     .body(json!({"content": {"kind": "ck.content.text", "body": "hello world"}}))
     .build("node");
@@ -256,30 +256,30 @@ fn kanban_card_strand_create_carries_position_in_metadata_fields() {
 fn mls_commit_builder_matches_registered_payload_schema() {
     let realm_id = "ak:realm:0196419b-0000-7000-8000-000000000001";
     let group_id = "ak:mls_group:kanban-test";
-    let governance_binding = cokret_sdk::MlsGovernanceBindingPayload::realm(
-        cokret_sdk::RealmId::new(realm_id.to_owned()).unwrap(),
+    let governance_binding = arkret_sdk::MlsGovernanceBindingPayload::realm(
+        arkret_sdk::RealmId::new(realm_id.to_owned()).unwrap(),
         group_id,
         0,
         1,
         vec![
-            cokret_sdk::EventId::new("ak:event:0196419b-0000-7000-8000-000000000002".to_owned())
+            arkret_sdk::EventId::new("ak:event:0196419b-0000-7000-8000-000000000002".to_owned())
                 .unwrap(),
         ],
-        cokret_sdk::Hash::new(
+        arkret_sdk::Hash::new(
             "sha256:2222222222222222222222222222222222222222222222222222222222222222".to_owned(),
         )
         .unwrap(),
-        cokret_sdk::MLS_GOVERNANCE_BINDING_FULL_PROFILE,
-        cokret_sdk::CORE_REDUCER_PROFILE,
+        arkret_sdk::MLS_GOVERNANCE_BINDING_FULL_PROFILE,
+        arkret_sdk::CORE_REDUCER_PROFILE,
     )
     .unwrap();
-    let payload = cokret_sdk::MlsCommitPayload::new(
+    let payload = arkret_sdk::MlsCommitPayload::new(
         group_id,
         0,
         "ak:event:0196419b-0000-7000-8000-000000000001",
         Vec::new(),
         1,
-        cokret_sdk::Hash::new(
+        arkret_sdk::Hash::new(
             "sha256:7777777777777777777777777777777777777777777777777777777777777777".to_owned(),
         )
         .unwrap(),
@@ -642,13 +642,13 @@ fn canonical_digest_is_stable_across_key_order() {
     let mut op_a = OperationBuilder::new(
         "ak:realm:0196419b-0000-7000-8000-0000000000ab",
         "did:web:alice",
-        cokret_sdk::events::kinds::EventKind::MessageCreate,
+        arkret_sdk::events::kinds::EventKind::MessageCreate,
     )
     .body(json!({"b": 2, "a": 1}))
     .build("node");
     op_a.event_id =
-        cokret_sdk::EventId::new("ak:event:0196419b-0000-7000-8000-0000000000ff").unwrap();
-    op_a.hlc = cokret_sdk::Hlc::new("000000000000-0000-00000000".to_owned()).unwrap();
+        arkret_sdk::EventId::new("ak:event:0196419b-0000-7000-8000-0000000000ff").unwrap();
+    op_a.hlc = arkret_sdk::Hlc::new("000000000000-0000-00000000".to_owned()).unwrap();
     op_a.actor_seq = 1;
 
     let mut op_b = op_a.clone();
@@ -666,7 +666,7 @@ fn sign_ed25519_attaches_typed_proof() {
     let mut op = OperationBuilder::new(
         "ak:realm:01904100-0000-7000-8000-000000000001",
         "did:web:alice",
-        cokret_sdk::events::kinds::EventKind::MessageCreate,
+        arkret_sdk::events::kinds::EventKind::MessageCreate,
     )
     .body(json!({"body": "hi"}))
     .build("node");
@@ -687,7 +687,7 @@ fn sdk_event_conversion_accepts_unsigned_builder_for_signing() {
     let op = OperationBuilder::new(
         "ak:realm:01904100-0000-7000-8000-000000000001",
         "did:web:alice.example",
-        cokret_sdk::events::kinds::EventKind::MessageCreate,
+        arkret_sdk::events::kinds::EventKind::MessageCreate,
     )
     .body(json!({"kind": "ck.content.text", "body": "hi"}))
     .build("node");
@@ -706,7 +706,7 @@ fn sdk_submit_event_conversion_preserves_signed_digest() {
     let mut op = OperationBuilder::new(
         "ak:realm:01904100-0000-7000-8000-000000000001",
         "did:web:alice.example",
-        cokret_sdk::events::kinds::EventKind::MessageCreate,
+        arkret_sdk::events::kinds::EventKind::MessageCreate,
     )
     .body(json!({"kind": "ck.content.text", "body": "hi"}))
     .build("node");
@@ -730,7 +730,7 @@ fn require_proof_fails_when_unsigned() {
     let mut op = OperationBuilder::new(
         "ak:realm:0196419b-0000-7000-8000-0000000000ab",
         "did:web:alice",
-        cokret_sdk::events::kinds::EventKind::MessageCreate,
+        arkret_sdk::events::kinds::EventKind::MessageCreate,
     )
     .body(json!({"body": "hi"}))
     .build("node");
@@ -741,8 +741,8 @@ fn require_proof_fails_when_unsigned() {
 #[test]
 fn invite_helpers_emit_canonical_kinds() {
     let invite_id = "ak:invite:01904100-0000-7000-8000-000000000001";
-    let invite_delivery_target = cokret_sdk::InviteDeliveryTarget {
-        recipient_service_did: cokret_sdk::Did::new("did:web:server.example").unwrap(),
+    let invite_delivery_target = arkret_sdk::InviteDeliveryTarget {
+        recipient_service_did: arkret_sdk::Did::new("did:web:server.example").unwrap(),
         recipient_service_type: Some("principal_server".to_owned()),
     };
     let introduction_evidence_digest =
@@ -770,7 +770,7 @@ fn invite_helpers_emit_canonical_kinds() {
         introduction_evidence_digest
     );
     assert!(
-        cokret_sdk::canonical::validate_timestamp_canonical(
+        arkret_sdk::canonical::validate_timestamp_canonical(
             create.payload["expires_at"].as_str().unwrap()
         )
         .is_ok()
@@ -1022,7 +1022,7 @@ fn message_revise_builder_uses_content_payload_schema() {
         "ak:realm:0196419b-0000-7000-8000-0000000000aa",
         "did:web:alice.example",
         message_id,
-        cokret_sdk::ContentBlock::text("updated body"),
+        arkret_sdk::ContentBlock::text("updated body"),
     )
     .expect("builds")
     .build("node");
@@ -1044,7 +1044,7 @@ fn message_revise_builder_uses_content_payload_schema() {
 // produces real `ck.realm.organization` events that cotest can reuse.
 mod realm_organization_builder_tests {
     use chrono::TimeZone;
-    use cokret_sdk::models::{
+    use arkret_sdk::models::{
         RealmOrganizationControlScope, RealmOrganizationIssuerRole, RealmOrganizationRelationship,
         RealmOrganizationStatus, SignatureMaterial,
     };
@@ -1278,7 +1278,7 @@ mod realm_organization_builder_tests {
         )
         .expect("builds (schema enforces the empty-proof rejection)")
         .build("node");
-        let catalog = cokret_sdk::schema::event_payload_validator_catalog().unwrap();
+        let catalog = arkret_sdk::schema::event_payload_validator_catalog().unwrap();
         assert!(
             catalog
                 .validate_payload(event.kind.as_str(), &event.payload)

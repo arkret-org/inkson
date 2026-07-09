@@ -11,20 +11,20 @@
 //! 2. set `key_schedule_cell` to the new schedule's content hash.
 //! 3. add the attested governance seal to `covered_seals_cell`.
 //!
-//! This module wraps `cokret_sdk::mls_move::*` so inkson can produce the
+//! This module wraps `arkret_sdk::mls_move::*` so inkson can produce the
 //! canonical Move precondition / effect tuples used by the hardening profile.
 //! It is not the `ck.mls.commit` event payload type; event payloads must use
-//! `cokret_sdk::MlsCommitPayload` and `cokret_sdk::MlsGovernanceBindingPayload`.
+//! `arkret_sdk::MlsCommitPayload` and `arkret_sdk::MlsGovernanceBindingPayload`.
 
-use cokret_sdk::mls_move::{
+use arkret_sdk::mls_move::{
     covered_seals_cell_id, governance_seal_tag, mls_commit_effects, mls_commit_preconditions,
 };
-use cokret_sdk::{Effect, Hash, Precondition, RealmId, SealId};
+use arkret_sdk::{Effect, Hash, Precondition, RealmId, SealId};
 use serde::{Deserialize, Serialize};
 
 /// Serializable view of the MLS Governance Binding Move tuple set. Keeps
 /// Move-builder call sites typed without forcing every module to depend on
-/// `cokret_sdk::Precondition` / `Effect`.
+/// `arkret_sdk::Precondition` / `Effect`.
 ///
 /// Both the human-readable summary fields (epoch / schedule / seal /
 /// frontier cell) and the **full SDK Precondition + Effect tuples** are
@@ -112,7 +112,7 @@ impl GovernanceBindingPayload {
     /// Render the binding as the internal Move tuple JSON shape.
     ///
     /// Do not use this as a `ck.mls.commit` event payload. That wire surface
-    /// is sealed by `cokret_sdk::MlsCommitPayload`.
+    /// is sealed by `arkret_sdk::MlsCommitPayload`.
     pub fn to_move_binding_body(&self) -> serde_json::Value {
         serde_json::json!({
             "group_id": &self.group_id,
@@ -135,7 +135,7 @@ pub const PROFILE_MLS_GOVERNANCE_BINDING_FULL: &str = "ck.profile.mls_governance
 
 #[cfg(test)]
 mod tests {
-    use cokret_sdk::{Hash, RealmId, SealId};
+    use arkret_sdk::{Hash, RealmId, SealId};
 
     use super::*;
 

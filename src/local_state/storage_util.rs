@@ -296,7 +296,7 @@ pub(crate) fn plaintext_identity_seed_fallback_allowed() -> bool {
 }
 
 pub(crate) fn snapshot_item_encrypted_payload(
-    item: &cokret_sdk::SnapshotMaterializedItem,
+    item: &arkret_sdk::SnapshotMaterializedItem,
 ) -> Option<EncryptedPayload> {
     let schema = item
         .object

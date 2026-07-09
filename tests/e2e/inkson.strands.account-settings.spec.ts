@@ -51,7 +51,7 @@ test("account menu falls back to account localpart when handle directory lookup 
   let handleDirectoryRequests = 0;
   const pageErrors: string[] = [];
   page.on("request", (request) => {
-    if (new URL(request.url()).pathname === "/_cokret/find/directory/list-handles-for-subject") {
+    if (new URL(request.url()).pathname === "/_arkret/find/directory/list-handles-for-subject") {
       handleDirectoryRequests += 1;
     }
   });
@@ -76,7 +76,7 @@ test("account menu keeps account handle when handle directory returns an empty p
 }) => {
   let handleDirectoryRequests = 0;
   page.on("request", (request) => {
-    if (new URL(request.url()).pathname === "/_cokret/find/directory/list-handles-for-subject") {
+    if (new URL(request.url()).pathname === "/_arkret/find/directory/list-handles-for-subject") {
       handleDirectoryRequests += 1;
     }
   });
@@ -141,8 +141,8 @@ test("settings avatar upload crops local image before publishing profile URL", a
     input.dispatchEvent(new Event("input", { bubbles: true }));
   });
 
-  const uploadRequest = page.waitForRequest("**/_cokret/self/blob/upload");
-  const profileRequest = page.waitForRequest("**/_cokret/self/account/profile");
+  const uploadRequest = page.waitForRequest("**/_arkret/self/blob/upload");
+  const profileRequest = page.waitForRequest("**/_arkret/self/account/profile");
   await page.getByTestId("settings-avatar-upload-cropped").click();
 
   const upload = await uploadRequest;
@@ -211,7 +211,7 @@ test("settings MIMI facade discovers drafts and runs interop actions", async ({ 
     "proxy-download ck:blob:sha256:01015dc8af66d01f557ea63f13538f1964848840a350c5311d1efc8ad138bb91",
   );
 
-  const submit = page.waitForRequest("**/_cokret/open/mimi/strands/01JSMIMI/messages");
+  const submit = page.waitForRequest("**/_arkret/open/mimi/strands/01JSMIMI/messages");
   await page.getByTestId("mimi-submit-message").click();
   expect((await submit).postDataJSON().source_format).toBe("text/markdown;variant=GFM-MIMI");
   await expect(page.getByTestId("mimi-action-receipt")).toContainText("submit-message mimi-msg-e2e");
@@ -241,7 +241,7 @@ test("account settings split account/server info and surface personal agents", a
   page.on("request", (request) => {
     if (
       request.method() === "GET" &&
-      new URL(request.url()).pathname === "/_cokret/self/agents"
+      new URL(request.url()).pathname === "/_arkret/self/agents"
     ) {
       agentListRequests += 1;
     }
@@ -304,7 +304,7 @@ test("account settings split account/server info and surface personal agents", a
   const provisionRequest = page.waitForRequest(
     (request) =>
       request.method() === "POST" &&
-      new URL(request.url()).pathname === "/_cokret/self/agents",
+      new URL(request.url()).pathname === "/_arkret/self/agents",
   );
   await page.getByTestId("agent-admin-provision-button").click();
   const provisionBody = (await provisionRequest).postDataJSON();

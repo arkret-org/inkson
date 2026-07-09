@@ -16,7 +16,7 @@ pub fn authed_api(base_url: &str, session_credential: String) -> anyhow::Result<
 /// for read-your-writes consistency on subsequent reads.
 ///
 /// ②(A+②): `session_credential` is the `ck.session.grant` JWT.
-/// The client also binds the grant-binding (DPoP) key so every `/_cokret/self/*`
+/// The client also binds the grant-binding (DPoP) key so every `/_arkret/self/*`
 /// request carries a per-request `DPoP` proof bound to the grant
 /// (api-conventions.md §3.3). This is the centralized self-path credential
 /// builder used across views.
@@ -46,7 +46,7 @@ pub fn authed_api_with_sync(
 }
 
 /// ②(A+②) — best-effort attach the grant-binding (DPoP) key to a client so its
-/// `/_cokret/self/*` requests are sender-constrained (api-conventions.md §3.3).
+/// `/_arkret/self/*` requests are sender-constrained (api-conventions.md §3.3).
 /// In production the seed is read from the secure key store (independent of the
 /// passed state store); in tests no key is present and the client stays
 /// without device proof material.
@@ -227,7 +227,7 @@ pub async fn with_authed_sdk_client<F, Fut, T>(
     f: F,
 ) -> Result<T, ApiCallError>
 where
-    F: FnOnce(cokret_sdk::http_client::Client) -> Fut,
+    F: FnOnce(arkret_sdk::http_client::Client) -> Fut,
     Fut: std::future::Future<Output = anyhow::Result<T>>,
 {
     with_authed_api(base_url, session_credential, |api| async move {

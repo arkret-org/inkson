@@ -38,7 +38,7 @@ pub fn strand_watch_set(
     Ok(OperationBuilder::new(
         realm_id,
         sender_actor,
-        cokret_sdk::events::kinds::EventKind::StrandWatchSet,
+        arkret_sdk::events::kinds::EventKind::StrandWatchSet,
     )
     .target_ref(strand_id)
     .body(payload))
@@ -71,7 +71,7 @@ pub fn strand_tracks_update(
     Ok(OperationBuilder::new(
         realm_id,
         actor,
-        cokret_sdk::events::kinds::EventKind::StrandTracksUpdate,
+        arkret_sdk::events::kinds::EventKind::StrandTracksUpdate,
     )
     .target_ref(strand_id)
     .body(strand_tracks_update_payload_value(strand_id, patch)?))
@@ -131,7 +131,7 @@ pub fn strand_archive(
     Ok(OperationBuilder::new(
         realm_id,
         actor,
-        cokret_sdk::events::kinds::EventKind::StrandArchive,
+        arkret_sdk::events::kinds::EventKind::StrandArchive,
     )
     .target_ref(strand_id)
     .body(object_lifecycle_payload_value(strand_id)?))
@@ -149,7 +149,7 @@ pub fn strand_restore(
     Ok(OperationBuilder::new(
         realm_id,
         actor,
-        cokret_sdk::events::kinds::EventKind::StrandRestore,
+        arkret_sdk::events::kinds::EventKind::StrandRestore,
     )
     .target_ref(strand_id)
     .body(object_lifecycle_payload_value(strand_id)?))
@@ -169,7 +169,7 @@ pub fn strand_update_patch(
     Ok(OperationBuilder::new(
         realm_id,
         actor,
-        cokret_sdk::events::kinds::EventKind::StrandUpdate,
+        arkret_sdk::events::kinds::EventKind::StrandUpdate,
     )
     .target_ref(strand_id)
     .body(strand_object_patch_payload_value(strand_id, patch)?))
@@ -245,7 +245,7 @@ pub fn strand_position_cas_update(
             Ok(OperationBuilder::new(
                 realm_id,
                 actor,
-                cokret_sdk::events::kinds::EventKind::StrandReorder,
+                arkret_sdk::events::kinds::EventKind::StrandReorder,
             )
             .target_ref(strand_id)
             .body(payload))
@@ -268,7 +268,7 @@ pub fn strand_position_cas_update(
             Ok(OperationBuilder::new(
                 realm_id,
                 actor,
-                cokret_sdk::events::kinds::EventKind::StrandMove,
+                arkret_sdk::events::kinds::EventKind::StrandMove,
             )
             .target_ref(strand_id)
             .body(payload))

@@ -395,9 +395,9 @@ pub fn CallPanel(
             let call = active_call_id();
             let api_token = token();
             let mode = if camera_on() {
-                cokret_sdk::RecordingMode::AudioVideo
+                arkret_sdk::RecordingMode::AudioVideo
             } else {
-                cokret_sdk::RecordingMode::AudioOnly
+                arkret_sdk::RecordingMode::AudioOnly
             };
             pending_capture.set(None);
             match capture_kind.as_str() {

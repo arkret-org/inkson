@@ -20,11 +20,11 @@
 //! detail view, error-code mapping, the composer banner, and the
 //! chat accent rail wiring inside `views/chat.rs`. The local
 //! `DecryptedScope` enum has been replaced with a re-export of the
-//! SDK's [`cokret_sdk::models::events::EffectiveScope`]; pattern
+//! SDK's [`arkret_sdk::models::events::EffectiveScope`]; pattern
 //! matching against `effective_scope` now happens against the same
 //! enum the reducer produces.
 
-use cokret_sdk::ERROR_CODE_DELIVERY_BINDING_HANDED_OVER;
+use arkret_sdk::ERROR_CODE_DELIVERY_BINDING_HANDED_OVER;
 use serde::{Deserialize, Serialize};
 
 /// The scope a composer / Strand-create form is actively writing into.
@@ -79,7 +79,7 @@ impl CircleScope {
 
 /// Lightweight projection of a Circle for sidebar / picker / modal
 /// rendering. The full canonical struct is
-/// [`cokret_sdk::cokret_core::models::circle::Circle`].
+/// [`arkret_sdk::arkret_core::models::circle::Circle`].
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CircleSummary {
     /// `ck:circle:…`
@@ -91,7 +91,7 @@ pub struct CircleSummary {
     pub color_token: String,
     pub symbol: String,
     pub member_count: u32,
-    pub state: cokret_sdk::CircleState,
+    pub state: arkret_sdk::CircleState,
     /// `true` if the active account is a member of this Circle (used to
     /// hide non-member Circles from the sidebar projection).
     pub viewer_is_member: bool,
@@ -114,7 +114,7 @@ impl CircleSummary {
 /// `schema_violation` sub-code) to a typed enum the UI can translate.
 ///
 /// One Circle-adjacent code is the top-level
-/// [`cokret_sdk::error_codes::ERROR_CODE_DELIVERY_BINDING_HANDED_OVER`]
+/// [`arkret_sdk::error_codes::ERROR_CODE_DELIVERY_BINDING_HANDED_OVER`]
 /// already registered in CKP-0006; we surface it through the same
 /// pipeline so a single Toast component handles all Circle-adjacent
 /// failures.
@@ -232,7 +232,7 @@ impl CircleErrorKind {
 /// pattern-match on the same enum the reducer produces. Earlier
 /// rounds shipped a local `DecryptedScope` mirror — that mirror has
 /// been deleted now that the SDK enum is available.
-pub use cokret_sdk::models::EffectiveScope;
+pub use arkret_sdk::models::EffectiveScope;
 
 /// Classify the relationship between an envelope's
 /// [`EffectiveScope`] and the payload-level `scope_circle_id`.
@@ -360,7 +360,7 @@ mod tests {
             color_token: "indigo".to_owned(),
             symbol: "shield".to_owned(),
             member_count: 7,
-            state: cokret_sdk::CircleState::Active,
+            state: arkret_sdk::CircleState::Active,
             viewer_is_member: true,
         };
         let scope = summary.into_scope();
