@@ -1111,13 +1111,8 @@ pub fn build_signed_device_verification_proof(
         .map_err(|error| anyhow::anyhow!("sign device verification proof: {error}"))?;
     Ok(json!({
         "device_envelope": body,
-        "signature": {
-            "kind": proof.kind,
-            "alg": proof.alg,
-            "verification_method": proof.verification_method,
-            "event_digest": proof.event_digest.as_str(),
-            "jws": proof.jws,
-        }
+        "signature": serde_json::to_value(&proof)
+            .map_err(|error| anyhow::anyhow!("serialize device verification proof: {error}"))?,
     }))
 }
 

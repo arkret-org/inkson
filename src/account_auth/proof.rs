@@ -1,31 +1,7 @@
 use anyhow::Context;
 use base64::Engine;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
-use serde::{Deserialize, Serialize};
-
-/// Session-grant introspection proof claims. Mirrors
-/// coauth's `SessionGrantIntrospectionProofClaims` (see
-/// `coauth/crates/backend/src/handlers/cokret.rs:575`). soland forwards
-/// the proof to coauth's private introspection endpoint when validating
-/// a session-grant binding — the JWS MUST verify against
-/// the session_public_key registered with the grant, and the
-/// claims MUST match `grant_id` / `grant_jwt_hash` / `audience` /
-/// `challenge` / `issued_at` / `expires_at` exactly.
-#[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct SessionGrantIntrospectionProofClaims {
-    /// Always `"ck.session_grant.introspection_proof.v1"`.
-    #[serde(rename = "type")]
-    pub kind: String,
-    pub grant_id: String,
-    /// `"sha256:<hex>"` of the grant JWT bytes.
-    pub grant_jwt_hash: String,
-    /// MUST match `grant.audience` (typically the principal-server URL).
-    pub audience: String,
-    /// Random per-introspection challenge string supplied by the caller.
-    pub challenge: String,
-    pub issued_at: chrono::DateTime<chrono::Utc>,
-    pub expires_at: chrono::DateTime<chrono::Utc>,
-}
+use serde::Serialize;
 
 /// Convenience helper: build the full
 /// [`cokret_sdk::SessionGrantIntrospectionProof`] (challenge + proof_jwt
@@ -96,8 +72,8 @@ pub fn build_session_grant_introspection_proof(
         anyhow::bail!("challenge is required");
     }
     let now = chrono::Utc::now();
-    let claims = SessionGrantIntrospectionProofClaims {
-        kind: "ck.session_grant.introspection_proof.v1".to_owned(),
+    let claims = cokret_sdk::SessionGrantIntrospectionProofClaims {
+        kind: cokret_sdk::SESSION_GRANT_INTROSPECTION_PROOF_CLAIMS_TYPE.to_owned(),
         grant_id: grant_id.to_owned(),
         grant_jwt_hash: session_grant_jwt_hash(grant_jwt),
         audience: audience.to_owned(),

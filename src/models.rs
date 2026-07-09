@@ -991,20 +991,6 @@ impl From<cokret_sdk::models::DirectoryHandleResolutionOutcome> for ResolveHandl
 /// are compose-time audit metadata only.
 pub use cokret_sdk::models::Mention;
 
-/// Per-Realm delivery binding surfaced to the member detail view.
-/// Mirrors `member_delivery_binding` from `event-payload.schema.json`.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct MemberDeliveryBindingView {
-    pub recipient_service_did: String,
-    pub binding_source: String,
-    pub delivery_modes: Vec<String>,
-    pub resolved_at: String,
-    #[serde(default)]
-    pub expires_at: Option<String>,
-    #[serde(default)]
-    pub service_endpoint: Option<String>,
-}
-
 // ── Realm / Space Management ────────────────────────────────────
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]

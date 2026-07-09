@@ -74,7 +74,7 @@ fn session_grant_proof_signs_canonical_claims() {
         .expect("proof JWS must verify under matching pubkey");
     // Decode + assert payload claims.
     let payload_bytes = URL_SAFE_NO_PAD.decode(parts[1]).unwrap();
-    let claims: SessionGrantIntrospectionProofClaims =
+    let claims: cokret_sdk::SessionGrantIntrospectionProofClaims =
         serde_json::from_slice(&payload_bytes).unwrap();
     assert_eq!(
         claims.kind, "ck.session_grant.introspection_proof.v1",
