@@ -575,7 +575,7 @@ pub(super) fn connect(base: String, actor: String, device: String, ctx: ConnectC
         needs_device_authorization.set(false);
         device_authorization_check_complete.set(false);
         account_has_other_devices.set(false);
-        tracing::warn!(target: "session_boot", token_empty = token().trim().is_empty(), "connect: starting bootstrap connect (sets Checking/Restoring; only reaches Authenticated at end)");
+        tracing::debug!(target: "session_boot", token_empty = token().trim().is_empty(), "connect: starting bootstrap connect (sets Checking/Restoring; only reaches Authenticated at end)");
         session_boot_state.set(if token().trim().is_empty() {
             SessionBootState::Restoring
         } else {
@@ -1712,7 +1712,7 @@ pub(super) fn connect(base: String, actor: String, device: String, ctx: ConnectC
                 );
             }
         }
-        tracing::warn!(target: "session_boot", token_empty = token().trim().is_empty(), "connect: reached END of bootstrap — setting boot_state = Authenticated (token present) / Unauthenticated (empty)");
+        tracing::debug!(target: "session_boot", token_empty = token().trim().is_empty(), "connect: reached END of bootstrap — setting boot_state = Authenticated (token present) / Unauthenticated (empty)");
         session_boot_state.set(if token().trim().is_empty() {
             SessionBootState::Unauthenticated
         } else {

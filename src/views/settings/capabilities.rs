@@ -268,7 +268,7 @@ mod tests {
     fn sample_grant(subject: serde_json::Value) -> Capability {
         serde_json::from_value(json!({
             "id": "ck:grant:0196419b-0000-7000-8000-000000000000",
-            "schema": "ck.schema.capability_grant.v1",
+            "schema": "ck.schema.capability.v1",
             "realm_id": "ck:realm:0196419b-0000-7000-8000-000000000001",
             "issuer": "did:web:alice.example",
             "subject": subject,

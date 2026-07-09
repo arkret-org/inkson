@@ -47,6 +47,7 @@ pub fn RealmAdminPanel(
     // Capability grant/revoke Move-strand inputs (see capability-grant-card)
     let mut cap_grant_id = use_signal(|| "cap.demo-01".to_owned());
     let mut cap_tag = use_signal(|| "discussion.message.create".to_owned());
+    let mut cap_subject = use_signal(String::new);
     let mut cap_revoke_reason = use_signal(|| "rotation policy".to_owned());
     let mut archive_confirm_open = use_signal(|| false);
     let mut destroy_confirm_open = use_signal(|| false);
@@ -1209,6 +1210,13 @@ pub fn RealmAdminPanel(
                     value: "{cap_tag}",
                     oninput: move |event: FormEvent| cap_tag.set(event.value()),
                 }
+                Label { html_for: "cap-grant-subject-input", "Subject DID (grantee — required for grant)" }
+                Input {
+                    id: "cap-grant-subject-input",
+                    "data-testid": "cap-grant-subject-input",
+                    value: "{cap_subject}",
+                    oninput: move |event: FormEvent| cap_subject.set(event.value()),
+                }
                 Label { html_for: "cap-revoke-reason-input", "Revoke reason (optional)" }
                 Input {
                     id: "cap-revoke-reason-input",
@@ -1284,9 +1292,10 @@ pub fn RealmAdminPanel(
                                 let api_token = token();
                                 let grant_val = cap_grant_id().trim().to_owned();
                                 let tag_val = cap_tag().trim().to_owned();
-                                if grant_val.is_empty() || tag_val.is_empty() {
+                                let subject_val = cap_subject().trim().to_owned();
+                                if grant_val.is_empty() || tag_val.is_empty() || subject_val.is_empty() {
                                     status_msg.set(
-                                        "fill grant_id + tag before submitting capability grant".to_owned(),
+                                        "fill grant_id + tag + subject DID before submitting capability grant".to_owned(),
                                     );
                                     return;
                                 }
@@ -1301,48 +1310,60 @@ pub fn RealmAdminPanel(
                                     return;
                                 }
                                 // Pull the active constraint from the editor
-                                // signals into the wire shape. Empty input
-                                // yields no constraint.
+                                // signals into the canonical `grant-constraint`
+                                // shape (`{constraint_type, effect, …}`). Empty
+                                // input yields no constraint. `expires_at` is the
+                                // grant's own validity bound, so it is threaded
+                                // through the builder directly (not as a
+                                // constraint) while the temporal constraint keeps
+                                // only `not_before`.
                                 let kind = cap_constraint_kind();
+                                let expires_at_val = cap_temporal_expires_at().trim().to_owned();
+                                let expires_at_opt = if kind == "temporal" && !expires_at_val.is_empty() {
+                                    Some(expires_at_val.clone())
+                                } else {
+                                    None
+                                };
                                 let constraint_json: serde_json::Value =
                                     if kind == "temporal" {
                                         let nb = cap_temporal_not_before();
-                                        let ea = cap_temporal_expires_at();
                                         let nb_trim = nb.trim();
-                                        let ea_trim = ea.trim();
-                                        if nb_trim.is_empty() && ea_trim.is_empty() {
+                                        if nb_trim.is_empty() && expires_at_opt.is_none() {
                                             serde_json::Value::Null
                                         } else {
-                                            let mut window = serde_json::Map::new();
+                                            let mut constraint = serde_json::Map::new();
+                                            constraint.insert(
+                                                "constraint_type".into(),
+                                                serde_json::Value::String("temporal".to_owned()),
+                                            );
+                                            constraint.insert(
+                                                "effect".into(),
+                                                serde_json::Value::String("allow".to_owned()),
+                                            );
                                             if !nb_trim.is_empty() {
-                                                window.insert(
+                                                constraint.insert(
                                                     "not_before".into(),
                                                     serde_json::Value::String(nb_trim.to_owned()),
                                                 );
                                             }
-                                            if !ea_trim.is_empty() {
-                                                // Validity upper bound is `expires_at`;
-                                                // `not_after` is not canonical.
-                                                window.insert(
+                                            if let Some(ea) = expires_at_opt.as_deref() {
+                                                constraint.insert(
                                                     "expires_at".into(),
-                                                    serde_json::Value::String(ea_trim.to_owned()),
+                                                    serde_json::Value::String(ea.to_owned()),
                                                 );
                                             }
-                                            json!([
-                                                {
-                                                    "kind": "temporal.window",
-                                                    "value": serde_json::Value::Object(window),
-                                                }
-                                            ])
+                                            json!([serde_json::Value::Object(constraint)])
                                         }
                                     } else {
                                         serde_json::Value::Null
                                     };
-                                let envelope = crate::operation::ck_ops::capability_grant(
+                                let envelope = crate::operation::ck_ops::capability_grant_actions(
                                     &realm,
                                     &actor_id,
                                     &grant_val,
-                                    &tag_val,
+                                    &subject_val,
+                                    &[tag_val.as_str()],
+                                    expires_at_opt.as_deref(),
                                     constraint_json,
                                 )
                                 .build_sdk_event("inkson");
@@ -1397,16 +1418,15 @@ pub fn RealmAdminPanel(
                                 let realm = realm.clone();
                                 let api_token = token();
                                 let grant_val = cap_grant_id().trim().to_owned();
-                                let tag_val = cap_tag().trim().to_owned();
                                 let reason_val = cap_revoke_reason();
                                 let reason_opt = if reason_val.trim().is_empty() {
                                     None
                                 } else {
                                     Some(reason_val.clone())
                                 };
-                                if grant_val.is_empty() || tag_val.is_empty() {
+                                if grant_val.is_empty() {
                                     status_msg.set(
-                                        "fill grant_id + tag before submitting capability revoke".to_owned(),
+                                        "fill grant_id before submitting capability revoke".to_owned(),
                                     );
                                     return;
                                 }
@@ -1420,16 +1440,21 @@ pub fn RealmAdminPanel(
                                     );
                                     return;
                                 }
-                                let envelope = crate::operation::ck_ops::capability_revoke(
+                                let envelope = match crate::operation::ck_ops::capability_revoke(
                                     &realm,
                                     &actor_id,
                                     &grant_val,
-                                    &tag_val,
                                     reason_opt.as_deref(),
-                                )
-                                .build_sdk_event("inkson");
-                                let envelope = match envelope {
-                                    Ok(envelope) => envelope,
+                                ) {
+                                    Ok(builder) => match builder.build_sdk_event("inkson") {
+                                        Ok(envelope) => envelope,
+                                        Err(err) => {
+                                            status_msg.set(format!(
+                                                "capability.revoke build failed: {err}"
+                                            ));
+                                            return;
+                                        }
+                                    },
                                     Err(err) => {
                                         status_msg.set(format!(
                                             "capability.revoke build failed: {err}"

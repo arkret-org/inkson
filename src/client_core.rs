@@ -5,8 +5,6 @@
 //! target-aware construction point without pulling UI state into client-core.
 
 use std::collections::{BTreeSet, VecDeque};
-use std::future::Future;
-use std::pin::Pin;
 use std::sync::{Arc, Mutex};
 
 use base64::Engine as _;
@@ -264,9 +262,8 @@ impl BufferedRealmEventsFrameSource {
 impl RealmEventsFrameSource for BufferedRealmEventsFrameSource {
     fn next_frame<'a>(
         &'a mut self,
-    ) -> Pin<
-        Box<dyn Future<Output = cokret_sdk::Result<Option<cokret_sdk::EventsSubscribeFrame>>> + 'a>,
-    > {
+    ) -> garth::subscribe::realm::BoxRealmStreamFuture<'a, Option<cokret_sdk::EventsSubscribeFrame>>
+    {
         let frame = self.frames.pop_front();
         Box::pin(async move { Ok(frame) })
     }
@@ -308,7 +305,7 @@ impl RealmEventsTransport for InksonRealmEventsTransport {
         &'a self,
         realm_id: &'a cokret_sdk::RealmId,
         after: Option<&'a str>,
-    ) -> Pin<Box<dyn Future<Output = cokret_sdk::Result<Self::Source>> + 'a>> {
+    ) -> garth::subscribe::realm::BoxRealmStreamFuture<'a, Self::Source> {
         Box::pin(async move {
             let mut options = cokret_sdk::http_client::EventsSubscribeOptions::new()
                 .realm(realm_id.as_str().to_owned())

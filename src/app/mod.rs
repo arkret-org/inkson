@@ -331,10 +331,10 @@ pub fn RouterView() -> Element {
         let mut token_for_secure_upgrade = token;
         use_future(move || async move {
             crate::runtime_helpers::sleep_for(std::time::Duration::from_millis(1)).await;
-            tracing::warn!(target: "secure_store", "secure store upgrade: invoking upgrade_wasm_secure_key_store_async");
+            tracing::debug!(target: "secure_store", "secure store upgrade: invoking upgrade_wasm_secure_key_store_async");
             match crate::secure_key_store::upgrade_wasm_secure_key_store_async("inkson").await {
                 Ok(Some(secure_store)) => {
-                    tracing::warn!(target: "secure_store", "secure store upgrade: Ok(Some) — IndexedDb tier installed");
+                    tracing::debug!(target: "secure_store", "secure store upgrade: Ok(Some) — IndexedDb tier installed");
                     let loaded_config = config_store_for_secure_upgrade
                         .read()
                         .load_with_secure_store(secure_store.as_ref());
@@ -360,7 +360,7 @@ pub fn RouterView() -> Element {
                             &account_did_for_secure_upgrade(),
                             &device_id_for_secure_upgrade(),
                         ) {
-                            tracing::warn!(target: "secure_store", "secure store upgrade: rehydrated token from config.session_credential — session should restore");
+                            tracing::debug!(target: "secure_store", "secure store upgrade: rehydrated token from config.session_credential — session should restore");
                             token_for_secure_upgrade.set(rehydrated);
                         }
                     } else {
@@ -525,7 +525,7 @@ pub fn RouterView() -> Element {
                     tracing::warn!(target: "secure_store", ?error, "secure store upgrade: Err — IndexedDB secure-key-store upgrade failed");
                 }
             }
-            tracing::warn!(target: "secure_store", "secure store upgrade: settled, marking secure_store_bootstrap_ready=true");
+            tracing::debug!(target: "secure_store", "secure store upgrade: settled, marking secure_store_bootstrap_ready=true");
             secure_store_ready_for_upgrade.set(true);
         });
     }
@@ -1003,7 +1003,7 @@ pub fn RouterView() -> Element {
             // backups whenever `detection_key` changes. On a wedged account it
             // storms; log the key so consecutive values reveal which field
             // (generation) keeps flipping. Remove once the driver is fixed.
-            tracing::warn!(target: "recovery_diag", key = %detection_key, "recovery_state re-fetch (recovery-policy+backups)");
+            tracing::debug!(target: "recovery_diag", key = %detection_key, "recovery_state re-fetch (recovery-policy+backups)");
             let local_fingerprint = {
                 let store = state_store_for_recovery_state.read();
                 crate::views::recovery::local_recovery_key_fingerprint(&store, &actor)
@@ -1196,7 +1196,7 @@ pub fn RouterView() -> Element {
                 &account_did(),
                 secure_store_ready,
             );
-            tracing::warn!(target: "session_boot", ?bootstrap_state, secure_store_ready, "bootstrap: branch A (will call connect) — setting boot_state from material");
+            tracing::debug!(target: "session_boot", ?bootstrap_state, secure_store_ready, "bootstrap: branch A (will call connect) — setting boot_state from material");
             session_boot_state.set(bootstrap_state);
             connect(
                 base,
@@ -1252,7 +1252,7 @@ pub fn RouterView() -> Element {
             // Only `set` on an actual change so the loop quiesces and the future
             // can run.
             if *session_boot_state.peek() != bootstrap_state {
-                tracing::warn!(target: "session_boot", ?bootstrap_state, secure_store_ready, "bootstrap: branch B (waiting on secure store) — boot_state changed, setting");
+                tracing::debug!(target: "session_boot", ?bootstrap_state, secure_store_ready, "bootstrap: branch B (waiting on secure store) — boot_state changed, setting");
                 session_boot_state.set(bootstrap_state);
             }
         }
@@ -1452,7 +1452,7 @@ pub fn RouterView() -> Element {
             // storms; log the full key so consecutive values reveal which
             // component (sec/snap/enc/epoch/rk/recovery/generation) keeps
             // flipping. Remove once the driver is fixed.
-            tracing::warn!(target: "recovery_diag", key = %detection_key, "mls_unlock detection re-fetch (backups)");
+            tracing::debug!(target: "recovery_diag", key = %detection_key, "mls_unlock detection re-fetch (backups)");
             let seen_detection_key_for_result = seen_detection_key;
 
             spawn(async move {
@@ -4228,15 +4228,20 @@ pub fn RouterView() -> Element {
                                 {
                                     let status_text = connection_status();
                                     let error_text = last_error();
-                                    let trimmed_status = if status_text.len() > 96 {
-                                        format!("{}…", &status_text[..96])
+                                    // Truncate by characters, not bytes: these
+                                    // strings carry server `reason` / error text
+                                    // that can contain non-ASCII (中文 / emoji),
+                                    // and a byte slice mid-character would panic
+                                    // the whole shell to a white screen.
+                                    let trimmed_status = if status_text.chars().count() > 96 {
+                                        format!("{}…", status_text.chars().take(96).collect::<String>())
                                     } else {
                                         status_text
                                     };
                                     let trimmed_error = error_text
                                         .as_ref()
-                                        .map(|err| if err.len() > 96 {
-                                            format!("{}…", &err[..96])
+                                        .map(|err| if err.chars().count() > 96 {
+                                            format!("{}…", err.chars().take(96).collect::<String>())
                                         } else {
                                             err.clone()
                                         });

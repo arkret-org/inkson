@@ -130,9 +130,10 @@ pub async fn submit_realm_key_request(
         actor_id: cokret_sdk::Did::new(actor_id.trim().to_owned())?,
         device_id: Some(cokret_sdk::DeviceId::new(device_id.trim().to_owned())?),
         sent_at,
-        // Directed relay; soland enforces its own TTL. Stay well under the
-        // 5-minute ephemeral ceiling.
-        expires_at: sent_at + chrono::Duration::minutes(5),
+        // Directed relay; soland enforces its own TTL. Stay a full minute
+        // under the 5-minute ephemeral ceiling so clock skew / a closed-
+        // interval check server-side can't reject a boundary value.
+        expires_at: sent_at + chrono::Duration::minutes(4),
         payload: serde_json::to_value(&payload)?,
         proof: None,
     };

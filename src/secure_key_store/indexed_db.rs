@@ -117,13 +117,13 @@ impl IndexedDbSecureKeyStore {
     /// [`SecureKeyStore`] trait.
     pub async fn new_async(service_name: &str) -> Result<Self, SecureKeyStoreError> {
         let db_name = format!("inkson.secret.{service_name}");
-        tracing::warn!(target: "secure_store", db_name=%db_name, "new_async: step 1/3 open_db (awaiting IndexedDB open)…");
+        tracing::debug!(target: "secure_store", db_name=%db_name, "new_async: step 1/3 open_db (awaiting IndexedDB open)…");
         let db = Self::open_db(&db_name).await?;
-        tracing::warn!(target: "secure_store", "new_async: step 1/3 open_db OK; step 2/3 load_or_derive_wrapping_key (SubtleCrypto)…");
+        tracing::debug!(target: "secure_store", "new_async: step 1/3 open_db OK; step 2/3 load_or_derive_wrapping_key (SubtleCrypto)…");
         let crypto_key = Self::load_or_derive_wrapping_key(&db, service_name).await?;
-        tracing::warn!(target: "secure_store", "new_async: step 2/3 wrapping_key OK; step 3/3 load_and_decrypt_cache…");
+        tracing::debug!(target: "secure_store", "new_async: step 2/3 wrapping_key OK; step 3/3 load_and_decrypt_cache…");
         let cache = Self::load_and_decrypt_cache(&db, &crypto_key).await?;
-        tracing::warn!(target: "secure_store", "new_async: step 3/3 cache OK; IndexedDbSecureKeyStore fully constructed");
+        tracing::debug!(target: "secure_store", "new_async: step 3/3 cache OK; IndexedDbSecureKeyStore fully constructed");
         Ok(Self {
             service_name: service_name.to_owned(),
             db_name,
@@ -433,7 +433,7 @@ impl IndexedDbSecureKeyStore {
             // "derived fresh" branch below on every reload, the persisted
             // `primary` CryptoKey is NOT surviving the IndexedDB round-trip — that
             // is the wrapping-key instability that orphans the MLS init key.
-            tracing::warn!(target: "secure_store", "wrapping key: LOADED existing primary (stable across reloads)");
+            tracing::debug!(target: "secure_store", "wrapping key: LOADED existing primary (stable across reloads)");
             return Ok(existing);
         }
         tracing::warn!(target: "secure_store", "wrapping key: DERIVED FRESH primary (no existing found — if this fires on EVERY reload, the key is not persisting and all prior entries are orphaned)");

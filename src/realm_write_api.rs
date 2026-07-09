@@ -521,52 +521,55 @@ pub async fn revoke_realm_admin(
         realm_id,
         actor_id,
         grant_id,
-        "ck.realm.admin",
         reason,
-    )
+    )?
     .build_sdk_event("inkson")?;
     submitter.submit_sdk_event(&event).await
 }
 
-/// Seal a moderation disposition via `ck.moderation.decision`.
-/// `decision_id` (cell subject) is minted client-side.
+/// Seal a moderation disposition via `ck.moderation.decision`. The cell
+/// subject is the moderated `target_ref`; the sealed decision Event's own
+/// id is the reference later lift / appeal events resolve. `decision` is
+/// the closed-enum runtime verb (`hard_deny` / `soft_deny` / `quarantine`
+/// / `require_review`).
 pub async fn moderation_decide(
     submitter: &EventSubmitter,
     realm_id: &str,
     actor_id: &str,
-    decision_id: &str,
     target_ref: &str,
-    verdict: &str,
+    decision: &str,
     reason_code: &str,
 ) -> anyhow::Result<SubmitEventResult> {
     let event = ck_ops::moderation_decision(
         realm_id,
         actor_id,
-        decision_id,
         target_ref,
-        verdict,
+        decision,
         reason_code,
-    )
+    )?
     .build_sdk_event("inkson")?;
     submitter.submit_sdk_event(&event).await
 }
 
 /// Lift a previously sealed moderation decision via
-/// `ck.moderation.decision.lift`. `decision_ref` is the lifted
-/// decision's `decision_id`.
+/// `ck.moderation.decision.lift`. `target_ref` is the moderated target
+/// (the cell subject shared with the original decision); `decision_ref`
+/// is the `ck:event:` id of the decision being lifted.
 pub async fn moderation_lift(
     submitter: &EventSubmitter,
     realm_id: &str,
     actor_id: &str,
+    target_ref: &str,
     decision_ref: &str,
     reason_code: &str,
 ) -> anyhow::Result<SubmitEventResult> {
     let event = ck_ops::moderation_decision_lift(
         realm_id,
         actor_id,
+        target_ref,
         decision_ref,
         reason_code,
-    )
+    )?
     .build_sdk_event("inkson")?;
     submitter.submit_sdk_event(&event).await
 }
@@ -624,6 +627,7 @@ pub async fn appeal_overturn_atomic(
     realm_id: &str,
     actor_id: &str,
     appeal_id: &str,
+    target_ref: &str,
     decision_ref: &str,
     reason_text_ref: &str,
     lift_reason_code: &str,
@@ -640,9 +644,10 @@ pub async fn appeal_overturn_atomic(
     let lift_event = ck_ops::moderation_decision_lift(
         realm_id,
         actor_id,
+        target_ref,
         decision_ref,
         lift_reason_code,
-    )
+    )?
     .build_sdk_event("inkson")?;
     sign_and_submit_moderation_batch(submitter, realm_id, vec![appeal_event, lift_event]).await
 }
@@ -671,11 +676,10 @@ pub async fn appeal_modify_atomic(
     let mut new_decision = ck_ops::moderation_decision(
         realm_id,
         actor_id,
-        &new_decision_id,
         target_ref,
         new_verdict,
         new_reason_code,
-    )
+    )?
     .build_sdk_event("inkson")?;
     // The reducer matches `modify_decision_ref` against the new decision's
     // EVENT id, so pin the SDK Event id to the same value we report.

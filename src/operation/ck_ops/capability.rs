@@ -4,66 +4,46 @@
 
 use serde_json::{Value, json};
 
-use super::{OperationBuilder, trim_realm_id};
+use super::{OperationBuilder, payload_value, trim_realm_id};
 
-/// `ck.capability.grant` event with optional structured constraints
-/// (e.g. `temporal.window`). `tag` is the capability action the grant
-/// authorises (e.g. `discussion.message.create`).
-pub fn capability_grant(
-    realm_id: &str,
-    actor: &str,
-    grant_id: &str,
-    tag: &str,
-    constraints: Value,
-) -> OperationBuilder {
-    let mut body = json!({
-        "grant_id": grant_id,
-        "tag": tag,
-    });
-    if !constraints.is_null() {
-        body["constraints"] = constraints;
-    }
-    OperationBuilder::new(
-        realm_id,
-        actor,
-        cokret_sdk::events::kinds::EventKind::CapabilityGrant,
-    )
-    .target_ref(grant_id)
-    .body(body)
-}
-
-/// `ck.capability.revoke` event. `reason` shows up in the audit
-/// trail and lets the UI explain why the capability was dropped.
+/// `ck.capability.revoke` — drop a standing grant, addressed by `grant_id`.
+/// `reason` shows up in the audit trail and lets the UI explain why the
+/// capability was dropped.
+///
+/// Uses the SDK `CapabilityRevokePayload` strong type
+/// (`event-payload.schema.json#/$defs/capability_revoke_payload`,
+/// `deny_unknown_fields`) so the wire body cannot drift — the earlier hand
+/// -rolled body carried a `tag` field the schema forbids.
 pub fn capability_revoke(
     realm_id: &str,
     actor: &str,
     grant_id: &str,
-    tag: &str,
     reason: Option<&str>,
-) -> OperationBuilder {
-    let mut body = json!({
-        "grant_id": grant_id,
-        "tag": tag,
-    });
-    if let Some(reason) = reason {
-        body["reason"] = json!(reason);
-    }
-    OperationBuilder::new(
+) -> anyhow::Result<OperationBuilder> {
+    let grant_id_typed = cokret_sdk::GrantId::new(grant_id.to_owned())
+        .map_err(|err| anyhow::anyhow!("capability revoke grant_id {grant_id:?}: {err}"))?;
+    let payload = cokret_sdk::CapabilityRevokePayload {
+        grant_ref: None,
+        grant_id: grant_id_typed,
+        reason: reason.map(ToOwned::to_owned),
+    };
+    Ok(OperationBuilder::new(
         realm_id,
         actor,
         cokret_sdk::events::kinds::EventKind::CapabilityRevoke,
     )
     .target_ref(grant_id)
-    .body(body)
+    .body(payload_value(&payload, "capability_revoke payload")?))
 }
 
 /// `ck.capability.grant` event carrying the canonical
 /// `capability_grant_payload` wrapper (`{grant_id, grant:{…}}`) the P1
 /// soland reducer (`apply_capability`) reads `issuer` / `subject` /
-/// `actions` / `resources` from. Use this — not [`capability_grant`] —
-/// for any directed grant (e.g. setting a Realm admin via
-/// `actions=[ck.realm.admin]`), because the reducer fails closed on a
-/// grant body with no `issuer` or no `actions`.
+/// `actions` / `resources` from. This is the only capability-grant
+/// builder: every directed grant (e.g. setting a Realm admin via
+/// `actions=[ck.realm.admin]`, or an admin-panel capability grant to a
+/// `subject`) carries the full grant object, because the reducer fails
+/// closed on a grant body with no `issuer` or no `actions`.
 ///
 /// `subject` is the delegee DID the grant authorizes; `actor` is the
 /// issuer (and the Envelope signer). `resources` defaults to a single
@@ -84,7 +64,7 @@ pub fn capability_grant_actions(
     let realm = trim_realm_id(realm_id);
     let mut grant = json!({
         "id": grant_id,
-        "schema": "ck.schema.capability_grant.v1",
+        "schema": "ck.schema.capability.v1",
         "realm_id": realm,
         "issuer": actor,
         "subject": subject,
