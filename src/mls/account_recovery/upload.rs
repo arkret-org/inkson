@@ -315,7 +315,7 @@ pub async fn upload_mls_account_secret_backup_with_recovery_public_key(
         .map_err(|err| anyhow!("fetch active recovery policy for backup binding: {err}"))?;
     let recovery_policy_ref = active_policy
         .as_ref()
-        .map(|policy| (policy.policy_id.as_str(), policy.policy_version));
+        .map(|policy| (policy.policy_id.as_str(), policy.version));
 
     let account_backup_id = fresh_backup_id();
     let recovery_key_ref = format!("{actor_id}#recovery");

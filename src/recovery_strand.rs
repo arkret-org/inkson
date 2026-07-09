@@ -13,7 +13,8 @@
 use base64::Engine as _;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD as B64;
 use cokret_sdk::models::{
-    RecoveryPolicyRef, RecoverySessionCompleteRequestBody, RecoverySessionCreateRequestBody,
+    RecoveryPolicyActiveOutcome, RecoveryPolicyRef, RecoveryPolicySummary,
+    RecoverySessionCompleteRequestBody, RecoverySessionCreateRequestBody,
     RecoverySessionProofSubmitRequestBody,
 };
 use cokret_sdk::{DeviceId, Did, EventId, PolicyId, TypedTrustDomainId};
@@ -35,17 +36,11 @@ pub const RECOVERY_POLICY_SIGNED_FIELDS: &[&str] = &[
 ];
 
 /// 6.1 — parsed active recovery policy summary (the fields a client surfaces).
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
-pub struct ActiveRecoveryPolicy {
-    pub policy_id: String,
-    pub policy_version: u64,
-    pub trust_domain: String,
-    pub allowed_proof_kinds: Vec<String>,
-}
+pub type ActiveRecoveryPolicy = RecoveryPolicySummary;
 
 /// Account-level recovery state derived from server facts plus optional local
 /// display metadata.
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Debug, Default)]
 pub struct AccountRecoveryState {
     pub active_policy: Option<ActiveRecoveryPolicy>,
     pub accepted_did_recovery_first_backup_count: usize,
@@ -73,30 +68,12 @@ impl AccountRecoveryState {
 /// Parse the `GET recovery-policy` response (`{ "active_policy": <summary|null> }`)
 /// into [`ActiveRecoveryPolicy`]. Returns `None` when no policy is accepted.
 pub fn parse_active_recovery_policy(response: &Value) -> Option<ActiveRecoveryPolicy> {
-    let p = response.get("active_policy").filter(|v| !v.is_null())?;
-    let policy_id = p.get("policy_id").and_then(Value::as_str)?.trim();
-    let policy_version = p.get("version").and_then(Value::as_u64)?;
-    if policy_id.is_empty() || policy_version == 0 {
+    let outcome = serde_json::from_value::<RecoveryPolicyActiveOutcome>(response.clone()).ok()?;
+    let policy = outcome.active_policy?;
+    if policy.version == 0 {
         return None;
     }
-    Some(ActiveRecoveryPolicy {
-        policy_id: policy_id.to_owned(),
-        policy_version,
-        trust_domain: p
-            .get("trust_domain")
-            .and_then(Value::as_str)
-            .unwrap_or_default()
-            .to_owned(),
-        allowed_proof_kinds: p
-            .get("allowed_proof_kinds")
-            .and_then(Value::as_array)
-            .map(|a| {
-                a.iter()
-                    .filter_map(|v| v.as_str().map(ToOwned::to_owned))
-                    .collect()
-            })
-            .unwrap_or_default(),
-    })
+    Some(policy)
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -125,8 +102,8 @@ pub fn first_backup_gate_status_from_payloads(
         Some(backup_id) => FirstBackupGateStatus::Satisfied { backup_id },
         None => FirstBackupGateStatus::Blocked(
             FirstBackupGateBlockReason::NoMatchingDidRecoveryBackup {
-                policy_id: policy.policy_id,
-                policy_version: policy.policy_version,
+                policy_id: policy.policy_id.as_str().to_owned(),
+                policy_version: policy.version,
             },
         ),
     }
@@ -428,8 +405,8 @@ pub async fn ensure_recovery_policy_and_did_recovery_backup(
         "recovery_private_key_b64u": B64.encode(&recovery_private_key),
         "recovery_public_key_b64u": B64.encode(&recovery_public_key),
         "recovery_policy_ref": {
-            "policy_id": policy.policy_id,
-            "policy_version": policy.policy_version,
+            "policy_id": policy.policy_id.as_str(),
+            "policy_version": policy.version,
         },
         "created_at": created_at,
     }))?;
@@ -440,8 +417,8 @@ pub async fn ensure_recovery_policy_and_did_recovery_backup(
         &recovery_public_key,
         &recovery_key_ref,
         &plaintext,
-        &policy.policy_id,
-        policy.policy_version,
+        policy.policy_id.as_str(),
+        policy.version,
     )?;
     api.put_key_backup(&backup_id, body).await?;
     Ok(backup_id)
@@ -489,7 +466,7 @@ fn did_recovery_backup_matches_active_policy(
             .get("recovery_policy_ref")
             .and_then(|policy_ref| policy_ref.get("policy_version"))
             .and_then(Value::as_u64)
-            == Some(policy.policy_version)
+            == Some(policy.version)
         && backup_series_seq_is_first_when_present(backup)
 }
 
@@ -636,9 +613,33 @@ pub async fn run_principal_signing_recovery(
 
 #[cfg(test)]
 mod tests {
+    use cokret_sdk::models::RecoveryProofKind;
     use serde_json::json;
 
     use super::*;
+
+    fn test_active_policy(policy_id: &str, version: u64) -> ActiveRecoveryPolicy {
+        let issued_at = chrono::DateTime::parse_from_rfc3339("2026-01-01T00:00:00Z")
+            .unwrap()
+            .with_timezone(&chrono::Utc);
+        let accepted_at = chrono::DateTime::parse_from_rfc3339("2026-01-01T00:00:01Z")
+            .unwrap()
+            .with_timezone(&chrono::Utc);
+        ActiveRecoveryPolicy {
+            policy_id: PolicyId::new(policy_id.to_owned()).unwrap(),
+            principal_id: Did::new("did:web:alice.example".to_owned()).unwrap(),
+            version,
+            recovery_policy_ref: None,
+            trust_domain: TypedTrustDomainId::new("ck:trust_domain:soland.local".to_owned())
+                .unwrap(),
+            allowed_proof_kinds: vec![RecoveryProofKind::RecoveryUnlock],
+            supersedes: None,
+            expires_at: None,
+            issued_at,
+            accepted_at,
+            policy: None,
+        }
+    }
 
     #[test]
     fn create_session_body_matches_schema_shape() {
@@ -676,29 +677,40 @@ mod tests {
 
     #[test]
     fn parse_active_policy_handles_null_and_value() {
-        assert_eq!(
-            parse_active_recovery_policy(&json!({ "active_policy": null })),
-            None
-        );
-        assert_eq!(
+        assert!(parse_active_recovery_policy(&json!({ "active_policy": null })).is_none());
+        assert!(
             parse_active_recovery_policy(&json!({
-                "active_policy": { "policy_id": "", "version": 1 }
-            })),
-            None
+                "active_policy": {
+                    "policy_id": "",
+                    "principal_id": "did:web:alice.example",
+                    "version": 1,
+                    "trust_domain": "ck:trust_domain:soland.local",
+                    "allowed_proof_kinds": [],
+                    "issued_at": "2026-01-01T00:00:00Z",
+                    "accepted_at": "2026-01-01T00:00:01Z"
+                }
+            }))
+            .is_none()
         );
         let parsed = parse_active_recovery_policy(&json!({
             "active_policy": {
                 "policy_id": "ck:policy:019a6aa0-0000-7000-8000-0000000000bb",
+                "principal_id": "did:web:alice.example",
                 "version": 3,
                 "trust_domain": "ck:trust_domain:soland.local",
                 "allowed_proof_kinds": ["principal_signing", "recovery_unlock"],
+                "issued_at": "2026-01-01T00:00:00Z",
+                "accepted_at": "2026-01-01T00:00:01Z"
             }
         }))
         .expect("active policy");
-        assert_eq!(parsed.policy_version, 3);
+        assert_eq!(parsed.version, 3);
         assert_eq!(
             parsed.allowed_proof_kinds,
-            vec!["principal_signing", "recovery_unlock"]
+            vec![
+                RecoveryProofKind::PrincipalSigning,
+                RecoveryProofKind::RecoveryUnlock
+            ]
         );
     }
 
@@ -823,9 +835,12 @@ mod tests {
         let policy = json!({
             "active_policy": {
                 "policy_id": "ck:policy:019a6aa0-0000-7000-8000-0000000000bb",
+                "principal_id": "did:web:alice.example",
                 "version": 1,
                 "trust_domain": "ck:trust_domain:soland.local",
                 "allowed_proof_kinds": ["principal_signing"],
+                "issued_at": "2026-01-01T00:00:00Z",
+                "accepted_at": "2026-01-01T00:00:01Z"
             }
         });
         let no_backup =
@@ -881,12 +896,7 @@ mod tests {
 
     #[test]
     fn matching_did_recovery_backup_requires_active_policy_ref() {
-        let policy = ActiveRecoveryPolicy {
-            policy_id: "ck:policy:019a6aa0-0000-7000-8000-0000000000bb".to_owned(),
-            policy_version: 2,
-            trust_domain: "ck:trust_domain:soland.local".to_owned(),
-            allowed_proof_kinds: vec!["recovery_unlock".to_owned()],
-        };
+        let policy = test_active_policy("ck:policy:019a6aa0-0000-7000-8000-0000000000bb", 2);
         let payload = json!({
             "backups": [
                 {
@@ -918,12 +928,7 @@ mod tests {
 
     #[test]
     fn matching_did_recovery_backup_rejects_non_first_series_seq_when_present() {
-        let policy = ActiveRecoveryPolicy {
-            policy_id: "ck:policy:019a6aa0-0000-7000-8000-0000000000bb".to_owned(),
-            policy_version: 2,
-            trust_domain: "ck:trust_domain:soland.local".to_owned(),
-            allowed_proof_kinds: vec!["recovery_unlock".to_owned()],
-        };
+        let policy = test_active_policy("ck:policy:019a6aa0-0000-7000-8000-0000000000bb", 2);
         let payload = json!({
             "backups": [{
                 "backup_id": "ck:backup:019a6aa0-0000-7000-8000-000000000002",
@@ -947,9 +952,12 @@ mod tests {
         let policy = json!({
             "active_policy": {
                 "policy_id": "ck:policy:019a6aa0-0000-7000-8000-0000000000bb",
+                "principal_id": "did:web:alice.example",
                 "version": 1,
                 "trust_domain": "ck:trust_domain:soland.local",
                 "allowed_proof_kinds": ["principal_signing"],
+                "issued_at": "2026-01-01T00:00:00Z",
+                "accepted_at": "2026-01-01T00:00:01Z"
             }
         });
         assert_eq!(

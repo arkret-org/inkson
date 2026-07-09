@@ -176,7 +176,7 @@ pub fn MlsUnlockPrompt(
                                 .map_err(|err| anyhow::anyhow!("derive recovery key: {err}"))
                                 .and_then(|(recovery_private_key, _)| {
                                     let expected_policy = active_policy.as_ref().map(|policy| {
-                                        (policy.policy_id.as_str(), policy.policy_version)
+                                        (policy.policy_id.as_str(), policy.version)
                                     });
                                     crate::mls::account_recovery::restore_mls_history_with_recovery_key_from_payload(
                                         &payload,
