@@ -12,55 +12,6 @@ use serde_json::json;
 
 use super::{OperationBuilder, trim_realm_id};
 
-/// Build a `ck.moderation.appeal.submit` operation. Mirrors the
-/// 4-state moderation appeal FSM. The wire body is the strong SDK
-/// [`cokret_sdk::AppealSubmitPayload`] (`ck.schema.moderation_appeal.v1`)
-/// rather than a hand-rolled `json!{}` — malformed ids fail at build time.
-/// (The live UI path is [`crate::views::moderation_appeal::build_appeal_submit_op`];
-/// this is the generic operation-builder form.)
-#[allow(clippy::too_many_arguments)]
-pub fn moderation_appeal_submit(
-    envelope_realm_id: &str,
-    actor: &str,
-    appeal_id: &str,
-    realm_id: &str,
-    decision_ref: &str,
-    target_ref: &str,
-    reason_text_ref: &str,
-    evidence_refs: Vec<String>,
-    evidence_visibility: Option<&str>,
-) -> anyhow::Result<OperationBuilder> {
-    let evidence_visibility = evidence_visibility
-        .map(|raw| {
-            serde_json::from_value::<cokret_sdk::AppealEvidenceVisibility>(json!(raw))
-                .map_err(|err| anyhow::anyhow!("invalid evidence_visibility {raw:?}: {err}"))
-        })
-        .transpose()?;
-    let payload = cokret_sdk::AppealSubmitPayload {
-        appeal_id: cokret_sdk::TypedAppealId::new(appeal_id)
-            .map_err(|err| anyhow::anyhow!("invalid appeal_id: {err}"))?,
-        realm_id: cokret_sdk::RealmId::new(realm_id.to_owned())
-            .map_err(|err| anyhow::anyhow!("invalid realm_id: {err}"))?,
-        decision_ref: cokret_sdk::EventId::new(decision_ref)
-            .map_err(|err| anyhow::anyhow!("invalid decision_ref: {err}"))?,
-        target_ref: target_ref.to_owned(),
-        appellant: cokret_sdk::Did::new(actor)
-            .map_err(|err| anyhow::anyhow!("invalid appellant did: {err}"))?,
-        reason_text_ref: reason_text_ref.to_owned(),
-        evidence_refs,
-        evidence_visibility,
-        created_at: chrono::Utc::now(),
-    };
-    cokret_sdk::ModerationAppealPayload::Submit(payload.clone()).validate_minimal()?;
-    Ok(OperationBuilder::new(
-        envelope_realm_id,
-        actor,
-        cokret_sdk::events::kinds::EventKind::ModerationAppealSubmit,
-    )
-    .target_ref(appeal_id)
-    .body(serde_json::to_value(&payload)?))
-}
-
 /// `ck.moderation.decision` — seal a moderation disposition. Writes the
 /// `moderation_state` cell keyed by `decision_id`. The reducer reads
 /// `decision_id` + `issuer` (here the authoring `actor`) and carries the
