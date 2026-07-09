@@ -1415,7 +1415,7 @@ fn add_feedback_keys(dict: &mut TranslationDict) {
     );
     dict.set(
         "feedback.invalid_realm_id",
-        "Realm ID must start with ck:realm:",
+        "Realm ID must start with ak:realm:",
     );
     dict.set(
         "feedback.contact_remark_saved",

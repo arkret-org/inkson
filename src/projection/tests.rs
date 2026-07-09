@@ -223,7 +223,7 @@ fn projection_audit_policy_access_late_recovery_marker_is_guarded() {
     let events = projection_events_from_sync_realms(&realms, None, None);
     let marker = events
         .iter()
-        .find(|event| event.id.starts_with("late-recovery-ck:event:01904100"))
+        .find(|event| event.id.starts_with("late-recovery-ak:event:01904100"))
         .expect("late recovery audit marker");
 
     assert!(marker.body.contains("30"));

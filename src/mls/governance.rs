@@ -37,7 +37,7 @@ use serde::{Deserialize, Serialize};
 pub struct GovernanceBindingPayload {
     /// MLS group id (Realm-scoped).
     pub group_id: String,
-    /// `ck:realm:` typed-id.
+    /// `ak:realm:` typed-id.
     pub realm_id: String,
     /// Epoch the commit advances from.
     pub prev_epoch: u64,

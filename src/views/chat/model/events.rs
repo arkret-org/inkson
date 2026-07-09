@@ -1243,7 +1243,7 @@ pub(crate) fn poll_cards_from_events(events: &[Value]) -> Vec<crate::messaging::
         let Some(message) = chat_message_from_event("", event) else {
             continue;
         };
-        // The card's tally identity is the wire message id (`ck:message:…`,
+        // The card's tally identity is the wire message id (`ak:message:…`,
         // what `poll_response.poll_ref` points at); the event id stays the
         // local render identity.
         if let Some(card) = crate::messaging::polls::PollCard::from_content(

@@ -661,7 +661,7 @@ fn cba_effect_plane_for_event(event: &arkret_sdk::Event) -> anyhow::Result<CbaEf
 fn cba_cell_family(cell: &str) -> anyhow::Result<&str> {
     let rest = cell
         .strip_prefix("ak:cell:")
-        .ok_or_else(|| anyhow::anyhow!("effects[].cell must use ck:cell: prefix"))?;
+        .ok_or_else(|| anyhow::anyhow!("effects[].cell must use ak:cell: prefix"))?;
     let (family, subject) = rest
         .split_once(':')
         .ok_or_else(|| anyhow::anyhow!("effects[].cell must include family and subject"))?;
@@ -680,7 +680,7 @@ fn data_event_auth_context(event: &arkret_sdk::Event) -> anyhow::Result<arkret_s
     };
     if !authorization_ref.starts_with("ak:grant:") {
         anyhow::bail!(
-            "DataEvent {} authorization_ref must be a ck:grant:* capability ref for auth_context",
+            "DataEvent {} authorization_ref must be a ak:grant:* capability ref for auth_context",
             event.event_id
         );
     }

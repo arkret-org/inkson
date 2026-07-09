@@ -90,7 +90,7 @@ pub(crate) fn read_scope_for_cursor(realm_id: &str, topic_id: Option<&str>) -> R
     }
 }
 
-/// YOU-05-009: the `ck:realm:<suffix>` → `ck:strand:<suffix>` main-strand id
+/// YOU-05-009: the `ak:realm:<suffix>` → `ak:strand:<suffix>` main-strand id
 /// derivation is a protocol mapping rule that affects event addressing.
 /// This is the crate's single authoritative copy — do NOT re-derive it
 /// locally; a divergent copy writes events to the wrong strand.

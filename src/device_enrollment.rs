@@ -24,7 +24,7 @@ use crate::secure_key_store::SigningSeedMaterial;
 /// a struct so the wasm bootstrap site stays readable and the assembly is unit
 /// testable without a live session.
 pub struct DeviceEnrollmentRequest {
-    /// This session's `device_id` (`ck:device:<uuid>`). The enrollment authority
+    /// This session's `device_id` (`ak:device:<uuid>`). The enrollment authority
     /// signs the `ck.device.authorize` for exactly this device so the projected
     /// `device_public_key` lands under the same id the session (and recovery)
     /// looks up.

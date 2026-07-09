@@ -757,7 +757,7 @@ pub fn RealmAdminPanel(
                                             && !avatar_blob_ref.starts_with("ak:blob:")
                                         {
                                             status_msg.set(
-                                                "profile update failed: avatar_blob_ref must be a ck:blob:* reference".to_owned(),
+                                                "profile update failed: avatar_blob_ref must be a ak:blob:* reference".to_owned(),
                                             );
                                             return;
                                         }

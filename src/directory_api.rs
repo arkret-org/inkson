@@ -40,7 +40,7 @@ pub async fn search_realms(
         .map_err(anyhow::Error::from)
 }
 
-/// Resolve a Realm by either its `ck:realm:<uuid>` id OR a human-readable
+/// Resolve a Realm by either its `ak:realm:<uuid>` id OR a human-readable
 /// realm alias (`engineering`, `engineering:acme.example`, `#engineering…`).
 ///
 /// The input is classified: a valid [`arkret_sdk::RealmId`] is sent as

@@ -5,7 +5,7 @@
 //!
 //! This strand creates a Circle plus a private discussion Strand under the current
 //! Realm. It MUST NOT create a Space hierarchy, and it MUST NOT write a Space
-//! id into `scope_circle_id` (that field is for `ck:circle:*` ids only).
+//! id into `scope_circle_id` (that field is for `ak:circle:*` ids only).
 //!
 //! The local 1.0 UI hides the promote modal unless the
 //! `experimental-discussion-promote` feature is enabled. This module keeps

@@ -170,7 +170,7 @@ pub(crate) fn chat_message_revise_operation(
 ) -> anyhow::Result<arkret_sdk::Event> {
     // Route through the SDK-typed `message_revise_payload` builder rather than a
     // hand-rolled `json!` body: it validates ids at build time and addresses a
-    // `ck:message:` target via the payload's `message_id` field (falling back to
+    // `ak:message:` target via the payload's `message_id` field (falling back to
     // `target_ref` for event/local refs), matching the schema's anyOf.
     crate::operation::ck_ops::message_revise_content(
         realm_id,

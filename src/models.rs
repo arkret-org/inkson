@@ -234,7 +234,7 @@ pub fn default_invite_receive_policy(subject_id: &str) -> InviteReceivePolicy {
     }
 }
 
-/// R15: result of `ck.realm.create`. Carries a `ck:realm:*` id under the
+/// R15: result of `ck.realm.create`. Carries a `ak:realm:*` id under the
 /// canonical `realm_id` field (was previously squeezed into a shared
 /// `space_id` on the old shared lifecycle result). `state` replaces the old
 /// `deleted: bool`, matching the spec lifecycle-state enum
@@ -249,7 +249,7 @@ pub struct RealmCreateResult {
     pub state: String,
 }
 
-/// R15: result of `ck.space.create`. A Space (`ck:space:*`) lives inside a
+/// R15: result of `ck.space.create`. A Space (`ak:space:*`) lives inside a
 /// Realm and inherits its membership / encryption. `state` mirrors the spec
 /// lifecycle enum (see [`RealmCreateResult`]).
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -423,17 +423,17 @@ pub use arkret_sdk::models::{
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum RealmTreeNodeKind {
-    /// `ck:realm:*` — security / sync / E2EE boundary.
+    /// `ak:realm:*` — security / sync / E2EE boundary.
     #[default]
     Realm,
-    /// `ck:space:*` — navigation container inside a Realm.
+    /// `ak:space:*` — navigation container inside a Realm.
     Space,
 }
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct RealmTreeNode {
-    /// Navigation node id. Realm nodes hold `ck:realm:*`; Space nodes hold
-    /// `ck:space:*`. Do not put Realm ids in a `space_id` field.
+    /// Navigation node id. Realm nodes hold `ak:realm:*`; Space nodes hold
+    /// `ak:space:*`. Do not put Realm ids in a `space_id` field.
     pub id: String,
     /// Canonical display name. Spec `realm.schema.json` / `space.schema.json`
     /// both make `title` the required display field; `name` is reserved for

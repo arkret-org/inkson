@@ -666,7 +666,7 @@ fn inkson_accepts_v1_sync_buckets_and_subscribe_ndjson_contract() {
 fn account_data_canonical_contact_and_realm_remark_keys_contract() {
     assert_eq!(
         realm_remark_account_data_key("ak:realm:contract"),
-        "ck.contacts.realm.ck:realm:contract"
+        "ck.contacts.realm.ak:realm:contract"
     );
     assert_eq!(
         contact_remark_account_data_key("did:web:alice.example"),

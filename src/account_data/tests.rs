@@ -740,7 +740,7 @@ fn contact_and_realm_remarks_are_encrypted_account_data() {
 
 #[test]
 fn private_account_data_builders_emit_encrypted_payload() {
-    let key = "ck.scheduled_send.v1:ck:message:01904100-0000-7000-8000-000000000001";
+    let key = "ck.scheduled_send.v1:ak:message:01904100-0000-7000-8000-000000000001";
     let op = build_private_account_data_set(
         "ak:realm:0196419b-0000-7000-8000-000000000001",
         "did:web:alice",
@@ -803,7 +803,7 @@ fn private_account_data_builder_can_emit_cas_guard() {
 #[test]
 fn generic_builder_does_not_put_private_values_under_body() {
     let key = AccountDataKey::Custom(
-        "ck.scheduled_send.v1:ck:message:01904100-0000-7000-8000-000000000001".to_owned(),
+        "ck.scheduled_send.v1:ak:message:01904100-0000-7000-8000-000000000001".to_owned(),
     );
     let op = build_account_data_set(
         "ak:realm:0196419b-0000-7000-8000-000000000001",

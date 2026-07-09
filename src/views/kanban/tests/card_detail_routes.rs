@@ -4,11 +4,11 @@ use super::*;
 fn card_detail_deep_link_targets_kanban_task_route() {
     assert_eq!(
         strand_detail_deep_link_path("ak:space:ops", "ak:strand:abc"),
-        "/kanban/ck:space:ops/task/ck:strand:abc"
+        "/kanban/ak:space:ops/task/ak:strand:abc"
     );
     assert_eq!(
         strand_detail_deep_link_path("", "ak:strand:abc"),
-        format!("/kanban/{DEMO_BOARD_SPACE_ID}/task/ck:strand:abc")
+        format!("/kanban/{DEMO_BOARD_SPACE_ID}/task/ak:strand:abc")
     );
 }
 
@@ -33,19 +33,19 @@ fn card_detail_tab_deep_link_round_trips() {
 fn card_detail_tab_reads_url_query() {
     assert_eq!(
         card_detail_tab_from_href(
-            "http://127.0.0.1:8080/kanban/ck:realm:r/task/ck:strand:f?tab=discussion"
+            "http://127.0.0.1:8080/kanban/ak:realm:r/task/ak:strand:f?tab=discussion"
         ),
         Some(CardDetailContentTab::Discussion)
     );
     assert_eq!(
         card_detail_tab_from_href(
-            "http://127.0.0.1:8080/kanban/ck:realm:r/task/ck:strand:f?tab=synthesis"
+            "http://127.0.0.1:8080/kanban/ak:realm:r/task/ak:strand:f?tab=synthesis"
         ),
         Some(CardDetailContentTab::Synthesis)
     );
     assert_eq!(
         card_detail_tab_from_href(
-            "http://127.0.0.1:8080/kanban/ck:realm:r/task/ck:strand:f?tab=bad"
+            "http://127.0.0.1:8080/kanban/ak:realm:r/task/ak:strand:f?tab=bad"
         ),
         None
     );
@@ -59,7 +59,7 @@ fn card_detail_share_link_carries_current_tab() {
             "ak:strand:abc",
             CardDetailContentTab::Discussion
         ),
-        "/kanban/ck:space:ops/task/ck:strand:abc?tab=discussion"
+        "/kanban/ak:space:ops/task/ak:strand:abc?tab=discussion"
     );
 }
 

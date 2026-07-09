@@ -31,7 +31,7 @@ pub(crate) fn truthy_env_value(value: Option<&str>) -> bool {
 /// does not need to change.
 ///
 /// The `_view_id` parameter is reserved so the future signature is stable:
-/// the UI holds the saved View's `ck:view:` id and threads it in when calling
+/// the UI holds the saved View's `ak:view:` id and threads it in when calling
 /// the probe.
 pub(crate) fn try_load_api_columns(_view_id: &str) -> Option<Vec<KanbanColumn>> {
     // Synchronous init context — always returns None. UI starts with

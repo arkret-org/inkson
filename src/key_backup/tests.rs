@@ -546,6 +546,6 @@ fn delete_ownership_proof_binds_actor_and_backup() {
             "did:web:alice.example",
             "ak:backup:01964137-0000-7000-8000-00000000beef"
         ),
-        "dev-ssk-delete:v1:did:web:alice.example:ck:backup:01964137-0000-7000-8000-00000000beef"
+        "dev-ssk-delete:v1:did:web:alice.example:ak:backup:01964137-0000-7000-8000-00000000beef"
     );
 }

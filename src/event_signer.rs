@@ -191,7 +191,7 @@ impl InksonEventSigner {
         &self.verification_method
     }
 
-    /// Protocol `ck:device:*` id bound into ordinary Event proof fragments.
+    /// Protocol `ak:device:*` id bound into ordinary Event proof fragments.
     pub fn device_id(&self) -> Option<&str> {
         self.device_id.as_deref()
     }
@@ -808,7 +808,7 @@ pub fn bootstrap_default_signer(
 }
 
 /// Bootstrap the OS-keychain backed signer and bind it to the protocol
-/// `ck:device:*` id for this account session.
+/// `ak:device:*` id for this account session.
 ///
 /// Unlike [`bootstrap_default_signer`], this intentionally replaces any stale
 /// active signer. Boot may have installed a grant-binding (DPoP) signer early
@@ -941,7 +941,7 @@ mod tests {
             "challenge": "challenge-1",
         }))
         .unwrap();
-        let kid = "did:web:jws.example#ck:device:01964137-0000-7000-8000-000000000001";
+        let kid = "did:web:jws.example#ak:device:01964137-0000-7000-8000-000000000001";
 
         let jws = signer
             .detached_jws_over_payload_with_kid(kid, &payload)

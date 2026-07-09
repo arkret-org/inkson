@@ -970,13 +970,13 @@ pub fn AgentsPanel(
                     }
                     Input {
                         "data-testid": "agent-publish-result-ref-input",
-                        placeholder: "result object_ref (ck:strand:... from the result)",
+                        placeholder: "result object_ref (ak:strand:... from the result)",
                         value: "{publish_result_ref}",
                         oninput: move |event: FormEvent| publish_result_ref.set(event.value()),
                     }
                     Input {
                         "data-testid": "agent-publish-artifact-ref-input",
-                        placeholder: "artifact object_ref (ck:morph:...)",
+                        placeholder: "artifact object_ref (ak:morph:...)",
                         value: "{publish_artifact_ref}",
                         oninput: move |event: FormEvent| publish_artifact_ref.set(event.value()),
                     }

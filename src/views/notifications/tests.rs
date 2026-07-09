@@ -190,7 +190,7 @@ mod tests {
         let mut local_state = ClientLocalState::default();
         local_state
             .notification_client_state
-            .entry("invite:ck:invite:00000000-0000-7000-8000-0000000000aa".to_owned())
+            .entry("invite:ak:invite:00000000-0000-7000-8000-0000000000aa".to_owned())
             .or_default()
             .archived = true;
         local_state
@@ -216,7 +216,7 @@ mod tests {
             "fresh invite must not inherit archive"
         );
         assert_eq!(
-            notification.id, "invite:ck:invite:00000000-0000-7000-8000-0000000000bb",
+            notification.id, "invite:ak:invite:00000000-0000-7000-8000-0000000000bb",
             "invite notification id is keyed on the unique invite id"
         );
         // Realm mute must not hide an invite to a realm we are not in.

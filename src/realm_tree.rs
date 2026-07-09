@@ -797,7 +797,7 @@ pub(crate) fn projection_tree_node_kind(id: &str, body: &Value) -> RealmTreeNode
     // Classify Realm vs Space. Wire signals:
     // - `__kind` (inkson-local tag from optimistic save)
     // - `schema` (server projection — ck.schema.realm.v1 vs ck.schema.space.v1)
-    // - id prefix (`ck:realm:*` vs `ck:space:*`)
+    // - id prefix (`ak:realm:*` vs `ak:space:*`)
     match body
         .get("__kind")
         .and_then(Value::as_str)
@@ -1340,7 +1340,7 @@ mod tests {
     /// without joining a separate fanout). A previous filter treated
     /// any `summary.strand` as a strand-as-tree-node projection and dropped the
     /// Space from the sidebar entirely. Only top-level `strand*`/`tracks`
-    /// or a strand-shaped `summary.category` should reject a `ck:space:`.
+    /// or a strand-shaped `summary.category` should reject a `ak:space:`.
     #[test]
     fn sync_projection_keeps_real_space_with_inlined_primary_strand() {
         let mut spaces = BTreeMap::new();

@@ -2802,7 +2802,7 @@ fn chat_message_revise_operation_uses_schema_target_ref() {
 
 #[test]
 fn chat_message_revise_operation_addresses_message_target_via_message_id() {
-    // A `ck:message:` target is addressed through the payload's `message_id`
+    // A `ak:message:` target is addressed through the payload's `message_id`
     // field (like `chat_message_redact_operation`), not `target_ref` — both are
     // valid per the message_revise_payload anyOf, and message_id is the typed
     // form the SDK builder emits for message ids.

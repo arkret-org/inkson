@@ -40,7 +40,7 @@ pub struct BlocklistEntry {
     /// Optional RFC 3339 expiry. `None` is a permanent block.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub expires_at: Option<String>,
-    /// Stable per-entry id (`ck:block:<hash>`), preserved across sync so other
+    /// Stable per-entry id (`ak:block:<hash>`), preserved across sync so other
     /// clients / appeal strands can reference a specific block.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub entry_id: Option<String>,

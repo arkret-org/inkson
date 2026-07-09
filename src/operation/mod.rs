@@ -403,7 +403,7 @@ fn typed_operation_id(operation_id: &str) -> String {
 ///
 /// Thin wrapper over the SDK's `new_prefixed_uuid7` (RFC 9562 UUIDv7 via the
 /// `uuid` crate, with same-millisecond monotonicity) called with an empty
-/// prefix. Callers add their own typed prefix (`ck:operation:`, `ck:device:`,
+/// prefix. Callers add their own typed prefix (`ak:operation:`, `ak:device:`,
 /// etc.). Replaces the previous hand-rolled bit-packing helper, which had no
 /// same-millisecond monotonic guarantee.
 pub fn uuid_v7() -> String {

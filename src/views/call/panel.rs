@@ -34,7 +34,7 @@ pub fn CallPanel(
     selected_realm_id: String,
     account_did: String,
     device_id: String,
-    /// Deep-linked call id (`ck:call:…`); empty when the user opens the
+    /// Deep-linked call id (`ak:call:…`); empty when the user opens the
     /// dialer fresh.
     #[props(default)]
     call_id: String,

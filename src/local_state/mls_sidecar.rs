@@ -315,7 +315,7 @@ impl LocalStateStore {
     /// Record a successfully accepted `ck.mls.genesis` event and seed the
     /// local MLS group-state frontier with that accepted Event id. This lets an
     /// immediately-following self-update or AddMember commit cite a real
-    /// `ck:event:*` base group-state ref before the next sync response arrives.
+    /// `ak:event:*` base group-state ref before the next sync response arrives.
     pub fn mark_mls_genesis_emitted_with_event(
         &mut self,
         realm_id: impl Into<String>,

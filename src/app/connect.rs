@@ -635,7 +635,7 @@ pub(super) fn connect(base: String, actor: String, device: String, ctx: ConnectC
                             let mut store = state_store.write();
                             let mut snapshot = store.load();
                             // `TypedTrustDomainId` enforces a non-empty
-                            // `ck:trust_domain:<scope>` shape at deserialize
+                            // `ak:trust_domain:<scope>` shape at deserialize
                             // time, so the previous "is_empty" guard is
                             // structurally impossible. Always cache.
                             snapshot.server_trust_domain =

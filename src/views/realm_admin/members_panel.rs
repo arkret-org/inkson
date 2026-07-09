@@ -2308,7 +2308,7 @@ pub(crate) fn plan_history_key_request(
 /// soland relays carries the *sending* (admitting / sharing) device's
 /// `(sender, sender_device_id)`. That device is by construction a joined member
 /// that holds Realm history, and soland's relay addresses the provider by
-/// `(target_principal_id, target_source_ref=ck:device:<id>)`, so this is exactly
+/// `(target_principal_id, target_source_ref=ak:device:<id>)`, so this is exactly
 /// the addressing tuple `submit_realm_key_request` needs. Self-authored messages
 /// are excluded so the requester never names itself as provider.
 fn provider_candidates_from_inbox(
@@ -5314,8 +5314,8 @@ mod tests {
         let parsed = parse_realm_key_request_envelope(&envelope).unwrap();
         let key = realm_key_request_answer_dedup_key(&parsed);
 
-        assert!(key.contains("scope:ck:realm:abc|target:did:web:provider.example|"));
-        assert!(key.contains("|recipient:did:web:self.example|ck:device:self|"));
+        assert!(key.contains("scope:ak:realm:abc|target:did:web:provider.example|"));
+        assert!(key.contains("|recipient:did:web:self.example|ak:device:self|"));
         assert!(key.contains("|range:1..3|"));
     }
 

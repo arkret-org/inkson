@@ -198,7 +198,7 @@ impl PollCard {
 
     /// Parse a canonical `poll_block`
     /// (`content-block-poll.schema.json#/$defs/poll_block`). `poll_ref` is
-    /// the wire message id (`ck:message:<uuid7>`) carried by the enclosing
+    /// the wire message id (`ak:message:<uuid7>`) carried by the enclosing
     /// `ck.message.create` — it becomes the card's `poll_id` (the identity
     /// `poll_response.poll_ref` points at); `message_id` stays the local
     /// render identity. Non-canonical shapes (missing `poll`, unknown
@@ -302,7 +302,7 @@ fn content_kind(content: &Value) -> Option<&str> {
 /// Build the canonical `poll_block` message
 /// (`content-block-poll.schema.json#/$defs/poll_block`) as a
 /// `ck.message.create` event. The poll's wire identity is the stamped
-/// `message_id` (`ck:message:<uuid7>` derived from the event id) — callers
+/// `message_id` (`ak:message:<uuid7>` derived from the event id) — callers
 /// read it back from `event.payload["message_id"]` to address later
 /// `poll_response.poll_ref`s at this poll.
 pub fn build_poll_create_op(
@@ -362,7 +362,7 @@ pub fn build_poll_create_op(
     Ok(event)
 }
 
-/// Read the stamped wire message id (`ck:message:<uuid7>`) back from a
+/// Read the stamped wire message id (`ak:message:<uuid7>`) back from a
 /// freshly built poll-create event — the identity later
 /// `poll_response.poll_ref`s point at.
 pub fn poll_message_ref(event: &arkret_sdk::Event) -> Option<String> {
@@ -376,7 +376,7 @@ pub fn poll_message_ref(event: &arkret_sdk::Event) -> Option<String> {
 /// Build the canonical `poll_response_block`
 /// (`content-block-poll.schema.json#/$defs/poll_response_block`) as a
 /// `ck.message.create` event on the poll's own Strand. `poll_ref` MUST be
-/// the poll message's wire id (`ck:message:<uuid7>`) — fail-closed
+/// the poll message's wire id (`ak:message:<uuid7>`) — fail-closed
 /// otherwise (a locally generated optimistic id never reaches the wire).
 pub fn build_poll_vote_op(
     realm_id: &str,
@@ -422,7 +422,7 @@ pub fn build_poll_vote_op(
 
 /// Generate a fresh local poll id (`poll-<uuid>`), used only as the
 /// optimistic local card/message identity before the create round-trip
-/// stamps the wire `ck:message:` id. Never written to the wire.
+/// stamps the wire `ak:message:` id. Never written to the wire.
 pub fn new_poll_id() -> String {
     format!("poll-{}", uuid_v7())
 }
@@ -554,7 +554,7 @@ mod tests {
     #[test]
     fn build_poll_vote_op_rejects_local_poll_ids() {
         // A locally generated optimistic id must never reach the wire as a
-        // poll_ref (schema requires ck:message:<uuid7>).
+        // poll_ref (schema requires ak:message:<uuid7>).
         assert!(
             build_poll_vote_op(
                 "ak:realm:01904100-0000-7000-8000-000000000010",

@@ -2635,13 +2635,13 @@ mod tests {
                             "event": {
                                 "actor_id": "did:web:alice.example",
                                 "device_id": "ak:device:01904100-0000-7000-8000-000000000001",
-                                "proofs": [{"verification_method": "did:web:alice.example#ck:device:01904100-0000-7000-8000-000000000001"}]
+                                "proofs": [{"verification_method": "did:web:alice.example#ak:device:01904100-0000-7000-8000-000000000001"}]
                             }
                         },
                         {
                             "actor_id": "did:web:alice.example",
                             "device_id": "ak:device:01904100-0000-7000-8000-000000000001",
-                            "proofs": [{"verification_method": "did:web:alice.example#ck:device:01904100-0000-7000-8000-000000000001"}]
+                            "proofs": [{"verification_method": "did:web:alice.example#ak:device:01904100-0000-7000-8000-000000000001"}]
                         },
                         {
                             "actor_id": "did:web:bob.example",
@@ -2649,7 +2649,7 @@ mod tests {
                         },
                         {
                             "actor_id": "did:web:carol.example",
-                            "proofs": [{"verification_method": "did:web:carol.example#ck:device:01904100-0000-7000-8000-000000000002"}]
+                            "proofs": [{"verification_method": "did:web:carol.example#ak:device:01904100-0000-7000-8000-000000000002"}]
                         }
                     ]
                 }
@@ -2700,7 +2700,7 @@ mod tests {
         // archive/read client-state from an earlier invite.
         assert!(projection.iter().any(|entry| {
             entry.get("notification_id").and_then(Value::as_str)
-                == Some("invite:ck:invite:0196419b-0000-7000-8000-000000000010")
+                == Some("invite:ak:invite:0196419b-0000-7000-8000-000000000010")
         }));
     }
 
@@ -2755,7 +2755,7 @@ mod tests {
 
         let mut response = empty_response("sx:43");
         // Fixture typo fix: the forgotten projection id must match the
-        // `ck:space:b` saved above. `forget_realm_tree_projection` deletes by
+        // `ak:space:b` saved above. `forget_realm_tree_projection` deletes by
         // exact id, without prefix normalization, so otherwise the
         // `!contains_key("ak:space:b")` assertion would always be false.
         response.left_realms = vec!["ak:space:b".to_owned()];

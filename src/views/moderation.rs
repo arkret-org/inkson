@@ -45,7 +45,7 @@ pub const DECISION_VERDICTS: &[&str] = &["hard_deny", "soft_deny", "quarantine",
 
 /// A standing moderation decision projected from the raw-operation log. Lifted
 /// decisions are folded out by [`project_moderation_queues`]. The cell subject
-/// is `target_ref`; `decision_ref` is the sealed decision Event's `ck:event:`
+/// is `target_ref`; `decision_ref` is the sealed decision Event's `ak:event:`
 /// id (the reference a lift resolves).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct StandingDecision {
@@ -206,7 +206,7 @@ pub fn ModerationWorkbench(
                     Input {
                         "data-testid": "moderation-decide-target",
                         value: "{decide_target}",
-                        placeholder: "target_ref (ck:event:… / ck:strand:…)",
+                        placeholder: "target_ref (ak:event:… / ak:strand:…)",
                         oninput: move |event: FormEvent| decide_target.set(event.value()),
                     }
                     select {

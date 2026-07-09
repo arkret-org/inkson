@@ -311,7 +311,7 @@ fn space_bootstrap_events_use_canonical_create_and_facet_kinds() {
     );
     assert_eq!(
         create.effects[0].cell.to_string(),
-        "ak:cell:ck.component.realm.create.v1:ck:realm:0196419b-0000-7000-8000-000000000001"
+        "ak:cell:ck.component.realm.create.v1:ak:realm:0196419b-0000-7000-8000-000000000001"
     );
     assert_eq!(create.effects[0].op.op_type, arkret_sdk::LatticeOpType::Set);
     // seal_ref starts unset on the typed envelope. Realm genesis
@@ -631,8 +631,8 @@ fn outgoing_payload_schema_gate_accepts_sdk_object_patch_payload() {
 #[test]
 fn space_create_payload_matches_spec_schema() {
     // Spec requires payload.object.realm_id to match the
-    // `^ck:realm:UUID7` pattern; the product Space id remains a
-    // separate `ck:space:*` object id.
+    // `^ak:realm:UUID7` pattern; the product Space id remains a
+    // separate `ak:space:*` object id.
     let event = build_space_create_event(
         "ak:space:0196419b-0000-7000-8000-000000000010",
         "ak:realm:0196419b-0000-7000-8000-000000000001",

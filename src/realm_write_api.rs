@@ -558,7 +558,7 @@ pub async fn moderation_decide(
 /// Lift a previously sealed moderation decision via
 /// `ck.moderation.decision.lift`. `target_ref` is the moderated target
 /// (the cell subject shared with the original decision); `decision_ref`
-/// is the `ck:event:` id of the decision being lifted.
+/// is the `ak:event:` id of the decision being lifted.
 pub async fn moderation_lift(
     submitter: &EventSubmitter,
     realm_id: &str,

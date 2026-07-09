@@ -723,7 +723,7 @@ mod tests {
 
         let identity = CokretMlsIdentity::new_basic(
             Did::new("did:web:alice.example".to_owned()).unwrap(),
-            // SDK 0.7 requires the canonical `ck:device:<uuid7>` form.
+            // SDK 0.7 requires the canonical `ak:device:<uuid7>` form.
             DeviceId::new("ak:device:01904100-0000-7000-8000-000000000001".to_owned()).unwrap(),
         )
         .unwrap();

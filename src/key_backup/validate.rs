@@ -23,11 +23,11 @@ pub fn validate_key_backup_envelope(
 ) -> Result<(), String> {
     let backup_id = required_str(body, "backup_id")?;
     if !is_protocol_backup_id(backup_id) {
-        return Err("backup_id must be ck:backup:<uuidv7>".to_owned());
+        return Err("backup_id must be ak:backup:<uuidv7>".to_owned());
     }
     let series_id = required_str(body, "series_id")?;
     if !is_protocol_backup_series_id(series_id) {
-        return Err("series_id must be ck:backup_series:<uuidv7>".to_owned());
+        return Err("series_id must be ak:backup_series:<uuidv7>".to_owned());
     }
     if body.get("series_seq").and_then(Value::as_u64).is_none() {
         return Err("series_seq must be a non-negative integer".to_owned());
@@ -57,7 +57,7 @@ pub fn validate_key_backup_envelope(
     if let Some(device_id) = body.get("device_id").and_then(Value::as_str)
         && !is_protocol_device_id(device_id)
     {
-        return Err("device_id must be ck:device:<uuidv7> when present".to_owned());
+        return Err("device_id must be ak:device:<uuidv7> when present".to_owned());
     }
 
     validate_contents(body, class)?;

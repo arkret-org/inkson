@@ -7,7 +7,7 @@
 //!
 //! Spec: `crypto-media/device-lifecycle.md` §4 — `display_name` is the
 //! optional, user-facing, mutable device name; the canonical identifier
-//! is always `device_id` (`ck:device:<uuidv7>`).
+//! is always `device_id` (`ak:device:<uuidv7>`).
 
 /// Derive a human-readable default device name from the running
 /// platform. Used at login / device authorization so each device is

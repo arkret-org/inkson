@@ -232,8 +232,8 @@ impl DesiredMedia {
 }
 
 /// Parameters identifying the local participant joining a call's media
-/// plane. All ids are canonical protocol ids (`ck:realm:…`, `ck:call:…`,
-/// `did:…`, `ck:device:…`).
+/// plane. All ids are canonical protocol ids (`ak:realm:…`, `ak:call:…`,
+/// `did:…`, `ak:device:…`).
 #[derive(Clone, Debug)]
 pub struct MediaJoinRequest {
     pub realm_id: String,

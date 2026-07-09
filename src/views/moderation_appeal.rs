@@ -79,12 +79,12 @@ impl AppealState {
 /// [`arkret_sdk::AppealSubmitPayload`] / `ck.schema.moderation_appeal.v1`.
 ///
 /// Inputs:
-/// - `decision_event_id` — the `ck:event:` id of the original moderation decision being appealed
+/// - `decision_event_id` — the `ak:event:` id of the original moderation decision being appealed
 ///   (used as `decision_ref`).
-/// - `target_ref` — opaque pointer to the moderated content (`ck:event:…` for a message,
-///   `ck:strand:…` for a strand, etc.).
+/// - `target_ref` — opaque pointer to the moderated content (`ak:event:…` for a message,
+///   `ak:strand:…` for a strand, etc.).
 /// - `reason_text_ref` — blob ref or inline string carrying the appeal narrative (server may
-///   require a `ck:blob:…` ref for E2EE Realms).
+///   require a `ak:blob:…` ref for E2EE Realms).
 pub fn build_appeal_submit_op(
     realm_id: &str,
     appellant: &str,
@@ -95,7 +95,7 @@ pub fn build_appeal_submit_op(
 ) -> anyhow::Result<OperationBuilder> {
     // Round R2/R3: typed appeal id binding. Validate the input rather than
     // forwarding free-form strings to the wire — the SDK's TypedAppealId
-    // enforces the `ck:appeal:<uuidv7>` shape.
+    // enforces the `ak:appeal:<uuidv7>` shape.
     let typed_appeal_id = arkret_sdk::TypedAppealId::new(appeal_id)
         .map_err(|err| anyhow::anyhow!("invalid appeal_id: {err}"))?;
     let realm_id = trim_realm_id(realm_id);
@@ -128,7 +128,7 @@ pub fn build_appeal_submit_op(
     .body(body))
 }
 
-/// Build a fresh `ck:appeal:<uuidv7>` id for a new appeal. UUIDv7 inherits
+/// Build a fresh `ak:appeal:<uuidv7>` id for a new appeal. UUIDv7 inherits
 /// process clock entropy so two devices appealing the same decision
 /// don't collide.
 pub fn new_appeal_id() -> String {
@@ -209,7 +209,7 @@ pub fn AppealEntrypoint(
                             let appeal_id = new_appeal_id();
                             // TODO(round23-T06): once the blob upload path
                             // settles for appeal narratives in E2EE Realms,
-                            // POST the reason as a `ck:blob:…` ref instead
+                            // POST the reason as a `ak:blob:…` ref instead
                             // of inlining the string. For now we inline so
                             // server-side reducer testing has a payload to
                             // chew on.

@@ -59,7 +59,7 @@ pub fn applet_package_from_manifest(kind: &ManifestInputKind) -> Option<Value> {
 }
 
 /// The effective-scope object an install/revoke targets. A blank `circle_id`
-/// installs the applet Realm-wide; a `ck:circle:…` id scopes it to that Circle
+/// installs the applet Realm-wide; a `ak:circle:…` id scopes it to that Circle
 /// only (spec §4b: a single install carries exactly one `effective_scope`, and a
 /// Circle install MUST NOT widen to a Realm-wide grant). soland gates the write
 /// on `ck.realm.admin` over the resolved scope either way.
@@ -196,7 +196,7 @@ pub fn AppletsPanel(
     let mut install_approved_scope_values = use_signal(Vec::<ScopeGrant>::new);
     let mut install_approve_actions = use_signal(String::new);
     let mut install_allow_ghost_actors = use_signal(|| false);
-    // Optional Circle scope for the install. Blank = Realm-wide; a `ck:circle:…`
+    // Optional Circle scope for the install. Blank = Realm-wide; a `ak:circle:…`
     // id scopes the install to that Circle only (spec §4b effective_scope).
     let mut install_circle_id = use_signal(String::new);
     let mut trace_open_for = use_signal(|| Option::<String>::None);
@@ -551,12 +551,12 @@ pub fn AppletsPanel(
                             style: "width: 100%; min-height: 60px;",
                         }
                         // Optional Circle scope. Blank installs Realm-wide; a
-                        // `ck:circle:…` id scopes the applet to that Circle only.
+                        // `ak:circle:…` id scopes the applet to that Circle only.
                         // Changing it invalidates the previewed plan (the digest
                         // is computed over effective_scope), so re-preview.
                         Textarea {
                             "data-testid": "applet-install-circle-input",
-                            placeholder: "optional Circle id (ck:circle:…) — blank = Realm-wide",
+                            placeholder: "optional Circle id (ak:circle:…) — blank = Realm-wide",
                             value: "{install_circle_id}",
                             oninput: move |event: FormEvent| {
                                 install_circle_id.set(event.value());

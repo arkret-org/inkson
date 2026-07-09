@@ -133,7 +133,7 @@ pub enum Route {
     NotificationsSettings,
 
     /// Live call surface. Optional query params deep-link an in-progress
-    /// or outgoing call: `call_id` (the `ck:call:…` id), `peer` (the 1:1
+    /// or outgoing call: `call_id` (the `ak:call:…` id), `peer` (the 1:1
     /// callee DID, empty for SFU group calls), `realm_id`, `video` (`1`
     /// for a video call, else audio-only), and `incoming` (`1` when this
     /// is an inbound ring being answered).

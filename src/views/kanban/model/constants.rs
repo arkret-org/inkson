@@ -137,7 +137,7 @@ mod tests {
 
     #[test]
     fn kanban_projection_refresh_waits_for_cursor_advance() {
-        let first_key = kanban_projection_refresh_key(" ck:realm:r1 ", "", " ck:cursor:1 ", 0, "");
+        let first_key = kanban_projection_refresh_key(" ak:realm:r1 ", "", " ak:cursor:1 ", 0, "");
 
         assert_eq!(
             next_kanban_projection_refresh_key(&first_key, "ak:realm:r1", "", "ak:cursor:1", 0, ""),
@@ -145,7 +145,7 @@ mod tests {
         );
         assert_eq!(
             next_kanban_projection_refresh_key(&first_key, "ak:realm:r1", "", "ak:cursor:2", 0, ""),
-            Some("ak:realm:r1||ck:cursor:2|0|".to_owned())
+            Some("ak:realm:r1||ak:cursor:2|0|".to_owned())
         );
     }
 

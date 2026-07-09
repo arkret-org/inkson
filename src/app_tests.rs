@@ -972,7 +972,7 @@ fn mls_key_package_publish_key_waits_for_e2ee_profile_and_sync() {
 
 #[test]
 fn merge_projection_events_keeps_existing_messages_on_summary_only_delta() {
-    let mut summary = ProjectionEvent::system_notice("summary-ck:realm:test", "server", "old");
+    let mut summary = ProjectionEvent::system_notice("summary-ak:realm:test", "server", "old");
     summary.realm_id = Some("ak:realm:test".to_owned());
     let message = ProjectionEvent {
         id: "ak:event:message".to_owned(),
@@ -981,7 +981,7 @@ fn merge_projection_events_keeps_existing_messages_on_summary_only_delta() {
         ..ProjectionEvent::default()
     };
     let mut updated_summary =
-        ProjectionEvent::system_notice("summary-ck:realm:test", "server", "new");
+        ProjectionEvent::system_notice("summary-ak:realm:test", "server", "new");
     updated_summary.realm_id = Some("ak:realm:test".to_owned());
 
     let merged = merge_projection_events(&[summary, message], vec![updated_summary]);

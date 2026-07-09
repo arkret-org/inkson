@@ -102,7 +102,7 @@ pub(super) fn kanban_event_carries_plaintext_private_content(event: &arkret_sdk:
 /// for Board and List) and structural updates (`ck.space.update`) are the
 /// canonical examples: a second device needs the plaintext title/rank to
 /// render the Board/List name and order instead of falling back to
-/// `generated_board_fallback_title` (`ck:space:...`) or stale rank order. Only
+/// `generated_board_fallback_title` (`ak:space:...`) or stale rank order. Only
 /// Strand card private content fields (body / synthesis / discussion) are E2EE
 /// — never the container scaffold. Exempting these kinds here is a hard
 /// invariant: it guarantees the plaintext-block decision can never silently

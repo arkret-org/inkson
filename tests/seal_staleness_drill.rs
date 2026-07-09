@@ -16,7 +16,7 @@
 //!      NOT the dev placeholder `"a..b"`.
 //!   3. `proofs[0].event_digest` starts with `sha256:` and has 64 hex chars.
 //!   4. `seal_ref` is `Some(_)` for reducer-input kinds AND matches
-//!      `^ck:seal:sha256:[0-9a-f]{64}$`. The fake seal is NOT the all-zero hash.
+//!      `^ak:seal:sha256:[0-9a-f]{64}$`. The fake seal is NOT the all-zero hash.
 //!
 //! The `roundtrip_through_live_principal_endpoint` test below is the live
 //! variant — it is marked `#[ignore]` because it requires a soland
@@ -52,7 +52,7 @@ fn signing_key() -> SigningKey {
 }
 
 /// Stamp the envelope with a real Ed25519 detached-JWS proof and a
-/// concrete `ck:seal:sha256:<hex>` ref derived from the envelope's
+/// concrete `ak:seal:sha256:<hex>` ref derived from the envelope's
 /// own kind. We deliberately do NOT use the zero hash, so the test
 /// catches a downstream regression that would forget to mint a real
 /// seal.
@@ -217,10 +217,10 @@ fn assert_seal_ref_is_real(envelope: &EventEnvelope) {
                 envelope.kind
             )
         });
-    let anchor_re = Regex::new(r"^ck:seal:sha256:[0-9a-f]{64}$").expect("seal regex compiles");
+    let anchor_re = Regex::new(r"^ak:seal:sha256:[0-9a-f]{64}$").expect("seal regex compiles");
     assert!(
         anchor_re.is_match(seal),
-        "envelope kind={} seal_ref `{}` does not match ck:seal:sha256:<64 hex>",
+        "envelope kind={} seal_ref `{}` does not match ak:seal:sha256:<64 hex>",
         envelope.kind,
         seal
     );

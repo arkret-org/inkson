@@ -18,7 +18,7 @@
 /// a given Board. Per
 /// [`spec/v1/zh/models/realm-and-space.md`
 /// §3.6](../../arkret-spec/spec/v1/zh/models/realm-and-space.md) the cell key is
-/// `ck:cell:ck.component.strand.position.v1:<board_space_id>:<strand_id>` — a Strand can appear on
+/// `ak:cell:ck.component.strand.position.v1:<board_space_id>:<strand_id>` — a Strand can appear on
 /// multiple Boards with **independent** position cells, so the Board id is part of the subject.
 pub fn strand_position_cell_id(board_space_id: &str, strand_id: &str) -> String {
     format!("ak:cell:ck.component.strand.position.v1:{board_space_id}:{strand_id}")
@@ -66,7 +66,7 @@ mod tests {
     use super::*;
 
     /// spec/v1/zh/models/realm-and-space.md §3.6: the position cell key is
-    /// `ck:cell:ck.component.strand.position.v1:<board_space_id>:<strand_id>`.
+    /// `ak:cell:ck.component.strand.position.v1:<board_space_id>:<strand_id>`.
     /// This pins the composite subject so a future refactor that drops one
     /// segment fails loudly.
     #[test]
@@ -77,7 +77,7 @@ mod tests {
         );
         assert_eq!(
             cell,
-            "ak:cell:ck.component.strand.position.v1:ck:space:0196419b-0000-7000-8000-000000000010:ck:strand:01abcd"
+            "ak:cell:ck.component.strand.position.v1:ak:space:0196419b-0000-7000-8000-000000000010:ak:strand:01abcd"
         );
     }
 }

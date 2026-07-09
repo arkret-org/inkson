@@ -79,7 +79,7 @@ pub fn applet_discovery(
 
 /// Round 4 (spec a77b995) — validate an `applet_id` against the
 /// canonical [`arkret_sdk::AppletIdentifier`] shape (DID *or*
-/// `ck:applet:<uuidv7>`). Returns the typed identifier so callers
+/// `ak:applet:<uuidv7>`). Returns the typed identifier so callers
 /// can stash it without re-parsing. Wire-breaking: plain strings
 /// outside these two forms are rejected.
 pub fn parse_applet_identifier(applet_id: &str) -> Result<arkret_sdk::AppletIdentifier, String> {
@@ -90,10 +90,10 @@ pub fn parse_applet_identifier(applet_id: &str) -> Result<arkret_sdk::AppletIden
     } else if applet_id.starts_with("ak:applet:") {
         arkret_sdk::AppletId::new(applet_id)
             .map(arkret_sdk::AppletIdentifier::Cx)
-            .map_err(|e| format!("invalid ck:applet:<uuidv7>: {e}"))
+            .map_err(|e| format!("invalid ak:applet:<uuidv7>: {e}"))
     } else {
         Err(format!(
-            "applet_id {applet_id:?} is neither a DID nor ck:applet:<uuidv7> \
+            "applet_id {applet_id:?} is neither a DID nor ak:applet:<uuidv7> \
              (round 4 schema_violation)"
         ))
     }

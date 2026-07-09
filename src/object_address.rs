@@ -49,7 +49,7 @@ use crate::routes::Route;
 
 /// The local object a user is sharing. Mirrors the SDK address hierarchy
 /// `realm ⊃ strand ⊃ message`. `realm` is a bare uuid or a domain-style alias
-/// (the `ck:realm:` sigil is stripped); `strand`/`message` are bare uuids.
+/// (the `ak:realm:` sigil is stripped); `strand`/`message` are bare uuids.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum ShareTarget {
     Realm {
@@ -192,7 +192,7 @@ impl ShareTarget {
     ///
     /// Fails closed when the realm segment is an alias (the digest is
     /// meaningless over an alias — the caller must resolve the alias to a
-    /// canonical `ck:realm:<uuid>` first).
+    /// canonical `ak:realm:<uuid>` first).
     // TODO(R3.3.1): once an alias-bearing share is supported, resolve the alias
     // via the directory before digesting (TargetDescriptor::set_realm_id).
     pub fn invite_target_digest(&self) -> anyhow::Result<String> {
@@ -295,7 +295,7 @@ impl OpenedLink {
 fn strip_sigil(id: &str) -> String {
     let id = id.trim();
     if let Some(rest) = id.strip_prefix("ak:") {
-        // `ck:realm:<uuid>` → `<uuid>`; alias strings have no `ck:` prefix.
+        // `ak:realm:<uuid>` → `<uuid>`; alias strings have no `ck:` prefix.
         rest.split_once(':')
             .map(|(_, v)| v.to_owned())
             .unwrap_or_else(|| id.to_owned())

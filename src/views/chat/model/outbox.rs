@@ -7,7 +7,7 @@
 //
 // Spec: sync/client-sync.md offline-conflict handling — the client keeps a
 // durable local intent and replays it once connectivity returns. Entries
-// carry the stable local `ck:message:` id so replay is idempotent against
+// carry the stable local `ak:message:` id so replay is idempotent against
 // the reducer's `ck.message.create` de-dup.
 
 /// A single parked outgoing message awaiting connectivity.
@@ -16,7 +16,7 @@ pub(crate) struct OutboxMessage {
     pub(crate) realm_id: String,
     pub(crate) strand_id: String,
     pub(crate) channel_kind: String,
-    /// Stable local `ck:message:` id; reused as the durable message id so
+    /// Stable local `ak:message:` id; reused as the durable message id so
     /// a replayed send collapses with the optimistic local row.
     pub(crate) message_id: String,
     pub(crate) body: String,

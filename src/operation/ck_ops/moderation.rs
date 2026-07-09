@@ -67,7 +67,7 @@ pub fn moderation_decision(
 /// `ck.moderation.decision.lift` — observed-remove / supersede a
 /// previously sealed decision. The cell subject is `target_ref` (the same
 /// moderated target as the original decision); `decision_ref` is the
-/// `ck:event:` id of the decision Event whose sealed tag is removed.
+/// `ak:event:` id of the decision Event whose sealed tag is removed.
 ///
 /// Uses the SDK `ModerationDecisionLiftPayload` strong type.
 pub fn moderation_decision_lift(

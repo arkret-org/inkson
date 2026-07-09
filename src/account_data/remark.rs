@@ -11,7 +11,7 @@ use serde::{Deserialize, Serialize};
 /// `discovery/client-preferences.md` §3.7: `ck.contacts.realm.<realm_id>`.
 ///
 /// The same string is the `key` used in `ck.account_data.set`. Callers should
-/// already have validated `realm_id` shape (`ck:realm:<uuid>`).
+/// already have validated `realm_id` shape (`ak:realm:<uuid>`).
 pub fn realm_remark_account_data_key(realm_id: &str) -> String {
     format!("ck.contacts.realm.{realm_id}")
 }

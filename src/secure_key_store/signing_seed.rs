@@ -447,7 +447,7 @@ pub fn delete_grant_binding_seed(store: &dyn SecureKeyStore) -> Result<(), Secur
 }
 
 /// Canonical storage key for the stable protocol `device_id`
-/// (`ck:device:<uuidv7>`), scoped per account.
+/// (`ak:device:<uuidv7>`), scoped per account.
 ///
 /// The `device_id` is NOT a secret — it is a PUBLIC identifier that already
 /// appears in events, KeyPackages and DIDs — so on wasm it lives in PLAIN

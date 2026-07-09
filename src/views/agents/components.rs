@@ -113,7 +113,7 @@ pub fn SidecarExposureDisclosure(
             div { class: "workflow-form",
                 Input {
                     "data-testid": "sidecar-exposure-ref-input",
-                    placeholder: "sidecar object_ref (ck:circle:... or ck:strand:...)",
+                    placeholder: "sidecar object_ref (ak:circle:... or ak:strand:...)",
                     value: "{ref_input}",
                     oninput: move |event: FormEvent| ref_input.set(event.value()),
                 }

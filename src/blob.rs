@@ -2,7 +2,7 @@
 //!
 //! Inkson ships a Media classifier already (`media.rs`); this module adds the
 //! protocol-level send paths so blob references survive in event payloads
-//! with the spec's content-hash typed-id (`ck:blob:sha256:<hex>`).
+//! with the spec's content-hash typed-id (`ak:blob:sha256:<hex>`).
 //!
 //! Re-exports the SDK's [`Attachment`] / [`MediaMetadata`] / [`Thumbnail`]
 //! structures and provides operation builders for blob register / revoke
@@ -61,7 +61,7 @@ impl EncryptedClientAsset {
         &self.envelope.ciphertext_digest
     }
 
-    /// Content-addressed blob reference (`ck:blob:sha256:<hex>`).
+    /// Content-addressed blob reference (`ak:blob:sha256:<hex>`).
     pub fn blob_ref(&self) -> &str {
         &self.envelope.blob_ref
     }
@@ -75,14 +75,14 @@ pub struct EncryptedAttachmentBundle {
     pub thumbnail: Option<EncryptedClientAsset>,
 }
 
-/// Content-address a blob payload as `ck:blob:sha256:<hex>`.
+/// Content-address a blob payload as `ak:blob:sha256:<hex>`.
 pub fn blob_typed_id(bytes: &[u8]) -> String {
     let digest = Sha256::digest(bytes);
     format!("ak:blob:sha256:{}", crate::canonical::hex_encode(&digest))
 }
 
 /// Finish an SDK encrypt: content-address the ciphertext and stamp the
-/// resulting `ck:blob:sha256:<hex>` into the envelope's `blob_ref`.
+/// resulting `ak:blob:sha256:<hex>` into the envelope's `blob_ref`.
 fn finish_asset(
     ciphertext: Vec<u8>,
     mut envelope: EncryptedAttachmentEnvelope,

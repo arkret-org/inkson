@@ -308,7 +308,7 @@ pub fn build_call_signal_envelope_v1(
 /// Attach the broadcast ephemeral `proof` required by
 /// `ephemeral-envelope.schema.json` for all four broadcast kinds: a detached
 /// JWS from the active device signer whose `verification_method` is
-/// `{actor_id}#{device_id}` (fragment = the full `ck:device:<uuidv7>` id) and
+/// `{actor_id}#{device_id}` (fragment = the full `ak:device:<uuidv7>` id) and
 /// whose `event_digest` covers the canonical envelope bytes without `proof`.
 /// Fails closed when no signer is installed — an unsigned broadcast ephemeral
 /// never goes on the wire.

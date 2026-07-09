@@ -125,7 +125,7 @@ fn safer_winner_for_capability_grant_prefers_revoked_over_active() {
 #[test]
 fn safer_winner_for_unknown_cell_family_returns_none() {
     let mut view = LocalSealView::default();
-    let cell = "ak:cell:ck.component.test.unknown.v1:ck:realm:demo".to_owned();
+    let cell = "ak:cell:ck.component.test.unknown.v1:ak:realm:demo".to_owned();
     view.bottom_cells.insert(
         cell.clone(),
         BottomCellInfo {
@@ -237,12 +237,12 @@ fn seal_view_from_sync_body_parses_full_payload() {
 fn seal_view_from_sync_body_parses_structured_bottoms() {
     let body = serde_json::json!({
         "bottoms": [{
-            "cell": "ak:cell:ck.component.strand.position.v1:ck:space:board:ck:strand:card",
+            "cell": "ak:cell:ck.component.strand.position.v1:ak:space:board:ak:strand:card",
             "status": "conflict",
             "bottom": {
                 "kind": "conflict",
                 "cells": [
-                    "ak:cell:ck.component.strand.position.v1:ck:space:board:ck:strand:card"
+                    "ak:cell:ck.component.strand.position.v1:ak:space:board:ak:strand:card"
                 ],
                 "event_ids": [
                     "ak:event:0196419b-0000-7000-8000-000000000001",
@@ -259,7 +259,7 @@ fn seal_view_from_sync_body_parses_structured_bottoms() {
     let view = LocalSealView::from_sync_body(&body);
     let info = view
         .bottom_cells
-        .get("ak:cell:ck.component.strand.position.v1:ck:space:board:ck:strand:card")
+        .get("ak:cell:ck.component.strand.position.v1:ak:space:board:ak:strand:card")
         .expect("structured bottom conflict surfaced");
     assert_eq!(info.status, "conflict");
     assert_eq!(info.heads.len(), 2);
@@ -283,10 +283,10 @@ fn seal_view_from_sync_body_extracts_mls_epoch_and_covered_seals() {
             "frontier": ["ak:seal:sha256:aaa"],
             "leaves": [],
             "cells": {
-                "ak:cell:ck.component.mls.epoch.v1:ck:realm:demo": {
+                "ak:cell:ck.component.mls.epoch.v1:ak:realm:demo": {
                     "value": 7
                 },
-                "ak:cell:ck.component.governance.covered_seals.v1:ck:realm:demo": {
+                "ak:cell:ck.component.governance.covered_seals.v1:ak:realm:demo": {
                     "register": { "value": "ak:state:sha256:abcd" }
                 }
             }
@@ -305,7 +305,7 @@ fn seal_view_mls_epoch_supports_object_value_with_epoch_field() {
         "seal_view": {
             "frontier": [],
             "cells": {
-                "ak:cell:ck.component.mls.epoch.v1:ck:realm:demo": {
+                "ak:cell:ck.component.mls.epoch.v1:ak:realm:demo": {
                     "value": { "epoch": 42, "members": 3 }
                 }
             }

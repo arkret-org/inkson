@@ -39,7 +39,7 @@ pub enum CircleScope {
     Realm,
     /// Circle-scoped — visible to a strict subset of Realm members.
     Circle {
-        /// `ck:circle:…` id stamped onto the envelope as
+        /// `ak:circle:…` id stamped onto the envelope as
         /// `scope_circle_id`.
         circle_id: String,
         /// Cached title for banner rendering. Reducer-authoritative
@@ -53,7 +53,7 @@ pub enum CircleScope {
 }
 
 impl CircleScope {
-    /// Returns the `ck:circle:…` id if this scope is Circle, otherwise
+    /// Returns the `ak:circle:…` id if this scope is Circle, otherwise
     /// `None` (Realm scope).
     pub fn circle_id(&self) -> Option<&str> {
         match self {
@@ -82,9 +82,9 @@ impl CircleScope {
 /// [`arkret_sdk::arkret_core::models::circle::Circle`].
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CircleSummary {
-    /// `ck:circle:…`
+    /// `ak:circle:…`
     pub id: String,
-    /// `ck:realm:…` of the parent Realm.
+    /// `ak:realm:…` of the parent Realm.
     pub realm_id: String,
     pub title: String,
     pub short_name: String,

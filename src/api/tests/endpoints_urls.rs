@@ -19,7 +19,7 @@ fn endpoint_enforces_private_path_redline() {
     assert!(api.endpoint(&private_consent).is_err());
     let retired_account_me = [private_prefix, "self", "account", "me"].join("/");
     assert!(api.endpoint(&retired_account_me).is_err());
-    let unlisted = format!("{private_prefix}/self/spaces/ck:space:1");
+    let unlisted = format!("{private_prefix}/self/spaces/ak:space:1");
     let error = api
         .endpoint(&unlisted)
         .expect_err("soland private paths must be rejected");

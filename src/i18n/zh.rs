@@ -1264,7 +1264,7 @@ fn add_feedback_keys_zh(dict: &mut TranslationDict) {
     );
     dict.set(
         "feedback.invalid_realm_id",
-        "Realm ID 必须以 ck:realm: 开头",
+        "Realm ID 必须以 ak:realm: 开头",
     );
     dict.set(
         "feedback.contact_remark_saved",

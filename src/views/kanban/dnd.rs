@@ -52,7 +52,7 @@ pub(super) fn submit_kanban_operation_event(
     // and gets dropped/cancelled when that route change unmounts the panel,
     // so the `ck.space.create` POST never left the client (board stuck
     // `write_state:"queued"`, never reaching the server → other devices saw a
-    // nameless `ck:space:...` board). `spawn_forever` (ScopeId::ROOT) detaches
+    // nameless `ak:space:...` board). `spawn_forever` (ScopeId::ROOT) detaches
     // the task so the submit completes regardless of navigation/unmount.
     // ("Add List" never navigated, which is why lists were `accepted` while
     // boards stayed `queued`.)
@@ -412,7 +412,7 @@ pub(super) struct ColumnNeighbours {
 ///
 /// - Cross-column drop ⇒ `ck.strand.move` Event kind.
 /// - Same-column drop ⇒ `ck.strand.reorder`.
-/// - Both compile to the same `ck:cell:ck.component.strand.position.v1:<board>:<strand>`
+/// - Both compile to the same `ak:cell:ck.component.strand.position.v1:<board>:<strand>`
 ///   cas-register cell; the difference is whether `effect.list_space_id` equals
 ///   `expected.list_space_id`.
 pub(super) fn dispatch_strand_position_move(

@@ -144,7 +144,7 @@ mod qr_tests {
 
     #[test]
     fn typical_payload_produces_svg() {
-        let svg = render_qr_svg("arkret:verify:ck:device:abc:ck:device:xyz");
+        let svg = render_qr_svg("arkret:verify:ak:device:abc:ak:device:xyz");
         // qrcode 0.14 emits an `<?xml …?>` declaration before `<svg`.
         assert!(svg.contains("<svg"));
         assert!(svg.contains("</svg>"));

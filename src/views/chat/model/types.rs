@@ -34,7 +34,7 @@ pub(crate) struct ChannelEntity {
 /// the chat composer banner and message accent rail.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct StrandScopeCircle {
-    /// `ck:circle:…`
+    /// `ak:circle:…`
     pub(crate) circle_id: String,
     /// Circle title used in the banner heading + accent-rail tooltip.
     pub(crate) title: String,
