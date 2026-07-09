@@ -9,6 +9,8 @@
 //! on `CokretApi` because its cross-endpoint join routing needs the
 //! facade's base-url / credential / sync-token state.
 
+use serde_json::{Value, json};
+
 use crate::event_builders::{
     build_member_state_transition_event, build_plaintext_visible_services_event,
     build_realm_archive_event, build_realm_bootstrap_events, build_realm_destroy_event,
@@ -17,14 +19,11 @@ use crate::event_builders::{
     recommended_history_sharing_policy_for_visibility, recommended_realm_policy_components_value,
 };
 use crate::event_submit::EventSubmitter;
-use crate::models::{
-    RealmCreateResult, RealmPolicyResult, SpaceCreateResult, SubmitEventResult,
-};
+use crate::models::{RealmCreateResult, RealmPolicyResult, SpaceCreateResult, SubmitEventResult};
 use crate::operation::{EventKind, ck_ops, uuid_v7};
 use crate::realm_helpers::{
     canonical_space_join_rule_v1, patch_touches_create_locked_encryption_profile,
 };
-use serde_json::{Value, json};
 
 /// Build + submit the spec-canonical `ck.realm.create` event bundle
 /// (and its facet follow-ups) via `ck.self.events.command.submit`
@@ -225,9 +224,19 @@ pub async fn transition_member_state(
     to_state: &str,
     reason: &str,
 ) -> anyhow::Result<SubmitEventResult> {
-    let event = build_member_state_transition_event(
+    let mut event = build_member_state_transition_event(
         realm_id, actor_id, member, from_state, to_state, reason,
     )?;
+    // `ck.member.state` is CBA-exempt in the shared stamper only because the
+    // Realm-bootstrap batch submits it pre-signed without a seal frontier.
+    // Post-bootstrap transitions (ban / kick / leave / unban) carry effects,
+    // and the server rejects effects-carrying Control Moves without
+    // `seal_basis.leaves` (envelope validation). Every caller of this helper
+    // is an already-joined actor, so the realm seal frontier is readable.
+    let seal_view = submitter.events_frontier_realm_seal_view(realm_id).await?;
+    event.seal_basis = Some(seal_view.seal_basis());
+    event.seal_ref = None;
+    event.auth_context = None;
     submitter.submit_sdk_event(&event).await
 }
 
@@ -266,9 +275,7 @@ pub async fn update_realm_plaintext_visible_services(
     else {
         anyhow::bail!("plaintext_visible_services update requires at least one service DID");
     };
-    let seal_view = submitter
-        .events_frontier_realm_seal_view(realm_id)
-        .await?;
+    let seal_view = submitter.events_frontier_realm_seal_view(realm_id).await?;
     event.seal_basis = Some(seal_view.seal_basis());
     event.seal_ref = None;
     event.auth_context = None;
@@ -416,8 +423,8 @@ pub async fn reject_realm_invite(
     invite_id: &str,
     reason: Option<&str>,
 ) -> anyhow::Result<SubmitEventResult> {
-    let event = ck_ops::invite_cancel(realm_id, actor_id, invite_id, reason)?
-        .build_sdk_event("inkson")?;
+    let event =
+        ck_ops::invite_cancel(realm_id, actor_id, invite_id, reason)?.build_sdk_event("inkson")?;
     submitter.submit_sdk_event(&event).await
 }
 
@@ -467,8 +474,16 @@ pub async fn ban_member(
     actor_id: &str,
     member: &str,
 ) -> anyhow::Result<SubmitEventResult> {
-    transition_member_state(submitter, realm_id, actor_id, member, Some("join"), "ban", "admin_ban")
-        .await
+    transition_member_state(
+        submitter,
+        realm_id,
+        actor_id,
+        member,
+        Some("join"),
+        "ban",
+        "admin_ban",
+    )
+    .await
 }
 
 // ── Daily governance — protocol-event pipeline (P3) ───────────────
@@ -517,13 +532,8 @@ pub async fn revoke_realm_admin(
     grant_id: &str,
     reason: Option<&str>,
 ) -> anyhow::Result<SubmitEventResult> {
-    let event = ck_ops::capability_revoke(
-        realm_id,
-        actor_id,
-        grant_id,
-        reason,
-    )?
-    .build_sdk_event("inkson")?;
+    let event = ck_ops::capability_revoke(realm_id, actor_id, grant_id, reason)?
+        .build_sdk_event("inkson")?;
     submitter.submit_sdk_event(&event).await
 }
 
@@ -540,14 +550,8 @@ pub async fn moderation_decide(
     decision: &str,
     reason_code: &str,
 ) -> anyhow::Result<SubmitEventResult> {
-    let event = ck_ops::moderation_decision(
-        realm_id,
-        actor_id,
-        target_ref,
-        decision,
-        reason_code,
-    )?
-    .build_sdk_event("inkson")?;
+    let event = ck_ops::moderation_decision(realm_id, actor_id, target_ref, decision, reason_code)?
+        .build_sdk_event("inkson")?;
     submitter.submit_sdk_event(&event).await
 }
 
@@ -673,14 +677,9 @@ pub async fn appeal_modify_atomic(
     appeal_reason_text_ref: &str,
 ) -> anyhow::Result<(String, cokret_sdk::EventsSubmitOutcome)> {
     let new_decision_id = format!("ck:event:{}", crate::operation::uuid_v7());
-    let mut new_decision = ck_ops::moderation_decision(
-        realm_id,
-        actor_id,
-        target_ref,
-        new_verdict,
-        new_reason_code,
-    )?
-    .build_sdk_event("inkson")?;
+    let mut new_decision =
+        ck_ops::moderation_decision(realm_id, actor_id, target_ref, new_verdict, new_reason_code)?
+            .build_sdk_event("inkson")?;
     // The reducer matches `modify_decision_ref` against the new decision's
     // EVENT id, so pin the SDK Event id to the same value we report.
     new_decision.event_id = cokret_sdk::EventId::new(new_decision_id.clone())
@@ -718,10 +717,10 @@ async fn sign_and_submit_moderation_batch(
         if event.proofs.is_empty() {
             crate::event_signer::sign_sdk_event_with_active_context(event, proof_context.clone())
                 .map_err(|err| {
-                    anyhow::anyhow!(
-                        "no active signer configured \u{2014} cannot submit moderation batch: {err}"
-                    )
-                })?;
+                anyhow::anyhow!(
+                    "no active signer configured \u{2014} cannot submit moderation batch: {err}"
+                )
+            })?;
         }
     }
     submitter

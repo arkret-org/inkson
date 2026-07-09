@@ -5,8 +5,9 @@
 //! fetch). What was missing was a *single* end-to-end orchestrator that
 //! resolves a real platform token via the active [`PushTokenProvider`],
 //! posts the register-device request through the chime [`CokretPushClient`]
-//! pointed at the floria notify gateway, and persists the resulting
-//! [`PushRegistrationState`] to [`LocalStateStore`].
+//! pointed at the floria notify gateway, and returns the resulting
+//! [`PushRegistrationState`] for the caller to persist through its live store
+//! handle.
 //!
 //! The orchestrator deliberately does **not** silently fall back to a
 //! placeholder push key. If the active provider declines (or none is
@@ -31,7 +32,7 @@
 //!     authorization_credential: Some(api_token),
 //!     session_grant: None,
 //!     active_circle_id: None,
-//! }, &mut local_state_store).await?;
+//! }, &local_state_store).await?;
 //! ```
 
 use chime::{
@@ -133,9 +134,9 @@ pub struct UnregisterContext {
     pub session_grant: Option<String>,
 }
 
-/// Outcome of a successful chime-driven registration. The persisted
-/// `PushRegistrationState` has already been saved to `LocalStateStore`
-/// — the value is returned for UI labelling.
+/// Outcome of a successful chime-driven registration. The caller owns
+/// persistence so Dioxus UI paths can write through the live state handle
+/// after the network await.
 #[derive(Clone, Debug)]
 pub struct RegisterOutcome {
     pub state: PushRegistrationState,
@@ -151,7 +152,7 @@ struct ChimeSessionGrantHeaders {
 
 /// Resolve a real token via the installed `PushTokenProvider`, build a
 /// chime register-device request, post it through the chime SDK, and
-/// persist the resulting `PushRegistrationState` to `LocalStateStore`.
+/// return the resulting `PushRegistrationState` for the caller to persist.
 ///
 /// On non-wasm targets the chime client uses reqwest+rustls+tokio. On
 /// wasm32 the same client routes through reqwest's fetch-backed wasm32
@@ -159,7 +160,7 @@ struct ChimeSessionGrantHeaders {
 /// real HTTP POST to the principal server.
 pub async fn register_via_chime(
     mut ctx: RegisterContext,
-    state_store: &mut LocalStateStore,
+    state_store: &LocalStateStore,
 ) -> Result<RegisterOutcome, PushRegistrationError> {
     let session_grant = resolve_chime_session_grant(&mut ctx, state_store)?;
     let token = resolve_real_token(&ctx).await?;
@@ -179,7 +180,6 @@ pub async fn register_via_chime(
         .map_err(|err| PushRegistrationError::Transport(err.to_string()))?;
 
     let state = registration_state_from_response(&request, &response.body);
-    state_store.save_push_registration(state.clone());
 
     Ok(RegisterOutcome {
         state,
@@ -189,7 +189,7 @@ pub async fn register_via_chime(
 
 pub async fn unregister_via_chime(
     ctx: UnregisterContext,
-    state_store: &mut LocalStateStore,
+    state_store: &LocalStateStore,
 ) -> Result<ChimePushUnregisterDeviceOutcome, PushRegistrationError> {
     let mut grant_ctx = RegisterContext {
         principal_server_url: ctx.principal_server_url.clone(),
@@ -215,7 +215,6 @@ pub async fn unregister_via_chime(
         .unregister_device_with_request(&request, request.idempotency_key.as_deref(), None)
         .await
         .map_err(|err| PushRegistrationError::Transport(err.to_string()))?;
-    state_store.clear_push_registration();
     Ok(response.body)
 }
 

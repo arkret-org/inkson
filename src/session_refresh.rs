@@ -11,8 +11,8 @@
 //!
 //! 1. [`refresh_decision`] inspects the persisted [`PersistedSessionGrant`] and decides whether to
 //!    do nothing, rotate the grant now, or surface a "must re-login" event.
-//! 2. [`exchange_refresh`] rotates a near-expiry grant onto a fresh one via the existing DPoP
-//!    refresh (`refresh_session_grant`); when the grant still has runway it is returned unchanged.
+//! 2. [`exchange_refresh`] rotates a near-expiry grant onto a fresh one via garth's session refresh
+//!    engine; when the grant still has runway it is returned unchanged.
 //! 3. [`commit_refresh`] persists the (possibly rotated) grant and hands the caller back the live
 //!    grant JWT — which the UI swaps into the `token` signal (the "current credential").
 //!
@@ -23,7 +23,7 @@ use anyhow::Context as _;
 use base64::Engine as _;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use chrono::Utc;
-use cokret_sdk::http_client::{Auth, ClientBuilder, DpopAuth};
+use cokret_sdk::http_client::{Auth, ClientBuilder};
 use garth::{SessionEngine, SessionGrantState, SessionRefreshOptions};
 use serde::Serialize;
 use url::Url;
@@ -237,7 +237,7 @@ pub fn prepare_refresh_for_server_after_unauthorized(
 /// Pure async rotation. Holds no `LocalStateStore` borrow.
 ///
 /// ②(A+②): there is no local session credential minted from the grant. This rotates the near-expiry
-/// grant onto a fresh one via the DPoP refresh (`refresh_session_grant`) and
+/// grant onto a fresh one via garth's DPoP refresh engine and
 /// returns the rotated [`PersistedSessionGrant`]. The grant itself remains the
 /// live credential; the caller swaps its JWT into the `token` signal.
 pub async fn exchange_refresh(
@@ -480,7 +480,7 @@ pub fn commit_refresh(
             }
         }
         Err(error) => {
-            if is_grant_dead_error(&error) {
+            if crate::api_error::is_terminal_session_grant_refresh_error(&error) {
                 store.set_session_grant(None);
                 RefreshOutcome::LoginRequired {
                     reason: format!("session grant could not be rotated: {error}"),
@@ -512,92 +512,6 @@ pub async fn run_refresh(store: &mut LocalStateStore) -> RefreshOutcome {
     };
     let result = exchange_refresh(&grant, &device_handle).await;
     commit_refresh(store, result)
-}
-
-/// Rotate the persisted session grant onto a fresh one against the Account
-/// Authority's DPoP refresh endpoint (kept from the existing refresh path).
-///
-/// The endpoint requires:
-///
-/// * A `DPoP:` header proving possession of the same key that's bound to the grant's `cnf.jkt`
-///   claim (issuance side: G3.S1 / G3.C1).
-/// * The prior grant JWT in the body (single-use: the old grant is revoked on success).
-///
-/// Returns the SDK [`cokret_sdk::SessionGrantRefreshOutcome`] body so the caller
-/// can persist the new grant id + expiry for the next rotation. The DPoP proof
-/// MUST already be minted against `htm=POST`, `htu`=absolute refresh URL,
-/// `ath`=hash(prior grant).
-pub async fn refresh_session_grant(
-    gate_account_base: &str,
-    grant_jwt: &str,
-    audience: Option<&str>,
-    device_id: &str,
-    proof: cokret_sdk::SessionGrantRefreshProof,
-    dpop_proof: &str,
-) -> anyhow::Result<cokret_sdk::SessionGrantRefreshOutcome> {
-    let sdk_base_url = sdk_base_url_from_gate_account_base(gate_account_base)?;
-    let supplied_dpop = dpop_proof.to_owned();
-    let client = ClientBuilder::new(sdk_base_url)
-        .allow_insecure_localhost()
-        .auth(Auth::Dpop(DpopAuth::with_access_token(
-            grant_jwt.to_owned(),
-            move |_request| Ok(supplied_dpop.clone()),
-        )))
-        .build()
-        .map_err(|error| anyhow::anyhow!("build session refresh HTTP client: {error}"))?;
-    let device_id = cokret_sdk::DeviceId::new(device_id.trim().to_owned())
-        .map_err(|error| anyhow::anyhow!("invalid refresh device_id: {error}"))?;
-    client
-        .auth_refresh_session_grant(&cokret_sdk::SessionGrantRefreshRequestBody {
-            grant_jwt: grant_jwt.to_owned(),
-            audience: audience.map(ToOwned::to_owned),
-            device_id: Some(device_id),
-            proof: Some(proof),
-        })
-        .await
-        .map_err(|error| anyhow::anyhow!("refresh session grant: {error}"))
-}
-
-fn is_grant_dead_error(error: &anyhow::Error) -> bool {
-    // Only refresh-specific terminal grant errors clear the persisted grant.
-    // A generic `auth_expired` / 401 on the refresh call can be a stale
-    // deployment, proxy route miss, clock skew, or temporary Account Authority
-    // outage; treating it as logout causes the UI to throw away recoverable
-    // session material.
-    if crate::api_error::is_terminal_session_grant_error(error) {
-        return true;
-    }
-    if let Some(api_error) = error.downcast_ref::<crate::api_error::CokretApiError>() {
-        let code = api_error.error.code();
-        let message = api_error.error.message().to_ascii_lowercase();
-        if matches!(
-            code,
-            "invalid_grant"
-                | "grant_expired"
-                | "grant_revoked"
-                | "session_grant_revoked"
-                | "grant_already_consumed"
-                | "session_grant_not_found"
-                | "session_logged_out"
-                | "invalid_signature"
-                | "did_proof_required"
-        ) {
-            return true;
-        }
-        if code == "capability_denied" && terminal_session_grant_message(&message) {
-            return true;
-        }
-    }
-    false
-}
-
-fn terminal_session_grant_message(message: &str) -> bool {
-    message.contains("session grant")
-        && (message.contains("revoked")
-            || message.contains("not active")
-            || message.contains("expired")
-            || message.contains("locked")
-            || message.contains("suspended"))
 }
 
 #[cfg(test)]

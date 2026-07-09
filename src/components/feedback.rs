@@ -103,26 +103,10 @@ impl Toast {
             args,
             fallback: None,
             detail: None,
-            captured_at_ms: feedback_now_ms(),
+            captured_at_ms: crate::clock::now_unix_ms(),
             id: next_toast_id(),
             source: "app",
         }
-    }
-}
-
-fn feedback_now_ms() -> u64 {
-    #[cfg(target_arch = "wasm32")]
-    {
-        js_sys::Date::now().max(0.0) as u64
-    }
-    #[cfg(not(target_arch = "wasm32"))]
-    {
-        use std::time::{SystemTime, UNIX_EPOCH};
-
-        SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .map(|d| d.as_millis() as u64)
-            .unwrap_or_default()
     }
 }
 
@@ -229,7 +213,7 @@ pub fn circle_error_to_toast(kind: CircleErrorKind) -> Toast {
         args: Vec::new(),
         fallback: Some(kind.english_fallback().to_owned()),
         detail: None,
-        captured_at_ms: feedback_now_ms(),
+        captured_at_ms: crate::clock::now_unix_ms(),
         id: next_toast_id(),
         source: "circle-error",
     }
@@ -296,18 +280,8 @@ pub fn ToastHost() -> Element {
             // unlike the old single-slot banner.
             let id = toast.id;
             let ttl_ms = toast.severity.autodismiss_ms();
-            #[cfg(not(target_arch = "wasm32"))]
             spawn(async move {
-                tokio::time::sleep(std::time::Duration::from_millis(ttl_ms)).await;
-                toasts.write().retain(|t| t.id != id);
-            });
-            #[cfg(target_arch = "wasm32")]
-            spawn(async move {
-                // `tokio::time` panics on wasm32-unknown-unknown; route
-                // through `setTimeout` via gloo-timers (same approach as
-                // `runtime_helpers::sleep_for`).
-                let ms = u32::try_from(ttl_ms).unwrap_or(u32::MAX);
-                gloo_timers::future::TimeoutFuture::new(ms).await;
+                crate::runtime_helpers::sleep_for(std::time::Duration::from_millis(ttl_ms)).await;
                 toasts.write().retain(|t| t.id != id);
             });
         }

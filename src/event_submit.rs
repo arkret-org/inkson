@@ -7,10 +7,12 @@
 
 #[cfg(test)]
 use cokret_sdk::ErrorEnvelope;
+#[cfg(test)]
 use reqwest::StatusCode;
 use serde_json::Value;
 use tokio::sync::OnceCell;
 
+#[cfg(test)]
 use crate::api_error::CokretApiError;
 use crate::ephemeral::{
     attach_broadcast_ephemeral_proof, build_presence_envelope, build_receipt_read_envelope,
@@ -295,7 +297,10 @@ impl EventSubmitter {
             .await
         {
             Ok(result) => Ok(result),
-            Err(error) if retry_actor_seq_cas && is_actor_seq_cas_conflict(&error) => {
+            Err(error)
+                if retry_actor_seq_cas
+                    && crate::api_error::is_actor_seq_cas_conflict_error(&error) =>
+            {
                 tracing::warn!(
                     event_id = %event.event_id,
                     actor_id = %event.actor_id,
@@ -382,7 +387,7 @@ impl EventSubmitter {
         let actor_id = event.actor_id.as_str().to_owned();
         match self.events_frontier_actor(&actor_id).await {
             Ok(frontier) => apply_actor_frontier_to_sdk_event(event, &frontier),
-            Err(error) if is_actor_frontier_absent(&error) => {
+            Err(error) if crate::api_error::is_actor_frontier_absent_error(&error) => {
                 event.actor_seq = 1;
                 event.prev_refs.clear();
                 tracing::debug!(
@@ -572,22 +577,6 @@ fn validate_signed_sdk_event_for_submit(event: &cokret_sdk::Event) -> anyhow::Re
         anyhow::anyhow!("event proof binding invalid for {}: {err}", event.event_id)
     })?;
     validate_outgoing_registered_event_payload(event.kind.as_str(), &event.payload)
-}
-
-fn is_actor_frontier_absent(error: &anyhow::Error) -> bool {
-    error
-        .downcast_ref::<CokretApiError>()
-        .is_some_and(|api_error| api_error.status == StatusCode::NOT_FOUND)
-}
-
-fn is_actor_seq_cas_conflict(error: &anyhow::Error) -> bool {
-    error
-        .downcast_ref::<CokretApiError>()
-        .is_some_and(|api_error| {
-            api_error.status == StatusCode::CONFLICT
-                && api_error.error.code() == "cas_conflict"
-                && api_error.error.message().contains("actor_seq")
-        })
 }
 
 fn apply_actor_frontier_to_sdk_event(
@@ -836,14 +825,16 @@ mod tests {
             ),
         }
         .into();
-        assert!(is_actor_seq_cas_conflict(&cas));
+        assert!(crate::api_error::is_actor_seq_cas_conflict_error(&cas));
 
         let different_conflict: anyhow::Error = CokretApiError {
             status: StatusCode::CONFLICT,
             error: ErrorEnvelope::new("cas_conflict", "expected head mismatch"),
         }
         .into();
-        assert!(!is_actor_seq_cas_conflict(&different_conflict));
+        assert!(!crate::api_error::is_actor_seq_cas_conflict_error(
+            &different_conflict
+        ));
     }
 
     #[test]

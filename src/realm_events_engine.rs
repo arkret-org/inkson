@@ -136,19 +136,18 @@ impl ClientProjector for RealmIngestProjector {
             if !payloads.is_empty() {
                 let mut state_store = self.state_store;
                 let mut guard = state_store.write();
-                let changed = crate::sync_engine::ingest_kanban_events(
-                    &mut guard,
-                    &self.realm_id,
-                    &payloads,
-                ) + crate::sync_engine::ingest_message_events(
-                    &mut guard,
-                    &self.realm_id,
-                    &payloads,
-                ) + crate::sync_engine::ingest_membership_events(
-                    &mut guard,
-                    &self.realm_id,
-                    &payloads,
-                );
+                let changed =
+                    crate::sync_engine::ingest_kanban_events(&mut guard, &self.realm_id, &payloads)
+                        + crate::sync_engine::ingest_message_events(
+                            &mut guard,
+                            &self.realm_id,
+                            &payloads,
+                        )
+                        + crate::sync_engine::ingest_membership_events(
+                            &mut guard,
+                            &self.realm_id,
+                            &payloads,
+                        );
                 drop(guard);
                 self.changed.set(self.changed.get() + changed);
             }
@@ -198,10 +197,7 @@ pub async fn run_realm_events_engine(
                 // the local exponential backoff on repeated failures
                 // (backoff_ms starts at MIN_BACKOFF_MS, so the old
                 // MIN_BACKOFF_MS floor is preserved).
-                sleep_for(std::time::Duration::from_millis(
-                    delay_ms.max(backoff_ms),
-                ))
-                .await;
+                sleep_for(std::time::Duration::from_millis(delay_ms.max(backoff_ms))).await;
                 backoff_ms = (backoff_ms.saturating_mul(2)).min(MAX_BACKOFF_MS);
             }
             RealmIterationOutcome::NotReady | RealmIterationOutcome::AuthExpired => {

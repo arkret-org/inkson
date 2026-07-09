@@ -530,8 +530,7 @@ mod client_core_sync_overlay_tests {
         let ui_clone = base.clone();
 
         assert!(!ui_clone.client_core_event_seen("ck:event:01904100-0000-7000-8000-0000000000aa"));
-        adapter_clone
-            .remember_client_core_event("ck:event:01904100-0000-7000-8000-0000000000aa");
+        adapter_clone.remember_client_core_event("ck:event:01904100-0000-7000-8000-0000000000aa");
         assert!(ui_clone.client_core_event_seen("ck:event:01904100-0000-7000-8000-0000000000aa"));
     }
 }

@@ -71,8 +71,7 @@ pub(super) fn push_read_receipt_account_data(
     );
     spawn(async move {
         match with_event_submitter(&base_url, api_token, |sub| async move {
-            crate::account_api::set_account_data(&sub, READ_RECEIPT_ACCOUNT_DATA_KEY, body)
-                .await
+            crate::account_api::set_account_data(&sub, READ_RECEIPT_ACCOUNT_DATA_KEY, body).await
         })
         .await
         {
@@ -317,8 +316,7 @@ pub(super) fn push_notification_rules_account_data(
     };
     spawn(async move {
         match with_event_submitter(&base_url, api_token, |sub| async move {
-            crate::account_api::set_account_data(&sub, PUSH_RULES_ACCOUNT_DATA_KEY, body)
-                .await
+            crate::account_api::set_account_data(&sub, PUSH_RULES_ACCOUNT_DATA_KEY, body).await
         })
         .await
         {

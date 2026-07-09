@@ -20,10 +20,8 @@
 //! because it resolves contact addressing via the struct-cached
 //! `describe_cached` (see `contact_request_addressing`).
 
-use reqwest::StatusCode;
 use serde_json::Value;
 
-use crate::api_error::CokretApiError;
 use crate::event_submit::EventSubmitter;
 use crate::models::{
     AccountDataSetResult, ContactListView, CurrentAccount, IdentityDescribeOutcome,
@@ -468,20 +466,6 @@ pub async fn submit_did_operation(
         .map_err(anyhow::Error::from)
 }
 
-fn unsupported_status(error: &anyhow::Error) -> Option<StatusCode> {
-    error
-        .downcast_ref::<CokretApiError>()
-        .map(|api_error| api_error.status)
-        .filter(|status| {
-            matches!(
-                *status,
-                StatusCode::NOT_FOUND
-                    | StatusCode::NOT_IMPLEMENTED
-                    | StatusCode::METHOD_NOT_ALLOWED
-            )
-        })
-}
-
 async fn account_data_actor_scope(
     http: &cokret_sdk::http_client::Client,
 ) -> anyhow::Result<(String, String)> {
@@ -505,7 +489,7 @@ pub async fn set_account_data(
     let (actor, principal_realm_id) = match account_data_actor_scope(submitter.http()).await {
         Ok(scope) => scope,
         Err(error) => {
-            if let Some(status) = unsupported_status(&error) {
+            if let Some(status) = crate::api_error::unsupported_endpoint_status(&error) {
                 tracing::warn!(
                     "principal-realm lookup for account_data returned {status}; \
                      keeping local state authoritative"
@@ -525,7 +509,7 @@ pub async fn set_account_data(
             response: serde_json::to_value(value)?,
         }),
         Err(error) => {
-            if let Some(status) = unsupported_status(&error) {
+            if let Some(status) = crate::api_error::unsupported_endpoint_status(&error) {
                 tracing::warn!(
                     "ck.account_data.set submit for {type_key} returned {status}; \
                      keeping local state authoritative"
@@ -549,7 +533,7 @@ pub async fn set_private_account_data_with_cas(
     let (actor, principal_realm_id) = match account_data_actor_scope(submitter.http()).await {
         Ok(scope) => scope,
         Err(error) => {
-            if let Some(status) = unsupported_status(&error) {
+            if let Some(status) = crate::api_error::unsupported_endpoint_status(&error) {
                 tracing::warn!(
                     "principal-realm lookup for private account_data returned {status}; \
                      keeping local state authoritative"
@@ -573,7 +557,7 @@ pub async fn set_private_account_data_with_cas(
             response: serde_json::to_value(value)?,
         }),
         Err(error) => {
-            if let Some(status) = unsupported_status(&error) {
+            if let Some(status) = crate::api_error::unsupported_endpoint_status(&error) {
                 tracing::warn!(
                     "ck.account_data.set submit for private {type_key} returned {status}; \
                      keeping local state authoritative"
@@ -588,14 +572,11 @@ pub async fn set_private_account_data_with_cas(
 /// Tombstone an account_data entry by submitting `ck.account_data.set` with
 /// `tombstone: true`. Same graceful-degradation contract as
 /// [`set_account_data`].
-pub async fn delete_account_data(
-    submitter: &EventSubmitter,
-    type_key: &str,
-) -> anyhow::Result<()> {
+pub async fn delete_account_data(submitter: &EventSubmitter, type_key: &str) -> anyhow::Result<()> {
     let (actor, principal_realm_id) = match account_data_actor_scope(submitter.http()).await {
         Ok(scope) => scope,
         Err(error) => {
-            if unsupported_status(&error).is_some() {
+            if crate::api_error::unsupported_endpoint_status(&error).is_some() {
                 return Ok(());
             }
             return Err(error);
@@ -608,7 +589,7 @@ pub async fn delete_account_data(
     match submitter.submit_sdk_event(&event).await {
         Ok(_) => Ok(()),
         Err(error) => {
-            if unsupported_status(&error).is_some() {
+            if crate::api_error::unsupported_endpoint_status(&error).is_some() {
                 return Ok(());
             }
             Err(error)

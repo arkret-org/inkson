@@ -53,24 +53,8 @@ impl PolicyDenyEvent {
             code: code.into(),
             message: message.into(),
             obligations,
-            captured_at_ms: policy_deny_now_ms(),
+            captured_at_ms: crate::clock::now_unix_ms(),
         }
-    }
-}
-
-fn policy_deny_now_ms() -> u64 {
-    #[cfg(target_arch = "wasm32")]
-    {
-        js_sys::Date::now().max(0.0) as u64
-    }
-    #[cfg(not(target_arch = "wasm32"))]
-    {
-        use std::time::{SystemTime, UNIX_EPOCH};
-
-        SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .map(|d| d.as_millis() as u64)
-            .unwrap_or_default()
     }
 }
 

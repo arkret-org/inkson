@@ -41,8 +41,7 @@ pub const APPEAL_VERDICTS: &[&str] = &["uphold", "overturn", "modify"];
 /// other value is a `schema_violation` server-side, so the workbench only
 /// ever offers this authoritative set (the earlier `deny` / `allow` values
 /// were not in the schema enum and would have been rejected).
-pub const DECISION_VERDICTS: &[&str] =
-    &["hard_deny", "soft_deny", "quarantine", "require_review"];
+pub const DECISION_VERDICTS: &[&str] = &["hard_deny", "soft_deny", "quarantine", "require_review"];
 
 /// A standing moderation decision projected from the raw-operation log. Lifted
 /// decisions are folded out by [`project_moderation_queues`]. The cell subject

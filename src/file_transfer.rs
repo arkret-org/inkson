@@ -410,7 +410,7 @@ fn prepare_actor_private_file(
     if device_id.trim().is_empty() {
         anyhow::bail!("device_id is required for file transfer");
     }
-    let transfer_id = random_base64url(24)?;
+    let transfer_id = crate::random::base64url_token(24, "file-transfer transfer-id rng")?;
     let account_data_key =
         crate::account_data::file_transfer_account_data_key(crypto.namespace_key(), &transfer_id)?;
     let mut content_key = [0u8; CONTENT_KEY_LEN];
@@ -963,13 +963,6 @@ fn derive_account_subkey(
     hk.expand(info, &mut out)
         .map_err(|_| anyhow::anyhow!("file-transfer HKDF expand failed"))?;
     Ok(out)
-}
-
-fn random_base64url(bytes_len: usize) -> anyhow::Result<String> {
-    let mut bytes = vec![0u8; bytes_len];
-    getrandom::fill(&mut bytes)
-        .map_err(|error| anyhow::anyhow!("file-transfer transfer-id rng: {error}"))?;
-    Ok(URL_SAFE_NO_PAD.encode(bytes))
 }
 
 fn decode_fixed<const N: usize>(value: &str) -> anyhow::Result<[u8; N]> {

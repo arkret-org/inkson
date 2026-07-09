@@ -261,6 +261,21 @@ fn realm_key_share_payload_value(envelope: &serde_json::Value) -> Option<&serde_
                 .and_then(|payload| payload.get("content"))
                 .and_then(realm_key_share_payload_candidate)
         })
+        // soland's durable to-device projection (sync `to_device[]` and
+        // device-messages) nests the spec payload under `content.payload`,
+        // mirroring the request direction handled in
+        // `parse_realm_key_request_envelope`.
+        .or_else(|| {
+            envelope
+                .get("content")
+                .and_then(|content| content.get("payload"))
+                .and_then(realm_key_share_payload_candidate)
+        })
+        .or_else(|| {
+            envelope
+                .get("content")
+                .and_then(realm_key_share_payload_candidate)
+        })
         .or_else(|| realm_key_share_payload_candidate(envelope))
 }
 
@@ -278,6 +293,11 @@ pub fn realm_key_share_message_realm_id(envelope: &serde_json::Value) -> Option<
         .filter(|value| !value.is_empty());
     let top_realm = envelope
         .get("realm_id")
+        .or_else(|| {
+            envelope
+                .get("content")
+                .and_then(|content| content.get("realm_id"))
+        })
         .and_then(serde_json::Value::as_str)
         .map(str::trim)
         .filter(|value| !value.is_empty());
@@ -304,6 +324,16 @@ pub fn realm_key_share_message_operation_id(envelope: &serde_json::Value) -> Opt
             envelope
                 .get("payload")
                 .and_then(|payload| payload.get("event_id"))
+        })
+        .or_else(|| {
+            envelope
+                .get("content")
+                .and_then(|content| content.get("operation_id"))
+        })
+        .or_else(|| {
+            envelope
+                .get("content")
+                .and_then(|content| content.get("event_id"))
         })
         .or_else(|| {
             envelope

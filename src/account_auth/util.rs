@@ -47,9 +47,7 @@ pub(crate) const STATE_NONCE_TOKEN_BYTES: usize = 16;
 pub(crate) const PKCE_VERIFIER_BYTES: usize = 32;
 
 pub(crate) fn random_url_safe_token(byte_len: usize) -> anyhow::Result<String> {
-    let mut buf = vec![0u8; byte_len];
-    getrandom::fill(&mut buf).map_err(|error| anyhow::anyhow!("getrandom failed: {error}"))?;
-    Ok(URL_SAFE_NO_PAD.encode(&buf))
+    crate::random::base64url_token(byte_len, "getrandom failed")
 }
 
 pub(crate) fn pkce_code_challenge_s256(code_verifier: &str) -> String {
