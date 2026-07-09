@@ -164,10 +164,17 @@ pub(crate) fn app_data_dir() -> PathBuf {
         .join("inkson")
 }
 
-/// XOR-based symmetric encryption for client-side private data.
-/// This is a simple obfuscation, not production-grade crypto.
-/// The same function encrypts and decrypts since XOR is its own inverse.
-pub(crate) fn xor_encrypt(key: &str, data: &str) -> String {
+/// Reversible XOR obfuscation for **non-sensitive** client-side preferences.
+///
+/// This is NOT encryption: the key is the public `account_did()` (recomputable
+/// by anyone holding the on-disk data) and XOR is trivially invertible. It only
+/// keeps UI preferences (theme, avatar ref, sidebar width, recovery-hint
+/// markers) from being casually readable as plaintext on disk. NEVER route
+/// secret material (seeds, private keys, tokens) through this — use the OS
+/// keychain / non-exportable SubtleCrypto path instead.
+///
+/// The same function obfuscates and de-obfuscates since XOR is its own inverse.
+pub(crate) fn obfuscate_nonsensitive(key: &str, data: &str) -> String {
     let key_bytes = key.as_bytes();
     if key_bytes.is_empty() {
         return data.to_owned();
@@ -181,8 +188,8 @@ pub(crate) fn xor_encrypt(key: &str, data: &str) -> String {
     crate::canonical::hex_encode(&encrypted)
 }
 
-/// Decode hex-encoded XOR-encrypted data back to plaintext.
-pub(crate) fn xor_decrypt(key: &str, hex_data: &str) -> Option<String> {
+/// Decode hex-encoded [`obfuscate_nonsensitive`] output back to plaintext.
+pub(crate) fn deobfuscate_nonsensitive(key: &str, hex_data: &str) -> Option<String> {
     let key_bytes = key.as_bytes();
     if key_bytes.is_empty() {
         return Some(hex_data.to_owned());

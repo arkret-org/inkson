@@ -36,7 +36,7 @@
 
 mod admin;
 mod components;
-mod model;
+pub(crate) mod model;
 mod panel;
 
 #[cfg(test)]

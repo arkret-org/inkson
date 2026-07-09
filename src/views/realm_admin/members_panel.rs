@@ -190,55 +190,38 @@ struct MemberGroup {
     agents: Vec<MemberAgentRow>,
 }
 
-fn agent_projection_value(row: &Value) -> &Value {
-    row.get("agent").unwrap_or(row)
-}
-
 fn member_agent_row_from_value(
-    row: Value,
+    row: cokret_sdk::models::AgentProjection,
     fallback_controller_did: &str,
 ) -> Option<MemberAgentRow> {
-    let projection = agent_projection_value(&row);
-    let agent_principal_id = projection
-        .get("agent_principal_id")
-        .and_then(Value::as_str)
-        .map(str::trim)
-        .filter(|value| !value.is_empty())?
-        .to_owned();
-    let display_name = projection
-        .get("display_name")
-        .and_then(Value::as_str)
+    let agent_principal_id = row.agent_principal_id.as_str().trim();
+    if agent_principal_id.is_empty() {
+        return None;
+    }
+    let agent_principal_id = agent_principal_id.to_owned();
+    let display_name = row
+        .display_name
+        .as_deref()
         .map(str::trim)
         .filter(|value| !value.is_empty())
         .map(ToOwned::to_owned)
         .unwrap_or_else(|| short_protocol_id(&agent_principal_id));
-    let agent_slug = projection
-        .get("agent_slug")
-        .and_then(Value::as_str)
+    let agent_slug = row
+        .agent_slug
+        .as_deref()
         .map(str::trim)
         .filter(|value| !value.is_empty())
         .map(ToOwned::to_owned)
         .unwrap_or_default();
-    let status = row
-        .get("status")
-        .or_else(|| projection.get("status"))
-        .and_then(Value::as_str)
-        .unwrap_or("active")
-        .to_owned();
-    let controller_did = row
-        .get("controller_did")
-        .or_else(|| projection.get("controller_did"))
-        .and_then(Value::as_str)
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .map(ToOwned::to_owned)
-        .unwrap_or_else(|| fallback_controller_did.trim().to_owned());
+    // `agent_projection` carries no controller binding; the list endpoint is
+    // already scoped to the caller's owned agents, so use the caller DID.
+    let controller_did = fallback_controller_did.trim().to_owned();
     Some(MemberAgentRow {
         agent_principal_id,
         controller_did,
         display_name,
         agent_slug,
-        status,
+        status: crate::views::agents::model::agent_status_wire(row.status).to_owned(),
         mention_policy: AgentMentionPolicy::Unknown,
         selection: AgentParticipation::NONE,
     })

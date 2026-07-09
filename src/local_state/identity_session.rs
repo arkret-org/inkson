@@ -237,8 +237,11 @@ impl LocalStateStore {
         let _ = self.flush();
     }
 
-    /// Save a private preference encrypted with the account key.
-    /// The account_key is typically the account DID or a derived secret.
+    /// Save a **non-sensitive** UI preference, XOR-obfuscated with the account
+    /// key. This is obfuscation, not encryption (see
+    /// [`obfuscate_nonsensitive`]): `account_key` is the public account DID, so
+    /// this MUST NOT be used for secret material — only casual-plaintext-hiding
+    /// of preferences.
     pub fn save_private_data(
         &mut self,
         account_key: &str,
@@ -247,15 +250,15 @@ impl LocalStateStore {
     ) {
         self.ensure_cached_loaded();
         let plaintext = value.into();
-        let encrypted = xor_encrypt(account_key, &plaintext);
-        self.cached.private_data.insert(key.into(), encrypted);
+        let obfuscated = obfuscate_nonsensitive(account_key, &plaintext);
+        self.cached.private_data.insert(key.into(), obfuscated);
         let _ = self.flush();
     }
 
-    /// Load and decrypt a private preference.
+    /// Load and de-obfuscate a non-sensitive UI preference.
     pub fn load_private_data(&self, account_key: &str, key: &str) -> Option<String> {
-        let encrypted = self.load().private_data.get(key)?.clone();
-        xor_decrypt(account_key, &encrypted)
+        let obfuscated = self.load().private_data.get(key)?.clone();
+        deobfuscate_nonsensitive(account_key, &obfuscated)
     }
 
     /// Remove a private preference.

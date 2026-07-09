@@ -1,20 +1,21 @@
-//! XOR private-data crypto helpers and MLS snapshot envelope persistence.
+//! XOR non-sensitive-preference obfuscation helpers and MLS snapshot envelope
+//! persistence.
 
 use super::*;
 
 #[test]
-fn xor_encrypt_decrypt_roundtrip() {
-    let key = "did:web:alice.example";
-    let plaintext = "my secret preference";
-    let encrypted = xor_encrypt(key, plaintext);
-    assert_ne!(encrypted, plaintext);
-    let decrypted = xor_decrypt(key, &encrypted).unwrap();
-    assert_eq!(decrypted, plaintext);
+fn obfuscate_nonsensitive_roundtrip() {
+    let key = "did:webvh:z6mkfixture:alice.example";
+    let plaintext = "my ui preference";
+    let obfuscated = obfuscate_nonsensitive(key, plaintext);
+    assert_ne!(obfuscated, plaintext);
+    let recovered = deobfuscate_nonsensitive(key, &obfuscated).unwrap();
+    assert_eq!(recovered, plaintext);
 }
 
 #[test]
-fn xor_encrypt_empty_key_returns_original() {
-    assert_eq!(xor_encrypt("", "hello"), "hello");
+fn obfuscate_nonsensitive_empty_key_returns_original() {
+    assert_eq!(obfuscate_nonsensitive("", "hello"), "hello");
 }
 
 #[test]

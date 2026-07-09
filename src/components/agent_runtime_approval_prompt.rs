@@ -277,16 +277,13 @@ async fn fetch_pending_agent_runtime_approval(
     with_authed_sdk_client(base_url, token, move |http| async move {
         let list = http.agent_list().await?;
         for row in list.agents {
-            if row.get("status").and_then(Value::as_str) != Some("pending_runtime_key") {
+            if row.status != cokret_sdk::models::AgentStatus::PendingRuntimeKey {
                 continue;
             }
-            let Some(agent_principal_id) = row
-                .get("agent_principal_id")
-                .and_then(Value::as_str)
-                .filter(|value| !value.trim().is_empty())
-            else {
+            let agent_principal_id = row.agent_principal_id.as_str();
+            if agent_principal_id.trim().is_empty() {
                 continue;
-            };
+            }
             let view = http.agent_get(agent_principal_id).await?;
             let Some(request) = pending_runtime_approval_from_view(&view) else {
                 continue;

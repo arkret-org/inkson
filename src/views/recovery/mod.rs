@@ -17,10 +17,11 @@
 //! - **Social Recovery** (advanced, local bookkeeping only): guardian list + Shamir threshold +
 //!   last-rehearsal timestamp persisted as JSON under the same private_data store.
 //!
-//! Everything writeable goes through `private_data`, which is itself
-//! encrypted at rest under the account DID via `xor_encrypt` (and on
-//! wasm32 mirrored to localStorage). The Recovery view never persists
-//! the Recovery Key in plaintext.
+//! Everything writeable goes through `private_data`, which is XOR-obfuscated
+//! (NOT encrypted) at rest under the public account DID via
+//! `obfuscate_nonsensitive` (and on wasm32 mirrored to localStorage) — it holds
+//! only non-sensitive markers such as a last-rehearsal timestamp. The Recovery
+//! view never persists the Recovery Key itself in plaintext or via this path.
 //!
 //! Split by responsibility into:
 //!   - [`types`]: serialized state + backup-summary data types;

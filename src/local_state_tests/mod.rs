@@ -5,7 +5,8 @@
 //! so `super` here still resolves to the `local_state` module. The
 //! `pub(super) use super::*;` below re-exports every visible `local_state`
 //! item (its public types, the `pub use seal_view::*` re-exports, and the
-//! `pub(crate)` `storage_util` helpers such as `xor_encrypt`/`xor_decrypt`)
+//! `pub(crate)` `storage_util` helpers such as
+//! `obfuscate_nonsensitive`/`deobfuscate_nonsensitive`)
 //! down to the topic submodules. Private fields of `LocalStateStore`
 //! (`cached`, `path`) remain reachable because private visibility extends to
 //! the whole module subtree, so the grandchild test modules can touch them

@@ -582,14 +582,54 @@ pub fn verify_proof_value(
     .is_ok()
 }
 
+/// Maximum accepted age of an ephemeral (call-signal) proof's `created_at`
+/// relative to now. Ephemeral signaling frames are transient, so bounding the
+/// `created_at` window caps how long a captured, already-signed frame can be
+/// replayed onto the routing path. The window is intentionally generous (an
+/// hour) so legitimately delayed or clock-skewed signaling is never dropped —
+/// persistent Events are NOT subject to this gate (they may be legitimately old
+/// during backfill/sync), which is why the check lives here and not in the
+/// shared [`verify_proof_value`].
+const EPHEMERAL_PROOF_MAX_AGE_SECS: i64 = 3600;
+/// Maximum accepted forward clock skew for an ephemeral proof's `created_at`.
+const EPHEMERAL_PROOF_MAX_FUTURE_SKEW_SECS: i64 = 300;
+
+/// Fail-closed freshness check for an ephemeral proof's `created_at`: it MUST be
+/// present, RFC 3339, and within [`EPHEMERAL_PROOF_MAX_AGE_SECS`] in the past /
+/// [`EPHEMERAL_PROOF_MAX_FUTURE_SKEW_SECS`] in the future of `now`.
+fn ephemeral_proof_created_at_fresh(
+    proof_value: &serde_json::Value,
+    now: chrono::DateTime<chrono::Utc>,
+) -> bool {
+    let Some(created_at) = proof_value.get("created_at").and_then(|v| v.as_str()) else {
+        return false;
+    };
+    let Ok(parsed) = chrono::DateTime::parse_from_rfc3339(created_at) else {
+        return false;
+    };
+    let age = now
+        .signed_duration_since(parsed.with_timezone(&chrono::Utc))
+        .num_seconds();
+    age <= EPHEMERAL_PROOF_MAX_AGE_SECS && age >= -EPHEMERAL_PROOF_MAX_FUTURE_SKEW_SECS
+}
+
 /// Verify an ephemeral call-signal envelope's `proof` (single object).
 ///
 /// Strips the top-level `proof` field, then delegates to [`verify_proof_value`].
 /// Returns `false` (fail-closed) when the envelope carries no `actor_id` or no
-/// `proof`.
+/// `proof`, or when the proof's `created_at` is stale/absent (replay window).
 pub fn verify_ephemeral_envelope_proof(
     envelope: &serde_json::Value,
     public_key: &PublicKeyMaterial,
+) -> bool {
+    verify_ephemeral_envelope_proof_at(envelope, public_key, chrono::Utc::now())
+}
+
+/// [`verify_ephemeral_envelope_proof`] with an injectable clock for tests.
+pub fn verify_ephemeral_envelope_proof_at(
+    envelope: &serde_json::Value,
+    public_key: &PublicKeyMaterial,
+    now: chrono::DateTime<chrono::Utc>,
 ) -> bool {
     let actor_id = match envelope.get("actor_id").and_then(|v| v.as_str()) {
         Some(actor) => actor.to_owned(),
@@ -599,6 +639,10 @@ pub fn verify_ephemeral_envelope_proof(
         Some(proof) => proof.clone(),
         None => return false,
     };
+    // Bound the replay window before signature work.
+    if !ephemeral_proof_created_at_fresh(&proof_value, now) {
+        return false;
+    }
     let mut without_proof = envelope.clone();
     if let Some(object) = without_proof.as_object_mut() {
         object.remove("proof");

@@ -924,9 +924,9 @@ mod tests {
         // Binding transcript via the SDK's authoritative `canonical_binding_bytes`
         // (context tag folded in), matching the production ephemeral sender and the
         // receiver-side verifier — so this test can never drift from the wire binding.
-        let created_at = chrono::DateTime::parse_from_rfc3339("2026-06-16T00:00:00Z")
-            .unwrap()
-            .with_timezone(&chrono::Utc);
+        // Use a fresh `created_at` so the receiver-side ephemeral replay-window gate
+        // (`verify_ephemeral_envelope_proof`) accepts these fixtures.
+        let created_at = chrono::Utc::now();
         let did = cokret_sdk::Did::new(actor_id.to_owned()).unwrap();
         let mut proof = cokret_sdk::Proof {
             kind: cokret_sdk::proof_kind::DETACHED_JWS.to_owned(),
@@ -1009,6 +1009,28 @@ mod tests {
         assert!(!crate::device_directory::verify_ephemeral_envelope_proof(
             &envelope, &key
         ));
+    }
+
+    #[test]
+    fn call_proof_fails_closed_when_replayed_outside_freshness_window() {
+        // S-4: a valid, correctly-signed call-signal proof that is presented
+        // long after its `created_at` MUST be dropped by the ephemeral replay
+        // window, even though the signature still verifies.
+        let actor = "did:web:caller.example";
+        let device = "ck:device:caller-1";
+        let seed = 71u8;
+        let signer = crate::event_signer::build_ed25519_signer([seed; 32], actor);
+        let envelope = signed_call_signal_envelope(&signer, actor, device);
+        let key = pubkey_material(seed);
+        // Fresh at signing time.
+        assert!(crate::device_directory::verify_ephemeral_envelope_proof(
+            &envelope, &key
+        ));
+        // Replayed two hours later → rejected by the freshness gate.
+        let later = chrono::Utc::now() + chrono::Duration::hours(2);
+        assert!(
+            !crate::device_directory::verify_ephemeral_envelope_proof_at(&envelope, &key, later)
+        );
     }
 
     #[test]

@@ -7,7 +7,8 @@
 
 use chrono::{Duration, Utc};
 use cokret_sdk::models::{
-    AgentKeyScope, AgentKeyScopeResource, AgentKeyScopeResourceKind, AgentParticipation, AgentView,
+    AgentKeyScope, AgentKeyScopeResource, AgentKeyScopeResourceKind, AgentParticipation,
+    AgentProjection, AgentStatus, AgentView,
 };
 use cokret_sdk::{
     AgentKeyApprovalEvidence, AgentKeyApprovalEvidenceKind, AgentKeyAuthorizePayload,
@@ -1048,23 +1049,29 @@ impl ActionRequestNonceStatus {
     }
 }
 
-pub(crate) fn agent_view_from_directory_row(row: Value) -> Option<AgentView> {
-    if let Ok(view) = serde_json::from_value::<AgentView>(row.clone()) {
-        return Some(view);
+pub(crate) fn agent_view_from_directory_row(row: AgentProjection) -> Option<AgentView> {
+    if row.agent_principal_id.as_str().trim().is_empty() {
+        return None;
     }
-    row.get("agent_principal_id").and_then(Value::as_str)?;
-    let status = row
-        .get("status")
-        .or_else(|| row.get("state"))
-        .and_then(Value::as_str)
-        .unwrap_or("active")
-        .to_owned();
+    let status = agent_status_wire(row.status).to_owned();
+    let agent = serde_json::to_value(&row).ok()?;
     Some(AgentView {
-        agent: row,
+        agent,
         status,
         grants: Vec::new(),
         key_state: Value::Null,
     })
+}
+
+/// Wire string for an `AgentStatus` (matches the schema `agent_status` enum).
+pub(crate) fn agent_status_wire(status: AgentStatus) -> &'static str {
+    match status {
+        AgentStatus::PendingRuntimeKey => "pending_runtime_key",
+        AgentStatus::Active => "active",
+        AgentStatus::PairingExpired => "pairing_expired",
+        AgentStatus::Paused => "paused",
+        AgentStatus::Deactivated => "deactivated",
+    }
 }
 
 /// Hash pasted draft content or action request payload fragments.
