@@ -143,7 +143,7 @@ impl LocalStateStore {
         *self.lock_mls_receive_overlay() = MlsReceiveOverlay::default();
         // E7: reset the account-scoped cursor overlay alongside the receive
         // overlay so a stale cursor never leaks across account scope changes.
-        *self.lock_cursor_overlay() = CursorOverlay::default();
+        *self.lock_client_core_sync_overlay() = ClientCoreSyncOverlay::default();
         self.cached = ClientLocalState {
             local_identity: preserved_identity,
             push_registration: preserved_push,
@@ -188,7 +188,7 @@ impl LocalStateStore {
         *self.lock_mls_receive_overlay() = MlsReceiveOverlay::default();
         // E7: reset the account-scoped cursor overlay alongside the receive
         // overlay so a stale cursor never leaks across account scope changes.
-        *self.lock_cursor_overlay() = CursorOverlay::default();
+        *self.lock_client_core_sync_overlay() = ClientCoreSyncOverlay::default();
         // Land the new active pointer in shared storage first.
         self.mutate_root(|root| {
             root.active_did = Some(actor.to_owned());
@@ -254,7 +254,7 @@ impl LocalStateStore {
             *self.lock_mls_receive_overlay() = MlsReceiveOverlay::default();
         // E7: reset the account-scoped cursor overlay alongside the receive
         // overlay so a stale cursor never leaks across account scope changes.
-        *self.lock_cursor_overlay() = CursorOverlay::default();
+        *self.lock_client_core_sync_overlay() = ClientCoreSyncOverlay::default();
             self.cached = ClientLocalState::default();
             let _ = self.flush();
         }
@@ -341,7 +341,7 @@ impl LocalStateStore {
         *self.lock_mls_receive_overlay() = MlsReceiveOverlay::default();
         // E7: reset the account-scoped cursor overlay alongside the receive
         // overlay so a stale cursor never leaks across account scope changes.
-        *self.lock_cursor_overlay() = CursorOverlay::default();
+        *self.lock_client_core_sync_overlay() = ClientCoreSyncOverlay::default();
         self.cached = ClientLocalState::default();
         let _ = self.flush();
     }

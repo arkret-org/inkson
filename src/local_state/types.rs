@@ -1165,30 +1165,36 @@ impl MlsReceiveOverlay {
     }
 }
 
-/// E7 — interior-mutable write-override overlay for stream cursors, shared
-/// across all clones of a `LocalStateStore` (via `Arc<Mutex<_>>`), like
+/// E7 — interior-mutable write-override overlay for the state garth's
+/// `Send + Sync` client-core adapter writes (stream cursors + event dedupe),
+/// shared across all clones of a `LocalStateStore` (via `Arc<Mutex<_>>`), like
 /// [`MlsReceiveOverlay`].
 ///
-/// Cursors (`ClientLocalState::sync_cursor` / `realm_events_cursors`) are
-/// written by BOTH the Dioxus UI clone and garth's `Send + Sync` `CursorStore`
-/// adapter clone. Each clone owns an independent in-memory `cached`, so without
-/// a shared source the two writers diverge and a stale clone's later flush
-/// clobbers the other's cursor. This overlay is that single shared source: a
-/// write records here; `load()` and the persist path merge it over `cached`, so
-/// every clone observes and persists one coherent cursor set. An empty overlay
-/// (or an unrecorded slot) falls through to `cached` — the last-persisted value
-/// — so a fresh process resumes from disk correctly.
+/// This state (`ClientLocalState::sync_cursor` / `realm_events_cursors` /
+/// `client_core_seen_event_ids`) is written by BOTH the Dioxus UI clone and
+/// garth's adapter clone. Each clone owns an independent in-memory `cached`, so
+/// without a shared source a stale clone's later flush clobbers the other's
+/// write. This overlay is that single shared source: a write records here;
+/// `load()` and the persist path merge it over `cached`, so every clone
+/// observes and persists one coherent set. An empty overlay (or an unrecorded
+/// slot) falls through to `cached` — the last-persisted value — so a fresh
+/// process resumes from disk correctly.
 #[derive(Debug, Default)]
-pub(crate) struct CursorOverlay {
+pub(crate) struct ClientCoreSyncOverlay {
     /// `Some(_)` overrides `sync_cursor` (inner `None` = cleared).
     pub(crate) sync_cursor: Option<Option<String>>,
     /// Per-realm overrides for `realm_events_cursors` (value `None` = cleared).
     pub(crate) realm_events_cursors: BTreeMap<String, Option<String>>,
+    /// Add-only event-dedupe ids recorded through the adapter's `EventCacheStore`
+    /// (never cleared except on account reset, which drops the whole overlay).
+    pub(crate) seen_events: BTreeSet<String>,
 }
 
-impl CursorOverlay {
+impl ClientCoreSyncOverlay {
     pub(crate) fn is_empty(&self) -> bool {
-        self.sync_cursor.is_none() && self.realm_events_cursors.is_empty()
+        self.sync_cursor.is_none()
+            && self.realm_events_cursors.is_empty()
+            && self.seen_events.is_empty()
     }
 
     pub(crate) fn apply_to(&self, state: &mut ClientLocalState) {
@@ -1206,6 +1212,9 @@ impl CursorOverlay {
                     state.realm_events_cursors.remove(realm_id);
                 }
             }
+        }
+        for event_id in &self.seen_events {
+            state.client_core_seen_event_ids.insert(event_id.clone());
         }
     }
 }

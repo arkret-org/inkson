@@ -12,7 +12,7 @@ impl LocalStateStore {
             // E7: record into the shared cursor overlay (coherent across clones),
             // not the per-clone `cached`. Fall through to `cached` for the
             // unchanged-check when this slot has not been overridden yet.
-            let mut overlay = self.lock_cursor_overlay();
+            let mut overlay = self.lock_client_core_sync_overlay();
             let current = match &overlay.sync_cursor {
                 Some(value) => value.clone(),
                 None => self.cached.sync_cursor.clone(),
@@ -28,7 +28,7 @@ impl LocalStateStore {
     pub fn clear_sync_cursor(&mut self) {
         self.ensure_cached_loaded();
         {
-            let mut overlay = self.lock_cursor_overlay();
+            let mut overlay = self.lock_client_core_sync_overlay();
             let current = match &overlay.sync_cursor {
                 Some(value) => value.clone(),
                 None => self.cached.sync_cursor.clone(),
@@ -58,7 +58,7 @@ impl LocalStateStore {
         }
         {
             // E7: record into the shared cursor overlay (coherent across clones).
-            let mut overlay = self.lock_cursor_overlay();
+            let mut overlay = self.lock_client_core_sync_overlay();
             let current = match overlay.realm_events_cursors.get(realm_id) {
                 Some(value) => value.clone(),
                 None => self.cached.realm_events_cursors.get(realm_id).cloned(),
@@ -80,9 +80,19 @@ impl LocalStateStore {
     pub fn remember_client_core_event(&mut self, event_id: impl Into<String>) {
         self.ensure_cached_loaded();
         let event_id = event_id.into();
-        if self.cached.client_core_seen_event_ids.insert(event_id) {
-            let _ = self.flush();
+        {
+            // E7: record dedupe ids into the shared overlay (coherent across
+            // clones), so a Signal-clone flush can't clobber the adapter clone's
+            // dedupe set. Skip if already known in the overlay or persisted set.
+            let mut overlay = self.lock_client_core_sync_overlay();
+            if overlay.seen_events.contains(&event_id)
+                || self.cached.client_core_seen_event_ids.contains(&event_id)
+            {
+                return;
+            }
+            overlay.seen_events.insert(event_id);
         }
+        let _ = self.flush();
     }
 
     pub fn save_presence_projection(&mut self, events: Vec<Value>) {
@@ -469,7 +479,7 @@ fn raw_payload_is_redaction_tombstone(payload: &Value) -> bool {
 }
 
 #[cfg(test)]
-mod cursor_overlay_tests {
+mod client_core_sync_overlay_tests {
     use super::super::storage_util::isolated_store_for_tests;
 
     const REALM: &str = "ck:realm:01904100-0000-7000-8000-000000000001";
@@ -509,5 +519,19 @@ mod cursor_overlay_tests {
 
         writer.save_realm_events_cursor(REALM, None);
         assert!(reader.realm_events_cursor(REALM).is_none());
+    }
+
+    // E7: event-dedupe ids recorded through the adapter clone must be visible to
+    // a different clone, so a Signal-clone flush can't drop the adapter's dedupe.
+    #[test]
+    fn dedupe_writes_are_coherent_across_clones() {
+        let base = isolated_store_for_tests("dedupe-coherence");
+        let mut adapter_clone = base.clone();
+        let ui_clone = base.clone();
+
+        assert!(!ui_clone.client_core_event_seen("ck:event:01904100-0000-7000-8000-0000000000aa"));
+        adapter_clone
+            .remember_client_core_event("ck:event:01904100-0000-7000-8000-0000000000aa");
+        assert!(ui_clone.client_core_event_seen("ck:event:01904100-0000-7000-8000-0000000000aa"));
     }
 }

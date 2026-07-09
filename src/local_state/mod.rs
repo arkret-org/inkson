@@ -145,7 +145,7 @@ pub struct LocalStateStore {
     /// the overlay data mutex so the short data-access sections never nest
     /// inside it in both orders (no deadlock).
     mls_decrypt_serial: Arc<Mutex<()>>,
-    /// E7 — shared stream-cursor write-override overlay (see [`CursorOverlay`]).
+    /// E7 — shared stream-cursor write-override overlay (see [`ClientCoreSyncOverlay`]).
     /// Cursors (`sync_cursor` / `realm_events_cursors`) are written by BOTH the
     /// Dioxus UI clone and garth's `Send + Sync` `CursorStore` adapter clone.
     /// Without a shared source each clone's per-clone `cached` diverges and a
@@ -154,7 +154,7 @@ pub struct LocalStateStore {
     /// `persist_health`); reads merge it, the persist path merges it, so every
     /// clone writes a coherent cursor and never clobbers. An empty overlay
     /// falls through to `cached` (the last-persisted value) so restart resumes.
-    cursor_overlay: Arc<Mutex<CursorOverlay>>,
+    client_core_sync_overlay: Arc<Mutex<ClientCoreSyncOverlay>>,
     #[cfg(not(target_arch = "wasm32"))]
     path: PathBuf,
 }
@@ -289,7 +289,7 @@ impl Default for LocalStateStore {
             persist_health: Arc::new(Mutex::new(None)),
             mls_receive_overlay: Arc::new(Mutex::new(MlsReceiveOverlay::default())),
             mls_decrypt_serial: Arc::new(Mutex::new(())),
-            cursor_overlay: Arc::new(Mutex::new(CursorOverlay::default())),
+            client_core_sync_overlay: Arc::new(Mutex::new(ClientCoreSyncOverlay::default())),
             #[cfg(not(target_arch = "wasm32"))]
             path: default_state_path(),
         }
@@ -321,8 +321,8 @@ impl LocalStateStore {
             .unwrap_or_else(|poisoned| poisoned.into_inner())
     }
 
-    fn lock_cursor_overlay(&self) -> MutexGuard<'_, CursorOverlay> {
-        self.cursor_overlay
+    fn lock_client_core_sync_overlay(&self) -> MutexGuard<'_, ClientCoreSyncOverlay> {
+        self.client_core_sync_overlay
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner())
     }
@@ -354,7 +354,7 @@ impl LocalStateStore {
         // cursor overlay (by this or any other clone — e.g. garth's CursorStore
         // adapter), so cursor reads are coherent across clones.
         {
-            let overlay = self.lock_cursor_overlay();
+            let overlay = self.lock_client_core_sync_overlay();
             if !overlay.is_empty() {
                 overlay.apply_to(&mut state);
             }
@@ -370,7 +370,7 @@ impl LocalStateStore {
         // E7: cursors are account-scoped; the shared cursor overlay from the OLD
         // account must not shadow the incoming state (else a stale cursor leaks
         // across account adopt/clear/forget).
-        *self.lock_cursor_overlay() = CursorOverlay::default();
+        *self.lock_client_core_sync_overlay() = ClientCoreSyncOverlay::default();
         self.cached = state;
         self.loaded.set(true);
         let _ = self.flush();
@@ -403,7 +403,7 @@ impl LocalStateStore {
         // E7: persist the coherent shared cursor (any clone's flush writes the
         // same up-to-date cursor), so a stale clone can never clobber it.
         {
-            let overlay = self.lock_cursor_overlay();
+            let overlay = self.lock_client_core_sync_overlay();
             if !overlay.is_empty() {
                 overlay.apply_to(&mut state);
             }
@@ -480,7 +480,7 @@ impl LocalStateStore {
             persist_health: Arc::new(Mutex::new(None)),
             mls_receive_overlay: Arc::new(Mutex::new(MlsReceiveOverlay::default())),
             mls_decrypt_serial: Arc::new(Mutex::new(())),
-            cursor_overlay: Arc::new(Mutex::new(CursorOverlay::default())),
+            client_core_sync_overlay: Arc::new(Mutex::new(ClientCoreSyncOverlay::default())),
             path: path.into(),
         }
     }
