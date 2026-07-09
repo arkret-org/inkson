@@ -28,7 +28,7 @@ use crate::local_state::LocalStateStore;
 use crate::ui::button::{Button, ButtonVariant};
 use crate::ui::input::Input;
 use crate::ui::textarea::Textarea;
-use crate::views::helpers::{short_protocol_id, with_authed_api};
+use crate::views::helpers::{short_protocol_id, with_event_submitter};
 
 /// `governance/content-moderation.md` §5.5.1.1 — the closed `verdict` enum for
 /// `ck.moderation.appeal.decision`. Authoritative set, drives both the UI
@@ -233,9 +233,9 @@ pub fn ModerationWorkbench(
                                     let api_token = token();
                                     spawn(async move {
                                         let decision_id = new_decision_id();
-                                        match with_authed_api(&base, api_token, |api| async move {
-                                            api.moderation_decide(
-                                                &realm, &actor, &decision_id, &target, &verdict, &reason,
+                                        match with_event_submitter(&base, api_token, |sub| async move {
+                                            crate::realm_write_api::moderation_decide(
+                                                &sub, &realm, &actor, &decision_id, &target, &verdict, &reason,
                                             )
                                             .await
                                         })
@@ -302,9 +302,9 @@ pub fn ModerationWorkbench(
                                                 let decision_ref = decision_id.clone();
                                                 let api_token = token();
                                                 spawn(async move {
-                                                    match with_authed_api(&base, api_token, |api| async move {
-                                                        api.moderation_lift(
-                                                            &realm, &actor, &decision_ref, "reviewer_lift",
+                                                    match with_event_submitter(&base, api_token, |sub| async move {
+                                                        crate::realm_write_api::moderation_lift(
+                                                            &sub, &realm, &actor, &decision_ref, "reviewer_lift",
                                                         )
                                                         .await
                                                     })
@@ -410,8 +410,8 @@ fn AppealReviewRow(
                                 let appeal_id = appeal_id.clone();
                                 let api_token = token();
                                 spawn(async move {
-                                    match with_authed_api(&base, api_token, |api| async move {
-                                        api.appeal_review(&realm, &actor, &appeal_id, None).await
+                                    match with_event_submitter(&base, api_token, |sub| async move {
+                                        crate::realm_write_api::appeal_review(&sub, &realm, &actor, &appeal_id, None).await
                                     })
                                     .await
                                     {
@@ -471,9 +471,9 @@ fn AppealReviewRow(
                                     let result = match chosen.as_str() {
                                         // §5.5.1.1 overturn — appeal-decision +
                                         // matching lift MUST ride one batch.
-                                        "overturn" => with_authed_api(&base, api_token, |api| async move {
-                                            api.appeal_overturn_atomic(
-                                                &realm, &actor, &appeal_id, &decision_ref,
+                                        "overturn" => with_event_submitter(&base, api_token, |sub| async move {
+                                            crate::realm_write_api::appeal_overturn_atomic(
+                                                &sub, &realm, &actor, &appeal_id, &decision_ref,
                                                 &reason_text, "appeal_overturn",
                                             )
                                             .await
@@ -482,9 +482,9 @@ fn AppealReviewRow(
                                         .await,
                                         // §5.5.1.1 modify — appeal-decision +
                                         // replacement decision MUST ride one batch.
-                                        "modify" => with_authed_api(&base, api_token, |api| async move {
-                                            api.appeal_modify_atomic(
-                                                &realm, &actor, &appeal_id, &target_ref,
+                                        "modify" => with_event_submitter(&base, api_token, |sub| async move {
+                                            crate::realm_write_api::appeal_modify_atomic(
+                                                &sub, &realm, &actor, &appeal_id, &target_ref,
                                                 "require_review", "appeal_modify", &reason_text,
                                             )
                                             .await
@@ -494,9 +494,9 @@ fn AppealReviewRow(
                                         })
                                         .await,
                                         // uphold — no side events.
-                                        _ => with_authed_api(&base, api_token, |api| async move {
-                                            api.appeal_decide(
-                                                &realm, &actor, &appeal_id, "uphold", &reason_text, None,
+                                        _ => with_event_submitter(&base, api_token, |sub| async move {
+                                            crate::realm_write_api::appeal_decide(
+                                                &sub, &realm, &actor, &appeal_id, "uphold", &reason_text, None,
                                             )
                                             .await
                                             .map(|resp| format!("appeal upheld; event_id {}", resp.event_id))
@@ -529,9 +529,9 @@ fn AppealReviewRow(
                                 let appeal_id = appeal_id.clone();
                                 let api_token = token();
                                 spawn(async move {
-                                    match with_authed_api(&base, api_token, |api| async move {
-                                        api.appeal_close(
-                                            &realm, &actor, &appeal_id, Some("reviewer_close"),
+                                    match with_event_submitter(&base, api_token, |sub| async move {
+                                        crate::realm_write_api::appeal_close(
+                                            &sub, &realm, &actor, &appeal_id, Some("reviewer_close"),
                                         )
                                         .await
                                     })

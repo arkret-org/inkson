@@ -481,7 +481,12 @@ pub(crate) async fn submit_chat_operation_with_plaintext_retry(
             if services.is_empty() {
                 return Err(error);
             }
-            api.update_realm_plaintext_visible_services(realm_id, actor_id, services)
+            crate::realm_write_api::update_realm_plaintext_visible_services(
+                &api.event_submitter()?,
+                realm_id,
+                actor_id,
+                services,
+            )
                 .await
                 .map_err(|update_error| {
                     anyhow::anyhow!(

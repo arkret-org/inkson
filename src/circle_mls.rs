@@ -148,9 +148,13 @@ pub async fn submit_circle_scope_rotate_draft(
     circle_id: &str,
     draft: CircleScopeRotateDraft,
 ) -> anyhow::Result<cokret_sdk::CircleScopeRotateOutcome> {
-    let outcome = api
-        .submit_circle_scope_rotate_events(circle_id, &draft.events, None)
-        .await?;
+    let outcome = crate::circle_api::submit_circle_scope_rotate_events(
+        &api.event_submitter()?,
+        circle_id,
+        &draft.events,
+        None,
+    )
+    .await?;
     if !outcome.accepted.is_empty() || !outcome.duplicate.is_empty() {
         state_store.save_mls_snapshot_for_effective_scope(
             realm_id.to_owned(),
@@ -169,7 +173,7 @@ pub async fn drain_circle_scope_rotate_obligations(
     actor_id: &str,
     device_id: &str,
 ) -> anyhow::Result<CircleScopeRotateDrainOutcome> {
-    let circles = api.list_circles(realm_id).await?;
+    let circles = crate::circle_api::list_circles(&api.sdk_http_client()?, realm_id).await?;
     let mut outcome = CircleScopeRotateDrainOutcome::default();
     for circle in circles.circles {
         let circle_id = circle.circle_id.to_string();

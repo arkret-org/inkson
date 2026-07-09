@@ -373,8 +373,8 @@ pub(super) fn NewSpaceSection(
                                 let actor = account_did();
                                 new_space_state.set("Submitting ck.space.create...".to_owned());
                                 spawn(async move {
-                                    match authed_api(&base, api_token) {
-                                        Ok(api) => {
+                                    match authed_api(&base, api_token).and_then(|api| api.event_submitter()) {
+                                        Ok(submitter) => {
                                             let summary_opt = if summary.trim().is_empty() {
                                                 None
                                             } else {
@@ -390,7 +390,8 @@ pub(super) fn NewSpaceSection(
                                             } else {
                                                 Some(default_realm_id.as_str())
                                             };
-                                            match api.create_space_under_realm(
+                                            match crate::realm_write_api::create_space_under_realm(
+                                                &submitter,
                                                 &realm_id,
                                                 &actor,
                                                 &title,
@@ -509,9 +510,9 @@ pub(super) fn NewSpaceSection(
                                         let realm_id = new_space_realm_id();
                                         new_space_state.set("Submitting ck.space.archive...".to_owned());
                                         spawn(async move {
-                                            match authed_api(&base, api_token) {
-                                                Ok(api) => match api.change_space_lifecycle(
-                                                    &space_id, &realm_id, &actor, EventKind::SpaceArchive,
+                                            match authed_api(&base, api_token).and_then(|api| api.event_submitter()) {
+                                                Ok(submitter) => match crate::realm_write_api::change_space_lifecycle(
+                                                    &submitter, &space_id, &realm_id, &actor, EventKind::SpaceArchive,
                                                 ).await {
                                                     Ok(()) => new_space_state.set(format!(
                                                         "Archived {}",
@@ -540,9 +541,9 @@ pub(super) fn NewSpaceSection(
                                         let realm_id = new_space_realm_id();
                                         new_space_state.set("Submitting ck.space.restore...".to_owned());
                                         spawn(async move {
-                                            match authed_api(&base, api_token) {
-                                                Ok(api) => match api.change_space_lifecycle(
-                                                    &space_id, &realm_id, &actor, EventKind::SpaceRestore,
+                                            match authed_api(&base, api_token).and_then(|api| api.event_submitter()) {
+                                                Ok(submitter) => match crate::realm_write_api::change_space_lifecycle(
+                                                    &submitter, &space_id, &realm_id, &actor, EventKind::SpaceRestore,
                                                 ).await {
                                                     Ok(()) => new_space_state.set(format!(
                                                         "Restored {}",
@@ -571,9 +572,9 @@ pub(super) fn NewSpaceSection(
                                         let realm_id = new_space_realm_id();
                                         new_space_state.set("Submitting ck.space.tombstone...".to_owned());
                                         spawn(async move {
-                                            match authed_api(&base, api_token) {
-                                                Ok(api) => match api.change_space_lifecycle(
-                                                    &space_id, &realm_id, &actor, EventKind::SpaceTombstone,
+                                            match authed_api(&base, api_token).and_then(|api| api.event_submitter()) {
+                                                Ok(submitter) => match crate::realm_write_api::change_space_lifecycle(
+                                                    &submitter, &space_id, &realm_id, &actor, EventKind::SpaceTombstone,
                                                 ).await {
                                                     Ok(()) => new_space_state.set(format!(
                                                         "Tombstoned {} (irreversible)",

@@ -5,7 +5,9 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use reqwest::Client;
-use serde_json::{Value, json};
+use serde_json::Value;
+#[cfg(test)]
+use serde_json::json;
 use tokio::sync::OnceCell;
 use url::Url;
 
@@ -13,10 +15,9 @@ use crate::config::validate_server_url;
 use crate::models::{
     BlobUploadOutcome, DeviceMessagesAckOutcome,
     DeviceMessagesAckRequestBody, DeviceMessagesGetOutcome, DeviceMessagesSendOutcome,
-    OP_SNAPSHOT_HEAD, RealmCreateResult, RealmJoinCandidate, RealmPolicyResult, ResolveHandleView,
-    ServerDescription, SpaceCreateResult, SubmitEventResult,
+    OP_SNAPSHOT_HEAD, RealmJoinCandidate, ResolveHandleView,
+    ServerDescription, SubmitEventResult,
 };
-use crate::operation::{EventKind, uuid_v7};
 use crate::wire_helpers::{canonical_blob_ref, safe_blob_filename_header};
 
 #[derive(Clone)]
@@ -75,7 +76,6 @@ impl Default for CokretApiOptions {
 mod account;
 mod blob;
 mod blob_resumable;
-mod circle;
 mod directory;
 mod keys;
 mod mls;

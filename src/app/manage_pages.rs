@@ -162,11 +162,11 @@ pub(super) fn RealmsManagePage(
                                             for realm_id in selected {
                                                 let realm_for_api = realm_id.clone();
                                                 let actor_for_api = actor_id.clone();
-                                                match crate::views::helpers::with_authed_api(
+                                                match crate::views::helpers::with_event_submitter(
                                                     &base,
                                                     api_token.clone(),
-                                                    |api| async move {
-                                                        api.leave_realm(&realm_for_api, &actor_for_api).await
+                                                    |sub| async move {
+                                                        crate::realm_write_api::leave_realm(&sub, &realm_for_api, &actor_for_api).await
                                                     },
                                                 )
                                                 .await

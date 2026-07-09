@@ -19,7 +19,7 @@ use serde_json::Value;
 
 use crate::i18n::tr;
 use crate::local_state::LocalStateStore;
-use crate::views::helpers::with_authed_api;
+use crate::views::helpers::with_event_submitter;
 
 /// Structured validation error from the form helpers. Carries the i18n key
 /// plus placeholder substitutions; translation happens at the render site so
@@ -360,8 +360,8 @@ pub fn DurabilityPolicyEditor(
                             }
                         };
                         status.set(tr("realm_admin.durability_submitting"));
-                        let result = with_authed_api(&base, session, |api| async move {
-                            api.set_realm_durability_policy(&realm_id, &actor_id, &policy, revision)
+                        let result = with_event_submitter(&base, session, |sub| async move {
+                            crate::realm_write_api::set_realm_durability_policy(&sub, &realm_id, &actor_id, &policy, revision)
                                 .await
                         })
                         .await;

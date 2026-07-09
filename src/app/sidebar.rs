@@ -183,8 +183,8 @@ pub(super) fn leave_sidebar_realm(
     );
     spawn(async move {
         let realm_for_api = realm_id.clone();
-        match crate::views::helpers::with_authed_api(&base_url, api_token, |api| async move {
-            api.leave_realm(&realm_for_api, &actor_id).await
+        match crate::views::helpers::with_event_submitter(&base_url, api_token, |sub| async move {
+            crate::realm_write_api::leave_realm(&sub, &realm_for_api, &actor_id).await
         })
         .await
         {

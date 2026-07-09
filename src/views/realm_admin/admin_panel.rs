@@ -796,16 +796,16 @@ pub fn RealmAdminPanel(
                                         }
                                         let patch = Value::Object(patch);
                                         spawn(async move {
-                                            match crate::views::helpers::with_authed_api(
+                                            match crate::views::helpers::with_event_submitter(
                                                 &base,
                                                 api_token,
-                                                |api| async move {
+                                                |sub| async move {
                                                     match subject_kind {
                                                         RealmTreeNodeKind::Realm => {
-                                                            api.update_realm_metadata(&home_realm_id, &actor_id, patch).await
+                                                            crate::realm_write_api::update_realm_metadata(&sub, &home_realm_id, &actor_id, patch).await
                                                         }
                                                         RealmTreeNodeKind::Space => {
-                                                            api.update_space_metadata(&home_realm_id, &subject_id, &actor_id, patch).await
+                                                            crate::realm_write_api::update_space_metadata(&sub, &home_realm_id, &subject_id, &actor_id, patch).await
                                                         }
                                                     }
                                                 },
@@ -956,11 +956,12 @@ pub fn RealmAdminPanel(
                                     .get(&realm)
                                     .is_some_and(projection_has_recommended_encryption_floor);
                                 spawn(async move {
-                                    match crate::views::helpers::with_authed_api(
+                                    match crate::views::helpers::with_event_submitter(
                                         &base,
                                         api_token,
-                                        |api| async move {
-                                            api.set_realm_policy_events(
+                                        |sub| async move {
+                                            crate::realm_write_api::set_realm_policy_events(
+                                                &sub,
                                                 &realm,
                                                 &actor,
                                                 &rule,
@@ -1158,11 +1159,11 @@ pub fn RealmAdminPanel(
                                     leave_confirm_open.set(false);
                                     spawn(async move {
                                         let realm_for_msg = realm.clone();
-                                        match crate::views::helpers::with_authed_api(
+                                        match crate::views::helpers::with_event_submitter(
                                             &base,
                                             api_token,
-                                            |api| async move {
-                                                api.leave_realm(&realm, &actor_id).await
+                                            |sub| async move {
+                                                crate::realm_write_api::leave_realm(&sub, &realm, &actor_id).await
                                             },
                                         )
                                         .await
@@ -1517,11 +1518,11 @@ pub fn RealmAdminPanel(
                                 let grant_id = format!("ck:grant:{}", crate::operation::uuid_v7());
                                 admin_grant_id.set(grant_id.clone());
                                 spawn(async move {
-                                    match crate::views::helpers::with_authed_api(
+                                    match crate::views::helpers::with_event_submitter(
                                         &base,
                                         api_token,
-                                        |api| async move {
-                                            api.grant_realm_admin(&realm, &actor_id, &grant_id, &subject).await
+                                        |sub| async move {
+                                            crate::realm_write_api::grant_realm_admin(&sub, &realm, &actor_id, &grant_id, &subject).await
                                         },
                                     )
                                     .await
@@ -1561,11 +1562,12 @@ pub fn RealmAdminPanel(
                                     return;
                                 }
                                 spawn(async move {
-                                    match crate::views::helpers::with_authed_api(
+                                    match crate::views::helpers::with_event_submitter(
                                         &base,
                                         api_token,
-                                        |api| async move {
-                                            api.revoke_realm_admin(
+                                        |sub| async move {
+                                            crate::realm_write_api::revoke_realm_admin(
+                                                &sub,
                                                 &realm,
                                                 &actor_id,
                                                 &grant_id,
@@ -1769,19 +1771,19 @@ pub fn RealmAdminPanel(
                                             let reason = destroy_reason().trim().to_owned();
                                             spawn(async move {
                                                 let realm_for_msg = realm.clone();
-                                                let result = crate::views::helpers::with_authed_api(
+                                                let result = crate::views::helpers::with_event_submitter(
                                                     &base,
                                                     api_token,
-                                                    |api| async move {
+                                                    |sub| async move {
                                                         if is_destroy {
                                                             let reason = if reason.is_empty() {
                                                                 "operator_request".to_owned()
                                                             } else {
                                                                 reason
                                                             };
-                                                            api.destroy_realm(&realm, &actor_id, &reason).await
+                                                            crate::realm_write_api::destroy_realm(&sub, &realm, &actor_id, &reason).await
                                                         } else {
-                                                            api.archive_realm(&realm, &actor_id).await
+                                                            crate::realm_write_api::archive_realm(&sub, &realm, &actor_id).await
                                                         }
                                                     },
                                                 )

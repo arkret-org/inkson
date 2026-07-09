@@ -11,6 +11,7 @@
 
 pub mod account_api;
 pub mod account_auth;
+pub mod circle_api;
 pub mod account_data;
 /// Single-source-of-truth resolver for the post-boot "account health" prompt
 /// chain (device authorization → MLS unlock → MLS backup → recovery-missing →
@@ -136,6 +137,7 @@ pub mod realm_events_engine;
 pub(crate) mod realm_helpers;
 pub mod realm_read_api;
 pub(crate) mod realm_tree;
+pub mod realm_write_api;
 pub mod recovery_crypto;
 pub mod recovery_proof;
 pub mod recovery_strand;

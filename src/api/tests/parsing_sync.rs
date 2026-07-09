@@ -1,4 +1,3 @@
-use super::super::*;
 use crate::sync_parse::parse_events_subscribe_ndjson_text;
 
 #[test]

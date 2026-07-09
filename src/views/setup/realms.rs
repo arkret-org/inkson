@@ -796,7 +796,22 @@ pub(super) fn RealmsSection(
                                                             Err(_) => String::new(),
                                                         },
                                                     };
-                                                    match api.create_realm(
+                                                    let submitter = match api.event_submitter() {
+                                                        Ok(submitter) => submitter,
+                                                        Err(error) => {
+                                                            let message = format!("create failed: {error}");
+                                                            realm_create_busy.set(false);
+                                                            realm_state.set(message.clone());
+                                                            crate::components::feedback::toast_error(
+                                                                "feedback.realm_create_failed",
+                                                                vec![],
+                                                                Some(message),
+                                                            );
+                                                            return;
+                                                        }
+                                                    };
+                                                    match crate::realm_write_api::create_realm(
+                                                        &submitter,
                                                         &actor,
                                                         &title,
                                                         Some(&summary),

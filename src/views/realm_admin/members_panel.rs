@@ -1269,11 +1269,11 @@ fn MemberRowActions(
                             }
                             spawn(async move {
                                 let realm_for_msg = realm.clone();
-                                match crate::views::helpers::with_authed_api(
+                                match crate::views::helpers::with_event_submitter(
                                     &base,
                                     api_token,
-                                    |api| async move {
-                                        api.leave_realm(&realm, &actor_id).await
+                                    |sub| async move {
+                                        crate::realm_write_api::leave_realm(&sub, &realm, &actor_id).await
                                     },
                                 )
                                 .await
@@ -1313,11 +1313,12 @@ fn MemberRowActions(
                             let actor_id = actor_account_did.clone();
                             spawn(async move {
                                 let realm_for_api = realm.clone();
-                                match crate::views::helpers::with_authed_api(
+                                match crate::views::helpers::with_event_submitter(
                                     &base,
                                     api_token,
-                                    |api| async move {
-                                        api.transition_member_state(
+                                    |sub| async move {
+                                        crate::realm_write_api::transition_member_state(
+                                            &sub,
                                             &realm_for_api,
                                             &actor_id,
                                             &target,
@@ -1383,11 +1384,11 @@ fn MemberRowActions(
                             let actor_id = actor_account_did.clone();
                             spawn(async move {
                                 let realm_for_api = realm.clone();
-                                match crate::views::helpers::with_authed_api(
+                                match crate::views::helpers::with_event_submitter(
                                     &base,
                                     api_token,
-                                    |api| async move {
-                                        api.ban_member(&realm_for_api, &actor_id, &target).await
+                                    |sub| async move {
+                                        crate::realm_write_api::ban_member(&sub, &realm_for_api, &actor_id, &target).await
                                     },
                                 )
                                 .await
@@ -1631,11 +1632,12 @@ fn PendingInviteRow(
                                 spawn(async move {
                                     let request_realm = realm.clone();
                                     let request_invite_id = invite_id.clone();
-                                    match crate::views::helpers::with_authed_api(
+                                    match crate::views::helpers::with_event_submitter(
                                         &base,
                                         api_token,
-                                        |api| async move {
-                                            api.reject_realm_invite(
+                                        |sub| async move {
+                                            crate::realm_write_api::reject_realm_invite(
+                                                &sub,
                                                 &request_realm,
                                                 &actor,
                                                 &request_invite_id,
@@ -4116,11 +4118,12 @@ pub fn RealmMembersPanel(
                                                                                             let api_token = token();
                                                                                             spawn(async move {
                                                                                                 let realm_for_api = realm.clone();
-                                                                                                match crate::views::helpers::with_authed_api(
+                                                                                                match crate::views::helpers::with_event_submitter(
                                                                                                     &base,
                                                                                                     api_token,
-                                                                                                    |api| async move {
-                                                                                                        api.transition_member_state(
+                                                                                                    |sub| async move {
+                                                                                                        crate::realm_write_api::transition_member_state(
+                                                                                                            &sub,
                                                                                                             &realm_for_api,
                                                                                                             &actor_id,
                                                                                                             &target,

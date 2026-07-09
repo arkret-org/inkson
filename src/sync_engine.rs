@@ -520,9 +520,9 @@ async fn run_circle_scope_rotate_pass(
         if generation() != start_generation {
             return;
         }
-        let circles = match crate::authed_api::with_authed_api(&base, token.clone(), {
+        let circles = match crate::authed_api::with_authed_sdk_client(&base, token.clone(), {
             let realm_id = realm_id.clone();
-            move |api| async move { api.list_circles(&realm_id).await }
+            move |http| async move { crate::circle_api::list_circles(&http, &realm_id).await }
         })
         .await
         {
@@ -620,11 +620,13 @@ async fn run_circle_scope_rotate_pass(
                 let post_commit_snapshot = draft.post_commit_snapshot;
                 let removed_leaves = draft.removed_leaves;
                 let removed_principals = draft.removed_principals;
-                let outcome = match crate::authed_api::with_authed_api(&base, token.clone(), {
+                let outcome = match crate::authed_api::with_event_submitter(&base, token.clone(), {
                     let circle_id = circle_id.clone();
-                    move |api| async move {
-                        api.submit_circle_scope_rotate_events(&circle_id, &events, None)
-                            .await
+                    move |sub| async move {
+                        crate::circle_api::submit_circle_scope_rotate_events(
+                            &sub, &circle_id, &events, None,
+                        )
+                        .await
                     }
                 })
                 .await
