@@ -594,8 +594,13 @@ pub(crate) fn short_principal_label(value: &str) -> String {
     }
     let principal = trimmed.strip_prefix("did:web:").unwrap_or(trimmed);
     let tail = principal.rsplit(':').next().unwrap_or(principal);
-    if tail.len() > 18 {
-        format!("{}...{}", &tail[..8], &tail[tail.len() - 6..])
+    // Count / slice by characters, not bytes: a display name or handle with
+    // non-ASCII would otherwise slice mid-character and panic the render.
+    if tail.chars().count() > 18 {
+        let head: String = tail.chars().take(8).collect();
+        let tail_len = tail.chars().count();
+        let suffix: String = tail.chars().skip(tail_len - 6).collect();
+        format!("{head}...{suffix}")
     } else {
         tail.to_owned()
     }

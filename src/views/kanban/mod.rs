@@ -2679,7 +2679,7 @@ pub fn KanbanPanel(
                                 if !card.labels.is_empty() {
                                     div { class: "actions board-card-labels",
                                     for label in &card.labels {
-                                        span { class: "badge", "{label}" }
+                                        span { key: "{label}", class: "badge", "{label}" }
                                     }
                                     }
                                 }
@@ -3022,7 +3022,7 @@ pub fn KanbanPanel(
                             div { class: "muted", {crate::i18n::tr("kanban.archived_lists_empty")} }
                         } else {
                             for column in archived.iter() {
-                                div { class: "event", "data-testid": "kanban-archived-list-row",
+                                div { key: "{column.id}", class: "event", "data-testid": "kanban-archived-list-row",
                                     div { class: "event-head",
                                         span { class: "entity-title", "{column.title}" }
                                         span { "rank {column.rank} / {column.cards.len()} card(s)" }
@@ -3120,7 +3120,7 @@ pub fn KanbanPanel(
                             div { class: "muted", {crate::i18n::tr("kanban.archived_cards_empty")} }
                         } else {
                             for row in archived_cards.iter() {
-                                div { class: "event", "data-testid": "kanban-archived-card-row",
+                                div { key: "{row.card.id}", class: "event", "data-testid": "kanban-archived-card-row",
                                     div { class: "event-head",
                                         span { class: "entity-title strand-title-with-security",
                                             SecurityStateBadge {
@@ -3497,7 +3497,7 @@ pub fn KanbanPanel(
                                             div { class: "card-detail-title-meta",
                                                 WriteStateBadge { state: displayed_card_state(card, &projected_strand_ids) }
                                                 for label in &card.labels {
-                                                    span { class: "badge", "{label}" }
+                                                    span { key: "{label}", class: "badge", "{label}" }
                                                 }
                                             }
                                         }

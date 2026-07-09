@@ -81,39 +81,33 @@ pub fn DurabilityDisclosureBanner(
     let verifications = use_resource(move || {
         let recipients = recipients.clone();
         async move {
+            // Resolve + verify orchestration lives in `mls::durability`; the
+            // component only maps the typed check results onto the display
+            // enum (handle vs short DID). A fresh unauthenticated client is
+            // fine — recovery-recipient DID documents are public `did.json`.
             let http = reqwest::Client::new();
-            let mut out: Vec<RecipientVerification> = Vec::new();
-            for recipient in &recipients {
-                let principal_did = recipient.principal_id.as_str().to_owned();
-                let document = crate::did_resolver::fetch_raw_did_document_json(
-                    &http,
-                    &recipient.principal_id,
-                )
-                .await;
-                let verified = document.as_ref().and_then(|document| {
-                    crate::mls::durability::resolve_recovery_recipient(recipient, document).ok()
-                });
-                match verified {
-                    Some(_resolved) => {
-                        let display = handle_display_from_did(&principal_did)
-                            .unwrap_or_else(|| short_protocol_id(&principal_did));
-                        out.push(RecipientVerification::Verified {
-                            recipient_id: recipient.recipient_id.clone(),
-                            principal_did: principal_did.clone(),
+            let checks =
+                crate::mls::durability::verify_recovery_recipients(&http, &recipients).await;
+            checks
+                .into_iter()
+                .map(|check| {
+                    if check.verified {
+                        let display = handle_display_from_did(&check.principal_did)
+                            .unwrap_or_else(|| short_protocol_id(&check.principal_did));
+                        RecipientVerification::Verified {
+                            recipient_id: check.recipient_id,
+                            principal_did: check.principal_did,
                             display,
-                            controller_organization: recipient
-                                .controller_organization
-                                .as_ref()
-                                .map(|did| did.as_str().to_owned()),
-                        });
+                            controller_organization: check.controller_organization,
+                        }
+                    } else {
+                        RecipientVerification::Unverified {
+                            recipient_id: check.recipient_id,
+                            principal_did: check.principal_did,
+                        }
                     }
-                    None => out.push(RecipientVerification::Unverified {
-                        recipient_id: recipient.recipient_id.clone(),
-                        principal_did,
-                    }),
-                }
-            }
-            out
+                })
+                .collect::<Vec<RecipientVerification>>()
         }
     });
 

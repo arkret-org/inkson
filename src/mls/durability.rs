@@ -65,6 +65,48 @@ pub fn resolve_recovery_recipient(
     resolve_realm_history_recovery_key(recipient, did_document_json)
 }
 
+/// Outcome of verifying one recovery recipient against its published DID
+/// document — the service-entry designation check, decoupled from any UI
+/// concern (no display formatting).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct RecoveryRecipientCheck {
+    pub recipient_id: String,
+    pub principal_did: String,
+    pub controller_organization: Option<String>,
+    pub verified: bool,
+}
+
+/// Resolve + verify a whole set of recovery recipients. Encapsulates the
+/// public DID-document fetch and the per-recipient `CokretRealmHistoryRecoveryKey`
+/// service-entry designation check so UI surfaces (e.g. the durability banner)
+/// consume typed results instead of driving the HTTP orchestration in the view
+/// layer. `http` is a shared unauthenticated client — recovery-recipient DID
+/// documents are public `did.json`, so no auth material is involved.
+pub async fn verify_recovery_recipients(
+    http: &reqwest::Client,
+    recipients: &[RealmRecoveryRecipient],
+) -> Vec<RecoveryRecipientCheck> {
+    let mut out = Vec::with_capacity(recipients.len());
+    for recipient in recipients {
+        let principal_did = recipient.principal_id.as_str().to_owned();
+        let document =
+            crate::did_resolver::fetch_raw_did_document_json(http, &recipient.principal_id).await;
+        let verified = document
+            .as_ref()
+            .is_some_and(|document| resolve_recovery_recipient(recipient, document).is_ok());
+        out.push(RecoveryRecipientCheck {
+            recipient_id: recipient.recipient_id.clone(),
+            principal_did,
+            controller_organization: recipient
+                .controller_organization
+                .as_ref()
+                .map(|did| did.as_str().to_owned()),
+            verified,
+        });
+    }
+    out
+}
+
 /// HPKE-seal the retained `(epoch, history_secret)` rows to a resolved RRK and
 /// return the durable `ck.realm_key.share` payload. Pure delegation to the SDK
 /// authority [`seal_history_secrets_to_recovery_recipient`].

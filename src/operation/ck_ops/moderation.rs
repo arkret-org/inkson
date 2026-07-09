@@ -8,64 +8,90 @@
 //! `ck.component.moderation.appeal.v1` and enforces the §5.5.2
 //! separation-of-duties / atomicity constraints.
 
-use serde_json::json;
+use serde_json::{Value, json};
 
-use super::{OperationBuilder, trim_realm_id};
+use super::{OperationBuilder, did_id, payload_value, trim_realm_id};
 
-/// `ck.moderation.decision` — seal a moderation disposition. Writes the
-/// `moderation_state` cell keyed by `decision_id`. The reducer reads
-/// `decision_id` + `issuer` (here the authoring `actor`) and carries the
-/// `target_ref` / `verdict` snapshot so the appeal SoD reverse-lookup
-/// resolves the original issuer.
+/// Derive the `request_canonical_digest` the `moderation_decision_payload`
+/// schema mandates (JCS SHA-256, `sha256:<64hex>`). inkson's reviewer
+/// workbench seals decisions directly — there is no upstream Policy Server
+/// request to hash — so the binding is a deterministic canonical digest
+/// over the moderated target preview. It is stable and reproducible for
+/// the exact `target_ref` being sealed.
+fn decision_request_digest(target_ref: &str) -> anyhow::Result<cokret_sdk::Hash> {
+    let digest = cokret_sdk::canonical::canonical_sha256(&json!({ "target_ref": target_ref }))
+        .map_err(|err| anyhow::anyhow!("moderation decision request digest: {err}"))?;
+    cokret_sdk::Hash::new(digest)
+        .map_err(|err| anyhow::anyhow!("moderation decision request digest is not a Hash: {err}"))
+}
+
+/// `ck.moderation.decision` — seal a moderation disposition over
+/// `target_ref` (the canonical `ck.component.moderation_state.v1` cell
+/// subject). `decision` is the runtime verb from the closed schema enum
+/// (`hard_deny` / `soft_deny` / `quarantine` / `require_review`). The
+/// authoring `actor` is the sealed `issuer`; the decision Event's own id
+/// is the reference later lift / appeal events resolve.
+///
+/// Uses the SDK `ModerationDecisionPayload` strong type (`deny_unknown_fields`)
+/// so the wire body cannot drift from `event-payload.schema.json`.
 pub fn moderation_decision(
     realm_id: &str,
     actor: &str,
-    decision_id: &str,
     target_ref: &str,
-    verdict: &str,
+    decision: &str,
     reason_code: &str,
-) -> OperationBuilder {
+) -> anyhow::Result<OperationBuilder> {
     let realm = trim_realm_id(realm_id);
-    OperationBuilder::new(
+    let payload = cokret_sdk::ModerationDecisionPayload {
+        target_ref: Value::String(target_ref.to_owned()),
+        decision: decision.to_owned(),
+        issuer: did_id(actor)?,
+        request_canonical_digest: decision_request_digest(target_ref)?,
+        action: None,
+        reason_code: Some(reason_code.to_owned()),
+        reason: None,
+        policy_decision_ref: None,
+        modify_decision_ref: None,
+        effective_at: None,
+        expires_at: None,
+    };
+    Ok(OperationBuilder::new(
         &realm,
         actor,
         cokret_sdk::events::kinds::EventKind::ModerationDecision,
     )
     .target_ref(target_ref)
-    .body(json!({
-        "decision_id": decision_id,
-        "realm_id": realm,
-        "issuer": actor,
-        "target_ref": target_ref,
-        "verdict": verdict,
-        "reason_code": reason_code,
-        "decided_at": crate::clock::now_rfc3339_secs(),
-    }))
+    .body(payload_value(&payload, "moderation_decision payload")?))
 }
 
 /// `ck.moderation.decision.lift` — observed-remove / supersede a
-/// previously sealed decision. Cell subject is `decision_ref` (the
-/// `decision_id` of the decision being lifted).
+/// previously sealed decision. The cell subject is `target_ref` (the same
+/// moderated target as the original decision); `decision_ref` is the
+/// `ck:event:` id of the decision Event whose sealed tag is removed.
+///
+/// Uses the SDK `ModerationDecisionLiftPayload` strong type.
 pub fn moderation_decision_lift(
     realm_id: &str,
     actor: &str,
+    target_ref: &str,
     decision_ref: &str,
     reason_code: &str,
-) -> OperationBuilder {
+) -> anyhow::Result<OperationBuilder> {
     let realm = trim_realm_id(realm_id);
-    OperationBuilder::new(
+    let payload = cokret_sdk::ModerationDecisionLiftPayload {
+        target_ref: Value::String(target_ref.to_owned()),
+        decision_ref: Value::String(decision_ref.to_owned()),
+        reason_code: Some(reason_code.to_owned()),
+        reason: None,
+        effective_at: None,
+    };
+    Ok(OperationBuilder::new(
         &realm,
         actor,
         cokret_sdk::events::kinds::EventKind::ModerationDecisionLift,
     )
-    .target_ref(decision_ref)
-    .body(json!({
-        "decision_ref": decision_ref,
-        "realm_id": realm,
-        "issuer": actor,
-        "reason_code": reason_code,
-        "lifted_at": crate::clock::now_rfc3339_secs(),
-    }))
+    .target_ref(target_ref)
+    .body(payload_value(&payload, "moderation_decision_lift payload")?))
 }
 
 /// `ck.moderation.appeal.review` — reviewer takes an appeal under

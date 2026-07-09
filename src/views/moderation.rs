@@ -36,19 +36,23 @@ use crate::views::helpers::{short_protocol_id, with_event_submitter};
 /// `schema_violation` server-side, so the workbench never offers one.
 pub const APPEAL_VERDICTS: &[&str] = &["uphold", "overturn", "modify"];
 
-/// Common moderation decision verdicts (`governance/content-moderation.md` §4
-/// gate vocabulary). `allow` is the no-op gate; the sealed dispositions are
-/// `deny` / `hard_deny` / `quarantine` / `require_review`.
+/// The closed `decision` enum for `ck.moderation.decision`
+/// (`event-payload.schema.json#/$defs/moderation_decision_payload`). Any
+/// other value is a `schema_violation` server-side, so the workbench only
+/// ever offers this authoritative set (the earlier `deny` / `allow` values
+/// were not in the schema enum and would have been rejected).
 pub const DECISION_VERDICTS: &[&str] =
-    &["deny", "hard_deny", "quarantine", "require_review", "allow"];
+    &["hard_deny", "soft_deny", "quarantine", "require_review"];
 
 /// A standing moderation decision projected from the raw-operation log. Lifted
-/// decisions are folded out by [`project_moderation_queues`].
+/// decisions are folded out by [`project_moderation_queues`]. The cell subject
+/// is `target_ref`; `decision_ref` is the sealed decision Event's `ck:event:`
+/// id (the reference a lift resolves).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct StandingDecision {
-    pub decision_id: String,
     pub target_ref: String,
-    pub verdict: String,
+    pub decision_ref: String,
+    pub decision: String,
     pub reason_code: String,
 }
 
@@ -68,6 +72,15 @@ fn body_str(payload: &Value, key: &str) -> Option<String> {
     payload
         .get("body")
         .and_then(|b| b.get(key))
+        .and_then(Value::as_str)
+        .map(ToOwned::to_owned)
+}
+
+/// Read a top-level (envelope) string field — e.g. the synced `event_id`
+/// that identifies a sealed decision Event.
+fn top_str(payload: &Value, key: &str) -> Option<String> {
+    payload
+        .get(key)
         .and_then(Value::as_str)
         .map(ToOwned::to_owned)
 }
@@ -93,21 +106,26 @@ pub fn project_moderation_queues(raw_ops: &[Value]) -> (Vec<StandingDecision>, V
     for payload in raw_ops {
         match payload_kind(payload) {
             Some("ck.moderation.decision") => {
-                if let Some(decision_id) = body_str(payload, "decision_id") {
+                // Cell subject is the moderated `target_ref`; the decision is
+                // referenced by its sealed Event id (top-level `event_id` once
+                // synced). Latest-wins by target_ref.
+                if let Some(target_ref) = body_str(payload, "target_ref") {
                     decisions.insert(
-                        decision_id.clone(),
+                        target_ref.clone(),
                         StandingDecision {
-                            decision_id,
-                            target_ref: body_str(payload, "target_ref").unwrap_or_default(),
-                            verdict: body_str(payload, "verdict").unwrap_or_default(),
+                            target_ref,
+                            decision_ref: top_str(payload, "event_id").unwrap_or_default(),
+                            decision: body_str(payload, "decision").unwrap_or_default(),
                             reason_code: body_str(payload, "reason_code").unwrap_or_default(),
                         },
                     );
                 }
             }
             Some("ck.moderation.decision.lift") => {
-                if let Some(decision_ref) = body_str(payload, "decision_ref") {
-                    decisions.remove(&decision_ref);
+                // The lift names the moderated `target_ref` (same cell subject),
+                // so drop the standing decision keyed by it.
+                if let Some(target_ref) = body_str(payload, "target_ref") {
+                    decisions.remove(&target_ref);
                 }
             }
             Some("ck.moderation.appeal.submit") => {
@@ -143,11 +161,6 @@ pub fn project_moderation_queues(raw_ops: &[Value]) -> (Vec<StandingDecision>, V
         decisions.into_values().collect(),
         appeals.into_values().collect(),
     )
-}
-
-/// Mint a fresh `ck:decision:<uuidv7>` id for a new moderation decision.
-pub fn new_decision_id() -> String {
-    format!("ck:decision:{}", crate::operation::uuid_v7())
 }
 
 #[component]
@@ -188,7 +201,7 @@ pub fn ModerationWorkbench(
                     span { class: "badge", title: "ck.moderation.decision", "Decision" }
                 }
                 div { class: "muted",
-                    "content-moderation.md §4 — a sealed decision over a target_ref. deny / hard_deny / quarantine / require_review change cross-peer visibility; allow is the no-op gate."
+                    "content-moderation.md §4 — a sealed decision over a target_ref. hard_deny / soft_deny / quarantine / require_review change cross-peer visibility."
                 }
                 div { class: "workflow-form",
                     Input {
@@ -232,10 +245,9 @@ pub fn ModerationWorkbench(
                                     }
                                     let api_token = token();
                                     spawn(async move {
-                                        let decision_id = new_decision_id();
                                         match with_event_submitter(&base, api_token, |sub| async move {
                                             crate::realm_write_api::moderation_decide(
-                                                &sub, &realm, &actor, &decision_id, &target, &verdict, &reason,
+                                                &sub, &realm, &actor, &target, &verdict, &reason,
                                             )
                                             .await
                                         })
@@ -276,17 +288,19 @@ pub fn ModerationWorkbench(
                             let base = base_url.clone();
                             let realm = selected_realm_id.clone();
                             let actor = account_did.clone();
-                            let decision_id_label = short_protocol_id(&decision.decision_id);
+                            let decision_ref_label = short_protocol_id(&decision.decision_ref);
                             let target_label = short_protocol_id(&decision.target_ref);
-                            let decision_id = decision.decision_id.clone();
+                            let decision_ref = decision.decision_ref.clone();
+                            let target_ref = decision.target_ref.clone();
                             rsx! {
                                 div {
                                     class: "event",
                                     "data-testid": "moderation-decision-row",
-                                    "data-decision-id": "{decision.decision_id}",
+                                    "data-decision-ref": "{decision.decision_ref}",
+                                    "data-target-ref": "{decision.target_ref}",
                                     div { class: "event-head",
-                                        span { class: "mono", title: "{decision.decision_id}", "{decision_id_label}" }
-                                        span { class: "badge", "{decision.verdict}" }
+                                        span { class: "mono", title: "{decision.decision_ref}", "{decision_ref_label}" }
+                                        span { class: "badge", "{decision.decision}" }
                                     }
                                     div { class: "muted", title: "{decision.target_ref}",
                                         "target {target_label} — {decision.reason_code}"
@@ -299,12 +313,13 @@ pub fn ModerationWorkbench(
                                                 let base = base.clone();
                                                 let realm = realm.clone();
                                                 let actor = actor.clone();
-                                                let decision_ref = decision_id.clone();
+                                                let decision_ref = decision_ref.clone();
+                                                let target_ref = target_ref.clone();
                                                 let api_token = token();
                                                 spawn(async move {
                                                     match with_event_submitter(&base, api_token, |sub| async move {
                                                         crate::realm_write_api::moderation_lift(
-                                                            &sub, &realm, &actor, &decision_ref, "reviewer_lift",
+                                                            &sub, &realm, &actor, &target_ref, &decision_ref, "reviewer_lift",
                                                         )
                                                         .await
                                                     })
@@ -473,7 +488,7 @@ fn AppealReviewRow(
                                         // matching lift MUST ride one batch.
                                         "overturn" => with_event_submitter(&base, api_token, |sub| async move {
                                             crate::realm_write_api::appeal_overturn_atomic(
-                                                &sub, &realm, &actor, &appeal_id, &decision_ref,
+                                                &sub, &realm, &actor, &appeal_id, &target_ref, &decision_ref,
                                                 &reason_text, "appeal_overturn",
                                             )
                                             .await
@@ -561,13 +576,13 @@ mod tests {
 
     use super::*;
 
-    fn decision_op(decision_id: &str, target: &str, verdict: &str) -> Value {
+    fn decision_op(event_id: &str, target: &str, decision: &str) -> Value {
         json!({
             "kind": "ck.moderation.decision",
+            "event_id": event_id,
             "body": {
-                "decision_id": decision_id,
                 "target_ref": target,
-                "verdict": verdict,
+                "decision": decision,
                 "reason_code": "policy_violation",
             }
         })
@@ -576,17 +591,29 @@ mod tests {
     #[test]
     fn lift_removes_the_standing_decision_it_targets() {
         let ops = vec![
-            decision_op("ck:decision:1", "ck:event:a", "quarantine"),
-            decision_op("ck:decision:2", "ck:event:b", "deny"),
+            decision_op("ck:event:1", "ck:event:a", "quarantine"),
+            decision_op("ck:event:2", "ck:event:b", "hard_deny"),
             json!({
                 "kind": "ck.moderation.decision.lift",
-                "body": { "decision_ref": "ck:decision:1" }
+                "body": { "target_ref": "ck:event:a", "decision_ref": "ck:event:1" }
             }),
         ];
         let (decisions, _) = project_moderation_queues(&ops);
         assert_eq!(decisions.len(), 1);
-        assert_eq!(decisions[0].decision_id, "ck:decision:2");
-        assert_eq!(decisions[0].verdict, "deny");
+        assert_eq!(decisions[0].target_ref, "ck:event:b");
+        assert_eq!(decisions[0].decision_ref, "ck:event:2");
+        assert_eq!(decisions[0].decision, "hard_deny");
+    }
+
+    #[test]
+    fn decision_verdicts_are_the_schema_closed_enum() {
+        // Guard against UI drift re-adding a value the reducer would reject
+        // with schema_violation (the `deny` / `allow` values are not in the
+        // moderation_decision_payload `decision` enum).
+        assert_eq!(
+            DECISION_VERDICTS,
+            &["hard_deny", "soft_deny", "quarantine", "require_review"]
+        );
     }
 
     #[test]
@@ -631,11 +658,5 @@ mod tests {
         // §5.5.1.1 closed enum — guard against UI drift adding a value the
         // reducer would reject with schema_violation.
         assert_eq!(APPEAL_VERDICTS, &["uphold", "overturn", "modify"]);
-    }
-
-    #[test]
-    fn new_decision_id_has_canonical_prefix() {
-        let id = new_decision_id();
-        assert!(id.starts_with("ck:decision:"));
     }
 }

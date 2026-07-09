@@ -799,15 +799,39 @@ pub(crate) fn verify_chat_envelope_proof(event: &Value) -> ChatProofVerdict {
     // Projected chat events nest the signed envelope under `event` / `envelope`
     // / `raw`; scan the same candidate layers used elsewhere.
     let candidates = message_candidates(event);
-    let envelope = candidates.iter().copied().find(|candidate| {
+    let proof_bearing = candidates.iter().copied().find(|candidate| {
         candidate
             .get("proofs")
             .and_then(Value::as_array)
             .is_some_and(|proofs| !proofs.is_empty())
-            && candidate.get("actor_id").and_then(Value::as_str).is_some()
+            && candidate
+                .get("actor_id")
+                .and_then(Value::as_str)
+                .is_some_and(|actor| !actor.trim().is_empty())
     });
-    let Some(envelope) = envelope else {
-        return ChatProofVerdict::NotApplicable;
+    let envelope = match proof_bearing {
+        Some(envelope) => envelope,
+        None => {
+            // No proof-bearing layer. If any layer is nonetheless attributed
+            // (claims an `actor_id`), it asserts a sender yet ships no proof
+            // — flag it as needing verification rather than render it as
+            // trusted plaintext (device-lifecycle.md §8.2 fail-closed, in
+            // parity with realm_key_share / member_identity / call_signal /
+            // welcome-claim receiver gates). Only a wholly unattributed row
+            // (no actor_id anywhere — non-persistent / system) is
+            // NotApplicable.
+            let attributed = candidates.iter().copied().any(|candidate| {
+                candidate
+                    .get("actor_id")
+                    .and_then(Value::as_str)
+                    .is_some_and(|actor| !actor.trim().is_empty())
+            });
+            return if attributed {
+                ChatProofVerdict::Unresolved
+            } else {
+                ChatProofVerdict::NotApplicable
+            };
+        }
     };
     let actor = envelope
         .get("actor_id")
