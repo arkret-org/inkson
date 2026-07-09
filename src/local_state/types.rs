@@ -1164,3 +1164,48 @@ impl MlsReceiveOverlay {
         }
     }
 }
+
+/// E7 — interior-mutable write-override overlay for stream cursors, shared
+/// across all clones of a `LocalStateStore` (via `Arc<Mutex<_>>`), like
+/// [`MlsReceiveOverlay`].
+///
+/// Cursors (`ClientLocalState::sync_cursor` / `realm_events_cursors`) are
+/// written by BOTH the Dioxus UI clone and garth's `Send + Sync` `CursorStore`
+/// adapter clone. Each clone owns an independent in-memory `cached`, so without
+/// a shared source the two writers diverge and a stale clone's later flush
+/// clobbers the other's cursor. This overlay is that single shared source: a
+/// write records here; `load()` and the persist path merge it over `cached`, so
+/// every clone observes and persists one coherent cursor set. An empty overlay
+/// (or an unrecorded slot) falls through to `cached` — the last-persisted value
+/// — so a fresh process resumes from disk correctly.
+#[derive(Debug, Default)]
+pub(crate) struct CursorOverlay {
+    /// `Some(_)` overrides `sync_cursor` (inner `None` = cleared).
+    pub(crate) sync_cursor: Option<Option<String>>,
+    /// Per-realm overrides for `realm_events_cursors` (value `None` = cleared).
+    pub(crate) realm_events_cursors: BTreeMap<String, Option<String>>,
+}
+
+impl CursorOverlay {
+    pub(crate) fn is_empty(&self) -> bool {
+        self.sync_cursor.is_none() && self.realm_events_cursors.is_empty()
+    }
+
+    pub(crate) fn apply_to(&self, state: &mut ClientLocalState) {
+        if let Some(sync_cursor) = &self.sync_cursor {
+            state.sync_cursor = sync_cursor.clone();
+        }
+        for (realm_id, cursor) in &self.realm_events_cursors {
+            match cursor {
+                Some(cursor) => {
+                    state
+                        .realm_events_cursors
+                        .insert(realm_id.clone(), cursor.clone());
+                }
+                None => {
+                    state.realm_events_cursors.remove(realm_id);
+                }
+            }
+        }
+    }
+}

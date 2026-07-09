@@ -8,18 +8,37 @@ impl LocalStateStore {
     pub fn save_sync_cursor(&mut self, cursor: impl Into<String>) {
         self.ensure_cached_loaded();
         let cursor = cursor.into();
-        if self.cached.sync_cursor.as_deref() == Some(cursor.as_str()) {
-            return; // cursor unchanged — skip flush
+        {
+            // E7: record into the shared cursor overlay (coherent across clones),
+            // not the per-clone `cached`. Fall through to `cached` for the
+            // unchanged-check when this slot has not been overridden yet.
+            let mut overlay = self.lock_cursor_overlay();
+            let current = match &overlay.sync_cursor {
+                Some(value) => value.clone(),
+                None => self.cached.sync_cursor.clone(),
+            };
+            if current.as_deref() == Some(cursor.as_str()) {
+                return; // cursor unchanged — skip flush
+            }
+            overlay.sync_cursor = Some(Some(cursor));
         }
-        self.cached.sync_cursor = Some(cursor);
         let _ = self.flush();
     }
 
     pub fn clear_sync_cursor(&mut self) {
         self.ensure_cached_loaded();
-        if self.cached.sync_cursor.take().is_some() {
-            let _ = self.flush();
+        {
+            let mut overlay = self.lock_cursor_overlay();
+            let current = match &overlay.sync_cursor {
+                Some(value) => value.clone(),
+                None => self.cached.sync_cursor.clone(),
+            };
+            if current.is_none() {
+                return; // already clear — skip flush
+            }
+            overlay.sync_cursor = Some(None);
         }
+        let _ = self.flush();
     }
 
     /// Resume cursor for this realm's `ck.self.events.stream.subscribe`. Kept
@@ -37,20 +56,19 @@ impl LocalStateStore {
         if realm_id.is_empty() {
             return;
         }
-        match cursor {
-            Some(cursor) => {
-                if self.cached.realm_events_cursors.get(realm_id) == Some(&cursor) {
-                    return; // unchanged — skip flush
-                }
-                self.cached
-                    .realm_events_cursors
-                    .insert(realm_id.to_owned(), cursor);
+        {
+            // E7: record into the shared cursor overlay (coherent across clones).
+            let mut overlay = self.lock_cursor_overlay();
+            let current = match overlay.realm_events_cursors.get(realm_id) {
+                Some(value) => value.clone(),
+                None => self.cached.realm_events_cursors.get(realm_id).cloned(),
+            };
+            if current == cursor {
+                return; // unchanged (including both cleared) — skip flush
             }
-            None => {
-                if self.cached.realm_events_cursors.remove(realm_id).is_none() {
-                    return; // nothing to clear — skip flush
-                }
-            }
+            overlay
+                .realm_events_cursors
+                .insert(realm_id.to_owned(), cursor);
         }
         let _ = self.flush();
     }
@@ -448,4 +466,48 @@ fn raw_payload_is_redaction_tombstone(payload: &Value) -> bool {
         || payload
             .get("payload")
             .is_some_and(raw_payload_is_redaction_tombstone)
+}
+
+#[cfg(test)]
+mod cursor_overlay_tests {
+    use super::super::storage_util::isolated_store_for_tests;
+
+    const REALM: &str = "ck:realm:01904100-0000-7000-8000-000000000001";
+
+    // E7: cursor writes through one clone (e.g. garth's Send+Sync CursorStore
+    // adapter) MUST be visible to a different clone (the Dioxus Signal), because
+    // both go through the shared cursor overlay rather than per-clone `cached`.
+    #[test]
+    fn cursor_writes_are_coherent_across_clones() {
+        let base = isolated_store_for_tests("cursor-coherence");
+        let mut adapter_clone = base.clone();
+        let ui_clone = base.clone();
+
+        adapter_clone.save_realm_events_cursor(REALM, Some("ck:cursor:realm-1".to_owned()));
+        adapter_clone.save_sync_cursor("ck:cursor:acct-1");
+
+        // A DISTINCT clone observes both writes via the shared overlay.
+        assert_eq!(
+            ui_clone.realm_events_cursor(REALM).as_deref(),
+            Some("ck:cursor:realm-1")
+        );
+        assert_eq!(ui_clone.sync_cursor().as_deref(), Some("ck:cursor:acct-1"));
+    }
+
+    // A clear on one clone is likewise visible to another (rebuild-from-history).
+    #[test]
+    fn cursor_clear_is_coherent_across_clones() {
+        let base = isolated_store_for_tests("cursor-clear-coherence");
+        let mut writer = base.clone();
+        let reader = base.clone();
+
+        writer.save_realm_events_cursor(REALM, Some("ck:cursor:realm-1".to_owned()));
+        assert_eq!(
+            reader.realm_events_cursor(REALM).as_deref(),
+            Some("ck:cursor:realm-1")
+        );
+
+        writer.save_realm_events_cursor(REALM, None);
+        assert!(reader.realm_events_cursor(REALM).is_none());
+    }
 }

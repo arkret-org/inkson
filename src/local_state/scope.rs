@@ -141,6 +141,9 @@ impl LocalStateStore {
         // YOU-02-004: the MLS receive-chain overlay is account-scoped state —
         // wipe it so a stale decrypt write-back can't resurrect old snapshots.
         *self.lock_mls_receive_overlay() = MlsReceiveOverlay::default();
+        // E7: reset the account-scoped cursor overlay alongside the receive
+        // overlay so a stale cursor never leaks across account scope changes.
+        *self.lock_cursor_overlay() = CursorOverlay::default();
         self.cached = ClientLocalState {
             local_identity: preserved_identity,
             push_registration: preserved_push,
@@ -183,6 +186,9 @@ impl LocalStateStore {
         // `active_did`, so flush while that still points at the old account.
         let _ = self.flush();
         *self.lock_mls_receive_overlay() = MlsReceiveOverlay::default();
+        // E7: reset the account-scoped cursor overlay alongside the receive
+        // overlay so a stale cursor never leaks across account scope changes.
+        *self.lock_cursor_overlay() = CursorOverlay::default();
         // Land the new active pointer in shared storage first.
         self.mutate_root(|root| {
             root.active_did = Some(actor.to_owned());
@@ -246,6 +252,9 @@ impl LocalStateStore {
         });
         if was_active {
             *self.lock_mls_receive_overlay() = MlsReceiveOverlay::default();
+        // E7: reset the account-scoped cursor overlay alongside the receive
+        // overlay so a stale cursor never leaks across account scope changes.
+        *self.lock_cursor_overlay() = CursorOverlay::default();
             self.cached = ClientLocalState::default();
             let _ = self.flush();
         }
@@ -330,6 +339,9 @@ impl LocalStateStore {
         }
         self.ensure_cached_loaded();
         *self.lock_mls_receive_overlay() = MlsReceiveOverlay::default();
+        // E7: reset the account-scoped cursor overlay alongside the receive
+        // overlay so a stale cursor never leaks across account scope changes.
+        *self.lock_cursor_overlay() = CursorOverlay::default();
         self.cached = ClientLocalState::default();
         let _ = self.flush();
     }
