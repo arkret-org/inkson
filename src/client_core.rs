@@ -64,7 +64,6 @@ impl garth::CursorStore for InksonLocalStateStoreAdapter {
             garth::CursorScope::RealmEvents { realm_id, .. } => {
                 Ok(store.realm_events_cursor(realm_id.as_str()))
             }
-            garth::CursorScope::EventsQuery { .. } => Ok(None),
         }
     }
 
@@ -79,7 +78,6 @@ impl garth::CursorStore for InksonLocalStateStoreAdapter {
             garth::CursorScope::RealmEvents { realm_id, .. } => {
                 store.save_realm_events_cursor(realm_id.as_str(), Some(cursor));
             }
-            garth::CursorScope::EventsQuery { .. } => {}
         }
         Ok(())
     }
@@ -93,7 +91,6 @@ impl garth::CursorStore for InksonLocalStateStoreAdapter {
                     store.save_realm_events_cursor(&realm_id, None);
                 }
             }
-            garth::CursorScope::EventsQuery { .. } => {}
         }
         Ok(())
     }

@@ -247,7 +247,7 @@ impl ClientEventSink for AccountClientEventSink {
             ClientEvent::ToDevice(_) => {
                 report.to_device += 1;
             }
-            ClientEvent::Backfill { .. } | ClientEvent::Interrupt(_) => {}
+            ClientEvent::Backfill { .. } => {}
         }
     }
 }

@@ -146,6 +146,30 @@ fn private_plaintext_sidecar_stays_memory_only_in_account_state() {
 }
 
 #[test]
+fn history_secret_inline_copy_survives_until_secure_store_persist_succeeds() {
+    let mut by_epoch = BTreeMap::new();
+    by_epoch.insert(7, b"history-secret".to_vec());
+    let mut state = ClientLocalState::default();
+    state
+        .history_secrets
+        .insert("ck:realm:history".to_owned(), by_epoch);
+
+    let not_migrated = e2ee_safe_persist_state_after_history_migration(&state, false);
+    assert!(
+        not_migrated
+            .history_secrets
+            .contains_key("ck:realm:history"),
+        "history_secret stays durable until IndexedDB persist succeeds"
+    );
+
+    let migrated = e2ee_safe_persist_state_after_history_migration(&state, true);
+    assert!(
+        migrated.history_secrets.is_empty(),
+        "history_secret is stripped once hardened storage accepted it"
+    );
+}
+
+#[test]
 fn disappearing_message_plaintext_drop_clears_sidecar_and_decrypt_cache() {
     use crate::mls::persistence::encrypt_state;
 

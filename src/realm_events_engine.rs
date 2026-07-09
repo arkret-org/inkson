@@ -98,8 +98,7 @@ fn client_event_to_legacy_payload(event: ClientEvent) -> Option<Value> {
         | ClientEvent::RealmDelta { .. }
         | ClientEvent::Backfill { .. }
         | ClientEvent::Notification(_)
-        | ClientEvent::ToDevice(_)
-        | ClientEvent::Interrupt(_) => return None,
+        | ClientEvent::ToDevice(_) => return None,
     };
     match serde_json::to_value(event) {
         Ok(value) => Some(value),
@@ -272,7 +271,7 @@ async fn run_realm_iteration(
     };
 
     let reason = match driver
-        .run_realm_projected(&transport, realm_id_typed, &projector)
+        .run_projected_stream(&transport, realm_id_typed, &projector)
         .await
     {
         Ok(reason) => reason,

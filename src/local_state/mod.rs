@@ -863,14 +863,24 @@ fn sanitize_did_for_filename(did: &str) -> String {
     base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(did.as_bytes())
 }
 
+fn e2ee_safe_persist_state(state: &ClientLocalState) -> ClientLocalState {
+    let history_secrets_persisted = state.history_secrets.is_empty()
+        || crate::secure_key_store::persist_inline_history_secrets(&state.history_secrets);
+    e2ee_safe_persist_state_after_history_migration(state, history_secrets_persisted)
+}
+
 /// Build the only form of account state that may be written to plaintext
 /// localStorage / JSON files. The runtime cache keeps these maps in memory so
-/// the active session stays usable, but the durable account-state blob never
-/// contains E2EE plaintext or raw MLS history keys.
-fn e2ee_safe_persist_state(state: &ClientLocalState) -> ClientLocalState {
+/// the active session stays usable. Raw MLS history keys are stripped only
+/// after the hardened SecureKeyStore write succeeds; before the wasm
+/// IndexedDB/SubtleCrypto upgrade they remain as a transitional durable copy so
+/// a refresh cannot permanently lose pre-join history access.
+fn e2ee_safe_persist_state_after_history_migration(
+    state: &ClientLocalState,
+    history_secrets_persisted: bool,
+) -> ClientLocalState {
     let mut stripped = state.clone();
-    if !stripped.history_secrets.is_empty() {
-        let _ = crate::secure_key_store::persist_inline_history_secrets(&stripped.history_secrets);
+    if history_secrets_persisted {
         stripped.history_secrets.clear();
     }
     stripped.mls_private_plaintext.clear();
