@@ -529,11 +529,12 @@ pub fn VerifyDevicePanel(
                                                         return;
                                                     }
                                                 };
-                                                match crate::views::helpers::with_authed_api(
+                                                match crate::views::helpers::with_authed_sdk_client(
                                                     &base,
                                                     api_token,
-                                                    |api| async move {
-                                                        api.send_device_message_envelope(
+                                                    |http| async move {
+                                                        crate::keys_api::send_device_message_envelope(
+                                                            &http,
                                                             "inkson-sas-key",
                                                             &account,
                                                             &target,

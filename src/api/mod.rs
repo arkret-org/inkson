@@ -14,7 +14,7 @@ use url::Url;
 use crate::config::validate_server_url;
 use crate::models::{
     BlobUploadOutcome, DeviceMessagesAckOutcome,
-    DeviceMessagesAckRequestBody, DeviceMessagesGetOutcome, DeviceMessagesSendOutcome,
+    DeviceMessagesAckRequestBody, DeviceMessagesGetOutcome,
     OP_SNAPSHOT_HEAD, RealmJoinCandidate, ResolveHandleView,
     ServerDescription, SubmitEventResult,
 };

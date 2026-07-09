@@ -4,7 +4,6 @@ use base64::Engine as _;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 
 use super::*;
-use crate::event_builders::build_device_message_envelope;
 
 /// Canonical signing-input prefix for the `keys/upload` `device_signature`
 /// (spec `device-lifecycle.md` §8.1).
@@ -88,109 +87,6 @@ fn key_backup_authorized_event_ref_for_device(viewer: &Value, device_id: &str) -
 }
 
 impl CokretApi {
-    /// POST a typed `ck.schema.device_message.v1` envelope to soland's
-    /// `/_cokret/self/device_messages` endpoint. Used by device
-    /// verification strands (R3), secret sharing (`ck.secret.*`) and any
-    /// other strand that needs to deliver a message to a specific
-    /// (actor, device_id) pair without going through Space history. The
-    /// body shape is the canonical
-    /// `messages -> actor -> device_id -> {kind, expires_at, content}` map
-    /// required by the SDK `DeviceMessageTarget` and `device-lifecycle.md`
-    /// §7. `expires_at` is an RFC3339 timestamp; per §7 it MUST NOT be
-    /// later than the kind/profile TTL cap (24h default). Idempotency is
-    /// conveyed via the `Idempotency-Key` request header (previously the
-    /// trailing `{txn_id}` path segment).
-    pub async fn send_device_message_envelope(
-        &self,
-        txn_id: &str,
-        target_actor: &str,
-        target_device_id: &str,
-        kind: &str,
-        expires_at: &str,
-        content: serde_json::Value,
-    ) -> anyhow::Result<DeviceMessagesSendOutcome> {
-        let payload = build_device_message_envelope(
-            target_actor,
-            target_device_id,
-            kind,
-            expires_at,
-            content,
-        )?;
-        self.sdk_http_client()?
-            .send_device_messages(txn_id, &payload)
-            .await
-            .map_err(anyhow::Error::from)
-    }
-
-    /// Submit an ephemeral `ck.realm_key.request` (realm-and-space.md
-    /// history-sharing): a late-joining device asks the provider device named by
-    /// `target_source_ref` to seal the retained `history_secret` range to
-    /// `recipient_hpke_public_key`. soland relays it to the provider's to-device
-    /// queue (`relay_ephemeral_realm_key_request`); the provider answers with a
-    /// durable `ck.realm_key.share`.
-    ///
-    /// Posts directly to `/_cokret/self/ephemeral` rather than via
-    /// [`Self::submit_ephemeral_envelope`], whose SDK guard only admits the
-    /// broadcast ephemeral allowlist (`ck.realm_key.request` is a directed relay,
-    /// not a broadcast signal).
-    #[allow(clippy::too_many_arguments)]
-    pub async fn submit_realm_key_request(
-        &self,
-        realm_id: &str,
-        actor_id: &str,
-        device_id: &str,
-        provider_device_ref: &str,
-        provider_principal_id: &str,
-        recipient_hpke_public_key: &str,
-        from_epoch: u64,
-        to_epoch: u64,
-    ) -> anyhow::Result<cokret_sdk::EphemeralSubmitOutcome> {
-        let payload = cokret_sdk::RealmKeyRequestPayload {
-            key_scope: cokret_sdk::RealmKeyRequestScope {
-                effective_scope: crate::operation::realm_effective_scope_value(realm_id)
-                    .map_err(anyhow::Error::msg)?,
-                policy_digest: None,
-                membership_frontier_digest: None,
-                from_epoch,
-                to_epoch,
-                history_visibility: None,
-            },
-            recipient_principal_id: cokret_sdk::Did::new(actor_id.trim().to_owned())?,
-            recipient_device_id: device_id.trim().to_owned(),
-            recipient_hpke_public_key: recipient_hpke_public_key.trim().to_owned(),
-            requested_source_class: cokret_sdk::HistoryKeySource::VerifiedMemberDevice,
-            target_source_ref: provider_device_ref.trim().to_owned(),
-            // The principal that owns `target_source_ref` (the provider device the
-            // requester picked as its history source). Required by the SDK request
-            // schema so the relay can route to the provider's to-device queue.
-            target_principal_id: cokret_sdk::Did::new(provider_principal_id.trim().to_owned())?,
-            created_at: crate::clock::now_utc(),
-        };
-        payload
-            .validate()
-            .map_err(|err| anyhow::anyhow!("ck.realm_key.request invalid: {err}"))?;
-        let sent_at = crate::clock::now_utc();
-        let envelope = cokret_sdk::EphemeralEnvelope {
-            // `ck.realm_key.request` is a directed ephemeral relay, not a broadcast
-            // signal, so it has no `events::kinds` constant; the literal is the
-            // wire kind soland's `relay_ephemeral_realm_key_request` matches on.
-            kind: "ck.realm_key.request".to_owned(),
-            realm_id: cokret_sdk::RealmId::new(crate::operation::trim_realm_id(realm_id))?,
-            actor_id: cokret_sdk::Did::new(actor_id.trim().to_owned())?,
-            device_id: Some(cokret_sdk::DeviceId::new(device_id.trim().to_owned())?),
-            sent_at,
-            // Directed relay; soland enforces its own TTL. Stay well under the
-            // 5-minute ephemeral ceiling.
-            expires_at: sent_at + chrono::Duration::minutes(5),
-            payload: serde_json::to_value(&payload)?,
-            proof: None,
-        };
-        self.sdk_http_client()?
-            .post("/_cokret/self/ephemeral", &envelope)
-            .await
-            .map_err(anyhow::Error::from)
-    }
-
     pub async fn receive_device_messages(&self) -> anyhow::Result<DeviceMessagesGetOutcome> {
         self.sdk_http_client()?
             .receive_device_messages(None, None)

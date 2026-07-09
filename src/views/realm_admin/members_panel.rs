@@ -2529,7 +2529,8 @@ pub(crate) async fn request_history_keys_for_realm(
     )
     .map_err(|err| anyhow::anyhow!("load device HPKE keypair for history request: {err}"))?;
     let recipient_hpke_public_key = cokret_sdk::base64url_encode(&pubkey);
-    api.submit_realm_key_request(
+    crate::keys_api::submit_realm_key_request(
+        &api.sdk_http_client()?,
         &realm_id,
         &actor_id,
         &device_id,

@@ -1032,6 +1032,7 @@ fn render_pair_strand(
                                     );
                                     let mut delivered = 0usize;
                                     let mut failed = 0usize;
+                                    let http = api.sdk_http_client()?;
                                     for row in rows {
                                         if row.device_id == requesting_device_id
                                             || row.verification_state != "verified"
@@ -1042,16 +1043,16 @@ fn render_pair_strand(
                                             "ck.key.verification.request:{}:{}",
                                             requesting_device_id, row.device_id
                                         );
-                                        match api
-                                            .send_device_message_envelope(
-                                                &txn_id,
-                                                &actor,
-                                                &row.device_id,
-                                                "ck.key.verification.request",
-                                                &expires_at,
-                                                content.clone(),
-                                            )
-                                            .await
+                                        match crate::keys_api::send_device_message_envelope(
+                                            &http,
+                                            &txn_id,
+                                            &actor,
+                                            &row.device_id,
+                                            "ck.key.verification.request",
+                                            &expires_at,
+                                            content.clone(),
+                                        )
+                                        .await
                                         {
                                             Ok(_) => delivered += 1,
                                             Err(error) => {

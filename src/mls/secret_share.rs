@@ -286,7 +286,8 @@ pub async fn send_request(
     requesting_device_id: &str,
 ) -> Result<()> {
     let content = build_request_content(requester, requesting_device_id)?;
-    api.send_device_message_envelope(
+    crate::keys_api::send_device_message_envelope(
+        &api.sdk_http_client()?,
         &format!("ck.secret.request:{}", requester.request_id),
         account_did,
         target_existing_device_id,
@@ -323,7 +324,8 @@ pub async fn respond_to_request(
         self_device_id,
         &expires_at,
     )?;
-    api.send_device_message_envelope(
+    crate::keys_api::send_device_message_envelope(
+        &api.sdk_http_client()?,
         &format!("ck.secret.send:{}", request.request_id),
         account_did,
         &request.from_device,

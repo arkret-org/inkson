@@ -230,17 +230,18 @@ pub async fn upload_device_bound_file(
     };
 
     let mut device_message_responses = Vec::with_capacity(dispatches.len());
+    let http = api.sdk_http_client()?;
     for dispatch in dispatches {
-        let response = api
-            .send_device_message_envelope(
-                &dispatch.txn_id,
-                &dispatch.target_actor_id,
-                &dispatch.target_device_id,
-                &dispatch.kind,
-                &dispatch.expires_at,
-                dispatch.content,
-            )
-            .await?;
+        let response = crate::keys_api::send_device_message_envelope(
+            &http,
+            &dispatch.txn_id,
+            &dispatch.target_actor_id,
+            &dispatch.target_device_id,
+            &dispatch.kind,
+            &dispatch.expires_at,
+            dispatch.content,
+        )
+        .await?;
         device_message_responses.push(response);
     }
 
