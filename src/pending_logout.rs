@@ -29,8 +29,8 @@
 //! coauth can't leave a poison entry forever — and crucially the grant's
 //! own 8h TTL means the chain self-heals well before the 24h record TTL.
 
-use chrono::{DateTime, Duration, Utc};
 use arkret_sdk::http_client::{Auth, ClientBuilder};
+use chrono::{DateTime, Duration, Utc};
 use serde::{Deserialize, Serialize};
 use zeroize::Zeroize as _;
 

@@ -1043,11 +1043,11 @@ fn message_revise_builder_uses_content_payload_schema() {
 // client-side counterparts of the SDK statement verifier tests; the helper
 // produces real `ck.realm.organization` events that cotest can reuse.
 mod realm_organization_builder_tests {
-    use chrono::TimeZone;
     use arkret_sdk::models::{
         RealmOrganizationControlScope, RealmOrganizationIssuerRole, RealmOrganizationRelationship,
         RealmOrganizationStatus, SignatureMaterial,
     };
+    use chrono::TimeZone;
 
     use super::*;
     use crate::operation::ck_ops::RealmOrganizationAuthorizationInput;

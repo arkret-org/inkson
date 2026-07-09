@@ -3,6 +3,8 @@
 
 use std::sync::Arc;
 
+use garth::{SecretBytes, SecureKeyStoreBackendInfo};
+
 use super::{SecureKeyStore, SecureKeyStoreError};
 
 /// Mobile **host-bridge** delegation pattern for
@@ -222,14 +224,23 @@ impl HostBridgeSecureKeyStore {
 }
 
 impl SecureKeyStore for HostBridgeSecureKeyStore {
-    fn store_secret(&self, key: &str, value: &str) -> Result<(), SecureKeyStoreError> {
+    fn store_secret_bytes(&self, key: &str, value: &[u8]) -> Result<(), SecureKeyStoreError> {
+        // The host bridge FFI (Android Keystore / iOS Keychain) exchanges string
+        // secrets; every inkson caller stores UTF-8 and garth's default
+        // `store_secret(&str)` routes here as valid UTF-8.
+        let value = std::str::from_utf8(value).map_err(|err| {
+            SecureKeyStoreError::Backend(format!("host-bridge secret not utf8: {err}"))
+        })?;
         self.require_biometric("Authenticate to store secret")?;
         self.bridge.put(&self.service_name, key, value)
     }
 
-    fn get_secret(&self, key: &str) -> Result<Option<String>, SecureKeyStoreError> {
+    fn get_secret_bytes(&self, key: &str) -> Result<Option<SecretBytes>, SecureKeyStoreError> {
         self.require_biometric("Authenticate to access secret")?;
-        self.bridge.get(&self.service_name, key)
+        Ok(self
+            .bridge
+            .get(&self.service_name, key)?
+            .map(|value| SecretBytes::new(value.into_bytes())))
     }
 
     fn delete_secret(&self, key: &str) -> Result<(), SecureKeyStoreError> {
@@ -240,7 +251,22 @@ impl SecureKeyStore for HostBridgeSecureKeyStore {
         self.bridge.delete(&self.service_name, key)
     }
 
-    fn backend_name(&self) -> &'static str {
-        self.bridge.backend_label()
+    fn list_secret_keys(&self, _prefix: Option<&str>) -> Result<Vec<String>, SecureKeyStoreError> {
+        // The `HostSecretBridge` FFI contract exposes only put/get/delete, so the
+        // platform keystore behind it cannot be enumerated from here.
+        Err(SecureKeyStoreError::Unsupported(
+            "host-bridge backend does not support secret key enumeration",
+        ))
+    }
+
+    fn backend_info(&self) -> SecureKeyStoreBackendInfo {
+        SecureKeyStoreBackendInfo {
+            // Preserved verbatim: strands from the bridge label so diagnostic UI
+            // can distinguish Android Keystore vs iOS Keychain.
+            name: self.bridge.backend_label(),
+            // Android Keystore / iOS Keychain are hardware-backed, non-exportable.
+            hardware_backed: true,
+            exportable: false,
+        }
     }
 }

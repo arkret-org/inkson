@@ -5,7 +5,6 @@
 //! endpoint registry, the personal-agent admin, and the handoff
 //! surfaces.
 
-use chrono::{Duration, Utc};
 use arkret_sdk::models::{
     AgentKeyScope, AgentKeyScopeResource, AgentKeyScopeResourceKind, AgentParticipation,
     AgentProjection, AgentStatus, AgentView,
@@ -15,6 +14,7 @@ use arkret_sdk::{
     AgentKeyAuthorizePayloadRuntimeAttestation, AgentKeyPairRequestBody,
     AgentKeyRuntimeAttestationKind, AgentPairingBootstrap, Did, Hash, PublicKey, RealmId,
 };
+use chrono::{Duration, Utc};
 use serde::Deserialize;
 use serde_json::{Value, json};
 
@@ -292,7 +292,7 @@ pub fn build_agent_pairing_bootstrap_json(
 ) -> serde_json::Result<String> {
     let base_url = base_url.trim_end_matches('/');
     let bootstrap = AgentPairingBootstrap {
-        arkret_base_url: base_url.to_owned(),
+        cokret_base_url: base_url.to_owned(),
         service_did: Did::new(service_did.trim().to_owned()).map_err(json_invalid_input)?,
         agent_principal_id: outcome.agent_principal_id.clone(),
         pairing_request_id: outcome.pairing_request_id.clone(),

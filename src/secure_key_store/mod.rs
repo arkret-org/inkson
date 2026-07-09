@@ -37,7 +37,6 @@ mod host_bridge;
 mod indexed_db;
 mod keyring;
 mod local_storage;
-mod memory;
 mod platform;
 mod signing_seed;
 
@@ -46,6 +45,14 @@ mod tests;
 
 #[cfg(target_arch = "wasm32")]
 use fallback::FallbackSecureKeyStore;
+// F-11: the authoritative client `SecureKeyStore` trait, its error type, and the
+// in-memory backend all live in garth now (the bytes-superset trait relaxed to
+// `MaybeSendSync + 'static` so wasm `!Send` backends can implement it directly).
+// inkson's `secure_key_store` module keeps the platform backends + seed
+// governance below and surfaces the canonical garth trait through this path; the
+// former parallel inkson trait / error / memory impl / `InksonSecureKeyStoreAdapter`
+// are deleted.
+pub use garth::{MemorySecureKeyStore, SecureKeyStore, SecureKeyStoreError};
 pub use host_bridge::{
     HostBridgeSecureKeyStore, HostSecretBridge, host_secret_bridge_installed,
     install_host_secret_bridge,
@@ -59,7 +66,6 @@ pub use indexed_db::{
 pub use keyring::KeyringSecureKeyStore;
 #[cfg(target_arch = "wasm32")]
 pub use local_storage::LocalStorageSecureKeyStore;
-pub use memory::MemorySecureKeyStore;
 #[cfg(any(feature = "mobile-android", target_os = "android"))]
 pub use platform::AndroidKeystoreSecureKeyStore;
 #[cfg(any(feature = "mobile-ios", target_os = "ios"))]
@@ -76,7 +82,14 @@ pub use signing_seed::{
 };
 
 #[cfg(target_arch = "wasm32")]
-static WASM_UPGRADED_SECURE_KEY_STORE: OnceLock<Arc<dyn SecureKeyStore>> = OnceLock::new();
+// The garth `SecureKeyStore` trait object drops its `Send + Sync` supertrait on
+// wasm (`MaybeSendSync`), but a `static OnceLock<T>` still requires `T: Sync`.
+// The concrete backends we ever install here (IndexedDb via `IndexedDbSendBoundary`,
+// LocalStorage over `String`/`[u8; 32]`, memory over `Arc<Mutex<…>>`) are all
+// genuinely `Send + Sync`, so pin the process-global slot to the `+ Send + Sync`
+// trait object; callers freely coerce it down to the bare `Arc<dyn SecureKeyStore>`.
+static WASM_UPGRADED_SECURE_KEY_STORE: OnceLock<Arc<dyn SecureKeyStore + Send + Sync>> =
+    OnceLock::new();
 
 #[cfg(target_arch = "wasm32")]
 pub(crate) const WASM_INDEXEDDB_SECURE_KEY_STORE_BACKEND: &str = "indexed_db_subtle_aes_gcm";
@@ -129,11 +142,14 @@ pub async fn ensure_wasm_secure_key_store_ready(
     if wasm_localstorage_secret_downgrade_enabled() {
         return Ok(default_secure_key_store(service_name));
     }
-    upgrade_wasm_secure_key_store_async(service_name)
-        .await?
-        .ok_or(SecureKeyStoreError::Unsupported(
+    // `Some(store)` is the `+ Send + Sync` trait object; `Ok(store)` coerces it
+    // down to the bare `Arc<dyn SecureKeyStore>` return type at the argument site.
+    match upgrade_wasm_secure_key_store_async(service_name).await? {
+        Some(store) => Ok(store),
+        None => Err(SecureKeyStoreError::Unsupported(
             WASM_ED25519_SEED_INDEXEDDB_REQUIRED,
-        ))
+        )),
+    }
 }
 
 #[cfg(any(target_arch = "wasm32", test))]
@@ -374,77 +390,6 @@ pub fn unwrap_secret(
         Err(_) => return Ok(None),
     };
     Ok(String::from_utf8(plain).ok())
-}
-
-/// Errors a [`SecureKeyStore`] can surface.
-#[derive(Debug, thiserror::Error)]
-pub enum SecureKeyStoreError {
-    /// The key was not present.
-    #[error("secret not found")]
-    NotFound,
-    /// Backend reachable but refused (locked keychain, biometric
-    /// cancelled, permission denied, etc.).
-    #[error("secure key store backend error: {0}")]
-    Backend(String),
-    /// Backend not wired on this build target. Callers should fall back
-    /// to a software default ([`MemorySecureKeyStore`]) and surface a
-    /// "secrets stored in plaintext" warning to the user.
-    #[error("secure key store backend `{0}` is not supported")]
-    Unsupported(&'static str),
-}
-
-/// Pluggable string-keyed secret store. All methods take `&self` so a
-/// store can be cheaply shared via `Arc<dyn SecureKeyStore>`.
-///
-/// Implementors MUST treat the values as opaque secrets — never log,
-/// never hash with a non-cryptographic hash, never include in `Debug`
-/// output. The trait is `Send + Sync` so a single store can be cloned
-/// across UI surfaces.
-pub trait SecureKeyStore: Send + Sync {
-    /// Persist `value` under `key`. Overwrites silently when the key
-    /// already exists.
-    fn store_secret(&self, key: &str, value: &str) -> Result<(), SecureKeyStoreError>;
-
-    /// Persist `value` under `key` and resolve ONLY after it is durably
-    /// committed to the backing store.
-    ///
-    /// [`store_secret`](Self::store_secret) is allowed to return as soon as the
-    /// value is in the in-memory cache and schedule the durable write
-    /// asynchronously (the wasm IndexedDB tier does exactly this — see
-    /// `IndexedDbSecureKeyStore::store_secret`). That fire-and-forget write can
-    /// lose a page-unload / reload race, which is catastrophic for material a
-    /// remote party will immediately depend on — notably the MLS KeyPackage
-    /// init private key: once the KeyPackage is advertised to the server and an
-    /// admin claims it, the Welcome can only be decrypted with that init key, so
-    /// it MUST be durable BEFORE the KeyPackage is published. Callers in that
-    /// position `await` this method instead of calling `store_secret`.
-    ///
-    /// The default implementation delegates to the synchronous
-    /// [`store_secret`](Self::store_secret), which is already durable for the
-    /// synchronous backends (OS keychain, `localStorage`). The wasm IndexedDB
-    /// tier overrides it to `await` the actual put.
-    fn store_secret_durable<'a>(
-        &'a self,
-        key: &'a str,
-        value: &'a str,
-    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<(), SecureKeyStoreError>> + 'a>>
-    {
-        let result = self.store_secret(key, value);
-        Box::pin(async move { result })
-    }
-
-    /// Load the secret associated with `key`. Returns `Ok(None)` when
-    /// the key is absent (vs `Err(NotFound)` — we collapse "not present"
-    /// into the success path so callers don't have to discriminate).
-    fn get_secret(&self, key: &str) -> Result<Option<String>, SecureKeyStoreError>;
-
-    /// Remove the secret. Idempotent — deleting an absent key returns
-    /// `Ok(())`.
-    fn delete_secret(&self, key: &str) -> Result<(), SecureKeyStoreError>;
-
-    /// Human-readable backend identifier (e.g. `"keyring"`,
-    /// `"memory"`). Surfaced in diagnostic UI.
-    fn backend_name(&self) -> &'static str;
 }
 
 /// wasm-only: one-time migration of the legacy global wrap_seed

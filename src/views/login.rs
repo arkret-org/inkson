@@ -1,5 +1,5 @@
-use chrono::Utc;
 use arkret_sdk::http_client::{Auth, ClientBuilder};
+use chrono::Utc;
 use dioxus::prelude::*;
 use garth::{LoginKind, OidcLogin, SessionEngine, SessionGrantState};
 
@@ -1062,7 +1062,7 @@ mod tests {
             expires_at: "2026-05-29T12:00:00Z".parse().unwrap(),
             audience: "https://local.host/api".to_owned(),
             granted_scope: vec!["urn:arkret:principal-server:session.bind".to_owned()],
-            session_public_key: "public-key".to_owned(),
+            session_public_key: Some("public-key".to_owned()),
             dpop_jkt: Some("dpop-jkt".to_owned()),
         };
         let persisted = persisted_session_grant_from_state(

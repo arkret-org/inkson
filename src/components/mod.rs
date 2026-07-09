@@ -6,6 +6,9 @@ use dioxus::prelude::*;
 pub mod account_switcher;
 pub mod agent_runtime_approval_prompt;
 pub mod avatar_uploader;
+/// D3 — generic single-flight / debounce / backoff / digest-dedupe backup-job
+/// scheduler shared by `mls_history_backup` and `mls_backup_prompt`.
+pub(crate) mod backup_job_scheduler;
 /// CKP-0007 P3B.2 — Circle error queue. Producers push
 /// [`crate::circle::CircleErrorKind`]; the unified `feedback::ToastHost`
 /// drains it and renders the localized user-facing string.

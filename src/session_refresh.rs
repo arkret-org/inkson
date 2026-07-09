@@ -20,10 +20,10 @@
 //! reqwest) and the IO thin.
 
 use anyhow::Context as _;
+use arkret_sdk::http_client::{Auth, ClientBuilder};
 use base64::Engine as _;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use chrono::Utc;
-use arkret_sdk::http_client::{Auth, ClientBuilder};
 use garth::{SessionEngine, SessionGrantState, SessionRefreshOptions};
 use serde::Serialize;
 use url::Url;
@@ -330,7 +330,11 @@ fn session_grant_state_from_persisted(
         expires_at,
         audience: grant.audience.clone(),
         granted_scope: Vec::new(),
-        session_public_key: "persisted-session-public-key-unavailable".to_owned(),
+        // Reconstructed-from-persistence state: the client persistence layer does
+        // not retain the session public key, and garth's refresh flow never reads
+        // it (only the wire refresh outcome supplies the rotated key). Pass `None`
+        // rather than a placeholder string.
+        session_public_key: None,
         dpop_jkt: Some(device_handle.jkt().to_owned()),
     })
 }

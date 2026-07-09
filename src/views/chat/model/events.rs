@@ -561,10 +561,6 @@ fn message_protocol_ids_match(left: &ChatMessage, right: &ChatMessage) -> bool {
         .is_some_and(|right_id| right_id == left_id)
 }
 
-fn incoming_message_is_newer(existing: &ChatMessage, incoming: &ChatMessage) -> bool {
-    incoming.is_newer_or_same_lifecycle_version_than(existing)
-}
-
 fn carry_create_metadata(target: &mut ChatMessage, source: &ChatMessage) {
     if target.reply_to.is_none() {
         target.reply_to = source.reply_to.clone();
@@ -586,14 +582,38 @@ fn merge_reactions_into(target: &mut ChatMessage, source: &ChatMessage) {
     sort_reactions(&mut target.reactions);
 }
 
-fn merge_duplicate_create_message(existing: &mut ChatMessage, mut incoming: ChatMessage) {
+/// Canonical duplicate-`create` merge for a matched pair of chat messages.
+///
+/// Single source of truth for folding a re-projected or late-arriving
+/// `create`/tombstone into the copy already rendered. Both projection paths
+/// call it: `push_or_merge_create_message` (event-list projection, matched by
+/// protocol message id) and `strands::merge_chat_messages` (list-vs-list
+/// merge, matched by event id or protocol id). The former
+/// `strands::replace_chat_message_preserving_local_metadata` twin was folded
+/// in here; its extra `created_at` carry-forward is preserved below.
+///
+/// Newer-vs-same is decided by `is_newer_or_same_lifecycle_version_than`
+/// (`>=` on the same-version id tie-break), so an incoming message at the same
+/// lifecycle version replaces the row while carrying existing local metadata
+/// forward.
+pub(crate) fn merge_duplicate_create_message(
+    existing: &mut ChatMessage,
+    mut incoming: ChatMessage,
+) {
     if existing.redacted && !incoming.redacted {
         carry_create_metadata(existing, &incoming);
         append_revision_body(existing, incoming.body);
         return;
     }
-    if incoming.redacted || incoming_message_is_newer(existing, &incoming) {
+    if incoming.redacted || incoming.is_newer_or_same_lifecycle_version_than(existing) {
         carry_create_metadata(&mut incoming, existing);
+        // Carry forward locally-tracked edit metadata. The sync projection
+        // rebuilds a message from its events but does not surface the
+        // per-message revision count, so a re-projection would otherwise wipe
+        // the write-status counter the moment a sync tick lands between two
+        // edits. Preserve the existing `edited` flag and revision history (the
+        // body still updates to the incoming/revised content) so the numeric
+        // counter is stable across re-projections.
         if !incoming.edited && existing.edited {
             incoming.edited = true;
         }
@@ -601,6 +621,9 @@ fn merge_duplicate_create_message(existing: &mut ChatMessage, mut incoming: Chat
             incoming.revisions = std::mem::take(&mut existing.revisions);
         }
         append_revision_body(&mut incoming, existing.body.clone());
+        if incoming.created_at.is_none() {
+            incoming.created_at = existing.created_at;
+        }
         merge_reactions_into(&mut incoming, existing);
         *existing = incoming;
     } else {

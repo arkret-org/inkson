@@ -2,6 +2,8 @@
 
 #![cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
 
+use garth::{SecretBytes, SecureKeyStoreBackendInfo};
+
 use super::{SecureKeyStore, SecureKeyStoreError};
 
 /// Desktop OS-keychain backend. Uses the `keyring` crate which routes
@@ -71,17 +73,23 @@ impl KeyringSecureKeyStore {
 }
 
 impl SecureKeyStore for KeyringSecureKeyStore {
-    fn store_secret(&self, key: &str, value: &str) -> Result<(), SecureKeyStoreError> {
+    fn store_secret_bytes(&self, key: &str, value: &[u8]) -> Result<(), SecureKeyStoreError> {
+        // The OS keychain slot is a "password" string; every inkson caller stores
+        // UTF-8 (base64/JSON) and garth's default `store_secret(&str)` routes here
+        // as valid UTF-8. Reject non-UTF-8 rather than changing the stored form.
+        let value = std::str::from_utf8(value).map_err(|err| {
+            SecureKeyStoreError::Backend(format!("keyring secret not utf8: {err}"))
+        })?;
         let entry = self.entry(key)?;
         entry
             .set_password(value)
             .map_err(|err| SecureKeyStoreError::Backend(format!("set_password: {err}")))
     }
 
-    fn get_secret(&self, key: &str) -> Result<Option<String>, SecureKeyStoreError> {
+    fn get_secret_bytes(&self, key: &str) -> Result<Option<SecretBytes>, SecureKeyStoreError> {
         let entry = self.entry(key)?;
         match entry.get_password() {
-            Ok(value) => Ok(Some(value)),
+            Ok(value) => Ok(Some(SecretBytes::new(value.into_bytes()))),
             Err(keyring::Error::NoEntry) => Ok(None),
             Err(err) => Err(SecureKeyStoreError::Backend(format!("get_password: {err}"))),
         }
@@ -98,7 +106,24 @@ impl SecureKeyStore for KeyringSecureKeyStore {
         }
     }
 
-    fn backend_name(&self) -> &'static str {
-        "keyring"
+    fn list_secret_keys(&self, _prefix: Option<&str>) -> Result<Vec<String>, SecureKeyStoreError> {
+        // The `keyring` crate exposes no per-service enumeration (Secret Service /
+        // Credential Manager / Keychain each need a platform-specific search that
+        // the crate does not surface), so enumeration is genuinely unsupported on
+        // this backend rather than silently empty.
+        Err(SecureKeyStoreError::Unsupported(
+            "keyring backend does not support secret key enumeration",
+        ))
+    }
+
+    fn backend_info(&self) -> SecureKeyStoreBackendInfo {
+        SecureKeyStoreBackendInfo {
+            // Preserved verbatim (diagnostics + `default_secure_key_store` test).
+            name: "keyring",
+            // OS keychain: guarded by the platform credential store, not
+            // guaranteed hardware-backed, and not plainly exportable via this API.
+            hardware_backed: false,
+            exportable: false,
+        }
     }
 }

@@ -18,8 +18,11 @@ const KEY_BACKUP_UNLOCK_BACKOFF_MAX_ENTRIES: usize = 32;
 thread_local! {
     static UNLOCKED_KEY_BACKUP_CACHE: RefCell<Vec<(String, Value)>> =
         const { RefCell::new(Vec::new()) };
-    static KEY_BACKUP_UNLOCK_BACKOFFS: RefCell<Vec<(String, u64)>> =
-        const { RefCell::new(Vec::new()) };
+    static KEY_BACKUP_UNLOCK_BACKOFFS: RefCell<crate::keyed_cooldown::KeyedCooldown> = const {
+        RefCell::new(crate::keyed_cooldown::KeyedCooldown::new(
+            KEY_BACKUP_UNLOCK_BACKOFF_MAX_ENTRIES,
+        ))
+    };
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -379,31 +382,12 @@ fn key_backup_unlock_backoff_scope(
 
 fn key_backup_unlock_backoff_remaining_ms(scope: &str) -> Option<u64> {
     let now_ms = crate::clock::now_unix_ms();
-    KEY_BACKUP_UNLOCK_BACKOFFS.with(|backoffs| {
-        let mut backoffs = backoffs.borrow_mut();
-        backoffs.retain(|(_, until_ms)| *until_ms > now_ms);
-        backoffs
-            .iter()
-            .find(|(entry_scope, _)| entry_scope == scope)
-            .map(|(_, until_ms)| until_ms.saturating_sub(now_ms))
-    })
+    KEY_BACKUP_UNLOCK_BACKOFFS.with(|backoffs| backoffs.borrow_mut().remaining_ms(scope, now_ms))
 }
 
 fn note_key_backup_unlock_backoff(scope: &str, retry_after_ms: u64) {
     let until_ms = crate::clock::now_unix_ms().saturating_add(retry_after_ms.max(1_000));
-    KEY_BACKUP_UNLOCK_BACKOFFS.with(|backoffs| {
-        let mut backoffs = backoffs.borrow_mut();
-        if let Some(index) = backoffs
-            .iter()
-            .position(|(entry_scope, _)| entry_scope == scope)
-        {
-            backoffs.remove(index);
-        }
-        backoffs.push((scope.to_owned(), until_ms));
-        while backoffs.len() > KEY_BACKUP_UNLOCK_BACKOFF_MAX_ENTRIES {
-            backoffs.remove(0);
-        }
-    });
+    KEY_BACKUP_UNLOCK_BACKOFFS.with(|backoffs| backoffs.borrow_mut().note_until(scope, until_ms));
 }
 
 fn unlocked_key_backup_cache_key(

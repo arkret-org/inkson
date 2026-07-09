@@ -2893,3 +2893,205 @@ fn chat_reaction_add_operation_uses_schema_target_ref() {
         .validate_payload(op.kind.as_str(), &op.payload)
         .unwrap();
 }
+
+/// D1: the former `events.rs` / `strands.rs` merge-helper twins were unified
+/// into the single canonical `merge_duplicate_create_message`. These tests pin
+/// the aligned semantics: the `>=` same-version tie-break, local-metadata
+/// preservation, revision-body append, reaction union/sort, whitespace-trim on
+/// reaction keys/actors, and the folded-in `created_at` carry-forward.
+#[cfg(test)]
+mod merge_duplicate_create_message_alignment_tests {
+    use super::*;
+
+    fn at(value: &str) -> Option<chrono::DateTime<chrono::Utc>> {
+        Some(
+            chrono::DateTime::parse_from_rfc3339(value)
+                .unwrap()
+                .with_timezone(&chrono::Utc),
+        )
+    }
+
+    fn msg(id: &str, body: &str, created_at: Option<chrono::DateTime<chrono::Utc>>) -> ChatMessage {
+        ChatMessage {
+            realm_id: "ak:realm:r1".to_owned(),
+            id: id.to_owned(),
+            protocol_message_id: Some("ak:message:m1".to_owned()),
+            sender: "did:web:bob.example".to_owned(),
+            executed_by: None,
+            body: body.to_owned(),
+            timestamp: "10:00".to_owned(),
+            created_at,
+            strand_id: "ak:strand:topic".to_owned(),
+            reply_to: None,
+            reactions: Vec::new(),
+            redacted: false,
+            edited: false,
+            revisions: Vec::new(),
+            pending: false,
+            failed: false,
+            error: None,
+            mentions: Vec::new(),
+            crypto_state: MessageCryptoState::Plaintext,
+        }
+    }
+
+    // The `>=` same-version tie-break is the load-bearing predicate the two
+    // former merge families now share. On an equal timestamp the incoming row
+    // wins (and thus carries local metadata forward) iff its id is `>=`.
+    #[test]
+    fn newer_or_same_lifecycle_version_uses_ge_id_tiebreak_on_equal_timestamp() {
+        let existing = msg("ak:event:b", "existing", at("2026-07-07T06:19:20Z"));
+        let same_id = msg("ak:event:b", "incoming", at("2026-07-07T06:19:20Z"));
+        let higher_id = msg("ak:event:c", "incoming", at("2026-07-07T06:19:20Z"));
+        let lower_id = msg("ak:event:a", "incoming", at("2026-07-07T06:19:20Z"));
+        assert!(same_id.is_newer_or_same_lifecycle_version_than(&existing));
+        assert!(higher_id.is_newer_or_same_lifecycle_version_than(&existing));
+        assert!(!lower_id.is_newer_or_same_lifecycle_version_than(&existing));
+    }
+
+    #[test]
+    fn newer_or_same_lifecycle_version_prefers_strictly_newer_timestamp() {
+        let existing = msg("ak:event:b", "existing", at("2026-07-07T06:19:20Z"));
+        // A strictly newer timestamp wins regardless of the id tie-break.
+        let newer = msg("ak:event:a", "incoming", at("2026-07-07T06:19:30Z"));
+        let older = msg("ak:event:c", "incoming", at("2026-07-07T06:19:10Z"));
+        assert!(newer.is_newer_or_same_lifecycle_version_than(&existing));
+        assert!(!older.is_newer_or_same_lifecycle_version_than(&existing));
+    }
+
+    #[test]
+    fn newer_or_same_lifecycle_version_missing_timestamps() {
+        let existing_none = msg("ak:event:a", "existing", None);
+        let existing_some = msg("ak:event:a", "existing", at("2026-07-07T06:19:20Z"));
+        let incoming_none = msg("ak:event:a", "incoming", None);
+        let incoming_some = msg("ak:event:a", "incoming", at("2026-07-07T06:19:20Z"));
+        // incoming timestamped, existing not → incoming newer.
+        assert!(incoming_some.is_newer_or_same_lifecycle_version_than(&existing_none));
+        // existing timestamped, incoming not → NOT newer.
+        assert!(!incoming_none.is_newer_or_same_lifecycle_version_than(&existing_some));
+        // neither timestamped → treat incoming as newer-or-same.
+        assert!(incoming_none.is_newer_or_same_lifecycle_version_than(&existing_none));
+    }
+
+    // A newer incoming replaces the row but preserves locally-tracked edit
+    // metadata (edited flag + revision history) and folds the previous body
+    // into the revision list.
+    #[test]
+    fn merge_newer_incoming_preserves_local_edit_metadata_and_appends_old_body() {
+        let mut existing = msg("ak:event:rev-1", "edited body", at("2026-07-07T06:19:22Z"));
+        existing.edited = true;
+        existing.revisions = vec!["draft".to_owned()];
+        let incoming = msg("ak:event:base", "newer body", at("2026-07-07T06:19:30Z"));
+
+        merge_duplicate_create_message(&mut existing, incoming);
+
+        assert_eq!(existing.id, "ak:event:base");
+        assert_eq!(existing.body, "newer body");
+        assert!(existing.edited, "edited flag carried forward");
+        assert_eq!(
+            existing.revisions,
+            vec!["draft".to_owned(), "edited body".to_owned()]
+        );
+    }
+
+    // A late older create folds into the existing (newer) row: existing stays
+    // authoritative, the older body is appended as a revision, reactions union.
+    #[test]
+    fn merge_older_incoming_keeps_existing_and_folds_body_into_revisions() {
+        let mut existing = msg("ak:event:rev-1", "current body", at("2026-07-07T06:19:30Z"));
+        existing.edited = true;
+        let mut incoming = msg("ak:event:base", "original body", at("2026-07-07T06:19:20Z"));
+        incoming.reactions = vec![("+1".to_owned(), vec!["did:web:carol.example".to_owned()])];
+
+        merge_duplicate_create_message(&mut existing, incoming);
+
+        assert_eq!(existing.id, "ak:event:rev-1");
+        assert_eq!(existing.body, "current body");
+        assert_eq!(existing.revisions, vec!["original body".to_owned()]);
+        assert_eq!(
+            existing.reactions,
+            vec![("+1".to_owned(), vec!["did:web:carol.example".to_owned()])]
+        );
+    }
+
+    // Reaction members from both sides union, dedupe overlapping reactors, and
+    // sort by key then by member.
+    #[test]
+    fn merge_unions_and_sorts_reaction_members() {
+        let mut existing = msg("ak:event:base", "body", at("2026-07-07T06:19:20Z"));
+        existing.reactions = vec![("+1".to_owned(), vec!["did:web:bob.example".to_owned()])];
+        let mut incoming = msg("ak:event:base2", "body", at("2026-07-07T06:19:30Z"));
+        incoming.reactions = vec![
+            (
+                "\u{2764}".to_owned(),
+                vec!["did:web:dave.example".to_owned()],
+            ),
+            (
+                "+1".to_owned(),
+                vec![
+                    "did:web:carol.example".to_owned(),
+                    "did:web:bob.example".to_owned(),
+                ],
+            ),
+        ];
+
+        merge_duplicate_create_message(&mut existing, incoming);
+
+        assert_eq!(
+            existing.reactions,
+            vec![
+                (
+                    "+1".to_owned(),
+                    vec![
+                        "did:web:bob.example".to_owned(),
+                        "did:web:carol.example".to_owned(),
+                    ],
+                ),
+                (
+                    "\u{2764}".to_owned(),
+                    vec!["did:web:dave.example".to_owned()]
+                ),
+            ]
+        );
+    }
+
+    // The retained (events) `push_reaction_member` trims whitespace on both the
+    // reaction key and the actor — the divergence that the deleted strands twin
+    // did NOT apply. Exercised through the real construction path.
+    #[test]
+    fn reactions_from_summary_trim_whitespace_in_key_and_actor() {
+        let events = vec![json!({
+            "event_id": "ak:event:msg-r",
+            "kind": "ck.message.create",
+            "actor_id": "did:web:bob.example",
+            "realm_id": "ak:realm:r1",
+            "created_at": "2026-07-07T06:19:20Z",
+            "strand_id": "ak:strand:topic",
+            "message_id": "ak:message:mr",
+            "body": "hi",
+            "reaction_summary": { " +1 ": { "members": [" did:web:carol.example "] } },
+            "proofs": []
+        })];
+        let messages = chat_messages_from_events_with_sidecar("ak:realm:r1", &events, None, None);
+        assert_eq!(messages.len(), 1);
+        assert_eq!(
+            messages[0].reactions,
+            vec![("+1".to_owned(), vec!["did:web:carol.example".to_owned()])]
+        );
+    }
+
+    // Folded-in strands improvement: a redaction tombstone that arrives without
+    // its own `created_at` keeps the existing row's timestamp so ordering is
+    // stable. (The former events twin dropped the timestamp here.)
+    #[test]
+    fn merge_redaction_tombstone_without_timestamp_keeps_existing_created_at() {
+        let mut existing = msg("ak:event:base", "secret", at("2026-07-07T06:19:20Z"));
+        let mut tombstone = msg("ak:event:base", "", None);
+        tombstone.redacted = true;
+
+        merge_duplicate_create_message(&mut existing, tombstone);
+
+        assert!(existing.redacted);
+        assert_eq!(existing.created_at, at("2026-07-07T06:19:20Z"));
+    }
+}

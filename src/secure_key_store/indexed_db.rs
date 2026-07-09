@@ -8,6 +8,7 @@ use std::sync::{Arc, Mutex};
 
 use base64::Engine as _;
 use base64::engine::general_purpose::STANDARD_NO_PAD;
+use garth::{SecretBytes, SecureKeyStoreBackendInfo};
 
 use super::{
     LocalStorageSecureKeyStore, SecureKeyStore, SecureKeyStoreError,
@@ -901,7 +902,15 @@ impl std::fmt::Debug for IndexedDbSecureKeyStore {
 }
 
 impl SecureKeyStore for IndexedDbSecureKeyStore {
-    fn store_secret(&self, key: &str, value: &str) -> Result<(), SecureKeyStoreError> {
+    fn store_secret_bytes(&self, key: &str, value: &[u8]) -> Result<(), SecureKeyStoreError> {
+        // The IndexedDb tier keeps its plaintext cache and SubtleCrypto payload as
+        // UTF-8 strings (unchanged on-disk format). Every inkson caller stores
+        // UTF-8 (base64/JSON) values, and garth's default `store_secret(&str)`
+        // routes through here as valid UTF-8, so reject non-UTF-8 rather than
+        // silently changing the wrapping representation.
+        let value = std::str::from_utf8(value).map_err(|err| {
+            SecureKeyStoreError::Backend(format!("indexeddb secret not utf8: {err}"))
+        })?;
         {
             let mut guard = self
                 .cache
@@ -972,19 +981,26 @@ impl SecureKeyStore for IndexedDbSecureKeyStore {
         Ok(())
     }
 
-    fn store_secret_durable<'a>(
+    fn store_secret_bytes_durable<'a>(
         &'a self,
         key: &'a str,
-        value: &'a str,
+        value: &'a [u8],
     ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<(), SecureKeyStoreError>> + 'a>>
     {
-        // Update the in-memory cache synchronously (same as `store_secret`) so
-        // concurrent reads in this session observe the value immediately.
+        let value = match std::str::from_utf8(value) {
+            Ok(value) => value,
+            Err(err) => {
+                let err = SecureKeyStoreError::Backend(format!("indexeddb secret not utf8: {err}"));
+                return Box::pin(async move { Err(err) });
+            }
+        };
+        // Update the in-memory cache synchronously (same as `store_secret_bytes`)
+        // so concurrent reads in this session observe the value immediately.
         if let Ok(mut guard) = self.cache.lock() {
             guard.insert(key.to_owned(), value.to_owned());
         }
         Box::pin(async move {
-            // AWAIT the real IndexedDB put: unlike `store_secret`'s
+            // AWAIT the real IndexedDB put: unlike `store_secret_bytes`'s
             // fire-and-forget `spawn_local`, this resolves only after the value
             // is durably committed, closing the unload-race window. Used by
             // callers that must guarantee durability before a remote party
@@ -994,12 +1010,26 @@ impl SecureKeyStore for IndexedDbSecureKeyStore {
         })
     }
 
-    fn get_secret(&self, key: &str) -> Result<Option<String>, SecureKeyStoreError> {
+    fn get_secret_bytes(&self, key: &str) -> Result<Option<SecretBytes>, SecureKeyStoreError> {
         let guard = self
             .cache
             .lock()
             .map_err(|err| SecureKeyStoreError::Backend(format!("cache lock: {err}")))?;
-        Ok(guard.get(key).cloned())
+        Ok(guard
+            .get(key)
+            .map(|value| SecretBytes::new(value.as_bytes().to_vec())))
+    }
+
+    fn list_secret_keys(&self, prefix: Option<&str>) -> Result<Vec<String>, SecureKeyStoreError> {
+        let guard = self
+            .cache
+            .lock()
+            .map_err(|err| SecureKeyStoreError::Backend(format!("cache lock: {err}")))?;
+        Ok(guard
+            .keys()
+            .filter(|key| prefix.is_none_or(|prefix| key.starts_with(prefix)))
+            .cloned()
+            .collect())
     }
 
     fn delete_secret(&self, key: &str) -> Result<(), SecureKeyStoreError> {
@@ -1031,8 +1061,17 @@ impl SecureKeyStore for IndexedDbSecureKeyStore {
         Ok(())
     }
 
-    fn backend_name(&self) -> &'static str {
-        "indexed_db_subtle_aes_gcm"
+    fn backend_info(&self) -> SecureKeyStoreBackendInfo {
+        SecureKeyStoreBackendInfo {
+            // Preserved verbatim: `require_wasm_indexeddb_ed25519_seed_store`
+            // matches on this exact name to gate seed-grade material to this tier.
+            name: "indexed_db_subtle_aes_gcm",
+            // The AES-GCM wrapping key is derived non-extractable in SubtleCrypto,
+            // so ciphertext at rest is not user-exportable, but the key is not
+            // hardware-backed (PBKDF2 over an origin-scoped seed).
+            hardware_backed: false,
+            exportable: false,
+        }
     }
 }
 
@@ -1062,7 +1101,7 @@ impl SecureKeyStore for IndexedDbSecureKeyStore {
 /// back to `MemorySecureKeyStore` rather than crashing).
 pub async fn upgrade_wasm_secure_key_store_async(
     service_name: &str,
-) -> Result<Option<Arc<dyn SecureKeyStore>>, SecureKeyStoreError> {
+) -> Result<Option<Arc<dyn SecureKeyStore + Send + Sync>>, SecureKeyStoreError> {
     // Idempotent: if the upgraded IndexedDB store is already installed, return
     // it instead of building a SECOND one. A second `new_async` re-runs
     // `load_or_derive_wrapping_key`, and a mistimed derive would overwrite the
@@ -1103,7 +1142,10 @@ pub async fn upgrade_wasm_secure_key_store_async(
     if migrated > 0 {
         tracing::info!("H6 migration: {migrated} entry(s) migrated from LocalStorage to IndexedDB");
     }
-    let store: Arc<dyn SecureKeyStore> = Arc::new(store);
+    // `IndexedDbSecureKeyStore` is genuinely `Send + Sync` (its `!Send` JS handles
+    // ride inside `IndexedDbSendBoundary`), so it can inhabit the `+ Send + Sync`
+    // trait object the process-global `OnceLock` requires.
+    let store: Arc<dyn SecureKeyStore + Send + Sync> = Arc::new(store);
     let _ = WASM_UPGRADED_SECURE_KEY_STORE.set(store.clone());
     Ok(Some(store))
 }

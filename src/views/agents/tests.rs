@@ -240,8 +240,10 @@ mod personal_agent_tests {
         .unwrap();
         let value: serde_json::Value = serde_json::from_str(&raw).unwrap();
 
-        // CKP-0008 §4.4: exactly the six pairing fields, no scope payload.
-        assert_eq!(value["arkret_base_url"], "https://arkret.example");
+        // CKP-0008 §4.4: exactly the six pairing fields, no scope payload. The
+        // base-URL field is the SDK/spec wire name `cokret_base_url` (a wire key,
+        // deliberately not renamed by the cokret→arkret source rename).
+        assert_eq!(value["cokret_base_url"], "https://arkret.example");
         assert_eq!(value["service_did"], "did:web:arkret.example");
         assert_eq!(
             value["agent_principal_id"],

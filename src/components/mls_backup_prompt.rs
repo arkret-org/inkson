@@ -1,4 +1,3 @@
-use std::collections::{BTreeMap, BTreeSet};
 use std::sync::{LazyLock, Mutex};
 use std::time::Duration;
 
@@ -6,6 +5,9 @@ use dioxus::prelude::*;
 // Shared JS-interop helper (single source, YGN-DRY-04).
 pub(crate) use yoface::utils::dom::copy_text_to_clipboard;
 
+use crate::components::backup_job_scheduler::{
+    BackupJob, BackupJobScheduler, BackupSchedulerConfig,
+};
 use crate::local_state::LocalStateStore;
 use crate::recovery_crypto::{
     generate_recovery_key, normalize_recovery_key_input, recovery_key_confirmation_matches,
@@ -18,11 +20,33 @@ use crate::views::helpers::with_authed_api;
 
 const MLS_RECOVERY_BACKUP_STATE_KEY: &str = "mls.recovery_backup.v1";
 const MLS_PRIVATE_PLAINTEXT_BACKUP_DEBOUNCE: Duration = Duration::from_millis(1500);
-static MLS_BACKUP_AFTER_WRITE_PROBES: LazyLock<Mutex<BTreeSet<String>>> =
-    LazyLock::new(|| Mutex::new(BTreeSet::new()));
-static MLS_PRIVATE_PLAINTEXT_BACKUP_JOBS: LazyLock<
-    Mutex<BTreeMap<String, MlsPrivatePlaintextBackupJob>>,
-> = LazyLock::new(|| Mutex::new(BTreeMap::new()));
+/// Entry cap for the after-write backup probe single-flight set. Keyed by
+/// `(base_url, actor_id)`, so a single browser session only ever holds a couple
+/// of entries; the cap just bounds a pathological key space.
+const MLS_BACKUP_AFTER_WRITE_PROBE_MAX_ENTRIES: usize = 64;
+static MLS_BACKUP_AFTER_WRITE_PROBES: LazyLock<Mutex<crate::keyed_cooldown::SeenSet>> =
+    LazyLock::new(|| {
+        Mutex::new(crate::keyed_cooldown::SeenSet::new(
+            MLS_BACKUP_AFTER_WRITE_PROBE_MAX_ENTRIES,
+        ))
+    });
+/// The private-plaintext sidecar job debounces only: no min-interval, and a
+/// failed upload of the current digest is not retried (it re-arms solely when
+/// strictly newer material arrives). `retry_base`/`retry_cap` are therefore
+/// never exercised (the failure counter is never bumped) but must be set.
+const MLS_PRIVATE_PLAINTEXT_BACKUP_CONFIG: BackupSchedulerConfig = BackupSchedulerConfig {
+    debounce: MLS_PRIVATE_PLAINTEXT_BACKUP_DEBOUNCE,
+    min_interval: None,
+    retry_base: MLS_PRIVATE_PLAINTEXT_BACKUP_DEBOUNCE,
+    retry_cap: MLS_PRIVATE_PLAINTEXT_BACKUP_DEBOUNCE,
+};
+
+static MLS_PRIVATE_PLAINTEXT_BACKUP_SCHEDULER: BackupJobScheduler<
+    MlsPrivatePlaintextBackupPayload,
+> = BackupJobScheduler::new(
+    "mls_private_plaintext_backup",
+    MLS_PRIVATE_PLAINTEXT_BACKUP_CONFIG,
+);
 
 // Recovery tasks can finish after the prompt scope is gone; dropped signals panic on `set()`.
 fn try_set_signal<T: 'static>(mut signal: Signal<T>, value: T) {
@@ -116,19 +140,20 @@ pub(crate) fn recovery_key_filename_from_handles(handles: &[String]) -> String {
     recovery_key_filename(&localpart)
 }
 
+/// Per-account payload carried by the shared scheduler. Credentials + the
+/// sidecar snapshot to upload + the cached predecessor body used to chain the
+/// next upload.
 #[derive(Clone, Default)]
-struct MlsPrivatePlaintextBackupJob {
+struct MlsPrivatePlaintextBackupPayload {
     base_url: String,
     token: String,
     actor_id: String,
     device_id: String,
     latest_sidecar_json: Vec<u8>,
-    latest_digest: String,
-    last_uploaded_digest: Option<String>,
     cached_previous_body: Option<serde_json::Value>,
-    scheduled: bool,
-    in_flight: bool,
 }
+
+type MlsPrivatePlaintextBackupJob = BackupJob<MlsPrivatePlaintextBackupPayload>;
 
 fn mls_backup_after_write_probe_key(base_url: &str, actor_id: &str) -> String {
     format!(
@@ -140,7 +165,7 @@ fn mls_backup_after_write_probe_key(base_url: &str, actor_id: &str) -> String {
 
 fn mark_mls_backup_after_write_probe_started(key: String) -> bool {
     match MLS_BACKUP_AFTER_WRITE_PROBES.lock() {
-        Ok(mut probes) => probes.insert(key),
+        Ok(mut probes) => probes.mark(key),
         Err(_) => {
             // COR-02: a poisoned lock means a prior holder panicked. Surface it
             // (it would otherwise be invisible) and treat the probe as already
@@ -177,34 +202,14 @@ pub(crate) fn schedule_mls_private_plaintext_backup_after_encrypted_write(
     };
     let digest = crate::canonical::sha256_digest(&sidecar_json);
     let key = mls_backup_after_write_probe_key(&base_url, &actor_id);
-    let should_spawn = match MLS_PRIVATE_PLAINTEXT_BACKUP_JOBS.lock() {
-        Ok(mut jobs) => {
-            let job = jobs.entry(key.clone()).or_default();
-            if job.last_uploaded_digest.as_deref() == Some(digest.as_str()) {
-                return;
-            }
-            job.base_url = base_url;
-            job.token = token;
-            job.actor_id = actor_id;
-            job.device_id = device_id;
-            job.latest_sidecar_json = sidecar_json;
-            job.latest_digest = digest;
-            if job.scheduled || job.in_flight {
-                false
-            } else {
-                job.scheduled = true;
-                true
-            }
-        }
-        Err(_) => {
-            // COR-02: poisoned job map → a prior task panicked. Log it so the
-            // dropped backup task is observable rather than silently lost.
-            tracing::warn!(
-                "MLS private plaintext backup job map lock poisoned; backup not scheduled this round"
-            );
-            false
-        }
-    };
+    let should_spawn = MLS_PRIVATE_PLAINTEXT_BACKUP_SCHEDULER.schedule(&key, digest, |payload| {
+        payload.base_url = base_url;
+        payload.token = token;
+        payload.actor_id = actor_id;
+        payload.device_id = device_id;
+        payload.latest_sidecar_json = sidecar_json;
+        // `cached_previous_body` is preserved across reschedules.
+    });
     if should_spawn {
         spawn(async move {
             run_mls_private_plaintext_backup_job(key).await;
@@ -214,31 +219,39 @@ pub(crate) fn schedule_mls_private_plaintext_backup_after_encrypted_write(
 
 async fn run_mls_private_plaintext_backup_job(key: String) {
     loop {
-        let Some(delay) = next_mls_private_plaintext_backup_delay(&key) else {
+        let Some(delay) =
+            MLS_PRIVATE_PLAINTEXT_BACKUP_SCHEDULER.next_delay(&key, chrono::Utc::now())
+        else {
             return;
         };
         crate::runtime_helpers::sleep_for(delay).await;
-        let Some(job_snapshot) = take_mls_private_plaintext_backup_job_snapshot(&key) else {
+        let Some(job) = MLS_PRIVATE_PLAINTEXT_BACKUP_SCHEDULER.begin_attempt(&key) else {
             return;
         };
-        if job_snapshot.last_uploaded_digest.as_deref() == Some(job_snapshot.latest_digest.as_str())
-        {
-            finish_mls_private_plaintext_backup_job(&key, &job_snapshot.latest_digest, None, None);
+        if job.last_uploaded_digest.as_deref() == Some(job.latest_digest.as_str()) {
+            // Latest already uploaded: clear in-flight (re-arming only if newer
+            // material slipped in) and stop this loop.
+            let _ = MLS_PRIVATE_PLAINTEXT_BACKUP_SCHEDULER.finish_rerun_if_newer(
+                &key,
+                &job.latest_digest,
+                |_| {},
+            );
             return;
         }
-        let upload_digest = job_snapshot.latest_digest.clone();
-        let upload_result = upload_mls_private_plaintext_backup_job_snapshot(job_snapshot).await;
-        let rerun = match upload_result {
+        let upload_digest = job.latest_digest.clone();
+        let rerun = match upload_mls_private_plaintext_backup_job_snapshot(job).await {
             Ok((backup_id, body)) => {
                 tracing::debug!(
                     backup_id = %backup_id,
                     "MLS private plaintext sidecar backup uploaded after encrypted write"
                 );
-                finish_mls_private_plaintext_backup_job(
+                MLS_PRIVATE_PLAINTEXT_BACKUP_SCHEDULER.finish_rerun_if_newer(
                     &key,
                     &upload_digest,
-                    Some(body),
-                    Some(upload_digest.clone()),
+                    |job| {
+                        job.payload.cached_previous_body = Some(body);
+                        job.last_uploaded_digest = Some(upload_digest.clone());
+                    },
                 )
             }
             Err(err) => {
@@ -246,7 +259,13 @@ async fn run_mls_private_plaintext_backup_job(key: String) {
                     error = %err,
                     "MLS private plaintext sidecar backup after encrypted write failed"
                 );
-                finish_mls_private_plaintext_backup_job(&key, &upload_digest, None, None)
+                // Debounce-only family: a failed upload of the current digest is
+                // NOT retried; re-arm only if strictly newer material arrived.
+                MLS_PRIVATE_PLAINTEXT_BACKUP_SCHEDULER.finish_rerun_if_newer(
+                    &key,
+                    &upload_digest,
+                    |_| {},
+                )
             }
         };
         if !rerun {
@@ -255,79 +274,24 @@ async fn run_mls_private_plaintext_backup_job(key: String) {
     }
 }
 
-fn next_mls_private_plaintext_backup_delay(key: &str) -> Option<Duration> {
-    let jobs = mls_private_plaintext_backup_jobs_lock_or_warn()?;
-    jobs.get(key)?;
-    Some(MLS_PRIVATE_PLAINTEXT_BACKUP_DEBOUNCE)
-}
-
-/// COR-02: acquire the backup-job map lock, logging a `warn!` (instead of
-/// silently returning `None`) when the lock is poisoned so a panicked prior
-/// holder — and the consequently dropped backup task — is observable.
-fn mls_private_plaintext_backup_jobs_lock_or_warn()
--> Option<std::sync::MutexGuard<'static, BTreeMap<String, MlsPrivatePlaintextBackupJob>>> {
-    match MLS_PRIVATE_PLAINTEXT_BACKUP_JOBS.lock() {
-        Ok(guard) => Some(guard),
-        Err(_) => {
-            tracing::warn!(
-                "MLS private plaintext backup job map lock poisoned; dropping this backup step"
-            );
-            None
-        }
-    }
-}
-
-fn take_mls_private_plaintext_backup_job_snapshot(
-    key: &str,
-) -> Option<MlsPrivatePlaintextBackupJob> {
-    let mut jobs = mls_private_plaintext_backup_jobs_lock_or_warn()?;
-    let job = jobs.get_mut(key)?;
-    job.scheduled = false;
-    job.in_flight = true;
-    Some(job.clone())
-}
-
-fn finish_mls_private_plaintext_backup_job(
-    key: &str,
-    uploaded_digest: &str,
-    cached_previous_body: Option<serde_json::Value>,
-    last_uploaded_digest: Option<String>,
-) -> bool {
-    let Some(mut jobs) = mls_private_plaintext_backup_jobs_lock_or_warn() else {
-        return false;
-    };
-    let Some(job) = jobs.get_mut(key) else {
-        return false;
-    };
-    job.in_flight = false;
-    if let Some(body) = cached_previous_body {
-        job.cached_previous_body = Some(body);
-    }
-    if let Some(digest) = last_uploaded_digest {
-        job.last_uploaded_digest = Some(digest);
-    }
-    if job.latest_digest != uploaded_digest
-        && job.last_uploaded_digest.as_deref() != Some(job.latest_digest.as_str())
-    {
-        job.scheduled = true;
-        true
-    } else {
-        false
-    }
-}
-
 async fn upload_mls_private_plaintext_backup_job_snapshot(
     job: MlsPrivatePlaintextBackupJob,
 ) -> anyhow::Result<(String, serde_json::Value)> {
-    with_authed_api(&job.base_url, job.token, |api| async move {
+    let MlsPrivatePlaintextBackupPayload {
+        base_url,
+        token,
+        actor_id,
+        device_id,
+        latest_sidecar_json,
+        cached_previous_body,
+    } = job.payload;
+    with_authed_api(&base_url, token, |api| async move {
         let secure_store = crate::secure_key_store::default_secure_key_store("inkson");
-        let previous_body = match job.cached_previous_body {
+        let previous_body = match cached_previous_body {
             Some(body) => Some(body),
             None => {
                 crate::mls::account_recovery::fetch_mls_private_plaintext_backup_body(
-                    &api,
-                    &job.actor_id,
-                    &job.device_id,
+                    &api, &actor_id, &device_id,
                 )
                 .await?
             }
@@ -335,9 +299,9 @@ async fn upload_mls_private_plaintext_backup_job_snapshot(
         crate::mls::account_recovery::upload_mls_private_plaintext_backup_with_previous(
             &api,
             secure_store.as_ref(),
-            &job.actor_id,
-            &job.device_id,
-            &job.latest_sidecar_json,
+            &actor_id,
+            &device_id,
+            &latest_sidecar_json,
             previous_body.as_ref(),
         )
         .await
@@ -1078,44 +1042,41 @@ pub fn MlsBackupPrompt(
 #[cfg(test)]
 mod tests {
     use super::{
-        MLS_PRIVATE_PLAINTEXT_BACKUP_DEBOUNCE, MLS_PRIVATE_PLAINTEXT_BACKUP_JOBS,
-        MlsPrivatePlaintextBackupJob, finish_mls_private_plaintext_backup_job,
-        next_mls_private_plaintext_backup_delay, recovery_key_filename,
-        recovery_key_filename_from_handles, recovery_localpart_from_handles,
+        BackupJob, MLS_PRIVATE_PLAINTEXT_BACKUP_DEBOUNCE, MLS_PRIVATE_PLAINTEXT_BACKUP_SCHEDULER,
+        recovery_key_filename, recovery_key_filename_from_handles, recovery_localpart_from_handles,
     };
 
     #[test]
     fn changed_private_plaintext_backup_reruns_after_debounce() {
-        let key = "test-private-plaintext-rerun-after-change".to_owned();
-        {
-            let mut jobs = MLS_PRIVATE_PLAINTEXT_BACKUP_JOBS.lock().unwrap();
-            jobs.remove(&key);
+        let key = "test-private-plaintext-rerun-after-change";
+        MLS_PRIVATE_PLAINTEXT_BACKUP_SCHEDULER.with_jobs_mut(|jobs| {
             jobs.insert(
-                key.clone(),
-                MlsPrivatePlaintextBackupJob {
+                key.to_owned(),
+                BackupJob {
                     latest_digest: "new-sidecar".to_owned(),
                     last_uploaded_digest: Some("old-sidecar".to_owned()),
                     in_flight: true,
                     ..Default::default()
                 },
-            );
-        }
+            )
+        });
 
-        assert!(finish_mls_private_plaintext_backup_job(
-            &key,
-            "old-sidecar",
-            None,
-            Some("old-sidecar".to_owned())
-        ));
+        // A strictly NEWER digest ("new-sidecar") is pending, so finishing the
+        // attempt on the OLD digest re-arms the loop; the next wake-up is the
+        // plain debounce (no min-interval, no backoff for this family).
+        assert!(
+            MLS_PRIVATE_PLAINTEXT_BACKUP_SCHEDULER.finish_rerun_if_newer(
+                key,
+                "old-sidecar",
+                |job| job.last_uploaded_digest = Some("old-sidecar".to_owned()),
+            )
+        );
         assert_eq!(
-            next_mls_private_plaintext_backup_delay(&key),
+            MLS_PRIVATE_PLAINTEXT_BACKUP_SCHEDULER.next_delay(key, chrono::Utc::now()),
             Some(MLS_PRIVATE_PLAINTEXT_BACKUP_DEBOUNCE)
         );
 
-        MLS_PRIVATE_PLAINTEXT_BACKUP_JOBS
-            .lock()
-            .unwrap()
-            .remove(&key);
+        MLS_PRIVATE_PLAINTEXT_BACKUP_SCHEDULER.with_jobs_mut(|jobs| jobs.remove(key));
     }
 
     #[test]

@@ -1,5 +1,19 @@
 use super::*;
 
+/// Serializes the tests that read/write the process-global
+/// `ACTIVE_DEVICE_SEED_SCOPE` static. They each carry their own
+/// `MemorySecureKeyStore`, but the seed-scope selector is process-wide, so
+/// running them concurrently lets one test's `set_active_device_seed_scope`
+/// corrupt another's `load_signing_seed` / `active_device_seed_scope()`
+/// assertions. Non-scope tests keep running in parallel.
+static SCOPE_TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+fn lock_scope_tests() -> std::sync::MutexGuard<'static, ()> {
+    SCOPE_TEST_LOCK
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+}
+
 struct SeedScopeReset;
 
 impl Drop for SeedScopeReset {
@@ -15,6 +29,7 @@ impl Drop for SeedScopeReset {
 /// derived did:key.
 #[test]
 fn signing_seed_round_trips_through_memory_store() {
+    let _scope_guard = lock_scope_tests();
     let store = MemorySecureKeyStore::new();
     assert!(load_signing_seed(&store).unwrap().is_none());
 
@@ -34,6 +49,7 @@ fn signing_seed_round_trips_through_memory_store() {
 /// and is idempotent on subsequent calls.
 #[test]
 fn ensure_signing_seed_generates_and_is_idempotent() {
+    let _scope_guard = lock_scope_tests();
     let store = MemorySecureKeyStore::new();
     let first = ensure_signing_seed(&store).expect("first");
     // Seed must be non-trivial.
@@ -45,6 +61,7 @@ fn ensure_signing_seed_generates_and_is_idempotent() {
 
 #[test]
 fn login_adopt_preserves_returning_account_device_identity() {
+    let _scope_guard = lock_scope_tests();
     let _reset = SeedScopeReset;
     set_active_device_seed_scope(None);
     let store = MemorySecureKeyStore::new();
@@ -85,6 +102,7 @@ fn login_adopt_preserves_returning_account_device_identity() {
 
 #[test]
 fn login_adopt_rehomes_bootstrap_material_for_first_time_account() {
+    let _scope_guard = lock_scope_tests();
     let _reset = SeedScopeReset;
     set_active_device_seed_scope(None);
     let store = MemorySecureKeyStore::new();
@@ -121,6 +139,7 @@ fn login_adopt_rehomes_bootstrap_material_for_first_time_account() {
 
 #[test]
 fn signin_reset_preserves_account_identity_and_rotates_grant_binding() {
+    let _scope_guard = lock_scope_tests();
     let _reset = SeedScopeReset;
     let store = MemorySecureKeyStore::new();
     let account = "did:web:alice.example";
@@ -180,7 +199,12 @@ fn load_signing_seed_rejects_short_entries() {
     store
         .store_secret(SIGNING_SEED_KEY, &STANDARD_NO_PAD.encode([1u8; 16]))
         .unwrap();
-    let err = load_signing_seed(&store).unwrap_err();
+    // Load through the explicit bootstrap scope rather than
+    // `load_signing_seed` (which reads the process-global
+    // `ACTIVE_DEVICE_SEED_SCOPE`): the seed above is stored under the bare
+    // `SIGNING_SEED_KEY`, so a concurrently-running scope test flipping the
+    // global must not turn this length-rejection assertion into `Ok(None)`.
+    let err = load_signing_seed_scoped(&store, None).unwrap_err();
     assert!(matches!(err, SecureKeyStoreError::Backend(_)));
 }
 
@@ -277,90 +301,10 @@ fn unwrap_secret_tolerates_malformed_blobs() {
     );
 }
 
-#[test]
-fn memory_store_round_trips_a_secret() {
-    let store = MemorySecureKeyStore::new();
-    assert!(store.is_empty());
-
-    store
-        .store_secret("test.session_secret", "session-secret-value")
-        .expect("store");
-    assert_eq!(store.len(), 1);
-
-    let loaded = store
-        .get_secret("test.session_secret")
-        .expect("get")
-        .expect("present");
-    assert_eq!(loaded, "session-secret-value");
-}
-
-#[test]
-fn memory_store_overwrites_existing_entry() {
-    let store = MemorySecureKeyStore::new();
-    store.store_secret("k", "v1").unwrap();
-    store.store_secret("k", "v2").unwrap();
-    assert_eq!(store.get_secret("k").unwrap().as_deref(), Some("v2"));
-    assert_eq!(store.len(), 1);
-}
-
-#[test]
-fn memory_store_returns_none_for_missing_key() {
-    let store = MemorySecureKeyStore::new();
-    assert!(store.get_secret("absent").unwrap().is_none());
-}
-
-#[test]
-fn memory_store_delete_is_idempotent() {
-    let store = MemorySecureKeyStore::new();
-    store.delete_secret("never-stored").expect("idempotent");
-    store.store_secret("k", "v").unwrap();
-    store.delete_secret("k").expect("delete");
-    assert!(store.get_secret("k").unwrap().is_none());
-    store.delete_secret("k").expect("idempotent second delete");
-}
-
-#[test]
-fn memory_store_clones_share_state() {
-    let a = MemorySecureKeyStore::new();
-    let b = a.clone();
-    a.store_secret("shared", "value").unwrap();
-    assert_eq!(b.get_secret("shared").unwrap().as_deref(), Some("value"));
-}
-
-#[test]
-fn memory_store_debug_does_not_leak_secret_values() {
-    let store = MemorySecureKeyStore::new();
-    store
-        .store_secret("test.session_secret", "extremely-sensitive-token")
-        .unwrap();
-    let debug = format!("{store:?}");
-    assert!(
-        !debug.contains("extremely-sensitive-token"),
-        "Debug must NEVER include secret values, got: {debug}"
-    );
-    assert!(
-        !debug.contains("test.session_secret"),
-        "Debug should not leak key names either, got: {debug}"
-    );
-}
-
-#[test]
-fn memory_store_advertises_correct_backend_name() {
-    assert_eq!(MemorySecureKeyStore::new().backend_name(), "memory");
-}
-
-#[test]
-fn trait_object_dispatch_works_for_memory_backend() {
-    // Sanity: the orchestrator stores `Arc<dyn SecureKeyStore>` —
-    // confirm the memory impl is dyn-safe + threads through the
-    // trait surface without specialisation.
-    fn store_via_trait(store: &dyn SecureKeyStore, key: &str, value: &str) {
-        store.store_secret(key, value).expect("store");
-    }
-    let store = MemorySecureKeyStore::new();
-    store_via_trait(&store, "k", "v");
-    assert_eq!(store.get_secret("k").unwrap().as_deref(), Some("v"));
-}
+// F-11: the in-memory backend is now garth's `MemorySecureKeyStore` (garth owns
+// its round-trip / overwrite / delete / clone / Debug-redaction / backend-name
+// unit tests). inkson keeps only the backend-selection + platform-specific tests
+// below.
 
 #[test]
 fn default_secure_key_store_returns_a_usable_backend() {

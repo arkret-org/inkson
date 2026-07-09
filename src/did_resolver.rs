@@ -20,13 +20,13 @@
 
 use std::collections::HashMap;
 
-use chrono::{DateTime, Duration, Utc};
 use arkret_sdk::identity::{
     CompositeDidResolver, DID_WEB_MAX_DOCUMENT_BYTES, DidKeyResolver, DidResolver as _,
     DidWebDocumentOutcome, DidWebResolver, DidWebvhDocumentOutcome, DidWebvhLogOutcome,
     DidWebvhResolver, ResolverFailMode, ResolverPolicy, host_is_safe_for_outbound,
 };
 use arkret_sdk::{Did, DidDocument};
+use chrono::{DateTime, Duration, Utc};
 
 /// Deployment profile drives which DID methods are accepted as principal.
 ///

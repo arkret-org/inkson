@@ -20,13 +20,13 @@
 //! for each step, mirroring the device-revoke design.
 
 use anyhow::Context;
-use base64::Engine as _;
-use base64::engine::general_purpose::STANDARD_NO_PAD as B64;
-use chrono::{Timelike, Utc};
 use arkret_sdk::{
     CrossSigningBinding, CrossSigningKeyRecord, CrossSigningPublishContent, Did,
     SignedCrossSigningKey, TypedTrustDomainId,
 };
+use base64::Engine as _;
+use base64::engine::general_purpose::STANDARD_NO_PAD as B64;
+use chrono::{Timelike, Utc};
 use ed25519_dalek::{SECRET_KEY_LENGTH, Signer, SigningKey};
 use serde::{Deserialize, Serialize};
 use zeroize::Zeroizing;

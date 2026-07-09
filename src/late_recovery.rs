@@ -26,11 +26,11 @@
 //! banner is bound to the audited recovery event id (and therefore
 //! auditable).
 
-use chrono::{DateTime, Duration, Utc};
 pub use arkret_sdk::{
     REASON_LATE_RECOVERY_REJECTED_EXPIRED, REASON_LATE_RECOVERY_REJECTED_MEMBERSHIP,
     REASON_LATE_RECOVERY_SHARE_NOT_AUTHORIZED,
 };
+use chrono::{DateTime, Duration, Utc};
 use serde_json::Value;
 
 /// One late-recovered event surfaced to message readers. Constructed from

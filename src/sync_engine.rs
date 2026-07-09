@@ -19,8 +19,9 @@
 //! * **Lifecycle via generation counter**: callers (login / logout / server-switch) bump the
 //!   engine's `generation` Signal; the loop notices on the next iteration and exits cleanly. A
 //!   fresh engine spawn picks up the next generation.
-//! * **Backoff**: transient network errors double the sleep (capped at `MAX_BACKOFF_SECS`); a
-//!   successful response resets it. Auth-expired errors stop the engine and let the refresh poller
+//! * **Backoff**: transient network errors double the sleep via [`garth::Backoff`] (capped at
+//!   `BACKOFF_CEILING`); a successful response resets it. Auth-expired errors stop the engine and
+//!   let the refresh poller
 //!   + login strand take over. Cursor-invalid errors clear the cursor and immediately retry as a
 //!     full sync.
 //!
@@ -36,6 +37,7 @@ use std::collections::BTreeSet;
 use std::time::Duration;
 
 use dioxus::prelude::*;
+use garth::Backoff;
 #[cfg(test)]
 use garth::{ClientEvent, ClientProjector, DecodedInbound, InboundDecoder};
 use serde_json::{Value, json};
@@ -79,13 +81,13 @@ impl ConnectionState {
     }
 }
 
-/// Sleep ceiling between failed iterations. 60s matches what other
-/// Long enough that a wedged server doesn't get DoSed by retries,
-/// short enough that recovery is noticeable to the user.
-const MAX_BACKOFF_SECS: u64 = 60;
-
-/// Floor for the first backoff sleep. Doubles up to `MAX_BACKOFF_SECS`.
-const MIN_BACKOFF_SECS: u64 = 1;
+/// Failure-backoff bounds for the account subscribe loop. The doubling ladder
+/// itself is [`garth::Backoff`]; these are just its floor/ceiling. A 1s floor
+/// keeps recovery noticeable to the user; a 60s ceiling stops a wedged server
+/// from being hammered by retries. Kept as `Duration` so there is a single unit
+/// (F-10: the old seconds-vs-milliseconds split across engines is gone).
+const BACKOFF_FLOOR: Duration = Duration::from_secs(1);
+const BACKOFF_CEILING: Duration = Duration::from_secs(60);
 
 /// Minimum pause between successful iterations. Insurance against
 /// servers that return account subscribe catch-up immediately; without
@@ -355,7 +357,7 @@ pub async fn run_sync_engine(
     // profiles mid-loop, the engine exits cleanly and a fresh spawn
     // picks up the new profile's cursor / token / account_did.
     let start_profile_id = ctx.profiles.read().active_profile_id.clone();
-    let mut backoff_secs = MIN_BACKOFF_SECS;
+    let mut backoff = Backoff::new(BACKOFF_FLOOR, BACKOFF_CEILING);
     // Counts delta syncs since the last invite refetch; see
     // `INVITES_REFRESH_EVERY_N_DELTAS`. Seeded at the threshold so the first
     // delta after spawn refreshes immediately even if it isn't a full sync.
@@ -387,7 +389,7 @@ pub async fn run_sync_engine(
         .await
         {
             IterationOutcome::Ok { realm_ids } => {
-                backoff_secs = MIN_BACKOFF_SECS;
+                backoff.reset();
                 // Recovery: clear any stale error the user has been
                 // staring at. Without this, a single Transient or
                 // RateLimited blip sticks in the status bar forever
@@ -414,7 +416,7 @@ pub async fn run_sync_engine(
                 // cursor was already cleared inside the iteration.
                 // Also clear the visible error so the UI doesn't
                 // show the cursor-rejection that just got handled.
-                backoff_secs = MIN_BACKOFF_SECS;
+                backoff.reset();
                 ctx.last_error.clone().set(None);
                 sleep_for(Duration::from_millis(MIN_INTER_ITERATION_MS)).await;
             }
@@ -422,13 +424,13 @@ pub async fn run_sync_engine(
                 // Keep the cursor (spec MUST NOT clear it) and retry
                 // after a beat — the iteration already consulted
                 // `account/describe` for the current frontier.
-                backoff_secs = MIN_BACKOFF_SECS;
+                backoff.reset();
                 sleep_for(Duration::from_millis(MIN_INTER_ITERATION_MS)).await;
             }
             IterationOutcome::AuthExpired => {
                 match crate::session::refresh_current_session().await {
                     crate::session::CurrentSessionRefresh::Credential(_) => {
-                        backoff_secs = MIN_BACKOFF_SECS;
+                        backoff.reset();
                         ctx.last_error.clone().set(None);
                         sleep_for(Duration::from_millis(MIN_INTER_ITERATION_MS)).await;
                     }
@@ -438,8 +440,7 @@ pub async fn run_sync_engine(
                             let mut last_error = ctx.last_error;
                             last_error.set(Some(format!("sync_engine session refresh: {reason}")));
                         }
-                        sleep_for(Duration::from_secs(backoff_secs)).await;
-                        backoff_secs = (backoff_secs.saturating_mul(2)).min(MAX_BACKOFF_SECS);
+                        sleep_for(backoff.next_delay()).await;
                     }
                     crate::session::CurrentSessionRefresh::LoginRequired { reason } => {
                         {
@@ -463,17 +464,17 @@ pub async fn run_sync_engine(
                     let mut last_error = ctx.last_error;
                     last_error.set(Some(reason));
                 }
-                // Honour the server's hint with a floor of
-                // `MIN_BACKOFF_SECS` so a buggy server that returns
-                // `retry_after_ms = 0` still gives us a beat.
+                // Honour the server's hint with a floor of `BACKOFF_FLOOR` so a
+                // buggy server that returns `retry_after_ms = 0` still gives us a
+                // beat.
                 let wait_ms = retry_after_ms
-                    .max(MIN_BACKOFF_SECS.saturating_mul(1000))
+                    .max(u64::try_from(BACKOFF_FLOOR.as_millis()).unwrap_or(1_000))
                     .min(u64::try_from(MAX_RETRY_DELAY.as_millis()).unwrap_or(u64::MAX));
                 sleep_for(Duration::from_millis(wait_ms)).await;
-                // Don't escalate `backoff_secs` — the server told us
-                // exactly how long to wait, so the next iteration
-                // restarts the generic backoff ladder from the floor.
-                backoff_secs = MIN_BACKOFF_SECS;
+                // Don't escalate the ladder — the server told us exactly how long
+                // to wait, so the next failure restarts the generic backoff ladder
+                // from the floor.
+                backoff.reset();
             }
             IterationOutcome::ReconnectAfter {
                 reconnect_after_ms,
@@ -484,18 +485,17 @@ pub async fn run_sync_engine(
                     last_error.set(reason.map(|reason| format!("sync_engine: {reason}")));
                 }
                 let wait_ms = reconnect_after_ms
-                    .max(MIN_BACKOFF_SECS.saturating_mul(1000))
+                    .max(u64::try_from(BACKOFF_FLOOR.as_millis()).unwrap_or(1_000))
                     .min(u64::try_from(MAX_RETRY_DELAY.as_millis()).unwrap_or(u64::MAX));
                 sleep_for(Duration::from_millis(wait_ms)).await;
-                backoff_secs = MIN_BACKOFF_SECS;
+                backoff.reset();
             }
             IterationOutcome::Transient(reason) => {
                 {
                     let mut last_error = ctx.last_error;
                     last_error.set(Some(reason));
                 }
-                sleep_for(Duration::from_secs(backoff_secs)).await;
-                backoff_secs = (backoff_secs.saturating_mul(2)).min(MAX_BACKOFF_SECS);
+                sleep_for(backoff.next_delay()).await;
             }
         }
     }

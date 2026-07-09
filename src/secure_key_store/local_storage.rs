@@ -4,6 +4,7 @@
 
 use base64::Engine as _;
 use base64::engine::general_purpose::STANDARD_NO_PAD;
+use garth::{SecretBytes, SecureKeyStoreBackendInfo};
 
 use super::{
     SecureKeyStore, SecureKeyStoreError, WASM_ED25519_SEED_INDEXEDDB_REQUIRED,
@@ -136,7 +137,7 @@ impl std::fmt::Debug for LocalStorageSecureKeyStore {
 }
 
 impl SecureKeyStore for LocalStorageSecureKeyStore {
-    fn store_secret(&self, key: &str, value: &str) -> Result<(), SecureKeyStoreError> {
+    fn store_secret_bytes(&self, key: &str, value: &[u8]) -> Result<(), SecureKeyStoreError> {
         if is_wasm_indexeddb_required_secret_key(key)
             && !wasm_localstorage_secret_downgrade_enabled()
         {
@@ -148,6 +149,13 @@ impl SecureKeyStore for LocalStorageSecureKeyStore {
                 },
             ));
         }
+        // AEAD-wrap the value as-is (unchanged on-disk format). The backend only
+        // ever holds UTF-8 (base64/JSON) values, and garth's default
+        // `store_secret(&str)` routes here as valid UTF-8; reject non-UTF-8 rather
+        // than silently altering the wrapped representation.
+        let value = std::str::from_utf8(value).map_err(|err| {
+            SecureKeyStoreError::Backend(format!("localStorage secret not utf8: {err}"))
+        })?;
         let storage = Self::storage()?;
         let wrapped = wrap_secret(value, &self.wrapping_key)?;
         storage
@@ -155,7 +163,7 @@ impl SecureKeyStore for LocalStorageSecureKeyStore {
             .map_err(|err| SecureKeyStoreError::Backend(format!("localStorage set: {err:?}")))
     }
 
-    fn get_secret(&self, key: &str) -> Result<Option<String>, SecureKeyStoreError> {
+    fn get_secret_bytes(&self, key: &str) -> Result<Option<SecretBytes>, SecureKeyStoreError> {
         if is_wasm_indexeddb_required_secret_key(key)
             && !wasm_localstorage_secret_downgrade_enabled()
         {
@@ -174,7 +182,8 @@ impl SecureKeyStore for LocalStorageSecureKeyStore {
         else {
             return Ok(None);
         };
-        unwrap_secret(&wrapped, &self.wrapping_key)
+        Ok(unwrap_secret(&wrapped, &self.wrapping_key)?
+            .map(|plain| SecretBytes::new(plain.into_bytes())))
     }
 
     fn delete_secret(&self, key: &str) -> Result<(), SecureKeyStoreError> {
@@ -184,7 +193,35 @@ impl SecureKeyStore for LocalStorageSecureKeyStore {
             .map_err(|err| SecureKeyStoreError::Backend(format!("localStorage remove: {err:?}")))
     }
 
-    fn backend_name(&self) -> &'static str {
-        "local_storage_aead"
+    fn list_secret_keys(&self, prefix: Option<&str>) -> Result<Vec<String>, SecureKeyStoreError> {
+        let storage = Self::storage()?;
+        let entry_prefix = format!("inkson.secret.{}.", self.service_name);
+        let length = storage
+            .length()
+            .map_err(|err| SecureKeyStoreError::Backend(format!("localStorage length: {err:?}")))?;
+        let mut out = Vec::new();
+        for i in 0..length {
+            let Ok(Some(full_key)) = storage.key(i) else {
+                continue;
+            };
+            let Some(entry) = full_key.strip_prefix(&entry_prefix) else {
+                continue;
+            };
+            if prefix.is_none_or(|prefix| entry.starts_with(prefix)) {
+                out.push(entry.to_owned());
+            }
+        }
+        Ok(out)
+    }
+
+    fn backend_info(&self) -> SecureKeyStoreBackendInfo {
+        SecureKeyStoreBackendInfo {
+            // Preserved verbatim (`FallbackSecureKeyStore` / diagnostics key off it).
+            name: "local_storage_aead",
+            // ChaCha20-Poly1305 wrap over a localStorage-resident random seed:
+            // software-only and recoverable from a same-origin disk dump.
+            hardware_backed: false,
+            exportable: true,
+        }
     }
 }

@@ -15,6 +15,14 @@ use std::sync::Arc;
     feature = "mobile-ios",
     target_os = "ios"
 ))]
+use garth::{SecretBytes, SecureKeyStoreBackendInfo};
+
+#[cfg(any(
+    feature = "mobile-android",
+    target_os = "android",
+    feature = "mobile-ios",
+    target_os = "ios"
+))]
 use super::{HostBridgeSecureKeyStore, HostSecretBridge, SecureKeyStore, SecureKeyStoreError};
 
 /// Android Keystore-backed secret store. On `target_os = "android"`
@@ -65,17 +73,23 @@ impl AndroidKeystoreSecureKeyStore {
 
 #[cfg(any(feature = "mobile-android", target_os = "android"))]
 impl SecureKeyStore for AndroidKeystoreSecureKeyStore {
-    fn store_secret(&self, key: &str, value: &str) -> Result<(), SecureKeyStoreError> {
-        self.inner.store_secret(key, value)
+    fn store_secret_bytes(&self, key: &str, value: &[u8]) -> Result<(), SecureKeyStoreError> {
+        self.inner.store_secret_bytes(key, value)
     }
-    fn get_secret(&self, key: &str) -> Result<Option<String>, SecureKeyStoreError> {
-        self.inner.get_secret(key)
+    fn get_secret_bytes(&self, key: &str) -> Result<Option<SecretBytes>, SecureKeyStoreError> {
+        self.inner.get_secret_bytes(key)
     }
     fn delete_secret(&self, key: &str) -> Result<(), SecureKeyStoreError> {
         self.inner.delete_secret(key)
     }
-    fn backend_name(&self) -> &'static str {
-        "android-keystore"
+    fn list_secret_keys(&self, prefix: Option<&str>) -> Result<Vec<String>, SecureKeyStoreError> {
+        self.inner.list_secret_keys(prefix)
+    }
+    fn backend_info(&self) -> SecureKeyStoreBackendInfo {
+        SecureKeyStoreBackendInfo {
+            name: "android-keystore",
+            ..self.inner.backend_info()
+        }
     }
 }
 
@@ -121,16 +135,22 @@ impl IosKeychainSecureKeyStore {
 
 #[cfg(any(feature = "mobile-ios", target_os = "ios"))]
 impl SecureKeyStore for IosKeychainSecureKeyStore {
-    fn store_secret(&self, key: &str, value: &str) -> Result<(), SecureKeyStoreError> {
-        self.inner.store_secret(key, value)
+    fn store_secret_bytes(&self, key: &str, value: &[u8]) -> Result<(), SecureKeyStoreError> {
+        self.inner.store_secret_bytes(key, value)
     }
-    fn get_secret(&self, key: &str) -> Result<Option<String>, SecureKeyStoreError> {
-        self.inner.get_secret(key)
+    fn get_secret_bytes(&self, key: &str) -> Result<Option<SecretBytes>, SecureKeyStoreError> {
+        self.inner.get_secret_bytes(key)
     }
     fn delete_secret(&self, key: &str) -> Result<(), SecureKeyStoreError> {
         self.inner.delete_secret(key)
     }
-    fn backend_name(&self) -> &'static str {
-        "ios-keychain"
+    fn list_secret_keys(&self, prefix: Option<&str>) -> Result<Vec<String>, SecureKeyStoreError> {
+        self.inner.list_secret_keys(prefix)
+    }
+    fn backend_info(&self) -> SecureKeyStoreBackendInfo {
+        SecureKeyStoreBackendInfo {
+            name: "ios-keychain",
+            ..self.inner.backend_info()
+        }
     }
 }

@@ -4,11 +4,9 @@
 //! migration replaces them. This module gives that migration a typed,
 //! target-aware construction point without pulling UI state into client-core.
 
-use std::collections::{BTreeSet, VecDeque};
+use std::collections::VecDeque;
 use std::sync::{Arc, Mutex};
 
-use base64::Engine as _;
-use base64::engine::general_purpose::STANDARD_NO_PAD;
 use garth::{RealmEventsFrameSource, RealmEventsTransport};
 #[cfg(not(target_arch = "wasm32"))]
 use reqwest::header::CONTENT_TYPE;
@@ -110,137 +108,6 @@ impl garth::EventCacheStore for InksonLocalStateStoreAdapter {
 }
 
 #[derive(Clone)]
-pub struct InksonSecureKeyStoreAdapter {
-    inner: Arc<dyn crate::secure_key_store::SecureKeyStore>,
-    key_index: Arc<Mutex<BTreeSet<String>>>,
-}
-
-impl InksonSecureKeyStoreAdapter {
-    pub fn new(inner: Arc<dyn crate::secure_key_store::SecureKeyStore>) -> Self {
-        Self {
-            inner,
-            key_index: Arc::new(Mutex::new(BTreeSet::new())),
-        }
-    }
-
-    fn map_error(
-        error: crate::secure_key_store::SecureKeyStoreError,
-    ) -> garth::SecureKeyStoreError {
-        match error {
-            crate::secure_key_store::SecureKeyStoreError::NotFound => {
-                garth::SecureKeyStoreError::NotFound
-            }
-            crate::secure_key_store::SecureKeyStoreError::Backend(error) => {
-                garth::SecureKeyStoreError::Backend(error)
-            }
-            crate::secure_key_store::SecureKeyStoreError::Unsupported(backend) => {
-                garth::SecureKeyStoreError::Unsupported(backend)
-            }
-        }
-    }
-
-    fn remember_key(&self, key: &str) -> Result<(), garth::SecureKeyStoreError> {
-        self.key_index
-            .lock()
-            .map_err(|err| {
-                garth::SecureKeyStoreError::Backend(format!(
-                    "secure key index lock poisoned: {err}"
-                ))
-            })?
-            .insert(key.to_owned());
-        Ok(())
-    }
-}
-
-impl std::fmt::Debug for InksonSecureKeyStoreAdapter {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("InksonSecureKeyStoreAdapter")
-            .field("backend", &self.inner.backend_name())
-            .finish_non_exhaustive()
-    }
-}
-
-impl garth::SecureKeyStore for InksonSecureKeyStoreAdapter {
-    fn store_secret_bytes(
-        &self,
-        key: &str,
-        value: &[u8],
-    ) -> Result<(), garth::SecureKeyStoreError> {
-        let encoded = STANDARD_NO_PAD.encode(value);
-        self.inner
-            .store_secret(key, &encoded)
-            .map_err(Self::map_error)?;
-        self.remember_key(key)
-    }
-
-    fn store_secret_bytes_durable<'a>(
-        &'a self,
-        key: &'a str,
-        value: &'a [u8],
-    ) -> std::pin::Pin<
-        Box<dyn std::future::Future<Output = Result<(), garth::SecureKeyStoreError>> + 'a>,
-    > {
-        let encoded = STANDARD_NO_PAD.encode(value);
-        Box::pin(async move {
-            self.inner
-                .store_secret_durable(key, &encoded)
-                .await
-                .map_err(Self::map_error)?;
-            self.remember_key(key)
-        })
-    }
-
-    fn get_secret_bytes(
-        &self,
-        key: &str,
-    ) -> Result<Option<garth::SecretBytes>, garth::SecureKeyStoreError> {
-        let Some(encoded) = self.inner.get_secret(key).map_err(Self::map_error)? else {
-            return Ok(None);
-        };
-        let bytes = STANDARD_NO_PAD.decode(encoded.as_bytes()).map_err(|err| {
-            garth::SecureKeyStoreError::Backend(format!("base64 secret decode: {err}"))
-        })?;
-        Ok(Some(zeroize::Zeroizing::new(bytes)))
-    }
-
-    fn delete_secret(&self, key: &str) -> Result<(), garth::SecureKeyStoreError> {
-        self.inner.delete_secret(key).map_err(Self::map_error)?;
-        if let Ok(mut index) = self.key_index.lock() {
-            index.remove(key);
-        }
-        Ok(())
-    }
-
-    fn list_secret_keys(
-        &self,
-        prefix: Option<&str>,
-    ) -> Result<Vec<String>, garth::SecureKeyStoreError> {
-        let index = self.key_index.lock().map_err(|err| {
-            garth::SecureKeyStoreError::Backend(format!("secure key index lock poisoned: {err}"))
-        })?;
-        Ok(index
-            .iter()
-            .filter(|key| prefix.is_none_or(|prefix| key.starts_with(prefix)))
-            .cloned()
-            .collect())
-    }
-
-    fn backend_info(&self) -> garth::SecureKeyStoreBackendInfo {
-        garth::SecureKeyStoreBackendInfo {
-            name: self.inner.backend_name(),
-            hardware_backed: matches!(
-                self.inner.backend_name(),
-                "keyring" | "host_bridge" | "android_keystore" | "ios_keychain"
-            ),
-            exportable: !matches!(
-                self.inner.backend_name(),
-                "keyring" | "host_bridge" | "android_keystore" | "ios_keychain"
-            ),
-        }
-    }
-}
-
-#[derive(Clone)]
 pub struct ClientCoreState<E, C, D, S> {
     pub http: arkret_sdk::http_client::Client,
     pub secure_key_store: S,
@@ -280,7 +147,7 @@ pub type InksonClientCore<E> = ClientCoreState<
     E,
     InksonLocalStateStoreAdapter,
     InksonLocalStateStoreAdapter,
-    InksonSecureKeyStoreAdapter,
+    Arc<dyn garth::SecureKeyStore>,
 >;
 
 pub struct BufferedRealmEventsFrameSource {
@@ -498,7 +365,9 @@ pub fn build_client_core(
     secure_key_store: Arc<dyn crate::secure_key_store::SecureKeyStore>,
 ) -> InksonClientCore<garth::NativeExecutor> {
     let local_state = InksonLocalStateStoreAdapter::new(local_state);
-    let secure_key_store = InksonSecureKeyStoreAdapter::new(secure_key_store);
+    // F-11: the platform backends implement garth's `SecureKeyStore` directly, so
+    // the shared `Arc<dyn SecureKeyStore>` is handed to client-core as-is (the
+    // former base64-wrapping `InksonSecureKeyStoreAdapter` is gone).
     ClientCoreState::new(
         http,
         secure_key_store,
@@ -513,7 +382,7 @@ pub fn build_client_core(
     secure_key_store: Arc<dyn crate::secure_key_store::SecureKeyStore>,
 ) -> InksonClientCore<garth::WasmExecutor> {
     let local_state = InksonLocalStateStoreAdapter::new(local_state);
-    let secure_key_store = InksonSecureKeyStoreAdapter::new(secure_key_store);
+    // F-11: hand the shared garth `SecureKeyStore` to client-core directly.
     ClientCoreState::new(
         http,
         secure_key_store,
@@ -648,19 +517,19 @@ mod tests {
         );
     }
 
+    /// F-11: the shared garth `MemorySecureKeyStore` round-trips binary secrets
+    /// end-to-end through the bytes trait surface (no inkson-side adapter).
     #[tokio::test]
-    async fn secure_key_store_adapter_round_trips_binary_secrets() {
-        let adapter = super::InksonSecureKeyStoreAdapter::new(std::sync::Arc::new(
-            crate::secure_key_store::MemorySecureKeyStore::new(),
-        ));
+    async fn secure_key_store_round_trips_binary_secrets() {
+        let store = garth::MemorySecureKeyStore::new();
 
-        adapter
+        store
             .store_secret_bytes_durable("client-core.secret", &[0, 1, 2, 255])
             .await
             .unwrap();
 
         assert_eq!(
-            adapter
+            store
                 .get_secret_bytes("client-core.secret")
                 .unwrap()
                 .as_ref()
@@ -668,12 +537,12 @@ mod tests {
             Some([0, 1, 2, 255].as_slice())
         );
         assert_eq!(
-            adapter.list_secret_keys(Some("client-core")).unwrap(),
+            store.list_secret_keys(Some("client-core")).unwrap(),
             vec!["client-core.secret".to_owned()]
         );
-        adapter.delete_secret("client-core.secret").unwrap();
+        store.delete_secret("client-core.secret").unwrap();
         assert!(
-            adapter
+            store
                 .get_secret_bytes("client-core.secret")
                 .unwrap()
                 .is_none()

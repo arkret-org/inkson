@@ -50,10 +50,10 @@
 
 use std::sync::{Arc, Mutex, OnceLock};
 
+use arkret_sdk::signatures::proof::{EventSigner as SdkEventSigner, ProofType};
 use base64::Engine as _;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use chrono::{DateTime, Utc};
-use arkret_sdk::signatures::proof::{EventSigner as SdkEventSigner, ProofType};
 use ed25519_dalek::{Signer as _, SigningKey};
 
 use crate::operation::{EventEnvelope, EventProofAudience, ProofMode, current_proof_mode};

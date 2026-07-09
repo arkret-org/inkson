@@ -73,6 +73,7 @@ pub mod identity_handle;
 pub mod invite_claim;
 pub mod key_backup;
 pub mod key_store;
+pub mod keyed_cooldown;
 pub mod keys_api;
 /// Round R2/R3 (T16) — late key recovery UX helpers.
 pub mod late_recovery;

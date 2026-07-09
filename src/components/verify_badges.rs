@@ -188,8 +188,8 @@ pub fn TrustCacheBadge(peer: String) -> Element {
 
 #[cfg(test)]
 mod tests {
-    use chrono::Duration;
     use arkret_sdk::{Did, DidDocument};
+    use chrono::Duration;
 
     use super::*;
 

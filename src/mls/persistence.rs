@@ -58,12 +58,12 @@
 //!   ([`decrypt_with_epoch_check`]) still relies on the epoch ordering provided by the Seal view,
 //!   but the AAD binding guarantees the timestamp the caller sees has not been swapped out.
 
+use arkret_sdk::MlsGroupStateRecord;
 use base64::Engine as _;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use chacha20poly1305::aead::{Aead, OsRng, Payload};
 use chacha20poly1305::{AeadCore, ChaCha20Poly1305, KeyInit, Nonce};
 use chrono::{DateTime, SecondsFormat, Utc};
-use arkret_sdk::MlsGroupStateRecord;
 use hkdf::Hkdf;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};

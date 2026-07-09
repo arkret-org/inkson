@@ -540,7 +540,7 @@ mod tests {
         raw_operations: Vec<RawOperationRecord>,
     }
 
-    impl garth::projection::DomainProjector for ClientCoreKanbanProjector {
+    impl garth::projection::RealmStateReducer for ClientCoreKanbanProjector {
         fn apply_domain_events(
             &mut self,
             _realm_id: &arkret_sdk::RealmId,

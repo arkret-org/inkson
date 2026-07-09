@@ -31,9 +31,10 @@
 //! without changing the ingest / cursor contract here.
 
 use std::cell::Cell;
+use std::time::Duration;
 
 use dioxus::prelude::*;
-use garth::{ClientEvent, ClientProjector, RealmEventsDriver, RealmStreamStopReason};
+use garth::{Backoff, ClientEvent, ClientProjector, RealmEventsDriver, RealmStreamStopReason};
 use serde_json::Value;
 
 use crate::api_error::{is_auth_expired_error, is_invalid_cursor_error, rate_limited_retry_after};
@@ -48,9 +49,11 @@ use crate::runtime_helpers::sleep_for;
 const REALM_EVENTS_POLL_WINDOW_MS: u64 = 5_000;
 
 /// Floor / ceiling for the failure backoff. Mirrors the account engine's
-/// human-scale recovery cadence.
-const MIN_BACKOFF_MS: u64 = 1_000;
-const MAX_BACKOFF_MS: u64 = 60_000;
+/// human-scale recovery cadence. The doubling ladder is [`garth::Backoff`];
+/// these are just its bounds, kept as `Duration` so the account and realm
+/// engines share one unit (F-10).
+const BACKOFF_FLOOR: Duration = Duration::from_secs(1);
+const BACKOFF_CEILING: Duration = Duration::from_secs(60);
 
 /// Signals the realm events engine needs. `Copy` because Dioxus signals are.
 #[derive(Clone, Copy)]
@@ -78,8 +81,10 @@ pub struct RealmEventsEngineContext {
 enum RealmIterationOutcome {
     /// Iteration completed; pause the short inter-iteration beat then re-poll.
     Ok,
-    /// Recoverable failure; sleep `delay_ms` (already chosen by the caller).
-    Backoff { delay_ms: u64 },
+    /// Recoverable failure; back off via the shared ladder. `retry_after_ms`
+    /// carries a server-advertised hint (rate-limit / reconnect-after) honored as
+    /// a hard floor for this step; `None` means "no hint, use the ladder base".
+    Backoff { retry_after_ms: Option<u64> },
     /// Base URL / token not yet populated; exit and let `app` respawn.
     NotReady,
     /// Terminal session loss; exit and let the account engine / app drive
@@ -167,7 +172,7 @@ pub async fn run_realm_events_engine(
         return;
     }
     let start_profile_id = ctx.profiles.read().active_profile_id.clone();
-    let mut backoff_ms = MIN_BACKOFF_MS;
+    let mut backoff = Backoff::new(BACKOFF_FLOOR, BACKOFF_CEILING);
     loop {
         // Cancellation: generation bump (login / logout / server switch),
         // profile rotation, or the user navigating to a different realm.
@@ -186,18 +191,17 @@ pub async fn run_realm_events_engine(
 
         match run_realm_iteration(&realm_id, &ctx, start_generation, generation).await {
             RealmIterationOutcome::Ok => {
-                backoff_ms = MIN_BACKOFF_MS;
+                backoff.reset();
                 // Brief beat between long-polls so an immediately-returning
                 // server can't spin the loop at network RTT.
-                sleep_for(std::time::Duration::from_millis(250)).await;
+                sleep_for(Duration::from_millis(250)).await;
             }
-            RealmIterationOutcome::Backoff { delay_ms } => {
-                // Honor the server's retry-after as a floor, escalating with
-                // the local exponential backoff on repeated failures
-                // (backoff_ms starts at MIN_BACKOFF_MS, so the old
-                // MIN_BACKOFF_MS floor is preserved).
-                sleep_for(std::time::Duration::from_millis(delay_ms.max(backoff_ms))).await;
-                backoff_ms = (backoff_ms.saturating_mul(2)).min(MAX_BACKOFF_MS);
+            RealmIterationOutcome::Backoff { retry_after_ms } => {
+                // Escalate the shared exponential ladder, honoring any
+                // server-advertised retry-after / reconnect-after as a hard floor
+                // for this step.
+                let hint = retry_after_ms.map(Duration::from_millis);
+                sleep_for(backoff.next_delay_with_hint(hint)).await;
             }
             RealmIterationOutcome::NotReady | RealmIterationOutcome::AuthExpired => {
                 return;
@@ -223,7 +227,7 @@ async fn run_realm_iteration(
         .is_err()
     {
         return RealmIterationOutcome::Backoff {
-            delay_ms: MIN_BACKOFF_MS,
+            retry_after_ms: None,
         };
     }
 
@@ -232,7 +236,7 @@ async fn run_realm_iteration(
             Ok(sdk_http) => sdk_http,
             Err(_) => {
                 return RealmIterationOutcome::Backoff {
-                    delay_ms: MIN_BACKOFF_MS,
+                    retry_after_ms: None,
                 };
             }
         };
@@ -242,7 +246,7 @@ async fn run_realm_iteration(
         Err(error) => {
             tracing::warn!(error = %error, realm_id, "invalid realm id for events subscribe");
             return RealmIterationOutcome::Backoff {
-                delay_ms: MIN_BACKOFF_MS,
+                retry_after_ms: None,
             };
         }
     };
@@ -282,7 +286,7 @@ async fn run_realm_iteration(
             }
             if let Some(retry_after_ms) = rate_limited_retry_after(&error) {
                 return RealmIterationOutcome::Backoff {
-                    delay_ms: retry_after_ms,
+                    retry_after_ms: Some(retry_after_ms),
                 };
             }
             if is_invalid_cursor_error(&error) {
@@ -292,7 +296,7 @@ async fn run_realm_iteration(
                 state_store.write().save_realm_events_cursor(realm_id, None);
             }
             return RealmIterationOutcome::Backoff {
-                delay_ms: MIN_BACKOFF_MS,
+                retry_after_ms: None,
             };
         }
     };
@@ -316,13 +320,13 @@ async fn run_realm_iteration(
             let mut state_store = ctx.state_store;
             state_store.write().save_realm_events_cursor(realm_id, None);
             RealmIterationOutcome::Backoff {
-                delay_ms: reconnect_after_ms.unwrap_or(MIN_BACKOFF_MS),
+                retry_after_ms: reconnect_after_ms,
             }
         }
         RealmStreamStopReason::ResyncRequired { reconnect_after_ms } => {
             // The driver already cleared the cursor on resync (via the adapter).
             RealmIterationOutcome::Backoff {
-                delay_ms: reconnect_after_ms.unwrap_or(MIN_BACKOFF_MS),
+                retry_after_ms: reconnect_after_ms,
             }
         }
         RealmStreamStopReason::Unauthorized { .. } => RealmIterationOutcome::AuthExpired,

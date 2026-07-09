@@ -392,110 +392,6 @@ fn chat_message_has_protocol_id(message: &ChatMessage, protocol_id: &str) -> boo
     chat_message_protocol_id(message).is_some_and(|candidate| candidate == protocol_id)
 }
 
-fn append_chat_message_revision_body(message: &mut ChatMessage, body: String) {
-    if body.is_empty() || body == message.body {
-        return;
-    }
-    if message.revisions.last().is_none_or(|last| last != &body)
-        && !message.revisions.iter().any(|existing| existing == &body)
-    {
-        message.revisions.push(body);
-    }
-}
-
-fn carry_chat_message_identity_metadata(target: &mut ChatMessage, source: &ChatMessage) {
-    if target.protocol_message_id.is_none() {
-        target.protocol_message_id = source.protocol_message_id.clone();
-    }
-    if target.reply_to.is_none() {
-        target.reply_to = source.reply_to.clone();
-    }
-}
-
-fn push_chat_message_reaction_member(
-    reactions: &mut Vec<(String, Vec<String>)>,
-    key: &str,
-    actor: &str,
-) {
-    if key.trim().is_empty() || actor.trim().is_empty() {
-        return;
-    }
-    if let Some((_, senders)) = reactions.iter_mut().find(|(existing, _)| existing == key) {
-        if !senders.iter().any(|sender| sender == actor) {
-            senders.push(actor.to_owned());
-        }
-    } else {
-        reactions.push((key.to_owned(), vec![actor.to_owned()]));
-    }
-}
-
-fn sort_chat_message_reactions(reactions: &mut Vec<(String, Vec<String>)>) {
-    for (_, senders) in reactions.iter_mut() {
-        senders.sort();
-        senders.dedup();
-    }
-    reactions.retain(|(_, senders)| !senders.is_empty());
-    reactions.sort_by(|left, right| left.0.cmp(&right.0));
-}
-
-fn merge_chat_message_reactions_into(target: &mut ChatMessage, source: &ChatMessage) {
-    if target.redacted {
-        return;
-    }
-    for (key, senders) in &source.reactions {
-        for sender in senders {
-            push_chat_message_reaction_member(&mut target.reactions, key, sender);
-        }
-    }
-    sort_chat_message_reactions(&mut target.reactions);
-}
-
-fn replace_chat_message_preserving_local_metadata(
-    existing: &mut ChatMessage,
-    mut message: ChatMessage,
-) {
-    if existing.redacted && !message.redacted {
-        carry_chat_message_identity_metadata(existing, &message);
-        append_chat_message_revision_body(existing, message.body);
-        return;
-    }
-    if message.redacted || message.is_newer_or_same_lifecycle_version_than(existing) {
-        carry_chat_message_identity_metadata(&mut message, existing);
-        // Carry forward locally-tracked edit metadata. The sync projection
-        // rebuilds a message from its events but does not surface the
-        // per-message revision count, so a re-projection would otherwise wipe
-        // the write-status counter the moment a sync tick lands between two
-        // edits. Preserve the existing `edited` flag and revision history (the
-        // body still updates to the incoming/revised content) so the numeric
-        // counter is stable across re-projections.
-        if !message.edited && existing.edited {
-            message.edited = true;
-        }
-        if message.revisions.is_empty() && !existing.revisions.is_empty() {
-            message.revisions = std::mem::take(&mut existing.revisions);
-        }
-        append_chat_message_revision_body(&mut message, existing.body.clone());
-        if message.created_at.is_none() {
-            message.created_at = existing.created_at.clone();
-        }
-        merge_chat_message_reactions_into(&mut message, existing);
-        *existing = message;
-    } else {
-        carry_chat_message_identity_metadata(existing, &message);
-        if message.edited {
-            existing.edited = true;
-        }
-        if existing.created_at.is_none() {
-            existing.created_at = message.created_at;
-        }
-        merge_chat_message_reactions_into(existing, &message);
-        for revision in message.revisions {
-            append_chat_message_revision_body(existing, revision);
-        }
-        append_chat_message_revision_body(existing, message.body);
-    }
-}
-
 fn prune_duplicate_chat_message_entries(
     target: &mut Vec<ChatMessage>,
     keep_id: &str,
@@ -523,7 +419,7 @@ pub(crate) fn merge_chat_messages(target: &mut Vec<ChatMessage>, incoming: Vec<C
                     .as_deref()
                     .is_some_and(|protocol_id| chat_message_has_protocol_id(existing, protocol_id))
         }) {
-            replace_chat_message_preserving_local_metadata(&mut target[existing_index], message);
+            merge_duplicate_create_message(&mut target[existing_index], message);
             let keep_id = target[existing_index].id.clone();
             let protocol_id =
                 chat_message_protocol_id(&target[existing_index]).map(ToOwned::to_owned);

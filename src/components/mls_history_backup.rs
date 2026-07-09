@@ -20,8 +20,10 @@
 //! - The tail envelope folds the Realm's complete recoverable group state, so no per-epoch envelope
 //!   pile-up is needed.
 //!
-//! Job mechanics mirror the sidecar backup job (digest dedupe, debounce,
-//! min-interval, single-flight) and add exponential-backoff retries plus a
+//! Job mechanics (single-flight, digest dedupe, debounce, min-interval,
+//! exponential-backoff retries, park-after-N-failures, three-state finish) are
+//! the shared [`crate::components::backup_job_scheduler`] machinery; this module
+//! supplies only the per-Realm payload + digest + the upload wire call, plus a
 //! status snapshot available to recovery/debug surfaces.
 
 use std::collections::BTreeMap;
@@ -32,6 +34,9 @@ use chrono::{DateTime, Utc};
 use dioxus::prelude::*;
 use serde_json::Value;
 
+use crate::components::backup_job_scheduler::{
+    BackupJob, BackupJobScheduler, BackupSchedulerConfig, upsert_backup_job,
+};
 use crate::local_state::LocalStateStore;
 use crate::views::helpers::with_authed_api;
 
@@ -45,29 +50,37 @@ const MLS_HISTORY_BACKUP_RETRY_CAP: Duration = Duration::from_secs(600);
 /// credentials and a reset failure counter.
 const MLS_HISTORY_BACKUP_MAX_CONSECUTIVE_FAILURES: u32 = 5;
 
+/// Per-Realm payload carried by the shared scheduler. Credentials + the latest
+/// snapshot to upload + the cached series-tail body used to chain the next
+/// successor.
 #[derive(Clone, Default)]
-struct MlsHistoryBackupJob {
+struct MlsHistoryBackupPayload {
     base_url: String,
     token: String,
     actor_id: String,
     device_id: String,
     realm_id: String,
     latest_snapshot: Option<crate::mls::persistence::MlsSnapshotEnvelope>,
-    latest_digest: String,
-    last_uploaded_digest: Option<String>,
-    last_upload_at: Option<DateTime<Utc>>,
     /// Full body of the current series tail (the envelope this device last
     /// uploaded or fetched). Chaining the next successor needs the FULL
     /// predecessor body (`supersedes_digest` is computed over it), and caching
-    /// it here avoids an unlock-proof read per upload.
+    /// it here avoids an unlock-proof read per upload. Preserved across
+    /// reschedules.
     cached_tail_body: Option<Value>,
-    consecutive_failures: u32,
-    scheduled: bool,
-    in_flight: bool,
 }
 
-static MLS_HISTORY_BACKUP_JOBS: LazyLock<Mutex<BTreeMap<String, MlsHistoryBackupJob>>> =
-    LazyLock::new(|| Mutex::new(BTreeMap::new()));
+type MlsHistoryBackupJob = BackupJob<MlsHistoryBackupPayload>;
+
+static MLS_HISTORY_BACKUP_SCHEDULER: BackupJobScheduler<MlsHistoryBackupPayload> =
+    BackupJobScheduler::new(
+        "mls_history_backup",
+        BackupSchedulerConfig {
+            debounce: MLS_HISTORY_BACKUP_DEBOUNCE,
+            min_interval: Some(MLS_HISTORY_BACKUP_MIN_INTERVAL),
+            retry_base: MLS_HISTORY_BACKUP_RETRY_BASE,
+            retry_cap: MLS_HISTORY_BACKUP_RETRY_CAP,
+        },
+    );
 
 /// Last terminal outcomes, kept separately from the per-realm job map so the
 /// diagnostics can show "last failure" even after the failing job was
@@ -101,16 +114,14 @@ pub struct MlsHistoryBackupStatus {
 /// Current continuous-backup status (pure read; no network).
 pub fn mls_history_backup_status() -> MlsHistoryBackupStatus {
     let mut status = MlsHistoryBackupStatus::default();
-    if let Ok(jobs) = MLS_HISTORY_BACKUP_JOBS.lock() {
+    MLS_HISTORY_BACKUP_SCHEDULER.with_jobs(|jobs| {
         for job in jobs.values() {
-            if !job.latest_digest.is_empty()
-                && job.last_uploaded_digest.as_deref() != Some(job.latest_digest.as_str())
-            {
+            if job.is_pending() {
                 status.pending_realms += 1;
             }
             status.in_flight |= job.in_flight;
         }
-    }
+    });
     if let Ok(last) = MLS_HISTORY_BACKUP_LAST_OUTCOME.lock() {
         status.last_error = last.last_error.clone();
         status.last_error_at = last.last_error_at.map(|at| at.to_rfc3339());
@@ -133,44 +144,11 @@ fn mls_snapshot_digest(snapshot: &crate::mls::persistence::MlsSnapshotEnvelope) 
     crate::canonical::sha256_digest(&bytes)
 }
 
-/// Exponential-backoff delay for the n-th consecutive failure (n ≥ 1):
-/// `base * 2^(n-1)`, capped.
-fn mls_history_backup_retry_delay(consecutive_failures: u32) -> Duration {
-    if consecutive_failures == 0 {
-        return MLS_HISTORY_BACKUP_DEBOUNCE;
-    }
-    let factor = 1u32 << consecutive_failures.saturating_sub(1).min(16);
-    MLS_HISTORY_BACKUP_RETRY_BASE
-        .saturating_mul(factor)
-        .min(MLS_HISTORY_BACKUP_RETRY_CAP)
-}
-
-/// Next wake-up delay for a job run: the debounce window, stretched to honour
-/// the min-interval since the last successful upload, and to the backoff
-/// window after consecutive failures.
-fn mls_history_backup_next_delay(
-    last_upload_at: Option<DateTime<Utc>>,
-    consecutive_failures: u32,
-    now: DateTime<Utc>,
-) -> Duration {
-    let mut delay = MLS_HISTORY_BACKUP_DEBOUNCE;
-    if let Some(last) = last_upload_at {
-        let min_interval = chrono::Duration::from_std(MLS_HISTORY_BACKUP_MIN_INTERVAL)
-            .unwrap_or_else(|_| chrono::Duration::seconds(300));
-        let elapsed = now.signed_duration_since(last);
-        if elapsed < min_interval {
-            let remaining = min_interval - elapsed;
-            delay = delay.max(Duration::from_millis(
-                u64::try_from(remaining.num_milliseconds()).unwrap_or(0),
-            ));
-        }
-    }
-    delay.max(mls_history_backup_retry_delay(consecutive_failures))
-}
-
 /// Upsert the job entry for a freshly observed snapshot. Returns `true` when
 /// the caller must spawn the job loop (no loop is scheduled or in flight).
 /// Pure on the map so the dedupe/single-flight decision is unit-testable.
+/// `cached_tail_body` is intentionally not touched — it survives reschedules
+/// so the next successor chains cheaply.
 #[allow(clippy::too_many_arguments)]
 fn upsert_mls_history_backup_job(
     jobs: &mut BTreeMap<String, MlsHistoryBackupJob>,
@@ -183,26 +161,14 @@ fn upsert_mls_history_backup_job(
     snapshot: crate::mls::persistence::MlsSnapshotEnvelope,
     digest: String,
 ) -> bool {
-    let job = jobs.entry(key.to_owned()).or_default();
-    if job.last_uploaded_digest.as_deref() == Some(digest.as_str()) {
-        return false;
-    }
-    job.base_url = base_url;
-    job.token = token;
-    job.actor_id = actor_id;
-    job.device_id = device_id;
-    job.realm_id = realm_id;
-    job.latest_snapshot = Some(snapshot);
-    job.latest_digest = digest;
-    // A fresh schedule carries fresh credentials — give a parked job a clean
-    // backoff slate instead of inheriting stale-token failures.
-    job.consecutive_failures = 0;
-    if job.scheduled || job.in_flight {
-        false
-    } else {
-        job.scheduled = true;
-        true
-    }
+    upsert_backup_job(jobs, key, digest, |payload| {
+        payload.base_url = base_url;
+        payload.token = token;
+        payload.actor_id = actor_id;
+        payload.device_id = device_id;
+        payload.realm_id = realm_id;
+        payload.latest_snapshot = Some(snapshot);
+    })
 }
 
 /// Hook: call after a `ck.mls.commit` was ACCEPTED by the server and the local
@@ -238,12 +204,13 @@ pub(crate) fn schedule_mls_history_backup_after_commit(
     };
     let digest = mls_snapshot_digest(&snapshot);
     let key = mls_history_backup_job_key(&base_url, &actor_id, &realm_id);
-    let should_spawn = match MLS_HISTORY_BACKUP_JOBS.lock() {
-        Ok(mut jobs) => upsert_mls_history_backup_job(
-            &mut jobs, &key, base_url, token, actor_id, device_id, realm_id, snapshot, digest,
-        ),
-        Err(_) => false,
-    };
+    let should_spawn = MLS_HISTORY_BACKUP_SCHEDULER
+        .with_jobs_mut(|jobs| {
+            upsert_mls_history_backup_job(
+                jobs, &key, base_url, token, actor_id, device_id, realm_id, snapshot, digest,
+            )
+        })
+        .unwrap_or(false);
     if should_spawn {
         spawn(async move {
             run_mls_history_backup_job(key).await;
@@ -268,10 +235,12 @@ pub(crate) async fn upload_mls_history_backup_now(
     snapshot: &crate::mls::persistence::MlsSnapshotEnvelope,
 ) -> anyhow::Result<String> {
     let key = mls_history_backup_job_key(base_url, actor_id, realm_id);
-    let cached_tail = MLS_HISTORY_BACKUP_JOBS
-        .lock()
-        .ok()
-        .and_then(|jobs| jobs.get(&key).and_then(|job| job.cached_tail_body.clone()));
+    let cached_tail = MLS_HISTORY_BACKUP_SCHEDULER
+        .with_jobs(|jobs| {
+            jobs.get(&key)
+                .and_then(|job| job.payload.cached_tail_body.clone())
+        })
+        .flatten();
     let previous = match cached_tail {
         Some(body) => Some(body),
         None => {
@@ -301,35 +270,29 @@ fn record_mls_history_backup_uploaded(
     snapshot: &crate::mls::persistence::MlsSnapshotEnvelope,
     body: Value,
 ) {
-    let now = Utc::now();
-    if let Ok(mut jobs) = MLS_HISTORY_BACKUP_JOBS.lock() {
-        let job = jobs.entry(key.to_owned()).or_default();
-        job.cached_tail_body = Some(body);
-        job.last_uploaded_digest = Some(mls_snapshot_digest(snapshot));
-        job.last_upload_at = Some(now);
-        job.consecutive_failures = 0;
-    }
+    MLS_HISTORY_BACKUP_SCHEDULER.record_success(key, mls_snapshot_digest(snapshot), |payload| {
+        payload.cached_tail_body = Some(body)
+    });
     if let Ok(mut last) = MLS_HISTORY_BACKUP_LAST_OUTCOME.lock() {
-        last.last_uploaded_at = Some(now);
+        last.last_uploaded_at = Some(Utc::now());
     }
 }
 
 async fn run_mls_history_backup_job(key: String) {
     loop {
-        let Some(delay) = next_mls_history_backup_delay(&key) else {
+        let Some(delay) = MLS_HISTORY_BACKUP_SCHEDULER.next_delay(&key, Utc::now()) else {
             return;
         };
         crate::runtime_helpers::sleep_for(delay).await;
-        let Some(job) = take_mls_history_backup_job_snapshot(&key) else {
+        let Some(job) = MLS_HISTORY_BACKUP_SCHEDULER.begin_attempt(&key) else {
             return;
         };
         if job.last_uploaded_digest.as_deref() == Some(job.latest_digest.as_str()) {
-            if !finish_mls_history_backup_job_idle(&key) {
+            if !MLS_HISTORY_BACKUP_SCHEDULER.finish_and_rearm_if_pending(&key) {
                 return;
             }
             continue;
         }
-        let upload_digest = job.latest_digest.clone();
         match upload_mls_history_backup_job_snapshot(job).await {
             Ok((backup_id, snapshot, body)) => {
                 tracing::debug!(
@@ -337,7 +300,7 @@ async fn run_mls_history_backup_job(key: String) {
                     "continuous mls_history backup uploaded after MLS commit"
                 );
                 record_mls_history_backup_uploaded(&key, &snapshot, body);
-                if !finish_mls_history_backup_job_success(&key, &upload_digest) {
+                if !MLS_HISTORY_BACKUP_SCHEDULER.finish_and_rearm_if_pending(&key) {
                     return;
                 }
             }
@@ -354,110 +317,51 @@ async fn run_mls_history_backup_job(key: String) {
     }
 }
 
-fn next_mls_history_backup_delay(key: &str) -> Option<Duration> {
-    let jobs = MLS_HISTORY_BACKUP_JOBS.lock().ok()?;
-    let job = jobs.get(key)?;
-    Some(mls_history_backup_next_delay(
-        job.last_upload_at,
-        job.consecutive_failures,
-        Utc::now(),
-    ))
-}
-
-fn take_mls_history_backup_job_snapshot(key: &str) -> Option<MlsHistoryBackupJob> {
-    let mut jobs = MLS_HISTORY_BACKUP_JOBS.lock().ok()?;
-    let job = jobs.get_mut(key)?;
-    job.scheduled = false;
-    job.in_flight = true;
-    Some(job.clone())
-}
-
-/// Latest digest already uploaded — clear in-flight; keep looping only when a
-/// NEWER digest arrived while we were checking.
-fn finish_mls_history_backup_job_idle(key: &str) -> bool {
-    let Ok(mut jobs) = MLS_HISTORY_BACKUP_JOBS.lock() else {
-        return false;
-    };
-    let Some(job) = jobs.get_mut(key) else {
-        return false;
-    };
-    job.in_flight = false;
-    if job.last_uploaded_digest.as_deref() != Some(job.latest_digest.as_str()) {
-        job.scheduled = true;
-        true
-    } else {
-        false
-    }
-}
-
-fn finish_mls_history_backup_job_success(key: &str, uploaded_digest: &str) -> bool {
-    let Ok(mut jobs) = MLS_HISTORY_BACKUP_JOBS.lock() else {
-        return false;
-    };
-    let Some(job) = jobs.get_mut(key) else {
-        return false;
-    };
-    job.in_flight = false;
-    // `record_mls_history_backup_uploaded` already stored the uploaded digest
-    // and tail body; rerun only if newer material arrived during the upload.
-    if job.latest_digest != uploaded_digest
-        && job.last_uploaded_digest.as_deref() != Some(job.latest_digest.as_str())
-    {
-        job.scheduled = true;
-        true
-    } else {
-        false
-    }
-}
-
-/// Failure: bump the backoff counter, surface the error to the status panel,
-/// and reschedule — unless the park threshold is reached (the pending digest
-/// stays visible and the next schedule call re-arms the job).
+/// Failure: surface the error to the status panel, then hand the job-map
+/// transition (bump the backoff counter, drop a stale series-tail cache, and
+/// reschedule — unless the park threshold is reached) to the shared scheduler.
 fn finish_mls_history_backup_job_failure(key: &str, error: &str) -> bool {
     let now = Utc::now();
     if let Ok(mut last) = MLS_HISTORY_BACKUP_LAST_OUTCOME.lock() {
         last.last_error = Some(error.to_owned());
         last.last_error_at = Some(now);
     }
-    let Ok(mut jobs) = MLS_HISTORY_BACKUP_JOBS.lock() else {
-        return false;
-    };
-    let Some(job) = jobs.get_mut(key) else {
-        return false;
-    };
-    job.in_flight = false;
-    job.consecutive_failures = job.consecutive_failures.saturating_add(1);
-    // A series conflict means our cached predecessor no longer matches the
-    // server's chain (e.g. a sibling device extended it, or a rotation opened
-    // a fresh series and deleted ours). Drop the cache so the retry re-reads
-    // the real tail instead of failing forever.
-    if error.contains("series") {
-        job.cached_tail_body = None;
-    }
-    if job.consecutive_failures >= MLS_HISTORY_BACKUP_MAX_CONSECUTIVE_FAILURES {
-        return false;
-    }
-    job.scheduled = true;
-    true
+    MLS_HISTORY_BACKUP_SCHEDULER.finish_failure(
+        key,
+        MLS_HISTORY_BACKUP_MAX_CONSECUTIVE_FAILURES,
+        |payload| {
+            // A series conflict means our cached predecessor no longer matches
+            // the server's chain (e.g. a sibling device extended it, or a
+            // rotation opened a fresh series and deleted ours). Drop the cache
+            // so the retry re-reads the real tail instead of failing forever.
+            if error.contains("series") {
+                payload.cached_tail_body = None;
+            }
+        },
+    )
 }
 
 async fn upload_mls_history_backup_job_snapshot(
     job: MlsHistoryBackupJob,
 ) -> anyhow::Result<(String, crate::mls::persistence::MlsSnapshotEnvelope, Value)> {
-    let snapshot = job
-        .latest_snapshot
-        .clone()
-        .ok_or_else(|| anyhow::anyhow!("mls_history backup job has no snapshot"))?;
+    let MlsHistoryBackupPayload {
+        base_url,
+        token,
+        actor_id,
+        device_id,
+        realm_id,
+        latest_snapshot,
+        cached_tail_body,
+    } = job.payload;
+    let snapshot =
+        latest_snapshot.ok_or_else(|| anyhow::anyhow!("mls_history backup job has no snapshot"))?;
     let snapshot_for_upload = snapshot.clone();
-    let (backup_id, body) = with_authed_api(&job.base_url, job.token.clone(), |api| async move {
-        let previous = match job.cached_tail_body {
+    let (backup_id, body) = with_authed_api(&base_url, token, |api| async move {
+        let previous = match cached_tail_body {
             Some(body) => Some(body),
             None => {
                 crate::mls::account_recovery::fetch_mls_history_tail_for_realm(
-                    &api,
-                    &job.actor_id,
-                    &job.device_id,
-                    &job.realm_id,
+                    &api, &actor_id, &device_id, &realm_id,
                 )
                 .await?
             }
@@ -465,8 +369,8 @@ async fn upload_mls_history_backup_job_snapshot(
         crate::mls::account_recovery::upload_mls_history_backup_with_previous(
             &api,
             &snapshot_for_upload,
-            &job.actor_id,
-            &job.device_id,
+            &actor_id,
+            &device_id,
             previous.as_ref(),
         )
         .await
@@ -529,7 +433,13 @@ mod tests {
         // recorded_at), so re-derive the uploaded digest instead of epoch reuse.
         let latest = jobs.get("k").unwrap().latest_digest.clone();
         jobs.get_mut("k").unwrap().last_uploaded_digest = Some(latest.clone());
-        let snap = jobs.get("k").unwrap().latest_snapshot.clone().unwrap();
+        let snap = jobs
+            .get("k")
+            .unwrap()
+            .payload
+            .latest_snapshot
+            .clone()
+            .unwrap();
         let spawned_third = upsert_mls_history_backup_job(
             &mut jobs,
             "k",
@@ -548,49 +458,5 @@ mod tests {
         let (respawned, _) = upsert(&mut jobs, "k", 2);
         assert!(respawned);
         assert_eq!(jobs.get("k").unwrap().consecutive_failures, 0);
-    }
-
-    #[test]
-    fn retry_delay_backs_off_exponentially_and_caps() {
-        assert_eq!(
-            mls_history_backup_retry_delay(0),
-            MLS_HISTORY_BACKUP_DEBOUNCE
-        );
-        assert_eq!(mls_history_backup_retry_delay(1), Duration::from_secs(5));
-        assert_eq!(mls_history_backup_retry_delay(2), Duration::from_secs(10));
-        assert_eq!(mls_history_backup_retry_delay(3), Duration::from_secs(20));
-        assert_eq!(
-            mls_history_backup_retry_delay(12),
-            MLS_HISTORY_BACKUP_RETRY_CAP
-        );
-        assert_eq!(
-            mls_history_backup_retry_delay(40),
-            MLS_HISTORY_BACKUP_RETRY_CAP
-        );
-    }
-
-    #[test]
-    fn next_delay_honours_min_interval_and_backoff() {
-        let now = Utc::now();
-        // No prior upload, no failures: plain debounce.
-        assert_eq!(
-            mls_history_backup_next_delay(None, 0, now),
-            MLS_HISTORY_BACKUP_DEBOUNCE
-        );
-        // Recent upload: wait out the remaining min-interval.
-        let recent = now - chrono::Duration::seconds(60);
-        let delay = mls_history_backup_next_delay(Some(recent), 0, now);
-        assert!(delay >= Duration::from_secs(230) && delay <= Duration::from_secs(240));
-        // Old upload: back to debounce.
-        let old = now - chrono::Duration::seconds(3600);
-        assert_eq!(
-            mls_history_backup_next_delay(Some(old), 0, now),
-            MLS_HISTORY_BACKUP_DEBOUNCE
-        );
-        // Failures stretch the wait even right after an old upload.
-        assert_eq!(
-            mls_history_backup_next_delay(Some(old), 2, now),
-            Duration::from_secs(10)
-        );
     }
 }

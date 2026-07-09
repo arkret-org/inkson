@@ -41,6 +41,11 @@ use crate::views::helpers::{display_name_for_did, persist_config, short_protocol
 
 const REALM_KEY_SHARE_ANSWER_RETRY_BACKOFF_MS: u64 = 60_000;
 
+/// Entry cap for the realm-key answer retry cooldown table. A single device only
+/// tracks the handful of unanswered `ck.realm_key.request` dedup keys currently
+/// backing off; the cap bounds a pathological key space.
+const REALM_KEY_ANSWER_BACKOFF_MAX_ENTRIES: usize = 64;
+
 // YOU-07-001: post-login / startup-check effects and small types moved to
 // `crate::app::bootstrap` (move-only; logic, signatures, and bytes unchanged).
 // The re-export keeps existing app.rs call sites and `app_tests.rs`
@@ -791,7 +796,9 @@ pub fn RouterView() -> Element {
     // re-requested — but an unchanged state never re-emits the same request on
     // every sync tick.
     let realm_key_request_dedup = use_signal(|| Option::<String>::None);
-    let realm_key_answer_backoff_until = use_signal(BTreeMap::<String, u64>::new);
+    let realm_key_answer_backoff_until = use_signal(|| {
+        crate::keyed_cooldown::KeyedCooldown::new(REALM_KEY_ANSWER_BACKOFF_MAX_ENTRIES)
+    });
     // Step 3 of the account-MLS-secret auto-unlock strand: set by the bootstrap
     // effect when this device has no local account secret yet but the server
     // holds an `mls_account_secret` backup; consumed by `MlsUnlockPrompt`.
@@ -2353,13 +2360,12 @@ pub fn RouterView() -> Element {
                     .filter(|request| {
                         request.payload.target_principal_id.as_str().trim() == actor.trim()
                             && request.payload.target_source_ref.trim() == device.trim()
-                            && answer_backoff
-                                .get(
-                                    &crate::views::realm_admin::realm_key_request_answer_dedup_key(
-                                        request,
-                                    ),
-                                )
-                                .is_none_or(|retry_after_ms| *retry_after_ms <= now_ms)
+                            && !answer_backoff.is_cooling(
+                                &crate::views::realm_admin::realm_key_request_answer_dedup_key(
+                                    request,
+                                ),
+                                now_ms,
+                            )
                     })
                     .collect();
                 let pull_request_key = active_realm_id.as_ref().and_then(|realm_id| {
@@ -2475,7 +2481,7 @@ pub fn RouterView() -> Element {
                     .await;
                     match outcome {
                         Ok(true) => {
-                            share_answer_backoff.write().remove(&request_key);
+                            share_answer_backoff.write().clear_key(&request_key);
                             if let Some(request_id) = request_id {
                                 let removed = share_state_store
                                     .write()
@@ -2489,18 +2495,18 @@ pub fn RouterView() -> Element {
                             }
                         }
                         Ok(false) => {
-                            let retry_after_ms = crate::clock::now_unix_ms()
+                            let until_ms = crate::clock::now_unix_ms()
                                 .saturating_add(REALM_KEY_SHARE_ANSWER_RETRY_BACKOFF_MS);
                             share_answer_backoff
                                 .write()
-                                .insert(request_key, retry_after_ms);
+                                .note_until(request_key, until_ms);
                         }
                         Err(error) => {
-                            let retry_after_ms = crate::clock::now_unix_ms()
+                            let until_ms = crate::clock::now_unix_ms()
                                 .saturating_add(REALM_KEY_SHARE_ANSWER_RETRY_BACKOFF_MS);
                             share_answer_backoff
                                 .write()
-                                .insert(request_key, retry_after_ms);
+                                .note_until(request_key, until_ms);
                             tracing::warn!(
                                 realm = %short_protocol_id(&realm_for_log),
                                 ?error,

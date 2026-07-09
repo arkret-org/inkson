@@ -188,8 +188,8 @@ pub fn DidResolutionHealthBanner(health: Signal<DidResolutionHealth>) -> Element
 
 #[cfg(test)]
 mod tests {
-    use chrono::Duration;
     use arkret_sdk::{Did, DidDocument};
+    use chrono::Duration;
 
     use super::*;
 

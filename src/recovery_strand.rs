@@ -10,14 +10,14 @@
 //! The wire shapes match `arkret-spec` `recovery-session.schema.json`
 //! (`create_request` / `proof_submit_request` / `complete_request`).
 
-use base64::Engine as _;
-use base64::engine::general_purpose::URL_SAFE_NO_PAD as B64;
 use arkret_sdk::models::{
     RecoveryPolicyActiveOutcome, RecoveryPolicyRef, RecoveryPolicySummary,
     RecoverySessionCompleteRequestBody, RecoverySessionCreateRequestBody,
     RecoverySessionProofSubmitRequestBody,
 };
 use arkret_sdk::{DeviceId, Did, EventId, PolicyId, TypedTrustDomainId};
+use base64::Engine as _;
+use base64::engine::general_purpose::URL_SAFE_NO_PAD as B64;
 use ed25519_dalek::SigningKey;
 use serde_json::{Map, Value, json};
 
