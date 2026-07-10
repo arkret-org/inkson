@@ -86,7 +86,7 @@ fn key_backup_authorized_event_ref_for_device(viewer: &Value, device_id: &str) -
         .map(str::to_owned)
 }
 
-impl CokretApi {
+impl ArkretApi {
     pub async fn receive_device_messages(&self) -> anyhow::Result<DeviceMessagesGetOutcome> {
         self.sdk_http_client()?
             .receive_device_messages(None, None)
@@ -400,13 +400,13 @@ impl CokretApi {
         }
         let principal = arkret_sdk::Did::new(actor_id.to_owned())
             .map_err(|err| anyhow::anyhow!("invalid principal DID for device revoke: {err}"))?;
-        let control_realm = arkret_sdk::auth::principal_control_realm_id(&principal);
+        let control_realm = arkret_sdk::principal_control_realm_id(&principal);
         let seal_view = self
             .event_submitter()?
             .events_frontier_realm_seal_view(&control_realm)
             .await?;
         let basis = seal_view.seal_basis();
-        let event = crate::operation::ck_ops::device_revoke(
+        let event = crate::operation::ak_ops::device_revoke(
             &control_realm,
             actor_id,
             target_device_id,

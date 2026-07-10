@@ -413,7 +413,7 @@ pub fn GlobalSearchPanel(
 #[allow(clippy::too_many_arguments)]
 fn run_search(
     q: String,
-    state_store: Signal<LocalStateStore>,
+    state_store: SyncSignal<LocalStateStore>,
     actor_id: String,
     device_id: String,
     mut results: Signal<ResultRows>,

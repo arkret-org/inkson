@@ -20,7 +20,7 @@ use crate::models::{
 use crate::wire_helpers::{canonical_blob_ref, safe_blob_filename_header};
 
 #[derive(Clone)]
-pub struct CokretApi {
+pub struct ArkretApi {
     base_url: Url,
     pub(crate) http: Client,
     authorization_credential: Option<String>,
@@ -37,9 +37,9 @@ pub struct CokretApi {
     service_describe_cache: Arc<OnceCell<ServerDescription>>,
 }
 
-impl fmt::Debug for CokretApi {
+impl fmt::Debug for ArkretApi {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("CokretApi")
+        f.debug_struct("ArkretApi")
             .field("base_url", &self.base_url)
             .field(
                 "authorization_credential",
@@ -60,11 +60,11 @@ impl fmt::Debug for CokretApi {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct CokretApiOptions {
+pub struct ArkretApiOptions {
     pub timeout: Duration,
 }
 
-impl Default for CokretApiOptions {
+impl Default for ArkretApiOptions {
     fn default() -> Self {
         Self {
             timeout: Duration::from_secs(10),
@@ -81,9 +81,9 @@ mod mls;
 mod realm;
 // YOU-07-001: sync / account-subscribe parsers now live at crate root so E2 can
 // delete `src/api/**` without carrying parser code in the old API module.
-// Structural split: core `impl CokretApi` HTTP transport (constructor, builder
-// methods, SDK client construction, network state, and legacy URL helper)
-// moved out of this file into `transport` (move only). All `impl CokretApi`
+// Structural split: core `impl ArkretApi` HTTP transport (constructor, builder
+// methods, SDK client construction, network state, and URL helper)
+// moved out of this file into `transport` (move only). All `impl ArkretApi`
 // inherent methods, so no free-item re-export is needed.
 mod transport;
 // Structural split: the former inline `#[cfg(test)] mod tests { … }` moved to

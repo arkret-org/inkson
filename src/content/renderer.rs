@@ -6,14 +6,14 @@
 use dioxus::prelude::*;
 use pulldown_cmark::{CowStr, Event, Options, Parser as MdParser, Tag, TagEnd, html as md_html};
 
-use crate::api::CokretApi;
+use crate::api::ArkretApi;
 use crate::config::LocalConfigStore;
 
 /// Marker recognised in message bodies that points at an uploaded blob.
 ///
 /// Produced by chat composer drag-and-drop when the upload pipeline sends
 /// bytes via
-/// `CokretApi::upload_blob_bytes` (A6.2).
+/// `ArkretApi::upload_blob_bytes` (A6.2).
 const ATTACHMENT_MARKER_PREFIX: &str = "[Attachment:";
 const ATTACHMENT_MARKER_SUFFIX: char = ']';
 
@@ -481,7 +481,7 @@ async fn authenticated_blob_data_url(blob_ref: &str, media_type: &str) -> anyhow
     }
     // ②(A+②): grant + per-request DPoP for the self-path blob fetch (§3.3).
     let bytes = crate::views::helpers::attach_device_dpop(
-        CokretApi::new(&config.server_url)?.with_bearer(token),
+        ArkretApi::new(&config.server_url)?.with_bearer(token),
     )
     .get_blob_bytes(blob_ref)
     .await?;

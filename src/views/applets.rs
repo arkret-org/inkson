@@ -6,9 +6,9 @@
 //!   * Reads `ak.applet.registration` / `ak.applet.discovery` events out of the local raw-operation
 //!     projection and renders them as registry rows so users see which applets the Space already
 //!     accepts.
-//!   * Surfaces a registration form bound to [`crate::operation::ck_ops::applet_registration`] —
-//!     fills `service_did`, `namespace` and `capabilities` and submits via
-//!     `with_authed_api(api.submit_sdk_event)`.
+//!   * Registration is derived from the signed manifest during the install
+//!     preview/commit flow; the panel does not expose a legacy short-form
+//!     registration writer.
 //!   * Per-session monitor lists active `interop_session.start/status` rows so an operator can see
 //!     in-flight applet calls + their bridge errors.
 //!
@@ -40,9 +40,8 @@ use serde_json::{Value, json};
 use crate::ui::button::{Button, ButtonVariant};
 use crate::ui::checkbox::Checkbox;
 use crate::ui::dialog::Dialog;
-use crate::ui::input::Input;
 use crate::ui::textarea::Textarea;
-use crate::views::helpers::{short_protocol_id, with_authed_api, with_authed_sdk_client};
+use crate::views::helpers::{short_protocol_id, with_authed_sdk_client};
 
 /// Build the canonical `applet_package` Value the install preview/commit
 /// surface expects from a manifest input. For inline JSON the parsed object is
@@ -100,6 +99,7 @@ pub fn parse_applet_approval_actions(raw: &str) -> Vec<String> {
     raw.split(|ch: char| ch.is_ascii_whitespace() || ch == ',')
         .map(str::trim)
         .filter(|value| !value.is_empty())
+        .filter(|value| value.starts_with("ak."))
         .map(str::to_owned)
         .collect::<BTreeSet<_>>()
         .into_iter()
@@ -142,6 +142,17 @@ pub fn manifest_hash_for(manifest: &str) -> String {
     format!("sha256:{}", &full[..16])
 }
 
+/// Render the namespace keys from the canonical registration payload. The
+/// retired short form carried one `namespace` string; full registrations use
+/// the closed `namespaces` object.
+fn registration_namespace_label(body: Option<&Value>) -> String {
+    body.and_then(|value| value.get("namespaces"))
+        .and_then(Value::as_object)
+        .map(|namespaces| namespaces.keys().cloned().collect::<Vec<_>>().join(", "))
+        .filter(|label| !label.is_empty())
+        .unwrap_or_else(|| "—".to_owned())
+}
+
 /// Parse a manifest input as either a URL (returns Url variant) or
 /// inline JSON (returns Json variant). The cotest harness pastes a
 /// `https://mock-applet-registry/.../manifest.json` URL OR a raw JSON
@@ -169,19 +180,10 @@ pub fn classify_manifest_input(raw: &str) -> ManifestInputKind {
 }
 
 #[component]
-pub fn AppletsPanel(
-    account_did: String,
-    token: Signal<String>,
-    selected_realm_id: String,
-) -> Element {
+pub fn AppletsPanel(token: Signal<String>, selected_realm_id: String) -> Element {
     // A4 — base_url / state_store from session context instead of props.
     let base_url = crate::app::SessionContext::base_url_string();
     let state_store = crate::app::SessionContext::get().state_store;
-    let mut service_did = use_signal(String::new);
-    let mut namespace = use_signal(|| "extensions".to_owned());
-    let mut capabilities = use_signal(|| "read".to_owned());
-    let mut status = use_signal(String::new);
-
     // ─────────────────────────────────────────────────────────────
     // G3.Y4 — install / uninstall / accountability state
     // ─────────────────────────────────────────────────────────────
@@ -253,13 +255,7 @@ pub fn AppletsPanel(
                 .and_then(Value::as_str)
                 .unwrap_or("did:web:?")
                 .to_owned();
-            let namespace = r
-                .payload
-                .get("body")
-                .and_then(|b| b.get("namespace"))
-                .and_then(Value::as_str)
-                .unwrap_or("-")
-                .to_owned();
+            let namespace = registration_namespace_label(r.payload.get("body"));
             let applet_id = format!("{service_did}@{namespace}");
             let manifest_repr = format!("{}:{}", service_did, namespace);
             let manifest_hash = manifest_hash_for(&manifest_repr);
@@ -314,11 +310,11 @@ pub fn AppletsPanel(
                     span { class: "badge", "{registrations.len()} registered" }
                 }
                 div { class: "muted",
-                    "Spec extensions/applet-integration.md §2 — applet registration carries service_did + namespace + capabilities. The registry lists every ak.applet.registration the local raw-operation log has observed."
+                    "Spec extensions/applet-integration.md §2 — registrations are emitted from a verified, signed Applet Package. The registry lists every ak.applet.registration the local raw-operation log has observed."
                 }
                 if registrations.is_empty() {
                     div { class: "muted", "data-testid": "applet-registry-empty",
-                        "No applets registered yet. Use the registration form below to write a ak.applet.registration event."
+                        "No applets registered yet. Use the signed Applet Package install flow below; registration is derived during commit."
                     }
                 } else {
                     for r in registrations {
@@ -328,11 +324,7 @@ pub fn AppletsPanel(
                                 .and_then(Value::as_str)
                                 .unwrap_or("did:web:?")
                                 .to_owned();
-                            let namespace = r.payload.get("body")
-                                .and_then(|b| b.get("namespace"))
-                                .and_then(Value::as_str)
-                                .unwrap_or("-")
-                                .to_owned();
+                            let namespace = registration_namespace_label(r.payload.get("body"));
                             let op_id = r.operation_id.clone();
                             let service_did_label = short_protocol_id(&service_did);
                             let op_id_label = short_protocol_id(&op_id);
@@ -346,94 +338,6 @@ pub fn AppletsPanel(
                                 }
                             }
                         }
-                    }
-                }
-            }
-            div { class: "event", "data-testid": "applet-register-form",
-                div { class: "event-head",
-                    span { "Register applet" }
-                    span { class: "badge", title: "ak.applet.registration", "Applet" }
-                }
-                div { class: "workflow-form",
-                    Input {
-                        "data-testid": "applet-register-service-did",
-                        value: "{service_did}",
-                        placeholder: "applet handle (e.g. applet:example.com)",
-                        oninput: move |event: FormEvent| service_did.set(event.value()),
-                    }
-                    Input {
-                        "data-testid": "applet-register-namespace",
-                        value: "{namespace}",
-                        placeholder: "namespace (extensions / messaging / …)",
-                        oninput: move |event: FormEvent| namespace.set(event.value()),
-                    }
-                    Input {
-                        "data-testid": "applet-register-capabilities",
-                        value: "{capabilities}",
-                        placeholder: "capabilities (comma-separated)",
-                        oninput: move |event: FormEvent| capabilities.set(event.value()),
-                    }
-                    div { class: "actions",
-                        Button {
-                            variant: ButtonVariant::Primary,
-                            "data-testid": "applet-register-submit-button",
-                            onclick: {
-                                let base = base_url.clone();
-                                let realm = selected_realm_id.clone();
-                                let actor = account_did.clone();
-                                move |_| {
-                                    let base = base.clone();
-                                    let realm = realm.clone();
-                                    let actor = actor.clone();
-                                    let did = service_did().trim().to_owned();
-                                    let ns = namespace().trim().to_owned();
-                                    let caps_input = capabilities();
-                                    let caps: Vec<String> = caps_input
-                                        .split(',')
-                                        .map(|s| s.trim().to_owned())
-                                        .filter(|s| !s.is_empty())
-                                        .collect();
-                                    if did.is_empty() || ns.is_empty() {
-                                        status.set("service_did + namespace are required".to_owned());
-                                        return;
-                                    }
-                                    let api_token = token();
-                                    spawn(async move {
-                                        let caps_refs: Vec<&str> = caps.iter().map(String::as_str).collect();
-                                        let op = crate::operation::ck_ops::applet_registration(
-                                            &realm, &actor, &did, &ns, &caps_refs,
-                                        )
-                                        .build_sdk_event("inkson");
-                                        let op = match op {
-                                            Ok(op) => op,
-                                            Err(err) => {
-                                                status.set(format!(
-                                                    "applet registration build failed: {err}"
-                                                ));
-                                                return;
-                                            }
-                                        };
-                                        match with_authed_api(&base, api_token, |api| async move {
-                                            api.event_submitter()?.submit_sdk_event(&op).await
-                                        })
-                                        .await
-                                        {
-                                            Ok(resp) => status.set(format!(
-                                                "applet registration submitted; event_id {}",
-                                                resp.event_id
-                                            )),
-                                            Err(err) => status.set(format!(
-                                                "applet registration failed: {}", err.display()
-                                            )),
-                                        }
-                                    });
-                                }
-                            },
-                            "Register applet"
-                        }
-                    }
-                    if !status().is_empty() {
-                        div { class: "muted", "data-testid": "applet-register-status", "{status}" }
                     }
                 }
             }
@@ -963,24 +867,6 @@ pub fn AppletsPanel(
 #[cfg(test)]
 mod tests {
 
-    /// Pin the current lightweight registration form. The full durable
-    /// `ak.applet.registration` payload still requires controller proof and
-    /// package metadata that this panel does not collect yet.
-    #[test]
-    fn applet_registration_body_keys_pin_canonical_wire() {
-        let op = crate::operation::ck_ops::applet_registration(
-            "ak:realm:0196419b-0000-7000-8000-000000000001",
-            "did:web:alice.example",
-            "did:web:applet.example",
-            "extensions",
-            &["read"],
-        )
-        .build("inkson");
-        assert_eq!(op.payload["service_did"], "did:web:applet.example");
-        assert_eq!(op.payload["namespace"], "extensions");
-        assert_eq!(op.payload["capabilities"][0], "read");
-    }
-
     #[test]
     fn applet_session_kind_filter_matches_three_session_event_kinds() {
         // The view filters with `kind.starts_with("ak.applet.interop_session.")`.
@@ -996,6 +882,21 @@ mod tests {
     // ── G3.Y4 — install helpers ─────────────────────────────────
 
     use super::{ManifestInputKind, classify_manifest_input, manifest_hash_for};
+
+    #[test]
+    fn registration_namespace_label_reads_canonical_namespace_object() {
+        let body = serde_json::json!({
+            "namespaces": {
+                "extensions": {"capabilities": ["read"]},
+                "messaging": {"capabilities": ["write"]}
+            }
+        });
+        assert_eq!(
+            super::registration_namespace_label(Some(&body)),
+            "extensions, messaging"
+        );
+        assert_eq!(super::registration_namespace_label(None), "—");
+    }
 
     #[test]
     fn manifest_hash_is_stable_and_prefixed() {

@@ -11,7 +11,7 @@
 
 use std::collections::BTreeMap;
 
-use arkret_sdk::WellKnownCokretServer;
+use arkret_sdk::WellKnownArkretServer;
 use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -82,7 +82,7 @@ impl TrustBundle {
     pub fn verify_well_known(
         &self,
         expected_domain: &str,
-        record: &WellKnownCokretServer,
+        record: &WellKnownArkretServer,
     ) -> TrustCheck {
         let seal = match self.seals.get(expected_domain) {
             Some(a) => a,
@@ -111,7 +111,7 @@ pub enum WellKnownFetchError {
     /// Server returned a non-2xx status.
     #[error("well-known HTTP {status}: {body}")]
     HttpStatus { status: u16, body: String },
-    /// Response body wasn't a parseable `WellKnownCokretServer`.
+    /// Response body wasn't a parseable `WellKnownArkretServer`.
     #[error("well-known decode error: {0}")]
     Decode(String),
 }
@@ -162,7 +162,7 @@ pub fn well_known_arkret_server_url(base_url: &str) -> Result<String, WellKnownF
 /// Spec `discovery/server-discovery.md` mandates clients call this on
 /// first contact with a new domain so they can pre-flight the service
 /// DID against the trust bundle before issuing any privileged request.
-/// Inkson wraps the SDK [`WellKnownCokretServer`] type — that struct
+/// Inkson wraps the SDK [`WellKnownArkretServer`] type — that struct
 /// owns the JSON shape, and inkson owns the HTTP + error mapping.
 ///
 /// This helper deliberately does **no** caching; the caller threads
@@ -171,7 +171,7 @@ pub fn well_known_arkret_server_url(base_url: &str) -> Result<String, WellKnownF
 /// pinned seal). Caching is a follow-up.
 pub async fn fetch_well_known_arkret_server(
     base_url: &str,
-) -> Result<WellKnownCokretServer, WellKnownFetchError> {
+) -> Result<WellKnownArkretServer, WellKnownFetchError> {
     let url = well_known_arkret_server_url(base_url)?;
     let response = reqwest::Client::new()
         .get(&url)
@@ -187,7 +187,7 @@ pub async fn fetch_well_known_arkret_server(
         });
     }
     response
-        .json::<WellKnownCokretServer>()
+        .json::<WellKnownArkretServer>()
         .await
         .map_err(|err| WellKnownFetchError::Decode(err.to_string()))
 }
@@ -216,7 +216,7 @@ mod tests {
     fn well_known_matches_pinned_did() {
         let mut bundle = TrustBundle::new();
         bundle.add_anchor(seal("bob.example", "did:web:bob.example"));
-        let record = WellKnownCokretServer {
+        let record = WellKnownArkretServer {
             service_did: arkret_sdk::Did::new("did:web:bob.example".to_owned()).unwrap(),
             base_url: "https://bob.example".to_owned(),
             protocol_versions: vec!["1.0".to_owned()],
@@ -234,7 +234,7 @@ mod tests {
     fn well_known_with_wrong_did_is_rejected() {
         let mut bundle = TrustBundle::new();
         bundle.add_anchor(seal("bob.example", "did:web:bob.example"));
-        let record = WellKnownCokretServer {
+        let record = WellKnownArkretServer {
             service_did: arkret_sdk::Did::new("did:web:eve.example".to_owned()).unwrap(),
             base_url: "https://eve.example".to_owned(),
             protocol_versions: vec!["1.0".to_owned()],

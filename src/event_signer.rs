@@ -17,7 +17,7 @@
 //!   `secure_key_store::ensure_signing_seed`) and returns a `InksonEventSigner` ready to attach
 //!   detached JWS proofs to event envelopes.
 //! * [`install_active_signer`] / [`active_signer`] — a process-wide `OnceLock` that holds the
-//!   active signer; [`crate::api::CokretApi::submit_sdk_event`] reaches into this to lazily sign
+//!   active signer; [`crate::api::ArkretApi::submit_sdk_event`] reaches into this to lazily sign
 //!   SDK events that were built unsigned.
 //! * [`signer_status`] — diagnostic snapshot for the settings panel.
 //!
@@ -51,6 +51,10 @@
 use std::sync::{Arc, Mutex, OnceLock};
 
 use arkret_sdk::signatures::proof::{EventSigner as SdkEventSigner, ProofType};
+use arkret_sdk::{
+    Did, Error as ArkretError, Hash, Move, MoveSignature, MoveSigner, Result as ArkretResult,
+    UnsignedMove,
+};
 use base64::Engine as _;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use chrono::{DateTime, Utc};
@@ -134,6 +138,65 @@ pub struct InksonEventSigner {
     /// `None` until the first sign succeeds. Exposed for the UI
     /// freshness indicator.
     last_signed_at: Mutex<Option<DateTime<Utc>>>,
+}
+
+struct InksonMoveSignerAdapter<'a> {
+    owner: &'a InksonEventSigner,
+    did: Did,
+    verification_method: String,
+}
+
+impl MoveSigner for InksonMoveSignerAdapter<'_> {
+    fn sign_move(&self, unsigned: &UnsignedMove) -> ArkretResult<Move> {
+        if unsigned.issuer != self.did {
+            return Err(ArkretError::Protocol(format!(
+                "Move issuer {} does not match signer DID {}",
+                unsigned.issuer, self.did
+            )));
+        }
+        let bytes = unsigned.canonical_bytes()?;
+        Ok(Move {
+            id: Move::id_from_canonical_bytes(&bytes)?,
+            issuer: unsigned.issuer.clone(),
+            realm_id: unsigned.realm_id.clone(),
+            preconditions: unsigned.preconditions.clone(),
+            effects: unsigned.effects.clone(),
+            seal_basis: unsigned.seal_basis.clone(),
+            refs: unsigned.refs.clone(),
+            hlc: unsigned.hlc.clone(),
+            sig: self.sign_payload(&bytes)?,
+        })
+    }
+
+    fn signer_did(&self) -> &Did {
+        &self.did
+    }
+
+    fn verification_method_id(&self) -> &str {
+        &self.verification_method
+    }
+
+    fn sign_payload(&self, canonical_bytes: &[u8]) -> ArkretResult<MoveSignature> {
+        let signature = self
+            .owner
+            .inner
+            .sign(canonical_bytes)
+            .map_err(|error| ArkretError::Protocol(error.to_string()))?;
+        let header = serde_json::to_vec(&serde_json::json!({
+            "alg": self.owner.algorithm(),
+        }))?;
+        Ok(MoveSignature {
+            alg: self.owner.algorithm().to_owned(),
+            verification_method: self.verification_method.clone(),
+            payload_digest: Hash::new(arkret_sdk::canonical::sha256_digest(canonical_bytes))?,
+            created_at: crate::clock::now_utc(),
+            jws: format!(
+                "{}..{}",
+                URL_SAFE_NO_PAD.encode(header),
+                URL_SAFE_NO_PAD.encode(signature)
+            ),
+        })
+    }
 }
 
 impl std::fmt::Debug for InksonEventSigner {
@@ -238,10 +301,9 @@ impl InksonEventSigner {
             .unwrap_or(None)
     }
 
-    /// Sign `event` in place: replaces `event.proofs` with a single
-    /// detached-JWS proof produced by the SDK pipeline. The proof
-    /// carries `ProofType::Production` (`detached_jws` / `EdDSA`) so a
-    /// `ProductionVerifier`-wrapped receiver accepts it.
+    /// Sign `event` in place through the SDK proof pipeline. An existing proof
+    /// for the same verification method is replaced idempotently; a proof from
+    /// another verification method makes the signing attempt fail closed.
     ///
     /// Updates [`Self::last_signed_at_snapshot`] on success.
     pub fn sign_envelope(&self, event: &mut EventEnvelope) -> Result<(), EventSignerError> {
@@ -264,26 +326,7 @@ impl InksonEventSigner {
         event: &mut arkret_sdk::Event,
         context: EventProofContext,
     ) -> Result<(), EventSignerError> {
-        use base64::Engine;
-        use base64::engine::general_purpose::URL_SAFE_NO_PAD;
-
-        let event_digest = event
-            .event_digest()
-            .map_err(|err| EventSignerError::Encoding(err.to_string()))?;
         let verification_method = self.verification_method_for_sdk_event(event);
-        let created_at = crate::clock::now_rfc3339_secs();
-        let actor_id = event.actor_id.as_str();
-        // Build the Proof up front (empty jws), then derive the signed bytes from
-        // the SDK's authoritative `Proof::canonical_binding_bytes` — the SAME
-        // transcript the verifier reconstructs: `{context, event_digest, actor_id,
-        // verification_method, created_at, domain?, audience?}`. Hand-rolling the
-        // binding here drifted from the SDK (it omitted the `context =
-        // "ak.event-proof-v1"` domain tag encoding.md §2 mandates), so every
-        // cross-member Event proof failed the binding-JWS signature check despite a
-        // correct signing key and a matching `event_digest`.
-        let proof_created_at = chrono::DateTime::parse_from_rfc3339(&created_at)
-            .map_err(|err| EventSignerError::Encoding(err.to_string()))?
-            .with_timezone(&Utc);
         let proof_audience = context
             .audience
             .as_ref()
@@ -295,33 +338,23 @@ impl InksonEventSigner {
                 .map_err(|err| EventSignerError::Encoding(err.to_string()))
             })
             .transpose()?;
-        let actor_did = arkret_sdk::Did::new(actor_id.to_owned())
-            .map_err(|err| EventSignerError::Encoding(err.to_string()))?;
-        let mut proof = arkret_sdk::Proof {
-            kind: "detached_jws".to_owned(),
-            alg: self.algorithm().to_owned(),
-            verification_method,
-            event_digest: arkret_sdk::Hash::new(event_digest)
-                .map_err(|err| EventSignerError::Encoding(err.to_string()))?,
-            created_at: proof_created_at,
-            domain: context.domain,
-            audience: proof_audience,
-            jws: String::new(),
+        let signer = InksonMoveSignerAdapter {
+            owner: self,
+            did: Did::new(self.signer_did.clone())
+                .map_err(|error| EventSignerError::Encoding(error.to_string()))?,
+            verification_method: verification_method.clone(),
         };
-        let proof_binding_bytes = proof
-            .canonical_binding_bytes(&actor_did)
-            .map_err(|err| EventSignerError::Encoding(err.to_string()))?;
-        let signature = self
-            .inner
-            .sign(&proof_binding_bytes)
-            .map_err(|err| EventSignerError::Backend(err.to_string()))?;
-        let header = serde_json::json!({ "alg": self.algorithm() });
-        let header = serde_json::to_vec(&header)
-            .map_err(|err| EventSignerError::Encoding(err.to_string()))?;
-        let header_b64 = URL_SAFE_NO_PAD.encode(&header);
-        let sig_b64 = URL_SAFE_NO_PAD.encode(&signature);
-        proof.jws = format!("{header_b64}..{sig_b64}");
-        event.proofs = vec![proof];
+        arkret_sdk::signatures::sign_event(
+            event,
+            &signer,
+            &verification_method,
+            arkret_sdk::signatures::SignEventOptions {
+                domain: context.domain,
+                audience: proof_audience,
+                created_at: Some(crate::clock::now_utc()),
+            },
+        )
+        .map_err(|error| EventSignerError::Backend(error.to_string()))?;
 
         if let Ok(mut guard) = self.last_signed_at.lock() {
             *guard = Some(crate::clock::now_utc());
@@ -1195,6 +1228,73 @@ mod tests {
         event
             .validate_proof_bindings()
             .expect("proof digest matches");
+    }
+
+    #[test]
+    fn sign_sdk_event_is_idempotent_for_the_same_verification_method() {
+        let _g = reset();
+        let signer = build_ed25519_device_signer([12u8; 32], "did:web:sdk.example", TEST_DEVICE_ID);
+        let mut event: arkret_sdk::Event = serde_json::from_value(json!({
+            "event_id": "ak:event:01904100-0000-7000-8000-000000000011",
+            "kind": "ak.message.create",
+            "realm_id": TEST_REALM_ID,
+            "actor_id": "did:web:sdk.example",
+            "actor_seq": 1,
+            "created_at": "2026-05-19T00:00:00Z",
+            "hlc": "01970e589d21-0001-a13f9c2e",
+            "prev_refs": [],
+            "payload": {"kind": "ak.content.text", "body": "typed"},
+            "proofs": []
+        }))
+        .unwrap();
+
+        signer
+            .sign_sdk_event_with_context(&mut event, EventProofContext::default())
+            .unwrap();
+        signer
+            .sign_sdk_event_with_context(&mut event, EventProofContext::default())
+            .unwrap();
+
+        assert_eq!(event.proofs.len(), 1);
+    }
+
+    #[test]
+    fn sign_sdk_event_rejects_a_second_verification_method() {
+        let _g = reset();
+        let first = build_ed25519_device_signer(
+            [13u8; 32],
+            "did:web:sdk.example",
+            "ak:device:01904100-0000-7000-8000-000000000013",
+        );
+        let second = build_ed25519_device_signer(
+            [14u8; 32],
+            "did:web:sdk.example",
+            "ak:device:01904100-0000-7000-8000-000000000014",
+        );
+        let mut event: arkret_sdk::Event = serde_json::from_value(json!({
+            "event_id": "ak:event:01904100-0000-7000-8000-000000000012",
+            "kind": "ak.message.create",
+            "realm_id": TEST_REALM_ID,
+            "actor_id": "did:web:sdk.example",
+            "actor_seq": 1,
+            "created_at": "2026-05-19T00:00:00Z",
+            "hlc": "01970e589d21-0001-a13f9c2e",
+            "prev_refs": [],
+            "payload": {"kind": "ak.content.text", "body": "typed"},
+            "proofs": []
+        }))
+        .unwrap();
+
+        first
+            .sign_sdk_event_with_context(&mut event, EventProofContext::default())
+            .unwrap();
+        let original = event.proofs.clone();
+        let error = second
+            .sign_sdk_event_with_context(&mut event, EventProofContext::default())
+            .unwrap_err();
+
+        assert!(!error.to_string().is_empty());
+        assert_eq!(event.proofs, original);
     }
 
     #[test]

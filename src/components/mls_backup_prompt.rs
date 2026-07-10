@@ -183,7 +183,7 @@ pub(crate) fn schedule_mls_private_plaintext_backup_after_encrypted_write(
     token: String,
     actor_id: String,
     device_id: String,
-    state_store: Signal<LocalStateStore>,
+    state_store: SyncSignal<LocalStateStore>,
 ) {
     if base_url.trim().is_empty()
         || token.trim().is_empty()
@@ -400,7 +400,7 @@ pub async fn maybe_auto_backup_mls_after_encrypted_write(
     token: String,
     actor_id: String,
     device_id: String,
-    state_store: Signal<LocalStateStore>,
+    state_store: SyncSignal<LocalStateStore>,
     needs_mls_backup: Signal<bool>,
 ) {
     maybe_backup_or_flag_mls_backup_after_encrypted_write(
@@ -417,7 +417,7 @@ async fn maybe_backup_or_flag_mls_backup_after_encrypted_write(
     base_url: String,
     token: String,
     actor_id: String,
-    auto_backup: Option<(String, Signal<LocalStateStore>)>,
+    auto_backup: Option<(String, SyncSignal<LocalStateStore>)>,
     needs_mls_backup: Signal<bool>,
 ) {
     if base_url.trim().is_empty() || token.trim().is_empty() || actor_id.trim().is_empty() {
@@ -569,7 +569,7 @@ fn upload_mls_backup_with_recovery_key(
     device: String,
     recovery_secret: String,
     sidecar_json: Option<Vec<u8>>,
-    state_store: Signal<LocalStateStore>,
+    state_store: SyncSignal<LocalStateStore>,
     needs_mls_backup: Signal<bool>,
     recovery_key_input: Signal<String>,
     mut status: Signal<String>,

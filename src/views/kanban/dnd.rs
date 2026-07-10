@@ -17,7 +17,7 @@ pub(super) fn submit_kanban_operation_event(
     operation: arkret_sdk::Event,
     // R4: three-state security signal (see `kanban_plaintext_block_reason`).
     scope_security_encrypted: Option<bool>,
-    mut state_store: Signal<LocalStateStore>,
+    mut state_store: SyncSignal<LocalStateStore>,
     mut board_status: Signal<String>,
 ) {
     if let Some(reason) = kanban_plaintext_block_reason(scope_security_encrypted, &operation) {
@@ -99,7 +99,7 @@ pub(super) fn submit_column_order_updates(
     ordered_columns: Vec<KanbanColumn>,
     // R4: three-state security signal (see `kanban_plaintext_block_reason`).
     scope_security_encrypted: Option<bool>,
-    state_store: Signal<LocalStateStore>,
+    state_store: SyncSignal<LocalStateStore>,
     mut board_status: Signal<String>,
 ) {
     if actor_id.trim().is_empty() {
@@ -122,7 +122,7 @@ pub(super) fn submit_column_order_updates(
         "Column order sending... ({update_count} rank updates)"
     ));
     for (column_id, rank) in updates {
-        let op = match crate::operation::ck_ops::space_update_patch(
+        let op = match crate::operation::ak_ops::space_update_patch(
             &realm_id,
             &actor_id,
             &column_id,
@@ -165,7 +165,7 @@ pub(super) fn submit_column_rename(
     title: String,
     // R4: three-state security signal (see `kanban_plaintext_block_reason`).
     scope_security_encrypted: Option<bool>,
-    state_store: Signal<LocalStateStore>,
+    state_store: SyncSignal<LocalStateStore>,
     mut board_status: Signal<String>,
 ) {
     let title = title.trim().to_owned();
@@ -180,7 +180,7 @@ pub(super) fn submit_column_rename(
         board_status.set("select a Realm before renaming lists".to_owned());
         return;
     }
-    let op = match crate::operation::ck_ops::space_update_patch(
+    let op = match crate::operation::ak_ops::space_update_patch(
         &realm_id,
         &actor_id,
         &column_id,
@@ -223,7 +223,7 @@ pub(super) fn submit_kanban_move(
     value: serde_json::Value,
     // R4: three-state security signal (see `kanban_plaintext_block_reason`).
     scope_security_encrypted: Option<bool>,
-    mut state_store: Signal<LocalStateStore>,
+    mut state_store: SyncSignal<LocalStateStore>,
     mut write_records: Signal<Vec<BoardWriteRecord>>,
     mut board_status: Signal<String>,
 ) {
@@ -250,7 +250,7 @@ pub(super) fn submit_kanban_move(
             board_status.set("cannot create card: missing rank".to_owned());
             return;
         };
-        crate::operation::ck_ops::kanban_card_strand_create(
+        crate::operation::ak_ops::kanban_card_strand_create(
             &realm_id,
             &actor_id,
             &subject,
@@ -260,7 +260,7 @@ pub(super) fn submit_kanban_move(
             rank,
         )
     } else {
-        crate::operation::ck_ops::strand_position_update(
+        crate::operation::ak_ops::strand_position_update(
             &realm_id,
             &actor_id,
             &subject,
@@ -425,7 +425,7 @@ pub(super) fn dispatch_strand_position_move(
     dragged: DraggedCard,
     target_column_id: String,
     neighbours: ColumnNeighbours,
-    state_store: Signal<LocalStateStore>,
+    state_store: SyncSignal<LocalStateStore>,
     write_records: Signal<Vec<BoardWriteRecord>>,
     mut board_status: Signal<String>,
 ) {
@@ -590,16 +590,16 @@ pub(super) fn dispatch_space_container_lifecycle(
     actor_id: String,
     space_container_id: String,
     target: SpaceContainerLifecycleState,
-    mut state_store: Signal<LocalStateStore>,
+    mut state_store: SyncSignal<LocalStateStore>,
     mut board_status: Signal<String>,
 ) {
     // Only Active <-> Archived are dispatchable; Tombstone is server-only.
     let builder = match target {
         SpaceContainerLifecycleState::Archived => {
-            crate::operation::ck_ops::realm_archive(&realm_id, &actor_id, &space_container_id)
+            crate::operation::ak_ops::realm_archive(&realm_id, &actor_id, &space_container_id)
         }
         SpaceContainerLifecycleState::Active => {
-            crate::operation::ck_ops::space_restore(&realm_id, &actor_id, &space_container_id)
+            crate::operation::ak_ops::space_restore(&realm_id, &actor_id, &space_container_id)
         }
         SpaceContainerLifecycleState::Tombstoned => {
             board_status.set("lifecycle update failed: tombstone is not dispatchable".to_owned());
@@ -688,16 +688,16 @@ pub(super) fn dispatch_strand_lifecycle(
     actor_id: String,
     strand_id: String,
     target: StrandLifecycleState,
-    mut state_store: Signal<LocalStateStore>,
+    mut state_store: SyncSignal<LocalStateStore>,
     mut board_status: Signal<String>,
 ) {
     // Only Active <-> Archived are dispatchable; Redaction is server-only.
     let builder = match target {
         StrandLifecycleState::Archived => {
-            crate::operation::ck_ops::strand_archive(&realm_id, &actor_id, &strand_id)
+            crate::operation::ak_ops::strand_archive(&realm_id, &actor_id, &strand_id)
         }
         StrandLifecycleState::Active => {
-            crate::operation::ck_ops::strand_restore(&realm_id, &actor_id, &strand_id)
+            crate::operation::ak_ops::strand_restore(&realm_id, &actor_id, &strand_id)
         }
         StrandLifecycleState::Redacted => {
             board_status.set("lifecycle update failed: redaction is not dispatchable".to_owned());
@@ -778,7 +778,7 @@ pub(super) fn dispatch_board_archive_cascade(
     realm_id: String,
     actor_id: String,
     board_space_id: String,
-    mut state_store: Signal<LocalStateStore>,
+    mut state_store: SyncSignal<LocalStateStore>,
     mut board_status: Signal<String>,
 ) {
     if board_space_id.trim().is_empty() {
@@ -812,7 +812,7 @@ pub(super) fn dispatch_board_archive_cascade(
     // optimistic op is appended.
     let mut events: Vec<arkret_sdk::Event> = Vec::new();
     for strand_id in &active_card_ids {
-        match crate::operation::ck_ops::strand_archive(&realm_id, &actor_id, strand_id)
+        match crate::operation::ak_ops::strand_archive(&realm_id, &actor_id, strand_id)
             .and_then(|builder| builder.build_sdk_event("inkson"))
         {
             Ok(event) => events.push(event),
@@ -826,7 +826,7 @@ pub(super) fn dispatch_board_archive_cascade(
         .iter()
         .chain(std::iter::once(&board_space_id))
     {
-        match crate::operation::ck_ops::realm_archive(&realm_id, &actor_id, list_id)
+        match crate::operation::ak_ops::realm_archive(&realm_id, &actor_id, list_id)
             .and_then(|builder| builder.build_sdk_event("inkson"))
         {
             Ok(event) => events.push(event),
@@ -930,7 +930,7 @@ pub(super) fn submit_strand_position_cas_move(
     kind: &'static str,
     expected: StrandPositionExpectation,
     effect: StrandPositionEffect,
-    state_store: Signal<LocalStateStore>,
+    state_store: SyncSignal<LocalStateStore>,
     write_records: Signal<Vec<BoardWriteRecord>>,
     board_status: Signal<String>,
 ) {
@@ -970,7 +970,7 @@ pub(super) fn submit_strand_position_cas_move_with_attempt(
     expected: StrandPositionExpectation,
     effect: StrandPositionEffect,
     attempt: u8,
-    mut state_store: Signal<LocalStateStore>,
+    mut state_store: SyncSignal<LocalStateStore>,
     mut write_records: Signal<Vec<BoardWriteRecord>>,
     mut board_status: Signal<String>,
 ) {
@@ -998,7 +998,7 @@ pub(super) fn submit_strand_position_cas_move_with_attempt(
         }
         StrandPositionEffect::Remove => serde_json::Value::Null,
     };
-    let envelope = match crate::operation::ck_ops::strand_position_cas_update(
+    let envelope = match crate::operation::ak_ops::strand_position_cas_update(
         &realm_id,
         &actor_id,
         kind,
@@ -1235,7 +1235,7 @@ pub(super) fn rebase_strand_position_after_conflict(
     kind: String,
     effect: StrandPositionEffect,
     attempt: u8,
-    state_store: Signal<LocalStateStore>,
+    state_store: SyncSignal<LocalStateStore>,
     write_records: Signal<Vec<BoardWriteRecord>>,
     mut board_status: Signal<String>,
 ) {
@@ -1328,7 +1328,7 @@ pub(super) fn locate_strand_position_in_projection(
 /// This is NOT a replay yet: event submit is the only write surface now, and
 /// a failed write needs the UI to reconstruct the equivalent
 /// `ak.strand.update` / `ak.component.strand.position.v1` envelope via
-/// `ck_ops::strand_position_*` rather than replay stale bytes. That
+/// `ak_ops::strand_position_*` rather than replay stale bytes. That
 /// reconstruction is tracked by **YOU-07-002 (kanban write replay)**; until it
 /// lands, the matching toolbar control is labelled "Quarantine for Review"
 /// (not "Replay") so the UI never promises a replay it can't perform.

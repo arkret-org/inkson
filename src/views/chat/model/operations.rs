@@ -172,7 +172,7 @@ pub(crate) fn chat_message_revise_operation(
     // hand-rolled `json!` body: it validates ids at build time and addresses a
     // `ak:message:` target via the payload's `message_id` field (falling back to
     // `target_ref` for event/local refs), matching the schema's anyOf.
-    crate::operation::ck_ops::message_revise_content(
+    crate::operation::ak_ops::message_revise_content(
         realm_id,
         actor,
         event_id,
@@ -275,7 +275,7 @@ pub(crate) fn chat_reaction_add_operation_encrypted(
 /// dropped (returns `None`) rather than leaking the emoji in plaintext.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn build_chat_reaction_add_operation(
-    mut state_store: Signal<LocalStateStore>,
+    mut state_store: SyncSignal<LocalStateStore>,
     realm_id: &str,
     actor: &str,
     device_id: &str,
@@ -457,7 +457,7 @@ pub(crate) fn chat_send_error_message(error: &anyhow::Error) -> String {
 }
 
 pub(crate) async fn submit_chat_operation_with_plaintext_retry(
-    api: &CokretApi,
+    api: &ArkretApi,
     realm_id: &str,
     actor_id: &str,
     plaintext_visible_services: &[String],

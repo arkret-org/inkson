@@ -85,10 +85,10 @@
 }
 .card-detail-edit-status {
   padding: 8px 10px;
-  border: 1px solid color-mix(in srgb, var(--warning, #f59e0b) 42%, var(--border, var(--ck-line)));
+  border: 1px solid color-mix(in srgb, var(--warning, #f59e0b) 42%, var(--border, var(--ak-line)));
   border-radius: 8px;
   background: color-mix(in srgb, var(--warning-soft, #fff8e5) 28%, transparent);
-  color: var(--text, var(--ck-ink));
+  color: var(--text, var(--ak-ink));
   font-size: 12px;
   line-height: 1.45;
   overflow-wrap: anywhere;
@@ -131,7 +131,7 @@
   }
   .card-detail-sidebar {
     border-left: 0;
-    border-top: 1px solid var(--border, var(--ck-line));
+    border-top: 1px solid var(--border, var(--ak-line));
   }
 }
 .chat-message-row {
@@ -154,12 +154,12 @@
 }
 .tab {
   border-radius: 999px;
-  background: var(--ck-surface);
-  color: var(--ck-muted);
+  background: var(--ak-surface);
+  color: var(--ak-muted);
 }
 .tab.active {
-  border-color: var(--ck-brand);
-  background: var(--ck-brand);
+  border-color: var(--ak-brand);
+  background: var(--ak-brand);
   color: #fff;
 }
 .settings-shell {
@@ -248,15 +248,15 @@
   width: 100%;
   box-sizing: border-box;
   padding: 7px 10px;
-  border: 1px solid var(--border, var(--ck-border));
+  border: 1px solid var(--border, var(--ak-border));
   border-radius: 8px;
-  background: var(--surface-2, var(--ck-surface));
-  color: var(--text, var(--ck-ink));
+  background: var(--surface-2, var(--ak-surface));
+  color: var(--text, var(--ak-ink));
   font-size: 13px;
 }
 .settings-nav-search-input:focus {
   outline: none;
-  border-color: var(--accent, var(--ck-accent));
+  border-color: var(--accent, var(--ak-accent));
 }
 .settings-nav-empty {
   padding: 8px 4px;
@@ -264,7 +264,7 @@
 }
 .settings-nav-group-label {
   margin: 0 0 2px 4px;
-  color: var(--text-3, var(--ck-muted));
+  color: var(--text-3, var(--ak-muted));
   font-size: 10px;
   font-weight: 800;
   letter-spacing: 0.08em;
@@ -272,7 +272,7 @@
 }
 .settings-content-title {
   margin: 0;
-  color: var(--text, var(--ck-ink));
+  color: var(--text, var(--ak-ink));
   line-height: 1.08;
   font-size: 26px;
 }
@@ -310,7 +310,7 @@
   transition: border-color 140ms ease, background-color 140ms ease, padding-left 140ms ease;
 }
 .settings-nav-item strong {
-  color: var(--text, var(--ck-ink));
+  color: var(--text, var(--ak-ink));
   font-size: 13px;
 }
 .settings-nav-item:hover {
@@ -328,7 +328,7 @@
   background:
     radial-gradient(circle at 100% 0, rgba(165, 107, 19, 0.12), transparent 26%),
     radial-gradient(circle at 0 0, rgba(43, 107, 79, 0.14), transparent 34%),
-    var(--surface, var(--ck-surface));
+    var(--surface, var(--ak-surface));
 }
 .settings-card-grid {
   display: grid;
@@ -450,7 +450,7 @@
   gap: 10px;
   padding-top: 14px;
   margin-top: 4px;
-  border-top: 1px solid var(--ck-line);
+  border-top: 1px solid var(--ak-line);
 }
 .new-space-hero {
   padding: 18px;
@@ -527,7 +527,7 @@
   align-content: start;
 }
 .setup-field label {
-  color: var(--text, var(--ck-ink));
+  color: var(--text, var(--ak-ink));
   font-size: 13px;
   font-weight: 700;
 }
@@ -550,7 +550,7 @@
   gap: 12px;
 }
 .setup-summary-row strong {
-  color: var(--text, var(--ck-ink));
+  color: var(--text, var(--ak-ink));
   font-size: 13px;
 }
 .setup-summary-row span {

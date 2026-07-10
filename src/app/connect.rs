@@ -59,18 +59,15 @@ async fn bootstrap_session_refresh() -> crate::session::CurrentSessionRefresh {
 }
 
 async fn client_core_events_describe(
-    authed: &crate::api::CokretApi,
-    state_store: Signal<LocalStateStore>,
+    authed: &crate::api::ArkretApi,
+    _state_store: SyncSignal<LocalStateStore>,
 ) -> anyhow::Result<arkret_sdk::ServiceDescribe> {
     let http = authed.sdk_http_client()?;
-    let local_state = state_store.read().clone();
-    let secure_store = crate::secure_key_store::default_secure_key_store("inkson");
-    let client_core = crate::client_core::build_client_core(http, local_state, secure_store);
-    client_core.http.events_describe().await.map_err(Into::into)
+    http.events_describe().await.map_err(Into::into)
 }
 
 async fn client_core_account_subscribe_snapshot(
-    authed: &crate::api::CokretApi,
+    authed: &crate::api::ArkretApi,
 ) -> anyhow::Result<crate::models::ClientSyncOutcome> {
     let http = authed.sdk_http_client()?;
     crate::client_core::account_subscribe_snapshot(&http, None).await
@@ -94,7 +91,7 @@ pub(super) async fn refresh_session_credential_for_active_context(
     base_url: Signal<String>,
     account_did: Signal<String>,
     device_id: Signal<String>,
-    mut state_store: Signal<LocalStateStore>,
+    mut state_store: SyncSignal<LocalStateStore>,
     mut token: Signal<String>,
     config_store: Signal<LocalConfigStore>,
     session_generation: Signal<u64>,
@@ -231,7 +228,7 @@ pub(super) struct ConnectContext {
     pub(super) frontier_state: Signal<String>,
     pub(super) crypto_state: Signal<String>,
     pub(super) config_store: Signal<LocalConfigStore>,
-    pub(super) state_store: Signal<LocalStateStore>,
+    pub(super) state_store: SyncSignal<LocalStateStore>,
     pub(super) network_state: Signal<String>,
     pub(super) last_error: Signal<Option<String>>,
     pub(super) server_description: Signal<Option<ServerDescription>>,
@@ -277,9 +274,9 @@ pub(super) fn redirect_to_login(navigator: Navigator) {
 }
 
 fn attach_current_session_material(
-    api: CokretApi,
+    api: ArkretApi,
     store: &mut crate::local_state::LocalStateStore,
-) -> CokretApi {
+) -> ArkretApi {
     match crate::account_auth::grant_dpop::load_or_recover_device_key(store) {
         Ok(Some(handle)) => api.with_dpop_device(handle),
         Ok(None) => {
@@ -302,9 +299,9 @@ fn attach_current_session_material(
 
 fn current_base_api(
     base: &str,
-    mut state_store: Signal<LocalStateStore>,
-) -> anyhow::Result<CokretApi> {
-    let api = CokretApi::new(base)?;
+    mut state_store: SyncSignal<LocalStateStore>,
+) -> anyhow::Result<ArkretApi> {
+    let api = ArkretApi::new(base)?;
     let mut store = state_store.write();
     Ok(attach_current_session_material(api, &mut store))
 }
@@ -312,9 +309,9 @@ fn current_base_api(
 fn current_authed_api(
     base: &str,
     session_credential: &str,
-    mut state_store: Signal<LocalStateStore>,
-) -> anyhow::Result<CokretApi> {
-    let api = CokretApi::new(base)?.with_bearer(session_credential.to_owned());
+    mut state_store: SyncSignal<LocalStateStore>,
+) -> anyhow::Result<ArkretApi> {
+    let api = ArkretApi::new(base)?.with_bearer(session_credential.to_owned());
     let mut store = state_store.write();
     Ok(attach_current_session_material(api, &mut store))
 }
@@ -324,23 +321,24 @@ fn current_authed_api(
 /// grant-binding (DPoP) key so each request carries a per-request `DPoP` proof
 /// (api-conventions.md §3.3).
 /// Used by standalone (non-`connect`) self-path call sites that build their own
-/// `CokretApi`. Best-effort on the DPoP key: if it cannot be loaded the
-/// credential is still attached for compatibility inbound paths.
+/// `ArkretApi`. Best-effort on the DPoP key: if it cannot be loaded the
+/// credential is still attached while the request remains server-authenticated
+/// by the active session grant.
 pub(super) fn self_authed_api(
     base: &str,
     session_credential: impl Into<String>,
-) -> anyhow::Result<CokretApi> {
-    let api = CokretApi::new(base)?.with_bearer(session_credential);
+) -> anyhow::Result<ArkretApi> {
+    let api = ArkretApi::new(base)?.with_bearer(session_credential);
     let mut store = crate::local_state::LocalStateStore::default();
     Ok(attach_current_session_material(api, &mut store))
 }
 
 pub(super) fn adopt_live_token_for_api(
     base: &str,
-    state_store: Signal<LocalStateStore>,
+    state_store: SyncSignal<LocalStateStore>,
     live_token: Signal<String>,
     session_credential: &mut String,
-    authed: &mut CokretApi,
+    authed: &mut ArkretApi,
 ) {
     let latest = live_token();
     if !latest.trim().is_empty() && latest != *session_credential {
@@ -364,8 +362,8 @@ async fn enroll_current_session_device(
     base: &str,
     actor: &str,
     device: &str,
-    principal_api: &CokretApi,
-    mut state_store: Signal<crate::local_state::LocalStateStore>,
+    principal_api: &ArkretApi,
+    mut state_store: SyncSignal<crate::local_state::LocalStateStore>,
     fallback_grant_jwt: &str,
 ) -> anyhow::Result<()> {
     let actor = actor.trim();
@@ -482,8 +480,8 @@ async fn probe_device_authorization_with_auto_enroll(
     base: &str,
     actor: &str,
     device: &str,
-    principal_api: &CokretApi,
-    state_store: Signal<crate::local_state::LocalStateStore>,
+    principal_api: &ArkretApi,
+    state_store: SyncSignal<crate::local_state::LocalStateStore>,
     fallback_grant_jwt: &str,
 ) -> anyhow::Result<(bool, bool)> {
     // The account-viewer helpers read `devices[]` leniently via `Value`
@@ -855,7 +853,7 @@ pub(super) fn connect(base: String, actor: String, device: String, ctx: ConnectC
                         realm_tree_nodes.set(Vec::new());
                         projection_events.set(Vec::new());
                         selected_realm_id.set(String::new());
-                        sync_cursor.set("-".to_owned());
+                        sync_cursor.set(String::new());
                         device_queue.set(0);
                         // Retire the previous-account SyncEngine so its
                         // in-flight long-poll doesn't write back into

@@ -338,7 +338,7 @@ pub(crate) fn build_creator_mls_genesis_event_for_effective_scope(
         &governance_binding,
     )
     .map_err(|err| err.user_message())?;
-    let mut event = crate::operation::ck_ops::mls_genesis_with_governance(
+    let mut event = crate::operation::ak_ops::mls_genesis_with_governance(
         realm_id,
         actor_id,
         &summary.group_id,
@@ -506,7 +506,7 @@ fn mls_commit_event_from_store_for_effective_scope_with_membership_frontier(
     )
     .map_err(|err| format!("MLS commit payload failed: {err}"))?;
     let mut event =
-        crate::operation::ck_ops::mls_commit_with_governance(realm_id, actor_id, &payload)
+        crate::operation::ak_ops::mls_commit_with_governance(realm_id, actor_id, &payload)
             .map_err(|err| format!("MLS commit payload failed: {err}"))?
             .build_sdk_event("inkson")
             .map_err(|err| format!("MLS commit SDK Event conversion failed: {err}"))?;

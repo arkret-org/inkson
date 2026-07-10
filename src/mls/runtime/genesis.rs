@@ -72,7 +72,7 @@ pub fn ensure_creator_mls_snapshot_for_effective_scope(
         .map_err(|err| MlsRuntimeError::Identity(format!("{err:?}")))?;
     let device_id_typed = arkret_sdk::DeviceId::new(device_id.to_owned())
         .map_err(|err| MlsRuntimeError::Identity(format!("{err:?}")))?;
-    let identity = arkret_sdk::CokretMlsIdentity::new_basic(principal_did, device_id_typed)
+    let identity = arkret_sdk::ArkretMlsIdentity::new_basic(principal_did, device_id_typed)
         .map_err(|err| MlsRuntimeError::Identity(format!("{err:?}")))?;
     let group_seed = circle.unwrap_or(realm);
     let group = identity

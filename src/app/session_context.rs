@@ -17,7 +17,7 @@ use crate::local_state::LocalStateStore;
 #[derive(Clone, Copy)]
 pub struct SessionContext {
     /// The app-wide local state store handle (persisted client projection).
-    pub state_store: Signal<LocalStateStore>,
+    pub state_store: SyncSignal<LocalStateStore>,
     /// The active server base URL. A `Signal<String>` so components that read it
     /// re-render when the user switches servers, matching the old prop chain
     /// where the parent re-passed the value on change.

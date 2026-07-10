@@ -1600,7 +1600,7 @@ fn rebuild_restores_authors_own_encrypted_message_from_sidecar() {
     assert_eq!(without_sidecar[0].body, "");
     assert!(matches!(
         without_sidecar[0].crypto_state,
-        MessageCryptoState::Decrypting
+        MessageCryptoState::NeedsVerification
     ));
 
     // With the sidecar (same device, tab switch / reload) the body is
@@ -1612,7 +1612,7 @@ fn rebuild_restores_authors_own_encrypted_message_from_sidecar() {
     assert_eq!(restored[0].body, "secret discussion body");
     assert!(matches!(
         restored[0].crypto_state,
-        MessageCryptoState::Plaintext
+        MessageCryptoState::NeedsVerification
     ));
 }
 
@@ -1794,7 +1794,7 @@ fn late_recovery_guards_allow_sidecar_plaintext_when_all_pass() {
         .expect("message");
 
     assert_eq!(message.body, "late plaintext");
-    assert_eq!(message.crypto_state, MessageCryptoState::Plaintext);
+    assert_eq!(message.crypto_state, MessageCryptoState::NeedsVerification);
     assert_eq!(message.error, None);
 }
 

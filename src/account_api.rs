@@ -1,8 +1,8 @@
-//! Free-function account/self READ + simple-write transport (E2 CokretApi
+//! Free-function account/self READ + simple-write transport (E2 ArkretApi
 //! strangler).
 //!
 //! These are the pure-passthrough account/self operations that used to live as
-//! thin inherent methods on [`crate::api::CokretApi`]. They build a typed SDK
+//! thin inherent methods on [`crate::api::ArkretApi`]. They build a typed SDK
 //! request body (and do input validation / small projections) and call the
 //! shared SDK `http-client::Client` directly. Call sites reach them through
 //! [`crate::authed_api::with_authed_sdk_client`], which keeps the
@@ -16,7 +16,7 @@
 //! [`crate::authed_api::with_event_submitter`]; the account-data actor-scope
 //! lookup they need runs through `submitter.http()`.
 //!
-//! Only the `request_contact` family remains an inherent `CokretApi` method,
+//! Only the `request_contact` family remains an inherent `ArkretApi` method,
 //! because it resolves contact addressing via the struct-cached
 //! `describe_cached` (see `contact_request_addressing`).
 
@@ -472,7 +472,7 @@ async fn account_data_actor_scope(
     let account = account_me(http).await?;
     let principal = arkret_sdk::Did::new(account.did.clone())
         .map_err(|err| anyhow::anyhow!("invalid account DID `{}`: {err}", account.did))?;
-    let realm_id = arkret_sdk::auth::principal_control_realm_id(&principal);
+    let realm_id = arkret_sdk::principal_control_realm_id(&principal);
     Ok((account.did, realm_id.to_string()))
 }
 

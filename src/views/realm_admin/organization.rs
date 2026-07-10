@@ -8,7 +8,7 @@
 //! Read side: the verified relationships and declared hints are read from the
 //! spec-canonical projection `ak.self.realm_organization.query.list`
 //! (`GET /_arkret/self/realms/{realm_id}/organizations`) via
-//! [`crate::api::CokretApi::list_realm_organizations`]. The server only returns
+//! [`crate::api::ArkretApi::list_realm_organizations`]. The server only returns
 //! `verified_active` / `revoked_or_expired` rows plus
 //! `declared_organization_hints`.
 //!
@@ -832,7 +832,7 @@ fn OrganizationBindPanel(token: Signal<String>, realm_id: String, account_did: S
                                 // canonical signing bytes — and the proof — stay
                                 // valid on the wire.
                                 let authorization =
-                                    crate::operation::ck_ops::RealmOrganizationAuthorizationInput {
+                                    crate::operation::ak_ops::RealmOrganizationAuthorizationInput {
                                         issuer: org_did.clone(),
                                         issuer_role:
                                             arkret_sdk::models::RealmOrganizationIssuerRole::OrganizationDid,
@@ -843,7 +843,7 @@ fn OrganizationBindPanel(token: Signal<String>, realm_id: String, account_did: S
                                         proof: signed.authorization.proof.clone(),
                                     };
                                 let builder =
-                                    match crate::operation::ck_ops::realm_organization_statement(
+                                    match crate::operation::ak_ops::realm_organization_statement(
                                         &realm_id,
                                         &actor,
                                         &statement_id,

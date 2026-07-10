@@ -812,8 +812,8 @@ mod tests {
         // per-component cells / typed lifecycle events.
         assert!(!kinds.contains(&"ak.space.lifecycle.set"));
         assert!(!kinds.contains(&"ak.space.policy.set"));
-        // Realm/Space split: security-boundary events live in ck.realm.*;
-        // container lifecycle events live in ck.space.*.
+        // Realm/Space split: security-boundary events live in ak.realm.*;
+        // container lifecycle events live in ak.space.*.
         assert!(kinds.contains(&"ak.realm.create"));
         assert!(kinds.contains(&"ak.realm.update"));
         assert!(kinds.contains(&"ak.space.archive"));
@@ -829,7 +829,7 @@ mod tests {
         for kind in known_event_kinds() {
             assert!(
                 kind.starts_with("ak."),
-                "event kind `{kind}` must live in the ck.* namespace"
+                "event kind `{kind}` must live in the ak.* namespace"
             );
             assert!(
                 !kind.contains(' '),
@@ -856,7 +856,7 @@ mod tests {
 
     /// Lock-down: structural shape of each event kind.
     ///
-    /// All canonical event kinds follow the segment pattern `ck.<group>.<verb>[.<sub>]…`
+    /// All canonical event kinds follow the segment pattern `ak.<group>.<verb>[.<sub>]…`
     /// with lowercase ASCII + underscore; payloads in identifiers are forbidden.
     #[test]
     fn known_event_kinds_are_well_formed() {

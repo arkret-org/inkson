@@ -1,7 +1,7 @@
-//! Free-function media/WebRTC READ transport (E2 CokretApi strangler).
+//! Free-function media/WebRTC READ transport (E2 ArkretApi strangler).
 //!
 //! These are the pure-passthrough media read operations that used to live as
-//! thin inherent methods on [`crate::api::CokretApi`]. They call the shared SDK
+//! thin inherent methods on [`crate::api::ArkretApi`]. They call the shared SDK
 //! `http-client::Client` directly. Call sites reach them through
 //! [`crate::authed_api::with_authed_sdk_client`] (or, for non-`with_authed_api`
 //! receivers, `crate::media_api::<name>(&recv.sdk_http_client()?, …)`), which

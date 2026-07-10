@@ -491,7 +491,7 @@ pub(crate) async fn ensure_local_mls_key_package_published(
         .map_err(|error| format!("MLS principal_id: {error:?}"))?;
     let device = arkret_sdk::DeviceId::new(device_id.trim().to_owned())
         .map_err(|error| format!("MLS device_id: {error:?}"))?;
-    let identity = arkret_sdk::CokretMlsIdentity::new_basic(principal, device)
+    let identity = arkret_sdk::ArkretMlsIdentity::new_basic(principal, device)
         .map_err(|error| format!("create MLS identity: {error}"))?;
     // Publish a reusable last-resort KeyPackage. Single-use KeyPackages are
     // consumed on claim, so once an admission claims it the member has no
@@ -607,7 +607,7 @@ pub(crate) async fn bootstrap_mls_welcome_for_realm(
     actor_id: String,
     device_id: String,
     realm_id: String,
-    mut state_store: Signal<LocalStateStore>,
+    mut state_store: SyncSignal<LocalStateStore>,
     needs_mls_backup: Signal<bool>,
 ) -> Result<MlsWelcomeBootstrapOutcome, String> {
     if session_credential.trim().is_empty() || realm_id.trim().is_empty() {

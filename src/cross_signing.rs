@@ -47,7 +47,7 @@ pub enum CrossSigningSetupStep {
     /// Generate the self_signing_key + user_signing_key keypairs locally.
     GenerateSelfAndUserSigningKeys,
     /// Use the PSK to issue binding signatures over SSK / USK (spec §5.1
-    /// `binding`). canonical input = `ck-cross-signing-bind-v1\n` +
+    /// `binding`). canonical input = `ak-cross-signing-bind-v1\n` +
     /// canonical_json(...).
     SignSubordinateBindings,
     /// Write the SSK / USK private keys into an encrypted
@@ -280,7 +280,7 @@ pub struct CrossSigningExecutor {
     plan: CrossSigningSetupPlan,
     principal_did: Did,
     /// Round 4 (spec a77b995) — REQUIRED deployment-scope trust domain
-    /// mixed into the canonical `ck-cross-signing-bind-v1` signing input
+    /// mixed into the canonical `ak-cross-signing-bind-v1` signing input
     /// so a publish from deployment A cannot be replayed into deployment
     /// B. Threaded from the caller's `/server/describe` response.
     trust_domain: TypedTrustDomainId,

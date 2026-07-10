@@ -14,7 +14,7 @@ use super::model::{
     joined_realm_ids, merge_invite_notifications, notification_id_for_dedupe,
     raw_notifications_from_sources, read_cursor_targets, realm_title_hints_from_values,
 };
-use crate::api::CokretApi;
+use crate::api::ArkretApi;
 use crate::api_error::is_auth_expired_error;
 use crate::local_state::LocalStateStore;
 use crate::notification_rules::{dnd_settings_from_account_data, push_rules_from_account_data};
@@ -30,7 +30,7 @@ fn invites_to_values(invites: Vec<arkret_sdk::models::Invite>) -> Vec<Value> {
         .collect()
 }
 
-pub(crate) async fn optional_invite_notifications(api: &CokretApi) -> anyhow::Result<Vec<Value>> {
+pub(crate) async fn optional_invite_notifications(api: &ArkretApi) -> anyhow::Result<Vec<Value>> {
     match async { crate::account_api::invites(&api.sdk_http_client()?).await }.await {
         Ok(response) => Ok(invites_to_values(response.invites)),
         Err(error) if is_auth_expired_error(&error) => {
@@ -69,7 +69,7 @@ pub(crate) async fn optional_invite_notifications(api: &CokretApi) -> anyhow::Re
 pub(crate) fn refresh_notifications(
     base_url: String,
     session_credential: Signal<String>,
-    mut state_store: Signal<LocalStateStore>,
+    mut state_store: SyncSignal<LocalStateStore>,
     mut notifications: Signal<Vec<UiNotification>>,
     mut status_msg: Signal<String>,
 ) {
@@ -127,7 +127,7 @@ pub(crate) fn mark_all_notifications_read(
     session_credential: String,
     actor_id: String,
     device_id: String,
-    mut state_store: Signal<LocalStateStore>,
+    mut state_store: SyncSignal<LocalStateStore>,
     mut notifications: Signal<Vec<UiNotification>>,
     mut status_msg: Signal<String>,
 ) {
@@ -204,7 +204,7 @@ pub(crate) fn mark_notification_read_state(
     device_id: String,
     notification: UiNotification,
     read: bool,
-    mut state_store: Signal<LocalStateStore>,
+    mut state_store: SyncSignal<LocalStateStore>,
     mut notifications: Signal<Vec<UiNotification>>,
     mut status_msg: Signal<String>,
 ) {
@@ -268,7 +268,7 @@ pub(crate) fn mark_notification_read_state(
 pub(crate) fn run_notification_action(
     base_url: String,
     session_credential: Signal<String>,
-    state_store: Signal<LocalStateStore>,
+    state_store: SyncSignal<LocalStateStore>,
     notifications: Signal<Vec<UiNotification>>,
     status_msg: Signal<String>,
     notification_id: String,
@@ -297,7 +297,7 @@ pub(crate) fn run_notification_action(
 fn accept_invite_notification(
     base_url: String,
     session_credential: Signal<String>,
-    mut state_store: Signal<LocalStateStore>,
+    mut state_store: SyncSignal<LocalStateStore>,
     mut notifications: Signal<Vec<UiNotification>>,
     mut status_msg: Signal<String>,
     notification_id: String,
@@ -413,7 +413,7 @@ fn accept_invite_notification(
 }
 
 fn hide_accepted_invite_notification(
-    state_store: &mut Signal<LocalStateStore>,
+    state_store: &mut SyncSignal<LocalStateStore>,
     notifications: &mut Signal<Vec<UiNotification>>,
     notification_id: &str,
     accepted_realm: &str,

@@ -106,7 +106,7 @@ pub(super) fn card_assignment_mutations(
     // assignment events; `assignee_id` is the person being assigned/unassigned
     // and only appears as the relation target.
     for assignee_id in selected_actor_ids.difference(&current_actor_ids) {
-        let operation = crate::operation::ck_ops::relation_create(
+        let operation = crate::operation::ak_ops::relation_create(
             realm_id,
             actor_id,
             "assigned_to",
@@ -139,7 +139,7 @@ pub(super) fn card_assignment_mutations(
         };
         for relation_id in relation_ids {
             let operation =
-                crate::operation::ck_ops::relation_tombstone(realm_id, actor_id, relation_id)
+                crate::operation::ak_ops::relation_tombstone(realm_id, actor_id, relation_id)
                     .build_sdk_event("inkson")
                     .map_err(|err| format!("cannot build assigned_to tombstone event: {err}"))?;
             mutations.push(CardAssignmentMutation::Tombstone {
@@ -204,7 +204,7 @@ pub(super) fn dispatch_card_assignees_update(
     selected_actor_ids: BTreeSet<String>,
     assignee_labels: BTreeMap<String, String>,
     mut selected_card: Signal<Option<KanbanCard>>,
-    mut state_store: Signal<LocalStateStore>,
+    mut state_store: SyncSignal<LocalStateStore>,
     mut board_status: Signal<String>,
     mut assignee_edit_status: Signal<String>,
 ) -> bool {
@@ -247,7 +247,7 @@ pub(super) fn dispatch_card_assignees_update(
     let optimistic_relations =
         assignment_relations_after_mutations(&current, &selected_actor_ids, &mutations);
     // Optimistic detail-panel feedback: apply the assignment to the open card.
-    // The board re-renders from the appended `ck.relation.*` ops below —
+    // The board re-renders from the appended `ak.relation.*` ops below —
     // `columns` is a `use_memo` over `raw_operations`, folded by
     // `overlay_local_card_assignment_records`, so there is no direct signal
     // write.

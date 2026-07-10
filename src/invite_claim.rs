@@ -13,7 +13,7 @@
 //! consistently without re-discovering the labels.
 //!
 //! This module only owns the typed builders + the rendering helpers;
-//! the network submit lives in [`crate::api::CokretApi`] and the
+//! the network submit lives in [`crate::api::ArkretApi`] and the
 //! actual signing key plumbing lives in [`crate::event_signer`].
 
 use base64::Engine as _;
@@ -117,7 +117,7 @@ impl InviteTerminalState {
 ///
 /// Returns the raw JSON body for the caller to wrap with
 /// [`crate::operation::OperationBuilder::build_sdk_event`] and submit through
-/// [`crate::api::CokretApi::submit_sdk_event`].
+/// [`crate::api::ArkretApi::submit_sdk_event`].
 pub fn build_invite_claim_body(
     invite_id: &str,
     realm_id: &str,

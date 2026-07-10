@@ -11,7 +11,7 @@ use crate::account_auth::{
     oidc_request_canonical_digest, open_oidc_authorize_url, persist_oidc_scaffold,
     restore_oidc_scaffold,
 };
-use crate::api::CokretApi;
+use crate::api::ArkretApi;
 use crate::components::UiIcon;
 use crate::config::{
     LocalConfigStore, normalize_device_id, normalize_server_url, principal_server_options_for,
@@ -479,7 +479,7 @@ pub fn LoginPanel(
 }
 
 fn persist_completed_login_state(
-    mut state_store: Signal<LocalStateStore>,
+    mut state_store: SyncSignal<LocalStateStore>,
     session_grant: Option<PersistedSessionGrant>,
 ) {
     let mut store = state_store.write();
@@ -568,7 +568,7 @@ pub(crate) async fn start_oidc_strand(
 ) -> Result<(), String> {
     // T1.Y1 — discover the Account Authority + auth methods from the Principal
     // Server's root `/_arkret/describe` (service-surface §2.5.1).
-    let principal = CokretApi::new(principal_server_url)
+    let principal = ArkretApi::new(principal_server_url)
         .map_err(|error| format!("Invalid principal server URL: {error}"))?;
     let description = principal
         .describe()
@@ -658,7 +658,7 @@ fn format_sign_in_discovery_error(principal_server_url: &str, error: &anyhow::Er
 
 async fn finish_oidc_callback(
     device_fallback: String,
-    mut state_store: Signal<LocalStateStore>,
+    mut state_store: SyncSignal<LocalStateStore>,
 ) -> Result<CompletedLogin, String> {
     let callback_url = capture_current_browser_callback_url()
         .map_err(|error| format!("Could not read callback URL: {error}"))?;
@@ -787,7 +787,7 @@ async fn finish_oidc_callback(
     )
     .map_err(|error| format!("DPoP device key record failed: {error}"))?;
     let principal_target = principal_server_url;
-    let principal = CokretApi::new(&principal_target)
+    let principal = ArkretApi::new(&principal_target)
         .map_err(|error| format!("Invalid principal server URL: {error}"))?;
     let actor = session_grant.principal_id.as_str().to_owned();
     if actor.trim().is_empty() {

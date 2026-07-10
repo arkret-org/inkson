@@ -128,7 +128,7 @@ pub(super) struct ServerSelectionContext {
     pub(super) frontier_state: Signal<String>,
     pub(super) crypto_state: Signal<String>,
     pub(super) config_store: Signal<LocalConfigStore>,
-    pub(super) state_store: Signal<LocalStateStore>,
+    pub(super) state_store: SyncSignal<LocalStateStore>,
     pub(super) network_state: Signal<String>,
     pub(super) last_error: Signal<Option<String>>,
     pub(super) server_description: Signal<Option<ServerDescription>>,
@@ -196,7 +196,7 @@ pub(super) fn select_server(server_url: String, ctx: ServerSelectionContext) {
         token()
     };
     base_url.set(server_url.clone());
-    sync_cursor.set("-".to_owned());
+    sync_cursor.set(String::new());
     selected_realm_id.set(String::new());
     realm_tree_nodes.set(Vec::new());
     projection_events.set(Vec::new());

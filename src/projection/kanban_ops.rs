@@ -36,6 +36,40 @@ pub(crate) fn kanban_operations_from_events(events: &[Value]) -> Vec<RawOperatio
         .collect()
 }
 
+pub(crate) fn kanban_operations_from_client_events(
+    events: &[garth::ClientEvent],
+) -> Vec<RawOperationRecord> {
+    events
+        .iter()
+        .filter_map(|event| match event {
+            garth::ClientEvent::Message(message) => kanban_operation_from_typed(&message.event),
+            garth::ClientEvent::Event(event) => kanban_operation_from_typed(event),
+            _ => None,
+        })
+        .collect()
+}
+
+fn kanban_operation_from_typed(event: &arkret_sdk::Event) -> Option<RawOperationRecord> {
+    let kind = event.kind.as_str();
+    if !KANBAN_EVENT_KINDS.contains(&kind) {
+        return None;
+    }
+    let operation_id = event.event_id.as_str().to_owned();
+    Some(RawOperationRecord {
+        operation_id: operation_id.clone(),
+        realm_id: Some(event.realm_id.as_str().to_owned()),
+        received_at: event.created_at,
+        payload: json!({
+            "kind": kind,
+            "operation_id": operation_id,
+            "actor_id": event.actor_id.as_str(),
+            "created_at": event.created_at.to_rfc3339(),
+            "write_state": "synced",
+            "body": event.payload,
+        }),
+    })
+}
+
 fn kanban_operation_from_event(event: &Value) -> Option<RawOperationRecord> {
     let kind = json_path_string(Some(event), &["event_kind"])
         .or_else(|| json_path_string(Some(event), &["kind"]))?;
@@ -86,4 +120,38 @@ pub(crate) fn raw_operation_from_event(
             "body": body,
         }),
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use serde_json::json;
+
+    use super::*;
+
+    #[test]
+    fn client_event_path_projects_without_reparsing_the_envelope() {
+        let mut event = arkret_sdk::Event::new(
+            arkret_sdk::events::kinds::STRAND_UPDATE,
+            arkret_sdk::RealmId::new("ak:realm:01904100-0000-7000-8000-000000000001").unwrap(),
+            arkret_sdk::Did::new("did:web:alice.example").unwrap(),
+            1,
+            arkret_sdk::Hlc::new("01970e589d21-0004-a13f9c2e").unwrap(),
+            json!({
+                "strand_id": "ak:strand:01904100-0000-7000-8000-000000000002",
+                "patch": {"title": {"$op": "set", "value": "Updated"}}
+            }),
+        )
+        .unwrap();
+        event.event_id =
+            arkret_sdk::EventId::new("ak:event:01904100-0000-7000-8000-000000000101").unwrap();
+
+        let records = kanban_operations_from_client_events(&[garth::ClientEvent::Event(event)]);
+
+        assert_eq!(records.len(), 1);
+        assert_eq!(records[0].payload["kind"], "ak.strand.update");
+        assert_eq!(
+            records[0].payload["body"]["strand_id"],
+            "ak:strand:01904100-0000-7000-8000-000000000002"
+        );
+    }
 }

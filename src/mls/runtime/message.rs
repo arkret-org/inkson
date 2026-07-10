@@ -90,7 +90,7 @@ pub fn decrypt_application_payload(
     if let Some(plaintext) = state_store.mls_decrypted_plaintext_for(realm_id, digest) {
         return Some(plaintext);
     }
-    // A local snapshot lets us instantiate a `CokretMlsGroup` and try the live
+    // A local snapshot lets us instantiate a `ArkretMlsGroup` and try the live
     // receive ratchet first. But the exporter-aead history-decrypt path does NOT
     // need a group at all — the content key derives purely from the granted
     // `history_secret` — so a never-Welcomed joiner (no snapshot) can still read
@@ -639,7 +639,7 @@ pub fn mls_group_member_principal_ids_for_realm(
 /// Export + re-encrypt the post-decrypt group state as a snapshot envelope,
 /// carrying the epoch clock and bumping the §5.6 observed-message counter.
 fn export_receive_chain_envelope(
-    group: &arkret_sdk::CokretMlsGroup,
+    group: &arkret_sdk::ArkretMlsGroup,
     realm_id: &str,
     secret: &str,
     previous: &crate::mls::persistence::MlsSnapshotEnvelope,
@@ -901,7 +901,7 @@ fn verify_welcome_claim_envelope_signer(welcome_value: &serde_json::Value) -> Re
 /// matches the durable payload forwarded by the server. The Welcome-declared
 /// `mls_group_id`, epochs, `policy_root`, `binding_profile` and
 /// `reducer_profile` build the expected context passed to
-/// `CokretMlsGroup::verify_current_governance_binding`. Any field mismatch or
+/// `ArkretMlsGroup::verify_current_governance_binding`. Any field mismatch or
 /// missing MLS binding extension returns `Err` and rejects the Welcome.
 ///
 /// Returns `Ok(None)` when the reduced Welcome contains no `governance_binding`;
@@ -916,7 +916,7 @@ fn verify_welcome_claim_envelope_signer(welcome_value: &serde_json::Value) -> Re
 /// guarantees "embedded MLS binding equals the server declaration"; inclusion
 /// proof closure waits for the Seal view injection noted below.
 fn verify_welcome_governance_binding(
-    group: &arkret_sdk::CokretMlsGroup,
+    group: &arkret_sdk::ArkretMlsGroup,
     welcome_value: &serde_json::Value,
 ) -> Result<Option<String>, String> {
     let Some(binding) = welcome_value.get("governance_binding") else {
@@ -1049,7 +1049,7 @@ pub fn apply_welcome_messages_with_device_snapshot(
                 key_package_id,
             ) {
                 Ok(Some(serialized_state)) => {
-                    match arkret_sdk::CokretMlsIdentity::restore_from_private_state(
+                    match arkret_sdk::ArkretMlsIdentity::restore_from_private_state(
                         principal_did.clone(),
                         device_id_typed.clone(),
                         &serialized_state,
@@ -1098,7 +1098,7 @@ pub fn apply_welcome_messages_with_device_snapshot(
                 continue;
             }
         };
-        let group = match arkret_sdk::CokretMlsGroup::join_from_welcome(identity, &welcome) {
+        let group = match arkret_sdk::ArkretMlsGroup::join_from_welcome(identity, &welcome) {
             Ok(group) => group,
             Err(err) => {
                 outcome.record_failure(format!("join welcome: {err}"));

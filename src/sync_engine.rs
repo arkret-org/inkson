@@ -10,8 +10,8 @@
 //! * **Cursor lives in `LocalStateStore.sync_cursor`** — the engine reads it on every iteration and
 //!   writes back the new `cursor` after each successful response. Reload of the tab resumes from
 //!   the persisted cursor without losing position.
-//! * **First iteration is initial account sync** when no cursor is stored (or it's the `"-"`
-//!   sentinel). Subsequent iterations resume with `after=<cursor>&catchup=true`.
+//! * **First iteration is initial account sync** when no cursor is stored. Subsequent iterations
+//!   resume with `after=<cursor>&catchup=true`.
 //! * **Server-authoritative reconcile**: on a full sync the response is the truth for top-level
 //!   Realm membership. Nested container Spaces may not appear as top-level `response.realms`
 //!   entries, so locally projected Spaces are retained while their home Realm remains in the
@@ -36,13 +36,14 @@ use std::cell::RefCell;
 use std::collections::BTreeSet;
 use std::time::Duration;
 
-use dioxus::prelude::*;
-use garth::Backoff;
 #[cfg(test)]
-use garth::{ClientEvent, ClientProjector, DecodedInbound, InboundDecoder};
+use arkret_sdk::{DecodedInbound, InboundDecoder};
+use dioxus::prelude::*;
+#[cfg(test)]
+use garth::{ClientEvent, ClientProjector};
 use serde_json::{Value, json};
 
-use crate::api::CokretApi;
+use crate::api::ArkretApi;
 use crate::api_error::{
     is_auth_expired_error, is_invalid_cursor_error, is_stale_frontier_error,
     is_terminal_session_grant_error, rate_limited_retry_after,
@@ -52,7 +53,8 @@ use crate::local_state::{LocalSealView, LocalStateStore, RawOperationRecord};
 use crate::models::{
     ClientSyncOutcome, DeviceMessagesGetOutcome, RealmTreeNode, RealmTreeNodeKind,
 };
-use crate::runtime_helpers::{MAX_RETRY_DELAY, sleep_for};
+use crate::runtime::engine_loop::{EngineLoopDirective, run_engine_loop};
+use crate::runtime_helpers::MAX_RETRY_DELAY;
 use crate::sync_parse::AccountSubscribeSnapshotResult;
 
 /// Connection-status label surfaced to the app shell's status signal.
@@ -127,7 +129,7 @@ const MAX_TO_DEVICE_BACKFILL_PAGES: usize = 32;
 pub struct SyncEngineContext {
     pub base_url: Signal<String>,
     pub token: Signal<String>,
-    pub state_store: Signal<LocalStateStore>,
+    pub state_store: SyncSignal<LocalStateStore>,
     pub realm_tree_nodes: Signal<Vec<RealmTreeNode>>,
     pub projection_events: Signal<Vec<crate::projection::ProjectionEvent>>,
     pub sync_cursor: Signal<String>,
@@ -280,9 +282,6 @@ fn push_decoded_account_event(
 ) {
     match decoder.decode_event(event) {
         DecodedInbound::Message(message) => batch.push(ClientEvent::Message(message)),
-        DecodedInbound::Notification(notification) => {
-            batch.push(ClientEvent::Event(notification.event));
-        }
         DecodedInbound::Event(event) => batch.push(ClientEvent::Event(event)),
     }
 }
@@ -357,30 +356,18 @@ pub async fn run_sync_engine(
     // profiles mid-loop, the engine exits cleanly and a fresh spawn
     // picks up the new profile's cursor / token / account_did.
     let start_profile_id = ctx.profiles.read().active_profile_id.clone();
-    let mut backoff = Backoff::new(BACKOFF_FLOOR, BACKOFF_CEILING);
     // Counts delta syncs since the last invite refetch; see
     // `INVITES_REFRESH_EVERY_N_DELTAS`. Seeded at the threshold so the first
     // delta after spawn refreshes immediately even if it isn't a full sync.
     let mut deltas_since_invites = INVITES_REFRESH_EVERY_N_DELTAS;
-    loop {
-        // Cancellation check at the top of every iteration. A change to
-        // `generation` mid-iteration is best-effort detected here; the
-        // network call below can't be cancelled in flight without
-        // platform-specific abort machinery, so a stale response from
-        // the previous generation may still arrive — `apply_response`
-        // re-checks generation before touching signals.
-        if generation() != start_generation {
-            return;
-        }
-        // Profile rotation guard. The shell bumps `generation`
-        // separately, but a generation bump can lag the active profile
-        // signal by a tick; comparing the snapshot here keeps the
-        // engine from emitting a stale request under the new profile.
-        if ctx.profiles.read().active_profile_id != start_profile_id {
-            return;
-        }
-
-        match run_iteration(
+    run_engine_loop(
+        BACKOFF_FLOOR,
+        BACKOFF_CEILING,
+        || {
+            generation() == start_generation
+                && ctx.profiles.read().active_profile_id == start_profile_id
+        },
+        async || match run_iteration(
             start_generation,
             generation,
             &ctx,
@@ -389,7 +376,6 @@ pub async fn run_sync_engine(
         .await
         {
             IterationOutcome::Ok { realm_ids } => {
-                backoff.reset();
                 // Recovery: clear any stale error the user has been
                 // staring at. Without this, a single Transient or
                 // RateLimited blip sticks in the status bar forever
@@ -409,30 +395,29 @@ pub async fn run_sync_engine(
                 // spec-compliant server; if the server returns
                 // immediately (older soland), MIN_INTER_ITERATION_MS
                 // keeps the loop from spinning at network RTT.
-                sleep_for(Duration::from_millis(MIN_INTER_ITERATION_MS)).await;
+                EngineLoopDirective::ContinueAfter(Duration::from_millis(MIN_INTER_ITERATION_MS))
             }
             IterationOutcome::InvalidCursor => {
                 // Demote to full sync next iteration. The persisted
                 // cursor was already cleared inside the iteration.
                 // Also clear the visible error so the UI doesn't
                 // show the cursor-rejection that just got handled.
-                backoff.reset();
                 ctx.last_error.clone().set(None);
-                sleep_for(Duration::from_millis(MIN_INTER_ITERATION_MS)).await;
+                EngineLoopDirective::ContinueAfter(Duration::from_millis(MIN_INTER_ITERATION_MS))
             }
             IterationOutcome::StaleFrontier => {
                 // Keep the cursor (spec MUST NOT clear it) and retry
                 // after a beat — the iteration already consulted
                 // `account/describe` for the current frontier.
-                backoff.reset();
-                sleep_for(Duration::from_millis(MIN_INTER_ITERATION_MS)).await;
+                EngineLoopDirective::ContinueAfter(Duration::from_millis(MIN_INTER_ITERATION_MS))
             }
             IterationOutcome::AuthExpired => {
                 match crate::session::refresh_current_session().await {
                     crate::session::CurrentSessionRefresh::Credential(_) => {
-                        backoff.reset();
                         ctx.last_error.clone().set(None);
-                        sleep_for(Duration::from_millis(MIN_INTER_ITERATION_MS)).await;
+                        EngineLoopDirective::ContinueAfter(Duration::from_millis(
+                            MIN_INTER_ITERATION_MS,
+                        ))
                     }
                     crate::session::CurrentSessionRefresh::SignInRequired { reason }
                     | crate::session::CurrentSessionRefresh::RetryLater { reason } => {
@@ -440,21 +425,23 @@ pub async fn run_sync_engine(
                             let mut last_error = ctx.last_error;
                             last_error.set(Some(format!("sync_engine session refresh: {reason}")));
                         }
-                        sleep_for(backoff.next_delay()).await;
+                        EngineLoopDirective::Retry {
+                            minimum_delay: None,
+                        }
                     }
                     crate::session::CurrentSessionRefresh::LoginRequired { reason } => {
                         {
                             let mut last_error = ctx.last_error;
                             last_error.set(Some(format!("sync_engine session expired: {reason}")));
                         }
-                        return;
+                        EngineLoopDirective::Stop
                     }
                 }
             }
             IterationOutcome::NotReady => {
                 // Nothing to do until base_url / token are populated.
                 // Caller's `use_effect` will respawn when they are.
-                return;
+                EngineLoopDirective::Stop
             }
             IterationOutcome::RateLimited {
                 retry_after_ms,
@@ -470,11 +457,7 @@ pub async fn run_sync_engine(
                 let wait_ms = retry_after_ms
                     .max(u64::try_from(BACKOFF_FLOOR.as_millis()).unwrap_or(1_000))
                     .min(u64::try_from(MAX_RETRY_DELAY.as_millis()).unwrap_or(u64::MAX));
-                sleep_for(Duration::from_millis(wait_ms)).await;
-                // Don't escalate the ladder — the server told us exactly how long
-                // to wait, so the next failure restarts the generic backoff ladder
-                // from the floor.
-                backoff.reset();
+                EngineLoopDirective::Pause(Duration::from_millis(wait_ms))
             }
             IterationOutcome::ReconnectAfter {
                 reconnect_after_ms,
@@ -487,18 +470,20 @@ pub async fn run_sync_engine(
                 let wait_ms = reconnect_after_ms
                     .max(u64::try_from(BACKOFF_FLOOR.as_millis()).unwrap_or(1_000))
                     .min(u64::try_from(MAX_RETRY_DELAY.as_millis()).unwrap_or(u64::MAX));
-                sleep_for(Duration::from_millis(wait_ms)).await;
-                backoff.reset();
+                EngineLoopDirective::Pause(Duration::from_millis(wait_ms))
             }
             IterationOutcome::Transient(reason) => {
                 {
                     let mut last_error = ctx.last_error;
                     last_error.set(Some(reason));
                 }
-                sleep_for(backoff.next_delay()).await;
+                EngineLoopDirective::Retry {
+                    minimum_delay: None,
+                }
             }
-        }
-    }
+        },
+    )
+    .await;
 }
 
 /// Background Circle MLS scope-rotate worker.
@@ -865,7 +850,7 @@ async fn run_iteration(
         .load()
         .sync_cursor
         .clone()
-        .filter(|c| !c.trim().is_empty() && c != "-");
+        .filter(|c| !c.trim().is_empty());
     let is_full_sync = cursor.is_none();
 
     let sdk_http = match api.sdk_http_client() {
@@ -990,8 +975,8 @@ async fn run_iteration(
             if reset_cursor {
                 let mut state_store = ctx.state_store;
                 let mut sync_cursor = ctx.sync_cursor;
-                state_store.write().save_sync_cursor("-");
-                sync_cursor.set("-".to_owned());
+                state_store.write().clear_sync_cursor();
+                sync_cursor.set(String::new());
             }
             IterationOutcome::ReconnectAfter {
                 reconnect_after_ms,
@@ -1015,8 +1000,8 @@ async fn run_iteration(
             // outer `&SyncEngineContext` doesn't need to be &mut.
             let mut state_store = ctx.state_store;
             let mut sync_cursor = ctx.sync_cursor;
-            state_store.write().save_sync_cursor("-");
-            sync_cursor.set("-".to_owned());
+            state_store.write().clear_sync_cursor();
+            sync_cursor.set(String::new());
             IterationOutcome::InvalidCursor
         }
         Err(error) if is_stale_frontier_error(&error) => {
@@ -1077,7 +1062,7 @@ async fn run_iteration(
 /// verified signals into the call-signal hub (fail-closed). Runs after the
 /// synchronous `apply_response` because directory resolution needs `keys/query`.
 async fn route_inbound_call_signals(
-    api: &CokretApi,
+    api: &ArkretApi,
     response: &ClientSyncOutcome,
     ctx: &SyncEngineContext,
 ) {
@@ -1122,7 +1107,7 @@ async fn route_inbound_call_signals(
 /// renders unresolved proofs conservatively; this pass resolves missing sender
 /// device keys and the caller then recomputes the projection.
 pub(crate) async fn prefetch_persistent_event_sender_keys(
-    api: &CokretApi,
+    api: &ArkretApi,
     response: &ClientSyncOutcome,
     did_cache: Signal<crate::did_resolver::DidResolutionCache>,
 ) -> bool {
@@ -1137,7 +1122,7 @@ pub(crate) async fn prefetch_persistent_event_sender_keys(
 /// `(actor, device)` pair is derived from each proof's `verification_method`
 /// (`did:method:identifier#device`); the controller MUST be the asserting actor.
 async fn prefetch_member_identity_proof_keys(
-    api: &CokretApi,
+    api: &ArkretApi,
     response: &ClientSyncOutcome,
     did_cache: Signal<crate::did_resolver::DidResolutionCache>,
 ) -> bool {
@@ -1204,7 +1189,7 @@ fn split_verification_method(verification_method: &str) -> Option<(String, Strin
 }
 
 pub(crate) async fn prefetch_persistent_event_sender_keys_from_values(
-    api: &CokretApi,
+    api: &ArkretApi,
     values: &[Value],
     did_cache: Signal<crate::did_resolver::DidResolutionCache>,
 ) -> bool {
@@ -1220,7 +1205,7 @@ pub(crate) async fn prefetch_persistent_event_sender_keys_from_values(
 /// loop priming `ak.realm_key.share` sender device keys before SEC-02
 /// fail-closed verification).
 pub(crate) async fn prefetch_device_key_pairs(
-    api: &CokretApi,
+    api: &ArkretApi,
     pairs: Vec<(String, String)>,
     did_cache: Signal<crate::did_resolver::DidResolutionCache>,
 ) -> bool {
@@ -1228,7 +1213,7 @@ pub(crate) async fn prefetch_device_key_pairs(
 }
 
 async fn prefetch_persistent_event_sender_key_pairs(
-    api: &CokretApi,
+    api: &ArkretApi,
     pairs: Vec<(String, String)>,
     did_cache: Signal<crate::did_resolver::DidResolutionCache>,
 ) -> bool {
@@ -1550,7 +1535,7 @@ pub fn apply_response(
 /// `identity_event_ids[]` and the events themselves live in the
 /// frame-level event log.
 async fn process_to_device_delivery(
-    api: &CokretApi,
+    api: &ArkretApi,
     response: &ClientSyncOutcome,
     ctx: &SyncEngineContext,
 ) -> anyhow::Result<()> {
@@ -1607,13 +1592,13 @@ async fn process_to_device_delivery(
     Ok(())
 }
 
-async fn poll_device_message_queue(api: &CokretApi, ctx: &SyncEngineContext) -> anyhow::Result<()> {
+async fn poll_device_message_queue(api: &ArkretApi, ctx: &SyncEngineContext) -> anyhow::Result<()> {
     let first_page = api.receive_device_messages().await?;
     ingest_device_message_pages(api, first_page, ctx).await
 }
 
 async fn ingest_device_message_pages(
-    api: &CokretApi,
+    api: &ArkretApi,
     first_page: DeviceMessagesGetOutcome,
     ctx: &SyncEngineContext,
 ) -> anyhow::Result<()> {
@@ -1702,7 +1687,7 @@ fn ingest_kanban_state_events_from_projection(
     body: &Value,
 ) -> usize {
     let events = sync_realm_state_events(body);
-    ingest_kanban_events(store, realm_id, &events)
+    ingest_kanban_projection_events(store, realm_id, &events)
 }
 
 /// Discussion message events ride a SEPARATE projection array from the kanban
@@ -1726,7 +1711,7 @@ fn ingest_message_events_from_projection(
     realm_id: &str,
     body: &Value,
 ) -> usize {
-    ingest_message_events(store, realm_id, &sync_realm_timeline_events(body))
+    ingest_message_projection_events(store, realm_id, &sync_realm_timeline_events(body))
 }
 
 fn discussion_state_control_event_kind(event: &Value) -> Option<&str> {
@@ -1755,7 +1740,7 @@ fn ingest_discussion_state_events_from_projection(
         .into_iter()
         .filter(discussion_state_control_event_is_ingestable)
         .collect::<Vec<_>>();
-    ingest_message_events(store, realm_id, &events)
+    ingest_message_projection_events(store, realm_id, &events)
 }
 
 /// Fold a batch of discussion message events into `raw_operations`. Shared by
@@ -1763,7 +1748,7 @@ fn ingest_discussion_state_events_from_projection(
 /// engine ([`crate::realm_events_engine`]) — a cross-member message that the
 /// account stream never routed (unroutable delivery binding) still lands
 /// locally through the realm stream — both deduping via the message event id.
-pub(crate) fn ingest_message_events(
+pub(crate) fn ingest_message_projection_events(
     store: &mut LocalStateStore,
     realm_id: &str,
     events: &[Value],
@@ -1781,6 +1766,22 @@ pub(crate) fn ingest_message_events(
     changed
 }
 
+pub(crate) fn ingest_message_events(
+    store: &mut LocalStateStore,
+    realm_id: &str,
+    events: &[garth::ClientEvent],
+) -> usize {
+    let records =
+        crate::projection::message_ops::message_operations_from_client_events(realm_id, events);
+    let mut changed = 0;
+    for record in records {
+        if store.upsert_raw_operation(record.operation_id, record.realm_id, record.payload) {
+            changed += 1;
+        }
+    }
+    changed
+}
+
 /// Fold a batch of realm events into the local kanban `raw_operations` overlay,
 /// returning the number of records that were newly inserted / changed. Shared
 /// by the account-aggregate sync path (above) and the per-realm
@@ -1788,7 +1789,7 @@ pub(crate) fn ingest_message_events(
 /// dedupe through the same `operation_id` upsert. Events are the projection
 /// event JSON shape (`event_kind` / `payload` / `operation_id`), matching both
 /// `account.subscribe` `state.events[]` and `events/subscribe` Event frames.
-pub(crate) fn ingest_kanban_events(
+pub(crate) fn ingest_kanban_projection_events(
     store: &mut LocalStateStore,
     realm_id: &str,
     events: &[Value],
@@ -1803,6 +1804,23 @@ pub(crate) fn ingest_kanban_events(
     // space.create, which silently dropped remote `ak.strand.create` — the
     // root cause of cross-member cards never appearing.
     let records = crate::projection::kanban_ops::kanban_operations_from_events(events);
+    let mut changed = 0;
+    for record in records {
+        let operation_id = record.operation_id;
+        let record_realm_id = record.realm_id.or_else(|| Some(realm_id.to_owned()));
+        if store.upsert_raw_operation(operation_id, record_realm_id, record.payload) {
+            changed += 1;
+        }
+    }
+    changed
+}
+
+pub(crate) fn ingest_kanban_events(
+    store: &mut LocalStateStore,
+    realm_id: &str,
+    events: &[garth::ClientEvent],
+) -> usize {
+    let records = crate::projection::kanban_ops::kanban_operations_from_client_events(events);
     let mut changed = 0;
     for record in records {
         let operation_id = record.operation_id;
@@ -1878,7 +1896,7 @@ fn membership_operation_from_event(event: &Value) -> Option<RawOperationRecord> 
     })
 }
 
-pub(crate) fn ingest_membership_events(
+pub(crate) fn ingest_membership_projection_events(
     store: &mut LocalStateStore,
     realm_id: &str,
     events: &[Value],
@@ -1897,12 +1915,60 @@ pub(crate) fn ingest_membership_events(
     changed
 }
 
+fn membership_operation_from_client_event(
+    client_event: &garth::ClientEvent,
+) -> Option<RawOperationRecord> {
+    let event = match client_event {
+        garth::ClientEvent::Message(message) => &message.event,
+        garth::ClientEvent::Event(event) => event,
+        _ => return None,
+    };
+    let kind = event.kind.as_str();
+    if !matches!(kind, "ak.member.state" | "ak.invite.accept") {
+        return None;
+    }
+    let operation_id = event.event_id.as_str().to_owned();
+    Some(RawOperationRecord {
+        operation_id: operation_id.clone(),
+        realm_id: Some(event.realm_id.as_str().to_owned()),
+        received_at: event.created_at,
+        payload: json!({
+            "kind": kind,
+            "operation_id": operation_id,
+            "event_id": event.event_id.as_str(),
+            "actor_id": event.actor_id.as_str(),
+            "created_at": event.created_at.to_rfc3339(),
+            "write_state": "synced",
+            "body": event.payload,
+        }),
+    })
+}
+
+pub(crate) fn ingest_membership_events(
+    store: &mut LocalStateStore,
+    realm_id: &str,
+    events: &[garth::ClientEvent],
+) -> usize {
+    let mut changed = 0;
+    for record in events
+        .iter()
+        .filter_map(membership_operation_from_client_event)
+    {
+        let operation_id = record.operation_id;
+        let record_realm_id = record.realm_id.or_else(|| Some(realm_id.to_owned()));
+        if store.upsert_raw_operation(operation_id, record_realm_id, record.payload) {
+            changed += 1;
+        }
+    }
+    changed
+}
+
 fn ingest_membership_events_from_projection(
     store: &mut LocalStateStore,
     realm_id: &str,
     body: &Value,
 ) -> usize {
-    ingest_membership_events(store, realm_id, &sync_realm_state_events(body))
+    ingest_membership_projection_events(store, realm_id, &sync_realm_state_events(body))
 }
 
 fn ingest_member_identity_events_from_projection(
@@ -2378,13 +2444,13 @@ mod tests {
         assert_eq!(event_payloads.len(), 1);
 
         let mut store = temp_store("realm-subscribe-ingest");
-        let changed = ingest_kanban_events(&mut store, realm_id, &event_payloads);
+        let changed = ingest_kanban_projection_events(&mut store, realm_id, &event_payloads);
         assert_eq!(changed, 1, "the remote space-create folds in once");
         assert_eq!(store.load().raw_operations.len(), 1);
 
         // Re-folding the same frames (buffered long-poll re-delivers history) is
         // idempotent: operation_id dedupe means zero new inserts.
-        let changed_again = ingest_kanban_events(&mut store, realm_id, &event_payloads);
+        let changed_again = ingest_kanban_projection_events(&mut store, realm_id, &event_payloads);
         assert_eq!(changed_again, 0, "re-ingest is deduped by operation_id");
         assert_eq!(store.load().raw_operations.len(), 1);
     }
@@ -2393,7 +2459,7 @@ mod tests {
     fn membership_events_ingest_into_raw_operations() {
         let realm_id = "ak:realm:0196419b-0000-7000-8000-000000000000";
         let mut store = temp_store("membership-events");
-        let changed = ingest_membership_events(
+        let changed = ingest_membership_projection_events(
             &mut store,
             realm_id,
             &[

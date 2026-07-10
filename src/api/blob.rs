@@ -2,7 +2,7 @@ use super::*;
 
 const DEFAULT_BLOB_DOWNLOAD_MAX_BYTES: usize = 64 * 1024 * 1024;
 
-impl CokretApi {
+impl ArkretApi {
     pub(crate) fn blob_upload_metadata(
         size_bytes: usize,
         media_type: &str,

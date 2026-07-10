@@ -4,14 +4,14 @@ use std::collections::HashMap;
 use url::Url;
 
 use super::util::principal_audience;
-use crate::api::CokretApi;
+use crate::api::ArkretApi;
 use crate::config::validate_server_url;
 
 thread_local! {
     /// Process-wide cache of resolved account authorities, keyed by principal
     /// server URL. The `/_arkret/describe` `auth_metadata` this is derived from
     /// is deployment-stable, so ONE probe per server connection suffices.
-    /// Without it, every session-grant rotation rebuilds a fresh `CokretApi`
+    /// Without it, every session-grant rotation rebuilds a fresh `ArkretApi`
     /// and re-fetches describe (the per-instance `describe_cached` OnceCell is
     /// useless across instances), so any upstream refresh loop becomes a
     /// `describe` request storm. Cleared on reconnect via
@@ -99,7 +99,7 @@ impl AuthorityResolver {
         // silence here means describe is coming from another caller. Remove once
         // the driver is fixed.
         tracing::warn!(target: "recovery_diag", server = %key, "authority discover cache-miss -> real describe");
-        let principal = CokretApi::new(principal_server_url)?;
+        let principal = ArkretApi::new(principal_server_url)?;
         let description = principal.describe().await?;
         let resolver = Self::from_description(principal_server_url, &description)?;
         AUTHORITY_RESOLVER_CACHE.with(|cache| cache.borrow_mut().insert(key, resolver.clone()));

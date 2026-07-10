@@ -15,7 +15,7 @@ use crate::views::helpers::short_protocol_id;
 pub(super) fn render_notification_kind_toggle(
     kind: &'static str,
     label: &'static str,
-    mut state_store: Signal<LocalStateStore>,
+    mut state_store: SyncSignal<LocalStateStore>,
 ) -> Element {
     let enabled = state_store.read().notification_kind_enabled(kind);
     rsx! {

@@ -139,14 +139,14 @@ fn two_member_group_with_bob_snapshot(
     realm: &str,
     bob_actor: &str,
     bob_device: &str,
-) -> arkret_sdk::CokretMlsGroup {
-    let alice = arkret_sdk::CokretMlsIdentity::new_basic(
+) -> arkret_sdk::ArkretMlsGroup {
+    let alice = arkret_sdk::ArkretMlsIdentity::new_basic(
         arkret_sdk::Did::new("did:web:alice.example".to_owned()).unwrap(),
         arkret_sdk::DeviceId::new("ak:device:01904100-0000-7000-8000-0000000000a1".to_owned())
             .unwrap(),
     )
     .unwrap();
-    let bob = arkret_sdk::CokretMlsIdentity::new_basic(
+    let bob = arkret_sdk::ArkretMlsIdentity::new_basic(
         arkret_sdk::Did::new(bob_actor.to_owned()).unwrap(),
         arkret_sdk::DeviceId::new(bob_device.to_owned()).unwrap(),
     )
@@ -154,7 +154,7 @@ fn two_member_group_with_bob_snapshot(
     let bob_key_package = bob.key_package_record().unwrap();
     let mut alice_group = alice.create_group(realm.as_bytes()).unwrap();
     let add = alice_group.add_member(&bob_key_package).unwrap();
-    let bob_group = arkret_sdk::CokretMlsGroup::join_from_welcome(bob, &add.welcome).unwrap();
+    let bob_group = arkret_sdk::ArkretMlsGroup::join_from_welcome(bob, &add.welcome).unwrap();
 
     let secret = load_or_create_device_snapshot_secret(secure, bob_actor, bob_device).unwrap();
     let post_state = bob_group.export_state_record().unwrap();
@@ -403,14 +403,14 @@ fn encrypted_write_with_snapshot_requires_existing_device_secret() {
 #[cfg(not(target_arch = "wasm32"))]
 #[test]
 fn encrypted_write_uses_device_key_snapshot_when_ready() {
-    use arkret_sdk::{CokretMlsIdentity, DeviceId, Did};
+    use arkret_sdk::{ArkretMlsIdentity, DeviceId, Did};
 
     let actor = "did:web:alice.example";
     let device = "ak:device:01904100-0000-7000-8000-000000000001";
     let realm = "ak:realm:01904100-0000-7000-8000-000000000003";
     let store = MemorySecureKeyStore::new();
     let secret = load_or_create_device_snapshot_secret(&store, actor, device).unwrap();
-    let identity = CokretMlsIdentity::new_basic(
+    let identity = ArkretMlsIdentity::new_basic(
         Did::new(actor.to_owned()).unwrap(),
         DeviceId::new(device.to_owned()).unwrap(),
     )
@@ -564,13 +564,13 @@ fn welcome_apply_uses_key_package_identity_state() {
     let realm = "ak:realm:01904100-0000-7000-8000-0000000000c1";
     let bob_actor = "did:web:bob.example";
     let bob_device = "ak:device:01904100-0000-7000-8000-0000000000c2";
-    let alice = arkret_sdk::CokretMlsIdentity::new_basic(
+    let alice = arkret_sdk::ArkretMlsIdentity::new_basic(
         arkret_sdk::Did::new("did:web:alice.example".to_owned()).unwrap(),
         arkret_sdk::DeviceId::new("ak:device:01904100-0000-7000-8000-0000000000a1".to_owned())
             .unwrap(),
     )
     .unwrap();
-    let bob = arkret_sdk::CokretMlsIdentity::new_basic(
+    let bob = arkret_sdk::ArkretMlsIdentity::new_basic(
         arkret_sdk::Did::new(bob_actor.to_owned()).unwrap(),
         arkret_sdk::DeviceId::new(bob_device.to_owned()).unwrap(),
     )
@@ -1087,7 +1087,7 @@ fn tier3_history_decrypt_works_without_local_snapshot() {
     let _ = history_store.delete_secret(&history_key);
 
     // Build alice's group WITHOUT persisting any snapshot into `state`.
-    let alice = arkret_sdk::CokretMlsIdentity::new_basic(
+    let alice = arkret_sdk::ArkretMlsIdentity::new_basic(
         arkret_sdk::Did::new("did:web:alice.example".to_owned()).unwrap(),
         arkret_sdk::DeviceId::new("ak:device:01904100-0000-7000-8000-0000000000a1".to_owned())
             .unwrap(),

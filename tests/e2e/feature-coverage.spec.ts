@@ -17,7 +17,7 @@
  */
 
 import { expect, test } from "@playwright/test";
-import { mockCokretApi } from "./mockCokretApi";
+import { mockArkretApi } from "./mockArkretApi";
 
 function latestTestId(page: import("@playwright/test").Page, testId: string) {
   return page.getByTestId(testId).last();
@@ -42,7 +42,7 @@ async function dismissBlockingDialog(page: import("@playwright/test").Page) {
 
 test.describe("feature coverage placeholders", () => {
   test.beforeEach(async ({ page }) => {
-    await mockCokretApi(page);
+    await mockArkretApi(page);
     await page.addInitScript(() => {
       if (localStorage.getItem("inkson.config.v1")) {
         return;

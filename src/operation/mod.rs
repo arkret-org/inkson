@@ -411,7 +411,7 @@ pub fn uuid_v7() -> String {
 }
 
 /// Canonical helper constructors used by the current UI.
-pub mod ck_ops;
+pub mod ak_ops;
 
 #[cfg(test)]
 #[path = "../operation_tests.rs"]

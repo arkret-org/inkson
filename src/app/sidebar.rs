@@ -95,7 +95,7 @@ pub(super) fn toggle_sidebar_realm_pin(
     realm_id: String,
     existing: Option<crate::account_data::RealmRemark>,
     next_pinned: bool,
-    mut state_store: Signal<LocalStateStore>,
+    mut state_store: SyncSignal<LocalStateStore>,
     base_url: String,
     api_token: String,
 ) {
@@ -126,7 +126,7 @@ pub(super) fn toggle_sidebar_contact_pin(
     actor_id: String,
     existing: Option<crate::account_data::ContactRemark>,
     next_pinned: bool,
-    mut state_store: Signal<LocalStateStore>,
+    mut state_store: SyncSignal<LocalStateStore>,
     base_url: String,
     api_token: String,
 ) {
@@ -156,7 +156,7 @@ pub(super) fn leave_sidebar_realm(
     api_token: String,
     realm_id: String,
     account_did: String,
-    mut state_store: Signal<LocalStateStore>,
+    mut state_store: SyncSignal<LocalStateStore>,
     mut realm_tree_nodes: Signal<Vec<RealmTreeNode>>,
     mut selected_realm_id: Signal<String>,
     mut sync_cursor: Signal<String>,
@@ -202,7 +202,7 @@ pub(super) fn leave_sidebar_realm(
                 if forgotten_ids.contains(&selected_realm_id()) {
                     selected_realm_id.set(String::new());
                 }
-                sync_cursor.set("-".to_owned());
+                sync_cursor.set(String::new());
                 crate::components::feedback::toast_success(
                     "feedback.realm_left",
                     vec![("realm", realm_label)],
@@ -308,7 +308,7 @@ pub(super) fn delete_sidebar_contact(
     base_url: String,
     api_token: String,
     peer: String,
-    state_store: Signal<LocalStateStore>,
+    state_store: SyncSignal<LocalStateStore>,
     mut direct_contact_rows: Signal<Vec<crate::models::ContactListRow>>,
     mut direct_contacts_loaded: Signal<bool>,
 ) {

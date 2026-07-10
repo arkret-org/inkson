@@ -84,7 +84,7 @@ fn CardMarkdownEditor(
             };
             // YOU-06-002: the editor JS only extracts file bytes and hands
             // them to Rust over the eval channel; the upload itself runs
-            // through the canonical `CokretApi` pipeline (auth headers,
+            // through the canonical `ArkretApi` pipeline (auth headers,
             // retry/backoff, error-envelope decoding) instead of a JS
             // `fetch` that hand-rolls the wire.
             let mut eval = document::eval(&script);
@@ -344,7 +344,7 @@ fn CalendarScheduleEditForm(
 
 /// Decode one `uploadImage` bridge request from the Toast editor JS and run
 /// it through the canonical Rust blob pipeline
-/// (`CokretApi::upload_blob_bytes_scoped`, multipart/form-data per
+/// (`ArkretApi::upload_blob_bytes_scoped`, multipart/form-data per
 /// YOU-01-007), so authorization, retry/backoff and spec error-envelope
 /// decoding stay owned by the network layer. Returns
 /// `(blob_ref, media_type)` for the editor to build its markdown target.
@@ -494,7 +494,7 @@ fn toast_editor_bootstrap_script(host_id: &str, fallback_id: &str, value: &str) 
     // YOU-06-002: JS never talks to the protocol endpoint itself. It only
     // extracts the picked file's bytes and hands them to Rust over the
     // bidirectional eval channel; the upload runs through the canonical
-    // `CokretApi::upload_blob_bytes_scoped` pipeline and Rust sends the
+    // `ArkretApi::upload_blob_bytes_scoped` pipeline and Rust sends the
     // typed `BlobUploadOutcome` fields back for the markdown insert.
     let nextUploadId = 1;
     const pendingUploads = new Map();
@@ -1069,7 +1069,7 @@ pub fn KanbanPanel(
             if let Some(resp) = events_res.as_ref() {
                 let event_values = resp.event_values();
                 let mut guard = state_store.write();
-                crate::sync_engine::ingest_kanban_events(
+                crate::sync_engine::ingest_kanban_projection_events(
                     &mut guard,
                     &lifecycle_realm_id,
                     &event_values,
@@ -1282,7 +1282,7 @@ pub fn KanbanPanel(
                 if let Ok(backfill) = events_res {
                     let event_values = backfill.event_values();
                     let mut store = state_store.write();
-                    crate::sync_engine::ingest_kanban_events(
+                    crate::sync_engine::ingest_kanban_projection_events(
                         &mut store,
                         &lifecycle_local_realm_id,
                         &event_values,
@@ -1431,7 +1431,7 @@ pub fn KanbanPanel(
                     // explicit reproject here.
                     {
                         let mut store = state_store.write();
-                        crate::sync_engine::ingest_kanban_events(
+                        crate::sync_engine::ingest_kanban_projection_events(
                             &mut store,
                             &local_realm_id,
                             &events,
@@ -1494,7 +1494,7 @@ pub fn KanbanPanel(
                 // server strand/space projection endpoints are dropped as content
                 // sources — they cannot carry another member's encrypted content.
                 let mut store = state_store.write();
-                crate::sync_engine::ingest_kanban_events(
+                crate::sync_engine::ingest_kanban_projection_events(
                     &mut store,
                     &lifecycle_local_realm_id,
                     &event_values,
@@ -1844,7 +1844,7 @@ pub fn KanbanPanel(
                                             let col_count = columns().len();
                                             let rank = format!("r{:03}", col_count + 1);
                                             let list_space_id = format!("ak:space:{}", uuid_v7());
-                                            let op = match crate::operation::ck_ops::space_create(
+                                            let op = match crate::operation::ak_ops::space_create(
                                                 &realm,
                                                 &actor,
                                                 &list_space_id,
@@ -1953,7 +1953,7 @@ pub fn KanbanPanel(
                                                     return;
                                                 }
                                                 let board_space_id = format!("ak:space:{}", uuid_v7());
-                                                let op = match crate::operation::ck_ops::space_create(
+                                                let op = match crate::operation::ak_ops::space_create(
                                                     &realm,
                                                     &actor,
                                                     &board_space_id,

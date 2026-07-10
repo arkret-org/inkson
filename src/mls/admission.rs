@@ -71,7 +71,7 @@ pub(crate) fn build_realm_mls_admission_events_from_claim(
         governance_binding,
         claim_nonce,
     )?;
-    let welcome = crate::operation::ck_ops::mls_welcome_with_governance(
+    let welcome = crate::operation::ak_ops::mls_welcome_with_governance(
         realm_id,
         actor_id,
         &add.welcome.group_id,
@@ -149,7 +149,7 @@ pub(crate) fn build_realm_mls_admission_events_from_claims(
             governance_binding.clone(),
             claim_nonce,
         )?;
-        let welcome = crate::operation::ck_ops::mls_welcome_with_governance(
+        let welcome = crate::operation::ak_ops::mls_welcome_with_governance(
             realm_id,
             actor_id,
             &welcome_envelope.group_id,
@@ -629,7 +629,7 @@ mod tests {
         .expect("creator genesis event");
         alice_state.mark_mls_genesis_emitted_with_event(realm, &genesis_event.event_id);
 
-        let bob_identity = arkret_sdk::CokretMlsIdentity::new_basic(
+        let bob_identity = arkret_sdk::ArkretMlsIdentity::new_basic(
             arkret_sdk::Did::new(bob.to_owned()).unwrap(),
             arkret_sdk::DeviceId::new(bob_device.to_owned()).unwrap(),
         )
@@ -755,7 +755,7 @@ mod tests {
         );
         alice_state.set_realm_seal_view(realm, advanced);
 
-        let bob_identity = arkret_sdk::CokretMlsIdentity::new_basic(
+        let bob_identity = arkret_sdk::ArkretMlsIdentity::new_basic(
             arkret_sdk::Did::new(bob.to_owned()).unwrap(),
             arkret_sdk::DeviceId::new(bob_device.to_owned()).unwrap(),
         )

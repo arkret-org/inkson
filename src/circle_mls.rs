@@ -63,7 +63,7 @@ fn build_circle_remove_proposal_event(
         target_device_id: None,
         governance_binding: None,
     };
-    let mut event = crate::operation::ck_ops::mls_proposal_with_governance(
+    let mut event = crate::operation::ak_ops::mls_proposal_with_governance(
         realm_id,
         actor_id,
         &proposal.group_id,
@@ -142,7 +142,7 @@ pub fn build_circle_remove_scope_rotate_draft(
 }
 
 pub async fn submit_circle_scope_rotate_draft(
-    api: &crate::api::CokretApi,
+    api: &crate::api::ArkretApi,
     state_store: &mut LocalStateStore,
     realm_id: &str,
     circle_id: &str,
@@ -166,7 +166,7 @@ pub async fn submit_circle_scope_rotate_draft(
 }
 
 pub async fn drain_circle_scope_rotate_obligations(
-    api: &crate::api::CokretApi,
+    api: &crate::api::ArkretApi,
     state_store: &mut LocalStateStore,
     secure_store: &dyn SecureKeyStore,
     realm_id: &str,

@@ -4,7 +4,7 @@ use crate::mls_api_helpers::{
     sign_keypackage_upload_batch,
 };
 
-impl CokretApi {
+impl ArkretApi {
     /// Publish an MLS `MlsKeyPackageRecord` to
     /// soland's `/_arkret/self/keys/keypackages/upload` endpoint so peers can
     /// fetch it via `query_keys` and `add_member()` against it. The

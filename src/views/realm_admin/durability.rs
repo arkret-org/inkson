@@ -3,10 +3,10 @@
 //! Spec: `models/realm-and-space.md` §2.3.1 (durability_policy + write path),
 //! `crypto-media/encryption-and-audit.md` §2.10.8.
 //!
-//! Writes the policy through `ck.realm.policy_components`
-//! ([`crate::api::CokretApi::set_realm_durability_policy`]) — there is no
+//! Writes the policy through `ak.realm.policy_components`
+//! ([`crate::api::ArkretApi::set_realm_durability_policy`]) — there is no
 //! dedicated event kind. Changing the policy is a control-plane Move; the new
-//! sealing obligation only takes effect once a following `ck.mls.commit` covers
+//! sealing obligation only takes effect once a following `ak.mls.commit` covers
 //! the membership frontier, which also triggers re-disclosure. The editor
 //! surfaces that two-step nature to the operator.
 

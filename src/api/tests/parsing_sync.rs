@@ -8,8 +8,8 @@ fn parses_events_subscribe_ndjson_frames() {
     let frames = parse_events_subscribe_ndjson_text(
         r#"
 {"kind":"heartbeat"}
-{"kind":"frontier","cursor":"ak:cursor:frontier"}
-{"kind":"catchup_complete","cursor":"ak:cursor:live"}
+{"cursor":"ak:cursor:frontier","kind":"frontier"}
+{"cursor":"ak:cursor:live","kind":"catchup_complete"}
 "#,
     )
     .unwrap();

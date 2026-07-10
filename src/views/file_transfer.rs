@@ -2,7 +2,7 @@ use std::collections::BTreeMap;
 
 use dioxus::prelude::*;
 
-use crate::api::CokretApi;
+use crate::api::ArkretApi;
 use crate::components::UiIcon;
 use crate::file_transfer::{
     FileTransferItem, data_url_for_download, decrypt_file_transfer_item, display_filename,
@@ -11,11 +11,7 @@ use crate::file_transfer::{
 };
 
 #[component]
-pub fn FileTransferPanel(
-    token: Signal<String>,
-    account_did: String,
-    device_id: String,
-) -> Element {
+pub fn FileTransferPanel(token: Signal<String>, account_did: String, device_id: String) -> Element {
     // A4 — base_url from session context instead of a prop.
     let base_url = crate::app::SessionContext::base_url_string();
     let mut items = use_signal(Vec::<FileTransferItem>::new);
@@ -88,7 +84,7 @@ pub fn FileTransferPanel(
                                 uploading.set(true);
                                 status.set("Uploading".to_owned());
                                 spawn(async move {
-                                    let api = match CokretApi::new(&base_url) {
+                                    let api = match ArkretApi::new(&base_url) {
                                         Ok(api) => crate::views::helpers::attach_device_dpop(api.with_bearer(api_token.clone())),
                                         Err(error) => {
                                             status.set(format!("Invalid server URL: {error}"));
@@ -271,7 +267,7 @@ fn FileTransferRow(
                             let transfer_id = transfer_id.clone();
                             status.set("Preparing download".to_owned());
                             spawn(async move {
-                                let api = match CokretApi::new(&base_url) {
+                                let api = match ArkretApi::new(&base_url) {
                                     Ok(api) => crate::views::helpers::attach_device_dpop(api.with_bearer(api_token)),
                                     Err(error) => {
                                         status.set(format!("Invalid server URL: {error}"));
@@ -326,7 +322,7 @@ fn refresh_items(
     refreshing.set(true);
     status.set("Refreshing".to_owned());
     spawn(async move {
-        let api = match CokretApi::new(&base_url) {
+        let api = match ArkretApi::new(&base_url) {
             Ok(api) => crate::views::helpers::attach_device_dpop(api.with_bearer(api_token)),
             Err(error) => {
                 status.set(format!("Invalid server URL: {error}"));

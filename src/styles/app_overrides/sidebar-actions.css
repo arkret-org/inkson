@@ -724,7 +724,7 @@
 .shell.app.sidebar-collapsed .sidebar-context .grow,
 .shell.app.sidebar-collapsed .sidebar-context .pill,
 .shell.app.sidebar-collapsed .sidebar-context .mini,
-.shell.app.sidebar-collapsed .ck-connect-section,
+.shell.app.sidebar-collapsed .ak-connect-section,
 .shell.app.sidebar-collapsed .server-switch-title,
 .shell.app.sidebar-collapsed .server-switch-state,
 .shell.app.sidebar-collapsed .server-switch-menu,
@@ -789,7 +789,7 @@
   display: none;
 }
 
-.ck-connect-section {
+.ak-connect-section {
   padding-top: 0;
 }
 
@@ -920,19 +920,19 @@
   background: color-mix(in srgb, var(--accent) 13%, var(--nav-soft));
 }
 
-.ck-connect-form {
+.ak-connect-form {
   display: grid;
   gap: 8px;
   padding: 0 10px 10px;
 }
 
-.ck-connect-form .actions {
+.ak-connect-form .actions {
   display: grid;
   grid-template-columns: 1fr 1fr;
   gap: 8px;
 }
 
-.ck-server-input,
+.ak-server-input,
 .workspace-header .search input {
   width: 100%;
   min-width: 0;
@@ -943,12 +943,12 @@
   font: inherit;
 }
 
-.ck-server-input {
+.ak-server-input {
   padding: 7px 9px;
   font-size: 12px;
 }
 
-.ck-server-input:focus,
+.ak-server-input:focus,
 .server-connect input:focus {
   outline: none;
   border-color: var(--accent);

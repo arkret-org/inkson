@@ -99,6 +99,22 @@ pub(crate) fn message_operations_from_events(
         .collect()
 }
 
+pub(crate) fn message_operations_from_client_events(
+    realm_id: &str,
+    events: &[garth::ClientEvent],
+) -> Vec<RawOperationRecord> {
+    events
+        .iter()
+        .filter_map(|event| match event {
+            garth::ClientEvent::Message(message) => {
+                typed_message_raw_operation(realm_id, &message.event)
+            }
+            garth::ClientEvent::Event(event) => typed_message_raw_operation(realm_id, event),
+            _ => None,
+        })
+        .collect()
+}
+
 fn message_event_is_ingestable(event: &Value) -> bool {
     let candidates = message_candidates(event);
     candidates.iter().any(|candidate| {
@@ -142,17 +158,26 @@ fn message_raw_operation_from_event(realm_id: &str, event: &Value) -> Option<Raw
 
 fn typed_message_raw_operation_from_event(event: &Value) -> Option<RawOperationRecord> {
     let sdk_event: arkret_sdk::Event = serde_json::from_value(event.clone()).ok()?;
-    let decoded = garth::InboundDecoder::new()
-        .try_decode_event(sdk_event)
-        .ok()?;
-    let garth::DecodedInbound::Message(message) = decoded else {
+    typed_message_raw_operation("", &sdk_event)
+}
+
+fn typed_message_raw_operation(
+    fallback_realm_id: &str,
+    event: &arkret_sdk::Event,
+) -> Option<RawOperationRecord> {
+    if !discussion_kind_is_raw_operation(event.kind.as_str()) {
         return None;
-    };
+    }
+    let payload = serde_json::to_value(event).ok()?;
     Some(RawOperationRecord {
-        operation_id: message.event.event_id.as_str().to_owned(),
-        realm_id: Some(message.event.realm_id.as_str().to_owned()),
-        received_at: message.event.created_at,
-        payload: event.clone(),
+        operation_id: event.event_id.as_str().to_owned(),
+        realm_id: Some(if event.realm_id.as_str().is_empty() {
+            fallback_realm_id.to_owned()
+        } else {
+            event.realm_id.as_str().to_owned()
+        }),
+        received_at: event.created_at,
+        payload,
     })
 }
 
@@ -213,5 +238,35 @@ mod tests {
         let value = serde_json::to_value(&event).unwrap();
 
         assert!(typed_message_raw_operation_from_event(&value).is_none());
+    }
+
+    #[test]
+    fn client_event_path_keeps_the_typed_event_boundary() {
+        let event = typed_event(
+            arkret_sdk::events::kinds::MESSAGE_CREATE,
+            json!({
+                "strand_id": "ak:strand:01904100-0000-7000-8000-000000000002",
+                "track_name": "discussion",
+                "content": {"kind": "ak.content.text", "body": "typed"}
+            }),
+        );
+        let decoded = arkret_sdk::InboundDecoder::new()
+            .try_decode_event(event)
+            .unwrap();
+        let client_event = match decoded {
+            arkret_sdk::DecodedInbound::Message(message) => garth::ClientEvent::Message(message),
+            other => panic!("expected message, got {other:?}"),
+        };
+
+        let records = message_operations_from_client_events(
+            "ak:realm:01904100-0000-7000-8000-000000000001",
+            &[client_event],
+        );
+
+        assert_eq!(records.len(), 1);
+        assert_eq!(
+            records[0].operation_id,
+            "ak:event:01904100-0000-7000-8000-000000000101"
+        );
     }
 }

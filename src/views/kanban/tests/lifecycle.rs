@@ -23,7 +23,7 @@ fn board_write_manual_review_is_only_for_conflicts() {
 
 /// `try_load_api_columns` is the synchronous-init probe. Real API
 /// fetching now lives in the async refresh handler that calls
-/// `CokretApi::collection_projection`. This test still pins the
+/// `ArkretApi::collection_projection`. This test still pins the
 /// init-time behaviour as None so UI startup stays empty unless explicit
 /// demo seed is enabled; async projection hydrate promotes to ApiDerived
 /// once the HTTP call returns.

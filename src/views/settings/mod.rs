@@ -49,29 +49,29 @@ use crate::views::helpers::{
 };
 use crate::workflows::blocked_release_workflows;
 
-/// `ck.account_data` key used by the read-receipt preferences entry. Spec:
+/// `ak.account_data` key used by the read-receipt preferences entry. Spec:
 /// `discovery/client-preferences.md` §3.6.
 pub(crate) const READ_RECEIPT_ACCOUNT_DATA_KEY: &str = "ak.read_receipt.preferences";
 
-/// `ck.account_data` key used by the cross-device UI preferences entry
+/// `ak.account_data` key used by the cross-device UI preferences entry
 /// (theme, sidebar collapsed, per-Realm view). Spec:
 /// `discovery/client-preferences.md` §2.
 pub(crate) const CLIENT_UI_ACCOUNT_DATA_KEY: &str = "client.ui";
 
-/// `ck.account_data` key used by the actor-private personal blocklist.
+/// `ak.account_data` key used by the actor-private personal blocklist.
 /// Spec: `discovery/client-preferences.md` §2 / §3 privacy preferences.
 pub(crate) const CLIENT_BLOCKLIST_ACCOUNT_DATA_KEY: &str = "ak.account.blocklist";
 
-/// `ck.account_data` key used by notification push-rule preferences.
+/// `ak.account_data` key used by notification push-rule preferences.
 pub(crate) const PUSH_RULES_ACCOUNT_DATA_KEY: &str = "ak.push_rules";
 
-/// `ck.account_data` key used by do-not-disturb preferences.
+/// `ak.account_data` key used by do-not-disturb preferences.
 pub(crate) const DND_ACCOUNT_DATA_KEY: &str = "ak.dnd_schedule";
 
-/// `ck.account_data` key used by the principal-private presence policy.
+/// `ak.account_data` key used by the principal-private presence policy.
 pub(crate) const PRESENCE_VISIBILITY_ACCOUNT_DATA_KEY: &str = "ak.presence.visibility";
 
-/// `ck.account_data` key used by the manual presence preference
+/// `ak.account_data` key used by the manual presence preference
 /// (profiles-presence.md §3.6). Send-side enforced; pushed encrypted —
 /// servers MUST NOT require a projection of this key.
 pub(crate) const PRESENCE_PREFERENCE_ACCOUNT_DATA_KEY: &str = "ak.presence.preference";
@@ -1993,7 +1993,7 @@ pub fn SettingsPanel(
                                     let api_token = token();
                                     let dev = device_id();
                                     let principal_id = account_did();
-                                    let local_store = state_store.read().clone();
+                                    let persisted_grant = state_store.read().session_grant();
                                     spawn(async move {
                                         let principal_id =
                                             (!principal_id.trim().is_empty()).then_some(principal_id);
@@ -2008,7 +2008,7 @@ pub fn SettingsPanel(
                                         };
                                         match crate::push::registration::register_via_chime(
                                             context,
-                                            &local_store,
+                                            persisted_grant,
                                         )
                                         .await
                                         {
@@ -2049,7 +2049,8 @@ pub fn SettingsPanel(
                                     let base = base_url();
                                     let api_token = token();
                                     let dev = device_id();
-                                    let local_store = state_store.read().clone();
+                                    let persisted_grant = state_store.read().session_grant();
+                                    let registration = state_store.read().push_registration();
                                     spawn(async move {
                                         let context = crate::push::registration::UnregisterContext {
                                             principal_server_url: base,
@@ -2059,7 +2060,8 @@ pub fn SettingsPanel(
                                         };
                                         match crate::push::registration::unregister_via_chime(
                                             context,
-                                            &local_store,
+                                            persisted_grant,
+                                            registration,
                                         ).await {
                                             Ok(_) => {
                                                 state_store.write().clear_push_registration();

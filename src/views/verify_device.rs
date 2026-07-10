@@ -956,7 +956,7 @@ pub fn VerifyDevicePanel(
                                         //    through it so the server-side
                                         //    pinning check accepts the write.
                                         let control_realm =
-                                            arkret_sdk::auth::principal_control_realm_id(
+                            arkret_sdk::principal_control_realm_id(
                                                 &principal,
                                             );
                                         let envelope = match output

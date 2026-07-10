@@ -1,7 +1,7 @@
 use reqwest::StatusCode;
 
 use crate::api_error::{
-    CokretApiError, decode_arkret_error, is_actor_frontier_absent_error,
+    ArkretApiError, decode_arkret_error, is_actor_frontier_absent_error,
     is_actor_seq_cas_conflict_error, is_auth_expired_error, is_device_not_authorized_error,
     is_invalid_cursor_error, is_plaintext_visibility_policy_error, is_snapshot_unavailable_error,
     is_space_membership_denied_error, is_terminal_session_grant_error,
@@ -36,7 +36,7 @@ fn decodes_plain_error_envelope_and_falls_back() {
     );
     assert_eq!(decoded.code(), "invalid_param");
 
-    // The SDK's ErrorEnvelope::new strips the `ck.error.` prefix in
+    // The SDK's ErrorEnvelope::new strips the `ak.error.` prefix in
     // `canonical_error_code` and we depend on that canonicalization so
     // downstream comparisons against the registry shape match.
     let fallback = decode_arkret_error(StatusCode::SERVICE_UNAVAILABLE, b"busy");
@@ -145,7 +145,7 @@ fn recognizes_device_not_authorized_errors() {
     // unverified / unauthorized session device. Recovery setup keys its
     // fail-closed routing on this, so the classifier must match it and
     // nothing else.
-    let device_not_authorized: anyhow::Error = CokretApiError {
+    let device_not_authorized: anyhow::Error = ArkretApiError {
         status: StatusCode::FORBIDDEN,
         error: decode_arkret_error(
             StatusCode::FORBIDDEN,
@@ -159,7 +159,7 @@ fn recognizes_device_not_authorized_errors() {
     // device was never enrolled (no projected `device_public_key`). It must
     // route to the same friendly "authorize this device" branch, not the
     // raw long-error fallback that overflows the modal.
-    let recovery_policy_denial: anyhow::Error = CokretApiError {
+    let recovery_policy_denial: anyhow::Error = ArkretApiError {
         status: StatusCode::CONFLICT,
         error: decode_arkret_error(
             StatusCode::CONFLICT,
@@ -172,7 +172,7 @@ fn recognizes_device_not_authorized_errors() {
     // The `service_attested` enrollment path's "no authority designated"
     // rejection is likewise a device-authorization problem from the user's
     // point of view.
-    let authority_denial: anyhow::Error = CokretApiError {
+    let authority_denial: anyhow::Error = ArkretApiError {
         status: StatusCode::FORBIDDEN,
         error: decode_arkret_error(
             StatusCode::FORBIDDEN,
@@ -185,7 +185,7 @@ fn recognizes_device_not_authorized_errors() {
     // A different denial (transient / unrelated capability) must NOT be
     // read as "device not authorized" — otherwise a flaky deny would wrongly
     // route the user away from generating their first Recovery Key.
-    let other_denial: anyhow::Error = CokretApiError {
+    let other_denial: anyhow::Error = ArkretApiError {
         status: StatusCode::FORBIDDEN,
         error: decode_arkret_error(
             StatusCode::FORBIDDEN,
@@ -198,7 +198,7 @@ fn recognizes_device_not_authorized_errors() {
 
 #[test]
 fn recognizes_auth_expired_errors() {
-    let error: anyhow::Error = CokretApiError {
+    let error: anyhow::Error = ArkretApiError {
         status: StatusCode::UNAUTHORIZED,
         error: decode_arkret_error(
             StatusCode::UNAUTHORIZED,
@@ -214,7 +214,7 @@ fn recognizes_auth_expired_errors() {
     // permanently invalid — it may just be a transient deny. The UI
     // surfaces the error and lets the user retry rather than wiping
     // the session and forcing a fresh sign-in.
-    let bare: anyhow::Error = CokretApiError {
+    let bare: anyhow::Error = ArkretApiError {
         status: StatusCode::UNAUTHORIZED,
         error: decode_arkret_error(StatusCode::UNAUTHORIZED, b""),
     }
@@ -225,7 +225,7 @@ fn recognizes_auth_expired_errors() {
     for code in ["unauthenticated", "soft_logged_out"] {
         let body =
             format!(r#"{{"ok":false,"error":{{"code":"{code}","message":"unknown token"}}}}"#);
-        let aliased: anyhow::Error = CokretApiError {
+        let aliased: anyhow::Error = ArkretApiError {
             status: StatusCode::UNAUTHORIZED,
             error: decode_arkret_error(StatusCode::UNAUTHORIZED, body.as_bytes()),
         }
@@ -235,7 +235,7 @@ fn recognizes_auth_expired_errors() {
 
     // A 401 carrying an unrelated error code (rate-limit, policy_denied
     // wrapped in 401, etc.) must not be misclassified as session death.
-    let unrelated: anyhow::Error = CokretApiError {
+    let unrelated: anyhow::Error = ArkretApiError {
         status: StatusCode::UNAUTHORIZED,
         error: decode_arkret_error(
             StatusCode::UNAUTHORIZED,
@@ -245,7 +245,7 @@ fn recognizes_auth_expired_errors() {
     .into();
     assert!(!is_auth_expired_error(&unrelated));
 
-    let forbidden: anyhow::Error = CokretApiError {
+    let forbidden: anyhow::Error = ArkretApiError {
         status: StatusCode::FORBIDDEN,
         error: decode_arkret_error(
             StatusCode::FORBIDDEN,
@@ -255,7 +255,7 @@ fn recognizes_auth_expired_errors() {
     .into();
     assert!(!is_auth_expired_error(&forbidden));
 
-    let revoked_session_grant: anyhow::Error = CokretApiError {
+    let revoked_session_grant: anyhow::Error = ArkretApiError {
         status: StatusCode::FORBIDDEN,
         error: decode_arkret_error(
             StatusCode::FORBIDDEN,
@@ -266,7 +266,7 @@ fn recognizes_auth_expired_errors() {
     assert!(is_terminal_session_grant_error(&revoked_session_grant));
     assert!(is_auth_expired_error(&revoked_session_grant));
 
-    let unrelated_capability_denied: anyhow::Error = CokretApiError {
+    let unrelated_capability_denied: anyhow::Error = ArkretApiError {
         status: StatusCode::FORBIDDEN,
         error: decode_arkret_error(
             StatusCode::FORBIDDEN,
@@ -282,7 +282,7 @@ fn recognizes_auth_expired_errors() {
 
 #[test]
 fn recognizes_plaintext_visibility_policy_errors() {
-    let error: anyhow::Error = CokretApiError {
+    let error: anyhow::Error = ArkretApiError {
         status: StatusCode::FORBIDDEN,
         error: decode_arkret_error(
             StatusCode::FORBIDDEN,
@@ -292,7 +292,7 @@ fn recognizes_plaintext_visibility_policy_errors() {
     .into();
     assert!(is_plaintext_visibility_policy_error(&error));
 
-    let capability_error: anyhow::Error = CokretApiError {
+    let capability_error: anyhow::Error = ArkretApiError {
         status: StatusCode::FORBIDDEN,
         error: decode_arkret_error(
             StatusCode::FORBIDDEN,
@@ -302,7 +302,7 @@ fn recognizes_plaintext_visibility_policy_errors() {
     .into();
     assert!(is_plaintext_visibility_policy_error(&capability_error));
 
-    let other_policy: anyhow::Error = CokretApiError {
+    let other_policy: anyhow::Error = ArkretApiError {
         status: StatusCode::FORBIDDEN,
         error: decode_arkret_error(
             StatusCode::FORBIDDEN,
@@ -315,7 +315,7 @@ fn recognizes_plaintext_visibility_policy_errors() {
 
 #[test]
 fn recognizes_space_membership_denied_errors() {
-    let error: anyhow::Error = CokretApiError {
+    let error: anyhow::Error = ArkretApiError {
         status: StatusCode::FORBIDDEN,
         error: decode_arkret_error(
             StatusCode::FORBIDDEN,

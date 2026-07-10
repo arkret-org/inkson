@@ -4,7 +4,7 @@
 //! request builder, registration-state persistence helper, VAPID describe
 //! fetch). What was missing was a *single* end-to-end orchestrator that
 //! resolves a real platform token via the active [`PushTokenProvider`],
-//! posts the register-device request through the chime [`CokretPushClient`]
+//! posts the register-device request through the chime [`ArkretPushClient`]
 //! pointed at the floria notify gateway, and returns the resulting
 //! [`PushRegistrationState`] for the caller to persist through its live store
 //! handle.
@@ -36,15 +36,15 @@
 //! ```
 
 use chime::{
-    ChimePushRegisterDeviceOutcome, ChimePushRegisterDeviceRequest,
-    ChimePushUnregisterDeviceOutcome, CokretPushClient, GatewayBinding, PushDeviceConfig,
-    PushGatewayType, PushPreferences, PushRegistrationState, build_register_device_request,
+    ArkretPushClient, ChimePushRegisterDeviceOutcome, ChimePushRegisterDeviceRequest,
+    ChimePushUnregisterDeviceOutcome, GatewayBinding, PushDeviceConfig, PushGatewayType,
+    PushPreferences, PushRegistrationState, build_register_device_request,
 };
 
 use crate::account_auth::{
     build_session_grant_introspection_proof_bundle, session_grant_signing_key_from_pem,
 };
-use crate::local_state::LocalStateStore;
+use crate::local_state::PersistedSessionGrant;
 use crate::push::{
     ensure_production_register_request, floria_gateway_url, registration_state_from_response,
 };
@@ -160,9 +160,9 @@ struct ChimeSessionGrantHeaders {
 /// real HTTP POST to the principal server.
 pub async fn register_via_chime(
     mut ctx: RegisterContext,
-    state_store: &LocalStateStore,
+    persisted_grant: Option<PersistedSessionGrant>,
 ) -> Result<RegisterOutcome, PushRegistrationError> {
-    let session_grant = resolve_chime_session_grant(&mut ctx, state_store)?;
+    let session_grant = resolve_chime_session_grant(&mut ctx, persisted_grant.as_ref())?;
     let token = resolve_real_token(&ctx).await?;
     let request = build_request(&ctx, &token)?;
     ensure_production_register_request(&request)
@@ -189,7 +189,8 @@ pub async fn register_via_chime(
 
 pub async fn unregister_via_chime(
     ctx: UnregisterContext,
-    state_store: &LocalStateStore,
+    persisted_grant: Option<PersistedSessionGrant>,
+    registration: Option<chime::PushRegistrationState>,
 ) -> Result<ChimePushUnregisterDeviceOutcome, PushRegistrationError> {
     let mut grant_ctx = RegisterContext {
         principal_server_url: ctx.principal_server_url.clone(),
@@ -200,12 +201,9 @@ pub async fn unregister_via_chime(
         session_grant: ctx.session_grant.clone(),
         active_circle_id: None,
     };
-    let session_grant = resolve_chime_session_grant(&mut grant_ctx, state_store)?;
-    let request = crate::push::build_unregister_request(
-        &ctx.device_id,
-        state_store.push_registration().as_ref(),
-    )
-    .map_err(PushRegistrationError::BuildRequest)?;
+    let session_grant = resolve_chime_session_grant(&mut grant_ctx, persisted_grant.as_ref())?;
+    let request = crate::push::build_unregister_request(&ctx.device_id, registration.as_ref())
+        .map_err(PushRegistrationError::BuildRequest)?;
     let client = chime_client(
         &ctx.principal_server_url,
         ctx.authorization_credential.as_deref(),
@@ -222,8 +220,8 @@ fn chime_client(
     principal_server_url: &str,
     authorization_credential: Option<&str>,
     session_grant: &ChimeSessionGrantHeaders,
-) -> Result<CokretPushClient, PushRegistrationError> {
-    let mut client = CokretPushClient::new(principal_server_url).with_required_session_grant(true);
+) -> Result<ArkretPushClient, PushRegistrationError> {
+    let mut client = ArkretPushClient::new(principal_server_url).with_required_session_grant(true);
     if let Some(token) = authorization_credential {
         client = client.with_bearer_token(token);
     }
@@ -244,7 +242,7 @@ fn chime_client(
 
 fn resolve_chime_session_grant(
     ctx: &mut RegisterContext,
-    state_store: &LocalStateStore,
+    persisted_grant: Option<&PersistedSessionGrant>,
 ) -> Result<ChimeSessionGrantHeaders, PushRegistrationError> {
     if let Some(grant_jwt) = ctx
         .session_grant
@@ -259,8 +257,8 @@ fn resolve_chime_session_grant(
         });
     }
 
-    let grant = state_store
-        .session_grant()
+    let grant = persisted_grant
+        .cloned()
         .ok_or(PushRegistrationError::MissingSessionGrant)?;
     if !grant_matches_principal_server(&grant, &ctx.principal_server_url) {
         return Err(PushRegistrationError::SessionGrantMismatch {
@@ -534,7 +532,8 @@ mod tests {
         let mut context = ctx("dev_inkson");
         context.principal_id = None;
 
-        let headers = resolve_chime_session_grant(&mut context, &store).expect("grant headers");
+        let headers = resolve_chime_session_grant(&mut context, store.session_grant().as_ref())
+            .expect("grant headers");
 
         assert_eq!(headers.grant_jwt, "header.payload.signature");
         assert!(headers.challenge.as_deref().is_some_and(|v| !v.is_empty()));
@@ -549,7 +548,8 @@ mod tests {
     fn missing_grant_fails_closed_before_register() {
         let mut context = ctx("dev_inkson");
         let store = isolated_store("missing-grant");
-        let err = resolve_chime_session_grant(&mut context, &store).unwrap_err();
+        let err =
+            resolve_chime_session_grant(&mut context, store.session_grant().as_ref()).unwrap_err();
         assert!(matches!(err, PushRegistrationError::MissingSessionGrant));
     }
 

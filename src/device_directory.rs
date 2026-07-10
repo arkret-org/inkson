@@ -64,7 +64,7 @@ use arkret_sdk::{
     QueryDeviceCrossSigningBinding, resolve_verification_method_key_from_document,
 };
 
-use crate::api::CokretApi;
+use crate::api::ArkretApi;
 
 /// Resolve the DID document for an `actor` so the Tier-2 anchoring step can
 /// confirm the published PSK against the actor's current DID control set.
@@ -463,7 +463,7 @@ fn directory_signing_key_multibase(value: &str) -> Option<String> {
 /// verification failure (a negative cache entry is written, fail-closed);
 /// `Err` for a transport / decode failure (not cached, so a later prefetch retries).
 pub async fn resolve_device_signing_key(
-    api: &CokretApi,
+    api: &ArkretApi,
     anchor: &dyn DidAnchor,
     actor: &str,
     device: &str,
@@ -508,7 +508,7 @@ pub async fn resolve_device_signing_key(
 /// skipped. Best-effort: a per-pair query error is swallowed (left uncached for
 /// retry) so one unreachable device never blocks the rest.
 pub async fn prefetch_device_keys(
-    api: &CokretApi,
+    api: &ArkretApi,
     anchor: &dyn DidAnchor,
     pairs: &[(String, String)],
 ) {
@@ -946,9 +946,9 @@ mod tests {
             crate::did_key::encode_ed25519_did_key_multibase(&device_key.verifying_key());
         let device_signing_key = format!("did:key:{device_multibase}");
 
-        let psk_kid = format!("{actor_str}#ck_principal_signing_v1");
-        let ssk_kid = format!("{actor_str}#ck_self_signing_v1");
-        let usk_kid = format!("{actor_str}#ck_user_signing_v1");
+        let psk_kid = format!("{actor_str}#ak_principal_signing_v1");
+        let ssk_kid = format!("{actor_str}#ak_self_signing_v1");
+        let usk_kid = format!("{actor_str}#ak_user_signing_v1");
 
         // DID document anchoring the PSK kid → PSK public key (multibase).
         let document = DidDocument::new(actor.clone(), psk_kid.clone(), psk_multibase.clone());
@@ -1134,7 +1134,7 @@ mod tests {
         let wrong_psk = SigningKey::from_bytes(&[99u8; 32]);
         let wrong_doc = DidDocument::new(
             fx.actor.clone(),
-            format!("{TIER2_ACTOR}#ck_principal_signing_v1"),
+            format!("{TIER2_ACTOR}#ak_principal_signing_v1"),
             crate::did_key::encode_ed25519_did_key_multibase(&wrong_psk.verifying_key()),
         );
         assert_eq!(

@@ -1,5 +1,5 @@
 import { expect, test } from "@playwright/test";
-import { mockCokretApi } from "./mockCokretApi";
+import { mockArkretApi } from "./mockArkretApi";
 import {
   registerStrandsBeforeEach,
   latestTestId,
@@ -65,7 +65,7 @@ test("first registered device opens 24-word recovery setup instead of existing-d
   const firstDevice = "ak:device:01964137-0000-7000-8000-0000000000f1";
 
   await page.unroute("**/*");
-  await mockCokretApi(page, {
+  await mockArkretApi(page, {
     accountPrincipalId: firstDid,
     primaryHandle: "first:local.host",
     currentDeviceId: firstDevice,
@@ -187,7 +187,7 @@ test("recovery key setup download filename stays bare without primary handle cla
   page,
 }) => {
   await page.unroute("**/*");
-  await mockCokretApi(page, {
+  await mockArkretApi(page, {
     advertiseListHandlesForSubject: true,
     accountPrincipalId: "did:web:local.host:users:carol",
     primaryHandle: null,

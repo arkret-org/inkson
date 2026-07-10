@@ -1,7 +1,7 @@
-//! Free-function directory READ transport (E2 CokretApi strangler).
+//! Free-function directory READ transport (E2 ArkretApi strangler).
 //!
 //! These are the pure-passthrough directory read operations that used to live
-//! as thin inherent methods on [`crate::api::CokretApi`]. They build a typed SDK
+//! as thin inherent methods on [`crate::api::ArkretApi`]. They build a typed SDK
 //! request body and call the shared SDK `http-client::Client` directly. Call
 //! sites reach them through
 //! [`crate::authed_api::with_authed_sdk_client`], which keeps the

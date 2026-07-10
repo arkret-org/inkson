@@ -5,7 +5,7 @@ use dioxus_primitives::checkbox::CheckboxState;
 use dioxus_router::hooks::use_navigator;
 use serde_json::{Value, json};
 
-use crate::api::CokretApi;
+use crate::api::ArkretApi;
 use crate::api_error::is_space_membership_denied_error;
 use crate::audit::build_audit_ryw_receipt;
 use crate::components::{HelpTip, SecurityStateBadge, SelfAttributionBadge, UiIcon};
@@ -13,7 +13,7 @@ use crate::hlc::{Hlc, observe_seq};
 use crate::local_state::{ClientLocalState, LocalStateStore};
 use crate::models::SubmitEventResult;
 use crate::operation::{
-    OperationBuilder, ck_ops, sdk_event_local_operation_id, trim_realm_id, uuid_v7,
+    OperationBuilder, ak_ops, sdk_event_local_operation_id, trim_realm_id, uuid_v7,
 };
 use crate::payload::sdk_payload_value;
 use crate::routes::Route;
@@ -193,7 +193,7 @@ pub fn ChatPanel(
     let mut messages = use_signal(Vec::<ChatMessage>::new);
     let mut moderation_appeal_prompts = use_signal(Vec::<ModerationAppealPrompt>::new);
     let mut chat_draft = use_signal(String::new);
-    // Perf (P0): replace the per-keystroke `ck.typing` POST with a leading-edge
+    // Perf (P0): replace the per-keystroke `ak.typing` POST with a leading-edge
     // throttle (≤ once / 3s) plus a trailing `typing=false` once the user stops.
     let typing_throttle = crate::perf::use_typing_throttle(3_000, 4_000);
     // A6.2 composer drag-drop attachment state. `compose_dragover` toggles
@@ -251,7 +251,7 @@ pub fn ChatPanel(
     let mut poll_draft = use_signal(|| Option::<crate::messaging::polls::PollDraft>::None);
     let mut poll_cards = use_signal(Vec::<crate::messaging::polls::PollCard>::new);
     // G3.Y2 — typing indicator. `typing_actors` lists the DIDs of
-    // other actors who have sent a `ck.typing` ephemeral within the
+    // other actors who have sent a `ak.typing` ephemeral within the
     // TTL window returned by the live sync projection.
     let typing_actors = use_signal(Vec::<String>::new);
     let typing_next_expires_at_ms = use_signal(|| Option::<i64>::None);
@@ -1302,7 +1302,7 @@ pub fn ChatPanel(
                                         let create_card = new_channel_create_card();
                                         let strand_id = format!("ak:strand:{}", uuid_v7());
                                         let rank = format!("r{}", chrono::Utc::now().timestamp_millis());
-                                        let op = match ck_ops::discussion_strand_create(
+                                        let op = match ak_ops::discussion_strand_create(
                                             &realm,
                                             &actor,
                                             &strand_id,
@@ -1537,7 +1537,7 @@ pub fn ChatPanel(
                                                                         status_msg.set(crate::i18n::tr("chat.watch_level.pending"));
                                                                         let api_token = token();
                                                                         let wait_for = active_sync_token(sync_cursor());
-                                                                        let watch_op = match ck_ops::strand_watch_set(
+                                                                        let watch_op = match ak_ops::strand_watch_set(
                                                                             &realm_for_click,
                                                                             &actor_for_click,
                                                                             &actor_for_click,
@@ -1665,7 +1665,7 @@ pub fn ChatPanel(
                     }
                 }
 
-                // Shared pin bar. Source is the `ck.pin.*` shared event
+                // Shared pin bar. Source is the `ak.pin.*` shared event
                 // projection only; holder-private `ak.saved.v1:*`
                 // account-data is rendered on message rows instead.
                 {
@@ -1760,7 +1760,7 @@ pub fn ChatPanel(
 
                 // G3.Y2 — typing indicator. Shown when one or more
                 // other actors in the active strand have sent a
-                // `ck.typing` ephemeral within `TYPING_TTL_SECONDS`.
+                // `ak.typing` ephemeral within `TYPING_TTL_SECONDS`.
                 // The DIDs live on `data-typing-actors` so cotest can
                 // assert on them without scraping localised text.
                 {
@@ -2064,7 +2064,7 @@ pub fn ChatPanel(
                                 }
                             }
                             // Tiny pop-out menu. Shared pin writes durable
-                            // `ck.pin.*`; private save writes `ak.saved.v1:*`
+                            // `ak.pin.*`; private save writes `ak.saved.v1:*`
                             // through holder-private account-d`ak.saved.v1
                             // The render condition checks per-message
                             // so only one menu is visible at a time.
@@ -2757,7 +2757,7 @@ pub fn ChatPanel(
                                         // hover action row (mirrors the right-click
                                         // context-menu pin), so E2E and keyboard
                                         // users can pin without the native menu.
-                                        // Writes the same durable `ck.pin.*` events.
+                                        // Writes the same durable `ak.pin.*` events.
                                         {
                                             let realm_for_pin = msg.realm_id.clone();
                                             let strand_for_pin = msg.strand_id.clone();
@@ -4105,7 +4105,7 @@ pub fn ChatPanel(
                                 // least as strict as presence
                                 // (profiles-presence.md §3.5): with
                                 // `presence_visibility="nobody"` the
-                                // client MUST NOT send `ck.typing`,
+                                // client MUST NOT send `ak.typing`,
                                 // symmetric with the presence send gate.
                                 if !state_store
                                     .read()

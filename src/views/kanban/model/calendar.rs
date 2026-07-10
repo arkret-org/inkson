@@ -244,7 +244,7 @@ pub(crate) fn calendar_rsvp_operation(
     status: &str,
     occurrence: &str,
 ) -> anyhow::Result<arkret_sdk::Event> {
-    crate::operation::ck_ops::rsvp_set(
+    crate::operation::ak_ops::rsvp_set(
         realm_id,
         actor_id,
         strand_id,

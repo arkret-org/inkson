@@ -17,7 +17,7 @@ use hkdf::Hkdf;
 use serde_json::{Value, json};
 use sha2::Sha256;
 
-use crate::api::CokretApi;
+use crate::api::ArkretApi;
 use crate::models::AccountDataSetResult;
 
 pub const FILE_TRANSFER_PURPOSE: &str = "file_transfer";
@@ -136,7 +136,7 @@ pub fn load_file_transfer_crypto_context(
 }
 
 pub async fn upload_actor_private_file(
-    api: &CokretApi,
+    api: &ArkretApi,
     crypto: &FileTransferCryptoContext,
     actor_id: &str,
     device_id: &str,
@@ -187,7 +187,7 @@ pub async fn upload_actor_private_file(
 }
 
 pub async fn upload_device_bound_file(
-    api: &CokretApi,
+    api: &ArkretApi,
     crypto: &FileTransferCryptoContext,
     actor_id: &str,
     device_id: &str,
@@ -257,7 +257,7 @@ pub async fn upload_device_bound_file(
 }
 
 pub async fn decrypt_file_transfer_item(
-    api: &CokretApi,
+    api: &ArkretApi,
     item: &FileTransferItem,
 ) -> anyhow::Result<Vec<u8>> {
     let ciphertext = api

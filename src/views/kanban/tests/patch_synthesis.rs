@@ -313,8 +313,12 @@ fn engine_ingest_dedupes_resent_strand_update_by_operation_id() {
 
     let mut store = LocalStateStore::default();
     // Fold the same event twice, as a resubscribe would.
-    crate::sync_engine::ingest_kanban_events(&mut store, "ak:realm:r1", &[event.clone()]);
-    crate::sync_engine::ingest_kanban_events(&mut store, "ak:realm:r1", &[event]);
+    crate::sync_engine::ingest_kanban_projection_events(
+        &mut store,
+        "ak:realm:r1",
+        &[event.clone()],
+    );
+    crate::sync_engine::ingest_kanban_projection_events(&mut store, "ak:realm:r1", &[event]);
 
     let raw_ops = store.load().raw_operations;
     assert_eq!(raw_ops.len(), 1, "resent update deduped by operation_id");
@@ -721,7 +725,7 @@ fn seed_strand_ids_are_valid_object_patch_targets() {
     ] {
         // SDK RealmId is strictly `ak:realm:<uuid7>` now; the realm arg can
         // no longer be the demo Space id.
-        let event = crate::operation::ck_ops::strand_update_patch(
+        let event = crate::operation::ak_ops::strand_update_patch(
             "ak:realm:0196419b-0000-7000-8000-00000000b0a0",
             "did:web:acme.example:users:alice",
             strand_id,

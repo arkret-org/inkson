@@ -262,7 +262,7 @@ pub fn is_space_membership_denied_error(error: &anyhow::Error) -> bool {
 
 pub fn normalize_wait_for_sync_token(sync_token: &str) -> Option<String> {
     let sync_token = sync_token.trim();
-    if sync_token.is_empty() || sync_token == "-" {
+    if sync_token.is_empty() {
         return None;
     }
     let mut tokens = Vec::new();

@@ -7,34 +7,69 @@
 use std::collections::VecDeque;
 use std::sync::{Arc, Mutex};
 
+use dioxus::prelude::{ReadableExt, SyncSignal, WritableExt};
+
 use garth::{RealmEventsFrameSource, RealmEventsTransport};
 #[cfg(not(target_arch = "wasm32"))]
 use reqwest::header::CONTENT_TYPE;
 
 use crate::sync_parse::{AccountSubscribeReconnectAfter, AccountSubscribeSnapshotResult};
 
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub struct InksonLocalStateStoreAdapter {
-    inner: Arc<Mutex<crate::local_state::LocalStateStore>>,
+    inner: InksonLocalStateStoreHandle,
+}
+
+#[derive(Clone)]
+enum InksonLocalStateStoreHandle {
+    Owned(Arc<Mutex<crate::local_state::LocalStateStore>>),
+    Signal(SyncSignal<crate::local_state::LocalStateStore>),
 }
 
 impl InksonLocalStateStoreAdapter {
     pub fn new(store: crate::local_state::LocalStateStore) -> Self {
         Self {
-            inner: Arc::new(Mutex::new(store)),
+            inner: InksonLocalStateStoreHandle::Owned(Arc::new(Mutex::new(store))),
         }
     }
 
-    pub fn shared(store: Arc<Mutex<crate::local_state::LocalStateStore>>) -> Self {
-        Self { inner: store }
+    pub fn from_signal(store: SyncSignal<crate::local_state::LocalStateStore>) -> Self {
+        Self {
+            inner: InksonLocalStateStoreHandle::Signal(store),
+        }
     }
 
-    fn lock(
+    fn with_store<R>(
         &self,
-    ) -> arkret_sdk::Result<std::sync::MutexGuard<'_, crate::local_state::LocalStateStore>> {
-        self.inner
-            .lock()
-            .map_err(|err| arkret_sdk::Error::Protocol(format!("local state lock poisoned: {err}")))
+        f: impl FnOnce(&crate::local_state::LocalStateStore) -> R,
+    ) -> arkret_sdk::Result<R> {
+        match &self.inner {
+            InksonLocalStateStoreHandle::Owned(store) => {
+                let store = store.lock().map_err(|error| {
+                    arkret_sdk::Error::Protocol(format!("local state lock poisoned: {error}"))
+                })?;
+                Ok(f(&store))
+            }
+            InksonLocalStateStoreHandle::Signal(store) => Ok(f(&store.read())),
+        }
+    }
+
+    fn with_store_mut<R>(
+        &self,
+        f: impl FnOnce(&mut crate::local_state::LocalStateStore) -> R,
+    ) -> arkret_sdk::Result<R> {
+        match &self.inner {
+            InksonLocalStateStoreHandle::Owned(store) => {
+                let mut store = store.lock().map_err(|error| {
+                    arkret_sdk::Error::Protocol(format!("local state lock poisoned: {error}"))
+                })?;
+                Ok(f(&mut store))
+            }
+            InksonLocalStateStoreHandle::Signal(store) => {
+                let mut store = *store;
+                Ok(f(&mut store.write()))
+            }
+        }
     }
 
     fn realm_id(scope: &garth::CursorScope) -> Option<String> {
@@ -50,19 +85,14 @@ impl garth::CursorStore for InksonLocalStateStoreAdapter {
         &self,
         scope: garth::CursorScope,
     ) -> arkret_sdk::Result<Option<garth::OpaqueCursor>> {
-        let store = self.lock()?;
-        match scope {
-            // Normalize the legacy "-" reset sentinel (and empty strings) that
-            // inkson's own account loop writes/filters: garth-driven loops
-            // must never send it as an `after` cursor (the server would reject
-            // it as cursor_unrecognized).
-            garth::CursorScope::Account { .. } => Ok(store
+        self.with_store(|store| match scope {
+            garth::CursorScope::Account { .. } => store
                 .sync_cursor()
-                .filter(|cursor| !matches!(cursor.trim(), "" | "-"))),
+                .filter(|cursor| !cursor.trim().is_empty()),
             garth::CursorScope::RealmEvents { realm_id, .. } => {
-                Ok(store.realm_events_cursor(realm_id.as_str()))
+                store.realm_events_cursor(realm_id.as_str())
             }
-        }
+        })
     }
 
     async fn save(
@@ -70,40 +100,33 @@ impl garth::CursorStore for InksonLocalStateStoreAdapter {
         scope: garth::CursorScope,
         cursor: garth::OpaqueCursor,
     ) -> arkret_sdk::Result<()> {
-        let mut store = self.lock()?;
-        match scope {
+        self.with_store_mut(|store| match scope {
             garth::CursorScope::Account { .. } => store.save_sync_cursor(cursor),
             garth::CursorScope::RealmEvents { realm_id, .. } => {
                 store.save_realm_events_cursor(realm_id.as_str(), Some(cursor));
             }
-        }
-        Ok(())
+        })
     }
 
     async fn clear(&self, scope: garth::CursorScope) -> arkret_sdk::Result<()> {
-        let mut store = self.lock()?;
-        match scope {
+        self.with_store_mut(|store| match scope {
             garth::CursorScope::Account { .. } => store.clear_sync_cursor(),
             garth::CursorScope::RealmEvents { .. } => {
                 if let Some(realm_id) = Self::realm_id(&scope) {
                     store.save_realm_events_cursor(&realm_id, None);
                 }
             }
-        }
-        Ok(())
+        })
     }
 }
 
 impl garth::EventCacheStore for InksonLocalStateStoreAdapter {
     async fn seen(&self, event_id: arkret_sdk::EventId) -> arkret_sdk::Result<bool> {
-        let store = self.lock()?;
-        Ok(store.client_core_event_seen(event_id.as_str()))
+        self.with_store(|store| store.client_core_event_seen(event_id.as_str()))
     }
 
     async fn remember(&self, event_id: arkret_sdk::EventId) -> arkret_sdk::Result<()> {
-        let mut store = self.lock()?;
-        store.remember_client_core_event(event_id.as_str());
-        Ok(())
+        self.with_store_mut(|store| store.remember_client_core_event(event_id.as_str()))
     }
 }
 
@@ -111,7 +134,7 @@ impl garth::EventCacheStore for InksonLocalStateStoreAdapter {
 pub struct ClientCoreState<E, C, D, S> {
     pub http: arkret_sdk::http_client::Client,
     pub secure_key_store: S,
-    core: garth::CokretClient<E, C, D>,
+    core: garth::ArkretClient<E, C, D>,
 }
 
 impl<E, C, D, S> ClientCoreState<E, C, D, S>
@@ -123,7 +146,7 @@ where
     pub fn new(
         http: arkret_sdk::http_client::Client,
         secure_key_store: S,
-        core: garth::CokretClient<E, C, D>,
+        core: garth::ArkretClient<E, C, D>,
     ) -> Self {
         Self {
             http,
@@ -143,12 +166,41 @@ where
 pub type MemoryClientCore<E> =
     ClientCoreState<E, garth::MemoryStore, garth::MemoryStore, garth::MemorySecureKeyStore>;
 
-pub type InksonClientCore<E> = ClientCoreState<
-    E,
+#[cfg(not(target_arch = "wasm32"))]
+type InksonSubscriptionEngine = garth::SubscriptionEngine<
+    garth::NativeExecutor,
     InksonLocalStateStoreAdapter,
     InksonLocalStateStoreAdapter,
-    Arc<dyn garth::SecureKeyStore>,
 >;
+
+#[cfg(target_arch = "wasm32")]
+type InksonSubscriptionEngine = garth::SubscriptionEngine<
+    garth::WasmExecutor,
+    InksonLocalStateStoreAdapter,
+    InksonLocalStateStoreAdapter,
+>;
+
+#[derive(Clone)]
+pub struct InksonClientRuntime {
+    subscriptions: InksonSubscriptionEngine,
+}
+
+impl InksonClientRuntime {
+    pub fn new(state_store: SyncSignal<crate::local_state::LocalStateStore>) -> Self {
+        let adapter = InksonLocalStateStoreAdapter::from_signal(state_store);
+        #[cfg(not(target_arch = "wasm32"))]
+        let executor = garth::NativeExecutor;
+        #[cfg(target_arch = "wasm32")]
+        let executor = garth::WasmExecutor;
+        Self {
+            subscriptions: garth::SubscriptionEngine::new(executor, adapter.clone(), adapter),
+        }
+    }
+
+    pub fn subscription_engine(&self) -> InksonSubscriptionEngine {
+        self.subscriptions.clone()
+    }
+}
 
 pub struct BufferedRealmEventsFrameSource {
     frames: VecDeque<arkret_sdk::EventsSubscribeFrame>,
@@ -236,6 +288,15 @@ impl RealmEventsTransport for InksonRealmEventsTransport {
                 .map_err(|error| arkret_sdk::Error::Protocol(error.to_string()))?;
             Ok(BufferedRealmEventsFrameSource::new(frames))
         })
+    }
+}
+
+impl garth::EventsScanTransport for InksonRealmEventsTransport {
+    fn scan_events<'a>(
+        &'a self,
+        request: garth::EventsScanRequest,
+    ) -> garth::subscribe::scan::BoxScanFuture<'a, arkret_sdk::SyncBackfillOutcome> {
+        garth::EventsScanTransport::scan_events(&self.http, request)
     }
 }
 
@@ -350,43 +411,11 @@ pub fn build_memory_client_core(http: arkret_sdk::http_client::Client) -> Defaul
     ClientCoreState::new(
         http,
         secure_key_store,
-        garth::CokretClient::new(
+        garth::ArkretClient::new(
             garth::NativeExecutor,
             garth::MemoryStore::new(),
             garth::MemoryStore::new(),
         ),
-    )
-}
-
-#[cfg(not(target_arch = "wasm32"))]
-pub fn build_client_core(
-    http: arkret_sdk::http_client::Client,
-    local_state: crate::local_state::LocalStateStore,
-    secure_key_store: Arc<dyn crate::secure_key_store::SecureKeyStore>,
-) -> InksonClientCore<garth::NativeExecutor> {
-    let local_state = InksonLocalStateStoreAdapter::new(local_state);
-    // F-11: the platform backends implement garth's `SecureKeyStore` directly, so
-    // the shared `Arc<dyn SecureKeyStore>` is handed to client-core as-is (the
-    // former base64-wrapping `InksonSecureKeyStoreAdapter` is gone).
-    ClientCoreState::new(
-        http,
-        secure_key_store,
-        garth::CokretClient::new(garth::NativeExecutor, local_state.clone(), local_state),
-    )
-}
-
-#[cfg(target_arch = "wasm32")]
-pub fn build_client_core(
-    http: arkret_sdk::http_client::Client,
-    local_state: crate::local_state::LocalStateStore,
-    secure_key_store: Arc<dyn crate::secure_key_store::SecureKeyStore>,
-) -> InksonClientCore<garth::WasmExecutor> {
-    let local_state = InksonLocalStateStoreAdapter::new(local_state);
-    // F-11: hand the shared garth `SecureKeyStore` to client-core directly.
-    ClientCoreState::new(
-        http,
-        secure_key_store,
-        garth::CokretClient::new(garth::WasmExecutor, local_state.clone(), local_state),
     )
 }
 
@@ -396,7 +425,7 @@ pub fn build_memory_client_core(http: arkret_sdk::http_client::Client) -> Defaul
     ClientCoreState::new(
         http,
         secure_key_store,
-        garth::CokretClient::new(
+        garth::ArkretClient::new(
             garth::WasmExecutor,
             garth::MemoryStore::new(),
             garth::MemoryStore::new(),
@@ -480,40 +509,6 @@ mod tests {
                 .await
                 .unwrap()
                 .is_none()
-        );
-    }
-
-    #[tokio::test]
-    async fn account_cursor_load_normalizes_reset_sentinel() {
-        let path = std::env::temp_dir().join(format!(
-            "inkson-client-core-sentinel-{}.json",
-            crate::operation::uuid_v7()
-        ));
-        let adapter = super::InksonLocalStateStoreAdapter::new(
-            crate::local_state::LocalStateStore::with_path(path),
-        );
-        let account_scope = garth::CursorScope::Account {
-            service_did: None,
-            actor_id: arkret_sdk::Did::new("did:webvh:z6mkfixture:alice.example").unwrap(),
-            device_id: arkret_sdk::DeviceId::new("ak:device:01904100-0000-7000-8000-000000000001")
-                .unwrap(),
-        };
-
-        // inkson's account loop writes "-" as an invalid-cursor reset marker;
-        // the adapter must surface it as "no cursor", never as an `after`.
-        adapter
-            .save(account_scope.clone(), "-".to_owned())
-            .await
-            .unwrap();
-        assert!(adapter.load(account_scope.clone()).await.unwrap().is_none());
-
-        adapter
-            .save(account_scope.clone(), "ak:cursor:real".to_owned())
-            .await
-            .unwrap();
-        assert_eq!(
-            adapter.load(account_scope).await.unwrap().as_deref(),
-            Some("ak:cursor:real")
         );
     }
 

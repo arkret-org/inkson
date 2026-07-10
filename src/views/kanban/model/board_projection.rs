@@ -6,7 +6,7 @@
 //! 已同步、已授权、已解密的 Event 集合自维护本地投影"). This module folds the
 //! realm's kanban events — `ak.space.create`, `ak.strand.create`,
 //! `ak.strand.update`, `ak.strand.move` / `ak.strand.reorder`,
-//! `ak.strand.archive` / `ak.strand.restore`, `ck.relation.*` — into the same
+//! `ak.strand.archive` / `ak.strand.restore`, `ak.relation.*` — into the same
 //! [`KanbanColumn`] shape the renderer consumes, WITHOUT depending on the
 //! per-session server projection endpoints (which are visibility-filtered and,
 //! for E2EE realms, cannot carry decrypted content).
@@ -951,7 +951,7 @@ mod tests {
     }
 
     /// Lock the REAL wire shapes: build the optimistic ops through the same
-    /// `ck_ops` builders the submit helpers use (`body = event.payload`) so the
+    /// `ak_ops` builders the submit helpers use (`body = event.payload`) so the
     /// reducer is proven against the actual serialized payloads, not hand-rolled
     /// JSON. Guards against a builder/reducer drift (e.g. a patch entry that
     /// serializes differently than `patch_entry_string` expects).
@@ -977,7 +977,7 @@ mod tests {
     fn real_space_update_builder_rank_reorders_columns() {
         let actor = "did:web:alice.example";
         let space_update_body = |space_id: &str, rank: &str| {
-            crate::operation::ck_ops::space_update_patch(
+            crate::operation::ak_ops::space_update_patch(
                 REALM,
                 actor,
                 space_id,
@@ -1016,7 +1016,7 @@ mod tests {
     #[test]
     fn real_cas_move_builder_relocates_card() {
         let strand = "ak:strand:019f1072-2002-73b2-9c7e-1bb33a924b5c";
-        let move_body = crate::operation::ck_ops::strand_position_cas_update(
+        let move_body = crate::operation::ak_ops::strand_position_cas_update(
             REALM,
             "did:web:alice.example",
             "ak.strand.move",

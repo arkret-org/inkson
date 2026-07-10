@@ -241,9 +241,9 @@ mod personal_agent_tests {
         let value: serde_json::Value = serde_json::from_str(&raw).unwrap();
 
         // AKP-0008 §4.4: exactly the six pairing fields, no scope payload. The
-        // base-URL field is the SDK/spec wire name `cokret_base_url` (a wire key,
-        // deliberately not renamed by the cokret→arkret source rename).
-        assert_eq!(value["cokret_base_url"], "https://arkret.example");
+        // base-URL field is the SDK/spec wire name `arkret_base_url` (a wire key,
+        // deliberately not renamed by the arkret→arkret source rename).
+        assert_eq!(value["arkret_base_url"], "https://arkret.example");
         assert_eq!(value["service_did"], "did:web:arkret.example");
         assert_eq!(
             value["agent_principal_id"],
@@ -329,8 +329,7 @@ mod personal_agent_tests {
         .to_string();
         let summary = summarize_runtime_key_approval_request(&raw).unwrap();
         let request = parse_runtime_key_approval_request(&raw).unwrap();
-        let expected =
-            arkret_sdk::agent::agent_runtime_public_key_digest(&request.public_key).unwrap();
+        let expected = arkret_sdk::agent_runtime_public_key_digest(&request.public_key).unwrap();
 
         assert_eq!(summary.public_key_fingerprint, expected.as_str());
         assert_eq!(summary.verification_method, verification_method);
@@ -403,8 +402,8 @@ mod personal_agent_tests {
         .unwrap();
 
         let runtime_digest =
-            arkret_sdk::agent::agent_runtime_public_key_digest(&request.public_key).unwrap();
-        let expected_pairing_digest = arkret_sdk::agent::agent_key_pairing_request_binding_digest(
+            arkret_sdk::agent_runtime_public_key_digest(&request.public_key).unwrap();
+        let expected_pairing_digest = arkret_sdk::agent_key_pairing_request_binding_digest(
             &arkret_sdk::Did::new(controller.to_owned()).unwrap(),
             &request.agent_principal_id,
             verification_method,
@@ -556,7 +555,7 @@ mod tests {
     /// event-payload.schema.json#/$defs/agent_endpoint_payload.
     #[test]
     fn agent_endpoint_body_keys_pin_canonical_wire() {
-        let op = crate::operation::ck_ops::agent_endpoint(
+        let op = crate::operation::ak_ops::agent_endpoint(
             "ak:realm:0196419b-0000-7000-8000-000000000001",
             "did:web:alice.example",
             "did:web:agent.example",
@@ -574,7 +573,7 @@ mod tests {
 
     #[test]
     fn agent_result_body_carries_audit_binding_artifact() {
-        let op = crate::operation::ck_ops::agent_interop_session_result(
+        let op = crate::operation::ak_ops::agent_interop_session_result(
             "ak:realm:0196419b-0000-7000-8000-000000000001",
             "did:web:alice.example",
             "ak:agent_interop_session:0196419b-0000-7000-8000-000000000002",
@@ -953,7 +952,7 @@ mod tests {
 
     #[test]
     fn interop_capability_constraint_pins_single_endpoint_and_action_intent() {
-        let constraint = crate::operation::ck_ops::interop_capability_constraint(
+        let constraint = crate::operation::ak_ops::interop_capability_constraint(
             "https://runtime.example/v1/a2a/tasks",
             &["a2a"],
             true,
@@ -973,7 +972,7 @@ mod tests {
 
     #[test]
     fn agent_publish_attribution_strand_preserves_agent_attribution() {
-        let op = crate::operation::ck_ops::agent_publish_attribution_strand(
+        let op = crate::operation::ak_ops::agent_publish_attribution_strand(
             "ak:realm:01904100-0000-7000-8000-000000000001",
             "did:web:alice.example",
             "ak:strand:01904100-0000-7000-8000-000000000004",

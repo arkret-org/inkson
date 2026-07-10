@@ -385,10 +385,9 @@ pub fn summarize_runtime_key_approval_request(
     raw: &str,
 ) -> anyhow::Result<RuntimeKeyApprovalSummary> {
     let request = parse_runtime_key_approval_request(raw)?;
-    let public_key_fingerprint =
-        arkret_sdk::agent::agent_runtime_public_key_digest(&request.public_key)?
-            .as_str()
-            .to_owned();
+    let public_key_fingerprint = arkret_sdk::agent_runtime_public_key_digest(&request.public_key)?
+        .as_str()
+        .to_owned();
     let proof_expires_at = request
         .proof_of_possession
         .get("expires_at")
@@ -458,12 +457,12 @@ pub fn build_agent_key_authorize_event_for_pairing(
             .ok_or_else(|| anyhow::anyhow!("agent key_state.requested_scope is required"))?,
     )?;
     let runtime_public_key_digest =
-        arkret_sdk::agent::agent_runtime_public_key_digest(&request.public_key)?;
+        arkret_sdk::agent_runtime_public_key_digest(&request.public_key)?;
     let runtime_public_key: PublicKey = serde_json::from_value(request.public_key.clone())?;
     if runtime_public_key.kid != request.verification_method {
         anyhow::bail!("runtime request public_key.kid does not match verification_method");
     }
-    let pairing_digest = arkret_sdk::agent::agent_key_pairing_request_binding_digest(
+    let pairing_digest = arkret_sdk::agent_key_pairing_request_binding_digest(
         &controller,
         &request.agent_principal_id,
         &request.verification_method,
@@ -505,7 +504,7 @@ pub fn build_agent_key_authorize_event_for_pairing(
         revocation_check_ref: None,
         runtime_attestation,
     };
-    let realm_id = RealmId::new(arkret_sdk::auth::principal_control_realm_id(&controller))?;
+    let realm_id = RealmId::new(arkret_sdk::principal_control_realm_id(&controller))?;
     let hlc = arkret_sdk::Hlc::new(crate::hlc::Hlc::now("inkson").encode())?;
     let mut event =
         arkret_sdk::agent::build_agent_key_authorize_event(&payload, realm_id, controller, 1, hlc)?;
@@ -566,7 +565,7 @@ pub fn expand_preset_grant(
 
 /// R3 spec sync (b47ff6ec) — UI label for an agent FSM state.
 ///
-/// `ck.agent.{pause,resume,deactivate}` lattice is now `fsm` (terminal:
+/// `ak.agent.{pause,resume,deactivate}` lattice is now `fsm` (terminal:
 /// `deactivated`). The badge text below mirrors the wire vocabulary
 /// surfaced by the soland `AgentResBody.state` field; unknown values
 /// fall through to the raw wire string so future state additions are

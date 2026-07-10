@@ -1,9 +1,9 @@
-//! Free-function realm READ transport (E2 CokretApi strangler).
+//! Free-function realm READ transport (E2 ArkretApi strangler).
 //!
 //! These are the pure-passthrough realm read operations (authz checks,
 //! effective grants, collection / strand projections, realm-organization
 //! relationships, notary describe) that used to live as thin inherent methods
-//! on [`crate::api::CokretApi`]. They build a typed SDK request body (and do
+//! on [`crate::api::ArkretApi`]. They build a typed SDK request body (and do
 //! small projections) and call the shared SDK `http-client::Client` directly.
 //! Call sites reach them through [`crate::authed_api::with_authed_sdk_client`]
 //! (or, for non-`with_authed_api` receivers,
@@ -12,7 +12,7 @@
 //! facade path while dropping the per-domain facade method.
 //!
 //! The realm create / mutate methods build + submit signed events via the event
-//! submitter and remain inherent `CokretApi` methods.
+//! submitter and remain inherent `ArkretApi` methods.
 
 use serde_json::{Value, json};
 

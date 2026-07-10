@@ -1,7 +1,7 @@
 //! Static deduplication gates for client-core extraction.
 //!
 //! These guards pin surfaces that have already been removed from inkson. They
-//! intentionally do not assert that the `CokretApi` struct itself is gone (its
+//! intentionally do not assert that the `ArkretApi` struct itself is gone (its
 //! remaining god-object methods + E8 orchestration are still live work), but
 //! they DO pin the `src/api/**` submodules that have been fully extracted:
 //! the durable/ephemeral event engine now lives in `crate::event_submit`
@@ -16,7 +16,7 @@ const FORBIDDEN_SOURCE_FILES: &[&str] = &[
     "dpop.rs",
     "auth_dpop.rs",
     // Event-submission engine extracted to crate::event_submit; these
-    // CokretApi delegator modules were deleted and must stay deleted.
+    // ArkretApi delegator modules were deleted and must stay deleted.
     "api/events.rs",
     "api/agent.rs",
     // Pure-passthrough surfaces migrated onto the SDK http-client keystone.

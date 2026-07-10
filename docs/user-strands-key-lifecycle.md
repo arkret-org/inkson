@@ -56,7 +56,7 @@ flowchart TD
     A["入口流程完成<br/>注册 / 启动 / 换机配对 / 恢复"] --> B{"1. 本设备已授权?"}
     B -- 否 --> B1["弹: 设备授权引导<br/>→ S3 配对 或 S4 恢复"]
     B -- 是 --> C{"2. needs_mls_unlock?<br/>服务器有备份, 本地无材料"}
-    C -- 是 --> C1["弹: MLS 解锁<br/>旧设备直传 ck.secret.* 优先<br/>否则输入 24 词"]
+    C -- 是 --> C1["弹: MLS 解锁<br/>旧设备直传 ak.secret.* 优先<br/>否则输入 24 词"]
     C -- 否 --> D{"3. needs_mls_backup?<br/>本地有材料, 服务器无备份"}
     D -- 是 --> D1{"recovery 已配置?"}
     D1 -- 是 --> D2["弹: 立即备份<br/>加密给 recovery 公钥, 无需用户输入"]
@@ -130,7 +130,7 @@ sequenceDiagram
     participant O as 旧设备(已授权)
 
     N->>S: 登录因子 (密码/passkey/OIDC)
-    S-->>N: fresh-device 受限 session grant<br/>(只能做 ak.key.verification.* bootstrap,<br/>不能读 E2EE 历史/解备份/请求 ck.secret.*)
+    S-->>N: fresh-device 受限 session grant<br/>(只能做 ak.key.verification.* bootstrap,<br/>不能读 E2EE 历史/解备份/请求 ak.secret.*)
     N->>N: 本地生成 device key
     N->>S: POST /_arkret/self/device_messages<br/>ak.key.verification.request<br/>purpose=same_principal_device_authorization<br/>+ pairing_code + new_device_pubkey + challenge_signature
     S-->>O: account subscribe delta.to_device<br/>(push 仅作唤醒)
@@ -253,7 +253,7 @@ flowchart TD
 | --- | --- | --- |
 | 自检链优先级 1–5 | ✅ 已重构 | 统一到 `account_health::resolve`；§3 的五级链 + 单弹窗互斥落地，SPOF 提醒（第 5 步）也纳入解析器（`RecoverySetupReminder`） |
 | S1 first-backup gate | ✅ 已有（既存） | `onboarding.rs` `FirstBackupGate` 硬门禁；拒绝分支的 SPOF 标记 + 启动提醒仍可加强 |
-| S3 配对 | ◑ 既存框架 | `settings/devices.rs` QR/pairing-code/gate device-pair 完整；SAS transcript 与 `ck.secret.*` 直传端到端联动待补 |
+| S3 配对 | ◑ 既存框架 | `settings/devices.rs` QR/pairing-code/gate device-pair 完整；SAS transcript 与 `ak.secret.*` 直传端到端联动待补 |
 | S4 恢复 | ◑ 既存框架 | `recovery.rs` 24 词输入与备份解锁已有；`recovery_session` 协议闭环（challenge/proof/complete/receipt）待接 |
 | S6 创建前检查 | ✅ 本轮新增 | `setup.rs` 创建按钮新增 recovery soft-gate：加密 Realm + 未配置 recovery → 弹门，"设置 Recovery Key"（转 `SettingsRecovery`）或 "Create without recovery"（personal_node override，置 `recovery_gate_acknowledged`） |
 | PCR floor 协议固定 | ✅ 本轮（spec） | `realm.schema.json` PCR 守卫钉死双 floor；`EncryptionFloorPrompt` 对正确实现的 PCR 不再误弹 |

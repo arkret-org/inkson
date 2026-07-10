@@ -62,7 +62,7 @@ pub(crate) type LocalMlsEncryptResult = (
 /// On any failure (missing Welcome/snapshot, restore fails, encrypt fails) it
 /// returns `(None, vec![], None, None, None)` and the caller aborts.
 pub(crate) fn run_local_mls_encrypt(
-    mut state_store: Signal<LocalStateStore>,
+    mut state_store: SyncSignal<LocalStateStore>,
     realm_id: &str,
     principal_id: &str,
     device_id: &str,
@@ -205,7 +205,7 @@ pub(crate) struct SecureSendBuild {
 /// passing it in keeps the (synchronous) `state_store` read at the call site.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn build_secure_send(
-    state_store: Signal<LocalStateStore>,
+    state_store: SyncSignal<LocalStateStore>,
     seal_view: &LocalSealView,
     realm_id: &str,
     actor: &str,
@@ -284,7 +284,7 @@ pub(crate) fn build_secure_send(
             )
             .map_err(|err| format!("MLS commit payload failed: {err}"))?;
             // Spec-canonical write path: ak.mls.commit event via ak.events.submit.
-            let commit_builder = crate::operation::ck_ops::mls_commit_with_governance(
+            let commit_builder = crate::operation::ak_ops::mls_commit_with_governance(
                 realm_id,
                 actor,
                 &mls_commit_payload,
@@ -372,8 +372,8 @@ pub(crate) enum SecureSendOutcome {
 /// draft, and emit any audit receipt.
 #[allow(clippy::too_many_arguments)]
 pub(crate) async fn submit_secure_send(
-    api: &crate::api::CokretApi,
-    mut state_store: Signal<LocalStateStore>,
+    api: &crate::api::ArkretApi,
+    mut state_store: SyncSignal<LocalStateStore>,
     build: SecureSendBuild,
     realm_id: &str,
     device_id: &str,

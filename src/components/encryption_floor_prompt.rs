@@ -71,7 +71,7 @@ pub fn EncryptionFloorPrompt(
 fn acknowledge_recommended_encryption(
     mut dismissed: Signal<bool>,
     account_did: Signal<String>,
-    mut state_store: Signal<LocalStateStore>,
+    mut state_store: SyncSignal<LocalStateStore>,
 ) {
     dismissed.set(true);
     let actor = account_did();
@@ -108,7 +108,7 @@ pub(crate) fn account_needs_recommended_encryption_prompt_for_projections(
 
     let pcr_realm_id = arkret_sdk::Did::new(actor.to_owned())
         .ok()
-        .map(|did| arkret_sdk::auth::principal_control_realm_id(&did));
+        .map(|did| arkret_sdk::principal_control_realm_id(&did));
     if let Some(pcr) = pcr_realm_id
         .as_deref()
         .and_then(|realm_id| projections.get(realm_id))
@@ -212,7 +212,7 @@ mod tests {
     #[test]
     fn pcr_projection_controls_prompt_when_present() {
         let actor = "did:web:alice.example";
-        let pcr_id = arkret_sdk::auth::principal_control_realm_id(
+        let pcr_id = arkret_sdk::principal_control_realm_id(
             &arkret_sdk::Did::new(actor.to_owned()).unwrap(),
         );
         let mut projections = BTreeMap::new();

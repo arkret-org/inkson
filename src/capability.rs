@@ -17,7 +17,7 @@ impl ActionGroup {
     /// Returns the set of actions in this group.
     ///
     /// Registered action names are the **canonical, fully-qualified** forms
-    /// from the spec `capability-action-registry.json` (always `ck.`
+    /// from the spec `capability-action-registry.json` (always `ak.`
     /// prefixed). Entries that are inkson-local UI grouping placeholders are
     /// marked inline and must not be written into capability grants.
     /// F-CAP-FIX-1 (2026-05-19) brought this table in line with spec
@@ -65,7 +65,7 @@ impl ActionGroup {
                 "ak.reaction.remove",
                 "ak.typing.broadcast",
                 "ak.read_cursor.advance",
-                // R14: `ck.comment.*` are not in capability-action-registry.json
+                // R14: `ak.comment.*` are not in capability-action-registry.json
                 // (the registry has no comment action family). These remain
                 // inkson-local UI grouping placeholders only.
                 "ak.comment.create",
@@ -90,9 +90,9 @@ impl ActionGroup {
                 "ak.policy.set",
                 "ak.schema.define",
                 "ak.schema.update",
-                // R14: `ck.member.{invite,remove,role_change}` are not in
+                // R14: `ak.member.{invite,remove,role_change}` are not in
                 // capability-action-registry.json. Member lifecycle is driven
-                // by the `ak.circle.member.*` / `ck.invite.*` registry actions
+                // by the `ak.circle.member.*` / `ak.invite.*` registry actions
                 // and the `ak.member.state` FSM; these three remain
                 // inkson-local UI grouping placeholders only.
                 "ak.member.invite",
@@ -648,12 +648,12 @@ mod tests {
     #[test]
     fn test_action_groups() {
         // F-CAP-FIX-1: spec capability-action-registry.json uses the
-        // fully-qualified `ck.<noun>.<verb>` form everywhere; the local
+        // fully-qualified `ak.<noun>.<verb>` form everywhere; the local
         // ActionGroup table mirrors that exactly. A bare-name lookup
         // (`strand.create`) is now an explicit miss so we catch any
         // regression that re-introduces the removed short form.
-        // Realm security-boundary actions live in ck.realm.*; Space
-        // container actions live in ck.space.*.
+        // Realm security-boundary actions live in ak.realm.*; Space
+        // container actions live in ak.space.*.
         assert!(ActionGroup::Common.contains("ak.realm.update"));
         assert!(ActionGroup::Common.contains("ak.strand.create"));
         assert!(ActionGroup::Conversation.contains("ak.message.create"));

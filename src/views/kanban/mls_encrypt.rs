@@ -40,7 +40,7 @@ pub(super) fn encrypt_private_card_detail_patch_values(
     strand_id: &str,
     actor_id: &str,
     device_id: &str,
-    mut state_store: Signal<LocalStateStore>,
+    mut state_store: SyncSignal<LocalStateStore>,
 ) -> Result<(Value, EncryptedWriteMlsEvents), String> {
     let secure_store = crate::secure_key_store::default_secure_key_store("inkson");
     let mut store = state_store.write();
@@ -191,7 +191,7 @@ pub(super) fn dispatch_card_detail_update(
     synthesis_entry_id: Option<String>,
     synthesis_revision_body: Option<String>,
     mut selected_card: Signal<Option<KanbanCard>>,
-    mut state_store: Signal<LocalStateStore>,
+    mut state_store: SyncSignal<LocalStateStore>,
     mut board_status: Signal<String>,
 ) -> bool {
     let patch = match card_detail_update_patch(&current, &draft) {
@@ -232,7 +232,7 @@ pub(super) fn dispatch_card_detail_update(
         snapshot: mls_new_snapshot,
     } = mls_events;
 
-    let op = match crate::operation::ck_ops::strand_update_patch(
+    let op = match crate::operation::ak_ops::strand_update_patch(
         &realm_id,
         &actor_id,
         &current.id,

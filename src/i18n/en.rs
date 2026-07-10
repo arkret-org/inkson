@@ -1079,7 +1079,7 @@ pub fn english_translations() -> TranslationDict {
     dict.set("content.attachment.download", "Download");
 
     // T7.1 — friendly product-language terms surfaced in the main strand.
-    // Raw protocol identifiers (did:webvh:, ck.*, schema ids, profile ids)
+    // Raw protocol identifiers (did:webvh:, ak.*, schema ids, profile ids)
     // are only shown inside Developer Tools / Diagnostics surfaces.
     dict.set(
         "friendly.identifier.placeholder",

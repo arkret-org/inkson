@@ -328,7 +328,7 @@ pub fn build_key_backup_unlock_proof_active(
 }
 
 pub async fn fetch_key_backup_with_active_unlock_proof(
-    api: &crate::api::CokretApi,
+    api: &crate::api::ArkretApi,
     backup_metadata: &Value,
     principal_id: &str,
     requesting_device_id: &str,
@@ -369,7 +369,7 @@ pub async fn fetch_key_backup_with_active_unlock_proof(
 }
 
 fn key_backup_unlock_backoff_scope(
-    api: &crate::api::CokretApi,
+    api: &crate::api::ArkretApi,
     principal_id: &str,
 ) -> anyhow::Result<String> {
     let endpoint = api.endpoint("_arkret/self/keys/backups")?;
@@ -391,7 +391,7 @@ fn note_key_backup_unlock_backoff(scope: &str, retry_after_ms: u64) {
 }
 
 fn unlocked_key_backup_cache_key(
-    api: &crate::api::CokretApi,
+    api: &crate::api::ArkretApi,
     backup_metadata: &Value,
     principal_id: &str,
     requesting_device_id: &str,

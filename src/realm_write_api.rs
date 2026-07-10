@@ -1,12 +1,12 @@
-//! E2 strangler — realm write free functions migrated out of `CokretApi`.
+//! E2 strangler — realm write free functions migrated out of `ArkretApi`.
 //!
 //! These are the realm / space / member / governance event-building
 //! submitters that formerly lived as inherent methods on
-//! `crate::api::CokretApi`. Each takes an
+//! `crate::api::ArkretApi`. Each takes an
 //! [`crate::event_submit::EventSubmitter`] as its first argument and
-//! submits through it, so call sites can drop the `CokretApi` facade in
+//! submits through it, so call sites can drop the `ArkretApi` facade in
 //! favour of `with_event_submitter`. `accept_realm_invite` stays inherent
-//! on `CokretApi` because its cross-endpoint join routing needs the
+//! on `ArkretApi` because its cross-endpoint join routing needs the
 //! facade's base-url / credential / sync-token state.
 
 use serde_json::{Value, json};
@@ -20,7 +20,7 @@ use crate::event_builders::{
 };
 use crate::event_submit::EventSubmitter;
 use crate::models::{RealmCreateResult, RealmPolicyResult, SpaceCreateResult, SubmitEventResult};
-use crate::operation::{EventKind, ck_ops, uuid_v7};
+use crate::operation::{EventKind, ak_ops, uuid_v7};
 use crate::realm_helpers::{
     canonical_space_join_rule_v1, patch_touches_create_locked_encryption_profile,
 };
@@ -256,7 +256,7 @@ pub async fn update_realm_metadata(
             "Realm encryption_profile is locked at creation; create a new Realm to change E2EE mode."
         );
     }
-    let event = ck_ops::realm_update_patch(realm_id, actor_id, realm_id, patch)?
+    let event = ak_ops::realm_update_patch(realm_id, actor_id, realm_id, patch)?
         .build_sdk_event("inkson")?;
     submitter.submit_sdk_event(&event).await
 }
@@ -292,7 +292,7 @@ pub async fn update_space_metadata(
     actor_id: &str,
     patch: Value,
 ) -> anyhow::Result<SubmitEventResult> {
-    let event = ck_ops::space_update_patch(realm_id, actor_id, space_id, patch)?
+    let event = ak_ops::space_update_patch(realm_id, actor_id, space_id, patch)?
         .build_sdk_event("inkson")?;
     submitter.submit_sdk_event(&event).await
 }
@@ -424,7 +424,7 @@ pub async fn reject_realm_invite(
     reason: Option<&str>,
 ) -> anyhow::Result<SubmitEventResult> {
     let event =
-        ck_ops::invite_cancel(realm_id, actor_id, invite_id, reason)?.build_sdk_event("inkson")?;
+        ak_ops::invite_cancel(realm_id, actor_id, invite_id, reason)?.build_sdk_event("inkson")?;
     submitter.submit_sdk_event(&event).await
 }
 
@@ -509,7 +509,7 @@ pub async fn grant_realm_admin(
     grant_id: &str,
     subject: &str,
 ) -> anyhow::Result<SubmitEventResult> {
-    let event = ck_ops::capability_grant_actions(
+    let event = ak_ops::capability_grant_actions(
         realm_id,
         actor_id,
         grant_id,
@@ -532,7 +532,7 @@ pub async fn revoke_realm_admin(
     grant_id: &str,
     reason: Option<&str>,
 ) -> anyhow::Result<SubmitEventResult> {
-    let event = ck_ops::capability_revoke(realm_id, actor_id, grant_id, reason)?
+    let event = ak_ops::capability_revoke(realm_id, actor_id, grant_id, reason)?
         .build_sdk_event("inkson")?;
     submitter.submit_sdk_event(&event).await
 }
@@ -550,7 +550,7 @@ pub async fn moderation_decide(
     decision: &str,
     reason_code: &str,
 ) -> anyhow::Result<SubmitEventResult> {
-    let event = ck_ops::moderation_decision(realm_id, actor_id, target_ref, decision, reason_code)?
+    let event = ak_ops::moderation_decision(realm_id, actor_id, target_ref, decision, reason_code)?
         .build_sdk_event("inkson")?;
     submitter.submit_sdk_event(&event).await
 }
@@ -567,7 +567,7 @@ pub async fn moderation_lift(
     decision_ref: &str,
     reason_code: &str,
 ) -> anyhow::Result<SubmitEventResult> {
-    let event = ck_ops::moderation_decision_lift(
+    let event = ak_ops::moderation_decision_lift(
         realm_id,
         actor_id,
         target_ref,
@@ -586,7 +586,7 @@ pub async fn appeal_review(
     appeal_id: &str,
     notes_ref: Option<&str>,
 ) -> anyhow::Result<SubmitEventResult> {
-    let event = ck_ops::moderation_appeal_review(realm_id, actor_id, appeal_id, notes_ref)
+    let event = ak_ops::moderation_appeal_review(realm_id, actor_id, appeal_id, notes_ref)
         .build_sdk_event("inkson")?;
     submitter.submit_sdk_event(&event).await
 }
@@ -606,7 +606,7 @@ pub async fn appeal_decide(
     reason_text_ref: &str,
     modify_decision_ref: Option<&str>,
 ) -> anyhow::Result<SubmitEventResult> {
-    let event = ck_ops::moderation_appeal_decision(
+    let event = ak_ops::moderation_appeal_decision(
         realm_id,
         actor_id,
         appeal_id,
@@ -636,7 +636,7 @@ pub async fn appeal_overturn_atomic(
     reason_text_ref: &str,
     lift_reason_code: &str,
 ) -> anyhow::Result<arkret_sdk::EventsSubmitOutcome> {
-    let appeal_event = ck_ops::moderation_appeal_decision(
+    let appeal_event = ak_ops::moderation_appeal_decision(
         realm_id,
         actor_id,
         appeal_id,
@@ -645,7 +645,7 @@ pub async fn appeal_overturn_atomic(
         None,
     )
     .build_sdk_event("inkson")?;
-    let lift_event = ck_ops::moderation_decision_lift(
+    let lift_event = ak_ops::moderation_decision_lift(
         realm_id,
         actor_id,
         target_ref,
@@ -678,13 +678,13 @@ pub async fn appeal_modify_atomic(
 ) -> anyhow::Result<(String, arkret_sdk::EventsSubmitOutcome)> {
     let new_decision_id = format!("ak:event:{}", crate::operation::uuid_v7());
     let mut new_decision =
-        ck_ops::moderation_decision(realm_id, actor_id, target_ref, new_verdict, new_reason_code)?
+        ak_ops::moderation_decision(realm_id, actor_id, target_ref, new_verdict, new_reason_code)?
             .build_sdk_event("inkson")?;
     // The reducer matches `modify_decision_ref` against the new decision's
     // EVENT id, so pin the SDK Event id to the same value we report.
     new_decision.event_id = arkret_sdk::EventId::new(new_decision_id.clone())
         .map_err(|err| anyhow::anyhow!("replacement decision id is invalid: {err}"))?;
-    let appeal_event = ck_ops::moderation_appeal_decision(
+    let appeal_event = ak_ops::moderation_appeal_decision(
         realm_id,
         actor_id,
         appeal_id,
@@ -738,7 +738,7 @@ pub async fn appeal_close(
     appeal_id: &str,
     close_reason: Option<&str>,
 ) -> anyhow::Result<SubmitEventResult> {
-    let event = ck_ops::moderation_appeal_close(realm_id, actor_id, appeal_id, close_reason)
+    let event = ak_ops::moderation_appeal_close(realm_id, actor_id, appeal_id, close_reason)
         .build_sdk_event("inkson")?;
     submitter.submit_sdk_event(&event).await
 }

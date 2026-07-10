@@ -199,7 +199,7 @@ pub(super) fn RealmsManagePage(
                                                 if forgotten_ids.contains(&selected_realm_id()) {
                                                     selected_realm_id.set(String::new());
                                                 }
-                                                sync_cursor.set("-".to_owned());
+                                                sync_cursor.set(String::new());
                                             }
                                             if !succeeded.is_empty() {
                                                 let mut next_selection = selection();

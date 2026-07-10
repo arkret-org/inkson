@@ -24,7 +24,7 @@ async fn publish_mls_key_package_fails_closed_without_active_signer() {
     }))
     .expect("MlsKeyPackageRecord fixture must deserialize");
 
-    let api = CokretApi::new("http://127.0.0.1:8787").unwrap();
+    let api = ArkretApi::new("http://127.0.0.1:8787").unwrap();
     let err = api
         .publish_mls_key_package("ak:device:test-prod-guard", &record)
         .await
@@ -39,7 +39,7 @@ async fn publish_mls_key_package_fails_closed_without_active_signer() {
 #[cfg(not(target_arch = "wasm32"))]
 #[test]
 fn mls_key_package_upload_entry_carries_digest_and_ref() {
-    let identity = arkret_sdk::CokretMlsIdentity::new_basic(
+    let identity = arkret_sdk::ArkretMlsIdentity::new_basic(
         arkret_sdk::Did::new("did:web:alice.example".to_owned()).unwrap(),
         arkret_sdk::DeviceId::new("ak:device:01904100-0000-7000-8000-000000000001".to_owned())
             .unwrap(),

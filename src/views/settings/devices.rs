@@ -3,14 +3,14 @@
 //!
 //! Surfaces:
 //! - `device-list` — wrapper element listing the principal's active devices from `GET
-//!   /_arkret/self/account/viewer` via [`crate::api::CokretApi::list_devices`]
+//!   /_arkret/self/account/viewer` via [`crate::api::ArkretApi::list_devices`]
 //! - `device-row` per row, with `data-device-id` and a `device-row-current` boolean tag on the row
 //!   matching the local `LocalStateStore::device_id`
 //! - `device-revoke-button` per row, which opens a confirmation modal
 //! - `device-revoke-confirm-button` / `device-revoke-status` after the user confirms; revoke
 //!   submits the spec-canonical durable `ak.device.revoke` Control Move on the principal control
 //!   stream (envelope `seal_basis` minted from `ak.self.events.query.frontier`, SPEC-SOL-003) with
-//!   a [`crate::api::CokretApi::revoke_device`], then rotates the account MLS history secret and
+//!   a [`crate::api::ArkretApi::revoke_device`], then rotates the account MLS history secret and
 //!   rewraps local `mls_history` backups.
 //!
 //! The pair strand on `/settings/devices/pair` carries:
@@ -357,7 +357,7 @@ fn render_device_list(
     account_did: Signal<String>,
     device_id: Signal<String>,
     token: Signal<String>,
-    state_store: Signal<LocalStateStore>,
+    state_store: SyncSignal<LocalStateStore>,
     revoke_passphrase: Signal<String>,
 ) -> Element {
     let rows = devices();
@@ -549,7 +549,7 @@ fn render_revoke_modal(
     mut revoke_status: Signal<String>,
     mut devices: Signal<Vec<DeviceRow>>,
     mut load_status: Signal<String>,
-    mut state_store: Signal<LocalStateStore>,
+    mut state_store: SyncSignal<LocalStateStore>,
     account_did: Signal<String>,
     device_id: Signal<String>,
     mut revoke_passphrase: Signal<String>,
@@ -738,7 +738,7 @@ fn render_pair_strand(
     device_id: Signal<String>,
     base_url: Signal<String>,
     token: Signal<String>,
-    mut state_store: Signal<LocalStateStore>,
+    mut state_store: SyncSignal<LocalStateStore>,
     mut pair_payload: Signal<String>,
     mut pair_status: Signal<String>,
     mut pending_pair_requests: Signal<Vec<PendingPairingRequest>>,

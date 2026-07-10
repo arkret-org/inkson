@@ -1,7 +1,7 @@
-//! `EventSubmitter` — the CokretApi-free durable/ephemeral event submission
+//! `EventSubmitter` — the ArkretApi-free durable/ephemeral event submission
 //! engine. Holds the authenticated SDK http-client plus a lazily-populated,
 //! per-instance service-describe cache. The cache lifetime matches the former
-//! per-`CokretApi` `OnceCell`: the signing path (`event_proof_context`) fetches
+//! per-`ArkretApi` `OnceCell`: the signing path (`event_proof_context`) fetches
 //! `describe` at most once per submitter, and non-signing paths
 //! (`submit_signed_*`, ephemeral, frontier, backfill) never fetch it.
 
@@ -13,7 +13,7 @@ use serde_json::Value;
 use tokio::sync::OnceCell;
 
 #[cfg(test)]
-use crate::api_error::CokretApiError;
+use crate::api_error::ArkretApiError;
 use crate::ephemeral::{
     attach_broadcast_ephemeral_proof, build_presence_envelope, build_receipt_read_envelope,
     build_typing_envelope, ensure_events_submit_accepted,
@@ -28,7 +28,7 @@ use crate::service_parse::parse_server_description;
 use crate::wire_helpers::query_component;
 
 /// Authenticated durable/ephemeral event submission engine extracted from the
-/// former `CokretApi` events surface. Constructed per authenticated call from
+/// former `ArkretApi` events surface. Constructed per authenticated call from
 /// the shared SDK http-client (see `crate::authed_api::with_event_submitter`).
 pub struct EventSubmitter {
     http: arkret_sdk::http_client::Client,
@@ -101,7 +101,7 @@ impl EventSubmitter {
     /// invoke `on_frame` once per parsed frame.
     ///
     /// Round R2/R3 (T02) — typing notifications are wire-scope-ephemeral
-    /// (`ck.typing`). They MUST strand through the canonical
+    /// (`ak.typing`). They MUST strand through the canonical
     /// `ak.self.ephemeral.command.send` operation (`POST /_arkret/self/ephemeral`), never
     /// through `ak.self.events.command.submit` or a deployment-local typing shim.
     pub async fn send_typing(
@@ -482,7 +482,7 @@ impl EventSubmitter {
     /// canonical ephemeral channel (`POST /_arkret/self/ephemeral`) instead of the
     /// durable `/_arkret/self/events` endpoint. The envelope MUST validate against
     /// `ak.schema.ephemeral_envelope.v1` (kind in
-    /// {`ak.call.signal`, `ck.presence`, `ck.typing`, `ak.receipt.read`}, and
+    /// {`ak.call.signal`, `ak.presence`, `ak.typing`, `ak.receipt.read`}, and
     /// `expires_at - sent_at <= 300_000` ms). The four broadcast ephemeral
     /// signal kinds MUST NOT travel via `ak.self.events.command.submit`; this method is
     /// the single approved network path.
@@ -822,7 +822,7 @@ mod tests {
 
     #[test]
     fn actor_seq_cas_conflict_classifier_is_narrow() {
-        let cas: anyhow::Error = CokretApiError {
+        let cas: anyhow::Error = ArkretApiError {
             status: StatusCode::CONFLICT,
             error: ErrorEnvelope::new(
                 "cas_conflict",
@@ -832,7 +832,7 @@ mod tests {
         .into();
         assert!(crate::api_error::is_actor_seq_cas_conflict_error(&cas));
 
-        let different_conflict: anyhow::Error = CokretApiError {
+        let different_conflict: anyhow::Error = ArkretApiError {
             status: StatusCode::CONFLICT,
             error: ErrorEnvelope::new("cas_conflict", "expected head mismatch"),
         }

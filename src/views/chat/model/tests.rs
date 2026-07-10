@@ -191,7 +191,7 @@ mod device_identity_proof_tests {
         });
         assert_eq!(
             verify_chat_envelope_proof(&envelope),
-            ChatProofVerdict::NotApplicable
+            ChatProofVerdict::Unresolved
         );
         // No regression: a proofless projection still renders.
         assert!(chat_message_from_event("ak:realm:r", &envelope).is_some());

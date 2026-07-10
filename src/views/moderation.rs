@@ -7,15 +7,15 @@
 //! … lives in realm_admin once wired"). It is mounted as the RealmAdmin
 //! `Moderation` section and drives the already-ready P3 API:
 //!
-//!   * [`crate::api::CokretApi::moderation_decide`] — seal a new decision.
-//!   * [`crate::api::CokretApi::moderation_lift`] — lift a standing decision.
-//!   * [`crate::api::CokretApi::appeal_review`] — take an appeal under review.
-//!   * [`crate::api::CokretApi::appeal_decide`] — `uphold` (no side events).
-//!   * [`crate::api::CokretApi::appeal_overturn_atomic`] — `overturn` + matching lift in one batch
+//!   * [`crate::api::ArkretApi::moderation_decide`] — seal a new decision.
+//!   * [`crate::api::ArkretApi::moderation_lift`] — lift a standing decision.
+//!   * [`crate::api::ArkretApi::appeal_review`] — take an appeal under review.
+//!   * [`crate::api::ArkretApi::appeal_decide`] — `uphold` (no side events).
+//!   * [`crate::api::ArkretApi::appeal_overturn_atomic`] — `overturn` + matching lift in one batch
 //!     (§5.5.1.1 atomicity MUST).
-//!   * [`crate::api::CokretApi::appeal_modify_atomic`] — `modify` + replacement decision in one
+//!   * [`crate::api::ArkretApi::appeal_modify_atomic`] — `modify` + replacement decision in one
 //!     batch (§5.5.1.1 atomicity MUST).
-//!   * [`crate::api::CokretApi::appeal_close`] — terminal close.
+//!   * [`crate::api::ArkretApi::appeal_close`] — terminal close.
 //!
 //! The work queues (standing decisions + open appeals) are projected from the
 //! local raw-operation log, exactly like [`crate::views::applets`] does for the

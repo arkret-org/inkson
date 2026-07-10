@@ -163,7 +163,9 @@ dependencies = [
  "arkret-html",
  "arkret-http-client",
  "arkret-keystore",
+ "arkret-server",
  "arkret-signatures",
+ "arkret-state",
  "base64",
  "chacha20poly1305",
  "chrono",
@@ -209,6 +211,7 @@ dependencies = [
  "serde",
  "serde_json",
  "sha2 0.11.0",
+ "subtle",
  "thiserror 2.0.18",
  "tracing",
  "unicode-normalization",
@@ -253,6 +256,7 @@ version = "0.3.0"
 dependencies = [
  "arkret-core",
  "arkret-signatures",
+ "arkret-state",
  "base64",
  "chrono",
  "futures-util",
@@ -287,6 +291,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "arkret-server"
+version = "0.3.0"
+dependencies = [
+ "arkret-core",
+ "arkret-signatures",
+ "arkret-state",
+ "chrono",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "arkret-signatures"
 version = "0.3.0"
 dependencies = [
@@ -301,7 +317,20 @@ dependencies = [
  "subtle",
  "thiserror 2.0.18",
  "url",
+ "uuid",
  "zeroize",
+]
+
+[[package]]
+name = "arkret-state"
+version = "0.3.0"
+dependencies = [
+ "arkret-core",
+ "chrono",
+ "hex",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.18",
 ]
 
 [[package]]
@@ -1747,7 +1776,7 @@ dependencies = [
 [[package]]
 name = "dioxus-attributes"
 version = "0.1.0"
-source = "git+https://github.com/cokret/dioxus-components?rev=3510aeee2d14f0ca2c11682c9b826650cb557d2f#3510aeee2d14f0ca2c11682c9b826650cb557d2f"
+source = "git+https://github.com/arkret/dioxus-components?rev=3510aeee2d14f0ca2c11682c9b826650cb557d2f#3510aeee2d14f0ca2c11682c9b826650cb557d2f"
 dependencies = [
  "dioxus-rsx",
  "proc-macro2",
@@ -1783,7 +1812,7 @@ checksum = "54f9ed8fc1a215ad34bb8dbae42a4ea54efbcd26ca9006bbe5cca78e511bf25f"
 [[package]]
 name = "dioxus-core"
 version = "0.7.9"
-source = "git+https://github.com/cokret/dioxus?rev=e59f9f24a5c27c9303cd61edd0452b44161374ab#e59f9f24a5c27c9303cd61edd0452b44161374ab"
+source = "git+https://github.com/arkret/dioxus?rev=e59f9f24a5c27c9303cd61edd0452b44161374ab#e59f9f24a5c27c9303cd61edd0452b44161374ab"
 dependencies = [
  "anyhow",
  "const_format",
@@ -1817,7 +1846,7 @@ dependencies = [
 [[package]]
 name = "dioxus-core-types"
 version = "0.7.9"
-source = "git+https://github.com/cokret/dioxus?rev=e59f9f24a5c27c9303cd61edd0452b44161374ab#e59f9f24a5c27c9303cd61edd0452b44161374ab"
+source = "git+https://github.com/arkret/dioxus?rev=e59f9f24a5c27c9303cd61edd0452b44161374ab#e59f9f24a5c27c9303cd61edd0452b44161374ab"
 
 [[package]]
 name = "dioxus-desktop"
@@ -2134,7 +2163,7 @@ dependencies = [
 [[package]]
 name = "dioxus-primitives"
 version = "0.0.1"
-source = "git+https://github.com/cokret/dioxus-components?rev=3510aeee2d14f0ca2c11682c9b826650cb557d2f#3510aeee2d14f0ca2c11682c9b826650cb557d2f"
+source = "git+https://github.com/arkret/dioxus-components?rev=3510aeee2d14f0ca2c11682c9b826650cb557d2f#3510aeee2d14f0ca2c11682c9b826650cb557d2f"
 dependencies = [
  "dioxus",
  "dioxus-attributes",
@@ -2998,7 +3027,7 @@ dependencies = [
 [[package]]
 name = "generational-box"
 version = "0.7.9"
-source = "git+https://github.com/cokret/dioxus?rev=e59f9f24a5c27c9303cd61edd0452b44161374ab#e59f9f24a5c27c9303cd61edd0452b44161374ab"
+source = "git+https://github.com/arkret/dioxus?rev=e59f9f24a5c27c9303cd61edd0452b44161374ab#e59f9f24a5c27c9303cd61edd0452b44161374ab"
 dependencies = [
  "parking_lot",
  "tracing",
@@ -7458,7 +7487,7 @@ dependencies = [
 [[package]]
 name = "subsecond"
 version = "0.7.9"
-source = "git+https://github.com/cokret/dioxus?rev=e59f9f24a5c27c9303cd61edd0452b44161374ab#e59f9f24a5c27c9303cd61edd0452b44161374ab"
+source = "git+https://github.com/arkret/dioxus?rev=e59f9f24a5c27c9303cd61edd0452b44161374ab#e59f9f24a5c27c9303cd61edd0452b44161374ab"
 dependencies = [
  "js-sys",
  "libc",
@@ -7476,7 +7505,7 @@ dependencies = [
 [[package]]
 name = "subsecond-types"
 version = "0.7.9"
-source = "git+https://github.com/cokret/dioxus?rev=e59f9f24a5c27c9303cd61edd0452b44161374ab#e59f9f24a5c27c9303cd61edd0452b44161374ab"
+source = "git+https://github.com/arkret/dioxus?rev=e59f9f24a5c27c9303cd61edd0452b44161374ab#e59f9f24a5c27c9303cd61edd0452b44161374ab"
 dependencies = [
  "serde",
 ]

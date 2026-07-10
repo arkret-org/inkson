@@ -59,7 +59,7 @@ pub(super) fn encrypted_account_data_marker(
 pub(super) fn push_read_receipt_account_data(
     base_url: String,
     api_token: String,
-    state_store: Signal<LocalStateStore>,
+    state_store: SyncSignal<LocalStateStore>,
 ) {
     let body = build_read_receipt_preferences_body(
         state_store.read().read_receipt_default_send(),
@@ -115,7 +115,7 @@ pub(super) fn build_presence_preference_body(
 pub(super) fn push_presence_preference_account_data(
     base_url: String,
     api_token: String,
-    state_store: Signal<LocalStateStore>,
+    state_store: SyncSignal<LocalStateStore>,
 ) {
     if api_token.trim().is_empty() {
         return;
@@ -178,7 +178,7 @@ pub(super) fn build_presence_visibility_body(visibility: PresenceVisibility) -> 
 pub(super) fn push_presence_visibility_account_data(
     base_url: String,
     api_token: String,
-    state_store: Signal<LocalStateStore>,
+    state_store: SyncSignal<LocalStateStore>,
 ) {
     let body = build_presence_visibility_body(state_store.read().presence_visibility());
     spawn(async move {
@@ -205,7 +205,7 @@ pub(super) fn push_presence_visibility_account_data(
 }
 
 /// Project the local per-realm watch levels into a spec-conformant
-/// `ck.push_rules` body (push-notifications.md §4) and sync it to soland.
+/// `ak.push_rules` body (push-notifications.md §4) and sync it to soland.
 ///
 /// Every emitted rule carries the MUST-on-wire `kind` (§4.2) and
 /// `evaluation_locus` (§4.3) fields. The rule chain is ordered highest
@@ -310,7 +310,7 @@ pub(super) fn push_notification_rules_account_data(
     let body = match encrypted_account_data_marker(PUSH_RULES_ACCOUNT_DATA_KEY, &body) {
         Ok(body) => body,
         Err(err) => {
-            tracing::warn!("ak.account_data.set for ck.push_rules skipped: {}", err);
+            tracing::warn!("ak.account_data.set for ak.push_rules skipped: {}", err);
             return;
         }
     };
@@ -323,12 +323,12 @@ pub(super) fn push_notification_rules_account_data(
             Ok(AccountDataSetResult::Stored { .. }) => {}
             Ok(AccountDataSetResult::Unsupported { status }) => {
                 tracing::debug!(
-                    "soland ak.account_data.set for ck.push_rules returned {status}; local notification rules remain authoritative"
+                    "soland ak.account_data.set for ak.push_rules returned {status}; local notification rules remain authoritative"
                 );
             }
             Err(err) => {
                 tracing::debug!(
-                    "ak.account_data.set for ck.push_rules failed: {}",
+                    "ak.account_data.set for ak.push_rules failed: {}",
                     err.display()
                 );
             }
@@ -359,7 +359,7 @@ pub(super) fn push_dnd_account_data(
     api_token: String,
     enabled: bool,
     mode: String,
-    mut state_store: Signal<LocalStateStore>,
+    mut state_store: SyncSignal<LocalStateStore>,
     mut notification_settings_status: Signal<String>,
 ) {
     let plaintext_body = build_dnd_account_data_body(enabled, &mode);

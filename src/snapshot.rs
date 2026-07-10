@@ -1,6 +1,6 @@
 use chrono::{DateTime, Duration, Utc};
 
-use crate::api::CokretApi;
+use crate::api::ArkretApi;
 use crate::local_state::LocalStateStore;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -43,7 +43,7 @@ pub struct SnapshotBootstrapResult {
 }
 
 pub async fn download_verify_and_apply_snapshot<R>(
-    api: &CokretApi,
+    api: &ArkretApi,
     store: &mut LocalStateStore,
     realm_id: &str,
     service_did: &arkret_sdk::Did,

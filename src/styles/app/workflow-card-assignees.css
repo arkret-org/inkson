@@ -18,9 +18,9 @@
   align-items: center;
   gap: 5px;
   padding: 2px 6px 2px 3px;
-  border: 1px solid var(--border, var(--ck-line));
+  border: 1px solid var(--border, var(--ak-line));
   border-radius: 999px;
-  background: var(--surface, var(--ck-surface));
+  background: var(--surface, var(--ak-surface));
 }
 .assignee-avatar {
   width: 20px;
@@ -31,7 +31,7 @@
   justify-content: center;
   border-radius: 50%;
   background: color-mix(in srgb, var(--accent) 22%, var(--surface));
-  color: var(--text, var(--ck-ink));
+  color: var(--text, var(--ak-ink));
   font-size: 11px;
   font-weight: 850;
 }
@@ -50,9 +50,9 @@
   display: grid;
   gap: 8px;
   padding: 10px;
-  border: 1px solid var(--border, var(--ck-line));
+  border: 1px solid var(--border, var(--ak-line));
   border-radius: 8px;
-  background: var(--surface, var(--ck-surface));
+  background: var(--surface, var(--ak-surface));
   box-shadow: 0 18px 48px rgba(0, 0, 0, 0.28);
 }
 .assignee-search {
@@ -81,14 +81,14 @@
   border: 0;
   border-radius: 8px;
   background: transparent;
-  color: var(--text, var(--ck-ink));
+  color: var(--text, var(--ak-ink));
   font: inherit;
   text-align: left;
   cursor: pointer;
 }
 .assignee-option:hover,
 .assignee-option:focus-visible {
-  background: var(--surface-2, var(--ck-panel));
+  background: var(--surface-2, var(--ak-panel));
   outline: none;
 }
 .assignee-option.selected {
@@ -120,7 +120,7 @@
 .assignee-option-meta,
 .assignee-option-empty,
 .assignee-edit-status {
-  color: var(--text-3, var(--ck-muted));
+  color: var(--text-3, var(--ak-muted));
   font-size: 12px;
 }
 .assignee-option-empty {
@@ -151,9 +151,9 @@
   align-items: center;
   min-height: 28px;
   padding: 0 9px;
-  border: 1px solid var(--border, var(--ck-line));
+  border: 1px solid var(--border, var(--ak-line));
   border-radius: 999px;
-  background: var(--surface, var(--ck-surface));
+  background: var(--surface, var(--ak-surface));
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -166,10 +166,10 @@
   justify-content: center;
   gap: 5px;
   padding: 0 8px;
-  border: 1px solid var(--border, var(--ck-line));
+  border: 1px solid var(--border, var(--ak-line));
   border-radius: 999px;
-  background: var(--surface-2, var(--ck-panel));
-  color: var(--text-2, var(--ck-muted));
+  background: var(--surface-2, var(--ak-panel));
+  color: var(--text-2, var(--ak-muted));
   font: inherit;
   font-size: 12px;
   font-weight: 800;
@@ -180,14 +180,14 @@
   padding: 0;
 }
 .due-clear-button {
-  color: var(--text-3, var(--ck-muted));
+  color: var(--text-3, var(--ak-muted));
 }
 .due-edit-button:hover,
 .due-edit-button:focus-visible,
 .due-add-button:hover,
 .due-add-button:focus-visible {
   border-color: var(--accent);
-  color: var(--text, var(--ck-ink));
+  color: var(--text, var(--ak-ink));
   outline: none;
 }
 .due-popover {
@@ -199,9 +199,9 @@
   display: grid;
   gap: 8px;
   padding: 10px;
-  border: 1px solid var(--border, var(--ck-line));
+  border: 1px solid var(--border, var(--ak-line));
   border-radius: 8px;
-  background: var(--surface, var(--ck-surface));
+  background: var(--surface, var(--ak-surface));
   box-shadow: 0 18px 48px rgba(0, 0, 0, 0.28);
 }
 .due-popover-field {
@@ -209,7 +209,7 @@
   gap: 5px;
 }
 .due-popover-field label {
-  color: var(--text-3, var(--ck-muted));
+  color: var(--text-3, var(--ak-muted));
   font-size: 12px;
   font-weight: 800;
 }
@@ -217,9 +217,9 @@
   display: grid;
   gap: 8px;
   padding: 8px;
-  border: 1px solid var(--border, var(--ck-line));
+  border: 1px solid var(--border, var(--ak-line));
   border-radius: 8px;
-  background: color-mix(in srgb, var(--surface-2, var(--ck-panel)) 58%, transparent);
+  background: color-mix(in srgb, var(--surface-2, var(--ak-panel)) 58%, transparent);
 }
 .due-calendar-header {
   display: grid;
@@ -229,7 +229,7 @@
 }
 .due-calendar-title {
   min-width: 0;
-  color: var(--text, var(--ck-ink));
+  color: var(--text, var(--ak-ink));
   font-size: 13px;
   font-weight: 800;
   text-align: center;
@@ -245,13 +245,13 @@
   border: 1px solid transparent;
   border-radius: 6px;
   background: transparent;
-  color: var(--text-2, var(--ck-muted));
+  color: var(--text-2, var(--ak-muted));
   cursor: pointer;
 }
 .due-calendar-nav:hover,
 .due-calendar-nav:focus-visible {
-  border-color: var(--accent, var(--ck-brand));
-  color: var(--text, var(--ck-ink));
+  border-color: var(--accent, var(--ak-brand));
+  color: var(--text, var(--ak-ink));
   outline: none;
 }
 .due-calendar-weekdays,
@@ -262,7 +262,7 @@
 }
 .due-calendar-weekdays span {
   min-width: 0;
-  color: var(--text-3, var(--ck-muted));
+  color: var(--text-3, var(--ak-muted));
   font-size: 11px;
   font-weight: 800;
   text-align: center;
@@ -275,7 +275,7 @@
   border: 1px solid transparent;
   border-radius: 6px;
   background: transparent;
-  color: var(--text, var(--ck-ink));
+  color: var(--text, var(--ak-ink));
   font: inherit;
   font-size: 12px;
   font-weight: 750;
@@ -283,24 +283,24 @@
   cursor: pointer;
 }
 .due-calendar-day.outside {
-  color: color-mix(in srgb, var(--text-3, var(--ck-muted)) 62%, transparent);
+  color: color-mix(in srgb, var(--text-3, var(--ak-muted)) 62%, transparent);
 }
 .due-calendar-day.today {
-  border-color: color-mix(in srgb, var(--accent, var(--ck-brand)) 54%, transparent);
+  border-color: color-mix(in srgb, var(--accent, var(--ak-brand)) 54%, transparent);
 }
 .due-calendar-day:hover,
 .due-calendar-day:focus-visible {
-  border-color: var(--accent, var(--ck-brand));
-  background: color-mix(in srgb, var(--accent, var(--ck-brand)) 12%, transparent);
+  border-color: var(--accent, var(--ak-brand));
+  background: color-mix(in srgb, var(--accent, var(--ak-brand)) 12%, transparent);
   outline: none;
 }
 .due-calendar-day.selected {
-  border-color: var(--accent, var(--ck-brand));
-  background: var(--accent, var(--ck-brand));
+  border-color: var(--accent, var(--ak-brand));
+  background: var(--accent, var(--ak-brand));
   color: var(--surface, #fff);
 }
 .due-edit-status {
-  color: var(--text-3, var(--ck-muted));
+  color: var(--text-3, var(--ak-muted));
   font-size: 12px;
 }
 .due-popover-actions {
@@ -353,14 +353,14 @@
 }
 .card-detail-activity-body strong {
   min-width: 0;
-  color: var(--text, var(--ck-ink));
+  color: var(--text, var(--ak-ink));
   font-size: 12px;
   font-weight: 800;
   overflow-wrap: anywhere;
 }
 .card-detail-activity-body span {
   min-width: 0;
-  color: var(--text-3, var(--ck-muted));
+  color: var(--text-3, var(--ak-muted));
   font-size: 12px;
   font-weight: 650;
   overflow-wrap: anywhere;
@@ -371,9 +371,9 @@
   box-sizing: border-box;
   min-height: 0;
   padding: 12px;
-  border: 1px solid var(--border, var(--ck-line));
+  border: 1px solid var(--border, var(--ak-line));
   border-radius: 8px;
-  background: color-mix(in srgb, var(--surface-2, var(--ck-bg-soft)) 62%, transparent);
+  background: color-mix(in srgb, var(--surface-2, var(--ak-bg-soft)) 62%, transparent);
 }
 .card-detail-tabs-section .card-detail-edit-form,
 .card-synthesis-entry .card-detail-edit-form {
@@ -384,15 +384,15 @@
 }
 .card-rich-editor {
   display: grid;
-  --editor-bg: color-mix(in srgb, var(--surface, var(--ck-surface, #fff)) 92%, var(--bg, var(--ck-bg, #eef3ed)) 8%);
-  --editor-bg-soft: color-mix(in srgb, var(--surface-2, var(--ck-bg-soft, #f7faf7)) 84%, var(--surface, var(--ck-surface, #fff)) 16%);
-  --editor-bg-raised: color-mix(in srgb, var(--surface-3, var(--ck-surface, #fff)) 78%, var(--accent, var(--ck-brand, #2b6b4f)) 10%);
-  --editor-line: var(--border, var(--ck-line, #d6e1d7));
-  --editor-line-strong: var(--border-strong, var(--ck-line-strong, #c0cec2));
-  --editor-ink: var(--text, var(--ck-ink, #142018));
-  --editor-muted: var(--text-2, var(--ck-muted, #627065));
-  --editor-accent: var(--accent, var(--ck-teal, #3a8a67));
-  --editor-code-bg: color-mix(in srgb, var(--surface-inv, #18212f) 8%, var(--surface-2, var(--ck-bg-soft, #f7faf7)) 92%);
+  --editor-bg: color-mix(in srgb, var(--surface, var(--ak-surface, #fff)) 92%, var(--bg, var(--ak-bg, #eef3ed)) 8%);
+  --editor-bg-soft: color-mix(in srgb, var(--surface-2, var(--ak-bg-soft, #f7faf7)) 84%, var(--surface, var(--ak-surface, #fff)) 16%);
+  --editor-bg-raised: color-mix(in srgb, var(--surface-3, var(--ak-surface, #fff)) 78%, var(--accent, var(--ak-brand, #2b6b4f)) 10%);
+  --editor-line: var(--border, var(--ak-line, #d6e1d7));
+  --editor-line-strong: var(--border-strong, var(--ak-line-strong, #c0cec2));
+  --editor-ink: var(--text, var(--ak-ink, #142018));
+  --editor-muted: var(--text-2, var(--ak-muted, #627065));
+  --editor-accent: var(--accent, var(--ak-teal, #3a8a67));
+  --editor-code-bg: color-mix(in srgb, var(--surface-inv, #18212f) 8%, var(--surface-2, var(--ak-bg-soft, #f7faf7)) 92%);
   --editor-code-ink: var(--accent-ink, var(--editor-accent));
   gap: 0;
 }

@@ -417,8 +417,6 @@ pub fn BlocklistSettingsCard(account_did: Signal<String>, token: Signal<String>)
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-
     #[test]
     fn blocklist_uses_client_blocklist_state_store_methods() {
         let mut store = crate::local_state::LocalStateStore::default();

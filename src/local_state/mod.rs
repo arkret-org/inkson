@@ -1,5 +1,5 @@
-use std::cell::Cell;
 use std::collections::{BTreeMap, BTreeSet};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard};
 #[cfg(not(target_arch = "wasm32"))]
 use std::{
@@ -89,7 +89,7 @@ mod remarks_blocklist;
 mod scope;
 mod to_device_raw;
 
-#[derive(Clone, Debug)]
+#[derive(Debug)]
 pub struct LocalStateStore {
     /// The ACTIVE account's full state. Every existing read/write method
     /// operates on `cached` unchanged — they simply act on whichever account
@@ -112,7 +112,7 @@ pub struct LocalStateStore {
     /// on native, localStorage on wasm) AND did a full-state `!= default`
     /// comparison on EVERY `load()` / mutation. Once loaded, `cached` is the
     /// authoritative single-process source of truth, so we skip both.
-    loaded: Cell<bool>,
+    loaded: AtomicBool,
     /// Perf (P0 sync-apply / notifications bulk): when `> 0`, [`Self::flush`]
     /// defers the (potentially synchronous, blocking) persist and only records
     /// that a write is pending. A batch guard performs exactly one flush when
@@ -121,12 +121,12 @@ pub struct LocalStateStore {
     flush_suspended: u32,
     /// Set by [`Self::flush`] while suspended; consumed by the batch guard so
     /// it only persists when at least one mutation actually requested a flush.
-    flush_pending: Cell<bool>,
+    flush_pending: AtomicBool,
     /// YOU-02-002/003: shared persistence-health latch. `None` = healthy;
     /// `Some(message)` records the last persist/read failure (atomic write
     /// failed, localStorage quota exceeded, or a corrupt backing store was
     /// found on boot). Shared via `Arc<Mutex<_>>` so every `Clone` of the store
-    /// (the Dioxus `Signal<LocalStateStore>` is cloned widely) observes the same
+    /// (the Dioxus `SyncSignal<LocalStateStore>` is cloned widely) observes the same
     /// latch, letting the UI surface "your changes aren't being saved"
     /// instead of silently diverging from disk. Must be thread-safe because the
     /// store is held behind `Arc<Mutex<_>>` in `InMemoryKeyStore` (`KeyStore:
@@ -145,16 +145,6 @@ pub struct LocalStateStore {
     /// the overlay data mutex so the short data-access sections never nest
     /// inside it in both orders (no deadlock).
     mls_decrypt_serial: Arc<Mutex<()>>,
-    /// E7 — shared stream-cursor write-override overlay (see [`ClientCoreSyncOverlay`]).
-    /// Cursors (`sync_cursor` / `realm_events_cursors`) are written by BOTH the
-    /// Dioxus UI clone and garth's `Send + Sync` `CursorStore` adapter clone.
-    /// Without a shared source each clone's per-clone `cached` diverges and a
-    /// stale clone's later flush clobbers the other's cursor. This overlay is
-    /// the single in-memory source of truth across clones (shared like
-    /// `persist_health`); reads merge it, the persist path merges it, so every
-    /// clone writes a coherent cursor and never clobbers. An empty overlay
-    /// falls through to `cached` (the last-persisted value) so restart resumes.
-    client_core_sync_overlay: Arc<Mutex<ClientCoreSyncOverlay>>,
     #[cfg(not(target_arch = "wasm32"))]
     path: PathBuf,
 }
@@ -283,13 +273,12 @@ impl Default for LocalStateStore {
     fn default() -> Self {
         Self {
             cached: ClientLocalState::default(),
-            loaded: Cell::new(false),
+            loaded: AtomicBool::new(false),
             flush_suspended: 0,
-            flush_pending: Cell::new(false),
+            flush_pending: AtomicBool::new(false),
             persist_health: Arc::new(Mutex::new(None)),
             mls_receive_overlay: Arc::new(Mutex::new(MlsReceiveOverlay::default())),
             mls_decrypt_serial: Arc::new(Mutex::new(())),
-            client_core_sync_overlay: Arc::new(Mutex::new(ClientCoreSyncOverlay::default())),
             #[cfg(not(target_arch = "wasm32"))]
             path: default_state_path(),
         }
@@ -321,12 +310,6 @@ impl LocalStateStore {
             .unwrap_or_else(|poisoned| poisoned.into_inner())
     }
 
-    fn lock_client_core_sync_overlay(&self) -> MutexGuard<'_, ClientCoreSyncOverlay> {
-        self.client_core_sync_overlay
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
-    }
-
     fn lock_mls_decrypt_serial(&self) -> MutexGuard<'_, ()> {
         self.mls_decrypt_serial
             .lock()
@@ -337,24 +320,16 @@ impl LocalStateStore {
         // Once reconciled with persistence, `cached` is authoritative (single
         // process) — skip the full-state `!= default` compare and the repeated
         // backing-store read that an empty account used to pay on every call.
-        let mut state = if self.loaded.get() || self.cached != ClientLocalState::default() {
-            self.cached.clone()
-        } else {
-            self.read_persisted_state().unwrap_or_default()
-        };
+        let mut state =
+            if self.loaded.load(Ordering::Relaxed) || self.cached != ClientLocalState::default() {
+                self.cached.clone()
+            } else {
+                self.read_persisted_state().unwrap_or_default()
+            };
         // YOU-02-004: readers must observe receive-chain write-backs that the
         // decrypt paths recorded through the interior-mutable overlay.
         {
             let overlay = self.lock_mls_receive_overlay();
-            if !overlay.is_empty() {
-                overlay.apply_to(&mut state);
-            }
-        }
-        // E7: readers must observe cursor writes recorded through the shared
-        // cursor overlay (by this or any other clone — e.g. garth's CursorStore
-        // adapter), so cursor reads are coherent across clones.
-        {
-            let overlay = self.lock_client_core_sync_overlay();
             if !overlay.is_empty() {
                 overlay.apply_to(&mut state);
             }
@@ -367,19 +342,15 @@ impl LocalStateStore {
         // pending receive-chain overlay entries derived from the OLD state
         // must not survive to shadow it.
         *self.lock_mls_receive_overlay() = MlsReceiveOverlay::default();
-        // E7: cursors are account-scoped; the shared cursor overlay from the OLD
-        // account must not shadow the incoming state (else a stale cursor leaks
-        // across account adopt/clear/forget).
-        *self.lock_client_core_sync_overlay() = ClientCoreSyncOverlay::default();
         self.cached = state;
-        self.loaded.set(true);
+        self.loaded.store(true, Ordering::Relaxed);
         let _ = self.flush();
     }
 
     pub fn flush(&self) -> anyhow::Result<()> {
         if self.flush_suspended > 0 {
             // Inside a batch — defer the persist and remember a write happened.
-            self.flush_pending.set(true);
+            self.flush_pending.store(true, Ordering::Relaxed);
             return Ok(());
         }
         let result = self.write_persisted_state(&self.effective_state_for_persist());
@@ -396,14 +367,6 @@ impl LocalStateStore {
         let mut state = self.cached.clone();
         {
             let overlay = self.lock_mls_receive_overlay();
-            if !overlay.is_empty() {
-                overlay.apply_to(&mut state);
-            }
-        }
-        // E7: persist the coherent shared cursor (any clone's flush writes the
-        // same up-to-date cursor), so a stale clone can never clobber it.
-        {
-            let overlay = self.lock_client_core_sync_overlay();
             if !overlay.is_empty() {
                 overlay.apply_to(&mut state);
             }
@@ -463,7 +426,7 @@ impl LocalStateStore {
         self.flush_suspended = self.flush_suspended.saturating_add(1);
         let result = body(self);
         self.flush_suspended = self.flush_suspended.saturating_sub(1);
-        if self.flush_suspended == 0 && self.flush_pending.replace(false) {
+        if self.flush_suspended == 0 && self.flush_pending.swap(false, Ordering::Relaxed) {
             let persisted = self.write_persisted_state(&self.effective_state_for_persist());
             self.record_persist_result(&persisted);
         }
@@ -474,13 +437,12 @@ impl LocalStateStore {
     pub fn with_path(path: impl Into<PathBuf>) -> Self {
         Self {
             cached: ClientLocalState::default(),
-            loaded: Cell::new(false),
+            loaded: AtomicBool::new(false),
             flush_suspended: 0,
-            flush_pending: Cell::new(false),
+            flush_pending: AtomicBool::new(false),
             persist_health: Arc::new(Mutex::new(None)),
             mls_receive_overlay: Arc::new(Mutex::new(MlsReceiveOverlay::default())),
             mls_decrypt_serial: Arc::new(Mutex::new(())),
-            client_core_sync_overlay: Arc::new(Mutex::new(ClientCoreSyncOverlay::default())),
             path: path.into(),
         }
     }
@@ -838,7 +800,7 @@ impl LocalStateStore {
         // Read the backing store at most once; afterwards `cached` is the
         // authoritative source so empty/default accounts stop re-reading disk /
         // localStorage on every mutation.
-        if self.loaded.get() {
+        if self.loaded.load(Ordering::Relaxed) {
             return;
         }
         // The root index is read through storage on demand (no `self.root`
@@ -849,7 +811,7 @@ impl LocalStateStore {
         {
             self.cached = state;
         }
-        self.loaded.set(true);
+        self.loaded.store(true, Ordering::Relaxed);
     }
 }
 

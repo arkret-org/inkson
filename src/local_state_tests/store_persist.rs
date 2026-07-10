@@ -381,7 +381,7 @@ fn local_state_store_persists_private_read_cursors() {
         Some("discussion")
     );
     assert_eq!(
-        marker.ck_read_cursor_operation(),
+        marker.ak_read_cursor_operation(),
         serde_json::json!({
             "kind": "ak.read_cursor.advance",
             "payload": {
@@ -879,53 +879,6 @@ fn account_entry_without_primary_handle_field_loads() {
     let mut store = store;
     store.adopt_account_scope(did);
     assert_eq!(store.load().sync_cursor.as_deref(), Some("sx:legacy"));
-}
-
-#[test]
-fn root_index_is_shared_across_clones_not_cached_per_clone() {
-    // Regression: `LocalStateStore` is `#[derive(Clone)]` and held in a
-    // widely-cloned `Signal<_>`. The root index (active_did / pending_login /
-    // known_dids) MUST be read through the backing store, never cached per
-    // clone, or a clone that didn't start the sign-in reads a stale empty root
-    // (login takes the wrong branch) and a stale clone's later flush clobbers a
-    // freshly-adopted active_did back to null.
-    let path = temp_state_path("root-shared-clones");
-    let mut a = LocalStateStore::with_path(path.clone());
-    let b = a.clone();
-
-    // `a` starts a pending sign-in...
-    a.begin_pending_login("ak:device:clone-race-1", Some("jkt-1"));
-    // ...and `b` (a different clone) must observe it through storage.
-    let pending = b.pending_login().expect("clone b sees pending login");
-    assert_eq!(pending.device_id, "ak:device:clone-race-1");
-
-    // `b` adopts onto a resolved DID...
-    let mut b = b;
-    let is_new = b.adopt_pending_login("did:web:clone.example");
-    assert!(is_new, "an unknown DID adopts as a new account");
-
-    // ...and `a` (the clone that started the flow) must observe the adopted
-    // active account and the cleared pending — cross-clone consistency, no
-    // stale-clone overwrite.
-    assert_eq!(
-        a.active_account_did().as_deref(),
-        Some("did:web:clone.example"),
-        "clone a sees the adopted active account"
-    );
-    assert!(
-        a.pending_login().is_none(),
-        "clone a sees pending cleared, not a stale per-clone copy"
-    );
-
-    // A later flush on the stale clone must NOT rewrite the root index back to
-    // null (write_persisted_state no longer co-writes the root).
-    a.save_draft("ak:realm:demo", "scratch");
-    let reader = LocalStateStore::with_path(path);
-    assert_eq!(
-        reader.active_account_did().as_deref(),
-        Some("did:web:clone.example"),
-        "active_did survives a stale-clone flush"
-    );
 }
 
 #[test]

@@ -17,7 +17,7 @@
 
 use anyhow::Context as _;
 
-use crate::api::CokretApi;
+use crate::api::ArkretApi;
 use crate::secure_key_store::SigningSeedMaterial;
 
 /// Inputs the caller resolves before invoking [`enroll_current_device`]. Kept as
@@ -136,7 +136,7 @@ fn validate_signed_device_authorize(
 /// different device.
 pub async fn enroll_current_device(
     account_client: &arkret_sdk::http_client::Client,
-    principal_api: &CokretApi,
+    principal_api: &ArkretApi,
     request: &DeviceEnrollmentRequest,
     expected_device_id: &str,
 ) -> anyhow::Result<()> {

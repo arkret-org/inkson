@@ -12,7 +12,7 @@
 //! the wire builders covered by unit tests while the soland reducer is
 //! completed.
 
-use crate::operation::{ck_ops, uuid_v7};
+use crate::operation::{ak_ops, uuid_v7};
 
 /// Whether the local UI should expose the discussion promote modal.
 pub fn discussion_promote_enabled() -> bool {
@@ -73,7 +73,7 @@ pub fn build_discussion_circle_create_op(
     ids: &PromoteIds,
     title: &str,
 ) -> anyhow::Result<arkret_sdk::Event> {
-    ck_ops::discussion_circle_create(realm_id, actor, &ids.circle_id, title)?
+    ak_ops::discussion_circle_create(realm_id, actor, &ids.circle_id, title)?
         .build_sdk_event("inkson")
 }
 
@@ -84,7 +84,7 @@ pub fn build_discussion_strand_create_op(
     ids: &PromoteIds,
     title: &str,
 ) -> anyhow::Result<arkret_sdk::Event> {
-    ck_ops::scoped_discussion_strand_create(
+    ak_ops::scoped_discussion_strand_create(
         realm_id,
         actor,
         &ids.discussion_strand_id,
@@ -102,7 +102,7 @@ pub fn build_confidential_discussion_relation_op(
     source_id: &str,
     ids: &PromoteIds,
 ) -> anyhow::Result<arkret_sdk::Event> {
-    ck_ops::confidential_discussion_relation_create(
+    ak_ops::confidential_discussion_relation_create(
         realm_id,
         actor,
         &ids.discussion_strand_id,

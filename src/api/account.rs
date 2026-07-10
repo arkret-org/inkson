@@ -1,6 +1,6 @@
 use super::*;
 
-impl CokretApi {
+impl ArkretApi {
     pub async fn describe(&self) -> anyhow::Result<ServerDescription> {
         self.sdk_http_client()?
             .describe()
@@ -18,7 +18,7 @@ impl CokretApi {
     // credential. The held credential is the `ak.session.grant` itself,
     // presented per-request as
     // `Authorization: Bearer <grant>` + a `DPoP` proof (see
-    // `CokretApi::with_bearer` / `with_dpop_device`).
+    // `ArkretApi::with_bearer` / `with_dpop_device`).
 
     pub async fn request_contact(
         &self,

@@ -27,7 +27,7 @@ pub fn build_mls_history_backup_body(
 }
 
 pub async fn upload_mls_snapshot_backup(
-    api: &crate::api::CokretApi,
+    api: &crate::api::ArkretApi,
     snapshot: &crate::mls::persistence::MlsSnapshotEnvelope,
     actor_id: &str,
     device_id: &str,

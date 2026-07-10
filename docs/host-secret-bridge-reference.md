@@ -278,7 +278,7 @@ impl HostSecretBridge for IosKeychainBridge {
         //   kSecAttrAccessible      = kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly
         // The CF construction is verbose enough that production code
         // typically wraps it in an Objective-C `+ (BOOL) put:` selector
-        // on a `CokretKeychainBridge` class and dispatches through
+        // on a `ArkretKeychainBridge` class and dispatches through
         // `objc::msg_send!` (or via `cocoa-foundation` / `objc2`).
         let _ = (service_name, key, value);
         // The CF marshalling boilerplate omitted here — production

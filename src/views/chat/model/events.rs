@@ -153,7 +153,7 @@ fn message_redaction_marker_from_event(event: &Value) -> Option<MessageRedaction
             &["kind", "event_kind", "type", "op_type", "event_type"],
         )
     })?;
-    if kind != "ak.message.redact" && kind != "ck.redaction" {
+    if kind != "ak.message.redact" && kind != "ak.redaction" {
         return None;
     }
     let payload = redaction_payload_candidate(event);
@@ -1202,7 +1202,7 @@ pub(crate) fn chat_messages_from_events_with_sidecar(
 ///
 /// Canonical `ak.message.create` events (and their server-folded redaction /
 /// expiry tombstone forms, which reuse the same kind + `event_id`) are kept.
-/// Shared `ck.pin.*` control events are kept in the same discussion log so the
+/// Shared `ak.pin.*` control events are kept in the same discussion log so the
 /// pinned-message bar and reaction summary project from the same local-first
 /// source. Poll responses / moderation prompts have their own projections and
 /// are deliberately excluded. The FULL event is stored as the record

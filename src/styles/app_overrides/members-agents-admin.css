@@ -23,9 +23,9 @@
   display: grid;
   gap: 8px;
   padding: 10px;
-  border: 1px solid var(--border, var(--ck-line));
+  border: 1px solid var(--border, var(--ak-line));
   border-radius: 8px;
-  background: var(--surface-2, var(--ck-surface));
+  background: var(--surface-2, var(--ak-surface));
 }
 
 .invite-by-handle input {

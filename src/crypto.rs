@@ -9,7 +9,7 @@ pub struct ClientEncryptedMessage {
 #[cfg(not(target_arch = "wasm32"))]
 mod native {
     use arkret_sdk::{
-        CokretMlsGroup, CokretMlsIdentity, DeviceId, Did, EncryptedMessage, MessageCrypto,
+        ArkretMlsGroup, ArkretMlsIdentity, DeviceId, Did, EncryptedMessage, MessageCrypto,
         MessageCryptoDecrypt, MlsAddMemberResult, MlsCommitEnvelope, MlsKeyPackageRecord,
         MlsProposalEnvelope, MlsRemoveMemberResult, MlsWelcomeEnvelope,
     };
@@ -17,15 +17,15 @@ mod native {
     use super::ClientEncryptedMessage;
 
     pub struct LocalMlsDevice {
-        identity: Option<CokretMlsIdentity>,
-        group: Option<CokretMlsGroup>,
+        identity: Option<ArkretMlsIdentity>,
+        group: Option<ArkretMlsGroup>,
         pending: Vec<ClientEncryptedMessage>,
     }
 
     impl LocalMlsDevice {
         pub fn new(principal_id: &str, device_id: &str) -> anyhow::Result<Self> {
             Ok(Self {
-                identity: Some(CokretMlsIdentity::new_basic(
+                identity: Some(ArkretMlsIdentity::new_basic(
                     Did::new(principal_id.to_owned())?,
                     DeviceId::new(device_id.to_owned())?,
                 )?),
@@ -56,7 +56,7 @@ mod native {
                 .identity
                 .take()
                 .ok_or_else(|| anyhow::anyhow!("MLS group already created or joined"))?;
-            self.group = Some(CokretMlsGroup::join_from_welcome(identity, welcome)?);
+            self.group = Some(ArkretMlsGroup::join_from_welcome(identity, welcome)?);
             Ok(())
         }
 
@@ -351,7 +351,7 @@ mod tests {
         // commit references detached Remove proposals rather than inlining
         // them. Surviving members converge by staging every proposal the
         // commit references, then applying the commit — mirroring the receive
-        // order (`ck.*.mls.proposal` events before the `mls_commit` event).
+        // order (`ak.*.mls.proposal` events before the `mls_commit` event).
         assert!(
             !remove.proposals.is_empty(),
             "Remove must emit at least one by-reference proposal"

@@ -2,7 +2,7 @@ use super::*;
 
 #[test]
 fn encrypted_scope_blocks_plaintext_strand_update_payload() {
-    let event = crate::operation::ck_ops::strand_update_patch(
+    let event = crate::operation::ak_ops::strand_update_patch(
         TEST_REALM_ID,
         "did:web:alice.example",
         DEMO_STRAND_LEGAL_REVIEW_ID,
@@ -28,7 +28,7 @@ fn encrypted_scope_blocks_plaintext_strand_update_payload() {
 /// normal plaintext strands.
 #[test]
 fn unknown_scope_security_blocks_plaintext_private_content_fail_closed() {
-    let private_update = crate::operation::ck_ops::strand_update_patch(
+    let private_update = crate::operation::ak_ops::strand_update_patch(
         TEST_REALM_ID,
         "did:web:alice.example",
         DEMO_STRAND_LEGAL_REVIEW_ID,
@@ -56,7 +56,7 @@ fn unknown_scope_security_blocks_plaintext_private_content_fail_closed() {
     // Non-private metadata (container scaffold) is exempt even when the
     // security state is unknown, so board/list creation is not bricked
     // while the projection is in flight.
-    let board_create = crate::operation::ck_ops::space_create(
+    let board_create = crate::operation::ak_ops::space_create(
         TEST_REALM_ID,
         "did:web:alice.example",
         "ak:space:00000000-0000-7000-8000-0000000000aa",
@@ -86,7 +86,7 @@ fn encrypted_scope_allows_encrypted_strand_update_patch_value() {
     .expect("test encryption should produce payload")
     .payload;
     let encrypted_payload = serde_json::to_value(encrypted_payload).unwrap();
-    let event = crate::operation::ck_ops::strand_update_patch(
+    let event = crate::operation::ak_ops::strand_update_patch(
         TEST_REALM_ID,
         "did:web:alice.example",
         DEMO_STRAND_LEGAL_REVIEW_ID,
@@ -150,17 +150,17 @@ fn encrypted_private_patch_without_mls_snapshot_is_blocked_before_queueing() {
 #[cfg(not(target_arch = "wasm32"))]
 #[test]
 fn encrypted_private_patch_reports_unusable_pending_local_welcome() {
-    use arkret_sdk::{CokretMlsIdentity, DeviceId, Did};
+    use arkret_sdk::{ArkretMlsIdentity, DeviceId, Did};
 
     let realm = "ak:realm:01904100-0000-7000-8000-000000000001";
     let bob_actor = "did:web:bob.example";
     let bob_device = "ak:device:01904100-0000-7000-8000-0000000000b2";
-    let alice = CokretMlsIdentity::new_basic(
+    let alice = ArkretMlsIdentity::new_basic(
         Did::new("did:web:alice.example".to_owned()).unwrap(),
         DeviceId::new("ak:device:01904100-0000-7000-8000-0000000000a1".to_owned()).unwrap(),
     )
     .unwrap();
-    let bob = CokretMlsIdentity::new_basic(
+    let bob = ArkretMlsIdentity::new_basic(
         Did::new(bob_actor.to_owned()).unwrap(),
         DeviceId::new(bob_device.to_owned()).unwrap(),
     )
@@ -212,17 +212,17 @@ fn encrypted_private_patch_reports_unusable_pending_local_welcome() {
 #[cfg(not(target_arch = "wasm32"))]
 #[test]
 fn encrypted_private_patch_applies_pending_welcome_with_key_package_state() {
-    use arkret_sdk::{CokretMlsIdentity, DeviceId, Did};
+    use arkret_sdk::{ArkretMlsIdentity, DeviceId, Did};
 
     let realm = "ak:realm:01904100-0000-7000-8000-000000000001";
     let bob_actor = "did:web:bob.example";
     let bob_device = "ak:device:01904100-0000-7000-8000-0000000000b3";
-    let alice = CokretMlsIdentity::new_basic(
+    let alice = ArkretMlsIdentity::new_basic(
         Did::new("did:web:alice.example".to_owned()).unwrap(),
         DeviceId::new("ak:device:01904100-0000-7000-8000-0000000000a1".to_owned()).unwrap(),
     )
     .unwrap();
-    let bob = CokretMlsIdentity::new_basic(
+    let bob = ArkretMlsIdentity::new_basic(
         Did::new(bob_actor.to_owned()).unwrap(),
         DeviceId::new(bob_device.to_owned()).unwrap(),
     )
@@ -363,7 +363,7 @@ fn encrypted_private_patch_creator_bootstraps_initial_mls_snapshot() {
 #[cfg(not(target_arch = "wasm32"))]
 #[test]
 fn encrypted_private_patch_with_ready_snapshot_replaces_plaintext() {
-    use arkret_sdk::{CokretMlsIdentity, DeviceId, Did};
+    use arkret_sdk::{ArkretMlsIdentity, DeviceId, Did};
 
     let actor = "did:web:alice.example";
     let device = "ak:device:01904100-0000-7000-8000-000000000001";
@@ -372,7 +372,7 @@ fn encrypted_private_patch_with_ready_snapshot_replaces_plaintext() {
     let secure = crate::secure_key_store::MemorySecureKeyStore::new();
     let secret =
         crate::mls::runtime::load_or_create_device_snapshot_secret(&secure, actor, device).unwrap();
-    let identity = CokretMlsIdentity::new_basic(
+    let identity = ArkretMlsIdentity::new_basic(
         Did::new(actor.to_owned()).unwrap(),
         DeviceId::new(device.to_owned()).unwrap(),
     )
@@ -536,7 +536,7 @@ fn encrypted_metadata_only_patch_does_not_require_mls_snapshot() {
 
 #[test]
 fn encrypted_scope_allows_structural_strand_position_update() {
-    let event = crate::operation::ck_ops::strand_position_update(
+    let event = crate::operation::ak_ops::strand_position_update(
         TEST_REALM_ID,
         "did:web:alice.example",
         DEMO_STRAND_LEGAL_REVIEW_ID,
@@ -557,7 +557,7 @@ fn encrypted_scope_allows_structural_strand_position_update() {
 
 #[test]
 fn encrypted_scope_allows_content_only_metadata_create_payloads() {
-    let strand = crate::operation::ck_ops::kanban_card_strand_create(
+    let strand = crate::operation::ak_ops::kanban_card_strand_create(
         TEST_REALM_ID,
         "did:web:alice.example",
         DEMO_STRAND_LEGAL_REVIEW_ID,
@@ -569,7 +569,7 @@ fn encrypted_scope_allows_content_only_metadata_create_payloads() {
     .expect("builds")
     .build("inkson");
     let strand = sdk_event(strand);
-    let space = crate::operation::ck_ops::space_create(
+    let space = crate::operation::ak_ops::space_create(
         TEST_REALM_ID,
         "did:web:alice.example",
         "ak:space:0196419b-0000-7000-8000-000000000002",
@@ -595,7 +595,7 @@ fn encrypted_scope_allows_content_only_metadata_create_payloads() {
 /// that field).
 #[test]
 fn encrypted_scope_never_blocks_container_metadata_but_blocks_plaintext_private_content() {
-    let board = crate::operation::ck_ops::space_create(
+    let board = crate::operation::ak_ops::space_create(
         TEST_REALM_ID,
         "did:web:alice.example",
         "ak:space:0196419b-0000-7000-8000-00000000aa01",
@@ -613,7 +613,7 @@ fn encrypted_scope_never_blocks_container_metadata_but_blocks_plaintext_private_
         "encrypted scope must not block board container create"
     );
 
-    let list = crate::operation::ck_ops::space_create(
+    let list = crate::operation::ak_ops::space_create(
         TEST_REALM_ID,
         "did:web:alice.example",
         "ak:space:0196419b-0000-7000-8000-00000000aa02",
@@ -631,7 +631,7 @@ fn encrypted_scope_never_blocks_container_metadata_but_blocks_plaintext_private_
         "encrypted scope must not block list container create"
     );
 
-    let list_rank_update = crate::operation::ck_ops::space_update_patch(
+    let list_rank_update = crate::operation::ak_ops::space_update_patch(
         TEST_REALM_ID,
         "did:web:alice.example",
         "ak:space:0196419b-0000-7000-8000-00000000aa02",
@@ -647,7 +647,7 @@ fn encrypted_scope_never_blocks_container_metadata_but_blocks_plaintext_private_
     );
 
     // Counter-case: plaintext private body in a strand update is still blocked.
-    let private_update = crate::operation::ck_ops::strand_update_patch(
+    let private_update = crate::operation::ak_ops::strand_update_patch(
         TEST_REALM_ID,
         "did:web:alice.example",
         DEMO_STRAND_LEGAL_REVIEW_ID,
@@ -666,7 +666,7 @@ fn encrypted_scope_never_blocks_container_metadata_but_blocks_plaintext_private_
 
 #[test]
 fn encrypted_scope_allows_strand_summary_metadata_update() {
-    let event = crate::operation::ck_ops::strand_update_patch(
+    let event = crate::operation::ak_ops::strand_update_patch(
         TEST_REALM_ID,
         "did:web:alice.example",
         DEMO_STRAND_LEGAL_REVIEW_ID,

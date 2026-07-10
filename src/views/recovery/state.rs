@@ -10,7 +10,7 @@ use crate::local_state::LocalStateStore;
 use crate::recovery_crypto::fingerprint_recovery_key;
 
 pub(crate) fn load_state(
-    state_store: &Signal<LocalStateStore>,
+    state_store: &SyncSignal<LocalStateStore>,
     account_key: &str,
 ) -> RecoveryState {
     if account_key.is_empty() {
@@ -26,7 +26,7 @@ pub(crate) fn load_state(
 }
 
 pub(crate) fn save_state(
-    state_store: &mut Signal<LocalStateStore>,
+    state_store: &mut SyncSignal<LocalStateStore>,
     account_key: &str,
     state: &RecoveryState,
 ) {
@@ -41,7 +41,7 @@ pub(crate) fn save_state(
 }
 
 pub(crate) fn save_generated_recovery_key_metadata(
-    state_store: &mut Signal<LocalStateStore>,
+    state_store: &mut SyncSignal<LocalStateStore>,
     account_key: &str,
     recovery_key: &str,
 ) -> Option<(String, String)> {

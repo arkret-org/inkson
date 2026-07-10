@@ -21,7 +21,7 @@ use super::*;
 pub const RESUMABLE_UPLOAD_THRESHOLD_BYTES: usize =
     arkret_sdk::http_client::RESUMABLE_UPLOAD_THRESHOLD_BYTES;
 
-impl CokretApi {
+impl ArkretApi {
     /// Describe-gated tus endpoint discovery. Returns the binding
     /// `base_url` only when the server advertises both the protocol
     /// feature id and a `kind="tus"` binding that covers

@@ -22,7 +22,7 @@ use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use dioxus::prelude::*;
 use serde_json::Value;
 
-use crate::api::CokretApi;
+use crate::api::ArkretApi;
 
 /// Inbound invite presented to the user as a ring. Set on the hub when an
 /// `invite` arrives for a call the local client has no active session for.
@@ -267,7 +267,7 @@ fn invite_wants_video(data: &Value) -> bool {
 /// proof verification against the sender's authoritative directory verify key
 /// (resolved via [`crate::device_directory`]). The sync-apply path is
 /// synchronous but the directory query is async, so this fn is `async` and
-/// takes an optional authenticated [`CokretApi`]:
+/// takes an optional authenticated [`ArkretApi`]:
 ///
 /// - cache **Hit** → verify inline; pass routes, fail drops;
 /// - cache **NegativeHit** (revoked / absent / no key) → fail-closed drop;
@@ -282,7 +282,7 @@ pub async fn route_realm_call_signals(
     realm_id: &str,
     body: &Value,
     local_actor: &str,
-    api: Option<&CokretApi>,
+    api: Option<&ArkretApi>,
     did_anchor: &dyn crate::device_directory::DidAnchor,
 ) {
     for decoded in decode_realm_call_signals(realm_id, body) {
@@ -338,7 +338,7 @@ fn verify_decoded_proof(
     crate::device_directory::verify_ephemeral_envelope_proof(&decoded.envelope, key)
 }
 
-async fn moderator_signal_authorized(decoded: &DecodedCallSignal, api: Option<&CokretApi>) -> bool {
+async fn moderator_signal_authorized(decoded: &DecodedCallSignal, api: Option<&ArkretApi>) -> bool {
     if !requires_call_moderate(decoded) {
         return true;
     }

@@ -1,7 +1,7 @@
-//! Free-function keys/device READ transport (E2 CokretApi strangler).
+//! Free-function keys/device READ transport (E2 ArkretApi strangler).
 //!
 //! These are the pure-passthrough key/device read operations that used to live
-//! as thin inherent methods on [`crate::api::CokretApi`]. They build a typed SDK
+//! as thin inherent methods on [`crate::api::ArkretApi`]. They build a typed SDK
 //! request body (and do input validation) and call the shared SDK
 //! `http-client::Client` directly. Call sites reach them through
 //! [`crate::authed_api::with_authed_sdk_client`] (or, for non-`with_authed_api`
@@ -11,7 +11,7 @@
 //!
 //! The key-backup / recovery / device-pairing / device-revoke methods and the
 //! device-message pull loop (receive / ack / cursor) carry signing,
-//! trust-anchor, or durable cursor semantics and remain inherent `CokretApi`
+//! trust-anchor, or durable cursor semantics and remain inherent `ArkretApi`
 //! methods. The one-shot device-message send and the `ak.realm_key.request`
 //! ephemeral relay below are plain transport writes (the caller prepares any
 //! signed `content`; the request itself carries `proof: None`), so they are

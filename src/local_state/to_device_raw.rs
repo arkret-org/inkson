@@ -8,36 +8,19 @@ impl LocalStateStore {
     pub fn save_sync_cursor(&mut self, cursor: impl Into<String>) {
         self.ensure_cached_loaded();
         let cursor = cursor.into();
-        {
-            // E7: record into the shared cursor overlay (coherent across clones),
-            // not the per-clone `cached`. Fall through to `cached` for the
-            // unchanged-check when this slot has not been overridden yet.
-            let mut overlay = self.lock_client_core_sync_overlay();
-            let current = match &overlay.sync_cursor {
-                Some(value) => value.clone(),
-                None => self.cached.sync_cursor.clone(),
-            };
-            if current.as_deref() == Some(cursor.as_str()) {
-                return; // cursor unchanged — skip flush
-            }
-            overlay.sync_cursor = Some(Some(cursor));
+        if self.cached.sync_cursor.as_deref() == Some(cursor.as_str()) {
+            return;
         }
+        self.cached.sync_cursor = Some(cursor);
         let _ = self.flush();
     }
 
     pub fn clear_sync_cursor(&mut self) {
         self.ensure_cached_loaded();
-        {
-            let mut overlay = self.lock_client_core_sync_overlay();
-            let current = match &overlay.sync_cursor {
-                Some(value) => value.clone(),
-                None => self.cached.sync_cursor.clone(),
-            };
-            if current.is_none() {
-                return; // already clear — skip flush
-            }
-            overlay.sync_cursor = Some(None);
+        if self.cached.sync_cursor.is_none() {
+            return;
         }
+        self.cached.sync_cursor = None;
         let _ = self.flush();
     }
 
@@ -56,19 +39,18 @@ impl LocalStateStore {
         if realm_id.is_empty() {
             return;
         }
-        {
-            // E7: record into the shared cursor overlay (coherent across clones).
-            let mut overlay = self.lock_client_core_sync_overlay();
-            let current = match overlay.realm_events_cursors.get(realm_id) {
-                Some(value) => value.clone(),
-                None => self.cached.realm_events_cursors.get(realm_id).cloned(),
-            };
-            if current == cursor {
-                return; // unchanged (including both cleared) — skip flush
+        if self.cached.realm_events_cursors.get(realm_id).cloned() == cursor {
+            return;
+        }
+        match cursor {
+            Some(cursor) => {
+                self.cached
+                    .realm_events_cursors
+                    .insert(realm_id.to_owned(), cursor);
             }
-            overlay
-                .realm_events_cursors
-                .insert(realm_id.to_owned(), cursor);
+            None => {
+                self.cached.realm_events_cursors.remove(realm_id);
+            }
         }
         let _ = self.flush();
     }
@@ -80,17 +62,8 @@ impl LocalStateStore {
     pub fn remember_client_core_event(&mut self, event_id: impl Into<String>) {
         self.ensure_cached_loaded();
         let event_id = event_id.into();
-        {
-            // E7: record dedupe ids into the shared overlay (coherent across
-            // clones), so a Signal-clone flush can't clobber the adapter clone's
-            // dedupe set. Skip if already known in the overlay or persisted set.
-            let mut overlay = self.lock_client_core_sync_overlay();
-            if overlay.seen_events.contains(&event_id)
-                || self.cached.client_core_seen_event_ids.contains(&event_id)
-            {
-                return;
-            }
-            overlay.seen_events.insert(event_id);
+        if !self.cached.client_core_seen_event_ids.insert(event_id) {
+            return;
         }
         let _ = self.flush();
     }
@@ -476,61 +449,4 @@ fn raw_payload_is_redaction_tombstone(payload: &Value) -> bool {
         || payload
             .get("payload")
             .is_some_and(raw_payload_is_redaction_tombstone)
-}
-
-#[cfg(test)]
-mod client_core_sync_overlay_tests {
-    use super::super::storage_util::isolated_store_for_tests;
-
-    const REALM: &str = "ak:realm:01904100-0000-7000-8000-000000000001";
-
-    // E7: cursor writes through one clone (e.g. garth's Send+Sync CursorStore
-    // adapter) MUST be visible to a different clone (the Dioxus Signal), because
-    // both go through the shared cursor overlay rather than per-clone `cached`.
-    #[test]
-    fn cursor_writes_are_coherent_across_clones() {
-        let base = isolated_store_for_tests("cursor-coherence");
-        let mut adapter_clone = base.clone();
-        let ui_clone = base.clone();
-
-        adapter_clone.save_realm_events_cursor(REALM, Some("ak:cursor:realm-1".to_owned()));
-        adapter_clone.save_sync_cursor("ak:cursor:acct-1");
-
-        // A DISTINCT clone observes both writes via the shared overlay.
-        assert_eq!(
-            ui_clone.realm_events_cursor(REALM).as_deref(),
-            Some("ak:cursor:realm-1")
-        );
-        assert_eq!(ui_clone.sync_cursor().as_deref(), Some("ak:cursor:acct-1"));
-    }
-
-    // A clear on one clone is likewise visible to another (rebuild-from-history).
-    #[test]
-    fn cursor_clear_is_coherent_across_clones() {
-        let base = isolated_store_for_tests("cursor-clear-coherence");
-        let mut writer = base.clone();
-        let reader = base.clone();
-
-        writer.save_realm_events_cursor(REALM, Some("ak:cursor:realm-1".to_owned()));
-        assert_eq!(
-            reader.realm_events_cursor(REALM).as_deref(),
-            Some("ak:cursor:realm-1")
-        );
-
-        writer.save_realm_events_cursor(REALM, None);
-        assert!(reader.realm_events_cursor(REALM).is_none());
-    }
-
-    // E7: event-dedupe ids recorded through the adapter clone must be visible to
-    // a different clone, so a Signal-clone flush can't drop the adapter's dedupe.
-    #[test]
-    fn dedupe_writes_are_coherent_across_clones() {
-        let base = isolated_store_for_tests("dedupe-coherence");
-        let mut adapter_clone = base.clone();
-        let ui_clone = base.clone();
-
-        assert!(!ui_clone.client_core_event_seen("ak:event:01904100-0000-7000-8000-0000000000aa"));
-        adapter_clone.remember_client_core_event("ak:event:01904100-0000-7000-8000-0000000000aa");
-        assert!(ui_clone.client_core_event_seen("ak:event:01904100-0000-7000-8000-0000000000aa"));
-    }
 }

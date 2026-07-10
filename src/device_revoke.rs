@@ -17,16 +17,16 @@
 //! - `DeviceManager::revoke_device(user_id, device_id)` — flag revoked.
 //! - `E2eeManager::revoke_device(principal_id, device_id)` — flag revoked and fail closed on
 //!   subsequent encrypted writes from the device.
-//! - `CokretMlsGroup::add_member(...)` — performs add + Welcome via OpenMLS.
-//! - `CokretMlsGroup::remove_member_by_principal(target)` — leaf-level removal that produces an
+//! - `ArkretMlsGroup::add_member(...)` — performs add + Welcome via OpenMLS.
+//! - `ArkretMlsGroup::remove_member_by_principal(target)` — leaf-level removal that produces an
 //!   [`MlsRemoveMemberResult`] (commit envelope + removed leaf indices + per-leaf principal DIDs).
-//! - `CokretMlsGroup::remove_member_by_leaf(leaf_index)` — same outcome targeted at a specific
+//! - `ArkretMlsGroup::remove_member_by_leaf(leaf_index)` — same outcome targeted at a specific
 //!   OpenMLS leaf index, for single-device revocation of a multi-device principal.
 //! - `E2eeManager::remove_member(group_id, did)` — DID-level removal (model layer; companion to the
 //!   SDK-level OpenMLS calls above).
 //!
 //! [`execute_mls_remove`] is the inkson adapter on top of the SDK: takes a
-//! restored [`CokretMlsGroup`] + target DID + space id and produces both
+//! restored [`ArkretMlsGroup`] + target DID + space id and produces both
 //! the [`MlsRemoveMemberResult`] and the canonical `mls_commit` Operation
 //! envelope a caller submits to soland. State persistence (re-encrypting
 //! the post-commit group via `mls_persistence`) stays with the caller —
@@ -201,7 +201,7 @@ impl DeviceRevokePlan {
     }
 }
 
-/// Drive the SDK's `CokretMlsGroup::remove_member_by_principal` and turn
+/// Drive the SDK's `ArkretMlsGroup::remove_member_by_principal` and turn
 /// the result into a canonical `mls_commit` [`Operation`] ready to ship.
 ///
 /// The function is split out so:
@@ -218,7 +218,7 @@ impl DeviceRevokePlan {
 /// Errors propagate from the SDK; the most common is "principal X has no
 /// leaf in group Y" when the caller's leaf bookkeeping is stale.
 pub fn execute_mls_remove(
-    group: &mut arkret_sdk::CokretMlsGroup,
+    group: &mut arkret_sdk::ArkretMlsGroup,
     target: &arkret_sdk::Did,
     operation_id: arkret_sdk::OperationId,
     realm_id: arkret_sdk::RealmId,

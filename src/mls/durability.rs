@@ -4,7 +4,7 @@
 //! - `crypto-media/encryption-and-audit.md` §2.10.8 (sealing obligation, disclosure obligation, RYW
 //!   guard, eager timing).
 //! - `models/realm-and-space.md` §2.3.1 (`durability_policy`).
-//! - `identity/identity-did.md` §8.3 (`CokretRealmHistoryRecoveryKey`).
+//! - `identity/identity-did.md` §8.3 (`ArkretRealmHistoryRecoveryKey`).
 //!
 //! ## SDK contract boundary
 //!
@@ -77,7 +77,7 @@ pub struct RecoveryRecipientCheck {
 }
 
 /// Resolve + verify a whole set of recovery recipients. Encapsulates the
-/// public DID-document fetch and the per-recipient `CokretRealmHistoryRecoveryKey`
+/// public DID-document fetch and the per-recipient `ArkretRealmHistoryRecoveryKey`
 /// service-entry designation check so UI surfaces (e.g. the durability banner)
 /// consume typed results instead of driving the HTTP orchestration in the view
 /// layer. `http` is a shared unauthenticated client — recovery-recipient DID
@@ -143,7 +143,7 @@ pub fn seal_history_secrets(
 /// recovery credential. Distinct from the `did_recovery` HPKE key-schedule info
 /// in `crate::hpke_backup` so the RRK domain is isolated
 /// (identity-did.md §8.3 / realm-and-space.md §2.3.1: the same key MUST NOT serve
-/// both `did_recovery` and `CokretRealmHistoryRecoveryKey`).
+/// both `did_recovery` and `ArkretRealmHistoryRecoveryKey`).
 const RRK_DERIVE_INFO: &[u8] = b"arkret-realm-history-recovery-key-x25519-v1";
 
 /// Derive the offline RRK X25519 keypair (raw 32-byte `(private, public)`) from
@@ -154,7 +154,7 @@ const RRK_DERIVE_INFO: &[u8] = b"arkret-realm-history-recovery-key-x25519-v1";
 /// (`open_history_secret_with_device_privkey`, which treats the private key as an
 /// `x25519_dalek::StaticSecret`). The public half equals the
 /// `publicKeyMultibase` an organization publishes in its
-/// `CokretRealmHistoryRecoveryKey` service entry.
+/// `ArkretRealmHistoryRecoveryKey` service entry.
 pub fn derive_rrk_keypair_from_recovery_key(
     recovery_key: &str,
 ) -> Result<([u8; 32], [u8; 32]), String> {
@@ -387,7 +387,7 @@ mod tests {
             "service": [
                 {
                     "id": "did:web:acme.example#realm-history-recovery",
-                    "type": "CokretRealmHistoryRecoveryKey",
+                    "type": "ArkretRealmHistoryRecoveryKey",
                     "serviceEndpoint": {
                         "verificationMethod": recipient.verification_method,
                         "kem": "hpke",

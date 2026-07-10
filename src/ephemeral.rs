@@ -1,6 +1,6 @@
 //! Ephemeral / durable envelope builders and submit-acceptance helpers for the
 //! self client: outgoing-payload schema validation, read-cursor advance events,
-//! the `ck.typing` / `ak.receipt.read` / `ck.presence` / `ak.call.signal`
+//! the `ak.typing` / `ak.receipt.read` / `ak.presence` / `ak.call.signal`
 //! ephemeral envelopes, and the events-batch acceptance gate.
 
 use chrono::Timelike as _;
@@ -37,7 +37,7 @@ pub fn build_read_cursor_advance_event(
         )
     })?;
     OperationBuilder::new(&marker.body.realm_id, &marker.actor, kind)
-        .body(marker.ck_read_cursor_payload())
+        .body(marker.ak_read_cursor_payload())
         .build_sdk_event(&marker.device_id)
 }
 
@@ -78,12 +78,12 @@ pub(crate) fn ensure_events_submit_accepted(
 }
 
 /// Round R2/R3 (T02) — default ephemeral TTL for long-lived ephemeral
-/// fanout such as `ck.presence` / `ak.receipt.read`. 30 seconds is
+/// fanout such as `ak.presence` / `ak.receipt.read`. 30 seconds is
 /// comfortably below the 5-minute hard ceiling.
 const EPHEMERAL_DEFAULT_TTL_SECS: i64 = 30;
 const TYPING_EPHEMERAL_TTL_SECS: i64 = 5;
 
-/// Round R2/R3 (T02) — build a `ck.typing` `EphemeralEnvelope`. Enforces
+/// Round R2/R3 (T02) — build a `ak.typing` `EphemeralEnvelope`. Enforces
 /// the kind allowlist + the 5-minute hard ceiling on `expires_at - sent_at`.
 pub fn build_typing_envelope(
     realm_id: &str,
@@ -96,16 +96,16 @@ pub fn build_typing_envelope(
     let expires_at = now + chrono::Duration::seconds(TYPING_EPHEMERAL_TTL_SECS);
     let realm_id_wire = trim_realm_id(realm_id);
     let realm = arkret_sdk::RealmId::new(realm_id_wire.clone())
-        .map_err(|err| anyhow::anyhow!("invalid realm_id for ck.typing: {err}"))?;
+        .map_err(|err| anyhow::anyhow!("invalid realm_id for ak.typing: {err}"))?;
     let actor = arkret_sdk::Did::new(actor_id)
-        .map_err(|err| anyhow::anyhow!("invalid actor_id for ck.typing: {err}"))?;
+        .map_err(|err| anyhow::anyhow!("invalid actor_id for ak.typing: {err}"))?;
     let strand = arkret_sdk::StrandId::new(strand_id.trim().to_owned())
-        .map_err(|err| anyhow::anyhow!("invalid strand_id for ck.typing: {err}"))?;
+        .map_err(|err| anyhow::anyhow!("invalid strand_id for ak.typing: {err}"))?;
     // ephemeral-envelope.schema.json: device_id is REQUIRED for every
     // broadcast ephemeral kind; the proof binds to `{actor_id}#{device_id}`.
     let device = Some(
         arkret_sdk::DeviceId::new(device_id)
-            .map_err(|err| anyhow::anyhow!("invalid device_id for ck.typing: {err}"))?,
+            .map_err(|err| anyhow::anyhow!("invalid device_id for ak.typing: {err}"))?,
     );
     arkret_sdk::EphemeralEnvelope::new(
         "ak.typing",
@@ -118,7 +118,7 @@ pub fn build_typing_envelope(
             "actor_id": actor_id,
             "realm_id": realm_id_wire,
             "strand_id": strand.as_str(),
-            // ephemeral-envelope.schema.json ck.typing branch: optional, const
+            // ephemeral-envelope.schema.json ak.typing branch: optional, const
             // "discussion" in v1 — the only writable Message timeline.
             "track_name": "discussion",
             "typing": typing,
@@ -173,7 +173,7 @@ pub fn build_receipt_read_envelope(
     .map_err(|err| anyhow::anyhow!("read receipt envelope rejected: {err}"))
 }
 
-/// Round R2/R3 (T02) — build a `ck.presence` `EphemeralEnvelope`.
+/// Round R2/R3 (T02) — build a `ak.presence` `EphemeralEnvelope`.
 pub fn build_presence_envelope(
     realm_id: &str,
     actor_id: &str,
@@ -189,9 +189,9 @@ pub fn build_presence_envelope(
     let expires_at = now + chrono::Duration::seconds(EPHEMERAL_DEFAULT_TTL_SECS);
     let realm_id_wire = trim_realm_id(realm_id);
     let realm = arkret_sdk::RealmId::new(realm_id_wire.clone())
-        .map_err(|err| anyhow::anyhow!("invalid realm_id for ck.presence: {err}"))?;
+        .map_err(|err| anyhow::anyhow!("invalid realm_id for ak.presence: {err}"))?;
     let actor = arkret_sdk::Did::new(actor_id)
-        .map_err(|err| anyhow::anyhow!("invalid actor_id for ck.presence: {err}"))?;
+        .map_err(|err| anyhow::anyhow!("invalid actor_id for ak.presence: {err}"))?;
     let mut payload = serde_json::Map::new();
     payload.insert("realm_id".into(), Value::String(realm_id_wire));
     payload.insert("actor_id".into(), Value::String(actor_id.to_owned()));
@@ -216,7 +216,7 @@ pub fn build_presence_envelope(
         Value::Number((EPHEMERAL_DEFAULT_TTL_SECS * 1000).into()),
     );
     let device = arkret_sdk::DeviceId::new(device_id)
-        .map_err(|err| anyhow::anyhow!("invalid device_id for ck.presence: {err}"))?;
+        .map_err(|err| anyhow::anyhow!("invalid device_id for ak.presence: {err}"))?;
     arkret_sdk::EphemeralEnvelope::new(
         "ak.presence",
         realm,
@@ -254,7 +254,7 @@ fn bucket_presence_timestamp(ts: chrono::DateTime<chrono::Utc>) -> String {
 /// The caller MUST attach a device-signed proof via the active
 /// [`crate::event_signer`] before submit — the bare envelope returned
 /// here carries `proof = None` and the submit guard / receiver will
-/// reject it. See [`super::CokretApi::submit_call_signal_v1`] for the
+/// reject it. See [`super::ArkretApi::submit_call_signal_v1`] for the
 /// signing + submit path.
 pub fn build_call_signal_envelope_v1(
     realm_id: &str,

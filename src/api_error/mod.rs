@@ -9,7 +9,7 @@ pub use classify::*;
 
 #[derive(Clone, Debug, thiserror::Error)]
 #[error("Arkret API returned {status}: {error}")]
-pub struct CokretApiError {
+pub struct ArkretApiError {
     pub status: StatusCode,
     pub error: ErrorEnvelope,
 }
@@ -17,7 +17,7 @@ pub struct CokretApiError {
 pub(crate) fn api_error_status_and_envelope(
     error: &anyhow::Error,
 ) -> Option<(StatusCode, &ErrorEnvelope)> {
-    if let Some(api_error) = error.downcast_ref::<CokretApiError>() {
+    if let Some(api_error) = error.downcast_ref::<ArkretApiError>() {
         return Some((api_error.status, &api_error.error));
     }
     if let Some(arkret_sdk::Error::Api { status, error }) =

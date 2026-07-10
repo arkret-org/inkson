@@ -50,7 +50,7 @@ pub fn capability_revoke(
 /// `{kind:"realm", realm_id}` selector — the management surface this
 /// covers. The Envelope `seal_basis` / signature carries the issuer
 /// proof; the per-grant `proofs[]` the strict SDK builder mints is not
-/// re-derived here (consistent with the rest of the inkson `ck_ops`
+/// re-derived here (consistent with the rest of the inkson `ak_ops`
 /// event pipeline, which signs at the Envelope boundary).
 pub fn capability_grant_actions(
     realm_id: &str,

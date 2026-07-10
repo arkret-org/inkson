@@ -182,7 +182,7 @@ pub(crate) fn schedule_mls_history_backup_after_commit(
     actor_id: String,
     device_id: String,
     realm_id: String,
-    state_store: Signal<LocalStateStore>,
+    state_store: SyncSignal<LocalStateStore>,
 ) {
     if base_url.trim().is_empty()
         || token.trim().is_empty()
@@ -227,7 +227,7 @@ pub(crate) fn schedule_mls_history_backup_after_commit(
 /// `mls_recovery_backup_configured` — these sites uploaded unconditionally
 /// before and that behaviour is preserved.
 pub(crate) async fn upload_mls_history_backup_now(
-    api: &crate::api::CokretApi,
+    api: &crate::api::ArkretApi,
     base_url: &str,
     actor_id: &str,
     device_id: &str,

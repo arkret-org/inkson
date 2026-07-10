@@ -10,11 +10,11 @@
 // | login              | desktop/login.html, mobile/login  | crypto-media/device-lifecycle §1-3                     | ak.session.grant, ak.device.authorize                            |
 // | dashboard          | desktop/home.html, mobile/home    | overview/architecture §3, sync/client-sync             | (read-only projection of frontier + spaces + notifications)        |
 // | kanban             | desktop/board.html, mobile/board  | overview/current-model §4, models/views §6             | ak.strand.move, ak.strand.reorder, ak.space.update (board/list container)|
-// | chat               | desktop/discussion.html           | models/object-model-standard §5, current-model §3      | ak.strand.tracks.update (unified), ck.message.*                      |
+// | chat               | desktop/discussion.html           | models/object-model-standard §5, current-model §3      | ak.strand.tracks.update (unified), ak.message.*                      |
 // | directory          | desktop/directory.html            | discovery/discovery-directory                          | (read-only); writes via ak.realm.discovery state event              |
 // | notifications      | desktop/inbox.html, mobile/inbox  | discovery/push-notifications, discovery/read-receipts §6 | (projection only — derived from ak.read_cursor.advance / ak.receipt.read / @-mention) |
 // | verify_device      | desktop/verify-device.html        | crypto-media/device-lifecycle (verification)           | ak.key.verification.*, ak.mls.welcome                              |
-// | realm_admin        | desktop/realm-admin.html          | authz/{capabilities,policy-server}, governance/content-moderation, sync/federation | ck.policy.{rule,action,set}, ck.capability.{grant,revoke,delegate}  |
+// | realm_admin        | desktop/realm-admin.html          | authz/{capabilities,policy-server}, governance/content-moderation, sync/federation | ak.policy.{rule,action,set}, ak.capability.{grant,revoke,delegate}  |
 // | settings           | desktop/settings.html             | identity/identity-handles §16, identity/account-lifecycle | ak.profile.update, ak.account.status, ak.identity.disclosure_*      |
 // | setup              | (workspace bootstrap helper page) | overview/architecture                                  | (workspace bootstrap)                                              |
 //
@@ -109,7 +109,7 @@ pub enum AppView {
     /// The only canonical events feeding this view are `ak.read_cursor.advance`,
     /// `ak.receipt.read`, `@-mention` extractions, plus capability/grant
     /// approval requests. Writes here MUST land on those canonical kinds, not
-    /// on a synthetic `ck.notification.*` event.
+    /// on a synthetic `ak.notification.*` event.
     Notifications,
     FileTransfer,
     /// Recovery — Recovery Key (24 words) + restore-from-backup, with Social
@@ -129,7 +129,7 @@ pub enum AppView {
     /// Agent endpoint + interop_session monitor.
     /// Spec `extensions/agent-integration.md`. Writes `ak.agent.endpoint` /
     /// `ak.agent.interop_session.{start,status,result}` via
-    /// `crate::operation::ck_ops::agent_*` builders.
+    /// `crate::operation::ak_ops::agent_*` builders.
     Agents,
     /// A6.1 — global cross-Space message search panel. Triggered by
     /// the `topbar-search-button`, `Cmd+F` (Ctrl+F off-mac), or by

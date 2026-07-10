@@ -34,28 +34,6 @@ fn parse_runtime_status(runtime_status: &str) -> anyhow::Result<arkret_sdk::Appl
     })
 }
 
-/// `ak.applet.registration` — declare an applet service_did + the
-/// event-kind subset / namespaces / capabilities it can write.
-pub fn applet_registration(
-    realm_id: &str,
-    actor: &str,
-    service_did: &str,
-    namespace: &str,
-    capabilities: &[&str],
-) -> OperationBuilder {
-    OperationBuilder::new(
-        realm_id,
-        actor,
-        arkret_sdk::events::kinds::EventKind::AppletRegistration,
-    )
-    .target_ref(service_did)
-    .body(json!({
-        "service_did": service_did,
-        "namespace": namespace,
-        "capabilities": capabilities,
-    }))
-}
-
 /// `ak.applet.discovery` — the network discovery surface that lists
 /// what an applet exposes; emitted by directory crawlers and by the
 /// applet itself on registration round-trip.

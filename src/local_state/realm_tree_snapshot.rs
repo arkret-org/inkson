@@ -88,7 +88,7 @@ impl LocalStateStore {
             }
             store.ensure_cached_loaded();
             store.cached.snapshot_sync.insert(realm_id, status);
-            store.flush_pending.set(true);
+            store.flush_pending.store(true, Ordering::Relaxed);
         });
         Ok(())
     }

@@ -168,7 +168,7 @@ pub(super) const TEST_SESSION_INJECTION_KEY: &str = "inkson.test.session_injecti
 /// it as stale.
 #[cfg(all(target_arch = "wasm32", feature = "wasm-localstorage-secrets-test"))]
 pub(super) fn inject_test_session_grant(
-    state_store: &mut Signal<LocalStateStore>,
+    state_store: &mut SyncSignal<LocalStateStore>,
     config_store: Signal<LocalConfigStore>,
     server_url: &str,
     account_did: &str,

@@ -2,7 +2,7 @@ import { expect, type Page, type Route } from "@playwright/test";
 import { spawnSync } from "node:child_process";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { mockCokretContract } from "./mockCokretContract";
+import { mockArkretContract } from "./mockArkretContract";
 
 const DEMO_REALM = "ak:realm:0196419b-0000-7000-8000-000000000000";
 const SETUP_REALM = "ak:realm:01js0setupflow000000000000";
@@ -55,7 +55,7 @@ type StrandProjection = {
   fields?: Record<string, unknown>;
 };
 
-type MockCokretApiOptions = {
+type MockArkretApiOptions = {
   advertiseListHandlesForSubject?: boolean;
   accountPrincipalId?: string;
   primaryHandle?: string | null;
@@ -192,9 +192,9 @@ function signedEventDigest(event: Record<string, unknown>) {
   return canonicalSha256(digestPayload);
 }
 
-export async function mockCokretApi(
+export async function mockArkretApi(
   page: Page,
-  options: MockCokretApiOptions = {},
+  options: MockArkretApiOptions = {},
 ) {
   const advertiseListHandlesForSubject =
     options.advertiseListHandlesForSubject ?? true;
@@ -2289,7 +2289,7 @@ export async function mockCokretApi(
       return json(route, { backups, has_more: false });
     }
 
-    const contractResponse = mockCokretContract({
+    const contractResponse = mockArkretContract({
       method: route.request().method(),
       path: url.pathname,
       query: Object.fromEntries(url.searchParams.entries()),

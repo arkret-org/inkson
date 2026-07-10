@@ -326,7 +326,7 @@ pub fn AgentsPanel(
                                     let api_token = token();
                                     spawn(async move {
                                         let caps_refs: Vec<&str> = caps.iter().map(String::as_str).collect();
-                                        let op = crate::operation::ck_ops::agent_endpoint(
+                                        let op = crate::operation::ak_ops::agent_endpoint(
                                             &realm, &actor, &did, &proto, &caps_refs,
                                         )
                                         .and_then(|builder| builder.build_sdk_event("inkson"));
@@ -629,7 +629,7 @@ pub fn AgentsPanel(
                                                 "ak:agent_interop_session:{}",
                                                 crate::operation::uuid_v7()
                                             );
-                                            let op = crate::operation::ck_ops::agent_interop_session_start(
+                                            let op = crate::operation::ak_ops::agent_interop_session_start(
                                                 &realm,
                                                 &actor,
                                                 &target,
@@ -861,7 +861,7 @@ pub fn AgentsPanel(
                                                     "ak:grant:{}",
                                                     crate::operation::uuid_v7()
                                                 );
-                                                let constraint = crate::operation::ck_ops::interop_capability_constraint(
+                                                let constraint = crate::operation::ak_ops::interop_capability_constraint(
                                                     &endpoint,
                                                     &["a2a"],
                                                     true,
@@ -870,7 +870,7 @@ pub fn AgentsPanel(
                                                     "metadata_only",
                                                     "summary_and_artifacts",
                                                 );
-                                                let op = crate::operation::ck_ops::capability_grant_actions(
+                                                let op = crate::operation::ak_ops::capability_grant_actions(
                                                     &realm,
                                                     &actor,
                                                     &grant_id,
@@ -1055,7 +1055,7 @@ pub fn AgentsPanel(
                                                 "ak:strand:{}",
                                                 crate::operation::uuid_v7()
                                             );
-                                            let op = crate::operation::ck_ops::agent_publish_attribution_strand(
+                                            let op = crate::operation::ak_ops::agent_publish_attribution_strand(
                                                 &realm,
                                                 &actor,
                                                 &strand_id,

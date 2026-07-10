@@ -22,7 +22,6 @@
 use dioxus::prelude::*;
 use serde_json::Value;
 
-
 /// Parse the pasted JSON: either a top-level array of share Events, or an object
 /// with a `shares` / `events` array. Each element may be the Event or its
 /// `{ "content": { "ciphertext": ... } }` form (both are handled downstream).

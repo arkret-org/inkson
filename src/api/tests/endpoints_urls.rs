@@ -3,7 +3,7 @@ use crate::wire_helpers::{path_component, query_component, safe_blob_filename_he
 
 #[test]
 fn endpoint_join_keeps_api_paths_under_base_url() {
-    let api = CokretApi::new("http://127.0.0.1:8787/").unwrap();
+    let api = ArkretApi::new("http://127.0.0.1:8787/").unwrap();
     assert_eq!(
         api.endpoint("/_arkret/describe").unwrap().as_str(),
         "http://127.0.0.1:8787/_arkret/describe"
@@ -12,7 +12,7 @@ fn endpoint_join_keeps_api_paths_under_base_url() {
 
 #[test]
 fn endpoint_enforces_private_path_redline() {
-    let api = CokretApi::new("http://127.0.0.1:8787/").unwrap();
+    let api = ArkretApi::new("http://127.0.0.1:8787/").unwrap();
     assert!(api.endpoint("_arkret/self/events").is_ok());
     let private_prefix = concat!("_so", "land");
     let private_consent = [private_prefix, "self", "consent", "cells", "alice", "grant"].join("/");
@@ -72,13 +72,13 @@ fn event_frontier_selectors_preserve_did_percent_escapes() {
     );
     assert_eq!(
         realm_selector,
-        "_arkret/self/events/frontier?realm_id=ck%3Arealm%3A0196419b-0000-7000-8000-000000000000"
+        "_arkret/self/events/frontier?realm_id=ak%3Arealm%3A0196419b-0000-7000-8000-000000000000"
     );
 }
 
 #[test]
 fn insecure_remote_http_is_rejected() {
-    let error = CokretApi::new("http://arkret.example").unwrap_err();
+    let error = ArkretApi::new("http://arkret.example").unwrap_err();
     assert!(
         error
             .to_string()

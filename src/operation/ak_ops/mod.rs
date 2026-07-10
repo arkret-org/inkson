@@ -2,9 +2,9 @@
 //!
 //! This module is split by topic across the sibling files (`discussion`,
 //! `strand`, `space`, ...). Each `pub fn` builder is re-exported here so the
-//! external path stays `crate::operation::ck_ops::<fn>`. The shared private
+//! external path stays `crate::operation::ak_ops::<fn>`. The shared private
 //! helpers below are `pub(super)` so the topic files can reuse them while
-//! remaining invisible outside `ck_ops`.
+//! remaining invisible outside `ak_ops`.
 
 use serde_json::Value;
 

@@ -2,7 +2,7 @@
 //!
 //! The protocol treats notification state as a derived projection, not
 //! canonical Space truth. This module evaluates the actor-private
-//! `ck.push_rules` and `ck.dnd_schedule` account_data payloads against a
+//! `ak.push_rules` and `ak.dnd_schedule` account_data payloads against a
 //! locally visible event context. It also models the required E2EE fallback:
 //! server-side dispatch may issue a blind wakeup for client-side rules, but
 //! the client must not show a user-visible banner until it has decrypted and

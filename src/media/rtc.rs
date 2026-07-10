@@ -35,7 +35,7 @@ use arkret_sdk::{
 use ed25519_dalek::VerifyingKey;
 use serde_json::Value;
 
-use crate::api::CokretApi;
+use crate::api::ArkretApi;
 
 /// Spec-mandated TTL ceiling for media tokens
 /// (`ak.self.call.media.exchange.issue_token`). Soland defaults to 300s; the
@@ -168,7 +168,7 @@ impl RtcClientError {
     /// to [`Self::ParticipantBindingInvalid`] so the renderer still fails
     /// closed instead of silently joining.
     fn from_api_error(error: &anyhow::Error) -> Self {
-        if let Some(api_error) = error.downcast_ref::<crate::api_error::CokretApiError>()
+        if let Some(api_error) = error.downcast_ref::<crate::api_error::ArkretApiError>()
             && let Some(typed) = Self::from_wire(api_error.error.code())
         {
             return typed;
@@ -286,7 +286,7 @@ impl MediaJoinRequest {
         Ok(dids)
     }
 
-    async fn anchors(&self, api: &CokretApi) -> Result<MediaServiceAnchors, RtcClientError> {
+    async fn anchors(&self, api: &ArkretApi) -> Result<MediaServiceAnchors, RtcClientError> {
         let dids = self.anchor_dids()?;
         let mut anchors = MediaServiceAnchors::new(dids);
         for service_did in &self.media_service_dids {
@@ -471,7 +471,7 @@ fn policy_media_service_decrypts(payload: Option<&Value>) -> bool {
 }
 
 async fn register_media_service_keys(
-    api: &CokretApi,
+    api: &ArkretApi,
     anchors: &mut MediaServiceAnchors,
     service_did: &str,
 ) -> Result<(), RtcClientError> {
@@ -555,7 +555,7 @@ pub struct JoinedMediaSession {
     /// Verified ICE configuration (STUN/TURN + force_turn + ttl).
     pub ice_config: IceConfig,
     /// 32-byte SFrame frame key derived from the MLS exporter
-    /// (`ck-rtc-frame-key/v1`). Installed as the E2EE keyprovider seed.
+    /// (`ak-rtc-frame-key/v1`). Installed as the E2EE keyprovider seed.
     /// Key material — kept [`zeroize::Zeroizing`] so it is wiped on drop.
     pub frame_key: zeroize::Zeroizing<Vec<u8>>,
     /// `desired_media` echoed for the transport's publisher setup.
@@ -658,7 +658,7 @@ impl PerSenderFrameKeys {
 /// realm MLS group; passing a non-MLS source is impossible by the
 /// [`MlsExporterSource`] bound, which is what enforces MEDIA-1.
 pub async fn join_call_media(
-    api: &CokretApi,
+    api: &ArkretApi,
     request: &MediaJoinRequest,
     mls_exporter: &impl MlsExporterSource,
 ) -> Result<JoinedMediaSession, RtcClientError> {
@@ -753,7 +753,7 @@ pub fn cross_check_participant_identity(
 
 /// MLS exporter backing the SFrame frame-key derivation.
 ///
-/// This wraps the live [`arkret_sdk::CokretMlsGroup`] restored from this
+/// This wraps the live [`arkret_sdk::ArkretMlsGroup`] restored from this
 /// device's persisted per-realm MLS snapshot — the same synchronised group
 /// (full membership, applied Welcomes/commits) the message E2EE send/receive
 /// path uses via `crate::mls::runtime`. The exported secret is therefore a
@@ -775,7 +775,7 @@ pub fn cross_check_participant_identity(
 /// every other member's device — instead of relying on an external host MLS
 /// bridge or a self-minted key.
 pub struct RealmMlsExporter {
-    group: arkret_sdk::CokretMlsGroup,
+    group: arkret_sdk::ArkretMlsGroup,
 }
 
 impl RealmMlsExporter {
@@ -1110,7 +1110,7 @@ mod tests {
     fn seed_realm_snapshot(
         store: &crate::secure_key_store::MemorySecureKeyStore,
     ) -> crate::mls::persistence::MlsSnapshotEnvelope {
-        use arkret_sdk::{CokretMlsIdentity, DeviceId, Did};
+        use arkret_sdk::{ArkretMlsIdentity, DeviceId, Did};
 
         let secret = crate::mls::runtime::load_or_create_device_snapshot_secret(
             store,
@@ -1118,7 +1118,7 @@ mod tests {
             EXPORTER_DEVICE,
         )
         .unwrap();
-        let identity = CokretMlsIdentity::new_basic(
+        let identity = ArkretMlsIdentity::new_basic(
             Did::new(EXPORTER_ACTOR.to_owned()).unwrap(),
             DeviceId::new(EXPORTER_DEVICE.to_owned()).unwrap(),
         )
@@ -1238,7 +1238,7 @@ mod tests {
     /// builds at join time.
     fn exporter_from_group(
         store: &crate::secure_key_store::MemorySecureKeyStore,
-        group: &arkret_sdk::CokretMlsGroup,
+        group: &arkret_sdk::ArkretMlsGroup,
         actor: &str,
         device: &str,
     ) -> RealmMlsExporter {
@@ -1260,15 +1260,15 @@ mod tests {
 
     #[test]
     fn receiver_recomputes_remote_sender_frame_key_cross_member() {
-        use arkret_sdk::{CokretMlsIdentity, DeviceId, Did};
+        use arkret_sdk::{ArkretMlsIdentity, DeviceId, Did};
 
         // Build a REAL two-member MLS group: Alice creates, Bob joins via Welcome.
-        let alice_identity = CokretMlsIdentity::new_basic(
+        let alice_identity = ArkretMlsIdentity::new_basic(
             Did::new(ALICE_ACTOR.to_owned()).unwrap(),
             DeviceId::new(ALICE_DEVICE.to_owned()).unwrap(),
         )
         .unwrap();
-        let bob_identity = CokretMlsIdentity::new_basic(
+        let bob_identity = ArkretMlsIdentity::new_basic(
             Did::new(BOB_ACTOR.to_owned()).unwrap(),
             DeviceId::new(BOB_DEVICE.to_owned()).unwrap(),
         )
@@ -1280,7 +1280,7 @@ mod tests {
             .unwrap();
         let add = alice_group.add_member(&bob_key_package).unwrap();
         let bob_group =
-            arkret_sdk::CokretMlsGroup::join_from_welcome(bob_identity, &add.welcome).unwrap();
+            arkret_sdk::ArkretMlsGroup::join_from_welcome(bob_identity, &add.welcome).unwrap();
 
         // Both members are now on the same epoch with the same exporter secret.
         assert_eq!(alice_group.epoch(), bob_group.epoch());

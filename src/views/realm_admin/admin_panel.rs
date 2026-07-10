@@ -1166,7 +1166,7 @@ pub fn RealmAdminPanel(
                                         {
                                             Ok(_) => {
                                                 state_store.write().forget_realm_tree_projection(&realm_for_msg);
-                                                sync_cursor.set("-".to_owned());
+                                                sync_cursor.set(String::new());
                                                 status_msg.set(format!(
                                                     "left {realm_for_msg}; local cache cleared"
                                                 ));
@@ -1352,7 +1352,7 @@ pub fn RealmAdminPanel(
                                     } else {
                                         serde_json::Value::Null
                                     };
-                                let envelope = crate::operation::ck_ops::capability_grant_actions(
+                                let envelope = crate::operation::ak_ops::capability_grant_actions(
                                     &realm,
                                     &actor_id,
                                     &grant_val,
@@ -1435,7 +1435,7 @@ pub fn RealmAdminPanel(
                                     );
                                     return;
                                 }
-                                let envelope = match crate::operation::ck_ops::capability_revoke(
+                                let envelope = match crate::operation::ak_ops::capability_revoke(
                                     &realm,
                                     &actor_id,
                                     &grant_val,

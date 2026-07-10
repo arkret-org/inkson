@@ -1,6 +1,6 @@
 //! G3.Y3 — Capability delegation viewer (`/settings/capabilities`).
 //!
-//! Read-only-ish UI for inspecting `ck.capability.*` rows attached to
+//! Read-only-ish UI for inspecting `ak.capability.*` rows attached to
 //! the current actor: capabilities held (subject), capabilities granted
 //! out (issuer), and the full delegation chain for each row. The cotest
 //! `authz/capability-chain` scenario is already live; this view focuses
@@ -73,10 +73,7 @@ fn decode_capability_row(grant: &Capability) -> CapabilityRow {
 }
 
 #[component]
-pub fn CapabilitiesSettingsCard(
-    account_did: Signal<String>,
-    token: Signal<String>,
-) -> Element {
+pub fn CapabilitiesSettingsCard(account_did: Signal<String>, token: Signal<String>) -> Element {
     // A4 — base_url / state_store from session context instead of props.
     let base_url = crate::app::SessionContext::get().base_url;
     let state_store = crate::app::SessionContext::get().state_store;

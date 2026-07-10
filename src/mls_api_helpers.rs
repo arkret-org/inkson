@@ -6,7 +6,7 @@ use serde_json::{Value, json};
 
 /// Canonical signing-input prefix for the MLS `keypackages/upload`
 /// `device_signature`. Distinct domain string from the prekey `keys/upload`
-/// (`ck-keys-upload-v1`, spec §8.1) so a signature over one batch can never be
+/// (`ak-keys-upload-v1`, spec §8.1) so a signature over one batch can never be
 /// replayed as the other; binds the device + the published KeyPackage batch.
 const KEYPACKAGE_UPLOAD_SIGNATURE_PREFIX: &str = "ak.keypackage-upload-v1\n";
 

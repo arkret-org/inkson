@@ -5,7 +5,7 @@
 // matching fixture case — unmatched branches are silently dead code.
 const DEMO_REALM = "ak:realm:0196419b-0000-7000-8000-000000000000";
 
-export function mockCokretContract(req) {
+export function mockArkretContract(req) {
   const method = (req.method ?? "GET").toUpperCase();
   const path = canonicalPath(req.path ?? "/");
   const body = req.body ?? {};
@@ -151,7 +151,7 @@ export function mockCokretContract(req) {
   }
 
   if (method === "POST" && path === "/_arkret/self/ephemeral") {
-    if (!["ak.receipt.read", "ck.typing", "ck.presence", "ak.call.signal"].includes(body.kind)) {
+    if (!["ak.receipt.read", "ak.typing", "ak.presence", "ak.call.signal"].includes(body.kind)) {
       return json(
         {
           ok: false,

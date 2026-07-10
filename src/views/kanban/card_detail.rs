@@ -220,7 +220,7 @@ pub(super) fn save_card_detail_edit(
     mut card_detail_actions_open: Signal<bool>,
     mut card_detail_edit_status: Signal<String>,
     selected_card: Signal<Option<KanbanCard>>,
-    state_store: Signal<LocalStateStore>,
+    state_store: SyncSignal<LocalStateStore>,
     board_status: Signal<String>,
 ) {
     card_detail_edit_status.set("Saving...".to_owned());
@@ -320,7 +320,7 @@ pub(super) fn save_card_due_edit(
     mut due_picker_open: Signal<bool>,
     mut due_edit_status: Signal<String>,
     selected_card: Signal<Option<KanbanCard>>,
-    state_store: Signal<LocalStateStore>,
+    state_store: SyncSignal<LocalStateStore>,
     board_status: Signal<String>,
 ) -> bool {
     let mut draft = card_detail_draft_from_card(&current);
@@ -369,7 +369,7 @@ pub(super) fn save_card_calendar_edit(
     mut card_detail_actions_open: Signal<bool>,
     mut card_detail_edit_status: Signal<String>,
     selected_card: Signal<Option<KanbanCard>>,
-    state_store: Signal<LocalStateStore>,
+    state_store: SyncSignal<LocalStateStore>,
     board_status: Signal<String>,
 ) -> bool {
     let mut draft = card_detail_draft_from_card(&current);
@@ -414,7 +414,7 @@ pub(super) fn dispatch_calendar_rsvp(
     card: KanbanCard,
     status: &'static str,
     occurrence: String,
-    mut state_store: Signal<LocalStateStore>,
+    mut state_store: SyncSignal<LocalStateStore>,
     mut board_status: Signal<String>,
 ) {
     let op = match calendar_rsvp_operation(

@@ -1,6 +1,6 @@
 //! Generic Morph object builders.
 //!
-//! `ck.morph.*` is a generic object family in the protocol; the Document
+//! `ak.morph.*` is a generic object family in the protocol; the Document
 //! surface that used to drive these builders was removed, but the
 //! `ak.morph.update` patch builder is retained for the Morph patch payload
 //! family.

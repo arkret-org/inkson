@@ -79,7 +79,7 @@ fn start_recovery_key_generation(
     token: Signal<String>,
     account_did: Signal<String>,
     device_id: Signal<String>,
-    mut state_store: Signal<LocalStateStore>,
+    mut state_store: SyncSignal<LocalStateStore>,
     mut generated_recovery_key: Signal<String>,
     mut generated_recovery_key_confirm: Signal<String>,
     mut action_status: Signal<String>,

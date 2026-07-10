@@ -425,7 +425,7 @@ async fn fetch_did_webvh_document(
 /// The Realm Recovery Key (RRK) verification path
 /// (`arkret_sdk::history_recovery::resolve_realm_history_recovery_key`,
 /// encryption-and-audit.md §2.10.8 / identity-did.md §8.3) needs the original
-/// document to confirm an active `CokretRealmHistoryRecoveryKey` service entry
+/// document to confirm an active `ArkretRealmHistoryRecoveryKey` service entry
 /// designates the declared verification method. This reuses the same
 /// SSRF-guarded, size-capped, `https`-only fetch path as the authority resolver:
 ///

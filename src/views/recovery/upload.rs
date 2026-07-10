@@ -37,7 +37,7 @@ pub(crate) fn upload_recovery_key_account_backup(
     token: Signal<String>,
     account_did: Signal<String>,
     device_id: Signal<String>,
-    state_store: Signal<LocalStateStore>,
+    state_store: SyncSignal<LocalStateStore>,
     recovery_key: String,
     mut status: Signal<String>,
     on_server_configured: Option<EventHandler<()>>,

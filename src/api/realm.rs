@@ -1,7 +1,7 @@
 use super::*;
 use crate::realm_helpers::select_join_candidate;
 
-impl CokretApi {
+impl ArkretApi {
     /// Accept an invite via `ak.invite.accept` event (spec-canonical).
     pub async fn accept_realm_invite(
         &self,
@@ -9,7 +9,7 @@ impl CokretApi {
         actor_id: &str,
         invite_id: &str,
     ) -> anyhow::Result<SubmitEventResult> {
-        let mut event = crate::operation::ck_ops::invite_accept(realm_id, actor_id, invite_id)?
+        let mut event = crate::operation::ak_ops::invite_accept(realm_id, actor_id, invite_id)?
             .build_sdk_event("inkson")?;
         let resolved =
             crate::directory_api::resolve_realm(&self.sdk_http_client()?, realm_id).await?;
@@ -38,7 +38,7 @@ impl CokretApi {
             return self.event_submitter()?.submit_sdk_event(event).await;
         }
 
-        let mut routed = CokretApi::new(endpoint)?;
+        let mut routed = ArkretApi::new(endpoint)?;
         if let Some(token) = self.authorization_credential.as_deref() {
             routed = routed.with_bearer(token.to_owned());
         }

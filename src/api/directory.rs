@@ -75,7 +75,7 @@ fn invite_address(
 
 /// U3 — build the `consent_grant` introduction evidence for a contact-path
 /// invite and return its canonical digest (the value
-/// `ck_ops::invite_create_structured` stamps into the invite event).
+/// `ak_ops::invite_create_structured` stamps into the invite event).
 ///
 /// We build the evidence object by hand (matching
 /// `IntroductionEvidence::ConsentGrant`'s `{kind, consent_grant_ref}` wire
@@ -252,7 +252,7 @@ fn resolved_at(resolved: &ResolveHandleView) -> Option<chrono::DateTime<chrono::
         .map(|ts| ts.with_timezone(&chrono::Utc))
 }
 
-impl CokretApi {
+impl ArkretApi {
     /// `ak.self.snapshot.query.manifest_head`.
     ///
     /// Snapshot bootstrap is an acceleration layer. If the server does not
@@ -549,7 +549,7 @@ impl CokretApi {
             .map_err(|err| anyhow::anyhow!("invalid invite_delivery_target: {err}"))?;
         let introduction_evidence_digest = contact_consent_evidence_digest(consent_grant_ref)?;
         let invite_id = format!("ak:invite:{}", crate::operation::uuid_v7());
-        let event = crate::operation::ck_ops::invite_create_structured(
+        let event = crate::operation::ak_ops::invite_create_structured(
             realm_id,
             actor_id,
             &invite_id,

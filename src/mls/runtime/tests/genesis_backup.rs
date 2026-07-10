@@ -180,14 +180,14 @@ fn mls_history_backup_decode_rejects_metadata_mismatch() {
 #[cfg(not(target_arch = "wasm32"))]
 #[test]
 fn restore_mls_history_backup_saves_snapshot_when_fresh() {
-    use arkret_sdk::{CokretMlsIdentity, DeviceId, Did};
+    use arkret_sdk::{ArkretMlsIdentity, DeviceId, Did};
 
     let actor = "did:web:alice.example";
     let device = "ak:device:01904100-0000-7000-8000-000000000001";
     let realm = "ak:realm:01904100-0000-7000-8000-000000000004";
     let store = MemorySecureKeyStore::new();
     let secret = load_or_create_device_snapshot_secret(&store, actor, device).unwrap();
-    let identity = CokretMlsIdentity::new_basic(
+    let identity = ArkretMlsIdentity::new_basic(
         Did::new(actor.to_owned()).unwrap(),
         DeviceId::new(device.to_owned()).unwrap(),
     )
@@ -222,14 +222,14 @@ fn restore_mls_history_backup_saves_snapshot_when_fresh() {
 #[cfg(not(target_arch = "wasm32"))]
 #[test]
 fn restore_mls_history_backup_rejects_epoch_rollback() {
-    use arkret_sdk::{CokretMlsIdentity, DeviceId, Did};
+    use arkret_sdk::{ArkretMlsIdentity, DeviceId, Did};
 
     let actor = "did:web:alice.example";
     let device = "ak:device:01904100-0000-7000-8000-000000000001";
     let realm = "ak:realm:01904100-0000-7000-8000-000000000002";
     let store = MemorySecureKeyStore::new();
     let secret = load_or_create_device_snapshot_secret(&store, actor, device).unwrap();
-    let identity = CokretMlsIdentity::new_basic(
+    let identity = ArkretMlsIdentity::new_basic(
         Did::new(actor.to_owned()).unwrap(),
         DeviceId::new(device.to_owned()).unwrap(),
     )
@@ -273,7 +273,7 @@ fn restore_mls_history_backup_rejects_epoch_rollback() {
 #[cfg(not(target_arch = "wasm32"))]
 #[test]
 fn cross_device_recovery_restores_history_without_local_secret() {
-    use arkret_sdk::{CokretMlsIdentity, DeviceId, Did};
+    use arkret_sdk::{ArkretMlsIdentity, DeviceId, Did};
 
     use crate::mls::account_recovery::{
         build_mls_account_secret_backup_body_with_kek, decrypt_mls_account_secret_backup,
@@ -290,7 +290,7 @@ fn cross_device_recovery_restores_history_without_local_secret() {
     let store_a = MemorySecureKeyStore::new();
     let secret_a = load_or_create_account_mls_secret(&store_a, actor, device_a).unwrap();
 
-    let identity = CokretMlsIdentity::new_basic(
+    let identity = ArkretMlsIdentity::new_basic(
         Did::new(actor.to_owned()).unwrap(),
         DeviceId::new(device_a.to_owned()).unwrap(),
     )

@@ -22,7 +22,7 @@
 use dioxus::prelude::*;
 use dioxus_router::Link;
 
-use crate::api::CokretApi;
+use crate::api::ArkretApi;
 use crate::identity_handle::{detect_handle_homograph_risk, handle_will_be_nfc_normalised};
 use crate::recovery_strand::{
     FirstBackupGateBlockReason, FirstBackupGateStatus, first_backup_gate_status_from_payloads,
@@ -239,7 +239,7 @@ pub fn OnboardingPanel(
                                 let display = register_display_name();
                                 let device = register_device_id();
                                 spawn(async move {
-                                    match CokretApi::new(&base) {
+                                    match ArkretApi::new(&base) {
                                         Ok(api) => match async {
                                             crate::account_api::register_account(
                                                 &api.sdk_http_client()?,

@@ -15,7 +15,7 @@
 //!    member, receives no live fanout, and is only taken out on recovery. The copy says "持续封存"
 //!    (continuously sealed), never "实时旁听".
 //! 2. The recovery holder identity is rendered only AFTER verifying it resolves to an active
-//!    `CokretRealmHistoryRecoveryKey` service entry on the principal's DID Document (via the SDK
+//!    `ArkretRealmHistoryRecoveryKey` service entry on the principal's DID Document (via the SDK
 //!    authority `resolve_realm_history_recovery_key`). An unverifiable recipient is shown as
 //!    "无法验证" — never as a bare public key.
 

@@ -9,7 +9,7 @@ use serde_json::{Value, json};
 use super::capabilities::{RealmMemberCapabilities, authz_json_allowed};
 use crate::components::SelfAttributionBadge;
 use crate::local_state::{LocalStateStore, MoveSubmissionState, RawOperationRecord};
-use crate::operation::ck_ops;
+use crate::operation::ak_ops;
 use crate::routes::Route;
 use crate::ui::button::{Button, ButtonSize, ButtonVariant};
 use crate::ui::checkbox::Checkbox;
@@ -1264,7 +1264,7 @@ fn MemberRowActions(
                                 {
                                     Ok(_) => {
                                         state_store.write().forget_realm_tree_projection(&realm_for_msg);
-                                        sync_cursor.set("-".to_owned());
+                                        sync_cursor.set(String::new());
                                         status_msg.set(format!(
                                             "left {realm_for_msg}; local cache cleared"
                                         ));
@@ -1671,8 +1671,8 @@ fn PendingInviteRow(
 }
 
 pub(crate) async fn submit_mls_admission_for_invitee(
-    api: &crate::api::CokretApi,
-    mut state_store: Signal<LocalStateStore>,
+    api: &crate::api::ArkretApi,
+    mut state_store: SyncSignal<LocalStateStore>,
     realm_id: String,
     actor_id: String,
     device_id: String,
@@ -1988,8 +1988,8 @@ pub(crate) fn realm_key_request_answer_dedup_key(
 /// provider has retained one). `request` is the inbound `ak.realm_key.request`
 /// to-device envelope; `realm_id`/`actor_id`/`device_id` are the provider's.
 pub(crate) async fn share_history_to_requester(
-    api: &crate::api::CokretApi,
-    mut state_store: Signal<LocalStateStore>,
+    api: &crate::api::ArkretApi,
+    mut state_store: SyncSignal<LocalStateStore>,
     realm_id: String,
     actor_id: String,
     device_id: String,
@@ -2102,8 +2102,8 @@ pub(crate) async fn share_history_to_requester(
 /// non-fatal failure is logged, never surfaced as a hard error (the commit
 /// itself already landed).
 pub(crate) async fn seal_history_to_recovery_recipients(
-    api: &crate::api::CokretApi,
-    mut state_store: Signal<LocalStateStore>,
+    api: &crate::api::ArkretApi,
+    mut state_store: SyncSignal<LocalStateStore>,
     realm_id: String,
     actor_id: String,
     device_id: String,
@@ -2455,8 +2455,8 @@ pub(crate) fn history_key_request_diagnostics(
 /// caller can record it for dedup), or `None` when nothing was requested (not
 /// encrypted / no snapshot / visibility forbids / no gap / no provider).
 pub(crate) async fn request_history_keys_for_realm(
-    api: &crate::api::CokretApi,
-    state_store: Signal<LocalStateStore>,
+    api: &crate::api::ArkretApi,
+    state_store: SyncSignal<LocalStateStore>,
     realm_id: String,
     actor_id: String,
     device_id: String,
@@ -2651,8 +2651,8 @@ pub(crate) fn mls_admission_candidate_realms_for_actor(
 ///
 /// Returns the number of members newly admitted on this pass.
 pub(crate) async fn reconcile_mls_admissions_for_realm(
-    api: &crate::api::CokretApi,
-    state_store: Signal<LocalStateStore>,
+    api: &crate::api::ArkretApi,
+    state_store: SyncSignal<LocalStateStore>,
     realm_id: String,
     actor_id: String,
     device_id: String,
@@ -2765,8 +2765,8 @@ pub(crate) async fn reconcile_mls_admissions_for_realm(
 }
 
 pub(crate) async fn submit_mls_admission_for_invitees(
-    api: &crate::api::CokretApi,
-    mut state_store: Signal<LocalStateStore>,
+    api: &crate::api::ArkretApi,
+    mut state_store: SyncSignal<LocalStateStore>,
     realm_id: String,
     actor_id: String,
     device_id: String,
@@ -2880,8 +2880,8 @@ fn mls_group_state_event_ref_ready(store: &LocalStateStore, realm_id: &str) -> b
 }
 
 async fn ensure_mls_genesis_frontier_for_invite(
-    api: &crate::api::CokretApi,
-    mut state_store: Signal<LocalStateStore>,
+    api: &crate::api::ArkretApi,
+    mut state_store: SyncSignal<LocalStateStore>,
     secure_store: &dyn crate::secure_key_store::SecureKeyStore,
     realm_id: &str,
     actor_id: &str,
@@ -3598,7 +3598,7 @@ pub fn RealmMembersPanel(
                                                             .clone()
                                                             .unwrap_or_else(|| invitee.did.clone());
                                                         let invitee_did = invitee.did.clone();
-                                                        let op = match ck_ops::invite_create_structured(
+                                                        let op = match ak_ops::invite_create_structured(
                                                             &realm,
                                                             &actor,
                                                             &invite_id,
@@ -4134,7 +4134,7 @@ pub fn RealmMembersPanel(
                                                                                                                 None,
                                                                                                             );
                                                                                                         }
-                                                                                                        sync_cursor.set("-".to_owned());
+                                                                                                        sync_cursor.set(String::new());
                                                                                                         let suffix = if mls_encrypted {
                                                                                                             "; epoch_update_required"
                                                                                                         } else {

@@ -24,8 +24,10 @@ use arkret_sdk::http_client::{Auth, ClientBuilder};
 use base64::Engine as _;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use chrono::Utc;
-use garth::{SessionEngine, SessionGrantState, SessionRefreshOptions};
+use garth::session::BoxSessionFuture;
+use garth::{SessionEngine, SessionGrantState, SessionGrantTransport, SessionRefreshOptions};
 use serde::Serialize;
+use std::sync::{Arc, Mutex, OnceLock, PoisonError};
 use url::Url;
 
 use crate::account_auth::grant_dpop::DpopHandle;
@@ -41,6 +43,83 @@ const SOFT_LOGOUT_RESTORE_OPERATION: &str = "resume_soft_logged_out_session";
 // credential; `GrantExpired` still attempts rotation so only the refresh
 // endpoint's terminal error decides whether session material is cleared.
 pub use garth::{POLL_INTERVAL_SECS, REFRESH_SKEW_SECS, RefreshDecision};
+
+#[derive(Clone, Default)]
+struct ReplaceableSessionTransport {
+    client: Arc<Mutex<Option<arkret_sdk::http_client::Client>>>,
+}
+
+impl ReplaceableSessionTransport {
+    fn replace(&self, client: arkret_sdk::http_client::Client) {
+        *self.client.lock().unwrap_or_else(PoisonError::into_inner) = Some(client);
+    }
+
+    fn clear(&self) {
+        *self.client.lock().unwrap_or_else(PoisonError::into_inner) = None;
+    }
+
+    fn current(&self) -> arkret_sdk::Result<arkret_sdk::http_client::Client> {
+        self.client
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .clone()
+            .ok_or_else(|| {
+                arkret_sdk::Error::Protocol("session transport is not configured".into())
+            })
+    }
+}
+
+impl SessionGrantTransport for ReplaceableSessionTransport {
+    fn issue_session_grant<'a>(
+        &'a self,
+        request: arkret_sdk::SessionGrantRequestBody,
+    ) -> BoxSessionFuture<'a, arkret_sdk::SessionGrantOutcome> {
+        let client = self.current();
+        Box::pin(async move { client?.auth_issue_session_grant(&request).await })
+    }
+
+    fn refresh_session_grant<'a>(
+        &'a self,
+        request: arkret_sdk::SessionGrantRefreshRequestBody,
+    ) -> BoxSessionFuture<'a, arkret_sdk::SessionGrantRefreshOutcome> {
+        let client = self.current();
+        Box::pin(async move { client?.auth_refresh_session_grant(&request).await })
+    }
+}
+
+struct SessionGrantRuntime {
+    transport: ReplaceableSessionTransport,
+    engine: SessionEngine<ReplaceableSessionTransport>,
+}
+
+impl Default for SessionGrantRuntime {
+    fn default() -> Self {
+        let transport = ReplaceableSessionTransport::default();
+        Self {
+            engine: SessionEngine::new(transport.clone()),
+            transport,
+        }
+    }
+}
+
+impl SessionGrantRuntime {
+    fn reset(&self) {
+        self.transport.clear();
+        self.engine.clear_state();
+    }
+}
+
+static SESSION_GRANT_RUNTIME: OnceLock<SessionGrantRuntime> = OnceLock::new();
+
+fn session_grant_runtime() -> &'static SessionGrantRuntime {
+    SESSION_GRANT_RUNTIME.get_or_init(SessionGrantRuntime::default)
+}
+
+pub fn reset_session_grant_runtime() {
+    if let Some(runtime) = SESSION_GRANT_RUNTIME.get() {
+        runtime.reset();
+    }
+}
 
 /// Outcome the refresh harness returns to the caller.
 #[derive(Clone, Debug)]
@@ -244,7 +323,7 @@ pub async fn exchange_refresh(
     grant: &PersistedSessionGrant,
     device_handle: &DpopHandle,
 ) -> anyhow::Result<PersistedSessionGrant> {
-    rotate_session_grant(grant, device_handle).await
+    rotate_session_grant(session_grant_runtime(), grant, device_handle).await
 }
 
 /// Rotate a session grant onto a fresh one via the Account Authority's DPoP
@@ -252,6 +331,7 @@ pub async fn exchange_refresh(
 /// `ath`=hash(prior grant), signed by the grant-binding key bound into
 /// `cnf.jkt`. The body proof is signed by the authorized device identity key.
 async fn rotate_session_grant(
+    runtime: &SessionGrantRuntime,
     grant: &PersistedSessionGrant,
     device_handle: &DpopHandle,
 ) -> anyhow::Result<PersistedSessionGrant> {
@@ -271,12 +351,17 @@ async fn rotate_session_grant(
         .map_err(|error| anyhow::anyhow!("mint rotation DID proof: {error}"))?;
     let device_id = arkret_sdk::DeviceId::new(grant.device_id.trim().to_owned())
         .map_err(|error| anyhow::anyhow!("invalid refresh device_id: {error}"))?;
-    let engine = SessionEngine::with_state(
-        http,
-        session_grant_state_from_persisted(grant, device_handle, Utc::now())?,
-    );
-    let handle = engine
-        .refresh_once(
+    runtime.transport.replace(http);
+    runtime
+        .engine
+        .replace_state(Some(session_grant_state_from_persisted(
+            grant,
+            device_handle,
+            Utc::now(),
+        )?));
+    let handle = runtime
+        .engine
+        .refresh_after_unauthorized(
             SessionRefreshOptions {
                 audience: Some(grant.audience.clone()),
                 device_id: Some(device_id),
@@ -287,7 +372,8 @@ async fn rotate_session_grant(
         )
         .await
         .map_err(|error| anyhow::anyhow!("session grant refresh: {error}"))?;
-    let state = engine
+    let state = runtime
+        .engine
         .current_state()
         .context("session grant refresh did not yield state")?;
     // The rotated grant binds to the same device key (`cnf.jkt` constant), so
@@ -501,7 +587,7 @@ pub fn commit_refresh(
 /// Convenience wrapper that drives the full prep → exchange → commit
 /// strand against a single `&mut LocalStateStore`. Holds the borrow
 /// across the network await, so callers backed by a Dioxus
-/// `Signal<LocalStateStore>` must orchestrate the three phases by hand
+/// `SyncSignal<LocalStateStore>` must orchestrate the three phases by hand
 /// (see the session-refresh `use_future` in `app.rs`). Test code that
 /// owns the store directly can keep using this entrypoint.
 #[cfg(test)]
@@ -627,7 +713,7 @@ mod tests {
     fn commit_clears_grant_and_requires_login_when_principal_reports_revoked_session_grant() {
         let mut store = isolated_store("revoked-grant");
         store.set_session_grant(Some(grant_with_expiry(86400)));
-        let error: anyhow::Error = crate::api_error::CokretApiError {
+        let error: anyhow::Error = crate::api_error::ArkretApiError {
             status: reqwest::StatusCode::FORBIDDEN,
             error: crate::api_error::decode_arkret_error(
                 reqwest::StatusCode::FORBIDDEN,
@@ -646,7 +732,7 @@ mod tests {
     fn commit_clears_grant_when_refresh_reports_already_consumed() {
         let mut store = isolated_store("consumed-grant");
         store.set_session_grant(Some(grant_with_expiry(86400)));
-        let error: anyhow::Error = crate::api_error::CokretApiError {
+        let error: anyhow::Error = crate::api_error::ArkretApiError {
             status: reqwest::StatusCode::BAD_REQUEST,
             error: crate::api_error::decode_arkret_error(
                 reqwest::StatusCode::BAD_REQUEST,
@@ -665,7 +751,7 @@ mod tests {
     fn commit_clears_grant_when_refresh_rejects_grant_binding_proof() {
         let mut store = isolated_store("invalid-proof-grant");
         store.set_session_grant(Some(grant_with_expiry(86400)));
-        let error: anyhow::Error = crate::api_error::CokretApiError {
+        let error: anyhow::Error = crate::api_error::ArkretApiError {
             status: reqwest::StatusCode::UNAUTHORIZED,
             error: crate::api_error::decode_arkret_error(
                 reqwest::StatusCode::UNAUTHORIZED,
@@ -684,7 +770,7 @@ mod tests {
     fn commit_keeps_grant_for_unrelated_capability_denial() {
         let mut store = isolated_store("unrelated-capability-denied");
         store.set_session_grant(Some(grant_with_expiry(86400)));
-        let error: anyhow::Error = crate::api_error::CokretApiError {
+        let error: anyhow::Error = crate::api_error::ArkretApiError {
             status: reqwest::StatusCode::FORBIDDEN,
             error: crate::api_error::decode_arkret_error(
                 reqwest::StatusCode::FORBIDDEN,
@@ -703,7 +789,7 @@ mod tests {
     fn commit_keeps_grant_for_generic_auth_expired_refresh_failure() {
         let mut store = isolated_store("generic-auth-expired-refresh");
         store.set_session_grant(Some(grant_with_expiry(86400)));
-        let error: anyhow::Error = crate::api_error::CokretApiError {
+        let error: anyhow::Error = crate::api_error::ArkretApiError {
             status: reqwest::StatusCode::UNAUTHORIZED,
             error: crate::api_error::decode_arkret_error(
                 reqwest::StatusCode::UNAUTHORIZED,

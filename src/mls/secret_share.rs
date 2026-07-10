@@ -1,4 +1,4 @@
-//! D2D root-secret direct share (`ck.secret.*` to-device).
+//! D2D root-secret direct share (`ak.secret.*` to-device).
 //!
 //! Implements the device-to-device branch of the passwordless recovery path
 //! described in `arkret-spec/.../crypto-media/device-lifecycle.md` §10.7: a
@@ -279,7 +279,7 @@ pub fn land_opened_secret(
 /// Send `ak.secret.request` from the requesting (new) device to a sibling
 /// (existing) device. TTL 30m (well under the §7 24h cap).
 pub async fn send_request(
-    api: &crate::api::CokretApi,
+    api: &crate::api::ArkretApi,
     requester: &SecretShareRequester,
     account_did: &str,
     target_existing_device_id: &str,
@@ -310,7 +310,7 @@ pub async fn send_request(
 /// completed SAS transcript (device-lifecycle.md §10.7 anti-abuse) before
 /// invoking it.
 pub async fn respond_to_request(
-    api: &crate::api::CokretApi,
+    api: &crate::api::ArkretApi,
     request: &ParsedSecretRequest,
     account_secret: &StoredAccountMlsSecret,
     account_did: &str,

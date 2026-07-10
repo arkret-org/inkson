@@ -1,5 +1,5 @@
 import { expect, test } from "@playwright/test";
-import { mockCokretApi } from "./mockCokretApi";
+import { mockArkretApi } from "./mockArkretApi";
 
 export const DEMO_REALM = "ak:realm:0196419b-0000-7000-8000-000000000000";
 export const CHILD_REALM = "ak:realm:01launchchild0000000000000";
@@ -290,7 +290,7 @@ export function registerStrandsBeforeEach() {
     const initialDeviceId = testInfo.title.startsWith("fresh browser requires device authorization")
       ? "ak:device:01964137-0000-7000-8000-0000000000b2"
       : DEFAULT_DEVICE_ID;
-    await mockCokretApi(page, {
+    await mockArkretApi(page, {
       currentDeviceId: initialDeviceId,
       advertiseListHandlesForSubject: !testInfo.title.startsWith(
         "account menu falls back to account localpart",

@@ -112,7 +112,7 @@ pub struct ReadMarkerRecord {
 }
 
 impl ReadMarkerRecord {
-    pub fn ck_read_cursor_payload(&self) -> Value {
+    pub fn ak_read_cursor_payload(&self) -> Value {
         json!({
             "id": &self.body.id,
             "schema": &self.body.schema,
@@ -125,10 +125,10 @@ impl ReadMarkerRecord {
         })
     }
 
-    pub fn ck_read_cursor_operation(&self) -> Value {
+    pub fn ak_read_cursor_operation(&self) -> Value {
         json!({
             "kind": &self.marker_type,
-            "payload": self.ck_read_cursor_payload(),
+            "payload": self.ak_read_cursor_payload(),
         })
     }
 }
@@ -217,7 +217,7 @@ impl PresenceVisibility {
 /// Local mirror of the `ak.presence.preference` account-data payload
 /// (profiles-presence.md §3.6): the user's pinned manual presence state,
 /// transient status message and expiry. Enforced on the send side — the
-/// broadcast loop reads this before every `ck.presence`.
+/// broadcast loop reads this before every `ak.presence`.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PresencePreferenceState {
     /// `online` / `idle` / `dnd`; `None` = automatic detection.
@@ -1161,60 +1161,6 @@ impl MlsReceiveOverlay {
             for (digest, plaintext) in entries {
                 slot.insert(digest.clone(), plaintext.clone());
             }
-        }
-    }
-}
-
-/// E7 — interior-mutable write-override overlay for the state garth's
-/// `Send + Sync` client-core adapter writes (stream cursors + event dedupe),
-/// shared across all clones of a `LocalStateStore` (via `Arc<Mutex<_>>`), like
-/// [`MlsReceiveOverlay`].
-///
-/// This state (`ClientLocalState::sync_cursor` / `realm_events_cursors` /
-/// `client_core_seen_event_ids`) is written by BOTH the Dioxus UI clone and
-/// garth's adapter clone. Each clone owns an independent in-memory `cached`, so
-/// without a shared source a stale clone's later flush clobbers the other's
-/// write. This overlay is that single shared source: a write records here;
-/// `load()` and the persist path merge it over `cached`, so every clone
-/// observes and persists one coherent set. An empty overlay (or an unrecorded
-/// slot) falls through to `cached` — the last-persisted value — so a fresh
-/// process resumes from disk correctly.
-#[derive(Debug, Default)]
-pub(crate) struct ClientCoreSyncOverlay {
-    /// `Some(_)` overrides `sync_cursor` (inner `None` = cleared).
-    pub(crate) sync_cursor: Option<Option<String>>,
-    /// Per-realm overrides for `realm_events_cursors` (value `None` = cleared).
-    pub(crate) realm_events_cursors: BTreeMap<String, Option<String>>,
-    /// Add-only event-dedupe ids recorded through the adapter's `EventCacheStore`
-    /// (never cleared except on account reset, which drops the whole overlay).
-    pub(crate) seen_events: BTreeSet<String>,
-}
-
-impl ClientCoreSyncOverlay {
-    pub(crate) fn is_empty(&self) -> bool {
-        self.sync_cursor.is_none()
-            && self.realm_events_cursors.is_empty()
-            && self.seen_events.is_empty()
-    }
-
-    pub(crate) fn apply_to(&self, state: &mut ClientLocalState) {
-        if let Some(sync_cursor) = &self.sync_cursor {
-            state.sync_cursor = sync_cursor.clone();
-        }
-        for (realm_id, cursor) in &self.realm_events_cursors {
-            match cursor {
-                Some(cursor) => {
-                    state
-                        .realm_events_cursors
-                        .insert(realm_id.clone(), cursor.clone());
-                }
-                None => {
-                    state.realm_events_cursors.remove(realm_id);
-                }
-            }
-        }
-        for event_id in &self.seen_events {
-            state.client_core_seen_event_ids.insert(event_id.clone());
         }
     }
 }

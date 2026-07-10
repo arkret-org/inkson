@@ -6,7 +6,7 @@ use dioxus_router::hooks::*;
 use dioxus_router::{Link, Navigator, Outlet, Router};
 use serde_json::Value;
 
-use crate::api::CokretApi;
+use crate::api::ArkretApi;
 use crate::api_error::is_auth_expired_error;
 use crate::components::{SecurityStateBadge, UiIcon};
 use crate::config::{ClientConfig, LocalConfigStore, normalize_device_id, normalize_server_url};
@@ -211,7 +211,7 @@ pub fn RouterView() -> Element {
         })
         .unwrap_or_default();
     let config_store = use_signal(LocalConfigStore::default);
-    let mut state_store = use_signal(LocalStateStore::default);
+    let mut state_store = use_signal_sync(LocalStateStore::default);
     // Move-into-signal initialisers. Each `use_signal(...)` runs once on
     // first render, so we pre-extract the fields and hand each closure a
     // ready-to-move `String` instead of repeatedly cloning the whole
@@ -245,7 +245,12 @@ pub fn RouterView() -> Element {
     // via context so descendant components read them through
     // `use_context::<SessionContext>()` instead of threading them down as props.
     // Same signal handles `RouterView` already owns; single source of truth.
-    use_context_provider(|| SessionContext { state_store, base_url });
+    use_context_provider(|| SessionContext {
+        state_store,
+        base_url,
+    });
+    let client_runtime =
+        use_context_provider(|| crate::client_core::InksonClientRuntime::new(state_store));
 
     // Install the app-wide, single-flight session credential refresher exactly once.
     // Every auth-expired handler (connect, sync, chat send, Realm create,
@@ -1104,7 +1109,7 @@ pub fn RouterView() -> Element {
                     invalidator_device_id(),
                     String::new(),
                 );
-                invalidator_sync_cursor.set("-".to_owned());
+                invalidator_sync_cursor.set(String::new());
                 invalidator_selected_realm_id.set(String::new());
                 invalidator_realm_tree_nodes.set(Vec::new());
                 invalidator_projection_events.set(Vec::new());
@@ -1359,6 +1364,7 @@ pub fn RouterView() -> Element {
             route_enabled: realm_events_route_enabled,
             realm_live_epoch,
             profiles: profiles_signal,
+            client_runtime: client_runtime.clone(),
         };
         let mut active_key_signal = realm_events_engine_active_key;
         spawn(async move {
@@ -1786,7 +1792,7 @@ pub fn RouterView() -> Element {
             let api_token = lookup_token.clone();
             let existing_personal_handles = personal_handles();
             spawn(async move {
-                match CokretApi::new(&base)
+                match ArkretApi::new(&base)
                     .and_then(|api| api.with_bearer(api_token).sdk_http_client())
                 {
                     Ok(http) => match crate::directory_api::list_handles_for_subject(
@@ -2870,7 +2876,7 @@ pub fn RouterView() -> Element {
     }
     let resolved_realm_surface = resolve_realm_surface(
         &route,
-        &state_store(),
+        &state_store.read(),
         &account_did(),
         context_realm_id.as_deref(),
     );
@@ -2882,7 +2888,7 @@ pub fn RouterView() -> Element {
         )
     {
         let stored_surface =
-            load_realm_surface_preference(&state_store(), &account_did(), realm_id);
+            load_realm_surface_preference(&state_store.read(), &account_did(), realm_id);
         if stored_surface != surface {
             persist_realm_surface_preference(
                 &mut state_store.write(),
@@ -2902,7 +2908,7 @@ pub fn RouterView() -> Element {
     // filter below.
     let self_realm_id: Option<String> = arkret_sdk::Did::new(account_did())
         .ok()
-        .map(|did| arkret_sdk::auth::principal_control_realm_id(&did));
+        .map(|did| arkret_sdk::principal_control_realm_id(&did));
     let hidden_realm_tree_node_ids: BTreeSet<String> = loaded_realm_tree_nodes
         .iter()
         .filter(|node| {
@@ -3046,7 +3052,7 @@ pub fn RouterView() -> Element {
     // assertions read it). All *styling* is driven off the *effective* canonical
     // `light`/`dark` value that `apply_document_root_theme` mirrors onto `<html>`:
     // design.css / app_overrides tokens and the vendored dxc palette key on
-    // `:root` / `html[data-theme]`, and app.css's `--ck-*` + auth surfaces key on
+    // `:root` / `html[data-theme]`, and app.css's `--ak-*` + auth surfaces key on
     // `[data-theme="dark"]` (the `<html>` ancestor). Nothing styling-related
     // depends on this attribute, so it stays the raw mode.
     let theme_attr = active_theme.as_str();
@@ -5290,7 +5296,7 @@ pub fn RouterView() -> Element {
                                                 // navigator.push(Login).
                                                 realm_tree_nodes.set(Vec::new());
                                                 projection_events.set(Vec::new());
-                                                sync_cursor.set("-".to_owned());
+                                                sync_cursor.set(String::new());
                                                 selected_realm_id.set(String::new());
                                                 device_queue.set(0);
                                                 // Y2 - logout is a full trust-bundle reset:
@@ -5714,7 +5720,6 @@ pub fn RouterView() -> Element {
                     Route::Applets => rsx! {
                         if crate::views::applets::applets_enabled() {
                             crate::views::applets::AppletsPanel {
-                                account_did,
                                 token,
                                 selected_realm_id: selected_realm_id(),
                             }

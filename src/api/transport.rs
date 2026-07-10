@@ -1,5 +1,5 @@
-//! Core transport shell for [`CokretApi`]: constructor + builder methods,
-//! SDK http-client construction, network state, and the legacy URL guard.
+//! Core transport shell for [`ArkretApi`]: constructor + builder methods,
+//! SDK http-client construction, network state, and the URL guard.
 //! Endpoint traffic is being strangled through `arkret-http-client`; this
 //! module now only holds the host-facing state needed to build that client.
 
@@ -7,12 +7,12 @@ use super::*;
 use crate::api_error::normalize_wait_for_sync_token;
 use crate::wire_helpers::soland_path_allowed;
 
-impl CokretApi {
+impl ArkretApi {
     pub fn new(base_url: &str) -> anyhow::Result<Self> {
-        Self::new_with_options(base_url, CokretApiOptions::default())
+        Self::new_with_options(base_url, ArkretApiOptions::default())
     }
 
-    pub fn new_with_options(base_url: &str, options: CokretApiOptions) -> anyhow::Result<Self> {
+    pub fn new_with_options(base_url: &str, options: ArkretApiOptions) -> anyhow::Result<Self> {
         let base_url = validate_server_url(base_url)?;
         let http = Client::builder();
         #[cfg(not(target_arch = "wasm32"))]
@@ -39,8 +39,8 @@ impl CokretApi {
     /// `Authorization: Bearer <grant>` plus a per-request `DPoP` proof bound to
     /// that grant (`ath=hash(grant)`).
     ///
-    /// Compatibility inbound credentials can still be placed in the HTTP Bearer
-    /// slot when no DPoP device is bound.
+    /// The active session grant is placed in the HTTP Bearer slot; a DPoP
+    /// device binding is attached separately when available.
     pub fn with_bearer(mut self, authorization_credential: impl Into<String>) -> Self {
         self.authorization_credential = Some(authorization_credential.into());
         self
@@ -60,7 +60,7 @@ impl CokretApi {
         // Permit `http://` only for loopback hosts (the SDK's guard still
         // rejects insecure remote URLs), matching inkson's own
         // `config::validate_server_url` loopback policy and the garth/login
-        // client path (`views::login`). Without this the CokretApi transport
+        // client path (`views::login`). Without this the ArkretApi transport
         // could not reach a local dev / joint-e2e soland on `http://127.0.0.1`,
         // while the client-core path could — an inconsistency that broke
         // UI-driven realm create against a loopback stack.
@@ -95,7 +95,7 @@ impl CokretApi {
     /// authenticated SDK transport. Bridge for the sibling `src/api` submodules
     /// whose durable/ephemeral event logic now lives in the extracted engine;
     /// each call gets a fresh submitter (fresh lazy describe cache), matching
-    /// the former per-`CokretApi` describe-cache lifetime.
+    /// the former per-`ArkretApi` describe-cache lifetime.
     pub(crate) fn event_submitter(&self) -> anyhow::Result<crate::event_submit::EventSubmitter> {
         Ok(crate::event_submit::EventSubmitter::new(
             self.sdk_http_client()?,

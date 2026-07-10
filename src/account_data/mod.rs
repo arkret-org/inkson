@@ -44,9 +44,9 @@ pub enum AccountDataKey {
     ClientPresencePreference,
     /// `ak.account.blocklist` — actor-private personal blocklist entries.
     ClientBlocklist,
-    /// `ck.push_rules` — per-Realm mute, sound, push routing.
+    /// `ak.push_rules` — per-Realm mute, sound, push routing.
     ClientNotifications,
-    /// `ck.dnd_schedule` — actor-private quiet-hour schedule and exceptions.
+    /// `ak.dnd_schedule` — actor-private quiet-hour schedule and exceptions.
     ClientDndSchedule,
     /// `client.language` — locale / RTL preferences.
     ClientLanguage,

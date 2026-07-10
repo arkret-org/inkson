@@ -34,13 +34,12 @@ use std::cell::Cell;
 use std::time::Duration;
 
 use dioxus::prelude::*;
-use garth::{Backoff, ClientEvent, ClientProjector, RealmEventsDriver, RealmStreamStopReason};
-use serde_json::Value;
+use garth::{ClientEvent, ClientProjector, RealmStreamStopReason};
 
 use crate::api_error::{is_auth_expired_error, is_invalid_cursor_error, rate_limited_retry_after};
 use crate::config::MultiProfileConfig;
 use crate::local_state::LocalStateStore;
-use crate::runtime_helpers::sleep_for;
+use crate::runtime::engine_loop::{EngineLoopDirective, run_engine_loop};
 
 /// How long the server holds each realm `events/subscribe` long-poll open. The
 /// buffered (wasm) reader only surfaces frames at close, so this is also the
@@ -56,11 +55,11 @@ const BACKOFF_FLOOR: Duration = Duration::from_secs(1);
 const BACKOFF_CEILING: Duration = Duration::from_secs(60);
 
 /// Signals the realm events engine needs. `Copy` because Dioxus signals are.
-#[derive(Clone, Copy)]
+#[derive(Clone)]
 pub struct RealmEventsEngineContext {
     pub base_url: Signal<String>,
     pub token: Signal<String>,
-    pub state_store: Signal<LocalStateStore>,
+    pub state_store: SyncSignal<LocalStateStore>,
     /// The realm the kanban view is currently showing. The engine exits when
     /// this no longer matches the realm it was spawned for, so a realm switch
     /// retires the old loop while `app` spawns a fresh one for the new realm.
@@ -75,6 +74,7 @@ pub struct RealmEventsEngineContext {
     /// Active multi-profile config — the engine exits when the active profile
     /// rotates (mirrors the account engine's profile guard).
     pub profiles: Signal<MultiProfileConfig>,
+    pub client_runtime: crate::client_core::InksonClientRuntime,
 }
 
 /// Outcome of a single subscribe iteration, telling the loop how to pace.
@@ -92,37 +92,15 @@ enum RealmIterationOutcome {
     AuthExpired,
 }
 
-/// Convert a driver-emitted [`ClientEvent`] into the legacy `Value` payload the
-/// inkson realm ingest functions consume. The realm driver only emits decoded
-/// `Message` / `Event` (the account-only variants never occur on this stream).
-fn client_event_to_legacy_payload(event: ClientEvent) -> Option<Value> {
-    let event = match event {
-        ClientEvent::Message(message) => message.event,
-        ClientEvent::Event(event) => event,
-        ClientEvent::AccountUpdates(_)
-        | ClientEvent::RealmDelta { .. }
-        | ClientEvent::Backfill { .. }
-        | ClientEvent::Notification(_)
-        | ClientEvent::ToDevice(_) => return None,
-    };
-    match serde_json::to_value(event) {
-        Ok(value) => Some(value),
-        Err(error) => {
-            tracing::warn!(error = %error, "failed to serialize decoded realm event for ingest");
-            None
-        }
-    }
-}
-
 /// [`ClientProjector`] that folds each driver-emitted batch into the shared
 /// local store (kanban / message / membership), tracking whether anything
 /// changed so the caller bumps `realm_live_epoch` once per subscribe window
 /// (preserving the batch re-projection cadence). The ingest is durable BEFORE
 /// the driver checkpoints the cursor (the projector gates cursor advance), and
-/// the cursor stays coherent with this ingest through the shared
-/// `ClientCoreSyncOverlay` (E7 store-handle unification).
+/// the cursor stays coherent because the garth adapter writes the same root
+/// `SyncSignal<LocalStateStore>` used by the projector.
 struct RealmIngestProjector {
-    state_store: Signal<LocalStateStore>,
+    state_store: SyncSignal<LocalStateStore>,
     realm_id: String,
     changed: Cell<usize>,
 }
@@ -132,25 +110,21 @@ impl ClientProjector for RealmIngestProjector {
         &self,
         batch: Vec<ClientEvent>,
     ) -> impl std::future::Future<Output = arkret_sdk::Result<()>> + '_ {
-        let payloads: Vec<Value> = batch
-            .into_iter()
-            .filter_map(client_event_to_legacy_payload)
-            .collect();
         async move {
-            if !payloads.is_empty() {
+            if !batch.is_empty() {
                 let mut state_store = self.state_store;
                 let mut guard = state_store.write();
                 let changed =
-                    crate::sync_engine::ingest_kanban_events(&mut guard, &self.realm_id, &payloads)
+                    crate::sync_engine::ingest_kanban_events(&mut guard, &self.realm_id, &batch)
                         + crate::sync_engine::ingest_message_events(
                             &mut guard,
                             &self.realm_id,
-                            &payloads,
+                            &batch,
                         )
                         + crate::sync_engine::ingest_membership_events(
                             &mut guard,
                             &self.realm_id,
-                            &payloads,
+                            &batch,
                         );
                 drop(guard);
                 self.changed.set(self.changed.get() + changed);
@@ -172,42 +146,28 @@ pub async fn run_realm_events_engine(
         return;
     }
     let start_profile_id = ctx.profiles.read().active_profile_id.clone();
-    let mut backoff = Backoff::new(BACKOFF_FLOOR, BACKOFF_CEILING);
-    loop {
-        // Cancellation: generation bump (login / logout / server switch),
-        // profile rotation, or the user navigating to a different realm.
-        if generation() != start_generation {
-            return;
-        }
-        if ctx.profiles.read().active_profile_id != start_profile_id {
-            return;
-        }
-        if ctx.selected_realm_id.read().as_str() != realm_id {
-            return;
-        }
-        if !(ctx.route_enabled)() {
-            return;
-        }
-
-        match run_realm_iteration(&realm_id, &ctx, start_generation, generation).await {
+    run_engine_loop(
+        BACKOFF_FLOOR,
+        BACKOFF_CEILING,
+        || {
+            generation() == start_generation
+                && ctx.profiles.read().active_profile_id == start_profile_id
+                && ctx.selected_realm_id.read().as_str() == realm_id
+                && (ctx.route_enabled)()
+        },
+        async || match run_realm_iteration(&realm_id, &ctx, start_generation, generation).await {
             RealmIterationOutcome::Ok => {
-                backoff.reset();
-                // Brief beat between long-polls so an immediately-returning
-                // server can't spin the loop at network RTT.
-                sleep_for(Duration::from_millis(250)).await;
+                EngineLoopDirective::ContinueAfter(Duration::from_millis(250))
             }
-            RealmIterationOutcome::Backoff { retry_after_ms } => {
-                // Escalate the shared exponential ladder, honoring any
-                // server-advertised retry-after / reconnect-after as a hard floor
-                // for this step.
-                let hint = retry_after_ms.map(Duration::from_millis);
-                sleep_for(backoff.next_delay_with_hint(hint)).await;
-            }
+            RealmIterationOutcome::Backoff { retry_after_ms } => EngineLoopDirective::Retry {
+                minimum_delay: retry_after_ms.map(Duration::from_millis),
+            },
             RealmIterationOutcome::NotReady | RealmIterationOutcome::AuthExpired => {
-                return;
+                EngineLoopDirective::Stop
             }
-        }
-    }
+        },
+    )
+    .await;
 }
 
 async fn run_realm_iteration(
@@ -260,22 +220,19 @@ async fn run_realm_iteration(
         .with_max_duration_ms(REALM_EVENTS_POLL_WINDOW_MS);
 
     // The garth driver loads/checkpoints this realm's cursor and remembers
-    // dedupe ids through this adapter, which shares the E7 `ClientCoreSyncOverlay`
-    // with the Dioxus `Signal` store (a clone of the same instance) — so the
-    // driver's cursor/dedupe writes stay coherent with the projector's ingest
-    // (no clone-divergence clobber). The driver also emits/awaits the projector
+    // dedupe ids through the root runtime adapter, which writes the exact
+    // `SyncSignal` store used by this projector. The driver emits/awaits the projector
     // BEFORE checkpointing the cursor, so ingest gates cursor advance.
-    let adapter =
-        crate::client_core::InksonLocalStateStoreAdapter::new(ctx.state_store.read().clone());
-    let driver = RealmEventsDriver::new(adapter.clone(), adapter);
     let projector = RealmIngestProjector {
         state_store: ctx.state_store,
         realm_id: realm_id.to_owned(),
         changed: Cell::new(0),
     };
 
-    let reason = match driver
-        .run_stream(&transport, realm_id_typed, &projector)
+    let reason = match ctx
+        .client_runtime
+        .subscription_engine()
+        .run_realm_stream(&transport, realm_id_typed, &projector)
         .await
     {
         Ok(reason) => reason,
@@ -330,77 +287,5 @@ async fn run_realm_iteration(
             }
         }
         RealmStreamStopReason::Unauthorized { .. } => RealmIterationOutcome::AuthExpired,
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use serde_json::json;
-
-    use super::*;
-
-    const TEST_REALM: &str = "ak:realm:01904100-0000-7000-8000-000000000001";
-
-    fn test_realm_id() -> arkret_sdk::RealmId {
-        arkret_sdk::RealmId::new(TEST_REALM).unwrap()
-    }
-
-    fn test_actor_id() -> arkret_sdk::Did {
-        arkret_sdk::Did::new("did:webvh:z6mkfixture:alice.example").unwrap()
-    }
-
-    fn test_event(kind: &str, payload: Value) -> arkret_sdk::Event {
-        arkret_sdk::Event::new(
-            kind,
-            test_realm_id(),
-            test_actor_id(),
-            1,
-            arkret_sdk::Hlc::new("01970e589d21-0004-a13f9c2e").unwrap(),
-            payload,
-        )
-        .unwrap()
-    }
-
-    #[test]
-    fn client_event_message_converts_to_legacy_ingest_payload() {
-        let event = test_event(
-            arkret_sdk::events::kinds::MESSAGE_CREATE,
-            json!({
-                "strand_id": "ak:strand:01904100-0000-7000-8000-000000000002",
-                "track_name": "discussion",
-                "content": {"kind": "ak.content.text", "body": "hello"}
-            }),
-        );
-        let event_value = serde_json::to_value(&event).unwrap();
-        // The garth driver decodes a message frame into `ClientEvent::Message`;
-        // the projector converts it back to the legacy ingest payload shape.
-        let decoded = garth::InboundDecoder::new()
-            .try_decode_event(event)
-            .unwrap();
-        let client_event = match decoded {
-            garth::DecodedInbound::Message(message) => ClientEvent::Message(message),
-            other => panic!("expected a decoded message, got {other:?}"),
-        };
-
-        let payload = client_event_to_legacy_payload(client_event).expect("message -> payload");
-
-        assert_eq!(payload["event_id"], event_value["event_id"]);
-        assert_eq!(payload["kind"], event_value["kind"]);
-        assert_eq!(payload["payload"], event_value["payload"]);
-    }
-
-    #[test]
-    fn client_event_generic_event_converts_to_legacy_ingest_payload() {
-        let event = test_event(
-            arkret_sdk::events::kinds::STRAND_UPDATE,
-            json!({"target_ref": "ak:strand:01904100-0000-7000-8000-000000000002", "patch": {}}),
-        );
-        let event_value = serde_json::to_value(&event).unwrap();
-
-        let payload =
-            client_event_to_legacy_payload(ClientEvent::Event(event)).expect("event -> payload");
-
-        assert_eq!(payload["event_id"], event_value["event_id"]);
-        assert_eq!(payload["kind"], event_value["kind"]);
     }
 }

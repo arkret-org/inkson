@@ -8,7 +8,7 @@
 //!
 //! This module wires three pieces together:
 //!
-//! 1. **Serialize on commit.** The SDK's `CokretMlsGroup` already exposes `export_state_record()` /
+//! 1. **Serialize on commit.** The SDK's `ArkretMlsGroup` already exposes `export_state_record()` /
 //!    `restore_from_state_record()` so the openmls provider storage can be round-tripped through a
 //!    typed [`arkret_sdk::MlsGroupStateRecord`]. We wrap that record in [`MlsSnapshotEnvelope`]
 //!    which adds a device-scoped confidentiality layer so a stolen state.json doesn't leak the
@@ -21,7 +21,7 @@
 //! payload is the canonical SDK serialization — JSON serialize the
 //! `MlsWelcomeEnvelope` struct directly — so an apply-on-receive path
 //! can round-trip it via `serde_json::from_value` and feed it into
-//! [`arkret_sdk::CokretMlsGroup::join_from_welcome`].
+//! [`arkret_sdk::ArkretMlsGroup::join_from_welcome`].
 //!
 //! 2. **Persist via key_backup.** [`MlsSnapshotEnvelope::to_key_backup_body`] produces the
 //!    `ak.schema.key_backup.v1` request body used by `PUT /_arkret/self/keys/backups/{backup_id}`.
@@ -428,7 +428,7 @@ impl MlsSnapshotEnvelope {
 /// Helper that decrypts an [`MlsSnapshotEnvelope`] + parses out the typed
 /// [`MlsGroupStateRecord`] without trying to reconstruct the live MLS group
 /// via the OpenMLS provider. Callers that need an executable
-/// [`arkret_sdk::CokretMlsGroup`] should use [`restore_envelope`].
+/// [`arkret_sdk::ArkretMlsGroup`] should use [`restore_envelope`].
 pub fn restore_state_record_only(
     envelope: &MlsSnapshotEnvelope,
     snapshot_secret: &str,
@@ -441,7 +441,7 @@ pub fn restore_state_record_only(
 
 /// Helper used by the boot path and local MLS actions. Decrypts the envelope,
 /// sanity-checks the epoch, and reconstructs the SDK group via
-/// [`arkret_sdk::CokretMlsGroup::restore_from_state_record`].
+/// [`arkret_sdk::ArkretMlsGroup::restore_from_state_record`].
 ///
 /// `current_epoch_floor` is taken from the latest Seal view; pass
 /// `0` to skip the freshness check (e.g. first-boot rehydrate where
@@ -450,10 +450,10 @@ pub fn restore_envelope(
     envelope: &MlsSnapshotEnvelope,
     snapshot_secret: &str,
     current_epoch_floor: u64,
-) -> Result<arkret_sdk::CokretMlsGroup, EnvelopeError> {
+) -> Result<arkret_sdk::ArkretMlsGroup, EnvelopeError> {
     let bytes = decrypt_with_epoch_check(envelope, snapshot_secret, current_epoch_floor)?;
     let record = MlsSnapshotEnvelope::restore_state_record(&bytes)?;
-    arkret_sdk::CokretMlsGroup::restore_from_state_record(&record)
+    arkret_sdk::ArkretMlsGroup::restore_from_state_record(&record)
         .map_err(|err| EnvelopeError::SdkRestore(err.to_string()))
 }
 
@@ -719,9 +719,9 @@ mod tests {
         // End-to-end: SDK creates a group → export_state_record →
         // encrypt → decrypt → SDK restore. The restored group must
         // report the same group_id + epoch.
-        use arkret_sdk::{CokretMlsIdentity, DeviceId, Did};
+        use arkret_sdk::{ArkretMlsIdentity, DeviceId, Did};
 
-        let identity = CokretMlsIdentity::new_basic(
+        let identity = ArkretMlsIdentity::new_basic(
             Did::new("did:web:alice.example".to_owned()).unwrap(),
             // SDK 0.7 requires the canonical `ak:device:<uuid7>` form.
             DeviceId::new("ak:device:01904100-0000-7000-8000-000000000001".to_owned()).unwrap(),

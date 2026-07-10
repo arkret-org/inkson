@@ -1,4 +1,4 @@
-//! YOU-01-014 regression: the `ck.member.{invite,remove,role_change}` tokens are
+//! YOU-01-014 regression: the `ak.member.{invite,remove,role_change}` tokens are
 //! inkson-local UI grouping placeholders only. They are NOT registered in
 //! `capability-action-registry.json`, so they must never be sent on the
 //! protocol authz wire (`authz_check_raw` → `AuthzCheckRequestBody.action` →

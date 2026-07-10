@@ -359,7 +359,7 @@ pub fn DraftApprovalPanel(token: Signal<String>, controller_did: String) -> Elem
     // in the controller's principal-control realm.
     let principal_realm = arkret_sdk::Did::new(controller_did.clone())
         .ok()
-        .map(|principal| arkret_sdk::auth::principal_control_realm_id(&principal).to_string());
+        .map(|principal| arkret_sdk::principal_control_realm_id(&principal).to_string());
 
     rsx! {
         div { class: "event", "data-testid": "agent-draft-approval",

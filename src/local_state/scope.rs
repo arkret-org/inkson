@@ -52,7 +52,9 @@ impl LocalStateStore {
         if did.is_empty() {
             return None;
         }
-        let handle = if self.loaded.get() && self.read_root().active_did.as_deref() == Some(did) {
+        let handle = if self.loaded.load(Ordering::Relaxed)
+            && self.read_root().active_did.as_deref() == Some(did)
+        {
             self.cached.primary_handle.clone()
         } else {
             self.read_account_state(did)
@@ -87,7 +89,9 @@ impl LocalStateStore {
             .map(|did| {
                 // Read the account's own entry; prefer the live `cached` copy
                 // for the active account so an unflushed login is reflected.
-                let state = if self.loaded.get() && active.as_deref() == Some(did.as_str()) {
+                let state = if self.loaded.load(Ordering::Relaxed)
+                    && active.as_deref() == Some(did.as_str())
+                {
                     Some(self.cached.clone())
                 } else {
                     self.read_account_state(did)
@@ -143,7 +147,6 @@ impl LocalStateStore {
         *self.lock_mls_receive_overlay() = MlsReceiveOverlay::default();
         // E7: reset the account-scoped cursor overlay alongside the receive
         // overlay so a stale cursor never leaks across account scope changes.
-        *self.lock_client_core_sync_overlay() = ClientCoreSyncOverlay::default();
         self.cached = ClientLocalState {
             local_identity: preserved_identity,
             push_registration: preserved_push,
@@ -188,7 +191,6 @@ impl LocalStateStore {
         *self.lock_mls_receive_overlay() = MlsReceiveOverlay::default();
         // E7: reset the account-scoped cursor overlay alongside the receive
         // overlay so a stale cursor never leaks across account scope changes.
-        *self.lock_client_core_sync_overlay() = ClientCoreSyncOverlay::default();
         // Land the new active pointer in shared storage first.
         self.mutate_root(|root| {
             root.active_did = Some(actor.to_owned());
@@ -254,7 +256,6 @@ impl LocalStateStore {
             *self.lock_mls_receive_overlay() = MlsReceiveOverlay::default();
             // E7: reset the account-scoped cursor overlay alongside the receive
             // overlay so a stale cursor never leaks across account scope changes.
-            *self.lock_client_core_sync_overlay() = ClientCoreSyncOverlay::default();
             self.cached = ClientLocalState::default();
             let _ = self.flush();
         }
@@ -341,7 +342,6 @@ impl LocalStateStore {
         *self.lock_mls_receive_overlay() = MlsReceiveOverlay::default();
         // E7: reset the account-scoped cursor overlay alongside the receive
         // overlay so a stale cursor never leaks across account scope changes.
-        *self.lock_client_core_sync_overlay() = ClientCoreSyncOverlay::default();
         self.cached = ClientLocalState::default();
         let _ = self.flush();
     }

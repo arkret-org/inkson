@@ -1,14 +1,14 @@
-//! Authenticated `CokretApi` construction + the view/engine-facing call
+//! Authenticated `ArkretApi` construction + the view/engine-facing call
 //! wrapper (`with_authed_api*` / [`ApiCallError`]).
 //!
 //! This is the crate-level HTTP exit for authenticated self-path calls:
 //! consumed by sync engines, bootstrap, MLS admission, and UI views.
 
-use crate::api::CokretApi;
+use crate::api::ArkretApi;
 use crate::api_error::{is_auth_expired_error, is_terminal_session_grant_error};
 
 /// Create an authenticated API client from a base URL and optional session credential.
-pub fn authed_api(base_url: &str, session_credential: String) -> anyhow::Result<CokretApi> {
+pub fn authed_api(base_url: &str, session_credential: String) -> anyhow::Result<ArkretApi> {
     authed_api_with_sync(base_url, session_credential, None)
 }
 
@@ -24,8 +24,8 @@ pub fn authed_api_with_sync(
     base_url: &str,
     session_credential: String,
     wait_for_sync_token: Option<String>,
-) -> anyhow::Result<CokretApi> {
-    let mut api = CokretApi::new(base_url)?;
+) -> anyhow::Result<ArkretApi> {
+    let mut api = ArkretApi::new(base_url)?;
     if !session_credential.is_empty() {
         api = api.with_bearer(session_credential);
         #[cfg(target_arch = "wasm32")]
@@ -50,7 +50,7 @@ pub fn authed_api_with_sync(
 /// In production the seed is read from the secure key store (independent of the
 /// passed state store); in tests no key is present and the client stays
 /// without device proof material.
-pub fn attach_device_dpop(api: CokretApi) -> CokretApi {
+pub fn attach_device_dpop(api: ArkretApi) -> ArkretApi {
     match try_attach_device_dpop(api.clone()) {
         Ok(api) => api,
         Err(error) => {
@@ -60,7 +60,7 @@ pub fn attach_device_dpop(api: CokretApi) -> CokretApi {
     }
 }
 
-fn try_attach_device_dpop(api: CokretApi) -> anyhow::Result<CokretApi> {
+fn try_attach_device_dpop(api: ArkretApi) -> anyhow::Result<ArkretApi> {
     let mut store = crate::local_state::LocalStateStore::default();
     let Some(handle) = crate::account_auth::grant_dpop::load_or_recover_device_key(&mut store)?
     else {
@@ -70,7 +70,7 @@ fn try_attach_device_dpop(api: CokretApi) -> anyhow::Result<CokretApi> {
 }
 
 #[cfg(target_arch = "wasm32")]
-fn require_device_dpop(api: CokretApi) -> anyhow::Result<CokretApi> {
+fn require_device_dpop(api: ArkretApi) -> anyhow::Result<ArkretApi> {
     let mut store = crate::local_state::LocalStateStore::default();
     let Some(handle) = crate::account_auth::grant_dpop::load_or_recover_device_key(&mut store)?
     else {
@@ -97,7 +97,7 @@ async fn ensure_self_path_auth_material_ready() -> Result<(), ApiCallError> {
 /// Reason a view-side API call failed. Roughly mirrors `connect()`'s
 /// three-way error split:
 ///
-/// * `Unavailable` — `CokretApi::new` rejected the base URL (bad scheme, parse error, etc.). The
+/// * `Unavailable` — `ArkretApi::new` rejected the base URL (bad scheme, parse error, etc.). The
 ///   session is intact; the user should fix the server URL.
 /// * `AuthExpired` — the server returned a terminal session-grant code. The app-wide invalidator
 ///   has already cleared the session; callers should stop the current flow.
@@ -137,8 +137,8 @@ impl ApiCallError {
     }
 }
 
-/// Build an authenticated [`CokretApi`] and pass it to the closure,
-/// folding `CokretApi::new` errors + auth-expired errors + generic
+/// Build an authenticated [`ArkretApi`] and pass it to the closure,
+/// folding `ArkretApi::new` errors + auth-expired errors + generic
 /// API errors into a single [`ApiCallError`] so call sites can write:
 ///
 /// ```ignore
@@ -156,22 +156,17 @@ impl ApiCallError {
 /// `crate::session`, because lower-level helpers cannot own app signals.
 pub async fn with_authed_api<F, Fut, T>(
     base_url: &str,
-    mut session_credential: String,
+    session_credential: String,
     f: F,
 ) -> Result<T, ApiCallError>
 where
-    F: FnOnce(CokretApi) -> Fut,
+    F: FnOnce(ArkretApi) -> Fut,
     Fut: std::future::Future<Output = anyhow::Result<T>>,
 {
     if session_credential.trim().is_empty() {
         return Err(ApiCallError::AuthExpired(anyhow::anyhow!(
             "missing authenticated session"
         )));
-    }
-    if let Some(refreshed) = crate::session::wait_for_current_session_credential_refresh().await
-        && !refreshed.trim().is_empty()
-    {
-        session_credential = refreshed;
     }
     ensure_self_path_auth_material_ready().await?;
     let api = authed_api(base_url, session_credential).map_err(ApiCallError::Unavailable)?;
@@ -182,28 +177,23 @@ where
 }
 
 /// Same as [`with_authed_api`] but also forwards a sync-cursor token to
-/// the resulting `CokretApi` so any subsequent read is fenced behind
+/// the resulting `ArkretApi` so any subsequent read is fenced behind
 /// the latest write (read-your-writes consistency). Pass the result of
 /// [`active_sync_token`] as `wait_for_sync_token`.
 pub async fn with_authed_api_with_sync<F, Fut, T>(
     base_url: &str,
-    mut session_credential: String,
+    session_credential: String,
     wait_for_sync_token: Option<String>,
     f: F,
 ) -> Result<T, ApiCallError>
 where
-    F: FnOnce(CokretApi) -> Fut,
+    F: FnOnce(ArkretApi) -> Fut,
     Fut: std::future::Future<Output = anyhow::Result<T>>,
 {
     if session_credential.trim().is_empty() {
         return Err(ApiCallError::AuthExpired(anyhow::anyhow!(
             "missing authenticated session"
         )));
-    }
-    if let Some(refreshed) = crate::session::wait_for_current_session_credential_refresh().await
-        && !refreshed.trim().is_empty()
-    {
-        session_credential = refreshed;
     }
     ensure_self_path_auth_material_ready().await?;
     let api = authed_api_with_sync(base_url, session_credential, wait_for_sync_token)
@@ -216,7 +206,7 @@ where
 
 /// Same three-way auth/refresh/classification contract as [`with_authed_api`],
 /// but hands the closure the shared SDK `http-client::Client` instead of the
-/// inkson [`CokretApi`] facade. This is the CokretApi-free transport exit that
+/// inkson [`ArkretApi`] facade. This is the ArkretApi-free transport exit that
 /// migrated call sites use: they call the SDK endpoint method directly on the
 /// client (`|http| async move { http.some_endpoint(&body).await.map_err(...) }`),
 /// keeping the session-refresh + terminal-session-death handling identical to
@@ -239,7 +229,7 @@ where
 
 /// Same auth/refresh/classification contract as [`with_authed_api`], but hands
 /// the closure a [`crate::event_submit::EventSubmitter`] built from the shared
-/// SDK http-client. This is the CokretApi-free durable/ephemeral event
+/// SDK http-client. This is the ArkretApi-free durable/ephemeral event
 /// submission exit; migrated call sites call `sub.submit_sdk_event(&event)`
 /// etc. directly.
 pub async fn with_event_submitter<F, Fut, T>(

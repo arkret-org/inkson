@@ -156,7 +156,7 @@ impl LocalStateStore {
     // snapshot on the next decrypt. These entry points are deliberately
     // `&self` (interior mutability through [`MlsReceiveOverlay`]) because
     // the decrypt-on-read callers run inside render passes that only hold
-    // a read borrow of the `Signal<LocalStateStore>`.
+    // a read borrow of the `SyncSignal<LocalStateStore>`.
 
     /// Acquire the receive-chain serialization guard. The caller holds it
     /// across the whole restore→decrypt→export→[`Self::advance_mls_receive_chain`]

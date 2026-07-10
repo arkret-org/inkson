@@ -1,7 +1,7 @@
-//! Free-function circle transport (E2 CokretApi strangler).
+//! Free-function circle transport (E2 ArkretApi strangler).
 //!
 //! The circle scope-list read and the scope-rotate event submission used to
-//! live as inherent methods on [`crate::api::CokretApi`]. `list_circles` is a
+//! live as inherent methods on [`crate::api::ArkretApi`]. `list_circles` is a
 //! pure passthrough over the shared SDK `http-client::Client`;
 //! `submit_circle_scope_rotate_events` signs each rotate event through the
 //! [`crate::event_submit::EventSubmitter`] proof/CBA path and posts the batch
