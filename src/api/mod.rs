@@ -72,9 +72,9 @@ impl Default for ArkretApiOptions {
     }
 }
 
-mod account;
 mod blob;
 mod blob_resumable;
+mod contacts;
 mod directory;
 mod keys;
 mod mls;

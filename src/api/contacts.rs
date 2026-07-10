@@ -1,25 +1,6 @@
 use super::*;
 
 impl ArkretApi {
-    pub async fn describe(&self) -> anyhow::Result<ServerDescription> {
-        self.sdk_http_client()?
-            .describe()
-            .await
-            .map_err(|error| anyhow::anyhow!("server describe: {error}"))
-    }
-
-    pub async fn describe_cached(&self) -> anyhow::Result<&ServerDescription> {
-        self.service_describe_cache
-            .get_or_try_init(|| async { self.describe().await })
-            .await
-    }
-
-    // ②(A+②): the Principal Server does not mint a second client-visible
-    // credential. The held credential is the `ak.session.grant` itself,
-    // presented per-request as
-    // `Authorization: Bearer <grant>` + a `DPoP` proof (see
-    // `ArkretApi::with_bearer` / `with_dpop_device`).
-
     pub async fn request_contact(
         &self,
         target: &str,
@@ -39,18 +20,9 @@ impl ArkretApi {
     /// Send a contact request carrying one or more requested scopes plus an
     /// optional free-text greeting.
     ///
-    /// Protocol contract (soland finalized): the `contacts/request` body
-    /// accepts an optional `message` field (1..2000 chars) and an optional
-    /// `recipient_service_did` (the target Principal Server's service DID). The
-    /// latter is required for cross-PS addressing since v1 DIDs do not embed a
-    /// home PS; leave it empty for same-PS contacts. We only emit either field
-    /// when actually populated so same-PS no-greeting requests stay minimal; an
-    /// empty / whitespace-only string is dropped client-side rather than sent
-    /// as `""`.
-    ///
-    /// Kept as an inherent method (not migrated to `account_api`) because it
-    /// resolves contact addressing through `contact_request_addressing`, which
-    /// reads the struct-cached `describe_cached`.
+    /// Kept on the transport while contact addressing depends on the cached
+    /// service description and directory evidence assembled by
+    /// `contact_request_addressing`.
     pub async fn request_contact_with_message(
         &self,
         target: &str,

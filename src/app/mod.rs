@@ -81,6 +81,7 @@ mod context_bar;
 mod feature_gate;
 mod handles;
 mod manage_pages;
+mod notifications_drawer;
 mod session_boot;
 mod session_context;
 mod sidebar;
@@ -92,6 +93,7 @@ pub(crate) use context_bar::*;
 pub(crate) use feature_gate::*;
 pub(crate) use handles::*;
 pub(crate) use manage_pages::*;
+use notifications_drawer::NotificationsDrawer;
 use session_boot::*;
 pub(crate) use session_context::SessionContext;
 use sidebar::*;
@@ -5755,50 +5757,11 @@ pub fn RouterView() -> Element {
                 }
             }
             }
-            if notifications_drawer_open() {
-                div {
-                    class: "notifications-drawer-layer",
-                    "data-testid": "notifications-drawer",
-                    aside {
-                        class: "notifications-drawer-panel",
-                        "data-testid": "notifications-drawer-panel",
-                        "aria-label": crate::i18n::tr("nav.notifications"),
-                        onclick: move |event: dioxus::events::MouseEvent| event.stop_propagation(),
-                        div { class: "notifications-drawer-header",
-                            div { class: "notifications-drawer-title",
-                                UiIcon { name: "bell" }
-                                span { {crate::i18n::tr("nav.notifications")} }
-                            }
-                            div { class: "notifications-drawer-actions",
-                                Link {
-                                    class: "btn icon sm ghost",
-                                    "data-testid": "notifications-drawer-settings",
-                                    title: crate::i18n::tr("notifications.tooltip.settings"),
-                                    "aria-label": crate::i18n::tr("notifications.tooltip.settings"),
-                                    to: Route::SettingsSection { section: "notifications".to_owned() },
-                                    onclick: move |_| notifications_drawer_open.set(false),
-                                    UiIcon { name: "settings" }
-                                }
-                                Button {
-                                    variant: ButtonVariant::Ghost,
-                                    size: ButtonSize::Sm,
-                                    r#type: "button",
-                                    class: "btn icon",
-                                    "data-testid": "notifications-drawer-close",
-                                    title: crate::i18n::tr("common.close"),
-                                    "aria-label": crate::i18n::tr("common.close"),
-                                    onclick: move |_| notifications_drawer_open.set(false),
-                                    UiIcon { name: "x" }
-                                }
-                            }
-                        }
-                        crate::views::notifications::NotificationsPanel {
-                            account_did: account_did(),
-                            device_id: device_id(),
-                            token,
-                        }
-                    }
-                }
+            NotificationsDrawer {
+                open: notifications_drawer_open,
+                account_did: account_did(),
+                device_id: device_id(),
+                token,
             }
             // A6.4 — shortcut help overlay; toggled by the `?` global
             // key handler on the shell div above.

@@ -387,9 +387,10 @@ fn build_realm_history_sharing_policy_event_matches_event_schema() {
 
 #[test]
 fn build_realm_preview_policy_event_matches_event_schema() {
-    let mut envelope = event_builders::build_realm_preview_policy_event(
+    let mut envelope = event_builders::build_realm_state_event(
         TEST_REALM_ID,
         TEST_ACTOR_ID,
+        EventKind::RealmPreviewPolicy,
         serde_json::json!({
             "mode": "stripped_state",
             "audiences": ["link_token_holder"],
@@ -401,7 +402,7 @@ fn build_realm_preview_policy_event_matches_event_schema() {
             }
         }),
     )
-    .expect("build_realm_preview_policy_event succeeds");
+    .expect("build_realm_state_event(preview_policy) succeeds");
     stamp_wire_fields(&mut envelope);
     assert_envelope_matches_schema("build_realm_state_event[preview_policy]", &envelope);
 }

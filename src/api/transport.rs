@@ -8,6 +8,19 @@ use crate::api_error::normalize_wait_for_sync_token;
 use crate::wire_helpers::soland_path_allowed;
 
 impl ArkretApi {
+    pub async fn describe(&self) -> anyhow::Result<ServerDescription> {
+        self.sdk_http_client()?
+            .describe()
+            .await
+            .map_err(|error| anyhow::anyhow!("server describe: {error}"))
+    }
+
+    pub async fn describe_cached(&self) -> anyhow::Result<&ServerDescription> {
+        self.service_describe_cache
+            .get_or_try_init(|| async { self.describe().await })
+            .await
+    }
+
     pub fn new(base_url: &str) -> anyhow::Result<Self> {
         Self::new_with_options(base_url, ArkretApiOptions::default())
     }

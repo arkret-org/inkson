@@ -8,10 +8,8 @@ use inkson::config::{ClientConfig, LocalConfigStore};
 use inkson::models::ServerDescriptionExt;
 use inkson::operation::OperationBuilder;
 use inkson::push::validate_blind_wakeup_payload;
-use inkson::service_parse::{
-    parse_directory_describe, parse_resolve_realm, parse_server_description, parse_sync_describe,
-};
-use inkson::sync_parse::{parse_events_subscribe_ndjson_text, parse_sync};
+use inkson::service_parse::parse_server_description;
+use inkson::sync_parse::parse_events_subscribe_ndjson_text;
 use inkson::telemetry::{UserActionOutcome, build_user_action_entry, format_user_action_line};
 use reqwest::StatusCode;
 use serde_json::json;
@@ -176,7 +174,7 @@ fn inkson_accepts_server_contract_payloads() {
         "did:web:alice.example"
     );
 
-    let sync_describe = parse_sync_describe(json!({
+    let sync_describe: arkret_sdk::models::SyncDescription = serde_json::from_value(json!({
         "service_did": "did:web:server.local",
         "supported_sync_profiles": ["initial", "incremental"],
         "limits": {"max_realms": 50, "max_timeline_events": 100},
@@ -189,7 +187,7 @@ fn inkson_accepts_server_contract_payloads() {
             .contains(&"initial".to_owned())
     );
 
-    let sync = parse_sync(json!({
+    let sync: inkson::models::ClientSyncOutcome = serde_json::from_value(json!({
         "cursor": "ak:cursor:contract-sync",
         "realms": {
             "ak:realm:0196419b-0000-7000-8000-000000000000": {
@@ -216,7 +214,7 @@ fn inkson_accepts_server_contract_payloads() {
             .contains_key("ak:realm:0196419b-0000-7000-8000-000000000000")
     );
 
-    let directory = parse_directory_describe(json!({
+    let directory: inkson::models::DirectoryDescription = serde_json::from_value(json!({
         "service_did": "did:web:server.local",
         "trust_domain": "ak:trust_domain:server.local",
         "service_type": "directory_service",
@@ -253,7 +251,7 @@ fn inkson_accepts_server_contract_payloads() {
         "ak.profile.directory_service.v1"
     );
 
-    let resolved = parse_resolve_realm(json!({
+    let resolved: inkson::models::ResolveRealmOutcome = serde_json::from_value(json!({
         "realm_preview": {
             "realm_id": "ak:realm:0196419b-0000-7000-8000-000000000000",
             "title": "Arkret Demo Realm",
@@ -610,7 +608,7 @@ fn inkson_accepts_v1_sync_buckets_and_subscribe_ndjson_contract() {
     // `left_realms`, flat arrays for `to_device` / `account_data` /
     // `presence`. The SDK's `SyncOutcome` is the single source of
     // truth; inkson no longer owns a custom deserializer.
-    let sync = parse_sync(json!({
+    let sync: inkson::models::ClientSyncOutcome = serde_json::from_value(json!({
         "cursor": "sx:v1-bucket",
         "realms": {
             "ak:realm:joined": {
