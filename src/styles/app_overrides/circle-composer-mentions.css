@@ -427,6 +427,35 @@
   gap: 4px;
 }
 
+.participant-agent-group-summary {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 6px;
+  cursor: pointer;
+  list-style: none;
+}
+
+.participant-agent-group-summary::-webkit-details-marker {
+  display: none;
+}
+
+.participant-agent-group-toggle {
+  white-space: nowrap;
+  font-size: 12px;
+}
+
+.participant-agent-group-toggle::after {
+  content: "\25be";
+  display: inline-block;
+  margin-left: 5px;
+  transition: transform 120ms ease;
+}
+
+.participant-agent-group:not([open]) .participant-agent-group-toggle::after {
+  transform: rotate(-90deg);
+}
+
 .participant-agent-children {
   display: grid;
   gap: 4px;
@@ -454,6 +483,11 @@
 .participant-did {
   min-width: 0;
   overflow-wrap: anywhere;
+}
+
+.participant-inline-self-badge {
+  margin-left: 6px;
+  vertical-align: middle;
 }
 
 .participant-agent-subline,

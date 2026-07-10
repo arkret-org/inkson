@@ -2299,6 +2299,72 @@ fn agent_metadata_from_mentions_recovers_selector_audit_metadata() {
 }
 
 #[test]
+fn participation_visibility_uses_most_specific_effective_scope() {
+    use arkret_sdk::models::{
+        AgentParticipation, AgentParticipationEntry, AgentParticipationScope,
+    };
+
+    let realm = "ak:realm:0196419b-0000-7000-8000-000000000000";
+    let circle = "ak:circle:0196419b-0000-7000-8000-000000000001";
+    let realm_entry = AgentParticipationEntry {
+        scope: AgentParticipationScope::Realm {
+            realm_id: arkret_sdk::RealmId::new(realm.to_owned()).unwrap(),
+        },
+        selection: AgentParticipation::ALL,
+        ceiling: AgentParticipation::ALL,
+        effective: AgentParticipation::ALL,
+    };
+    let circle_entry = AgentParticipationEntry {
+        scope: AgentParticipationScope::Circle {
+            realm_id: arkret_sdk::RealmId::new(realm.to_owned()).unwrap(),
+            circle_id: arkret_sdk::CircleId::new(circle.to_owned()).unwrap(),
+        },
+        selection: AgentParticipation::NONE,
+        ceiling: AgentParticipation::NONE,
+        effective: AgentParticipation::NONE,
+    };
+
+    assert!(participation_allows_public_interaction(
+        std::slice::from_ref(&realm_entry),
+        realm,
+        None,
+        "ak:strand:0196419b-0000-7000-8000-000000000002",
+    ));
+    assert!(!participation_allows_public_interaction(
+        &[realm_entry, circle_entry],
+        realm,
+        Some(circle),
+        "ak:strand:0196419b-0000-7000-8000-000000000002",
+    ));
+}
+
+#[test]
+fn participation_visibility_can_target_the_synthesized_default_discussion_strand() {
+    use arkret_sdk::models::{
+        AgentParticipation, AgentParticipationEntry, AgentParticipationScope,
+    };
+
+    let realm = "ak:realm:0196419b-0000-7000-8000-000000000010";
+    let strand = default_discussion_strand_id(realm);
+    let entry = AgentParticipationEntry {
+        scope: AgentParticipationScope::Strand {
+            realm_id: arkret_sdk::RealmId::new(realm.to_owned()).unwrap(),
+            strand_id: arkret_sdk::StrandId::new(strand.clone()).unwrap(),
+        },
+        selection: AgentParticipation::NONE,
+        ceiling: AgentParticipation::ALL,
+        effective: AgentParticipation::ALL,
+    };
+
+    assert!(participation_allows_public_interaction(
+        std::slice::from_ref(&entry),
+        realm,
+        None,
+        &strand,
+    ));
+}
+
+#[test]
 fn participant_roster_rows_groups_agents_under_visible_controller() {
     let controller = SpaceParticipant {
         did: "did:web:example.com:users:alice".to_owned(),
@@ -2325,7 +2391,8 @@ fn participant_roster_rows_groups_agents_under_visible_controller() {
             display_name: "Summary Assistant".to_owned(),
         }),
     };
-    let rows = participant_roster_rows(&[controller.clone(), agent.clone()]);
+    let visible = std::collections::BTreeSet::from([agent.did.clone()]);
+    let rows = participant_roster_rows(&[controller.clone(), agent.clone()], &visible);
     assert_eq!(rows.len(), 1);
     match &rows[0] {
         ParticipantRosterRow::ControllerWithAgents { controller, agents } => {
@@ -2335,10 +2402,19 @@ fn participant_roster_rows_groups_agents_under_visible_controller() {
         }
         ParticipantRosterRow::Participant(_) => panic!("expected grouped controller row"),
     }
+
+    let private_rows = participant_roster_rows(
+        &[controller.clone(), agent],
+        &std::collections::BTreeSet::new(),
+    );
+    assert_eq!(
+        private_rows,
+        vec![ParticipantRosterRow::Participant(controller)]
+    );
 }
 
 #[test]
-fn mention_candidate_for_agent_uses_controller_scoped_selector() {
+fn mention_candidate_for_own_agent_uses_me_alias() {
     let controller = SpaceParticipant {
         did: "did:web:example.com:users:alice".to_owned(),
         display_name: Some("Alice".to_owned()),
@@ -2364,17 +2440,115 @@ fn mention_candidate_for_agent_uses_controller_scoped_selector() {
             display_name: "Summary Assistant".to_owned(),
         }),
     };
-    let participants = vec![controller, agent.clone()];
-    let candidate =
-        mention_candidate_for_participant(&agent, &participants).expect("agent mention candidate");
+    let participants = vec![controller.clone(), agent.clone()];
+    let candidate = mention_candidate_for_participant(&agent, &participants, &controller.did)
+        .expect("agent mention candidate");
     assert_eq!(candidate.display_name, "Summary Assistant");
-    assert_eq!(candidate.insert_label(), "alice:example.com/summary");
+    assert_eq!(candidate.insert_label(), "me/summary");
     assert_eq!(
         candidate.controller_subject_id,
         "did:web:example.com:users:alice"
     );
     assert_eq!(candidate.controller_handle_at_time, "alice:example.com");
     assert_eq!(candidate.agent_slug_at_time, "summary");
+}
+
+#[test]
+fn mention_candidate_for_other_agent_keeps_canonical_controller_handle() {
+    let controller = SpaceParticipant {
+        did: "did:web:example.com:users:bob".to_owned(),
+        display_name: Some("Bob".to_owned()),
+        handle_label: Some("bob:example.com".to_owned()),
+        display_name_rank: 0,
+        role: SpaceParticipantRole::Member,
+        is_self: false,
+        is_agent: false,
+        agent_metadata: None,
+    };
+    let agent = SpaceParticipant {
+        did: "did:web:agents.example:summary".to_owned(),
+        display_name: Some("Summary Assistant".to_owned()),
+        handle_label: None,
+        display_name_rank: 1,
+        role: SpaceParticipantRole::Member,
+        is_self: false,
+        is_agent: true,
+        agent_metadata: Some(AgentParticipantMetadata {
+            controller_did: controller.did.clone(),
+            controller_handle: "bob:example.com".to_owned(),
+            agent_slug: "summary".to_owned(),
+            display_name: "Summary Assistant".to_owned(),
+        }),
+    };
+    let participants = vec![controller, agent.clone()];
+
+    let candidate =
+        mention_candidate_for_participant(&agent, &participants, "did:web:example.com:users:alice")
+            .expect("agent mention candidate");
+
+    assert_eq!(candidate.insert_label(), "bob:example.com/summary");
+}
+
+#[test]
+fn agent_candidate_visibility_keeps_owned_agents_and_hides_private_remote_agents() {
+    let own_controller = SpaceParticipant {
+        did: "did:web:example.com:users:alice".to_owned(),
+        display_name: Some("Alice".to_owned()),
+        handle_label: Some("alice:example.com".to_owned()),
+        display_name_rank: 0,
+        role: SpaceParticipantRole::Member,
+        is_self: true,
+        is_agent: false,
+        agent_metadata: None,
+    };
+    let own_agent = SpaceParticipant {
+        did: "did:web:agents.example:alice-summary".to_owned(),
+        display_name: Some("Alice Summary".to_owned()),
+        handle_label: None,
+        display_name_rank: 1,
+        role: SpaceParticipantRole::Member,
+        is_self: false,
+        is_agent: true,
+        agent_metadata: Some(AgentParticipantMetadata {
+            controller_did: own_controller.did.clone(),
+            controller_handle: "alice:example.com".to_owned(),
+            agent_slug: "summary".to_owned(),
+            display_name: "Alice Summary".to_owned(),
+        }),
+    };
+    let remote_agent = SpaceParticipant {
+        did: "did:web:agents.example:bob-summary".to_owned(),
+        display_name: Some("Bob Summary".to_owned()),
+        handle_label: None,
+        display_name_rank: 1,
+        role: SpaceParticipantRole::Member,
+        is_self: false,
+        is_agent: true,
+        agent_metadata: Some(AgentParticipantMetadata {
+            controller_did: "did:web:example.com:users:bob".to_owned(),
+            controller_handle: "bob:example.com".to_owned(),
+            agent_slug: "summary".to_owned(),
+            display_name: "Bob Summary".to_owned(),
+        }),
+    };
+    let account_did = own_controller.did.as_str();
+    let visible = std::collections::BTreeSet::new();
+
+    assert!(agent_candidate_is_visible(
+        &own_agent,
+        &visible,
+        account_did
+    ));
+    assert!(!agent_candidate_is_visible(
+        &remote_agent,
+        &visible,
+        account_did
+    ));
+    assert!(agent_candidate_is_visible(
+        &remote_agent,
+        &std::collections::BTreeSet::from([remote_agent.did.clone()]),
+        account_did
+    ));
 }
 
 #[test]
@@ -2391,8 +2565,12 @@ fn mention_candidate_without_handle_is_not_displayed_as_did() {
     };
 
     assert!(
-        mention_candidate_for_participant(&participant, std::slice::from_ref(&participant))
-            .is_none()
+        mention_candidate_for_participant(
+            &participant,
+            std::slice::from_ref(&participant),
+            "did:web:alice.example",
+        )
+        .is_none()
     );
 }
 
@@ -2429,8 +2607,9 @@ fn mention_candidate_uses_cached_member_handle() {
         "https://local.host",
     );
 
-    let candidate = mention_candidate_for_participant(&participants[0], &participants)
-        .expect("member mention candidate");
+    let candidate =
+        mention_candidate_for_participant(&participants[0], &participants, "did:web:alice.example")
+            .expect("member mention candidate");
     assert_eq!(candidate.did, "did:web:bob.example");
     assert_eq!(candidate.display_name, "bob:local.host");
     assert_eq!(candidate.insert_label(), "bob:local.host");

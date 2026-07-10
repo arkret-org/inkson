@@ -318,12 +318,17 @@ pub fn parse_agent_selector_mention_tokens(input: &str) -> Vec<AgentSelectorMent
         {
             continue;
         }
-        let Some(parsed) = crate::identity_handle::parse_user_handle(controller_handle) else {
-            continue;
+        let controller_handle = if controller_handle.eq_ignore_ascii_case("me") {
+            "me".to_owned()
+        } else {
+            let Some(parsed) = crate::identity_handle::parse_user_handle(controller_handle) else {
+                continue;
+            };
+            parsed.handle
         };
         tokens.push(AgentSelectorMentionToken {
             mention_text_original: normalized.to_owned(),
-            controller_handle: parsed.handle,
+            controller_handle,
             agent_slug: agent_slug.to_owned(),
         });
     }
@@ -682,15 +687,19 @@ mod tests {
 
     #[test]
     fn parses_agent_selector_tokens_without_materializing_mentions() {
-        let tokens =
-            parse_agent_selector_mention_tokens("ask @alice:example.com/summary, not @bob:Bad");
-        assert_eq!(tokens.len(), 1);
+        let tokens = parse_agent_selector_mention_tokens(
+            "ask @alice:example.com/summary, @me/digest, not @bob:Bad",
+        );
+        assert_eq!(tokens.len(), 2);
         assert_eq!(
             tokens[0].mention_text_original,
             "@alice:example.com/summary"
         );
         assert_eq!(tokens[0].controller_handle, "alice:example.com");
         assert_eq!(tokens[0].agent_slug, "summary");
+        assert_eq!(tokens[1].mention_text_original, "@me/digest");
+        assert_eq!(tokens[1].controller_handle, "me");
+        assert_eq!(tokens[1].agent_slug, "digest");
 
         let mentions = parse_mention_nodes("ask @alice:example.com/summary");
         assert!(mentions.is_empty());

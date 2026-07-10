@@ -177,6 +177,46 @@ pub(crate) fn agent_metadata_from_raw_operations(
     out
 }
 
+pub(crate) fn participation_allows_public_interaction(
+    entries: &[arkret_sdk::models::AgentParticipationEntry],
+    realm_id: &str,
+    circle_id: Option<&str>,
+    strand_id: &str,
+) -> bool {
+    let strand_match = entries.iter().find(|entry| {
+        matches!(
+            &entry.scope,
+            arkret_sdk::models::AgentParticipationScope::Strand {
+                realm_id: entry_realm,
+                strand_id: entry_strand,
+            } if entry_realm.as_str() == realm_id && entry_strand.as_str() == strand_id
+        )
+    });
+    let realm_match = entries.iter().find(|entry| {
+        matches!(
+            &entry.scope,
+            arkret_sdk::models::AgentParticipationScope::Realm {
+                realm_id: entry_realm,
+            } if entry_realm.as_str() == realm_id
+        )
+    });
+    let circle_match = circle_id.and_then(|circle_id| {
+        entries.iter().find(|entry| {
+            matches!(
+                &entry.scope,
+                arkret_sdk::models::AgentParticipationScope::Circle {
+                    realm_id: entry_realm,
+                    circle_id: entry_circle,
+                } if entry_realm.as_str() == realm_id && entry_circle.as_str() == circle_id
+            )
+        })
+    });
+    strand_match
+        .or(circle_match)
+        .or(realm_match)
+        .is_some_and(|entry| entry.effective.reply || entry.effective.accept_third_party_mention)
+}
+
 /// Compatibility helper for older call sites and tests that only need
 /// the endpoint DID set.
 #[cfg(test)]

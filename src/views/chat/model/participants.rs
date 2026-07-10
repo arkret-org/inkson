@@ -304,6 +304,7 @@ pub(crate) fn upsert_participant(
 
 pub(crate) fn participant_roster_rows(
     participants: &[SpaceParticipant],
+    visible_agent_dids: &std::collections::BTreeSet<String>,
 ) -> Vec<ParticipantRosterRow> {
     let visible_dids = participants
         .iter()
@@ -313,7 +314,7 @@ pub(crate) fn participant_roster_rows(
         std::collections::BTreeMap::<String, Vec<SpaceParticipant>>::new();
     for participant in participants
         .iter()
-        .filter(|participant| participant.is_agent)
+        .filter(|participant| participant.is_agent && visible_agent_dids.contains(&participant.did))
     {
         let Some(metadata) = participant.agent_metadata.as_ref() else {
             continue;
@@ -345,6 +346,9 @@ pub(crate) fn participant_roster_rows(
 
     let mut rows = Vec::new();
     for participant in participants {
+        if participant.is_agent && !visible_agent_dids.contains(&participant.did) {
+            continue;
+        }
         if grouped_agent_dids.contains(participant.did.as_str()) {
             continue;
         }
@@ -359,6 +363,17 @@ pub(crate) fn participant_roster_rows(
         }
         rows.push(ParticipantRosterRow::Participant(participant.clone()));
     }
+    // Keep the local controller at the top even if a caller assembled the
+    // participant slice from multiple projections with a different order.
+    // The roster contract is stable across the presence list, member list,
+    // and mention picker: the current account is always first.
+    rows.sort_by_key(|row| {
+        let is_self = match row {
+            ParticipantRosterRow::Participant(participant) => participant.is_self,
+            ParticipantRosterRow::ControllerWithAgents { controller, .. } => controller.is_self,
+        };
+        !is_self
+    });
     rows
 }
 
@@ -685,11 +700,20 @@ pub(crate) fn agent_selector_label(participant: &SpaceParticipant) -> Option<Str
 pub(crate) fn mention_candidate_for_participant(
     participant: &SpaceParticipant,
     participants: &[SpaceParticipant],
+    account_did: &str,
 ) -> Option<crate::messaging::mentions::MentionCandidate> {
     if participant.is_agent {
         let display_name = agent_display_label(participant);
-        let selector = agent_selector_label(participant);
         let metadata = participant.agent_metadata.as_ref();
+        let selector = metadata.and_then(|metadata| {
+            if metadata.agent_slug.trim().is_empty() {
+                None
+            } else if metadata.controller_did.trim() == account_did.trim() {
+                Some(format!("me/{}", metadata.agent_slug.trim()))
+            } else {
+                agent_selector_label(participant)
+            }
+        });
         let controller_label = agent_controller_label(participant, participants);
         return Some(crate::messaging::mentions::MentionCandidate {
             did: participant.did.clone(),
@@ -726,6 +750,21 @@ pub(crate) fn mention_candidate_for_participant(
         controller_handle_at_time: String::new(),
         agent_slug_at_time: String::new(),
     })
+}
+
+pub(crate) fn agent_candidate_is_visible(
+    participant: &SpaceParticipant,
+    public_agent_dids: &std::collections::BTreeSet<String>,
+    account_did: &str,
+) -> bool {
+    if !participant.is_agent {
+        return true;
+    }
+    public_agent_dids.contains(&participant.did)
+        || participant
+            .agent_metadata
+            .as_ref()
+            .is_some_and(|metadata| metadata.controller_did.trim() == account_did.trim())
 }
 
 pub(crate) fn sender_display_label(

@@ -64,6 +64,7 @@ async fn resolve_agent_selector_mentions(
     body: &str,
     realm_id: &str,
     requester: &str,
+    own_controller_handle: Option<&str>,
 ) -> Vec<MentionNode> {
     let tokens = parse_agent_selector_mention_tokens(body);
     if tokens.is_empty() {
@@ -74,9 +75,20 @@ async fn resolve_agent_selector_mentions(
     };
     let mut mentions = Vec::new();
     for token in tokens {
+        let controller_handle = if token.controller_handle == "me" {
+            let Some(handle) = own_controller_handle
+                .map(str::trim)
+                .filter(|handle| !handle.is_empty())
+            else {
+                continue;
+            };
+            handle
+        } else {
+            token.controller_handle.as_str()
+        };
         let Ok(outcome) = api
             .resolve_agent_selector_mention(
-                &token.controller_handle,
+                controller_handle,
                 &token.agent_slug,
                 realm_id,
                 requester,
@@ -85,7 +97,7 @@ async fn resolve_agent_selector_mentions(
         else {
             continue;
         };
-        let Ok(controller_handle) = arkret_sdk::Handle::parse(&token.controller_handle) else {
+        let Ok(controller_handle) = arkret_sdk::Handle::parse(controller_handle) else {
             continue;
         };
         let mention = arkret_sdk::Mention::new(outcome.subject)
@@ -96,6 +108,51 @@ async fn resolve_agent_selector_mentions(
             )
             .with_mention_text_original(token.mention_text_original)
             .with_resolved_at(chrono::Utc::now());
+        mentions.push(MentionNode::mention(mention));
+    }
+    mentions
+}
+
+fn composer_mention_nodes(
+    body: &str,
+    picker: &[crate::messaging::mentions::MentionCandidate],
+) -> Vec<MentionNode> {
+    let mut mentions = parse_mention_nodes(body);
+    for chip in picker {
+        if mentions.iter().any(|node| {
+            node.as_mention()
+                .is_some_and(|mention| mention.subject_id.as_str() == chip.did)
+        }) {
+            continue;
+        }
+        let Ok(subject_id) = arkret_sdk::Did::new(chip.did.clone()) else {
+            continue;
+        };
+        let insert_label = chip.insert_label().to_owned();
+        let parsed_handle = (!chip.is_agent)
+            .then(|| crate::identity_handle::parse_user_handle(&insert_label))
+            .flatten();
+        let mut mention = arkret_sdk::Mention::new(subject_id)
+            .with_mention_text_original(format!("@{insert_label}"));
+        if !chip.display_name.trim().is_empty() {
+            mention = mention.with_display_name_at_time(chip.display_name.clone());
+        }
+        if let Some(handle) =
+            parsed_handle.and_then(|parsed| arkret_sdk::Handle::parse(&parsed.handle).ok())
+        {
+            mention = mention.with_handle_at_time(handle);
+        }
+        if let (Ok(controller_subject_id), Ok(controller_handle)) = (
+            arkret_sdk::Did::new(chip.controller_subject_id.clone()),
+            arkret_sdk::Handle::parse(&chip.controller_handle_at_time),
+        ) && !chip.agent_slug_at_time.trim().is_empty()
+        {
+            mention = mention.with_agent_selector_metadata(
+                controller_subject_id,
+                controller_handle,
+                chip.agent_slug_at_time.clone(),
+            );
+        }
         mentions.push(MentionNode::mention(mention));
     }
     mentions
@@ -243,6 +300,9 @@ pub fn ChatPanel(
     // composer can render `mention-picker` / `mention-suggestion` /
     // `mention-chip` testids off a single signal.
     let mut mention_picker_state = use_signal(crate::messaging::mentions::MentionPickerState::new);
+    let mut agent_participation_visibility =
+        use_signal(std::collections::BTreeMap::<String, bool>::new);
+    let mut agent_participation_sync_key_seen = use_signal(String::new);
     // G3.Y2 — poll composer. `poll_draft` is `Some(_)` while the
     // attachment menu's poll form is open; on send it becomes
     // `PollCard` in `poll_cards`. The attachment menu open/closed
@@ -724,8 +784,117 @@ pub fn ChatPanel(
         annotate_agent_participants_with_metadata(&mut participants, &agent_metadata);
     }
     let participants_for_messages = participants.clone();
+    let own_controller_handle = participants_for_messages
+        .iter()
+        .find(|participant| participant.is_self && !participant.is_agent)
+        .and_then(mention_label_for_participant);
 
-    let mut participant_dids_for_presence = participants_for_messages
+    let mut known_agent_ids = participants_for_messages
+        .iter()
+        .filter(|participant| participant.is_agent)
+        .map(|participant| participant.did.clone())
+        .collect::<Vec<_>>();
+    known_agent_ids.sort();
+    known_agent_ids.dedup();
+    let selected_scope_circle = channels()
+        .iter()
+        .find(|channel| channel.strand_id == selected_channel_value)
+        .and_then(|channel| {
+            channel
+                .scope_circle
+                .as_ref()
+                .map(|circle| circle.circle_id.clone())
+        });
+    let agent_participation_sync_key = format!(
+        "{}|{}|{}|{}|{}",
+        selected_realm_id,
+        selected_channel_value,
+        selected_scope_circle.as_deref().unwrap_or_default(),
+        sync_cursor(),
+        known_agent_ids.join(",")
+    );
+    {
+        let base = base_url.clone();
+        let realm = selected_realm_id.clone();
+        let strand = if selected_channel_value.trim().is_empty() {
+            default_discussion_strand_id(&realm)
+        } else {
+            selected_channel_value.clone()
+        };
+        let circle = selected_scope_circle.clone();
+        let agent_ids = known_agent_ids.clone();
+        use_effect(move || {
+            if token().trim().is_empty()
+                || realm.trim().is_empty()
+                || agent_ids.is_empty()
+                || agent_participation_sync_key_seen.peek().as_str() == agent_participation_sync_key
+            {
+                return;
+            }
+            agent_participation_sync_key_seen.set(agent_participation_sync_key.clone());
+            // A scope change must fail closed while the new participation
+            // snapshot is loading; never reuse the previous strand/circle's
+            // visibility decision for this agent list.
+            agent_participation_visibility.set(std::collections::BTreeMap::new());
+            let base = base.clone();
+            let realm = realm.clone();
+            let strand = strand.clone();
+            let circle = circle.clone();
+            let agent_ids = agent_ids.clone();
+            let api_token = token();
+            spawn(async move {
+                let result = crate::views::helpers::with_authed_sdk_client(
+                    &base,
+                    api_token,
+                    move |http| async move {
+                        let mut visible = std::collections::BTreeMap::new();
+                        for agent_id in agent_ids {
+                            if let Ok(outcome) = http.agent_participation_get(&agent_id).await {
+                                visible.insert(
+                                    agent_id,
+                                    participation_allows_public_interaction(
+                                        &outcome.entries,
+                                        &realm,
+                                        circle.as_deref(),
+                                        &strand,
+                                    ),
+                                );
+                            }
+                        }
+                        Ok::<_, anyhow::Error>(visible)
+                    },
+                )
+                .await;
+                if let Ok(visible) = result {
+                    agent_participation_visibility.set(visible);
+                }
+            });
+        });
+    }
+
+    let mut public_agent_dids = std::collections::BTreeSet::new();
+    public_agent_dids.extend(
+        agent_participation_visibility()
+            .into_iter()
+            .filter_map(|(agent_id, visible)| visible.then_some(agent_id)),
+    );
+    let known_agent_did_set = known_agent_ids
+        .iter()
+        .map(String::as_str)
+        .collect::<std::collections::BTreeSet<_>>();
+    public_agent_dids.extend(
+        visible_messages
+            .iter()
+            .filter(|message| message.reply_to.is_some())
+            .map(|message| message.sender.trim())
+            .filter(|sender| known_agent_did_set.contains(sender))
+            .map(ToOwned::to_owned),
+    );
+    participants.retain(|participant| {
+        !participant.is_agent || public_agent_dids.contains(&participant.did)
+    });
+
+    let mut participant_dids_for_presence = participants
         .iter()
         .map(|participant| participant.did.clone())
         .filter(|did| !did.trim().is_empty())
@@ -3567,7 +3736,15 @@ pub fn ChatPanel(
                                             "data-actor-did": "{did_attr}",
                                             "data-presence-state": "{state}",
                                             span { class: "presence-dot presence-dot-{state}" }
-                                            span { class: "presence-name", title: "{did_attr}", "{display}" }
+                                            span { class: "presence-name", title: "{did_attr}",
+                                                "{display}"
+                                                if participant.is_self {
+                                                    SelfAttributionBadge {
+                                                        class: Some("participant-inline-self-badge".to_owned()),
+                                                        test_id: Some("presence-self-badge".to_owned()),
+                                                    }
+                                                }
+                                            }
                                             span { class: "muted", " ({state})" }
                                             if let Some(status_message) = status_message {
                                                 span {
@@ -3584,7 +3761,7 @@ pub fn ChatPanel(
                     }
                     div { class: "discussion-detail-section",
                         div { class: "discussion-subhead", span { "Space users" } }
-                        for row in participant_roster_rows(&participants) {
+                        for row in participant_roster_rows(&participants, &public_agent_dids) {
                             {
                                 match row {
                                     ParticipantRosterRow::Participant(participant) => {
@@ -3598,23 +3775,35 @@ pub fn ChatPanel(
                                                 participants: participants_for_messages.clone(),
                                                 display_label,
                                                 nested_agent: false,
+                                                show_binding_details: true,
                                             }
                                         }
                                     }
                                     ParticipantRosterRow::ControllerWithAgents { controller, agents } => {
+                                        let controller_did = controller.did.clone();
+                                        let agent_count = agents.len();
                                         let display_label = participant_roster_display_label(
                                             &state_store.read(),
                                             &controller,
                                         );
                                         rsx! {
-                                            div {
+                                            details {
                                                 class: "participant-agent-group",
                                                 "data-testid": "participant-agent-group",
-                                                DiscussionParticipantRow {
-                                                    participant: controller,
-                                                    participants: participants_for_messages.clone(),
-                                                    display_label,
-                                                    nested_agent: false,
+                                                "data-controller-did": "{controller_did}",
+                                                summary { class: "participant-agent-group-summary",
+                                                    DiscussionParticipantRow {
+                                                        participant: controller,
+                                                        participants: participants_for_messages.clone(),
+                                                        display_label,
+                                                        nested_agent: false,
+                                                        show_binding_details: false,
+                                                    }
+                                                    span {
+                                                        class: "participant-agent-group-toggle muted",
+                                                        "data-testid": "participant-agent-group-toggle",
+                                                        "{agent_count} agents"
+                                                    }
                                                 }
                                                 div { class: "participant-agent-children",
                                                     for agent in agents {
@@ -3629,6 +3818,7 @@ pub fn ChatPanel(
                                                                     participants: participants_for_messages.clone(),
                                                                     display_label,
                                                                     nested_agent: true,
+                                                                    show_binding_details: true,
                                                                 }
                                                             }
                                                         }
@@ -4191,7 +4381,12 @@ pub fn ChatPanel(
                                 let candidates: Vec<crate::messaging::mentions::MentionCandidate> =
                                     participants_for_messages
                                         .iter()
-                                        .filter_map(|p| mention_candidate_for_participant(p, &participants_for_messages))
+                                        .filter(|p| agent_candidate_is_visible(p, &public_agent_dids, &account_did))
+                                        .filter_map(|p| mention_candidate_for_participant(
+                                            p,
+                                            &participants_for_messages,
+                                            &account_did,
+                                        ))
                                         .collect();
                                 // `filter` borrows from `candidates`, not from the
                                 // picker state, so we run it under the read guard and
@@ -4642,10 +4837,12 @@ pub fn ChatPanel(
                             let service_did = plaintext_service_did.clone();
                             let realm = selected_realm_id.clone();
                             let actor = account_did.clone();
+                            let own_controller_handle = own_controller_handle.clone();
                             // Captured for the offline-outbox park branch (keyed
                             // by account so the persisted queue is per-identity).
                             let account_did = account_did.clone();
                             move |_| {
+                                let own_controller_handle = own_controller_handle.clone();
                                 let body = chat_draft().trim().to_owned();
                                 if body.is_empty() {
                                     return;
@@ -4654,55 +4851,10 @@ pub fn ChatPanel(
                                     status_msg.set(format!("Message send failed: {error:#}"));
                                     return;
                                 }
-                                let mut mentions = parse_mention_nodes(&body);
-                                // G3.Y2 — merge mention picker chips
-                                // into the structured mentions list so
-                                // the @mention picker counts as a
-                                // first-class source (not just typed
-                                // `@name` text).
-                                {
-                                    let picker = mention_picker_state.read().inserted.clone();
-                                    for chip in picker {
-                                        if !mentions.iter().any(|m| {
-                                            m.as_mention().is_some_and(|mention| {
-                                                mention.subject_id.as_str() == chip.did
-                                            })
-                                        }) {
-                                            let Ok(subject_id) = arkret_sdk::Did::new(chip.did.clone()) else {
-                                                continue;
-                                            };
-                                            let insert_label = chip.insert_label().to_owned();
-                                            let parsed_handle =
-                                                (!chip.is_agent).then(|| {
-                                                    crate::identity_handle::parse_user_handle(
-                                                        &insert_label,
-                                                    )
-                                                }).flatten();
-                                            let mut mention = arkret_sdk::Mention::new(subject_id)
-                                                .with_mention_text_original(format!("@{insert_label}"));
-                                            if !chip.display_name.trim().is_empty() {
-                                                mention = mention
-                                                    .with_display_name_at_time(chip.display_name.clone());
-                                            }
-                                            if let Some(handle) = parsed_handle
-                                                .and_then(|parsed| arkret_sdk::Handle::parse(&parsed.handle).ok())
-                                            {
-                                                mention = mention.with_handle_at_time(handle);
-                                            }
-                                            if let (Ok(controller_subject_id), Ok(controller_handle)) = (
-                                                arkret_sdk::Did::new(chip.controller_subject_id.clone()),
-                                                arkret_sdk::Handle::parse(&chip.controller_handle_at_time),
-                                            ) && !chip.agent_slug_at_time.trim().is_empty() {
-                                                mention = mention.with_agent_selector_metadata(
-                                                    controller_subject_id,
-                                                    controller_handle,
-                                                    chip.agent_slug_at_time.clone(),
-                                                );
-                                            }
-                                            mentions.push(MentionNode::mention(mention));
-                                        }
-                                    }
-                                }
+                                let mentions = composer_mention_nodes(
+                                    &body,
+                                    &mention_picker_state.read().inserted,
+                                );
                                 let local_id = new_chat_message_id();
                                 let channel = channels()
                                     .iter()
@@ -4810,6 +4962,7 @@ pub fn ChatPanel(
                                         &body_for_resolve,
                                         &realm,
                                         &actor,
+                                        own_controller_handle.as_deref(),
                                     )
                                     .await
                                     {
@@ -4968,9 +5121,11 @@ pub fn ChatPanel(
                             let base = base_url.clone();
                             let realm = selected_realm_id.clone();
                             let actor = account_did.clone();
+                            let own_controller_handle = own_controller_handle.clone();
                             let selected_strand = selected_channel_value.clone();
                             let pending_mls_binding = selected_realm_pending_mls_binding;
                             move |_| {
+                                let own_controller_handle = own_controller_handle.clone();
                                 if pending_mls_binding {
                                     status_msg.set(
                                         "epoch_update_required: membership frontier changed; MLS Remove commit required"
@@ -4983,43 +5138,10 @@ pub fn ChatPanel(
                                     status_msg.set("Type a message before secure send".to_owned());
                                     return;
                                 }
-                                // P1: encrypt the canonical Content Block JSON
-                                // (`ak.content.text`), NOT the bare body bytes, so
-                                // s`ak.content.textcan parse the decrypted payload
-                                // as `application/vnd.arkret.message+json` and the
-                                // decrypt-on-read path round-trips it back to text.
-                                let secure_content_block = match chat_content_block_for_body(&body)
-                                {
-                                    Ok(content) => content,
-                                    Err(err) => {
-                                        status_msg.set(format!(
-                                            "Send Secure rejected message content: {err:#}"
-                                        ));
-                                        return;
-                                    }
-                                };
-                                let secure_content_value = match sdk_payload_value(
-                                    secure_content_block.to_value(),
-                                    "chat encrypted content block serialize",
-                                ) {
-                                    Ok(value) => value,
-                                    Err(err) => {
-                                        status_msg.set(format!(
-                                            "Send Secure could not encode message content: {err:#}"
-                                        ));
-                                        return;
-                                    }
-                                };
-                                let secure_content_bytes =
-                                    match serde_json::to_vec(&secure_content_value) {
-                                        Ok(bytes) => bytes,
-                                        Err(err) => {
-                                            status_msg.set(format!(
-                                                "Send Secure could not encode message content: {err}"
-                                            ));
-                                            return;
-                                        }
-                                    };
+                                let mentions = composer_mention_nodes(
+                                    &body,
+                                    &mention_picker_state.read().inserted,
+                                );
                                 let realm = realm.clone();
                                 let actor = actor.clone();
                                 let strand_id = if selected_strand.trim().is_empty() {
@@ -5050,9 +5172,10 @@ pub fn ChatPanel(
                                     pending: true,
                                     failed: false,
                                     error: None,
-                                    mentions: Vec::new(),
+                                    mentions: mentions.clone(),
                                     crypto_state: MessageCryptoState::Plaintext,
                                 });
+                                mention_picker_state.write().clear();
                                 chat_draft.set(String::new());
                                 reply_to_message.set(None);
                                 let base = base.clone();
@@ -5067,6 +5190,122 @@ pub fn ChatPanel(
                                 let token_for_backup_trigger = api_token.clone();
                                 let actor_for_backup_trigger = actor.clone();
                                 spawn(async move {
+                                let mut mentions = mentions;
+                                for mention in resolve_agent_selector_mentions(
+                                    &base,
+                                    api_token.clone(),
+                                    wait_for.clone(),
+                                    &body,
+                                    &realm,
+                                    &actor,
+                                    own_controller_handle.as_deref(),
+                                )
+                                .await
+                                {
+                                    push_unique_mention_node(&mut mentions, mention);
+                                }
+                                if let Some(found) = messages
+                                    .write()
+                                    .iter_mut()
+                                    .find(|candidate| candidate.id == message_id)
+                                {
+                                    found.mentions = mentions.clone();
+                                }
+                                // Encrypt the canonical Content Block JSON with
+                                // its structured mention nodes. The UI-only
+                                // `@me` alias has already resolved to the real
+                                // controller handle before this content enters
+                                // MLS ciphertext.
+                                let actor_mentions = mentions
+                                    .iter()
+                                    .filter_map(|mention| mention.as_mention().cloned())
+                                    .collect::<Vec<_>>();
+                                let audience_mentions = mentions
+                                    .iter()
+                                    .filter_map(|mention| mention.as_audience_mention().cloned())
+                                    .collect::<Vec<_>>();
+                                let mut secure_content_block =
+                                    match chat_content_block_for_body(&body) {
+                                        Ok(content) => content,
+                                        Err(err) => {
+                                            fail_optimistic_chat_send(
+                                                messages,
+                                                chat_draft,
+                                                status_msg,
+                                                &message_id,
+                                                &body,
+                                                format!("Send Secure rejected message content: {err:#}"),
+                                            );
+                                            return;
+                                        }
+                                    };
+                                if !actor_mentions.is_empty() {
+                                    secure_content_block = match secure_content_block
+                                        .with_mentions(actor_mentions)
+                                    {
+                                        Ok(content) => content,
+                                        Err(err) => {
+                                            fail_optimistic_chat_send(
+                                                messages,
+                                                chat_draft,
+                                                status_msg,
+                                                &message_id,
+                                                &body,
+                                                format!("Send Secure could not encode mentions: {err}"),
+                                            );
+                                            return;
+                                        }
+                                    };
+                                }
+                                if !audience_mentions.is_empty() {
+                                    secure_content_block = match secure_content_block
+                                        .with_audience_mentions(audience_mentions)
+                                    {
+                                        Ok(content) => content,
+                                        Err(err) => {
+                                            fail_optimistic_chat_send(
+                                                messages,
+                                                chat_draft,
+                                                status_msg,
+                                                &message_id,
+                                                &body,
+                                                format!("Send Secure could not encode audience mentions: {err}"),
+                                            );
+                                            return;
+                                        }
+                                    };
+                                }
+                                let secure_content_value = match sdk_payload_value(
+                                    secure_content_block.to_value(),
+                                    "chat encrypted content block serialize",
+                                ) {
+                                    Ok(value) => value,
+                                    Err(err) => {
+                                        fail_optimistic_chat_send(
+                                            messages,
+                                            chat_draft,
+                                            status_msg,
+                                            &message_id,
+                                            &body,
+                                            format!("Send Secure could not encode message content: {err:#}"),
+                                        );
+                                        return;
+                                    }
+                                };
+                                let secure_content_bytes = match serde_json::to_vec(&secure_content_value) {
+                                    Ok(bytes) => bytes,
+                                    Err(err) => {
+                                        fail_optimistic_chat_send(
+                                            messages,
+                                            chat_draft,
+                                            status_msg,
+                                            &message_id,
+                                            &body,
+                                            format!("Send Secure could not encode message content: {err}"),
+                                        );
+                                        return;
+                                    }
+                                };
                                 let _hlc = Hlc::now("inkson").to_string();
                                 let seal_view = state_store.read().seal_view_for_realm(&realm);
                                 // Shared MLS core: encrypt → forced ak.mls.commit

@@ -97,6 +97,7 @@ pub(super) fn DiscussionParticipantRow(
     participants: Vec<SpaceParticipant>,
     display_label: String,
     nested_agent: bool,
+    show_binding_details: bool,
 ) -> Element {
     let participant_did_attr = participant.did.clone();
     let participant_did_label = short_protocol_id(&participant_did_attr);
@@ -133,6 +134,12 @@ pub(super) fn DiscussionParticipantRow(
                     class: "mono participant-did",
                     title: "{participant_did_attr}",
                     "{display_label}"
+                    if participant.is_self {
+                        SelfAttributionBadge {
+                            class: Some("participant-badge self participant-inline-self-badge".to_owned()),
+                            test_id: Some("participant-self-badge".to_owned()),
+                        }
+                    }
                     if !participant.is_agent {
                         if let Some(host) = binding_host.as_ref() {
                             span { class: "binding-context",
@@ -158,12 +165,6 @@ pub(super) fn DiscussionParticipantRow(
                     }
                 }
                 div { class: "participant-badges",
-                    if participant.is_self {
-                        SelfAttributionBadge {
-                            class: Some("participant-badge self".to_owned()),
-                            test_id: Some("participant-self-badge".to_owned()),
-                        }
-                    }
                     if participant.is_agent {
                         span {
                             class: "badge member-badge member-badge-agent",
@@ -182,13 +183,15 @@ pub(super) fn DiscussionParticipantRow(
                         "{participant.role.label()}"
                     }
                 }
-                details { class: "binding-context-details",
-                    summary { class: "muted", {crate::i18n::tr("chat.binding_context.details")} }
-                    div { class: "mono muted", title: "{participant_did_attr}",
-                        "{participant_did_label}"
-                    }
-                    if let Some(selector) = selector_label.clone() {
-                        div { class: "mono muted", "@{selector}" }
+                if show_binding_details {
+                    details { class: "binding-context-details",
+                        summary { class: "muted", {crate::i18n::tr("chat.binding_context.details")} }
+                        div { class: "mono muted", title: "{participant_did_attr}",
+                            "{participant_did_label}"
+                        }
+                        if let Some(selector) = selector_label.clone() {
+                            div { class: "mono muted", "@{selector}" }
+                        }
                     }
                 }
             }
