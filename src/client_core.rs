@@ -9,7 +9,6 @@ use std::sync::{Arc, Mutex};
 use dioxus::prelude::{ReadableExt, SyncSignal, WritableExt};
 use garth::{RealmEventsFrameSource, RealmEventsTransport};
 
-#[cfg(not(target_arch = "wasm32"))]
 use crate::sync_parse::{AccountSubscribeReconnectAfter, AccountSubscribeSnapshotResult};
 
 #[derive(Clone)]
