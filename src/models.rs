@@ -40,6 +40,18 @@ pub struct DirectConversationSummary {
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub struct ContactAgentRow {
+    pub agent_principal_id: String,
+    pub controller_principal_id: String,
+    #[serde(default)]
+    pub display_name: Option<String>,
+    #[serde(default)]
+    pub agent_slug: Option<String>,
+    #[serde(default)]
+    pub direct_conversation: Option<DirectConversationSummary>,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct ContactListRow {
     pub peer: String,
     pub state: String,
@@ -82,6 +94,8 @@ pub struct ContactListRow {
     /// me to invite them, so the UI disables the row rather than guessing a ref.
     #[serde(default)]
     pub invite_consent_grant_ref: Option<String>,
+    #[serde(default)]
+    pub agents: Vec<ContactAgentRow>,
 }
 
 impl ContactListRow {
@@ -145,6 +159,25 @@ impl ContactListRow {
                 .map(DirectConversationSummary::from_sdk),
             peer_service_did: row.peer_service_did.map(|value| value.to_string()),
             invite_consent_grant_ref: row.invite_consent_grant_ref.map(|value| value.to_string()),
+            agents: row
+                .agents
+                .into_iter()
+                .map(ContactAgentRow::from_sdk)
+                .collect(),
+        }
+    }
+}
+
+impl ContactAgentRow {
+    fn from_sdk(row: arkret_sdk::ContactAgentProjection) -> Self {
+        Self {
+            agent_principal_id: row.agent_principal_id.to_string(),
+            controller_principal_id: row.controller_principal_id.to_string(),
+            display_name: row.display_name,
+            agent_slug: row.agent_slug,
+            direct_conversation: row
+                .direct_conversation
+                .map(DirectConversationSummary::from_sdk),
         }
     }
 }

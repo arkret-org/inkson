@@ -279,6 +279,15 @@ export async function mockArkretApi(
   const personalAgentKeyStates = new Map<string, Record<string, unknown>>();
   const personalAgentGrants = new Map<string, Array<Record<string, unknown>>>();
   let personalAgentCounter = 0;
+  personalAgents.set("did:web:agents.example:assistant", {
+    agent_principal_id: "did:web:agents.example:assistant",
+    display_name: "Alice Assistant",
+    agent_slug: "assistant",
+    status: "active",
+    created_at: "2026-07-06T00:00:00Z",
+    updated_at: "2026-07-06T00:05:00Z",
+    controller_principal_id: accountPrincipalId,
+  });
   const eventRealmId = (event: Record<string, unknown>) =>
     String(event.realm_id ?? "");
   const accountDeviceSummaries = () =>
@@ -1738,6 +1747,20 @@ export async function mockArkretApi(
                 "ak:event:0196419b-0000-7000-8000-000000000103",
               state: "active",
             },
+            agents: [
+              {
+                agent_principal_id: "did:web:agents.example:bob-helper",
+                controller_principal_id: "did:web:bob.example",
+                display_name: "Bob Helper",
+                agent_slug: "helper",
+                direct_conversation: {
+                  realm_id: "ak:realm:01964137-0000-7000-8000-0000000000b1",
+                  main_strand_id: "ak:strand:01964137-0000-7000-8000-0000000000b2",
+                  binding_event_ref: "ak:event:01964137-0000-7000-8000-0000000000b3",
+                  state: "active",
+                },
+              },
+            ],
           },
           {
             peer: "did:web:carol.example",
@@ -1922,6 +1945,18 @@ export async function mockArkretApi(
       return json(route, {
         agents: Array.from(personalAgents.values()),
         has_more: false,
+      });
+    }
+
+    if (
+      url.pathname === "/_arkret/self/agent-sidecar-threads:ensure" &&
+      route.request().method() === "POST"
+    ) {
+      return json(route, {
+        ok: true,
+        private_circle_id: "ak:circle:01964137-0000-7000-8000-0000000000a1",
+        private_strand_id: "ak:strand:01964137-0000-7000-8000-0000000000a2",
+        private_relation_id: "ak:relation:01964137-0000-7000-8000-0000000000a3",
       });
     }
 

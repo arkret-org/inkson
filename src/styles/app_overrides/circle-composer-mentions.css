@@ -1274,6 +1274,47 @@
   grid-template-columns: var(--sidebar-icon-track) minmax(0, 1fr) repeat(2, auto);
 }
 
+.contact-sidebar-group {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+
+.contact-sidebar-user-row {
+  min-height: 36px;
+}
+
+.contact-agent-count,
+.contact-agent-chevron {
+  flex: 0 0 auto;
+}
+
+.contact-agent-count[role="button"] {
+  cursor: pointer;
+}
+
+.contact-agent-list {
+  display: grid;
+  gap: 4px;
+  padding-inline-start: calc(var(--sidebar-icon-track) + 10px);
+}
+
+.contact-sidebar-agent-row {
+  min-height: 34px;
+  grid-template-columns: var(--sidebar-icon-track) minmax(0, 1fr) auto;
+  border-style: dashed;
+}
+
+.contact-sidebar-agent-row .sidebar-nav-icon {
+  color: var(--accent);
+}
+
+.shell.app.sidebar-collapsed .contact-agent-list,
+.shell.app.sidebar-collapsed .contact-agent-count,
+.shell.app.sidebar-collapsed .contact-agent-chevron {
+  display: none;
+}
+
 .sidebar-nav-item .grow {
   min-width: 0;
 }

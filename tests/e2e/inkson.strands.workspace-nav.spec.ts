@@ -29,12 +29,24 @@ test("workspace sidebar separates contact-based direct chats", async ({ page }) 
   await expect(shell.getByTestId("contacts-sidebar-search-input")).toBeVisible();
   await expect(shell.getByTestId("sidebar-new-contact-cta")).toBeVisible();
   await expect(shell.getByTestId("contacts-sidebar-summary")).toContainText("Contacts");
+  await expect(shell.getByTestId("contact-sidebar-self-row")).toContainText("You");
+  await expect(shell.locator(".contact-sidebar-group").first()).toHaveAttribute(
+    "data-testid",
+    "contact-sidebar-self-group",
+  );
+  await expect(shell.getByTestId("contact-sidebar-self-agents")).toContainText("Alice Assistant");
+  await expect(shell.getByTestId("contact-sidebar-agent-toggle").first()).toContainText("Agents 1");
+  await shell.getByTestId("contact-sidebar-agent-toggle").first().click();
+  await expect(shell.getByTestId("contact-sidebar-contact-agents")).toContainText("Bob Helper");
   await expect(shell.getByTestId("direct-conversation-row").filter({ hasText: "bob:example.com" })).toContainText(
     "DM",
   );
   await expect(shell.getByTestId("direct-conversation-row").filter({ hasText: "carol:example.com" })).toContainText(
     "pending",
   );
+  await shell.getByTestId("contact-sidebar-agent-row").filter({ hasText: "Bob Helper" }).click();
+  await expect(page).toHaveURL(/\/direct\/.*0000000000b1\/.*0000000000b2$/);
+  await shell.getByTestId("realm-sidebar-tab-direct").click();
   await shell.getByTestId("realm-sidebar-manage-home-button").click();
   await expect(page).toHaveURL(/\/contacts\/manage$/);
   await expect(shell.getByTestId("contacts-manage-page")).toBeVisible();

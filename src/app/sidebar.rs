@@ -59,6 +59,62 @@ pub(super) fn sidebar_text_matches_query(normalized_query: &str, values: &[&str]
             .any(|value| value.to_ascii_lowercase().contains(normalized_query))
 }
 
+pub(super) fn load_direct_contacts_and_agents_for_sidebar(
+    base: String,
+    api_token: String,
+    mut direct_contact_rows: Signal<Vec<crate::models::ContactListRow>>,
+    mut direct_contacts_loaded: Signal<bool>,
+    mut own_agent_rows: Signal<Vec<arkret_sdk::AgentProjection>>,
+    mut own_agents_loaded: Signal<bool>,
+) {
+    if api_token.trim().is_empty() {
+        direct_contact_rows.set(Vec::new());
+        direct_contacts_loaded.set(false);
+        own_agent_rows.set(Vec::new());
+        own_agents_loaded.set(false);
+        return;
+    }
+
+    direct_contacts_loaded.set(true);
+    own_agents_loaded.set(true);
+    spawn(async move {
+        match crate::views::helpers::with_authed_sdk_client(&base, api_token, |http| async move {
+            let contacts = crate::account_api::contacts(&http).await;
+            let agents = http.agent_list().await.map_err(anyhow::Error::from);
+            Ok((contacts, agents))
+        })
+        .await
+        {
+            Ok((contacts, agents)) => {
+                match contacts {
+                    Ok(response) => direct_contact_rows.set(response.contacts),
+                    Err(err) => {
+                        direct_contacts_loaded.set(false);
+                        crate::components::feedback::toast_error(
+                            "feedback.contacts_load_failed",
+                            vec![],
+                            Some(err.to_string()),
+                        );
+                    }
+                }
+                match agents {
+                    Ok(response) => own_agent_rows.set(response.agents),
+                    Err(_) => own_agents_loaded.set(false),
+                }
+            }
+            Err(err) => {
+                direct_contacts_loaded.set(false);
+                own_agents_loaded.set(false);
+                crate::components::feedback::toast_error(
+                    "feedback.contacts_load_failed",
+                    vec![],
+                    Some(err.display()),
+                );
+            }
+        }
+    });
+}
+
 pub(super) fn load_direct_contacts_for_sidebar(
     base: String,
     api_token: String,
@@ -70,7 +126,6 @@ pub(super) fn load_direct_contacts_for_sidebar(
         direct_contacts_loaded.set(false);
         return;
     }
-
     direct_contacts_loaded.set(true);
     spawn(async move {
         match crate::views::helpers::with_authed_sdk_client(&base, api_token, |http| async move {

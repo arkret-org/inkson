@@ -788,6 +788,10 @@ pub fn RouterView() -> Element {
     let manage_bulk_busy = use_signal(|| false);
     let direct_contact_rows = use_signal(Vec::<crate::models::ContactListRow>::new);
     let direct_contacts_loaded = use_signal(|| false);
+    let own_agent_rows = use_signal(Vec::<arkret_sdk::AgentProjection>::new);
+    let own_agents_loaded = use_signal(|| false);
+    let mut own_agents_expanded = use_signal(|| true);
+    let mut expanded_contact_agents = use_signal(BTreeSet::<String>::new);
     let mut sidebar_row_menu_open = use_signal(|| Option::<String>::None);
     // UI pre-gate cache for the row menu's Add Member / Settings entries,
     // keyed by realm_id. Filled lazily when a row kebab opens (see
@@ -2937,7 +2941,7 @@ pub fn RouterView() -> Element {
     let active_projection_realm_id =
         projection_realm_id_for_known_node(&loaded_realm_tree_nodes, &active_realm_id)
             .unwrap_or_default();
-    let direct_contact_count = direct_contact_rows.read().len();
+    let direct_contact_count = direct_contact_rows.read().len() + usize::from(has_session);
     let pinned_realm_ids = {
         let store = state_store.read();
         pinned_realm_ids_from_store(&store)
@@ -3005,10 +3009,21 @@ pub fn RouterView() -> Element {
                 .cloned()
                 .collect::<Vec<_>>()
                 .join(" ");
-            sidebar_text_matches_query(
-                &direct_sidebar_query_value,
-                &[&contact.peer, &contact.state, &display_name, &scopes],
-            )
+            let agent_match = contact.agents.iter().any(|agent| {
+                sidebar_text_matches_query(
+                    &direct_sidebar_query_value,
+                    &[
+                        &agent.agent_principal_id,
+                        agent.display_name.as_deref().unwrap_or_default(),
+                        agent.agent_slug.as_deref().unwrap_or_default(),
+                    ],
+                )
+            });
+            agent_match
+                || sidebar_text_matches_query(
+                    &direct_sidebar_query_value,
+                    &[&contact.peer, &contact.state, &display_name, &scopes],
+                )
         })
         .cloned()
         .collect();
@@ -3857,11 +3872,13 @@ pub fn RouterView() -> Element {
                                         if direct_contacts_loaded() || token().trim().is_empty() {
                                             return;
                                         }
-                                        load_direct_contacts_for_sidebar(
+                                        load_direct_contacts_and_agents_for_sidebar(
                                             base.clone(),
                                             token(),
                                             direct_contact_rows,
                                             direct_contacts_loaded,
+                                            own_agent_rows,
+                                            own_agents_loaded,
                                         );
                                     }
                                 },
@@ -3897,11 +3914,13 @@ pub fn RouterView() -> Element {
                                         let base = base_url();
                                         move |_| {
                                             if realm_sidebar_tab() == "direct" && !direct_contacts_loaded() {
-                                                load_direct_contacts_for_sidebar(
+                                                load_direct_contacts_and_agents_for_sidebar(
                                                     base.clone(),
                                                     token(),
                                                     direct_contact_rows,
                                                     direct_contacts_loaded,
+                                                    own_agent_rows,
+                                                    own_agents_loaded,
                                                 );
                                             }
                                         }
@@ -3950,11 +3969,13 @@ pub fn RouterView() -> Element {
                                             if direct_contacts_loaded() || token().trim().is_empty() {
                                                 return;
                                             }
-                                            load_direct_contacts_for_sidebar(
+                                            load_direct_contacts_and_agents_for_sidebar(
                                                 base.clone(),
                                                 token(),
                                                 direct_contact_rows,
                                                 direct_contacts_loaded,
+                                                own_agent_rows,
+                                                own_agents_loaded,
                                             );
                                         }
                                     },
@@ -3975,14 +3996,128 @@ pub fn RouterView() -> Element {
                                 span { class: "pill muted xs", "{direct_contact_count}" }
                             }
                         }
-                        if direct_contact_rows.read().is_empty() {
-                            div { class: "sidebar-nav-item is-dim", "data-testid": "direct-conversation-empty-state",
-                                span { class: "sidebar-nav-icon", UiIcon { name: "users" } }
-                                span { class: "grow truncate",
-                                    {if has_session { crate::i18n::tr("contacts.empty") } else { crate::i18n::tr("contacts.sign_in") }}
+                        if has_session && (direct_sidebar_query_value.is_empty()
+                            || sidebar_text_matches_query(
+                                &direct_sidebar_query_value,
+                                &[&account_did(), &display_name_for_did(&state_store.read(), &account_did()), &account_primary_handle()],
+                            ))
+                        {
+                            {
+                                let self_did = account_did();
+                                let self_display_name = display_name_for_did(&state_store.read(), &self_did);
+                                let own_agent_count = own_agent_rows.read().len();
+                                rsx! {
+                                    div {
+                                        class: "contact-sidebar-group is-self",
+                                        "data-testid": "contact-sidebar-self-group",
+                                        button {
+                                            class: "sidebar-nav-item contact-sidebar-row contact-sidebar-user-row",
+                                            r#type: "button",
+                                            "data-testid": "contact-sidebar-self-row",
+                                            "data-peer": "{self_did}",
+                                            "aria-expanded": if own_agents_expanded() { "true" } else { "false" },
+                                            onclick: move |_| own_agents_expanded.toggle(),
+                                            span { class: "sidebar-nav-icon", UiIcon { name: "user" } }
+                                            span { class: "grow truncate", "{self_display_name}" }
+                                            span { class: "pill muted xs", "You" }
+                                            if own_agent_count > 0 {
+                                                span { class: "pill muted xs contact-agent-count", "Agents {own_agent_count}" }
+                                            }
+                                            span { class: "contact-agent-chevron", UiIcon { name: if own_agents_expanded() { "chevron-down" } else { "chevron-right" } } }
+                                        }
+                                        if own_agents_expanded() {
+                                            div { class: "contact-agent-list", "data-testid": "contact-sidebar-self-agents",
+                                                for agent in own_agent_rows.read().iter() {
+                                                    {
+                                                        let agent_id = agent.agent_principal_id.to_string();
+                                                        let agent_label = agent.display_name.clone()
+                                                            .or_else(|| agent.agent_slug.clone())
+                                                            .unwrap_or_else(|| short_protocol_id(&agent_id));
+                                                        let agent_status = format!("{:?}", agent.status).to_ascii_lowercase();
+                                                        let controller_did = self_did.clone();
+                                                        rsx! {
+                                                            button {
+                                                                key: "{agent_id}",
+                                                                class: "sidebar-nav-item contact-sidebar-agent-row",
+                                                                r#type: "button",
+                                                                "data-testid": "contact-sidebar-agent-row",
+                                                                "data-agent": "{agent_id}",
+                                                                "data-controller": "{controller_did}",
+                                                                title: "Chat with {agent_label}",
+                                                                onclick: {
+                                                                    let base = base_url();
+                                                                    let agent_id = agent_id.clone();
+                                                                    let controller_did = controller_did.clone();
+                                                                    move |event: dioxus::events::MouseEvent| {
+                                                                        event.prevent_default();
+                                                                        event.stop_propagation();
+                                                                        let api_token = token();
+                                                                        let base = base.clone();
+                                                                        let agent_id = agent_id.clone();
+                                                                        let controller_did = controller_did.clone();
+                                                                        spawn(async move {
+                                                                            let request = (|| -> anyhow::Result<arkret_sdk::AgentSidecarThreadEnsureRequestBody> {
+                                                                                let controller = arkret_sdk::Did::new(controller_did.clone())?;
+                                                                                let agent = arkret_sdk::Did::new(agent_id)?;
+                                                                                let self_realm = arkret_sdk::principal_control_realm_id(&controller);
+                                                                                let realm_id = arkret_sdk::RealmId::new(self_realm.clone())?;
+                                                                                let strand_id = arkret_sdk::StrandId::new(default_strand_id_for_realm(&self_realm))?;
+                                                                                Ok(arkret_sdk::AgentSidecarThreadEnsureRequestBody {
+                                                                                    controller_principal_id: controller,
+                                                                                    addressed_agent_principal_ids: vec![agent],
+                                                                                    context_ref: arkret_sdk::AgentSidecarContextRef::strand(realm_id, strand_id),
+                                                                                })
+                                                                            })();
+                                                                            let Ok(request) = request else {
+                                                                                crate::components::feedback::toast_error(
+                                                                                    "feedback.direct_open_failed", vec![], Some("Invalid agent identity".to_owned()),
+                                                                                );
+                                                                                return;
+                                                                            };
+                                                                            match crate::views::helpers::with_authed_sdk_client(
+                                                                                &base,
+                                                                                api_token,
+                                                                                |http| async move {
+                                                                                    http.agent_sidecar_thread_ensure(&request)
+                                                                                        .await
+                                                                                        .map_err(anyhow::Error::from)
+                                                                                },
+                                                                            ).await {
+                                                                                Ok(response) => {
+                                                                                    let controller = arkret_sdk::Did::new(controller_did)
+                                                                                        .expect("controller DID validated before request");
+                                                                                    let _ = navigator.push(Route::DirectConversation {
+                                                                                        realm_id: arkret_sdk::principal_control_realm_id(&controller),
+                                                                                        strand_id: response.private_strand_id.to_string(),
+                                                                                    });
+                                                                                }
+                                                                                Err(err) => crate::components::feedback::toast_error(
+                                                                                    "feedback.direct_open_failed", vec![], Some(err.display()),
+                                                                                ),
+                                                                            }
+                                                                        });
+                                                                    }
+                                                                },
+                                                                span { class: "sidebar-nav-icon", UiIcon { name: "bot" } }
+                                                                span { class: "grow truncate", "{agent_label}" }
+                                                                span { class: "pill muted xs", "AI agent" }
+                                                                span { class: "pill muted xs", "{agent_status}" }
+                                                            }
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
                                 }
                             }
-                        } else if filtered_direct_contact_rows.is_empty() {
+                        }
+                        if !has_session {
+                            div { class: "sidebar-nav-item is-dim", "data-testid": "direct-conversation-empty-state",
+                                span { class: "sidebar-nav-icon", UiIcon { name: "users" } }
+                                span { class: "grow truncate", {crate::i18n::tr("contacts.sign_in")} }
+                            }
+                        } else if filtered_direct_contact_rows.is_empty() && !direct_sidebar_query_value.is_empty() {
                             div { class: "sidebar-nav-item is-dim", "data-testid": "direct-conversation-no-results",
                                 span { class: "sidebar-nav-icon", UiIcon { name: "search" } }
                                 span { class: "grow truncate", "No matching contacts" }
@@ -4033,9 +4168,23 @@ pub fn RouterView() -> Element {
                                     let contact_menu_is_open =
                                         sidebar_row_menu_open().as_deref()
                                             == Some(contact_menu_key.as_str());
+                                    let contact_agent_count = contact.agents.len();
+                                    let contact_agents_expanded = expanded_contact_agents.read().contains(&peer);
+                                    let show_contact_agents = contact_agents_expanded
+                                        || (!direct_sidebar_query_value.is_empty()
+                                            && contact.agents.iter().any(|agent| {
+                                                sidebar_text_matches_query(
+                                                    &direct_sidebar_query_value,
+                                                    &[
+                                                        &agent.agent_principal_id,
+                                                        agent.display_name.as_deref().unwrap_or_default(),
+                                                        agent.agent_slug.as_deref().unwrap_or_default(),
+                                                    ],
+                                                )
+                                            }));
                                     rsx! {
-                                        div { class: "sidebar-row contact-sidebar-action-row",
-                                            key: "{peer}",
+                                        div { class: "contact-sidebar-group", key: "{peer}", "data-controller": "{peer}",
+                                          div { class: "sidebar-row contact-sidebar-action-row",
                                             button {
                                                 class: if can_resolve { "sidebar-nav-item contact-sidebar-row sidebar-row-main" } else { "sidebar-nav-item contact-sidebar-row sidebar-row-main is-dim" },
                                                 r#type: "button",
@@ -4125,6 +4274,28 @@ pub fn RouterView() -> Element {
                                                 span { class: "pill muted xs", "{state_label}" }
                                                 if has_direct_scope {
                                                     span { class: "pill muted xs", title: "{scopes_label}", "DM" }
+                                                }
+                                                if contact_agent_count > 0 {
+                                                    span {
+                                                        class: "pill muted xs contact-agent-count",
+                                                        role: "button",
+                                                        tabindex: "0",
+                                                        "data-testid": "contact-sidebar-agent-toggle",
+                                                        "aria-expanded": if contact_agents_expanded { "true" } else { "false" },
+                                                        onclick: {
+                                                            let peer = peer.clone();
+                                                            move |event: dioxus::events::MouseEvent| {
+                                                                event.prevent_default();
+                                                                event.stop_propagation();
+                                                                if expanded_contact_agents.read().contains(&peer) {
+                                                                    expanded_contact_agents.write().remove(&peer);
+                                                                } else {
+                                                                    expanded_contact_agents.write().insert(peer.clone());
+                                                                }
+                                                            }
+                                                        },
+                                                        "Agents {contact_agent_count}"
+                                                    }
                                                 }
                                             }
                                             div {
@@ -4219,6 +4390,88 @@ pub fn RouterView() -> Element {
                                                     }
                                                 }
                                             }
+                                          }
+                                          if show_contact_agents {
+                                            div { class: "contact-agent-list", "data-testid": "contact-sidebar-contact-agents",
+                                              for agent in contact.agents.iter() {
+                                                {
+                                                    let agent_id = agent.agent_principal_id.clone();
+                                                    let agent_label = agent.display_name.clone()
+                                                        .or_else(|| agent.agent_slug.clone())
+                                                        .unwrap_or_else(|| short_protocol_id(&agent_id));
+                                                    let agent_direct = agent.direct_conversation.clone();
+                                                    let controller = peer.clone();
+                                                    rsx! {
+                                                        button {
+                                                            key: "{agent_id}",
+                                                            class: "sidebar-nav-item contact-sidebar-agent-row",
+                                                            r#type: "button",
+                                                            "data-testid": "contact-sidebar-agent-row",
+                                                            "data-agent": "{agent_id}",
+                                                            "data-controller": "{controller}",
+                                                            title: "Chat with {agent_label}",
+                                                            onclick: {
+                                                                let base = base_url();
+                                                                let agent_id = agent_id.clone();
+                                                                let agent_direct = agent_direct.clone();
+                                                                move |event: dioxus::events::MouseEvent| {
+                                                                    event.prevent_default();
+                                                                    event.stop_propagation();
+                                                                    if let Some(summary) = agent_direct.clone()
+                                                                        && summary.state == "active"
+                                                                    {
+                                                                        let _ = navigator.push(Route::DirectConversation {
+                                                                            realm_id: summary.realm_id,
+                                                                            strand_id: summary.main_strand_id,
+                                                                        });
+                                                                        return;
+                                                                    }
+                                                                    let api_token = token();
+                                                                    let base = base.clone();
+                                                                    let agent_id = agent_id.clone();
+                                                                    spawn(async move {
+                                                                        match crate::views::helpers::with_authed_sdk_client(
+                                                                            &base,
+                                                                            api_token,
+                                                                            |http| async move {
+                                                                                crate::account_api::direct_conversation_resolve(&http, &agent_id, true).await
+                                                                            },
+                                                                        ).await {
+                                                                            Ok(response) if matches!(
+                                                                                response.state,
+                                                                                arkret_sdk::DirectConversationResolveState::Found
+                                                                                    | arkret_sdk::DirectConversationResolveState::Created
+                                                                            ) => {
+                                                                                if let (Some(realm_id), Some(strand_id)) =
+                                                                                    (response.realm_id, response.main_strand_id)
+                                                                                {
+                                                                                    let _ = navigator.push(Route::DirectConversation {
+                                                                                        realm_id: realm_id.to_string(),
+                                                                                        strand_id: strand_id.to_string(),
+                                                                                    });
+                                                                                }
+                                                                            }
+                                                                            Ok(response) => crate::components::feedback::toast_error(
+                                                                                "feedback.direct_open_failed",
+                                                                                vec![],
+                                                                                Some(format!("state: {:?}", response.state)),
+                                                                            ),
+                                                                            Err(err) => crate::components::feedback::toast_error(
+                                                                                "feedback.direct_open_failed", vec![], Some(err.display()),
+                                                                            ),
+                                                                        }
+                                                                    });
+                                                                }
+                                                            },
+                                                            span { class: "sidebar-nav-icon", UiIcon { name: "bot" } }
+                                                            span { class: "grow truncate", "{agent_label}" }
+                                                            span { class: "pill muted xs", "AI agent" }
+                                                        }
+                                                    }
+                                                }
+                                              }
+                                            }
+                                          }
                                         }
                                     }
                                 }
