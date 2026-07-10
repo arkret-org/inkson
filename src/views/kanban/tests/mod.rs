@@ -77,7 +77,7 @@ pub(super) fn board_write_record(state: CardState, note: &str) -> BoardWriteReco
         state,
         move_id: "ak:operation:test".to_owned(),
         kind: "ak.strand.create".to_owned(),
-        cell_id: "ak:cell:test".to_owned(),
+        cell_id: "ak:cell:ak.component.test.board_write.v1:test".to_owned(),
         effect_summary: "{}".to_owned(),
         seal_ref: "ak:seal:test".to_owned(),
         hlc: "000000000000-0000-00000000".to_owned(),

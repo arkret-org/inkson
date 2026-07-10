@@ -659,9 +659,14 @@ fn cba_effect_plane_for_event(event: &arkret_sdk::Event) -> anyhow::Result<CbaEf
 }
 
 fn cba_cell_family(cell: &str) -> anyhow::Result<&str> {
+    arkret_sdk::CellRef::new(cell.to_owned()).map_err(|_| {
+        anyhow::anyhow!(
+            "effects[].cell must use canonical ak:cell:ak.component.<facet-path>.v<n>:<subject> form"
+        )
+    })?;
     let rest = cell
         .strip_prefix("ak:cell:")
-        .ok_or_else(|| anyhow::anyhow!("effects[].cell must use ak:cell: prefix"))?;
+        .expect("validated CellRef has ak:cell: prefix");
     let (family, subject) = rest
         .split_once(':')
         .ok_or_else(|| anyhow::anyhow!("effects[].cell must include family and subject"))?;
