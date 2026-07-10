@@ -29,6 +29,13 @@ export default defineConfig({
         url: baseURL,
         reuseExistingServer: !process.env.CI,
         timeout: 240_000,
+        // Never let the E2E dx process overwrite the live development server's
+        // wasm/CSS-module bundle in target/dx. CSS-module class hashes and
+        // stylesheets must be emitted by the same build invocation.
+        env: {
+          CARGO_TARGET_DIR:
+            process.env.INKSON_E2E_CARGO_TARGET_DIR ?? "target/playwright-e2e",
+        },
       }
     : undefined,
 });

@@ -227,7 +227,8 @@ test("account settings split account/server info and surface personal agents", a
   await expect(page.getByTestId("settings-panel")).toBeVisible({ timeout: 120_000 });
   await expect(page.getByTestId("settings-nav-item-account")).toHaveAttribute("aria-current", "page");
   await expect(page.getByTestId("settings-avatar-card")).toBeVisible();
-  await expect(page.getByTestId("settings-account-did")).toBeVisible();
+  await expect(page.getByTestId("settings-account-did")).toHaveText("did:web:alice.example");
+  await expect(page.getByTestId("settings-account-did")).not.toHaveText("@alice:local.host");
   await expect(page.getByTestId("settings-nav-item-recovery")).toBeVisible();
 
   // Server information is a separate section (transport context).
