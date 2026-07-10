@@ -1,3 +1,12 @@
+[default]
+extend-ignore-re = [
+    # multibase/base58 strings (did:key, did:webvh)
+    "z[1-9A-HJ-NP-Za-km-z]{20,}",
+    # long base64 / base64url runs (keys, JWT segments, fixtures)
+    "[A-Za-z0-9+/=]{40,}",
+    "[A-Za-z0-9_-]{40,}",
+]
+
 [files]
 extend-exclude = [
   "Cargo.lock",
@@ -7,6 +16,9 @@ extend-exclude = [
   "test-results",
   "playwright-report",
   "docker-context",
+  # vendored third-party bundles
+  "assets/vendor",
+  "assets/livekit_vendor.js",
 ]
 
 [default.extend-words]
@@ -15,3 +27,17 @@ OpenMLS = "OpenMLS"
 inkson = "inkson"
 authz = "authz"
 to_device = "to_device"
+# legitimate plural of canonicalization
+canonicalizations = "canonicalizations"
+# accepted variant spellings
+browseable = "browseable"
+unparseable = "unparseable"
+Unparseable = "Unparseable"
+# hyphenated prefix: mis-configured, ...
+mis = "mis"
+# spec rule IDs like YG-MENT-2
+MENT = "MENT"
+# deliberately truncated test string "auth.loc...ANONICAL"
+ANONICAL = "ANONICAL"
+# "Theme" in several locales (i18n)
+Tema = "Tema"

@@ -1822,7 +1822,7 @@ pub fn KanbanPanel(
                                     "data-testid": "add-column-button",
                                     onclick: {
                                         // Lists are Space containers in v1. The local column is
-                                        // visibl`ak.self.eventsut remains in sending/failed state
+                                        // visible but remains in sending/failed state
                                         // until `ak.self.events.command.submit` returns.
                                         let base = base_url.clone();
                                         let realm = selected_realm_id.clone();
