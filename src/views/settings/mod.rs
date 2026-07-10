@@ -592,14 +592,6 @@ pub fn SettingsPanel(
     let account_default_avatar_tone = default_avatar_tone(&personal_handles, &account_did());
     let account_default_avatar_class =
         format!("avatar-img lg default-avatar tone-{account_default_avatar_tone}");
-    let principal_short_label = if has_session {
-        personal_handles
-            .first()
-            .map(|handle| format!("@{handle}"))
-            .unwrap_or_else(|| display_name_for_did(&state_store.read(), &principal_label))
-    } else {
-        principal_label.clone()
-    };
     let device_short_label = short_protocol_id(&device_label);
     {
         let account_key = account_did();
@@ -1164,7 +1156,7 @@ pub fn SettingsPanel(
                                                 class: "mono",
                                                 "data-testid": "settings-account-did",
                                                 title: "{principal_label}",
-                                                "{principal_short_label}"
+                                                "{principal_label}"
                                             }
                                             Button {
                                                 variant: ButtonVariant::Ghost,

@@ -73,10 +73,7 @@ fn decode_capability_row(grant: &Capability) -> CapabilityRow {
 }
 
 #[component]
-pub fn CapabilitiesSettingsCard(
-    account_did: Signal<String>,
-    token: Signal<String>,
-) -> Element {
+pub fn CapabilitiesSettingsCard(account_did: Signal<String>, token: Signal<String>) -> Element {
     // A4 — base_url / state_store from session context instead of props.
     let base_url = crate::app::SessionContext::get().base_url;
     let state_store = crate::app::SessionContext::get().state_store;

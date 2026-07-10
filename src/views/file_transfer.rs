@@ -11,11 +11,7 @@ use crate::file_transfer::{
 };
 
 #[component]
-pub fn FileTransferPanel(
-    token: Signal<String>,
-    account_did: String,
-    device_id: String,
-) -> Element {
+pub fn FileTransferPanel(token: Signal<String>, account_did: String, device_id: String) -> Element {
     // A4 — base_url from session context instead of a prop.
     let base_url = crate::app::SessionContext::base_url_string();
     let mut items = use_signal(Vec::<FileTransferItem>::new);

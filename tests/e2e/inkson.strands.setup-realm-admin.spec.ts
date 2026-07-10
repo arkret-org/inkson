@@ -16,6 +16,23 @@ test("setup realm form stays in the main workspace layout", async ({ page }) => 
   await page.goto("/setup/realms", { waitUntil: "domcontentloaded" });
   await expect(page.getByTestId("setup-panel")).toBeVisible();
 
+  const activeStepButton = page.locator(
+    '.setup-step-list button[data-style="primary"]',
+  );
+  await expect(activeStepButton).toHaveCount(1);
+  await expect(activeStepButton).toHaveClass(/\bdx-button\b/);
+  const activeStepStyle = await activeStepButton.evaluate((button) => {
+    const style = getComputedStyle(button);
+    return {
+      display: style.display,
+      borderRadius: style.borderRadius,
+      backgroundImage: style.backgroundImage,
+    };
+  });
+  expect(activeStepStyle.display).toBe("inline-flex");
+  expect(activeStepStyle.borderRadius).toBe("8px");
+  expect(activeStepStyle.backgroundImage).toContain("linear-gradient");
+
   const measureLayout = () => page.evaluate(() => {
     const rectOf = (selector: string) => {
       const rect = document.querySelector(selector)?.getBoundingClientRect();

@@ -152,6 +152,11 @@ const APP_OVERRIDES: &str = concat!(
 /// before the three existing style blocks so later design.css/app_overrides can
 /// override these tokens.
 const DXC_THEME: &str = yoface::TOKENS_CSS;
+// CSS-module class hashes include the component source path. Keep the shared
+// button stylesheet available through yoface's stable `dx-button` class so a
+// relocated workspace or stale Dioxus asset directory cannot strip every
+// button down to the browser default while the wasm and CSS hashes disagree.
+const DXC_BUTTON_STYLE: &str = yoface::ui::button::BUTTON_CSS;
 
 #[component]
 pub fn App() -> Element {
@@ -3244,6 +3249,7 @@ pub fn RouterView() -> Element {
 
     rsx! {
         style { "{DXC_THEME}" }
+        style { "{DXC_BUTTON_STYLE}" }
         style { "{STYLE}" }
         style { "{DESIGN_STYLE}" }
         style { "{APP_OVERRIDES}" }
