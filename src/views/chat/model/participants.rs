@@ -767,6 +767,27 @@ pub(crate) fn agent_candidate_is_visible(
             .is_some_and(|metadata| metadata.controller_did.trim() == account_did.trim())
 }
 
+pub(crate) fn readable_participation_agent_ids(
+    participants: &[SpaceParticipant],
+    account_did: &str,
+) -> Vec<String> {
+    let account_did = account_did.trim();
+    let mut agent_ids = participants
+        .iter()
+        .filter(|participant| participant.is_agent)
+        .filter(|participant| {
+            participant
+                .agent_metadata
+                .as_ref()
+                .is_some_and(|metadata| metadata.controller_did.trim() == account_did)
+        })
+        .map(|participant| participant.did.clone())
+        .collect::<Vec<_>>();
+    agent_ids.sort();
+    agent_ids.dedup();
+    agent_ids
+}
+
 pub(crate) fn sender_display_label(
     sender: &str,
     account_did: &str,

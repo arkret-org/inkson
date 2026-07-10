@@ -6,7 +6,6 @@ pub struct ClientEncryptedMessage {
     pub payload: EncryptedPayload,
 }
 
-#[cfg(not(target_arch = "wasm32"))]
 mod native {
     use arkret_sdk::{
         ArkretMlsGroup, ArkretMlsIdentity, DeviceId, Did, EncryptedMessage, MessageCrypto,
@@ -182,7 +181,6 @@ mod native {
     }
 }
 
-#[cfg(not(target_arch = "wasm32"))]
 pub use native::LocalMlsDevice;
 
 pub fn compose_local_encrypted_message(
@@ -195,7 +193,6 @@ pub fn compose_local_encrypted_message(
     compose_local_encrypted_message_inner(principal_id, device_id, realm_id, message_id, body)
 }
 
-#[cfg(not(target_arch = "wasm32"))]
 fn compose_local_encrypted_message_inner(
     principal_id: &str,
     device_id: &str,
@@ -217,27 +214,6 @@ fn compose_local_encrypted_message_inner(
         }
     }))?;
     device.encrypt_message(message_id, &plaintext)
-}
-
-/// Wasm builds do not link the native MLS stack, so there is no real
-/// ciphertext to produce here. R17: the previous implementation emitted a
-/// hard-coded placeholder ciphertext (gated on
-/// `INKSON_ALLOW_PLACEHOLDER_CIPHERTEXT=1`) while still tagging it
-/// `scheme: MlsRfc9420` — a fake ciphertext masquerading as a real MLS
-/// payload. That fallback has been removed entirely: this path is now
-/// unconditionally fail-closed so no fake "MLS" ciphertext can ever reach the
-/// wire. The default build behavior is unchanged (it always bailed).
-#[cfg(target_arch = "wasm32")]
-fn compose_local_encrypted_message_inner(
-    _principal_id: &str,
-    _device_id: &str,
-    _realm_id: &str,
-    _message_id: &str,
-    _body: &str,
-) -> anyhow::Result<ClientEncryptedMessage> {
-    anyhow::bail!(
-        "MLS encryption is unavailable in this wasm build; refusing to emit placeholder ciphertext"
-    )
 }
 
 #[cfg(all(test, not(target_arch = "wasm32")))]
@@ -357,8 +333,10 @@ mod tests {
             "Remove must emit at least one by-reference proposal"
         );
         for proposal in &remove.proposals {
+            bob.apply_proposal(proposal).unwrap();
             carol.apply_proposal(proposal).unwrap();
         }
+        bob.apply_commit(&remove.commit).unwrap();
         carol.apply_commit(&remove.commit).unwrap();
 
         let after_remove = alice
@@ -376,7 +354,12 @@ mod tests {
         ));
 
         let bob_after = bob.decrypt_or_preserve(after_remove.clone()).unwrap();
-        let MessageCryptoDecrypt::Encrypted { payload, .. } = bob_after else {
+        let MessageCryptoDecrypt::Encrypted {
+            payload,
+            reason: MessageCryptoUnavailable::Removed,
+            ..
+        } = bob_after
+        else {
             panic!("removed member must not decrypt post-remove ciphertext");
         };
         assert_eq!(payload.ciphertext, after_remove.payload.ciphertext);

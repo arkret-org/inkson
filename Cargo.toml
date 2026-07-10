@@ -293,6 +293,9 @@ jsonschema = {workspace = true,default-features = false,features = ["resolve-fil
 rand_core = {workspace = true}
 rand_core_06 = {workspace = true}
 regex = {workspace = true}
+
+[target.'cfg(target_arch = "wasm32")'.dev-dependencies]
+wasm-bindgen-test = "0.3"
 # Pinned by rev; bump deliberately when upgrading.
 [patch."https://github.com/DioxusLabs/components"]
 dioxus-primitives = { git = "https://github.com/arkret/dioxus-components", rev = "3510aeee2d14f0ca2c11682c9b826650cb557d2f" }

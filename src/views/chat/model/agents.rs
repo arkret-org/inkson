@@ -177,7 +177,7 @@ pub(crate) fn agent_metadata_from_raw_operations(
     out
 }
 
-pub(crate) fn participation_allows_public_interaction(
+pub(crate) fn participation_allows_public_reply(
     entries: &[arkret_sdk::models::AgentParticipationEntry],
     realm_id: &str,
     circle_id: Option<&str>,
@@ -214,7 +214,7 @@ pub(crate) fn participation_allows_public_interaction(
     strand_match
         .or(circle_match)
         .or(realm_match)
-        .is_some_and(|entry| entry.effective.reply || entry.effective.accept_third_party_mention)
+        .is_some_and(|entry| entry.effective.reply)
 }
 
 /// Compatibility helper for older call sites and tests that only need

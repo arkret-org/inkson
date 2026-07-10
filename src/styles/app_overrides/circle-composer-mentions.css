@@ -440,6 +440,12 @@
   display: none;
 }
 
+.participant-agent-group-summary:focus-visible {
+  outline: 2px solid var(--focus-ring, var(--accent));
+  outline-offset: 2px;
+  border-radius: 8px;
+}
+
 .participant-agent-group-toggle {
   white-space: nowrap;
   font-size: 12px;

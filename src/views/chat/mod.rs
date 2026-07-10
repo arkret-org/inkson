@@ -158,6 +158,34 @@ fn composer_mention_nodes(
     mentions
 }
 
+fn apply_mention_sidecar_hashes(
+    event: &mut arkret_sdk::Event,
+    realm_id: &str,
+    mentions: &[MentionNode],
+) {
+    let mention_dids = mentions
+        .iter()
+        .filter_map(|node| {
+            node.as_mention()
+                .map(|mention| mention.subject_id.as_str().to_owned())
+        })
+        .collect::<Vec<_>>();
+    if mention_dids.is_empty() {
+        return;
+    }
+    let hashes = crate::messaging::mentions::mention_sidecar_hashes(realm_id, &mention_dids);
+    if let Some(content) = event
+        .payload
+        .get_mut("content")
+        .and_then(Value::as_object_mut)
+    {
+        content.insert(
+            "mention_sidecar_hash".to_owned(),
+            Value::Array(hashes.into_iter().map(Value::String).collect()),
+        );
+    }
+}
+
 fn chat_visible_read_receipt_should_send(
     store: &LocalStateStore,
     strand_id: &str,
@@ -497,14 +525,35 @@ pub fn ChatPanel(
                         .cloned();
                     let plaintext_services =
                         plaintext_services_for_policy(projection.as_ref(), &service_did);
-                    let op = match chat_message_create_operation(
+                    let mut mentions = entry.mentions.clone();
+                    for mention in resolve_agent_selector_mentions(
+                        &base,
+                        api_token.clone(),
+                        wait_for.clone(),
+                        &entry.body,
+                        &entry.realm_id,
+                        &account_did,
+                        entry.own_controller_handle.as_deref(),
+                    )
+                    .await
+                    {
+                        push_unique_mention_node(&mut mentions, mention);
+                    }
+                    if let Some(found) = messages
+                        .write()
+                        .iter_mut()
+                        .find(|candidate| candidate.id == entry.message_id)
+                    {
+                        found.mentions = mentions.clone();
+                    }
+                    let mut op = match chat_message_create_operation(
                         &entry.realm_id,
                         &account_did,
                         &entry.strand_id,
                         &entry.channel_kind,
                         &entry.message_id,
                         &entry.body,
-                        &[],
+                        &mentions,
                         entry.reply_to.as_deref(),
                     ) {
                         Ok(op) => op,
@@ -513,6 +562,7 @@ pub fn ChatPanel(
                             continue;
                         }
                     };
+                    apply_mention_sidecar_hashes(&mut op, &entry.realm_id, &mentions);
                     match submit_chat_operation_with_auth_refresh(
                         &base,
                         &account_did,
@@ -796,6 +846,12 @@ pub fn ChatPanel(
         .collect::<Vec<_>>();
     known_agent_ids.sort();
     known_agent_ids.dedup();
+    // The participation resource is controller-self-only. Remote agents are
+    // never probed here; they become roster-visible only through already
+    // visible reply history, which avoids both forbidden requests and agent
+    // policy enumeration.
+    let readable_participation_agent_ids =
+        readable_participation_agent_ids(&participants_for_messages, &account_did);
     let selected_scope_circle = channels()
         .iter()
         .find(|channel| channel.strand_id == selected_channel_value)
@@ -811,7 +867,7 @@ pub fn ChatPanel(
         selected_channel_value,
         selected_scope_circle.as_deref().unwrap_or_default(),
         sync_cursor(),
-        known_agent_ids.join(",")
+        readable_participation_agent_ids.join(",")
     );
     {
         let base = base_url.clone();
@@ -822,11 +878,10 @@ pub fn ChatPanel(
             selected_channel_value.clone()
         };
         let circle = selected_scope_circle.clone();
-        let agent_ids = known_agent_ids.clone();
+        let agent_ids = readable_participation_agent_ids.clone();
         use_effect(move || {
             if token().trim().is_empty()
                 || realm.trim().is_empty()
-                || agent_ids.is_empty()
                 || agent_participation_sync_key_seen.peek().as_str() == agent_participation_sync_key
             {
                 return;
@@ -836,12 +891,16 @@ pub fn ChatPanel(
             // snapshot is loading; never reuse the previous strand/circle's
             // visibility decision for this agent list.
             agent_participation_visibility.set(std::collections::BTreeMap::new());
+            if agent_ids.is_empty() {
+                return;
+            }
             let base = base.clone();
             let realm = realm.clone();
             let strand = strand.clone();
             let circle = circle.clone();
             let agent_ids = agent_ids.clone();
             let api_token = token();
+            let request_key = agent_participation_sync_key.clone();
             spawn(async move {
                 let result = crate::views::helpers::with_authed_sdk_client(
                     &base,
@@ -852,7 +911,7 @@ pub fn ChatPanel(
                             if let Ok(outcome) = http.agent_participation_get(&agent_id).await {
                                 visible.insert(
                                     agent_id,
-                                    participation_allows_public_interaction(
+                                    participation_allows_public_reply(
                                         &outcome.entries,
                                         &realm,
                                         circle.as_deref(),
@@ -865,7 +924,9 @@ pub fn ChatPanel(
                     },
                 )
                 .await;
-                if let Ok(visible) = result {
+                if agent_participation_sync_key_seen.peek().as_str() == request_key
+                    && let Ok(visible) = result
+                {
                     agent_participation_visibility.set(visible);
                 }
             });
@@ -3786,12 +3847,22 @@ pub fn ChatPanel(
                                             &state_store.read(),
                                             &controller,
                                         );
+                                        let agent_count_label = if agent_count == 1 {
+                                            "1 agent".to_owned()
+                                        } else {
+                                            format!("{agent_count} agents")
+                                        };
+                                        let group_aria_label = format!(
+                                            "Show {agent_count_label} for {display_label}"
+                                        );
                                         rsx! {
                                             details {
                                                 class: "participant-agent-group",
                                                 "data-testid": "participant-agent-group",
                                                 "data-controller-did": "{controller_did}",
-                                                summary { class: "participant-agent-group-summary",
+                                                summary {
+                                                    class: "participant-agent-group-summary",
+                                                    "aria-label": "{group_aria_label}",
                                                     DiscussionParticipantRow {
                                                         participant: controller,
                                                         participants: participants_for_messages.clone(),
@@ -3802,7 +3873,7 @@ pub fn ChatPanel(
                                                     span {
                                                         class: "participant-agent-group-toggle muted",
                                                         "data-testid": "participant-agent-group-toggle",
-                                                        "{agent_count} agents"
+                                                        "{agent_count_label}"
                                                     }
                                                 }
                                                 div { class: "participant-agent-children",
@@ -4911,6 +4982,8 @@ pub fn ChatPanel(
                                         message_id: local_id.clone(),
                                         body: body.clone(),
                                         reply_to: reply_to_message(),
+                                        mentions: mentions.clone(),
+                                        own_controller_handle: own_controller_handle.clone(),
                                     };
                                     chat_outbox.write().push(entry);
                                     let parked = chat_outbox.read().clone();
@@ -5001,45 +5074,10 @@ pub fn ChatPanel(
                                             return;
                                         }
                                     };
-                                    // G3.Y2 — mention sidecar hashes.
-                                    // Decorates the outgoing payload with
-                                    // `mention_sidecar_hash: [hex, ...]`
-                                    // so the server can route mention
-                                    // notifications without seeing the
-                                    // mentioned actor's DID in plaintext.
-                                    // See `discovery/push-notifications.md
-                                    // §4.5`. We use the Space id as the
-                                    // mention salt until soland exposes a
-                                    // dedicated salt projection.
-                                    if !mentions.is_empty() {
-                                        let mention_dids: Vec<String> = mentions
-                                            .iter()
-                                            .filter_map(|m| {
-                                                m.as_mention()
-                                                    .map(|mention| mention.subject_id.as_str().to_owned())
-                                            })
-                                            .collect();
-                                        let hashes =
-                                            crate::messaging::mentions::mention_sidecar_hashes(
-                                                &realm,
-                                                &mention_dids,
-                                            );
-                                        if let Some(content) = op
-                                            .payload
-                                            .get_mut("content")
-                                            .and_then(Value::as_object_mut)
-                                        {
-                                            content.insert(
-                                                "mention_sidecar_hash".to_owned(),
-                                                serde_json::Value::Array(
-                                                    hashes
-                                                        .into_iter()
-                                                        .map(serde_json::Value::String)
-                                                        .collect(),
-                                                ),
-                                            );
-                                        }
-                                    }
+                                    // G3.Y2 — keep online sends and offline
+                                    // replay on the same E2EE-safe notification
+                                    // routing path.
+                                    apply_mention_sidecar_hashes(&mut op, &realm, &mentions);
                                     let mention_values_for_store = mention_nodes_to_values(&mentions);
                                     match submit_chat_operation_with_auth_refresh(
                                         &base,

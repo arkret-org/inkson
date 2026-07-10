@@ -427,6 +427,33 @@ fn chat_message_create_operation_embeds_agent_selector_mention_metadata() {
 }
 
 #[test]
+fn mention_sidecar_hashes_are_applied_to_replayed_events() {
+    let realm = "ak:realm:01904100-0000-7000-8000-000000000010";
+    let mentions = vec![MentionNode::mention(arkret_sdk::Mention::new(
+        arkret_sdk::Did::new("did:web:agent.example".to_owned()).unwrap(),
+    ))];
+    let mut event = chat_message_create_operation(
+        realm,
+        "did:web:alice.example",
+        "ak:strand:01904100-0000-7000-8000-000000000001",
+        "discussion",
+        "ak:message:01904100-0000-7000-8000-000000000003",
+        "hello agent",
+        &mentions,
+        None,
+    )
+    .expect("builds");
+
+    apply_mention_sidecar_hashes(&mut event, realm, &mentions);
+
+    let hashes = event.payload["content"]["mention_sidecar_hash"]
+        .as_array()
+        .expect("mention sidecar hashes");
+    assert_eq!(hashes.len(), 1);
+    assert_eq!(hashes[0].as_str().map(str::len), Some(64));
+}
+
+#[test]
 fn chat_message_create_operation_includes_reply_fields_only_when_present() {
     let op = chat_message_create_operation(
         "ak:realm:01904100-0000-7000-8000-000000000010",
@@ -2324,13 +2351,13 @@ fn participation_visibility_uses_most_specific_effective_scope() {
         effective: AgentParticipation::NONE,
     };
 
-    assert!(participation_allows_public_interaction(
+    assert!(participation_allows_public_reply(
         std::slice::from_ref(&realm_entry),
         realm,
         None,
         "ak:strand:0196419b-0000-7000-8000-000000000002",
     ));
-    assert!(!participation_allows_public_interaction(
+    assert!(!participation_allows_public_reply(
         &[realm_entry, circle_entry],
         realm,
         Some(circle),
@@ -2356,11 +2383,40 @@ fn participation_visibility_can_target_the_synthesized_default_discussion_strand
         effective: AgentParticipation::ALL,
     };
 
-    assert!(participation_allows_public_interaction(
+    assert!(participation_allows_public_reply(
         std::slice::from_ref(&entry),
         realm,
         None,
         &strand,
+    ));
+}
+
+#[test]
+fn mention_only_participation_does_not_expose_agent_in_roster() {
+    use arkret_sdk::models::{
+        AgentParticipation, AgentParticipationEntry, AgentParticipationScope,
+    };
+
+    let realm = "ak:realm:0196419b-0000-7000-8000-000000000020";
+    let mention_only = AgentParticipation {
+        reply: false,
+        accept_third_party_mention: true,
+        act_on_behalf: false,
+    };
+    let entry = AgentParticipationEntry {
+        scope: AgentParticipationScope::Realm {
+            realm_id: arkret_sdk::RealmId::new(realm.to_owned()).unwrap(),
+        },
+        selection: mention_only,
+        ceiling: AgentParticipation::ALL,
+        effective: mention_only,
+    };
+
+    assert!(!participation_allows_public_reply(
+        std::slice::from_ref(&entry),
+        realm,
+        None,
+        "ak:strand:0196419b-0000-7000-8000-000000000021",
     ));
 }
 
@@ -2549,6 +2605,10 @@ fn agent_candidate_visibility_keeps_owned_agents_and_hides_private_remote_agents
         &std::collections::BTreeSet::from([remote_agent.did.clone()]),
         account_did
     ));
+    assert_eq!(
+        readable_participation_agent_ids(&[own_agent.clone(), remote_agent], account_did),
+        vec![own_agent.did]
+    );
 }
 
 #[test]

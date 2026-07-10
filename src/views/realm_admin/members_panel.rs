@@ -2071,7 +2071,11 @@ pub(crate) async fn share_history_to_requester(
             .as_str()
             .to_owned(),
         };
-        (store.history_secrets_for(&realm_id), policy_digest, source_authorization_ref)
+        (
+            store.history_secrets_for(&realm_id),
+            policy_digest,
+            source_authorization_ref,
+        )
     };
     if all.is_empty() {
         return Ok(false);
@@ -2184,7 +2188,12 @@ pub(crate) async fn seal_history_to_recovery_recipients(
             .unwrap_or(Value::Null);
         let source_authorization_ref =
             realm_history_share_source_authorization_ref(&store, &realm_id);
-        (policy, history_secrets, policy_digest, source_authorization_ref)
+        (
+            policy,
+            history_secrets,
+            policy_digest,
+            source_authorization_ref,
+        )
     };
     if history_secrets.is_empty() {
         return Ok((0, 0));
