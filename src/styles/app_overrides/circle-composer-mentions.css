@@ -639,9 +639,44 @@
   box-shadow: none;
 }
 
-.auth-primary {
+.auth-primary[data-size="default"] {
+  appearance: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   justify-self: stretch;
   width: 100%;
+  height: 44px;
+  min-height: 44px;
+  padding-inline: 18px;
+  border: 1px solid transparent;
+  border-radius: 999px;
+  font-size: 14px;
+  font-weight: 700;
+  line-height: 1.5;
+  cursor: pointer;
+  transition: background 160ms ease, box-shadow 160ms ease, transform 160ms ease;
+}
+
+.auth-primary[data-style="primary"] {
+  background: linear-gradient(135deg, var(--accent) 0%, var(--accent-2) 100%);
+  color: var(--text-on-accent);
+  box-shadow: var(--shadow-sm), 0 12px 26px color-mix(in srgb, var(--accent) 24%, transparent);
+}
+
+.auth-primary[data-style="primary"]:not(:disabled):hover {
+  background: linear-gradient(
+    135deg,
+    var(--accent-strong) 0%,
+    color-mix(in srgb, var(--accent-2) 92%, white) 100%
+  );
+  box-shadow: var(--shadow-md), 0 14px 30px color-mix(in srgb, var(--accent) 28%, transparent);
+  transform: translateY(-1px);
+}
+
+.auth-primary[data-style="primary"]:not(:disabled):active {
+  box-shadow: var(--shadow-sm), 0 8px 18px color-mix(in srgb, var(--accent) 20%, transparent);
+  transform: translateY(0);
 }
 
 /* Principal-server combobox: an editable URL field with a custom-styled
