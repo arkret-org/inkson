@@ -49,18 +49,12 @@ impl ArkretApi {
     }
 }
 
-/// Stamp an invite→join Control Move's `seal_basis` from the resolve-realm
+/// Stamp an invite-to-join Control Move's `seal_basis` from the resolve-realm
 /// join candidate.
 ///
 /// The invitee is not yet a member, so it cannot read the membership-gated
-/// `GET /_arkret/self/events/frontier?realm_id=` Realm Seal view (it answers
-/// `404 realm not found`). The current Seal basis is instead disclosed by
-/// resolve-realm, authorized by the invite, in the join candidate. Stamp it
-/// before signing so the join submitter does not fall back to the 404-prone
-/// frontier read or incorrectly turn the Control Move into a DataEvent.
-///
-/// Only stamps when the event actually needs a Control Move basis: it carries
-/// effects and has no CBA basis yet.
+/// Realm Seal view. The current basis is disclosed by resolve-realm and bound
+/// to the invite instead.
 fn stamp_invite_join_seal_basis(
     event: &mut arkret_sdk::Event,
     candidate: &RealmJoinCandidate,

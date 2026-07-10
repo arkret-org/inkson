@@ -76,9 +76,9 @@ mod blob;
 mod blob_resumable;
 mod contacts;
 mod directory;
+mod invite_join;
 mod keys;
 mod mls;
-mod realm;
 // YOU-07-001: sync / account-subscribe parsers now live at crate root so E2 can
 // delete `src/api/**` without carrying parser code in the old API module.
 // Structural split: core `impl ArkretApi` HTTP transport (constructor, builder
