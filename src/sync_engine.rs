@@ -969,6 +969,7 @@ async fn run_iteration(
         }
         Ok(AccountSubscribeSnapshotResult::ReconnectAfter {
             reconnect_after_ms,
+            reconnect_cursor: _,
             reason,
             reset_cursor,
         }) => {

@@ -34,6 +34,20 @@ pub(crate) fn trim_ascii(mut bytes: &[u8]) -> &[u8] {
     bytes
 }
 
+fn new_account_subscribe_folder() -> AccountSubscribeFolder {
+    // The SDK folder is now explicitly bound to request trace context rather
+    // than implementing `Default`.  Parsers receive a complete body/stream
+    // without the original request, so use the same catch-up context Inkson
+    // sends for account bootstrap snapshots.
+    AccountSubscribeFolder::for_request(&arkret_sdk::SyncRequestBody {
+        after: None,
+        catchup: Some(true),
+        filter: None,
+        subscriptions: None,
+        wait_for: None,
+    })
+}
+
 // Buffered fold over a complete NDJSON body. Production path on wasm32
 // (no chunk reader on the browser-fetch backend); native production goes
 // through `drain_account_subscribe_response`, so this is test-only there.
@@ -52,14 +66,14 @@ pub(crate) fn parse_account_subscribe_snapshot_outcome(
         return Ok(AccountSubscribeSnapshotResult::Delta(Box::new(response)));
     }
 
-    let mut folder = AccountSubscribeFolder::default();
+    let mut folder = new_account_subscribe_folder();
     for line in bytes.split(|byte| *byte == b'\n') {
         let trimmed = trim_ascii(line);
         if trimmed.is_empty() {
             continue;
         }
         let frame: arkret_sdk::AccountSubscribeFrame = serde_json::from_slice(trimmed)?;
-        if folder.push(frame) {
+        if folder.push(frame)? {
             break;
         }
     }
@@ -75,7 +89,7 @@ pub(crate) fn parse_account_subscribe_snapshot_outcome(
 pub(crate) async fn drain_account_subscribe_response(
     mut response: reqwest::Response,
 ) -> anyhow::Result<AccountSubscribeSnapshotResult> {
-    let mut folder = AccountSubscribeFolder::default();
+    let mut folder = new_account_subscribe_folder();
     let mut pending: Vec<u8> = Vec::new();
     'stream: while let Some(chunk) = response.chunk().await? {
         pending.extend_from_slice(&chunk);
@@ -100,7 +114,7 @@ pub(crate) async fn drain_account_subscribe_response(
                 continue;
             }
             let frame: arkret_sdk::AccountSubscribeFrame = serde_json::from_slice(trimmed)?;
-            if folder.push(frame) {
+            if folder.push(frame)? {
                 break 'stream;
             }
         }
@@ -109,7 +123,7 @@ pub(crate) async fn drain_account_subscribe_response(
     let trimmed = trim_ascii(&pending);
     if !trimmed.is_empty() {
         let frame: arkret_sdk::AccountSubscribeFrame = serde_json::from_slice(trimmed)?;
-        folder.push(frame);
+        folder.push(frame)?;
     }
     Ok(folder.finish()?)
 }

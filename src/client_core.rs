@@ -8,9 +8,8 @@ use std::sync::{Arc, Mutex};
 
 use dioxus::prelude::{ReadableExt, SyncSignal, WritableExt};
 use garth::{RealmEventsFrameSource, RealmEventsTransport};
-#[cfg(not(target_arch = "wasm32"))]
-use reqwest::header::CONTENT_TYPE;
 
+#[cfg(not(target_arch = "wasm32"))]
 use crate::sync_parse::{AccountSubscribeReconnectAfter, AccountSubscribeSnapshotResult};
 
 #[derive(Clone)]
@@ -268,16 +267,14 @@ impl InksonRealmEventsTransport {
         let trace_context = RealmEventsTraceContext::from_after(after);
         let mut options = arkret_sdk::http_client::EventsSubscribeOptions::new()
             .realm(realm_id.as_str().to_owned())
-            .include_history(trace_context.catchup);
+            .catchup(trace_context.catchup);
         if let Some(after) = trace_context.after.as_deref() {
             options = options.after(after.to_owned());
         }
-        if let Some(max_duration_ms) = self.max_duration_ms {
-            options = options.max_duration_ms(max_duration_ms);
-        }
-        if let Some(heartbeat_ms) = self.heartbeat_ms {
-            options = options.heartbeat_ms(heartbeat_ms);
-        }
+        // The SDK's stream options no longer expose client-side timeout or
+        // heartbeat query parameters. Those controls are local transport
+        // concerns; keep the Inkson fields for backwards-compatible builder
+        // configuration but do not send unsupported wire parameters.
         (options, trace_context)
     }
 }
@@ -318,10 +315,12 @@ pub async fn account_subscribe_snapshot(
         AccountSubscribeSnapshotResult::Delta(response) => Ok(*response),
         AccountSubscribeSnapshotResult::ReconnectAfter {
             reconnect_after_ms,
+            reconnect_cursor,
             reason,
             reset_cursor,
         } => Err(AccountSubscribeReconnectAfter {
             reconnect_after_ms,
+            reconnect_cursor,
             reason,
             reset_cursor,
         }
@@ -350,10 +349,12 @@ pub async fn account_subscribe_snapshot_with_options(
         AccountSubscribeSnapshotResult::Delta(response) => Ok(*response),
         AccountSubscribeSnapshotResult::ReconnectAfter {
             reconnect_after_ms,
+            reconnect_cursor,
             reason,
             reset_cursor,
         } => Err(AccountSubscribeReconnectAfter {
             reconnect_after_ms,
+            reconnect_cursor,
             reason,
             reset_cursor,
         }
@@ -381,32 +382,13 @@ pub async fn account_subscribe_snapshot_outcome_with_options(
         subscriptions: None,
         wait_for: None,
     };
-    let response = http
-        .account_subscribe_with_options(&request, options)
-        .await?;
-
-    #[cfg(not(target_arch = "wasm32"))]
-    let is_ndjson = response
-        .headers()
-        .get(CONTENT_TYPE)
-        .and_then(|value| value.to_str().ok())
-        .unwrap_or_default()
-        .to_ascii_lowercase()
-        .contains("application/x-ndjson");
-    #[cfg(not(target_arch = "wasm32"))]
-    {
-        if is_ndjson {
-            crate::sync_parse::drain_account_subscribe_response(response).await
-        } else {
-            let bytes = response.bytes().await?;
-            crate::sync_parse::parse_account_subscribe_snapshot_outcome(&bytes)
-        }
-    }
-    #[cfg(target_arch = "wasm32")]
-    {
-        let bytes = response.bytes().await?;
-        crate::sync_parse::parse_account_subscribe_snapshot_outcome(&bytes)
-    }
+    // The SDK now owns account-subscribe stream framing and folding.  Keep
+    // this wrapper's request-options argument for source compatibility, but
+    // delegate to the typed one-shot helper instead of reaching into the
+    // removed raw-response API (`account_subscribe_with_options`).
+    let _ = options;
+    let response = http.account_subscribe_once(&request).await?;
+    Ok(AccountSubscribeSnapshotResult::Delta(Box::new(response)))
 }
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -472,9 +454,7 @@ mod tests {
         let (initial, initial_context) = transport.subscribe_request(&realm_id, None);
         assert_eq!(initial.realms, vec![realm_id.as_str().to_owned()]);
         assert_eq!(initial.after, None);
-        assert_eq!(initial.include_history, Some(true));
-        assert_eq!(initial.max_duration_ms, Some(30_000));
-        assert_eq!(initial.heartbeat_ms, Some(5_000));
+        assert_eq!(initial.catchup, Some(true));
         assert_eq!(
             initial_context,
             super::RealmEventsTraceContext {
@@ -486,7 +466,7 @@ mod tests {
         let (resumed, resumed_context) =
             transport.subscribe_request(&realm_id, Some("ak:cursor:resume"));
         assert_eq!(resumed.after.as_deref(), Some("ak:cursor:resume"));
-        assert_eq!(resumed.include_history, Some(false));
+        assert_eq!(resumed.catchup, Some(false));
         assert_eq!(
             resumed_context,
             super::RealmEventsTraceContext {

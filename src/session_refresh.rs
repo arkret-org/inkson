@@ -19,6 +19,8 @@
 //! The split keeps the policy pure (testable without spinning up
 //! reqwest) and the IO thin.
 
+use std::sync::{Arc, Mutex, OnceLock, PoisonError};
+
 use anyhow::Context as _;
 use arkret_sdk::http_client::{Auth, ClientBuilder};
 use base64::Engine as _;
@@ -27,7 +29,6 @@ use chrono::Utc;
 use garth::session::BoxSessionFuture;
 use garth::{SessionEngine, SessionGrantState, SessionGrantTransport, SessionRefreshOptions};
 use serde::Serialize;
-use std::sync::{Arc, Mutex, OnceLock, PoisonError};
 use url::Url;
 
 use crate::account_auth::grant_dpop::DpopHandle;
