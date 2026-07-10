@@ -123,6 +123,7 @@ pub fn seal_history_secrets(
     to_epoch: u64,
     policy_digest: Value,
     sender_device_id: &str,
+    source_authorization_ref: &str,
     sender_device_signature: Value,
 ) -> Result<arkret_sdk::RealmKeySharePayload, String> {
     let scope = rrk_key_scope(realm_id, from_epoch, to_epoch, policy_digest, None);
@@ -132,6 +133,7 @@ pub fn seal_history_secrets(
         realm_id,
         scope,
         sender_device_id.to_owned(),
+        source_authorization_ref.to_owned(),
         sender_device_signature,
         crate::clock::now_utc_secs(),
         None,
@@ -254,6 +256,7 @@ pub fn build_eager_seal_events(
     history_secrets: &[(u64, Vec<u8>)],
     did_documents: &std::collections::BTreeMap<String, Value>,
     policy_digest: Value,
+    source_authorization_ref: &str,
 ) -> Vec<RecipientSealOutcome> {
     if history_secrets.is_empty() || !durability_is_effective(policy) {
         return Vec::new();
@@ -292,6 +295,7 @@ pub fn build_eager_seal_events(
                 to_epoch,
                 policy_digest.clone(),
                 device_id,
+                source_authorization_ref,
                 serde_json::json!({}),
             ) {
                 Ok(payload) => payload,
@@ -418,6 +422,7 @@ mod tests {
             8,
             json!("sha256:policy"),
             "ak:device:01904100-0000-7000-8000-00000000ae01",
+            "ak:event:01904100-0000-7000-8000-e2eeae0d0002",
             json!({}),
         )
         .unwrap();

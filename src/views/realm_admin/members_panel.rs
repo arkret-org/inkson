@@ -2061,6 +2061,17 @@ pub(crate) async fn share_history_to_requester(
         .fold((u64::MAX, 0_u64), |(lo, hi), (epoch, _)| {
             (lo.min(*epoch), hi.max(*epoch))
         });
+    let source_authorization_ref = {
+        let store = state_store.read();
+        store
+            .seal_view_for_realm(&realm_id)
+            .frontier
+            .iter()
+            .chain(store.seal_view_for_realm(&realm_id).leaves.iter())
+            .find_map(|value| arkret_sdk::EventId::new(value.clone()).ok())
+            .map(|event_id| event_id.as_str().to_owned())
+            .ok_or_else(|| anyhow::anyhow!("history-share source authorization ref unavailable"))?
+    };
     let share = crate::mls::admission::build_realm_key_share_event(
         &realm_id,
         &actor_id,
@@ -2070,6 +2081,7 @@ pub(crate) async fn share_history_to_requester(
         min_epoch,
         max_epoch,
         policy_digest,
+        &source_authorization_ref,
         sealed,
     )
     .map_err(|err| anyhow::anyhow!(err))?;
@@ -2120,7 +2132,7 @@ pub(crate) async fn seal_history_to_recovery_recipients(
             &device_id,
         );
     }
-    let (policy, history_secrets, policy_digest) = {
+    let (policy, history_secrets, policy_digest, source_authorization_ref) = {
         let store = state_store.read();
         let Some(policy) = store.realm_durability_policy(&realm_id) else {
             return Ok((0, 0));
@@ -2136,11 +2148,30 @@ pub(crate) async fn seal_history_to_recovery_recipients(
             .state_root
             .map(Value::String)
             .unwrap_or(Value::Null);
-        (policy, history_secrets, policy_digest)
+        let source_authorization_ref = store
+            .seal_view_for_realm(&realm_id)
+            .frontier
+            .iter()
+            .chain(store.seal_view_for_realm(&realm_id).leaves.iter())
+            .find_map(|value| arkret_sdk::EventId::new(value.clone()).ok())
+            .map(|event_id| event_id.as_str().to_owned());
+        (
+            policy,
+            history_secrets,
+            policy_digest,
+            source_authorization_ref,
+        )
     };
     if history_secrets.is_empty() {
         return Ok((0, 0));
     }
+    let Some(source_authorization_ref) = source_authorization_ref else {
+        tracing::warn!(
+            realm = %short_protocol_id(&realm_id),
+            "history share skipped: source authorization ref unavailable"
+        );
+        return Ok((0, 0));
+    };
     // Fetch each recipient principal's raw DID Document (carrying service /
     // keyAgreement) so the SDK authority can verify the active RRK service entry.
     let mut did_documents: BTreeMap<String, Value> = BTreeMap::new();
@@ -2160,6 +2191,7 @@ pub(crate) async fn seal_history_to_recovery_recipients(
         &history_secrets,
         &did_documents,
         policy_digest,
+        &source_authorization_ref,
     );
     let mut events = Vec::new();
     let mut unverified = 0_usize;

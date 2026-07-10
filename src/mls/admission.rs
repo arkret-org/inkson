@@ -188,12 +188,15 @@ pub(crate) fn build_realm_key_share_event(
     from_epoch: u64,
     to_epoch: u64,
     policy_digest: String,
+    source_authorization_ref: &str,
     sealed_ciphertext: String,
 ) -> Result<arkret_sdk::Event, String> {
     let recipient_did = arkret_sdk::Did::new(recipient_principal_id.trim().to_owned())
         .map_err(|err| format!("invalid realm_key.share recipient DID: {err:?}"))?;
     let policy_digest = arkret_sdk::Hash::new(policy_digest.trim().to_owned())
         .map_err(|err| format!("invalid realm_key.share policy_digest: {err:?}"))?;
+    arkret_sdk::EventId::new(source_authorization_ref.trim().to_owned())
+        .map_err(|err| format!("invalid realm_key.share source_authorization_ref: {err:?}"))?;
     let key_scope = arkret_sdk::RealmKeyScope {
         effective_scope: crate::operation::realm_effective_scope_value(realm_id)?,
         policy_digest: Value::String(policy_digest.as_str().to_owned()),
@@ -209,6 +212,7 @@ pub(crate) fn build_realm_key_share_event(
         recipient_verification_method: None,
         recovery_recipient_id: None,
         sender_device_id: sender_device_id.trim().to_owned(),
+        source_authorization_ref: source_authorization_ref.trim().to_owned(),
         // Filled below with a real Ed25519 signature over
         // `RealmKeySharePayload::sender_signing_input()` (device-lifecycle.md
         // §13). Initialized empty only while constructing the signing input and
@@ -576,6 +580,7 @@ mod tests {
             0,
             2,
             policy_digest.clone(),
+            "ak:event:01904100-0000-7000-8000-0000000000d8",
             "c2VhbGVk".to_owned(),
         )
         .unwrap();
