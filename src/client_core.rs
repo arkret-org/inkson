@@ -4,11 +4,9 @@
 //! migration replaces them. This module gives that migration a typed,
 //! target-aware construction point without pulling UI state into client-core.
 
-use std::collections::VecDeque;
 use std::sync::{Arc, Mutex};
 
 use dioxus::prelude::{ReadableExt, SyncSignal, WritableExt};
-
 use garth::{RealmEventsFrameSource, RealmEventsTransport};
 #[cfg(not(target_arch = "wasm32"))]
 use reqwest::header::CONTENT_TYPE;
@@ -202,33 +200,40 @@ impl InksonClientRuntime {
     }
 }
 
-pub struct BufferedRealmEventsFrameSource {
-    frames: VecDeque<arkret_sdk::EventsSubscribeFrame>,
-}
-
-impl BufferedRealmEventsFrameSource {
-    fn new(frames: Vec<arkret_sdk::EventsSubscribeFrame>) -> Self {
-        Self {
-            frames: VecDeque::from(frames),
-        }
-    }
-}
-
-impl RealmEventsFrameSource for BufferedRealmEventsFrameSource {
-    fn next_frame<'a>(
-        &'a mut self,
-    ) -> garth::subscribe::realm::BoxRealmStreamFuture<'a, Option<arkret_sdk::EventsSubscribeFrame>>
-    {
-        let frame = self.frames.pop_front();
-        Box::pin(async move { Ok(frame) })
-    }
-}
-
 #[derive(Clone, Debug)]
 pub struct InksonRealmEventsTransport {
     http: arkret_sdk::http_client::Client,
     max_duration_ms: Option<u64>,
     heartbeat_ms: Option<u64>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct RealmEventsTraceContext {
+    after: Option<String>,
+    catchup: bool,
+}
+
+impl RealmEventsTraceContext {
+    fn from_after(after: Option<&str>) -> Self {
+        Self {
+            after: after.map(str::to_owned),
+            catchup: after.is_none(),
+        }
+    }
+}
+
+pub struct InksonRealmEventsFrameSource {
+    inner: arkret_sdk::http_client::EventsSubscribeFrameStream,
+    _trace_context: RealmEventsTraceContext,
+}
+
+impl RealmEventsFrameSource for InksonRealmEventsFrameSource {
+    fn next_frame<'a>(
+        &'a mut self,
+    ) -> garth::subscribe::realm::BoxRealmStreamFuture<'a, Option<arkret_sdk::EventsSubscribeFrame>>
+    {
+        Box::pin(async move { self.inner.next_frame().await })
+    }
 }
 
 impl InksonRealmEventsTransport {
@@ -251,10 +256,34 @@ impl InksonRealmEventsTransport {
         self.heartbeat_ms = Some(heartbeat_ms);
         self
     }
+
+    fn subscribe_request(
+        &self,
+        realm_id: &arkret_sdk::RealmId,
+        after: Option<&str>,
+    ) -> (
+        arkret_sdk::http_client::EventsSubscribeOptions,
+        RealmEventsTraceContext,
+    ) {
+        let trace_context = RealmEventsTraceContext::from_after(after);
+        let mut options = arkret_sdk::http_client::EventsSubscribeOptions::new()
+            .realm(realm_id.as_str().to_owned())
+            .include_history(trace_context.catchup);
+        if let Some(after) = trace_context.after.as_deref() {
+            options = options.after(after.to_owned());
+        }
+        if let Some(max_duration_ms) = self.max_duration_ms {
+            options = options.max_duration_ms(max_duration_ms);
+        }
+        if let Some(heartbeat_ms) = self.heartbeat_ms {
+            options = options.heartbeat_ms(heartbeat_ms);
+        }
+        (options, trace_context)
+    }
 }
 
 impl RealmEventsTransport for InksonRealmEventsTransport {
-    type Source = BufferedRealmEventsFrameSource;
+    type Source = InksonRealmEventsFrameSource;
 
     fn open_realm_events<'a>(
         &'a self,
@@ -262,31 +291,12 @@ impl RealmEventsTransport for InksonRealmEventsTransport {
         after: Option<&'a str>,
     ) -> garth::subscribe::realm::BoxRealmStreamFuture<'a, Self::Source> {
         Box::pin(async move {
-            let mut options = arkret_sdk::http_client::EventsSubscribeOptions::new()
-                .realm(realm_id.as_str().to_owned())
-                .include_history(after.is_none());
-            if let Some(after) = after {
-                options = options.after(after.to_owned());
-            }
-            if let Some(max_duration_ms) = self.max_duration_ms {
-                options = options.max_duration_ms(max_duration_ms);
-            }
-            if let Some(heartbeat_ms) = self.heartbeat_ms {
-                options = options.heartbeat_ms(heartbeat_ms);
-            }
-            let response = self
-                .http
-                .events_subscribe_stream_with_options(&options)
-                .await?;
-            let bytes = response
-                .bytes()
-                .await
-                .map_err(|error| arkret_sdk::Error::Http(error.to_string()))?;
-            let text = std::str::from_utf8(&bytes)
-                .map_err(|error| arkret_sdk::Error::Protocol(error.to_string()))?;
-            let frames = crate::sync_parse::parse_events_subscribe_ndjson_text(text)
-                .map_err(|error| arkret_sdk::Error::Protocol(error.to_string()))?;
-            Ok(BufferedRealmEventsFrameSource::new(frames))
+            let (options, trace_context) = self.subscribe_request(realm_id, after);
+            let inner = self.http.events_subscribe_frames(&options).await?;
+            Ok(InksonRealmEventsFrameSource {
+                inner,
+                _trace_context: trace_context,
+            })
         })
     }
 }
@@ -435,7 +445,9 @@ pub fn build_memory_client_core(http: arkret_sdk::http_client::Client) -> Defaul
 
 #[cfg(test)]
 mod tests {
-    use garth::{CursorStore, EventCacheStore, SecureKeyStore};
+    use garth::{
+        CursorStore, EventCacheStore, RealmEventsFrameSource, RealmEventsTransport, SecureKeyStore,
+    };
 
     #[test]
     fn memory_client_core_exposes_host_session_and_subscription_engines() {
@@ -445,6 +457,125 @@ mod tests {
 
         let _session = garth::SessionEngine::new(http);
         let _subscription = client.subscription_engine();
+    }
+
+    #[test]
+    fn realm_events_request_retains_initial_and_resumed_trace_context() {
+        let http = arkret_sdk::http_client::Client::new("https://service.example".parse().unwrap())
+            .unwrap();
+        let transport = super::InksonRealmEventsTransport::new(http)
+            .with_max_duration_ms(30_000)
+            .with_heartbeat_ms(5_000);
+        let realm_id =
+            arkret_sdk::RealmId::new("ak:realm:01904100-0000-7000-8000-000000000001").unwrap();
+
+        let (initial, initial_context) = transport.subscribe_request(&realm_id, None);
+        assert_eq!(initial.realms, vec![realm_id.as_str().to_owned()]);
+        assert_eq!(initial.after, None);
+        assert_eq!(initial.include_history, Some(true));
+        assert_eq!(initial.max_duration_ms, Some(30_000));
+        assert_eq!(initial.heartbeat_ms, Some(5_000));
+        assert_eq!(
+            initial_context,
+            super::RealmEventsTraceContext {
+                after: None,
+                catchup: true,
+            }
+        );
+
+        let (resumed, resumed_context) =
+            transport.subscribe_request(&realm_id, Some("ak:cursor:resume"));
+        assert_eq!(resumed.after.as_deref(), Some("ak:cursor:resume"));
+        assert_eq!(resumed.include_history, Some(false));
+        assert_eq!(
+            resumed_context,
+            super::RealmEventsTraceContext {
+                after: Some("ak:cursor:resume".to_owned()),
+                catchup: false,
+            }
+        );
+    }
+
+    #[tokio::test]
+    async fn realm_events_transport_yields_before_stream_response_closes() {
+        use std::io::{Read, Write};
+        use std::net::TcpListener;
+        use std::sync::mpsc;
+        use std::time::Duration;
+
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = listener.local_addr().unwrap();
+        let (request_tx, request_rx) = mpsc::channel();
+        let (release_tx, release_rx) = mpsc::channel();
+        let server = std::thread::spawn(move || {
+            let (mut socket, _) = listener.accept().unwrap();
+            socket
+                .set_read_timeout(Some(Duration::from_secs(5)))
+                .unwrap();
+            let mut request = Vec::new();
+            let mut buffer = [0_u8; 4096];
+            loop {
+                let read = socket.read(&mut buffer).unwrap();
+                request.extend_from_slice(&buffer[..read]);
+                if request.windows(4).any(|window| window == b"\r\n\r\n") {
+                    break;
+                }
+            }
+            request_tx
+                .send(String::from_utf8(request).unwrap())
+                .unwrap();
+
+            let frame = b"{\"cursor\":\"ak:cursor:first\",\"kind\":\"frontier\"}\n";
+            socket
+                .write_all(
+                    b"HTTP/1.1 200 OK\r\nContent-Type: application/x-ndjson\r\nTransfer-Encoding: chunked\r\nConnection: keep-alive\r\n\r\n",
+                )
+                .unwrap();
+            write!(socket, "{:X}\r\n", frame.len()).unwrap();
+            socket.write_all(frame).unwrap();
+            socket.write_all(b"\r\n").unwrap();
+            socket.flush().unwrap();
+
+            release_rx.recv_timeout(Duration::from_secs(5)).unwrap();
+            socket.write_all(b"0\r\n\r\n").unwrap();
+        });
+
+        let http =
+            arkret_sdk::http_client::Client::builder(format!("http://{address}/").parse().unwrap())
+                .allow_insecure_localhost()
+                .build()
+                .unwrap();
+        let transport = super::InksonRealmEventsTransport::new(http);
+        let realm_id =
+            arkret_sdk::RealmId::new("ak:realm:01904100-0000-7000-8000-000000000001").unwrap();
+        let mut source = tokio::time::timeout(
+            Duration::from_secs(2),
+            transport.open_realm_events(&realm_id, None),
+        )
+        .await
+        .expect("response headers should arrive")
+        .unwrap();
+        let frame = tokio::time::timeout(Duration::from_secs(2), source.next_frame())
+            .await
+            .expect("the first frame must not wait for response EOF")
+            .unwrap()
+            .unwrap();
+        assert_eq!(frame.kind, arkret_sdk::EventsSubscribeFrameKind::Frontier);
+        assert_eq!(
+            frame.cursor.as_ref().map(|cursor| cursor.as_str()),
+            Some("ak:cursor:first")
+        );
+
+        let request = request_rx.recv_timeout(Duration::from_secs(2)).unwrap();
+        assert!(request.starts_with("GET /_arkret/self/events/subscribe?"));
+        assert!(request.contains("include_history=true"));
+        assert!(
+            request
+                .to_ascii_lowercase()
+                .contains("accept: application/x-ndjson")
+        );
+        release_tx.send(()).unwrap();
+        server.join().unwrap();
     }
 
     #[tokio::test]

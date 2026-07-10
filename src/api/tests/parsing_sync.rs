@@ -1,18 +1,20 @@
-use crate::sync_parse::parse_events_subscribe_ndjson_text;
-
 #[test]
 fn parses_events_subscribe_ndjson_frames() {
     // Round 4 typed frames carry the discriminator-required fields:
     // `heartbeat` requires `emitted_at`; `frontier` requires a nested
     // `frontier` value; `catchup_complete` is a unit variant.
-    let frames = parse_events_subscribe_ndjson_text(
-        r#"
-{"kind":"heartbeat"}
-{"cursor":"ak:cursor:frontier","kind":"frontier"}
-{"cursor":"ak:cursor:live","kind":"catchup_complete"}
-"#,
-    )
-    .unwrap();
+    let frames = [
+        r#"{"kind":"heartbeat"}"#,
+        r#"{"cursor":"ak:cursor:frontier","kind":"frontier"}"#,
+        r#"{"cursor":"ak:cursor:live","kind":"catchup_complete"}"#,
+    ]
+    .into_iter()
+    .map(|line| {
+        arkret_sdk::EventsSubscribeFrame::from_ndjson_line(line)
+            .unwrap()
+            .unwrap()
+    })
+    .collect::<Vec<_>>();
 
     assert_eq!(
         frames[0].kind,

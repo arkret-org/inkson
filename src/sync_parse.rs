@@ -1,35 +1,17 @@
 use std::sync::LazyLock;
 
+pub use arkret_sdk::{
+    AccountSubscribeFolder, AccountSubscribeReconnectAfter, AccountSubscribeSnapshotResult,
+};
 use serde_json::Value;
 use tokio::sync::Mutex;
 
 use crate::models::ClientSyncOutcome;
 
-pub use arkret_sdk::{
-    AccountSubscribeFolder, AccountSubscribeReconnectAfter, AccountSubscribeSnapshotResult,
-};
-
 /// Keep account-subscribe network calls globally serial so duplicate UI tasks
 /// cannot leave multiple pending long-polls in browser runtimes.
 pub(crate) static ACCOUNT_SUBSCRIBE_NETWORK_GATE: LazyLock<Mutex<()>> =
     LazyLock::new(|| Mutex::new(()));
-
-/// Round 4 (spec a77b995) — parse the round-4 typed
-/// `/events/subscribe` NDJSON stream. The frame body is
-/// [`arkret_sdk::EventsSubscribeFrame`] (tag = "kind",
-/// snake_case-discriminated). Wire-breaking: the pre-round-4 untyped
-/// string-line parser is deleted.
-pub fn parse_events_subscribe_ndjson_text(
-    input: &str,
-) -> anyhow::Result<Vec<arkret_sdk::EventsSubscribeFrame>> {
-    let mut frames = Vec::new();
-    for line in input.lines() {
-        if let Some(frame) = parse_events_subscribe_ndjson_line(line.as_bytes())? {
-            frames.push(frame);
-        }
-    }
-    Ok(frames)
-}
 
 /// Maximum bytes any native NDJSON streaming reader will buffer between two
 /// newline delimiters. A spec-compliant server delimits every frame with `\n`;
@@ -41,19 +23,6 @@ pub fn parse_events_subscribe_ndjson_text(
 /// `events.subscribe`) so the resource bound lives in exactly one place.
 #[cfg(not(target_arch = "wasm32"))]
 pub(crate) const MAX_NDJSON_STREAM_FRAME_BYTES: usize = 16 * 1024 * 1024;
-
-pub(crate) fn parse_events_subscribe_ndjson_line(
-    line: &[u8],
-) -> anyhow::Result<Option<arkret_sdk::EventsSubscribeFrame>> {
-    let trimmed = trim_ascii(line);
-    if trimmed.is_empty() {
-        return Ok(None);
-    }
-    let line = std::str::from_utf8(trimmed)
-        .map_err(|error| anyhow::anyhow!("subscribe NDJSON frame is not UTF-8: {error}"))?;
-    arkret_sdk::EventsSubscribeFrame::from_ndjson_line(line)
-        .map_err(|error| anyhow::anyhow!("failed to parse subscribe NDJSON frame: {error}"))
-}
 
 pub(crate) fn trim_ascii(mut bytes: &[u8]) -> &[u8] {
     while bytes.first().is_some_and(u8::is_ascii_whitespace) {

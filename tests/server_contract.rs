@@ -9,7 +9,6 @@ use inkson::models::ServerDescriptionExt;
 use inkson::operation::OperationBuilder;
 use inkson::push::validate_blind_wakeup_payload;
 use inkson::service_parse::parse_server_description;
-use inkson::sync_parse::parse_events_subscribe_ndjson_text;
 use inkson::telemetry::{UserActionOutcome, build_user_action_entry, format_user_action_line};
 use reqwest::StatusCode;
 use serde_json::json;
@@ -639,13 +638,18 @@ fn inkson_accepts_v1_sync_buckets_and_subscribe_ndjson_contract() {
     assert_eq!(sync.presence[0]["actor_id"], "did:web:alice.example");
     assert!(sync.presence[0].get("sender").is_none());
 
-    let frames = parse_events_subscribe_ndjson_text(
-        r#"{"kind":"heartbeat"}
-{"kind":"frontier","cursor":"ak:cursor:frontier"}
-{"kind":"catchup_complete","cursor":"ak:cursor:live"}
-"#,
-    )
-    .unwrap();
+    let frames = [
+        r#"{"kind":"heartbeat"}"#,
+        r#"{"cursor":"ak:cursor:frontier","kind":"frontier"}"#,
+        r#"{"cursor":"ak:cursor:live","kind":"catchup_complete"}"#,
+    ]
+    .into_iter()
+    .map(|line| {
+        arkret_sdk::EventsSubscribeFrame::from_ndjson_line(line)
+            .unwrap()
+            .unwrap()
+    })
+    .collect::<Vec<_>>();
     assert_eq!(
         frames[0].kind,
         arkret_sdk::EventsSubscribeFrameKind::Heartbeat

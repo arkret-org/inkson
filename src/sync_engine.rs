@@ -2431,8 +2431,14 @@ mod tests {
             json!({ "kind": "heartbeat", "ts": "2026-06-29T00:00:01Z" }),
         );
 
-        let frames = crate::sync_parse::parse_events_subscribe_ndjson_text(&ndjson)
-            .expect("events/subscribe NDJSON parses");
+        let frames = ndjson
+            .lines()
+            .map(|line| {
+                arkret_sdk::EventsSubscribeFrame::from_ndjson_line(line)
+                    .expect("events/subscribe NDJSON parses")
+                    .expect("fixture lines are non-empty")
+            })
+            .collect::<Vec<_>>();
         // event + catchup_complete + heartbeat.
         assert_eq!(frames.len(), 3);
 
