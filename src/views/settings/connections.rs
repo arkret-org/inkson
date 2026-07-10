@@ -92,18 +92,18 @@ pub fn ConnectionsSettingsCard(account_did: Signal<String>, token: Signal<String
             status.set("A TSP relationship with that VID already exists.".to_owned());
             return;
         }
-        // The actual TSP relationship bootstrap is performed against the
-        // remote `ak.service.tsp` endpoint; TSP being an opt-in extension
-        // profile, the client records the established relationship locally so
-        // the connections list and trust-level badge reflect it. The trust
-        // level starts as `verified` and downgrades to `degraded_no_witness`
-        // when the remote VID resolver is witness-degraded (spec §8).
+        // The real TSP relationship bootstrap against the remote
+        // `ak.service.tsp` endpoint is not implemented yet; this preview
+        // surface only records the intent locally. Until the live handshake
+        // exists the row must not claim `verified` — it stays
+        // `degraded_no_witness` so the badge reflects that no witness /
+        // handshake evidence backs it (spec §8).
         let account_key = account_did();
         let record = TspRelationship {
             remote_vid: vid.clone(),
             relationship_id: format!("tsp:rel:{}", short_id(&vid)),
             support_system: "did:webvh / did:web".to_owned(),
-            trust_level: "verified".to_owned(),
+            trust_level: "degraded_no_witness".to_owned(),
             established_at: String::new(),
         };
         let mut next = relationships();
@@ -111,7 +111,9 @@ pub fn ConnectionsSettingsCard(account_did: Signal<String>, token: Signal<String
         save_relationships(&mut state_store.write(), &account_key, &next);
         relationships.set(next);
         remote_vid.set(String::new());
-        status.set(format!("TSP relationship established with {vid}."));
+        status.set(format!(
+            "TSP relationship with {vid} recorded locally (preview; no remote bootstrap performed)."
+        ));
     };
 
     rsx! {
@@ -121,11 +123,16 @@ pub fn ConnectionsSettingsCard(account_did: Signal<String>, token: Signal<String
             div { class: "event",
                 div { class: "event-head",
                     span { "TSP connections" }
-                    span { "extension profile" }
+                    span { class: "badge amber", "preview — not yet connected" }
                 }
                 p { class: "muted",
                     "Establish pairwise Trust Spanning Protocol relationships with external "
                     "VID endpoints. v1 core uses HTTPS JWE / MLS DM by default; TSP is opt-in."
+                }
+                p { class: "muted", "data-testid": "connections-preview-warning",
+                    "This surface is a local preview: entries are recorded on this device "
+                    "only and no ak.service.tsp bootstrap is performed against the remote "
+                    "endpoint yet."
                 }
                 div { class: "field",
                     Label { html_for: "tsp-remote-vid-input", "Remote VID" }

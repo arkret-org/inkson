@@ -900,6 +900,7 @@ fn render_pair_strand(
                                                     .await
                                                     {
                                                         Ok(value) => {
+                                                            let _ = value;
                                                             state_store
                                                                 .write()
                                                                 .dismiss_pairing_to_device_message(
@@ -910,9 +911,10 @@ fn render_pair_strand(
                                                                 &state_store.read().to_device_inbox(),
                                                             );
                                                             pending_pair_requests.set(rows);
-                                                            pending_pair_status.set(format!(
-                                                                "To-device pairing request approved. Server response: {value:?}"
-                                                            ));
+                                                            pending_pair_status.set(
+                                                                "To-device pairing request approved."
+                                                                    .to_owned(),
+                                                            );
                                                         }
                                                         Err(err) => {
                                                             pending_pair_status.set(format!(
@@ -1194,9 +1196,11 @@ fn render_pair_strand(
                             .await
                             {
                                 Ok(value) => {
-                                    accept_status.set(format!(
-                                        "Sibling device paired. Server response: {value:?}"
-                                    ));
+                                    let _ = value;
+                                    accept_status.set(
+                                        "Sibling device paired. It will appear in the device list shortly."
+                                            .to_owned(),
+                                    );
                                 }
                                 Err(err) => {
                                     accept_status.set(format!(

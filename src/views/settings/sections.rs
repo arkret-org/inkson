@@ -162,9 +162,13 @@ pub(super) const SETTINGS_PRIVACY_GROUP: &[SettingsSection] = &[
 pub(super) const SETTINGS_NOTIFICATIONS_GROUP: &[SettingsSection] =
     &[SettingsSection::Notifications];
 pub(super) const SETTINGS_APPEARANCE_GROUP: &[SettingsSection] = &[SettingsSection::Theme];
+// `Connections` (TSP) is intentionally absent from every group, like `Mimi`:
+// the current page only records a local placeholder row and never performs
+// the real `ak.service.tsp` bootstrap, so it must not present itself as a
+// working setting. It stays reachable at `/settings/connections` for
+// development until the live TSP flow lands.
 pub(super) const SETTINGS_ADVANCED_GROUP: &[SettingsSection] = &[
     SettingsSection::Storage,
-    SettingsSection::Connections,
     SettingsSection::Release,
     SettingsSection::Audit,
     SettingsSection::Developer,

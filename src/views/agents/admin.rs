@@ -1219,6 +1219,30 @@ pub fn PersonalAgentAdminPanel(token: Signal<String>, controller_did: String) ->
                                                     {
                                                         Ok(r) => {
                                                             let entry_count = r.entries.len();
+                                                            // Rehydrate the editor from the loaded
+                                                            // selection: without this a Save right
+                                                            // after Load would overwrite the stored
+                                                            // policy with the stale checkbox defaults.
+                                                            let wanted = participation_realm();
+                                                            let wanted = wanted.trim().to_owned();
+                                                            let hydrate = r
+                                                                .entries
+                                                                .iter()
+                                                                .find(|entry| match &entry.scope {
+                                                                    AgentParticipationScope::Realm { realm_id } => {
+                                                                        wanted.is_empty() || realm_id.as_str() == wanted
+                                                                    }
+                                                                    _ => false,
+                                                                })
+                                                                .or_else(|| r.entries.first());
+                                                            if let Some(entry) = hydrate {
+                                                                if let AgentParticipationScope::Realm { realm_id } = &entry.scope {
+                                                                    participation_realm.set(realm_id.as_str().to_owned());
+                                                                }
+                                                                participation_reply.set(entry.selection.reply);
+                                                                participation_mention.set(entry.selection.accept_third_party_mention);
+                                                                participation_aob.set(entry.selection.act_on_behalf);
+                                                            }
                                                             participation_entries.set(r.entries);
                                                             last_op_status.set(format!(
                                                                 "Loaded Realm behavior for {} scope(s).",

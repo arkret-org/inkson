@@ -453,8 +453,21 @@ pub fn SettingsPanel(
     let mut presence_expiry_choice = use_signal(|| "never".to_owned());
     let presence_expiry_selected = use_memo(move || Some(presence_expiry_choice()));
     let mut presence_status_feedback = use_signal(String::new);
-    let mut dnd_enabled = use_signal(|| false);
-    let mut dnd_mode = use_signal(|| "off".to_owned());
+    // Hydrate DND from the persisted local snapshot so the toggle reflects
+    // the last-saved state instead of always rendering "off" (the saved body
+    // only carries a full-day period when the user picked "now").
+    let initial_dnd_settings = state_store.read().notification_dnd_settings();
+    let initial_dnd_enabled = initial_dnd_settings.as_ref().is_some_and(|dnd| dnd.enabled);
+    let initial_dnd_mode = if initial_dnd_settings
+        .as_ref()
+        .is_some_and(|dnd| dnd.enabled && !dnd.schedule.periods.is_empty())
+    {
+        "now".to_owned()
+    } else {
+        "off".to_owned()
+    };
+    let mut dnd_enabled = use_signal(move || initial_dnd_enabled);
+    let mut dnd_mode = use_signal(move || initial_dnd_mode);
     let dnd_mode_selected = use_memo(move || Some(dnd_mode()));
     let mut notification_settings_status = use_signal(String::new);
     let mut notification_sound_enabled = use_signal(|| {
@@ -529,8 +542,6 @@ pub fn SettingsPanel(
     let mut blocklist_did_input = use_signal(String::new);
     let mut blocklist_reason_input = use_signal(String::new);
     let mut blocklist_status = use_signal(String::new);
-    let mut mls_group_policy = use_signal(|| "default".to_owned());
-    let mls_group_policy_selected = use_memo(move || Some(mls_group_policy()));
     let mut mimi_directory = use_signal(|| "Not loaded".to_owned());
     let mut mimi_receipt = use_signal(|| "No MIMI action receipt".to_owned());
     let blocked_count = blocked_release_workflows().len();
@@ -1429,13 +1440,8 @@ pub fn SettingsPanel(
                                     span { "Encryption" }
                                     span { "MLS / E2EE" }
                                 }
-                                label { "MLS Group Policy" }
-                                Select::<String> {
-                                    value: Some(mls_group_policy_selected.into()),
-                                    on_value_change: move |v: Option<String>| { if let Some(v) = v { mls_group_policy.set(v); } },
-                                    SelectOption::<String> { index: 0usize, value: "default".to_string(), text_value: "Default", "Default" }
-                                    SelectOption::<String> { index: 1usize, value: "always-encrypt".to_string(), text_value: "Always Encrypt", "Always Encrypt" }
-                                    SelectOption::<String> { index: 2usize, value: "prefer-plaintext".to_string(), text_value: "Prefer Plaintext", "Prefer Plaintext" }
+                                div { class: "muted",
+                                    "End-to-end encryption is always on for encrypted Realms. Manage your recovery key below."
                                 }
                             }
                             // X11.1 — persistent MLS recovery-key entry.
