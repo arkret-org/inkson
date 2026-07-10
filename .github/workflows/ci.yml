@@ -83,6 +83,11 @@ jobs:
       - name: Install Dioxus CLI
         run: cargo install dioxus-cli --version "${DIOXUS_CLI_VERSION}" --locked
 
+      # ARC-0002 (重构计划 2026-07-10): legacy patterns must ratchet to zero.
+      - name: Deletion gate
+        working-directory: inkson
+        run: bash scripts/deletion_gate.sh
+
       - name: Check formatting
         working-directory: inkson
         run: cargo fmt --all -- --check
