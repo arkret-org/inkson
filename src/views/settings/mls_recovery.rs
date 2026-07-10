@@ -176,14 +176,15 @@ fn start_recovery_key_generation(
 
 #[component]
 pub fn SettingsMlsRecoveryPanel(
-    base_url: Signal<String>,
     token: Signal<String>,
     account_did: Signal<String>,
     device_id: Signal<String>,
-    state_store: Signal<LocalStateStore>,
     /// Primary account handle claim, used only to name the recovery-key download file readably.
     account_primary_handle: String,
 ) -> Element {
+    // A4 — base_url / state_store from session context instead of props.
+    let base_url = crate::app::SessionContext::get().base_url;
+    let mut state_store = crate::app::SessionContext::get().state_store;
     let mut status = use_signal(|| MlsRecoveryStatus::Loading);
     let mut generated_recovery_key = use_signal(String::new);
     let mut generated_recovery_key_confirm = use_signal(String::new);

@@ -29,19 +29,19 @@ use realms::RealmsSection;
 
 #[component]
 pub fn SetupPanel(
-    base_url: String,
     plaintext_service_did: String,
     secure_store_ready: bool,
     token: Signal<String>,
     account_did: Signal<String>,
     device_id: Signal<String>,
     config_store: Signal<LocalConfigStore>,
-    state_store: Signal<LocalStateStore>,
     realm_tree_nodes: Signal<Vec<RealmTreeNode>>,
     selected_realm_id: Signal<String>,
     new_space_context_node: Signal<String>,
     section: Option<String>,
 ) -> Element {
+    // A4 — base_url / state_store are read from the session context directly by
+    // the child sections now; SetupPanel no longer threads them through.
     let active_section = SetupSection::from_slug(section.as_deref());
 
     // Wizard / form state lives on the parent so each section's in-progress
@@ -93,14 +93,12 @@ pub fn SetupPanel(
 
             if active_section == SetupSection::Realms {
                 RealmsSection {
-                    base_url: base_url.clone(),
                     plaintext_service_did,
                     secure_store_ready,
                     token,
                     account_did,
                     device_id,
                     config_store,
-                    state_store,
                     selected_realm_id,
                     create_step,
                     seed_members,
@@ -126,10 +124,8 @@ pub fn SetupPanel(
 
             if active_section == SetupSection::NewSpace {
                 NewSpaceSection {
-                    base_url: base_url.clone(),
                     token,
                     account_did,
-                    state_store,
                     selected_realm_id,
                     realm_tree_nodes,
                     new_space_context_node,

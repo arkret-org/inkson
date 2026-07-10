@@ -152,11 +152,9 @@ fn constraints_lines(constraints: &arkret_sdk::models::ReceivePolicyConstraints)
 }
 
 #[component]
-pub fn InvitePolicySettingsCard(
-    base_url: Signal<String>,
-    token: Signal<String>,
-    account_did: Signal<String>,
-) -> Element {
+pub fn InvitePolicySettingsCard(token: Signal<String>, account_did: Signal<String>) -> Element {
+    // A4 — base_url from session context instead of a prop.
+    let base_url = crate::app::SessionContext::get().base_url;
     let mut policy = use_signal(|| default_invite_receive_policy(&account_did()));
     let mut loaded = use_signal(|| false);
     let mut loading = use_signal(|| true);

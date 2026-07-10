@@ -66,12 +66,12 @@ pub async fn create_realm(
     let actor_id = actor_id.trim();
     if actor_id.is_empty() {
         return Err(anyhow::anyhow!(
-            "actor_id is required for canonical ck.realm.create"
+            "actor_id is required for canonical ak.realm.create"
         ));
     }
     let title = title.trim();
     if title.is_empty() {
-        return Err(anyhow::anyhow!("title is required for ck.realm.create"));
+        return Err(anyhow::anyhow!("title is required for ak.realm.create"));
     }
 
     let realm_id = format!("ak:realm:{}", uuid_v7());
@@ -150,16 +150,16 @@ pub async fn create_space_under_realm(
 ) -> anyhow::Result<SpaceCreateResult> {
     let actor_id = actor_id.trim();
     if actor_id.is_empty() {
-        return Err(anyhow::anyhow!("actor_id is required for ck.space.create"));
+        return Err(anyhow::anyhow!("actor_id is required for ak.space.create"));
     }
     let title = title.trim();
     if title.is_empty() {
-        return Err(anyhow::anyhow!("title is required for ck.space.create"));
+        return Err(anyhow::anyhow!("title is required for ak.space.create"));
     }
     let realm_id = realm_id.trim();
     if realm_id.is_empty() {
         return Err(anyhow::anyhow!(
-            "realm_id is required for ck.space.create — Space must live inside a Realm"
+            "realm_id is required for ak.space.create — Space must live inside a Realm"
         ));
     }
     let space_id = format!("ak:space:{}", uuid_v7());
@@ -240,7 +240,7 @@ pub async fn transition_member_state(
     submitter.submit_sdk_event(&event).await
 }
 
-// ── Space / Realm Management (all writes go through ck.self.events.command.submit) ─
+// ── Space / Realm Management (all writes go through ak.self.events.command.submit) ─
 
 /// Update a Realm's metadata via `ck.realm.update` event (spec-canonical).
 /// `patch` carries the merge-shape body the server reducer applies to the
@@ -316,7 +316,7 @@ pub async fn set_realm_policy_events(
     }
     if history_visibility.trim() == "restricted" {
         return Err(anyhow::anyhow!(
-            "restricted history_visibility requires ck.realm.history_sharing_policy; use build_realm_history_sharing_policy_event before emitting the visibility change"
+            "restricted history_visibility requires ak.realm.history_sharing_policy; use build_realm_history_sharing_policy_event before emitting the visibility change"
         ));
     }
     let join_rule = canonical_space_join_rule_v1(join_rule);
@@ -396,7 +396,7 @@ pub async fn set_realm_durability_policy(
     let actor_id = actor_id.trim();
     if actor_id.is_empty() {
         return Err(anyhow::anyhow!(
-            "actor_id is required for ck.realm.policy_components"
+            "actor_id is required for ak.realm.policy_components"
         ));
     }
     let durability_value = serde_json::to_value(policy)

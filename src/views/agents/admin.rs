@@ -223,11 +223,9 @@ fn spawn_load_agent_details(
 }
 
 #[component]
-pub fn PersonalAgentAdminPanel(
-    base_url: String,
-    token: Signal<String>,
-    controller_did: String,
-) -> Element {
+pub fn PersonalAgentAdminPanel(token: Signal<String>, controller_did: String) -> Element {
+    // A4 — base_url from session context instead of a prop.
+    let base_url = crate::app::SessionContext::base_url_string();
     let mut agents = use_signal(Vec::<AgentView>::new);
     let list_status = use_signal(String::new);
     let mut selected_agent_id = use_signal(String::new);

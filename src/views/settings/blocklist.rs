@@ -75,13 +75,12 @@ fn expiry_choice_to_rfc3339(choice: &str) -> Option<String> {
 }
 
 #[component]
-pub fn BlocklistSettingsCard(
-    base_url: Signal<String>,
-    account_did: Signal<String>,
-    token: Signal<String>,
-    mut state_store: Signal<LocalStateStore>,
-) -> Element {
+pub fn BlocklistSettingsCard(account_did: Signal<String>, token: Signal<String>) -> Element {
+    // A4 — base_url / state_store from session context instead of props.
+    let base_url = crate::app::SessionContext::get().base_url;
+    let mut state_store = crate::app::SessionContext::get().state_store;
     let _ = account_did;
+    let _ = token;
 
     let initial = state_store.read().client_blocklist();
     let mut entries = use_signal(|| initial);

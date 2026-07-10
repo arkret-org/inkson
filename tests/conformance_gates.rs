@@ -227,7 +227,7 @@ fn schema_validator_rejects_obviously_invalid_envelope() {
     });
     assert!(
         !validator.is_valid(&reducer_missing_required),
-        "validator accepted a reducer-input ck.realm.create envelope \
+        "validator accepted a reducer-input ak.realm.create envelope \
          missing preconditions/effects/seal_ref; the conditional `if/then` \
          branch on event-envelope.schema.json is not being evaluated"
     );
@@ -436,7 +436,7 @@ fn build_member_state_event_matches_event_schema() {
     let mut envelope = events
         .into_iter()
         .find(|event| event.kind == EventKind::MemberState)
-        .expect("bootstrap chain emits one ck.member.state envelope for the invitee");
+        .expect("bootstrap chain emits one ak.member.state envelope for the invitee");
     stamp_wire_fields(&mut envelope);
     assert_envelope_matches_schema("build_member_state_event[invite]", &envelope);
 }

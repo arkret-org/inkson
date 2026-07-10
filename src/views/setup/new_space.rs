@@ -16,10 +16,8 @@ use crate::views::helpers::{authed_api, short_protocol_id};
 
 #[component]
 pub(super) fn NewSpaceSection(
-    base_url: String,
     token: Signal<String>,
     account_did: Signal<String>,
-    state_store: Signal<LocalStateStore>,
     selected_realm_id: Signal<String>,
     realm_tree_nodes: Signal<Vec<RealmTreeNode>>,
     new_space_context_node: Signal<String>,
@@ -37,6 +35,9 @@ pub(super) fn NewSpaceSection(
     mut new_space_state: Signal<String>,
     mut new_space_created_id: Signal<String>,
 ) -> Element {
+    // A4 — base_url / state_store from session context instead of props.
+    let base_url = crate::app::SessionContext::base_url_string();
+    let mut state_store = crate::app::SessionContext::get().state_store;
     let has_session = !token().trim().is_empty();
 
     let new_space_kind_selected = use_memo(move || Some(new_space_kind()));
@@ -371,7 +372,7 @@ pub(super) fn NewSpaceSection(
                                 let parent_id = new_space_parent_id();
                                 let default_realm_id = new_space_default_realm_id();
                                 let actor = account_did();
-                                new_space_state.set("Submitting ck.space.create...".to_owned());
+                                new_space_state.set("Submitting ak.space.create...".to_owned());
                                 spawn(async move {
                                     match authed_api(&base, api_token).and_then(|api| api.event_submitter()) {
                                         Ok(submitter) => {
@@ -475,7 +476,7 @@ pub(super) fn NewSpaceSection(
                     div { class: "setup-summary-row setup-summary-row-stack",
                         strong { "Wire shape" }
                         span { class: "muted",
-                            "ak.space.create event + optional parent_space_id / default_realm_id. Lifecycle actions below dispatch ck.space.archive / restore / tombstone."
+                            "ak.space.create event + optional parent_space_id / default_realm_id. Lifecycle actions below dispatch ak.space.archive / restore / tombstone."
                         }
                     }
                 }
@@ -508,7 +509,7 @@ pub(super) fn NewSpaceSection(
                                         let actor = account_did();
                                         let space_id = new_space_created_id();
                                         let realm_id = new_space_realm_id();
-                                        new_space_state.set("Submitting ck.space.archive...".to_owned());
+                                        new_space_state.set("Submitting ak.space.archive...".to_owned());
                                         spawn(async move {
                                             match authed_api(&base, api_token).and_then(|api| api.event_submitter()) {
                                                 Ok(submitter) => match crate::realm_write_api::change_space_lifecycle(
@@ -539,7 +540,7 @@ pub(super) fn NewSpaceSection(
                                         let actor = account_did();
                                         let space_id = new_space_created_id();
                                         let realm_id = new_space_realm_id();
-                                        new_space_state.set("Submitting ck.space.restore...".to_owned());
+                                        new_space_state.set("Submitting ak.space.restore...".to_owned());
                                         spawn(async move {
                                             match authed_api(&base, api_token).and_then(|api| api.event_submitter()) {
                                                 Ok(submitter) => match crate::realm_write_api::change_space_lifecycle(
@@ -570,7 +571,7 @@ pub(super) fn NewSpaceSection(
                                         let actor = account_did();
                                         let space_id = new_space_created_id();
                                         let realm_id = new_space_realm_id();
-                                        new_space_state.set("Submitting ck.space.tombstone...".to_owned());
+                                        new_space_state.set("Submitting ak.space.tombstone...".to_owned());
                                         spawn(async move {
                                             match authed_api(&base, api_token).and_then(|api| api.event_submitter()) {
                                                 Ok(submitter) => match crate::realm_write_api::change_space_lifecycle(

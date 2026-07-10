@@ -254,7 +254,7 @@
           - generic [ref=e227]:
             - generic [ref=e228]:
               - generic [ref=e229]: conflict
-              - generic [ref=e230]: ck.strand.move superseded
+              - generic [ref=e230]: ak.strand.move superseded
             - generic [ref=e231]: Concurrent move resolved
             - generic [ref=e232]: Losing write remains auditable.
         - generic [ref=e233]:
@@ -263,12 +263,12 @@
             - generic [ref=e236]: derived projection
           - generic [ref=e237]:
             - generic [ref=e238]:
-              - generic [ref=e239]: ck.strand.move
+              - generic [ref=e239]: ak.strand.move
               - generic [ref=e240]: Launch Board
             - generic [ref=e241]: Legal review moved into Doing
           - generic [ref=e242]:
             - generic [ref=e243]:
-              - generic [ref=e244]: ck.message.create
+              - generic [ref=e244]: ak.message.create
               - generic [ref=e245]: Review discussion
             - generic [ref=e246]: Bob mentioned you in a visible discussion
     - complementary "Space, sync, and device info":

@@ -118,13 +118,13 @@ pub fn build_request_content(
         recipient_hpke_public_key: req.recipient_public_b64.clone(),
     };
     serde_json::to_value(content)
-        .map_err(|err| anyhow!("serialize ck.secret.request content: {err}"))
+        .map_err(|err| anyhow!("serialize ak.secret.request content: {err}"))
 }
 
 /// Parse and validate an inbound `ck.secret.request.content`.
 pub fn parse_request_content(content: &Value) -> Result<ParsedSecretRequest> {
     let content: arkret_sdk::SecretShareRequestContent = serde_json::from_value(content.clone())
-        .map_err(|err| anyhow!("decode ck.secret.request.content: {err}"))?;
+        .map_err(|err| anyhow!("decode ak.secret.request.content: {err}"))?;
     let request_id = content.request_id;
     let secret_id = content.secret_id;
     if secret_id != SECRET_SHARE_SECRET_ID {
@@ -180,7 +180,7 @@ pub fn build_send_content(
         enc: URL_SAFE_NO_PAD.encode(sealed.enc),
         ciphertext: URL_SAFE_NO_PAD.encode(sealed.ciphertext),
     };
-    serde_json::to_value(content).map_err(|err| anyhow!("serialize ck.secret.send content: {err}"))
+    serde_json::to_value(content).map_err(|err| anyhow!("serialize ak.secret.send content: {err}"))
 }
 
 /// Open an inbound `ck.secret.send.content` on the requesting (new) device.
@@ -200,7 +200,7 @@ pub fn open_send_content(
 ) -> Result<OpenedSecret> {
     let send_content: arkret_sdk::SecretShareSendContent =
         serde_json::from_value(send_content.clone())
-            .map_err(|err| anyhow!("decode ck.secret.send.content: {err}"))?;
+            .map_err(|err| anyhow!("decode ak.secret.send.content: {err}"))?;
     let outer_request_id = send_content.request_id;
     if outer_request_id != requester.request_id {
         bail!("ak.secret.send.request_id does not match a pending request (unsolicited)");
@@ -218,10 +218,10 @@ pub fn open_send_content(
     }
     let enc = URL_SAFE_NO_PAD
         .decode(send_content.enc.as_bytes())
-        .map_err(|err| anyhow!("decode ck.secret.send.enc: {err}"))?;
+        .map_err(|err| anyhow!("decode ak.secret.send.enc: {err}"))?;
     let ciphertext = URL_SAFE_NO_PAD
         .decode(send_content.ciphertext.as_bytes())
-        .map_err(|err| anyhow!("decode ck.secret.send.ciphertext: {err}"))?;
+        .map_err(|err| anyhow!("decode ak.secret.send.ciphertext: {err}"))?;
 
     let aad = send_aad(
         account_did,
@@ -296,7 +296,7 @@ pub async fn send_request(
         content,
     )
     .await
-    .map_err(|err| anyhow!("send ck.secret.request: {err}"))?;
+    .map_err(|err| anyhow!("send ak.secret.request: {err}"))?;
     Ok(())
 }
 
@@ -334,7 +334,7 @@ pub async fn respond_to_request(
         content,
     )
     .await
-    .map_err(|err| anyhow!("send ck.secret.send: {err}"))?;
+    .map_err(|err| anyhow!("send ak.secret.send: {err}"))?;
     Ok(())
 }
 
@@ -563,7 +563,7 @@ mod tests {
             None
         );
 
-        // A materialized ck.secret.send envelope (as soland would hand it back).
+        // A materialized ak.secret.send envelope (as soland would hand it back).
         let envelope = json!({
             "kind": SECRET_SHARE_KIND_SEND,
             "sender_principal_id": ACCOUNT_DID,

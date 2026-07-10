@@ -351,7 +351,7 @@ pub fn build_poll_create_op(
     .target_ref(strand_id)
     .body(sdk_payload_value(
         payload.to_value(),
-        "poll ck.message.create payload serialize",
+        "poll ak.message.create payload serialize",
     )?)
     .build_sdk_event("inkson")?;
     let message_ref = event
@@ -415,7 +415,7 @@ pub fn build_poll_vote_op(
     .target_ref(strand_id)
     .body(sdk_payload_value(
         payload.to_value(),
-        "poll vote ck.message.create payload serialize",
+        "poll vote ak.message.create payload serialize",
     )?)
     .build_sdk_event("inkson")
 }

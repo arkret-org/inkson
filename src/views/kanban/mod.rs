@@ -2864,7 +2864,7 @@ pub fn KanbanPanel(
                                         "aria-label": "Save card",
                                         onclick: {
                                             // Card create submits a real
-                                            // ck.strand.create envelope. The
+                                            // ak.strand.create envelope. The
                                             // initial Board/List placement
                                             // rides in the strand.position
                                             // component so the projection can

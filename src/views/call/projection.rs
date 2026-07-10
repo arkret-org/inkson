@@ -186,7 +186,7 @@ pub(super) fn media_governance_evidence(
                 .get("kind")
                 .and_then(Value::as_str)
                 .unwrap_or_default();
-            if !matches!(kind, "ak.mls.commit" | "ck.mls.genesis") {
+            if !matches!(kind, "ak.mls.commit" | "ak.mls.genesis") {
                 return None;
             }
             operation_body(&record.payload)

@@ -78,7 +78,7 @@ pub(super) fn push_read_receipt_account_data(
             Ok(AccountDataSetResult::Stored { .. }) => {}
             Ok(AccountDataSetResult::Unsupported { status }) => {
                 tracing::debug!(
-                    "soland ck.account_data.set returned {status}; local state still authoritative"
+                    "soland ak.account_data.set returned {status}; local state still authoritative"
                 );
             }
             Err(err) => {
@@ -130,7 +130,7 @@ pub(super) fn push_presence_preference_account_data(
             .await
             {
                 tracing::debug!(
-                    "account_data DELETE for ck.presence.preference failed: {}; local state still authoritative",
+                    "account_data DELETE for ak.presence.preference failed: {}; local state still authoritative",
                     err.display()
                 );
             }
@@ -142,7 +142,7 @@ pub(super) fn push_presence_preference_account_data(
     {
         Ok(body) => body,
         Err(err) => {
-            tracing::warn!("ak.account_data.set for ck.presence.preference skipped: {err}");
+            tracing::warn!("ak.account_data.set for ak.presence.preference skipped: {err}");
             return;
         }
     };
@@ -156,12 +156,12 @@ pub(super) fn push_presence_preference_account_data(
             Ok(AccountDataSetResult::Stored { .. }) => {}
             Ok(AccountDataSetResult::Unsupported { status }) => {
                 tracing::debug!(
-                    "soland ck.account_data.set for ck.presence.preference returned {status}; local preference remains authoritative"
+                    "soland ak.account_data.set for ak.presence.preference returned {status}; local preference remains authoritative"
                 );
             }
             Err(err) => {
                 tracing::warn!(
-                    "ak.account_data.set for ck.presence.preference failed: {}",
+                    "ak.account_data.set for ak.presence.preference failed: {}",
                     err.display()
                 );
             }
@@ -191,12 +191,12 @@ pub(super) fn push_presence_visibility_account_data(
             Ok(AccountDataSetResult::Stored { .. }) => {}
             Ok(AccountDataSetResult::Unsupported { status }) => {
                 tracing::debug!(
-                    "soland ck.account_data.set for ck.presence.visibility returned {status}; local presence policy remains authoritative"
+                    "soland ak.account_data.set for ak.presence.visibility returned {status}; local presence policy remains authoritative"
                 );
             }
             Err(err) => {
                 tracing::warn!(
-                    "ak.account_data.set for ck.presence.visibility failed: {}",
+                    "ak.account_data.set for ak.presence.visibility failed: {}",
                     err.display()
                 );
             }
@@ -323,7 +323,7 @@ pub(super) fn push_notification_rules_account_data(
             Ok(AccountDataSetResult::Stored { .. }) => {}
             Ok(AccountDataSetResult::Unsupported { status }) => {
                 tracing::debug!(
-                    "soland ck.account_data.set for ck.push_rules returned {status}; local notification rules remain authoritative"
+                    "soland ak.account_data.set for ck.push_rules returned {status}; local notification rules remain authoritative"
                 );
             }
             Err(err) => {

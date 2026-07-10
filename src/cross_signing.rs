@@ -110,7 +110,7 @@ impl CrossSigningSetupStep {
                 "Write SSK / USK private keys into the encrypted secret_storage backup"
             }
             Self::EmitCrossSigningPublish => {
-                "Publish ck.cross_signing.publish to the control stream"
+                "Publish ak.cross_signing.publish to the control stream"
             }
             Self::SignCurrentDeviceBinding => {
                 "Use SSK to sign a cross_signing_binding over this device's verify_key"

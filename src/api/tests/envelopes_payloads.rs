@@ -626,7 +626,7 @@ fn outgoing_payload_schema_gate_accepts_sdk_object_patch_payload() {
     validate_outgoing_registered_event_payload(event.kind.as_str(), &event.payload).unwrap();
 }
 
-/// Contract test: ck.space.create payload must satisfy spec
+/// Contract test: ak.space.create payload must satisfy spec
 /// space.schema.json — same validator soland runs on the wire.
 #[test]
 fn space_create_payload_matches_spec_schema() {

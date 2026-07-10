@@ -164,7 +164,7 @@ mod personal_agent_tests {
 
         assert_eq!(
             scope.actions,
-            vec!["ak.self.events.query.scan", "ck.self.events.resource.get"]
+            vec!["ak.self.events.query.scan", "ak.self.events.resource.get"]
         );
     }
 
@@ -178,7 +178,7 @@ mod personal_agent_tests {
         );
         assert_eq!(
             grant["actions"],
-            serde_json::json!(["ak.message.create", "ck.reaction.add"])
+            serde_json::json!(["ak.message.create", "ak.reaction.add"])
         );
         assert_eq!(grant["subject"], "did:web:agents.example:summary");
         assert_eq!(grant["resources"][0]["kind"], "realm");

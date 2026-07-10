@@ -305,7 +305,7 @@ pub(super) fn submit_kanban_move(
         effect_summary: effect_summary.clone(),
         seal_ref: seal_ref.clone(),
         hlc: hlc.clone(),
-        note: format!("submitting {wire_kind} event via ck.self.events.command.submit"),
+        note: format!("submitting {wire_kind} event via ak.self.events.command.submit"),
         signed_move_json: None,
         rebase_attempts: 0,
     };
@@ -448,7 +448,7 @@ pub(super) fn dispatch_strand_position_move(
         Ok(r) => r,
         Err(RankError::Exhausted) => {
             board_status.set(
-                "rank exhausted between neighbours — request ck.container.rebalance before retrying"
+                "rank exhausted between neighbours — request ak.container.rebalance before retrying"
                     .to_owned(),
             );
             return;
@@ -462,7 +462,7 @@ pub(super) fn dispatch_strand_position_move(
     // appends the canonical move/reorder op to `raw_operations` (write_state
     // `submitted`), which the `columns` `use_memo` folds via `project_board` —
     // no direct signal mutation. It is not marked accepted until the server
-    // returns from ck.events.submit.
+    // returns from ak.events.submit.
     let expected = StrandPositionExpectation::At {
         list_space_id: dragged.from_column_id.clone(),
         rank: dragged.from_rank.clone(),
@@ -1038,7 +1038,7 @@ pub(super) fn submit_strand_position_cas_move_with_attempt(
         seal_ref: seal_ref.clone(),
         hlc: hlc.clone(),
         note: if attempt == 0 {
-            format!("submitting {kind} via ck.self.events.command.submit")
+            format!("submitting {kind} via ak.self.events.command.submit")
         } else {
             format!("rebase attempt {attempt} of {kind}")
         },
@@ -1267,11 +1267,11 @@ pub(super) fn rebase_strand_position_after_conflict(
         };
         // The static lifetime requirement on `kind` is satisfied by
         // mapping the dynamic String back to one of the known
-        // classifiers. Anything else falls through to ck.strand.move
+        // classifiers. Anything else falls through to ak.strand.move
         // because that's the spec wire shape for drag operations.
         let kind_static: &'static str = match kind.as_str() {
-            "ak.strand.reorder" => "ck.strand.reorder",
-            "ak.strand.move" => "ck.strand.move",
+            "ak.strand.reorder" => "ak.strand.reorder",
+            "ak.strand.move" => "ak.strand.move",
             _ => "ak.strand.move",
         };
         submit_strand_position_cas_move_with_attempt(

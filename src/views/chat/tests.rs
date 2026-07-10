@@ -95,7 +95,7 @@ fn parses_message_event_with_nested_envelope_payload_shape() {
 
 #[test]
 fn folds_received_redaction_tombstone_onto_message() {
-    // soland surfaces a redacted ck.message.create as a per-message tombstone:
+    // soland surfaces a redacted ak.message.create as a per-message tombstone:
     // event_id preserved, body stripped, redacted/state markers added. The
     // receive path MUST render the tombstone (redacted=true, empty body) even
     // though this is the only copy of the message the reader ever sees.
@@ -2165,7 +2165,7 @@ fn participant_with_agent_id_renders_with_agent_badge() {
     assert!(!bob.is_agent, "human member must not be flagged as agent");
     assert!(
         agent.is_agent,
-        "DID registered via ck.agent.endpoint must be flagged as agent"
+        "DID registered via ak.agent.endpoint must be flagged as agent"
     );
 }
 

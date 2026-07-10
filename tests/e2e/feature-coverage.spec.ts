@@ -65,16 +65,16 @@ test.describe("feature coverage placeholders", () => {
     }
   });
 
-  // ---- Board / Strand / ck.strand.move drag conflict ----
+  // ---- Board / Strand / ak.strand.move drag conflict ----
   // UI surface: board
   // spec: overview/current-model.md §4, models/views.md §6
-  test("board: drag strand across lists writes ck.strand.move", async ({ page }) => {
+  test("board: drag strand across lists writes ak.strand.move", async ({ page }) => {
     // The drag-drop pipeline is exercised end-to-end by
     // inkson.strands.spec.ts::"kanban card drag queues a strand move".
     // This placeholder pins the structural contract the drop relies
     // on: the move-queue + write-records data-testids MUST
-    // exist on /kanban so soland can dispatch ck.strand.move /
-    // ck.strand.reorder write records through them. The HLC tiebreak
+    // exist on /kanban so soland can dispatch ak.strand.move /
+    // ak.strand.reorder write records through them. The HLC tiebreak
     // assertion called out in the spec is exercised in the SDK's
     // reducer unit tests (`strand_position_cas_*`), not at the UI layer.
     await page.goto("/kanban", { waitUntil: "domcontentloaded", timeout: 120_000 });
@@ -116,9 +116,9 @@ test.describe("feature coverage placeholders", () => {
   // ---- Identity / Device — three independent concerns ----
   // UI surface: devices and verify-device
   // spec: crypto-media/devices-and-auth.md §1.2
-  test("device verification: SAS match writes ck.device.authorize + ck.device.cross_sign", async ({ page }) => {
+  test("device verification: SAS match writes ak.device.authorize + ak.device.cross_sign", async ({ page }) => {
     // pin the SAS verification UI surface. The
-    // full SAS exchange + cross_sign + ck.device.authorize event emit
+    // full SAS exchange + cross_sign + ak.device.authorize event emit
     // happen inside the SDK + soland's identity store; this test
     // makes sure the data-testid handles the next layer down expects
     // (sas-verify-strand, sas-emoji-row, sas-digits, sas-match-button)
@@ -174,7 +174,7 @@ test.describe("feature coverage placeholders", () => {
     await expect(page.getByTestId("accept-pairing-status")).toContainText("Sibling device paired");
   });
 
-  test("cross-signing: Run setup submits ck.cross_signing.publish into the principal control Realm", async ({
+  test("cross-signing: Run setup submits ak.cross_signing.publish into the principal control Realm", async ({
     page,
   }) => {
     // D2 — formerly unwritten. The verify-device panel now runs the
@@ -208,7 +208,7 @@ test.describe("feature coverage placeholders", () => {
     await page.getByTestId("setup-cross-signing").click();
     await expect(page.getByTestId("cross-signing-plan")).toBeVisible();
 
-    // Step 2: capture the ck.cross_signing.publish submission before
+    // Step 2: capture the ak.cross_signing.publish submission before
     // it fires so we don't race the spawn task.
     const publishPromise = page.waitForRequest((request) => {
       if (request.method() !== "POST" || !request.url().endsWith("/_arkret/self/events")) {
@@ -486,7 +486,7 @@ test.describe("feature coverage placeholders", () => {
   // ---- Applet / Agent / Portal Space ----
   // UI surface: applets
   // spec: extensions/applet-integration.md
-  test("applets: register new applet writes signed ck.applet.registration", async ({ page }) => {
+  test("applets: register new applet writes signed ak.applet.registration", async ({ page }) => {
     // The applet surface is compiled for unit coverage but hidden in
     // the default local 1.0 UI until the `experimental-applets`
     // feature is explicitly enabled.

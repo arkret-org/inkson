@@ -100,14 +100,14 @@ flowchart TD
     A["选择 DID method<br/>默认 did:webvh"] --> B["绑定 Handle"]
     B --> C["本地生成 inception keypair<br/>写 did.jsonl entry 0"]
     C --> D["创建 PCR genesis<br/>mls_rfc9420 + 双 floor e2ee_required<br/>purpose=principal_control"]
-    D --> E["生成 device key<br/>首台设备自授权 ck.device.authorize<br/>authorized_by = inception key"]
+    D --> E["生成 device key<br/>首台设备自授权 ak.device.authorize<br/>authorized_by = inception key"]
     E --> F["发布 genesis recovery policy"]
     F --> G{"First-backup gate<br/>弹: 强烈建议设置 24 词 Recovery Key"}
     G -- 接受 --> H["生成 24 词 BIP-39<br/>用户抄写 + 回填校验<br/>本地仅存指纹"]
     H --> I["发布 did_recovery envelope<br/>series_seq=0, 加密给 recovery 公钥"]
     I --> J["inception key 退场<br/>entry 1 轮换 或 封存为 recovery-only<br/>推荐 ≤1h, 硬上限 24h"]
     G -- "拒绝 (personal_node MAY)" --> K["标记 SPOF<br/>inception key 不退场<br/>每次启动提醒"]
-    J --> L["发布 ck.cross_signing.publish<br/>SSK/USK → 立即写 secret_storage 备份"]
+    J --> L["发布 ak.cross_signing.publish<br/>SSK/USK → 立即写 secret_storage 备份"]
     K --> M["进入主界面 → 自检链: 弹 SPOF 提醒"]
     L --> N["进入主界面 → 自检链: 全绿"]
 ```
@@ -130,18 +130,18 @@ sequenceDiagram
     participant O as 旧设备(已授权)
 
     N->>S: 登录因子 (密码/passkey/OIDC)
-    S-->>N: fresh-device 受限 session grant<br/>(只能做 ck.key.verification.* bootstrap,<br/>不能读 E2EE 历史/解备份/请求 ck.secret.*)
+    S-->>N: fresh-device 受限 session grant<br/>(只能做 ak.key.verification.* bootstrap,<br/>不能读 E2EE 历史/解备份/请求 ck.secret.*)
     N->>N: 本地生成 device key
     N->>S: POST /_arkret/self/device_messages<br/>ck.key.verification.request<br/>purpose=same_principal_device_authorization<br/>+ pairing_code + new_device_pubkey + challenge_signature
     S-->>O: account subscribe delta.to_device<br/>(push 仅作唤醒)
     O->>O: UI 展示新设备 metadata + pairing code<br/>用户与新设备屏幕比对
     Note over N,O: SAS / QR transcript<br/>(start→accept→key→mac→done)
     O->>S: POST /_arkret/gate/account/device-pair<br/>transcript 绑定的 pairing_code/new_device_pubkey<br/>/challenge_signature + 自身 fresh proof
-    S-->>S: 写入 ck.device.authorize + ck.device.list_update (PCR)
+    S-->>S: 写入 ak.device.authorize + ak.device.list_update (PCR)
     N->>S: 验证 durable device list (不信 done 消息本身)
-    N->>O: ck.secret.request (HPKE 公钥)
+    N->>O: ak.secret.request (HPKE 公钥)
     O->>O: 用户显式批准
-    O-->>N: ck.secret.send<br/>(SSK/account secret/secret storage bootstrap, HPKE 密封)
+    O-->>N: ak.secret.send<br/>(SSK/account secret/secret storage bootstrap, HPKE 密封)
     Note over N,S: MLS Welcome / realm_key.share → 同步历史
     N->>N: 进入自检链 (§3)
 ```
@@ -183,7 +183,7 @@ sequenceDiagram
     S-->>N: 尾部 envelope 完整密文
     N->>N: HPKE-open → 取出 SSK<br/>(解锁次序: 授权前只解承载 SSK 的恢复域备份)
     N->>N: 用 SSK 签 cross_signing_binding<br/>(ssk_generation == session snapshot)
-    N->>S: 提交 ck.device.authorize + ck.device.list_update<br/>(客户端产出, 服务端只校验引用)
+    N->>S: 提交 ak.device.authorize + ak.device.list_update<br/>(客户端产出, 服务端只校验引用)
     N->>S: /complete (authorization_event_id + device_list_update_event_id)
     N->>S: 授权 accepted 后, 用新设备 key 解锁<br/>secret_storage / mls_history 备份
     Note over N,S: MLS Welcome replay<br/>(claim_ref.ssk_generation == 当前 generation)

@@ -227,7 +227,7 @@ pub fn realm_organization_statement(
     };
 
     let body = serde_json::to_value(&payload)
-        .map_err(|err| anyhow::anyhow!("invalid ck.realm.organization payload: {err}"))?;
+        .map_err(|err| anyhow::anyhow!("invalid ak.realm.organization payload: {err}"))?;
 
     Ok(OperationBuilder::new(
         realm_id,

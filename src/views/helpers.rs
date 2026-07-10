@@ -533,13 +533,14 @@ pub fn handle_claim_rows(
 /// displayed handle.
 #[component]
 pub fn WhyThisHandlePanel(
-    base_url: String,
     token: String,
     subject_id: String,
     /// Optional Realm id to scope disclosure policy.
     #[props(default)]
     realm_id: Option<String>,
 ) -> Element {
+    // A4 — base_url from session context instead of a prop.
+    let base_url = crate::app::SessionContext::base_url_string();
     let mut rows = use_signal(Vec::<HandleClaimRow>::new);
     let mut primary = use_signal(|| Option::<String>::None);
     let mut status = use_signal(String::new);

@@ -141,13 +141,13 @@ pub fn build_receipt_read_envelope(
     let expires_at = now + chrono::Duration::seconds(EPHEMERAL_DEFAULT_TTL_SECS);
     let realm_id_wire = trim_realm_id(realm_id);
     let realm = arkret_sdk::RealmId::new(realm_id_wire.clone())
-        .map_err(|err| anyhow::anyhow!("invalid realm_id for ck.receipt.read: {err}"))?;
+        .map_err(|err| anyhow::anyhow!("invalid realm_id for ak.receipt.read: {err}"))?;
     let actor = arkret_sdk::Did::new(actor_id)
-        .map_err(|err| anyhow::anyhow!("invalid actor_id for ck.receipt.read: {err}"))?;
+        .map_err(|err| anyhow::anyhow!("invalid actor_id for ak.receipt.read: {err}"))?;
     let strand = arkret_sdk::StrandId::new(strand_id.trim().to_owned())
-        .map_err(|err| anyhow::anyhow!("invalid strand_id for ck.receipt.read: {err}"))?;
+        .map_err(|err| anyhow::anyhow!("invalid strand_id for ak.receipt.read: {err}"))?;
     let event = arkret_sdk::EventId::new(event_id.trim().to_owned())
-        .map_err(|err| anyhow::anyhow!("invalid event_id for ck.receipt.read: {err}"))?;
+        .map_err(|err| anyhow::anyhow!("invalid event_id for ak.receipt.read: {err}"))?;
     let receipt = arkret_sdk::ReadReceipt {
         receipt_type: "read".to_owned(),
         schema: arkret_sdk::READ_RECEIPT_SCHEMA.to_owned(),
@@ -159,7 +159,7 @@ pub fn build_receipt_read_envelope(
         created_at: now,
     };
     let device = arkret_sdk::DeviceId::new(device_id)
-        .map_err(|err| anyhow::anyhow!("invalid device_id for ck.receipt.read: {err}"))?;
+        .map_err(|err| anyhow::anyhow!("invalid device_id for ak.receipt.read: {err}"))?;
     arkret_sdk::EphemeralEnvelope::new(
         "ak.receipt.read",
         realm,
@@ -268,21 +268,21 @@ pub fn build_call_signal_envelope_v1(
     let now = chrono::Utc::now();
     let expires_at = now + chrono::Duration::seconds(EPHEMERAL_DEFAULT_TTL_SECS);
     let realm = arkret_sdk::RealmId::new(realm_id)
-        .map_err(|err| anyhow::anyhow!("invalid realm_id for ck.call.signal: {err}"))?;
+        .map_err(|err| anyhow::anyhow!("invalid realm_id for ak.call.signal: {err}"))?;
     let actor = arkret_sdk::Did::new(actor_id)
-        .map_err(|err| anyhow::anyhow!("invalid actor_id for ck.call.signal: {err}"))?;
+        .map_err(|err| anyhow::anyhow!("invalid actor_id for ak.call.signal: {err}"))?;
     if device_id.trim().is_empty() {
         anyhow::bail!("ak.call.signal requires non-empty device_id (round 4 schema_violation)");
     }
     let device = Some(
         arkret_sdk::DeviceId::new(device_id)
-            .map_err(|err| anyhow::anyhow!("invalid device_id for ck.call.signal: {err}"))?,
+            .map_err(|err| anyhow::anyhow!("invalid device_id for ak.call.signal: {err}"))?,
     );
     if !arkret_sdk::CALL_SIGNAL_TYPES.contains(&signal_type) {
         anyhow::bail!("ak.call.signal signal_type {signal_type:?} not in canonical 13-value enum");
     }
     let call = arkret_sdk::CallId::new(call_id)
-        .map_err(|err| anyhow::anyhow!("invalid call_id for ck.call.signal: {err}"))?;
+        .map_err(|err| anyhow::anyhow!("invalid call_id for ak.call.signal: {err}"))?;
     let payload = arkret_sdk::CallSignalPayload {
         call_id: call,
         signal_type: signal_type.to_owned(),

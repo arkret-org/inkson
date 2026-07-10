@@ -1035,7 +1035,7 @@ fn message_revise_builder_uses_content_payload_schema() {
     assert_registered_payload_valid(&event);
 }
 
-// ── YGN-ORG-05 — ck.realm.organization builder snapshot + negative tests ──
+// ── YGN-ORG-05 — ak.realm.organization builder snapshot + negative tests ──
 //
 // Covers the YGN-ORG-02 builder: active / revoked payload snapshots against
 // the registered spec schema, plus negative coverage for missing delegation,

@@ -33,7 +33,7 @@ fn extract_string(value: &Value, key: &str) -> Option<String> {
 
 fn classify_audit_row(operation_id: &str, body: &Value) -> Option<AuditRow> {
     let kind = extract_string(body, "kind")?;
-    if !matches!(kind.as_str(), "ak.audit.accessed" | "ck.audit.ryw_receipt") {
+    if !matches!(kind.as_str(), "ak.audit.accessed" | "ak.audit.ryw_receipt") {
         return None;
     }
     Some(AuditRow {
@@ -69,7 +69,7 @@ pub fn AuditPanel() -> Element {
                 div { class: "event",
                     div { class: "event-head",
                         span { "Audit log" }
-                    HelpTip { text: "Attested-audit Realms require every successful decrypt to emit a ck.audit.accessed event. Disclosed-audit Realms require every write to emit a ck.audit.ryw_receipt. This view is read-only — it reflects what the local raw-operation log has observed." }
+                    HelpTip { text: "Attested-audit Realms require every successful decrypt to emit a ak.audit.accessed event. Disclosed-audit Realms require every write to emit a ak.audit.ryw_receipt. This view is read-only — it reflects what the local raw-operation log has observed." }
                 }
                 div { class: "metric-grid",
                     div { class: "metric",

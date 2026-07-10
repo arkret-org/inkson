@@ -842,7 +842,7 @@ fn inkson_e2ee_workflow_matches_protocol_mls_envelope_behavior() {
 }
 
 // (Move/Seal pipeline tests removed — all writes now go through
-// ck.self.events.command.submit; the SubmitEventResult decoder is exercised by
+// ak.self.events.command.submit; the SubmitEventResult decoder is exercised by
 // soland's own integration tests and the arkret-spec fixtures.)
 
 /// Regression: `is_auth_expired_error` MUST treat a bare 401

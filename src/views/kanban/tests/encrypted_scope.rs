@@ -16,7 +16,7 @@ fn encrypted_scope_blocks_plaintext_strand_update_payload() {
 
     assert!(kanban_event_carries_plaintext_private_content(&event));
     let reason = kanban_plaintext_block_reason(Some(true), &event).unwrap();
-    assert!(reason.contains("Encrypted Realm blocks plaintext ck.strand.update"));
+    assert!(reason.contains("Encrypted Realm blocks plaintext ak.strand.update"));
     assert!(kanban_plaintext_block_reason(Some(false), &event).is_none());
 }
 
@@ -345,7 +345,7 @@ fn encrypted_private_patch_creator_bootstraps_initial_mls_snapshot() {
     assert!(mls_events.commit.is_none());
     assert!(mls_events.snapshot.is_none());
     // A freshly-created creator group must still produce a one-time
-    // ck.mls.genesis event; ordinary application writes ride epoch 0
+    // ak.mls.genesis event; ordinary application writes ride epoch 0
     // without a per-write commit.
     let genesis = mls_events
         .genesis

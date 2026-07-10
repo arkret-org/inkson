@@ -436,7 +436,7 @@ pub(crate) fn chat_message_create_operation_with_expiry(
     .target_ref(strand_id)
     .body(sdk_payload_value(
         payload.to_value(),
-        "chat ck.message.create payload serialize",
+        "chat ak.message.create payload serialize",
     )?)
     .build_sdk_event("inkson")
 }

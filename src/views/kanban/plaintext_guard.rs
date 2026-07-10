@@ -109,7 +109,7 @@ pub(super) fn kanban_event_carries_plaintext_private_content(event: &arkret_sdk:
 /// drop a container create/update, regardless of what
 /// `kanban_event_carries_plaintext_private_content` matches in the future. See
 /// _next.md X13.
-pub(super) const KANBAN_PLAINTEXT_METADATA_KINDS: &[&str] = &["ak.space.create", "ck.space.update"];
+pub(super) const KANBAN_PLAINTEXT_METADATA_KINDS: &[&str] = &["ak.space.create", "ak.space.update"];
 
 /// R4 fail-closed reason surfaced when the Realm security projection has not
 /// synced yet and we cannot prove the scope is plaintext. Mirrors the

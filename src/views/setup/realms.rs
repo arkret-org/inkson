@@ -26,14 +26,12 @@ use crate::views::helpers::{authed_api, display_name_for_did, short_protocol_id}
 
 #[component]
 pub(super) fn RealmsSection(
-    base_url: String,
     plaintext_service_did: String,
     secure_store_ready: bool,
     token: Signal<String>,
     account_did: Signal<String>,
     device_id: Signal<String>,
     config_store: Signal<LocalConfigStore>,
-    state_store: Signal<LocalStateStore>,
     mut selected_realm_id: Signal<String>,
     // State signals are owned by the parent `SetupPanel` so the wizard's
     // in-progress draft survives switching between setup sections (the
@@ -59,6 +57,9 @@ pub(super) fn RealmsSection(
     mut pending_recovery_gate: Signal<bool>,
     mut recovery_gate_acknowledged: Signal<bool>,
 ) -> Element {
+    // A4 — base_url / state_store from session context instead of props.
+    let base_url = crate::app::SessionContext::base_url_string();
+    let mut state_store = crate::app::SessionContext::get().state_store;
     let has_session = !token().trim().is_empty();
 
     let realm_discoverability_selected = use_memo(move || Some(realm_discoverability()));
@@ -747,7 +748,7 @@ pub(super) fn RealmsSection(
                                                     Ok(_) => {}
                                                     Err(error) => {
                                                         let message = format!(
-                                                            "event signer is not ready; cannot sign ck.realm.create: {error}"
+                                                            "event signer is not ready; cannot sign ak.realm.create: {error}"
                                                         );
                                                         realm_create_busy.set(false);
                                                         realm_state.set(message.clone());
@@ -830,7 +831,7 @@ pub(super) fn RealmsSection(
                                                         Some(content_scheme.as_str()),
                                                     ).await {
                                                     Ok(realm) => {
-                                                        // R15: ck.realm.create now returns
+                                                        // R15: ak.realm.create now returns
                                                         // RealmCreateResult with the new
                                                         // `ak:realm:*` id under `realm_id`.
                                                         let realm_id = realm.realm_id.clone();
@@ -922,9 +923,9 @@ pub(super) fn RealmsSection(
                                                                     }
                                                                 }
                                                             };
-                                                            // Emit the one-time ck.mls.genesis for the
+                                                            // Emit the one-time ak.mls.genesis for the
                                                             // freshly-created creator group at epoch 0,
-                                                            // BEFORE any ck.mls.commit can bump the epoch.
+                                                            // BEFORE any ak.mls.commit can bump the epoch.
                                                             // A duplicate (mls_genesis_already_exists) is
                                                             // treated as success. Failure is non-fatal:
                                                             // soland lazily defaults a never-seen group to
@@ -950,7 +951,7 @@ pub(super) fn RealmsSection(
                                                                             tracing::warn!(
                                                                                 error = %err,
                                                                                 realm = %realm_id,
-                                                                                "building ck.mls.genesis event failed",
+                                                                                "building ak.mls.genesis event failed",
                                                                             );
                                                                             None
                                                                         }

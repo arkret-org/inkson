@@ -315,11 +315,11 @@ pub fn AppletsPanel(
                     span { class: "badge", "{registrations.len()} registered" }
                 }
                 div { class: "muted",
-                    "Spec extensions/applet-integration.md §2 — applet registration carries service_did + namespace + capabilities. The registry lists every ck.applet.registration the local raw-operation log has observed."
+                    "Spec extensions/applet-integration.md §2 — applet registration carries service_did + namespace + capabilities. The registry lists every ak.applet.registration the local raw-operation log has observed."
                 }
                 if registrations.is_empty() {
                     div { class: "muted", "data-testid": "applet-registry-empty",
-                        "No applets registered yet. Use the registration form below to write a ck.applet.registration event."
+                        "No applets registered yet. Use the registration form below to write a ak.applet.registration event."
                     }
                 } else {
                     for r in registrations {
@@ -447,7 +447,7 @@ pub fn AppletsPanel(
                 }
                 if sessions.is_empty() {
                     div { class: "muted", "data-testid": "applet-session-empty",
-                        "No protocol sessions observed. Once an applet calls ck.applet.interop_session.start the row appears here with its status updates."
+                        "No protocol sessions observed. Once an applet calls ak.applet.interop_session.start the row appears here with its status updates."
                     }
                 } else {
                     for s in sessions {
@@ -991,7 +991,7 @@ mod tests {
         ] {
             assert!(kind.starts_with("ak.applet.interop_session."));
         }
-        assert!(!"ak.applet.registration".starts_with("ck.applet.interop_session."));
+        assert!(!"ak.applet.registration".starts_with("ak.applet.interop_session."));
     }
 
     // ── G3.Y4 — install helpers ─────────────────────────────────
@@ -1072,7 +1072,7 @@ mod tests {
         let plan = serde_json::json!({
             "plan_digest": "sha256:deadbeef",
             "approved_scopes": [{
-                "actions": ["ak.message.create", "ck.applet.ghost.provision"],
+                "actions": ["ak.message.create", "ak.applet.ghost.provision"],
                 "realm_ids": ["ak:realm:01904100-0000-7000-8000-000000000010"],
                 "constraints": []
             }],
@@ -1092,7 +1092,7 @@ mod tests {
     fn parse_applet_approval_actions_splits_and_dedupes() {
         assert_eq!(
             parse_applet_approval_actions(
-                "ak.message.create, ck.applet.ghost.provision\nck.message.create"
+                "ak.message.create, ak.applet.ghost.provision\nck.message.create"
             ),
             vec![
                 "ak.applet.ghost.provision".to_owned(),

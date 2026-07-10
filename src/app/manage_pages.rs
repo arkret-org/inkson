@@ -22,7 +22,6 @@ pub(super) fn contact_manage_scope_summary(contact: &crate::models::ContactListR
 
 #[component]
 pub(super) fn RealmsManagePage(
-    base_url: String,
     account_did: String,
     token: Signal<String>,
     has_session: bool,
@@ -30,11 +29,13 @@ pub(super) fn RealmsManagePage(
     mut realm_tree_nodes: Signal<Vec<RealmTreeNode>>,
     mut selected_realm_id: Signal<String>,
     mut sync_cursor: Signal<String>,
-    mut state_store: Signal<LocalStateStore>,
     mut query: Signal<String>,
     mut selection: Signal<BTreeSet<String>>,
     mut busy: Signal<bool>,
 ) -> Element {
+    // A4 — base_url / state_store from session context instead of props.
+    let base_url = crate::app::SessionContext::base_url_string();
+    let mut state_store = crate::app::SessionContext::get().state_store;
     let normalized_query = query().trim().to_ascii_lowercase();
     let filtered_rows = realm_rows
         .iter()
@@ -304,16 +305,17 @@ pub(super) fn RealmsManagePage(
 
 #[component]
 pub(super) fn ContactsManagePage(
-    base_url: String,
     token: Signal<String>,
     has_session: bool,
     mut contact_rows: Signal<Vec<crate::models::ContactListRow>>,
     mut contacts_loaded: Signal<bool>,
-    state_store: Signal<LocalStateStore>,
     mut query: Signal<String>,
     mut selection: Signal<BTreeSet<String>>,
     mut busy: Signal<bool>,
 ) -> Element {
+    // A4 — base_url / state_store from session context instead of props.
+    let base_url = crate::app::SessionContext::base_url_string();
+    let state_store = crate::app::SessionContext::get().state_store;
     {
         let base = base_url.clone();
         use_effect(move || {

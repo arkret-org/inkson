@@ -796,7 +796,7 @@ pub(crate) fn is_realm_or_space_projection_id(id: &str) -> bool {
 pub(crate) fn projection_tree_node_kind(id: &str, body: &Value) -> RealmTreeNodeKind {
     // Classify Realm vs Space. Wire signals:
     // - `__kind` (inkson-local tag from optimistic save)
-    // - `schema` (server projection — ck.schema.realm.v1 vs ck.schema.space.v1)
+    // - `schema` (server projection — ak.schema.realm.v1 vs ak.schema.space.v1)
     // - id prefix (`ak:realm:*` vs `ak:space:*`)
     match body
         .get("__kind")

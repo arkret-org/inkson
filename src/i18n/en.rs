@@ -347,7 +347,7 @@ pub fn english_translations() -> TranslationDict {
     dict.set("realm_admin.admin_grant_title", "Realm administrators");
     dict.set(
         "realm_admin.admin_grant_hint",
-        "Grant or revoke ck.realm.admin authority. Authored as a signed capability event; takes effect once the soland reducer projects it.",
+        "Grant or revoke ak.realm.admin authority. Authored as a signed capability event; takes effect once the soland reducer projects it.",
     );
     dict.set("realm_admin.admin_subject_label", "Admin subject (DID)");
     dict.set("realm_admin.admin_grant_id_label", "Grant ID");
@@ -386,7 +386,7 @@ pub fn english_translations() -> TranslationDict {
     );
     dict.set(
         "realm_admin.durability_intro",
-        "Declares who can unseal this Realm's history after every member device is lost or all members have left. Changing the policy is a control-plane Move: it only applies to new epochs once a following ck.mls.commit covers the membership frontier, which also triggers re-disclosure to members.",
+        "Declares who can unseal this Realm's history after every member device is lost or all members have left. Changing the policy is a control-plane Move: it only applies to new epochs once a following ak.mls.commit covers the membership frontier, which also triggers re-disclosure to members.",
     );
     dict.set(
         "realm_admin.durability_scheme_warning",
@@ -428,7 +428,7 @@ pub fn english_translations() -> TranslationDict {
     dict.set("realm_admin.durability_submitting", "Submitting…");
     dict.set(
         "realm_admin.durability_submitted",
-        "Submitted ck.realm.policy_components; advance one ck.mls.commit to activate the sealing obligation and trigger re-disclosure.",
+        "Submitted ak.realm.policy_components; advance one ak.mls.commit to activate the sealing obligation and trigger re-disclosure.",
     );
     dict.set(
         "realm_admin.durability_submit_failed",

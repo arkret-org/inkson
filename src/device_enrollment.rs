@@ -71,7 +71,7 @@ impl DeviceEnrollmentRequest {
 /// `ck.device.authorize` record: the default-MUST HPKE suite (secret / key
 /// envelope sealing) plus the MLS v1 group algorithm. UTF-8 bytewise sorted.
 pub const INKSON_DEVICE_ALGORITHMS: &[&str] =
-    &["ak.hpke_x25519_aead_chacha20poly1305.v1", "ck.mls.v1"];
+    &["ak.hpke_x25519_aead_chacha20poly1305.v1", "ak.mls.v1"];
 
 pub fn inkson_device_algorithms() -> Vec<String> {
     INKSON_DEVICE_ALGORITHMS

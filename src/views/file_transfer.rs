@@ -12,11 +12,12 @@ use crate::file_transfer::{
 
 #[component]
 pub fn FileTransferPanel(
-    base_url: String,
     token: Signal<String>,
     account_did: String,
     device_id: String,
 ) -> Element {
+    // A4 — base_url from session context instead of a prop.
+    let base_url = crate::app::SessionContext::base_url_string();
     let mut items = use_signal(Vec::<FileTransferItem>::new);
     let mut status = use_signal(|| "Ready".to_owned());
     let refreshing = use_signal(|| false);
@@ -208,7 +209,6 @@ pub fn FileTransferPanel(
                     for item in items.read().iter().cloned() {
                         FileTransferRow {
                             item,
-                            base_url: base_url.clone(),
                             api_token: token(),
                             status,
                             download_urls,
@@ -223,11 +223,12 @@ pub fn FileTransferPanel(
 #[component]
 fn FileTransferRow(
     item: FileTransferItem,
-    base_url: String,
     api_token: String,
     mut status: Signal<String>,
     mut download_urls: Signal<BTreeMap<String, String>>,
 ) -> Element {
+    // A4 — base_url from session context instead of a prop.
+    let base_url = crate::app::SessionContext::base_url_string();
     let transfer_id = item.record.transfer_id.clone();
     let filename = display_filename(&item.record);
     let digest_tail = digest_tail(&item.record.content_digest);

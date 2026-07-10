@@ -2457,7 +2457,7 @@ pub fn RouterView() -> Element {
                         tracing::info!(
                             installed = count,
                             realm = %short_protocol_id(&share_realm_id),
-                            "installed history_secret(s) from ck.realm_key.share"
+                            "installed history_secret(s) from ak.realm_key.share"
                         );
                     }
                 }
@@ -2497,7 +2497,7 @@ pub fn RouterView() -> Element {
                                 if removed > 0 {
                                     tracing::debug!(
                                         request_id = %short_protocol_id(&request_id),
-                                        "dismissed answered ck.realm_key.request from local inbox"
+                                        "dismissed answered ak.realm_key.request from local inbox"
                                     );
                                 }
                             }
@@ -3131,13 +3131,11 @@ pub fn RouterView() -> Element {
                     match auth_surface {
                         AuthSurface::Callback => rsx! {
                             crate::views::login::LoginPanel {
-                                base_url,
                                 account_did,
                                 device_id,
                                 token,
                                 connection_status,
                                 config_store,
-                                state_store,
                                 account_primary_handle,
                                 personal_handles,
                                 personal_handles_status,
@@ -3172,13 +3170,11 @@ pub fn RouterView() -> Element {
                         },
                         AuthSurface::Login | AuthSurface::AppShell => rsx! {
                             crate::views::login::LoginPanel {
-                                base_url,
                                 account_did,
                                 device_id,
                                 token,
                                 connection_status,
                                 config_store,
-                                state_store,
                                 account_primary_handle,
                                 personal_handles,
                                 personal_handles_status,
@@ -3380,7 +3376,6 @@ pub fn RouterView() -> Element {
                 device_id,
             }
             crate::components::AgentRuntimeApprovalPrompt {
-                base_url,
                 token,
                 account_did,
             }
@@ -5375,13 +5370,11 @@ pub fn RouterView() -> Element {
                 match content_route {
                     Route::Login => rsx! {
                         crate::views::login::LoginPanel {
-                            base_url,
                             account_did,
                             device_id,
                             token,
                             connection_status,
                             config_store,
-                            state_store,
                             account_primary_handle,
                             personal_handles,
                             personal_handles_status,
@@ -5391,13 +5384,11 @@ pub fn RouterView() -> Element {
                     },
                     Route::AuthCallback => rsx! {
                         crate::views::login::LoginPanel {
-                            base_url,
                             account_did,
                             device_id,
                             token,
                             connection_status,
                             config_store,
-                            state_store,
                             account_primary_handle,
                             personal_handles,
                             personal_handles_status,
@@ -5418,7 +5409,6 @@ pub fn RouterView() -> Element {
                     },
                     Route::FileTransfer => rsx! {
                         crate::views::file_transfer::FileTransferPanel {
-                            base_url: base_url(),
                             token,
                             account_did: account_did(),
                             device_id: device_id(),
@@ -5508,7 +5498,6 @@ pub fn RouterView() -> Element {
                     },
                     Route::RealmsManage => rsx! {
                         RealmsManagePage {
-                            base_url: base_url(),
                             account_did: account_did(),
                             token,
                             has_session,
@@ -5516,7 +5505,6 @@ pub fn RouterView() -> Element {
                             realm_tree_nodes,
                             selected_realm_id,
                             sync_cursor,
-                            state_store,
                             query: realm_manage_query,
                             selection: manage_realm_selection,
                             busy: manage_bulk_busy,
@@ -5524,12 +5512,10 @@ pub fn RouterView() -> Element {
                     },
                     Route::ContactsManage => rsx! {
                         ContactsManagePage {
-                            base_url: base_url(),
                             token,
                             has_session,
                             contact_rows: direct_contact_rows,
                             contacts_loaded: direct_contacts_loaded,
-                            state_store,
                             query: contact_manage_query,
                             selection: manage_contact_selection,
                             busy: manage_bulk_busy,
@@ -5544,14 +5530,12 @@ pub fn RouterView() -> Element {
                         if full_ready {
                             rsx! {
                                 crate::views::setup::SetupPanel {
-                                    base_url: base_url(),
                                     plaintext_service_did: active_service_did.clone(),
                                     secure_store_ready: secure_store_bootstrap_ready(),
                                     token,
                                     account_did,
                                     device_id,
                                     config_store,
-                                    state_store,
                                     realm_tree_nodes,
                                     selected_realm_id,
                                     new_space_context_node,
@@ -5572,7 +5556,6 @@ pub fn RouterView() -> Element {
                     | Route::Audit
                     | Route::Developer => rsx! {
                         crate::views::settings::SettingsPanel {
-                            base_url,
                             account_did,
                             device_id,
                             token,
@@ -5581,7 +5564,6 @@ pub fn RouterView() -> Element {
                             personal_handles_status: personal_handles_status(),
                             can_list_handles_for_subject,
                             config_store,
-                            state_store,
                             push_state,
                             locale,
                             theme,
@@ -5591,12 +5573,10 @@ pub fn RouterView() -> Element {
                         if e2ee_ready {
                             rsx! {
                                 crate::views::verify_device::VerifyDevicePanel {
-                                    base_url: base_url(),
                                     token,
                                     device_id: device_id(),
                                     account_did: account_did(),
                                     selected_realm_id: selected_realm_id(),
-                                    state_store,
                                 }
                             }
                         } else {
@@ -5612,7 +5592,6 @@ pub fn RouterView() -> Element {
                         if full_ready {
                             rsx! {
                                 crate::views::realm_admin::RealmMembersPanel {
-                                    base_url: base_url(),
                                     active_service_did: active_service_did.clone(),
                                     account_did: account_did(),
                                     device_id: device_id(),
@@ -5620,7 +5599,6 @@ pub fn RouterView() -> Element {
                                     selected_realm_id: active_realm_id.clone(),
                                     sync_cursor,
                                     frontier_state,
-                                    state_store,
                                 }
                             }
                         } else {
@@ -5636,14 +5614,12 @@ pub fn RouterView() -> Element {
                         if full_ready {
                             rsx! {
                                 crate::views::realm_admin::RealmAdminPanel {
-                                    base_url: base_url(),
                                     account_did: account_did(),
                                     device_id: device_id(),
                                     token,
                                     selected_realm_id: active_realm_id.clone(),
                                     sync_cursor,
                                     frontier_state,
-                                    state_store,
                                     active_section: route.realm_admin_section().map(str::to_owned),
                                 }
                             }

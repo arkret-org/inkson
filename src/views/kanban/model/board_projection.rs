@@ -1009,7 +1009,7 @@ mod tests {
         assert_eq!(columns.len(), 2);
         assert_eq!(
             columns[0].title, "Second",
-            "real ck.space.update rank patch folds and re-sorts the columns"
+            "real ak.space.update rank patch folds and re-sorts the columns"
         );
     }
 

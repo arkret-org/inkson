@@ -777,7 +777,7 @@ export async function mockCokretApi(
       url.pathname === "/_arkret/self/events/describe" &&
       route.request().method() === "GET"
     ) {
-      // Spec ck.self.events.query.describe -> canonical ServiceDescribe shape
+      // Spec ak.self.events.query.describe -> canonical ServiceDescribe shape
       // (17 required fields; inkson decodes the SDK ServerDescription).
       return json(route, {
         service_did: "did:web:server.local",

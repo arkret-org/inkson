@@ -7,15 +7,15 @@
 //
 // | View module        | claude-design page                | spec sections                                           | primary event kinds                                                |
 // |--------------------|-----------------------------------|---------------------------------------------------------|--------------------------------------------------------------------|
-// | login              | desktop/login.html, mobile/login  | crypto-media/device-lifecycle §1-3                     | ak.session.grant, ck.device.authorize                            |
+// | login              | desktop/login.html, mobile/login  | crypto-media/device-lifecycle §1-3                     | ak.session.grant, ak.device.authorize                            |
 // | dashboard          | desktop/home.html, mobile/home    | overview/architecture §3, sync/client-sync             | (read-only projection of frontier + spaces + notifications)        |
-// | kanban             | desktop/board.html, mobile/board  | overview/current-model §4, models/views §6             | ck.strand.move, ck.strand.reorder, ck.space.update (board/list container)|
-// | chat               | desktop/discussion.html           | models/object-model-standard §5, current-model §3      | ck.strand.tracks.update (unified), ck.message.*                      |
-// | directory          | desktop/directory.html            | discovery/discovery-directory                          | (read-only); writes via ck.realm.discovery state event              |
-// | notifications      | desktop/inbox.html, mobile/inbox  | discovery/push-notifications, discovery/read-receipts §6 | (projection only — derived from ck.read_cursor.advance / ck.receipt.read / @-mention) |
-// | verify_device      | desktop/verify-device.html        | crypto-media/device-lifecycle (verification)           | ck.key.verification.*, ck.mls.welcome                              |
+// | kanban             | desktop/board.html, mobile/board  | overview/current-model §4, models/views §6             | ak.strand.move, ak.strand.reorder, ak.space.update (board/list container)|
+// | chat               | desktop/discussion.html           | models/object-model-standard §5, current-model §3      | ak.strand.tracks.update (unified), ck.message.*                      |
+// | directory          | desktop/directory.html            | discovery/discovery-directory                          | (read-only); writes via ak.realm.discovery state event              |
+// | notifications      | desktop/inbox.html, mobile/inbox  | discovery/push-notifications, discovery/read-receipts §6 | (projection only — derived from ak.read_cursor.advance / ak.receipt.read / @-mention) |
+// | verify_device      | desktop/verify-device.html        | crypto-media/device-lifecycle (verification)           | ak.key.verification.*, ak.mls.welcome                              |
 // | realm_admin        | desktop/realm-admin.html          | authz/{capabilities,policy-server}, governance/content-moderation, sync/federation | ck.policy.{rule,action,set}, ck.capability.{grant,revoke,delegate}  |
-// | settings           | desktop/settings.html             | identity/identity-handles §16, identity/account-lifecycle | ck.profile.update, ck.account.status, ck.identity.disclosure_*      |
+// | settings           | desktop/settings.html             | identity/identity-handles §16, identity/account-lifecycle | ak.profile.update, ak.account.status, ak.identity.disclosure_*      |
 // | setup              | (workspace bootstrap helper page) | overview/architecture                                  | (workspace bootstrap)                                              |
 //
 // Pending views (see `_todos.md`):

@@ -147,7 +147,7 @@ pub fn canonical_mls_remove_membership_frontier(
 ) -> Result<Vec<arkret_sdk::EventId>, MlsRuntimeError> {
     if revocation_membership_frontier.is_empty() {
         return Err(MlsRuntimeError::Commit(
-            "MLS Remove governance binding requires the accepted ck.device.revoke event \
+            "MLS Remove governance binding requires the accepted ak.device.revoke event \
              or imported revocation Control Move frontier"
                 .to_owned(),
         ));

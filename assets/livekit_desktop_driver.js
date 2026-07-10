@@ -99,7 +99,7 @@ const room = new LK.Room(roomOptions);
 
 // Wire the real ParticipantConnected event BEFORE connect so participants
 // present at connect time and those joining later are both forwarded to Rust
-// for the MEDIA-2 cross-check against ck.call.state.participants[].
+// for the MEDIA-2 cross-check against ak.call.state.participants[].
 room.on(LK.RoomEvent.ParticipantConnected, (participant) => {
   try {
     dioxus.send({ event: "participant", identity: participant.identity });

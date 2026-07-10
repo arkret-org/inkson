@@ -637,7 +637,7 @@ mod tests {
     fn test_grant() -> UiCapabilityGrant {
         grant(
             "did:web:bob",
-            &["ak.strand.read", "ck.strand.update"],
+            &["ak.strand.read", "ak.strand.update"],
             vec![UiCapabilityConstraint::Temporal {
                 not_before: None,
                 expires_at: Some("2027-01-01T00:00:00Z".to_owned()),
@@ -718,7 +718,7 @@ mod tests {
         engine.add_grant(UiCapabilityGrant {
             subject: "did:web:alice.example".to_owned(),
             resource_selectors: vec![UiResourceSelector::Wildcard],
-            actions: vec!["ak.space.archive".to_owned(), "ck.space.restore".to_owned()],
+            actions: vec!["ak.space.archive".to_owned(), "ak.space.restore".to_owned()],
             constraints: Vec::new(),
         });
         let resource = UiResourceRef {

@@ -12,7 +12,7 @@ fn mls_remove_membership_frontier_requires_revocation_evidence() {
 
     assert!(
         err.user_message()
-            .contains("accepted ck.device.revoke event or imported revocation Control Move")
+            .contains("accepted ak.device.revoke event or imported revocation Control Move")
     );
 }
 

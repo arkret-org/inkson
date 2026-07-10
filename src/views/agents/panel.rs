@@ -273,7 +273,7 @@ pub fn AgentsPanel(
                     span { class: "badge", title: "ak.agent.endpoint", "Bot endpoint" }
                 }
                 div { id: "agent-register-form-help", class: "muted",
-                    "Fill in agent_id + protocol + comma-separated capabilities. Submits a ck.agent.endpoint envelope."
+                    "Fill in agent_id + protocol + comma-separated capabilities. Submits a ak.agent.endpoint envelope."
                 }
                 div { class: "workflow-form",
                     Input {
@@ -505,7 +505,7 @@ pub fn AgentsPanel(
                 }
                 if incoming_results.read().is_empty() {
                     div { class: "muted", "data-testid": "agent-incoming-empty",
-                        "No result events fetched yet. The runtime emits these after a ck.agent.interop_session.start lands."
+                        "No result events fetched yet. The runtime emits these after a ak.agent.interop_session.start lands."
                     }
                 } else {
                     for (event_id, payload) in incoming_results.read().iter() {
@@ -566,7 +566,7 @@ pub fn AgentsPanel(
                     }
                 }
                 div { class: "muted",
-                    "Initiates a ck.agent.interop_session.start handoff to a registered agent endpoint via soland's agent_bridge route. The transcript panel tails the soland status events."
+                    "Initiates a ak.agent.interop_session.start handoff to a registered agent endpoint via soland's agent_bridge route. The transcript panel tails the soland status events."
                 }
                 div { class: "workflow-form",
                     Input {
@@ -761,7 +761,7 @@ pub fn AgentsPanel(
 
             // ─────────────────────────────────────────────────────
             // G3.Y4 (Phase B) — interop capability-approval surface.
-            // Authors a ck.capability.grant carrying
+            // Authors a ak.capability.grant carrying
             // actions=[ck.agent.interop_session.start] + the §7
             // constraint, gated behind an explicit human-approval
             // acknowledgement (spec §4 / §8).
@@ -777,7 +777,7 @@ pub fn AgentsPanel(
                     }
                 }
                 div { class: "muted",
-                    "Grant ck.agent.interop_session.start to a counterparty agent, pinned to a single allowed endpoint with a human-approval gate (agent-protocol-interop.md §4 / §7 / §8)."
+                    "Grant ak.agent.interop_session.start to a counterparty agent, pinned to a single allowed endpoint with a human-approval gate (agent-protocol-interop.md §4 / §7 / §8)."
                 }
                 div { class: "actions",
                     Button {

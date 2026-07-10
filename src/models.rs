@@ -263,7 +263,7 @@ pub struct SpaceCreateResult {
 }
 
 // (Move/Seal pipeline DTOs deleted; all writes now go through
-// ck.self.events.command.submit via SubmitEventResult.)
+// ak.self.events.command.submit via SubmitEventResult.)
 
 /// Result of [`crate::api::CokretApi::set_account_data`]. Captures the
 /// graceful-degradation contract: 404/501/405 are not treated as errors —

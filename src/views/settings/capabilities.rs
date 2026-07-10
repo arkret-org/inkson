@@ -75,11 +75,12 @@ fn decode_capability_row(grant: &Capability) -> CapabilityRow {
 
 #[component]
 pub fn CapabilitiesSettingsCard(
-    base_url: Signal<String>,
     account_did: Signal<String>,
     token: Signal<String>,
-    state_store: Signal<LocalStateStore>,
 ) -> Element {
+    // A4 — base_url / state_store from session context instead of props.
+    let base_url = crate::app::SessionContext::get().base_url;
+    let state_store = crate::app::SessionContext::get().state_store;
     let mut rows = use_signal(Vec::<CapabilityRow>::new);
     let mut status = use_signal(String::new);
     let mut detail_for = use_signal(|| Option::<String>::None);

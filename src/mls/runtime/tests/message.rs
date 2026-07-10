@@ -118,7 +118,7 @@ fn authoring_exporter_aead_content_retains_history_secret() {
     .unwrap();
 
     // The epoch-0 history_secret is now retained and non-empty, so it can be
-    // sealed into a later ck.realm_key.share for a late joiner.
+    // sealed into a later ak.realm_key.share for a late joiner.
     let retained = state
         .history_secret_for(realm, 0)
         .expect("authoring exporter-aead content must retain the epoch history_secret");
@@ -807,7 +807,7 @@ fn ingest_realm_key_share_installs_history_secrets() {
 #[cfg(not(target_arch = "wasm32"))]
 #[test]
 fn ingest_realm_key_share_accepts_projected_payload_envelope() {
-    // soland projects durable ck.realm_key.share events into device_messages as
+    // soland projects durable ak.realm_key.share events into device_messages as
     // `{ kind, realm_id, sender, sender_device_id, payload }`. The receiver
     // must parse the spec payload field or Bob never installs the shared
     // history key.

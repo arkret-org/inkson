@@ -1218,7 +1218,7 @@ pub(crate) fn poll_content_from_candidates<'a>(candidates: &[&'a Value]) -> Opti
             candidate
                 .get("kind")
                 .and_then(Value::as_str)
-                .is_some_and(|kind| matches!(kind, "ak.content.poll" | "ck.content.poll.response"))
+                .is_some_and(|kind| matches!(kind, "ak.content.poll" | "ak.content.poll.response"))
         })
         .copied()
 }
@@ -1286,7 +1286,7 @@ pub(crate) fn apply_shared_pin_event(
     else {
         return;
     };
-    if !matches!(kind, "ak.pin.add" | "ck.pin.remove" | "ck.pin.reorder") {
+    if !matches!(kind, "ak.pin.add" | "ak.pin.remove" | "ak.pin.reorder") {
         return;
     }
     let payload = event

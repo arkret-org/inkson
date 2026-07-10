@@ -48,7 +48,7 @@ pub fn build_morph_update(
     patch: Value,
 ) -> anyhow::Result<OperationBuilder> {
     let patch: arkret_sdk::Patch = serde_json::from_value(patch)
-        .map_err(|err| anyhow::anyhow!("ak.morph.update patch must match ck.patch.v1: {err}"))?;
+        .map_err(|err| anyhow::anyhow!("ak.morph.update patch must match ak.patch.v1: {err}"))?;
     let typed_morph_id = arkret_sdk::MorphId::new(morph_id.to_owned())
         .map_err(|err| anyhow::anyhow!("invalid morph id {morph_id:?}: {err:?}"))?;
     let body = arkret_sdk::MorphUpdatePayload::for_morph(typed_morph_id, patch)

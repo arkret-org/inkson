@@ -153,7 +153,7 @@ export async function arkretLivekitSetE2EEKey(
 //
 // Subscribes to the real ParticipantConnected event and forwards the SFU
 // participant identity string to the Rust callback, which cross-checks it
-// against ck.call.state.participants[] (fail-closed on mismatch).
+// against ak.call.state.participants[] (fail-closed on mismatch).
 export function arkretLivekitOnParticipant(handle, cb) {
   const { room, LK } = lookup(handle);
   room.on(LK.RoomEvent.ParticipantConnected, (participant) => {

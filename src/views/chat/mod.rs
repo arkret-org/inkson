@@ -1688,7 +1688,7 @@ pub fn ChatPanel(
                                 class: "pinned-bar",
                                 "data-testid": "pinned-bar",
                                 "data-source": "shared-event",
-                                "data-permission": "ak.pin.add ck.pin.remove",
+                                "data-permission": "ak.pin.add ak.pin.remove",
                                 if pinned_view.is_empty() {
                                     span {
                                         class: "pinned-bar-empty",
@@ -2157,7 +2157,7 @@ pub fn ChatPanel(
                                                 r#type: "button",
                                                 "data-testid": "message-shared-pin-button",
                                                 "data-source": "shared-event",
-                                                "data-permission": if is_pinned { "ak.pin.remove" } else { "ck.pin.add" },
+                                                "data-permission": if is_pinned { "ak.pin.remove" } else { "ak.pin.add" },
                                                 onclick: move |_| {
                                                     let rank = existing_pin
                                                         .as_ref()
@@ -2782,7 +2782,7 @@ pub fn ChatPanel(
                                                     "data-testid": "chat-pin-button",
                                                     "data-source": "shared-event",
                                                     "data-pinned": if is_pinned { "true" } else { "false" },
-                                                    "data-permission": if is_pinned { "ak.pin.remove" } else { "ck.pin.add" },
+                                                    "data-permission": if is_pinned { "ak.pin.remove" } else { "ak.pin.add" },
                                                     onclick: move |_| {
                                                         let rank = existing_pin
                                                             .as_ref()
@@ -3759,7 +3759,7 @@ pub fn ChatPanel(
 
             // G3.Y2 — discussion promote confirmation modal. Renders
             // a single input for the child Board Space title + a confirm
-            // button that fires a Realm-scoped ck.space.create.
+            // button that fires a Realm-scoped ak.space.create.
             if crate::messaging::discussion_promote::discussion_promote_enabled()
                 && promote_discussion_draft.read().is_open()
             {
@@ -5054,11 +5054,11 @@ pub fn ChatPanel(
                                 spawn(async move {
                                 let _hlc = Hlc::now("inkson").to_string();
                                 let seal_view = state_store.read().seal_view_for_realm(&realm);
-                                // Shared MLS core: encrypt → forced ck.mls.commit
+                                // Shared MLS core: encrypt → forced ak.mls.commit
                                 // envelope (governance / prev→post epoch /
                                 // policy_root / membership_frontier) → spec
                                 // `ck.schema.encrypted_envelope.v1` wrap →
-                                // ck.message.create payload. This mirrors the
+                                // ak.message.create payload. This mirrors the
                                 // shared secure send builder.
                                 let secure_build = match crate::views::secure_send::build_secure_send(
                                     state_store,
@@ -5145,10 +5145,10 @@ pub fn ChatPanel(
                                         );
                                         return;
                                     };
-                                    // Shared submit: forced ck.mls.commit first
+                                    // Shared submit: forced ak.mls.commit first
                                     // (persist-on-accept snapshot + §7.10 backup
                                     // schedule + move record), then the encrypted
-                                    // ck.message.create.
+                                    // ak.message.create.
                                     let outcome = crate::views::secure_send::submit_secure_send(
                                         &api,
                                         state_store,

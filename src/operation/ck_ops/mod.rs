@@ -165,7 +165,7 @@ pub(super) fn strand_tracks_update_payload_value(
     arkret_sdk::StrandTracksUpdatePayload::with_patch(strand_id_value(strand_id)?, patch)
         .and_then(|payload| payload.to_value())
         .map_err(|err| {
-            anyhow::anyhow!("invalid ck.strand.tracks.update payload for {strand_id}: {err}")
+            anyhow::anyhow!("invalid ak.strand.tracks.update payload for {strand_id}: {err}")
         })
 }
 
@@ -178,7 +178,7 @@ pub(super) fn strand_watch_level_value(
         "all" => Ok(arkret_sdk::StrandWatchLevel::All),
         "muted" => Ok(arkret_sdk::StrandWatchLevel::Muted),
         other => Err(anyhow::anyhow!(
-            "unknown ck.strand.watch.set level {other:?}"
+            "unknown ak.strand.watch.set level {other:?}"
         )),
     }
 }
@@ -298,9 +298,9 @@ pub(super) fn relation_create_payload_value(
 
 pub(super) fn patch_from_value(patch: Value) -> anyhow::Result<arkret_sdk::Patch> {
     let patch: arkret_sdk::Patch = serde_json::from_value(patch)
-        .map_err(|err| anyhow::anyhow!("ak.strand.update patch must match ck.patch.v1: {err}"))?;
+        .map_err(|err| anyhow::anyhow!("ak.strand.update patch must match ak.patch.v1: {err}"))?;
     patch
         .validate()
-        .map_err(|err| anyhow::anyhow!("ak.strand.update patch must match ck.patch.v1: {err}"))?;
+        .map_err(|err| anyhow::anyhow!("ak.strand.update patch must match ak.patch.v1: {err}"))?;
     Ok(patch)
 }

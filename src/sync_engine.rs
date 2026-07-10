@@ -783,7 +783,7 @@ async fn run_idle_self_update_pass(
                 continue;
             }
         };
-        // Submit the canonical ck.mls.commit. The server's expected-prev-epoch
+        // Submit the canonical ak.mls.commit. The server's expected-prev-epoch
         // CAS (§5.4) rejects the loser of any concurrent commit race; either
         // way the epoch advances, so a rejection is fine — we simply do NOT
         // persist the local snapshot (persist-on-accept).
@@ -1742,7 +1742,7 @@ fn discussion_state_control_event_kind(event: &Value) -> Option<&str> {
 fn discussion_state_control_event_is_ingestable(event: &Value) -> bool {
     matches!(
         discussion_state_control_event_kind(event),
-        Some("ak.pin.add" | "ck.pin.remove" | "ck.pin.reorder")
+        Some("ak.pin.add" | "ak.pin.remove" | "ak.pin.reorder")
     )
 }
 
@@ -1829,7 +1829,7 @@ fn sync_event_string(value: Option<&Value>, path: &[&str]) -> Option<String> {
 fn membership_operation_from_event(event: &Value) -> Option<RawOperationRecord> {
     let kind = sync_event_string(Some(event), &["event_kind"])
         .or_else(|| sync_event_string(Some(event), &["kind"]))?;
-    if !matches!(kind.as_str(), "ak.member.state" | "ck.invite.accept") {
+    if !matches!(kind.as_str(), "ak.member.state" | "ak.invite.accept") {
         return None;
     }
     let body = event
@@ -2007,7 +2007,7 @@ fn invalidate_cache_for_revocation_events(
             .and_then(Value::as_str)
             .or_else(|| event.get("type").and_then(Value::as_str))
             .unwrap_or("");
-        kind == "ak.cross_signing.reset" || kind == "ck.device.revoke"
+        kind == "ak.cross_signing.reset" || kind == "ak.device.revoke"
     }
 
     /// Read the actor DID string from the event, falling back to the roster entry.
@@ -2130,7 +2130,7 @@ fn apply_account_data(
             }
             continue;
         }
-        // ck.account.blocklist — personal block list.
+        // ak.account.blocklist — personal block list.
         if data_type == "ak.presence.visibility" {
             let Some(visibility) = entry
                 .get("content")
@@ -2139,14 +2139,14 @@ fn apply_account_data(
                 .and_then(crate::local_state::PresenceVisibility::try_from_wire)
             else {
                 tracing::warn!(
-                    "sync engine: ignoring malformed ck.presence.visibility account_data"
+                    "sync engine: ignoring malformed ak.presence.visibility account_data"
                 );
                 continue;
             };
             store.set_presence_visibility(visibility);
             continue;
         }
-        // ck.presence.preference — manual presence preference
+        // ak.presence.preference — manual presence preference
         // (profiles-presence.md §3.6). Normally pushed encrypted, so a
         // plaintext-readable body only appears from same-account devices
         // in dev / test deployments; opaque ciphertext entries are
@@ -2170,13 +2170,13 @@ fn apply_account_data(
                 Ok(entries) => store.set_client_blocklist(entries),
                 Err(error) => {
                     tracing::warn!(
-                        "sync engine: ignoring malformed ck.account.blocklist account_data: {error}",
+                        "sync engine: ignoring malformed ak.account.blocklist account_data: {error}",
                     );
                 }
             }
             continue;
         }
-        // ck.contacts.actor.<did> — actor-private contact remarks.
+        // ak.contacts.actor.<did> — actor-private contact remarks.
         if let Some(actor_id) = crate::account_data::actor_id_from_contact_remark_key(data_type) {
             let Some(content) = entry.get("content") else {
                 continue;
@@ -2191,7 +2191,7 @@ fn apply_account_data(
             }
             continue;
         }
-        // ck.contacts.realm.<realm_id> — actor-private Realm remarks.
+        // ak.contacts.realm.<realm_id> — actor-private Realm remarks.
         let Some(realm_id) = crate::account_data::realm_id_from_realm_remark_key(data_type) else {
             continue;
         };

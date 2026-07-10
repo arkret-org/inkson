@@ -153,16 +153,17 @@ mod qr_tests {
 
 #[component]
 pub fn VerifyDevicePanel(
-    base_url: String,
     token: Signal<String>,
     device_id: String,
     account_did: String,
     selected_realm_id: String,
-    state_store: Signal<LocalStateStore>,
 ) -> Element {
+    // A4 — base_url / state_store from session context instead of props.
     // B2e wires `state_store` to persist the cross-signing publish content;
     // `selected_realm_id` is kept on the prop list so the route binding in
     // `app.rs` stays uniform with other panel signatures.
+    let base_url = crate::app::SessionContext::base_url_string();
+    let mut state_store = crate::app::SessionContext::get().state_store;
     let _ = (&selected_realm_id,);
     let mut verify_method = use_signal(|| VerifyMethod::QrCode);
     let mut target_device = use_signal(String::new);

@@ -244,7 +244,7 @@ test("chat separates shared pins from private saved account-data", async ({ page
       return false;
     }
     const body = request.postDataJSON();
-    return body.kind === "ak.account_data.set" && String(body.payload?.key ?? "").startsWith("ck.saved.v1:");
+    return body.kind === "ak.account_data.set" && String(body.payload?.key ?? "").startsWith("ak.saved.v1:");
   });
   await page.getByTestId("message-private-save-button").click();
   const savedBody = await savedRequest.then((request) => request.postDataJSON());

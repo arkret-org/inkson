@@ -94,7 +94,7 @@ impl DeviceRevokeStep {
     pub fn description(&self) -> String {
         match self {
             Self::LocalRevoke => "Mark revoked in local DeviceManager + E2eeManager".to_owned(),
-            Self::DeviceRevoked => "Write ck.device.revoke to the actor event chain".to_owned(),
+            Self::DeviceRevoked => "Write ak.device.revoke to the actor event chain".to_owned(),
             Self::RotateAccountMlsSecret => {
                 "Rotate the account MLS history secret and rewrap latest backups".to_owned()
             }

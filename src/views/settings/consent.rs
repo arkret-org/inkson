@@ -125,11 +125,9 @@ fn parse_consent_rows(value: &arkret_sdk::ConsentCellList) -> Vec<ConsentRow> {
 }
 
 #[component]
-pub fn ConsentSettingsPanel(
-    base_url: Signal<String>,
-    account_did: Signal<String>,
-    token: Signal<String>,
-) -> Element {
+pub fn ConsentSettingsPanel(account_did: Signal<String>, token: Signal<String>) -> Element {
+    // A4 — base_url from session context instead of a prop.
+    let base_url = crate::app::SessionContext::get().base_url;
     let mut rows = use_signal(Vec::<ConsentRow>::new);
     let mut load_error = use_signal(|| Option::<String>::None);
     let mut reload = use_signal(|| 0_u32);

@@ -784,7 +784,7 @@ fn local_terminal_invite_ids_for_realm(
                 Some("ak.invite.accept") if raw_operation_is_accepted_fact(payload) => {
                     raw_operation_invite_ref(payload)
                 }
-                Some("ak.invite.cancel" | "ck.invite.revoke") => raw_operation_invite_ref(payload),
+                Some("ak.invite.cancel" | "ak.invite.revoke") => raw_operation_invite_ref(payload),
                 _ => None,
             }
         })
@@ -1207,7 +1207,6 @@ fn member_avatar_initial(profile: &MemberProfile) -> String {
 
 #[component]
 fn MemberRowActions(
-    base_url: String,
     token: Signal<String>,
     account_did: String,
     selected_realm_id: String,
@@ -1217,10 +1216,12 @@ fn MemberRowActions(
     is_self: bool,
     #[props(default)] leave_disabled_reason: Option<String>,
     sync_cursor: Signal<String>,
-    state_store: Signal<LocalStateStore>,
     mut status_msg: Signal<String>,
     mut block_confirm_did: Signal<Option<String>>,
 ) -> Element {
+    // A4 — base_url / state_store from session context instead of props.
+    let base_url = crate::app::SessionContext::base_url_string();
+    let state_store = crate::app::SessionContext::get().state_store;
     let leave_title = leave_disabled_reason
         .clone()
         .unwrap_or_else(|| crate::i18n::tr("realm_admin.leave_realm"));
@@ -1476,16 +1477,17 @@ fn MemberRowActions(
 #[component]
 fn PendingInviteRow(
     profile: MemberProfile,
-    base_url: String,
     token: Signal<String>,
     account_did: String,
     selected_realm_id: String,
     can_cancel_invite: bool,
     mut members: Signal<Vec<MemberProfile>>,
-    state_store: Signal<LocalStateStore>,
     mut frontier_state: Signal<String>,
     mut status_msg: Signal<String>,
 ) -> Element {
+    // A4 — base_url / state_store from session context instead of props.
+    let base_url = crate::app::SessionContext::base_url_string();
+    let state_store = crate::app::SessionContext::get().state_store;
     let member = profile.actor_id.clone();
     let member_label = profile.primary_label();
     let avatar_initial = member_avatar_initial(&profile);
@@ -1834,7 +1836,7 @@ pub(crate) async fn submit_mls_admission_for_invitee(
     tracing::debug!(
         realm = %short_protocol_id(&realm_id),
         invitee_device = %short_protocol_id(&invitee_device_id),
-        "retained history_secret for late-joiner sharing; awaiting ck.realm_key.request"
+        "retained history_secret for late-joiner sharing; awaiting ak.realm_key.request"
     );
     Ok(Some(next_epoch))
 }
@@ -2189,7 +2191,7 @@ pub(crate) async fn seal_history_to_recovery_recipients(
             sealed,
             unverified,
             realm = %short_protocol_id(&realm_id),
-            "submitted provider-initiated RRK ck.realm_key.share(s)"
+            "submitted provider-initiated RRK ak.realm_key.share(s)"
         );
     }
     Ok((sealed, unverified))
@@ -2328,7 +2330,7 @@ fn provider_candidates_from_inbox(
             .unwrap_or_default();
         let is_history_bearing = matches!(
             kind,
-            "ak.mls.welcome" | "ck.mls.commit" | "ck.realm_key.share"
+            "ak.mls.welcome" | "ak.mls.commit" | "ak.realm_key.share"
         ) || kind == arkret_sdk::events::kinds::REALM_KEY_SHARE;
         if !is_history_bearing {
             continue;
@@ -2529,7 +2531,7 @@ pub(crate) async fn request_history_keys_for_realm(
         provider = %short_protocol_id(&plan.provider_principal_id),
         from_epoch = plan.from_epoch,
         to_epoch = plan.to_epoch,
-        "sent ck.realm_key.request for pre-join history"
+        "sent ak.realm_key.request for pre-join history"
     );
     Ok(Some((plan.from_epoch, plan.to_epoch)))
 }
@@ -2976,7 +2978,6 @@ async fn ensure_mls_genesis_frontier_for_invite(
 
 #[component]
 pub fn RealmMembersPanel(
-    base_url: String,
     active_service_did: String,
     account_did: String,
     device_id: String,
@@ -2984,8 +2985,10 @@ pub fn RealmMembersPanel(
     selected_realm_id: String,
     sync_cursor: Signal<String>,
     frontier_state: Signal<String>,
-    state_store: Signal<LocalStateStore>,
 ) -> Element {
+    // A4 — base_url / state_store from session context instead of props.
+    let base_url = crate::app::SessionContext::base_url_string();
+    let mut state_store = crate::app::SessionContext::get().state_store;
     let mut invite_target = use_signal(String::new);
     let mut status_msg = use_signal(String::new);
     let mut members = use_signal(Vec::<MemberProfile>::new);
@@ -3844,13 +3847,11 @@ pub fn RealmMembersPanel(
                                     for invite in visible_pending_invites {
                                         PendingInviteRow {
                                             profile: invite.clone(),
-                                            base_url: base_url.clone(),
                                             token,
                                             account_did: account_did.clone(),
                                             selected_realm_id: selected_realm_id.clone(),
                                             can_cancel_invite,
                                             members,
-                                            state_store,
                                             frontier_state,
                                             status_msg,
                                         }
@@ -4012,7 +4013,6 @@ pub fn RealmMembersPanel(
                                             }
                                         }
                                         MemberRowActions {
-                                            base_url: base_url.clone(),
                                             token,
                                             account_did: account_did.clone(),
                                             selected_realm_id: selected_realm_id.clone(),
@@ -4022,7 +4022,6 @@ pub fn RealmMembersPanel(
                                             is_self,
                                             leave_disabled_reason: self_leave_reason,
                                             sync_cursor,
-                                            state_store,
                                             status_msg,
                                             block_confirm_did,
                                         }

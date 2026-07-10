@@ -12,7 +12,7 @@ use crate::models::{ServerDescription, ServerDescriptionExt};
 pub const PROFILE_MINIMAL_CLIENT: &str = "ak.profile.minimal_client.v1";
 // T2.3: chat_only_client / kanban_only_client profile ids were removed from
 // the spec (artifacts/registry/deprecated-profile-ids.json, since 0a5ab85).
-// Replacement profile ids are ck.profile.chat_mvp.v1 / ck.profile.kanban_mvp.v1;
+// Replacement profile ids are ak.profile.chat_mvp.v1 / ak.profile.kanban_mvp.v1;
 // modality is otherwise expressed via Realm schema, not via single-modality
 // profile gating.
 pub const PROFILE_CHAT_MVP: &str = "ak.profile.chat_mvp.v1";
@@ -626,7 +626,7 @@ mod tests {
             chat.missing
                 .iter()
                 .any(|missing| missing.contains("ak.self.account.stream.subscribe")),
-            "expected chat_mvp to flag missing ck.self.account.stream.subscribe, got {:?}",
+            "expected chat_mvp to flag missing ak.self.account.stream.subscribe, got {:?}",
             chat.missing
         );
     }
@@ -819,7 +819,7 @@ mod tests {
         assert!(kinds.contains(&"ak.space.archive"));
         assert!(kinds.contains(&"ak.space.restore"));
         assert!(kinds.contains(&"ak.space.tombstone"));
-        // Renamed: ck.actor.profile.update -> ck.profile.update
+        // Renamed: ak.actor.profile.update -> ak.profile.update
         assert!(kinds.contains(&"ak.profile.update"));
         assert!(!kinds.contains(&"ak.actor.profile.update"));
     }

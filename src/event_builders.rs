@@ -169,7 +169,7 @@ pub fn build_realm_bootstrap_events(
     let mut events: Vec<arkret_sdk::Event> = Vec::new();
     if history_visibility.trim() == "restricted" {
         return Err(anyhow::anyhow!(
-            "restricted history_visibility requires a ck.realm.history_sharing_policy event in the same ordered batch"
+            "restricted history_visibility requires a ak.realm.history_sharing_policy event in the same ordered batch"
         ));
     }
     validate_realm_history_content_scheme_for_profile(
@@ -374,7 +374,7 @@ pub fn build_realm_create_event(
         object["plaintext_visible_services"] = Value::Array(plaintext_services);
     }
 
-    // ck.component.realm.create.v1 is an ordered-log genesis singleton;
+    // ak.component.realm.create.v1 is an ordered-log genesis singleton;
     // the bootstrap write asserts head_eq null and sets the realm metadata.
     let preconditions = vec![head_eq_precondition(&cell, Value::Null)?];
     let effects = vec![set_effect(&cell, object.clone())?];
@@ -803,7 +803,7 @@ pub fn build_realm_destroy_event(
 ) -> anyhow::Result<arkret_sdk::Event> {
     let reason = reason.trim();
     if reason.is_empty() {
-        return Err(anyhow::anyhow!("reason is required for ck.realm.destroy"));
+        return Err(anyhow::anyhow!("reason is required for ak.realm.destroy"));
     }
     let created_at = event_timestamp();
     let realm_id_wire = trim_realm_id(realm_id);

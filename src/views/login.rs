@@ -51,7 +51,6 @@ thread_local! {
 
 #[component]
 pub fn LoginPanel(
-    base_url: Signal<String>,
     account_did: Signal<String>,
     device_id: Signal<String>,
     token: Signal<String>,
@@ -59,13 +58,15 @@ pub fn LoginPanel(
     /// here is the post-sign-in "Online" transition.
     connection_status: Signal<String>,
     config_store: Signal<LocalConfigStore>,
-    state_store: Signal<LocalStateStore>,
     account_primary_handle: Signal<String>,
     personal_handles: Signal<Vec<String>>,
     personal_handles_status: Signal<String>,
     auto_capture_callback: bool,
     on_login: EventHandler<()>,
 ) -> Element {
+    // A4 — base_url / state_store from session context instead of props.
+    let mut base_url = crate::app::SessionContext::get().base_url;
+    let mut state_store = crate::app::SessionContext::get().state_store;
     let mut auth_status = use_signal(|| {
         if auto_capture_callback {
             "Completing sign in...".to_owned()

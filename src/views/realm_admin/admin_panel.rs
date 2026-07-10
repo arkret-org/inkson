@@ -22,16 +22,17 @@ use crate::views::helpers::short_protocol_id;
 
 #[component]
 pub fn RealmAdminPanel(
-    base_url: String,
     account_did: String,
     device_id: String,
     token: Signal<String>,
     selected_realm_id: String,
     sync_cursor: Signal<String>,
     frontier_state: Signal<String>,
-    state_store: Signal<LocalStateStore>,
     active_section: Option<String>,
 ) -> Element {
+    // A4 — base_url / state_store from session context instead of props.
+    let base_url = crate::app::SessionContext::base_url_string();
+    let state_store = crate::app::SessionContext::get().state_store;
     let mut metadata_title = use_signal(String::new);
     let mut metadata_summary = use_signal(String::new);
     let mut metadata_avatar_blob_ref = use_signal(String::new);
@@ -112,9 +113,9 @@ pub fn RealmAdminPanel(
         .clone()
         .unwrap_or_else(|| "(not published)".to_owned());
     // MLS epoch + governance covered_seals for the read-only widget.
-    // `mls_epoch` is the cas-register value of ck.component.mls.epoch.v1;
+    // `mls_epoch` is the cas-register value of ak.component.mls.epoch.v1;
     // `covered_seals` is the
-    // ck.component.governance.covered_seals.v1 cell value. Both come
+    // ak.component.governance.covered_seals.v1 cell value. Both come
     // from the same seal view the bottom-cells banner reads.
     let mls_epoch_label = seal_view
         .mls_epoch
@@ -500,8 +501,8 @@ pub fn RealmAdminPanel(
                 }
                 // RRK durability policy editor (realm-and-space.md §2.3.1 /
                 // encryption-and-audit.md §2.10.8). Writes durability_policy via
-                // ck.realm.policy_components; prompts the operator that a
-                // following ck.mls.commit activates sealing + re-disclosure.
+                // ak.realm.policy_components; prompts the operator that a
+                // following ak.mls.commit activates sealing + re-disclosure.
                 super::durability::DurabilityPolicyEditor {
                     base_url: base_url.clone(),
                     token,
@@ -1018,7 +1019,7 @@ pub fn RealmAdminPanel(
                                     return;
                                 }
                                 // Build the forced self-update commit + the
-                                // canonical ck.mls.commit event locally.
+                                // canonical ak.mls.commit event locally.
                                 let secure_store =
                                     crate::secure_key_store::default_secure_key_store("inkson");
                                 let built = {
@@ -1063,7 +1064,7 @@ pub fn RealmAdminPanel(
                                         Ok(_) => {
                                             // Persist-on-accept: only advance the
                                             // local snapshot after the server
-                                            // accepted the ck.mls.commit.
+                                            // accepted the ak.mls.commit.
                                             state_store
                                                 .write()
                                                 .save_mls_snapshot(realm.clone(), snapshot);
@@ -1550,7 +1551,7 @@ pub fn RealmAdminPanel(
                                     .await
                                     {
                                         Ok(resp) => status_msg.set(format!(
-                                            "granted ck.realm.admin: event_id={}",
+                                            "granted ak.realm.admin: event_id={}",
                                             short_protocol_id(&resp.event_id)
                                         )),
                                         Err(err) => status_msg.set(format!(
@@ -1601,7 +1602,7 @@ pub fn RealmAdminPanel(
                                     .await
                                     {
                                         Ok(resp) => status_msg.set(format!(
-                                            "revoked ck.realm.admin: event_id={}",
+                                            "revoked ak.realm.admin: event_id={}",
                                             short_protocol_id(&resp.event_id)
                                         )),
                                         Err(err) => status_msg.set(format!(

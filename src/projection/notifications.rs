@@ -154,7 +154,7 @@ fn notification_is_invite(value: &Value) -> bool {
     ["notification_kind", "notification_type", "type", "kind"]
         .iter()
         .filter_map(|key| value.get(*key).and_then(Value::as_str))
-        .any(|kind| matches!(kind, "invite" | "ak.invite" | "ck.invite.create"))
+        .any(|kind| matches!(kind, "invite" | "ak.invite" | "ak.invite.create"))
 }
 
 pub(crate) fn drop_joined_invite_notifications(

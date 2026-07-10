@@ -48,13 +48,10 @@ pub(super) fn render_notification_kind_toggle(
 /// controlled `value` memo can read `state_store` reactively (a free function
 /// could not hold a hook).
 #[component]
-pub(super) fn RealmOverrideRow(
-    realm_id: String,
-    label: String,
-    mut state_store: Signal<LocalStateStore>,
-    base_url: Signal<String>,
-    token: Signal<String>,
-) -> Element {
+pub(super) fn RealmOverrideRow(realm_id: String, label: String, token: Signal<String>) -> Element {
+    // A4 — base_url / state_store from session context instead of props.
+    let base_url = crate::app::SessionContext::get().base_url;
+    let mut state_store = crate::app::SessionContext::get().state_store;
     let level = state_store.read().realm_watch_level(&realm_id);
     let selected = use_memo({
         let realm_id = realm_id.clone();

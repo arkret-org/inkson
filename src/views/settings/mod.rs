@@ -154,7 +154,7 @@ pub(crate) fn push_client_ui_account_data_with_avatar(
             Ok(AccountDataSetResult::Stored { .. }) => {}
             Ok(AccountDataSetResult::Unsupported { status }) => {
                 tracing::debug!(
-                    "soland ck.account_data.set for client.ui returned {status}; \
+                    "soland ak.account_data.set for client.ui returned {status}; \
                      local state still authoritative"
                 );
             }
@@ -232,7 +232,7 @@ pub(crate) fn push_blocklist_account_data(
             .await
             {
                 tracing::debug!(
-                    "ak.account_data.delete for ck.account.blocklist failed: {}",
+                    "ak.account_data.delete for ak.account.blocklist failed: {}",
                     err.display()
                 );
             }
@@ -245,7 +245,7 @@ pub(crate) fn push_blocklist_account_data(
             Ok(body) => body,
             Err(err) => {
                 tracing::warn!(
-                    "ak.account_data.set for ck.account.blocklist skipped: {}",
+                    "ak.account_data.set for ak.account.blocklist skipped: {}",
                     err
                 );
                 return;
@@ -261,13 +261,13 @@ pub(crate) fn push_blocklist_account_data(
             Ok(AccountDataSetResult::Stored { .. }) => {}
             Ok(AccountDataSetResult::Unsupported { status }) => {
                 tracing::debug!(
-                    "soland ck.account_data.set for ck.account.blocklist returned {status}; \
+                    "soland ak.account_data.set for ak.account.blocklist returned {status}; \
                      local blocklist remains authoritative"
                 );
             }
             Err(err) => {
                 tracing::debug!(
-                    "ak.account_data.set for ck.account.blocklist failed: {}",
+                    "ak.account_data.set for ak.account.blocklist failed: {}",
                     err.display()
                 );
             }
@@ -400,7 +400,6 @@ pub(crate) fn push_contact_remark_account_data(
 
 #[component]
 pub fn SettingsPanel(
-    base_url: Signal<String>,
     account_did: Signal<String>,
     device_id: Signal<String>,
     token: Signal<String>,
@@ -409,11 +408,13 @@ pub fn SettingsPanel(
     personal_handles_status: String,
     can_list_handles_for_subject: bool,
     config_store: Signal<LocalConfigStore>,
-    state_store: Signal<LocalStateStore>,
     push_state: Signal<String>,
     mut locale: Signal<Locale>,
     mut theme: Signal<String>,
 ) -> Element {
+    // A4 — base_url / state_store from session context instead of props.
+    let base_url = crate::app::SessionContext::get().base_url;
+    let mut state_store = crate::app::SessionContext::get().state_store;
     let route = use_route::<Route>();
     let active_section = SettingsSection::from_slug(route.settings_section());
     // Settings-nav filter: matches section labels in the active locale so the
@@ -1331,7 +1332,6 @@ pub fn SettingsPanel(
                     // ── My Agents (CKP-0008 native personal agents) ──────
                     if active_section == SettingsSection::Agents {
                         crate::views::agents::PersonalAgentAdminPanel {
-                            base_url: base_url(),
                             token,
                             controller_did: account_did(),
                         }
@@ -1339,17 +1339,14 @@ pub fn SettingsPanel(
 
                     if active_section == SettingsSection::Devices {
                         crate::views::settings::devices::SettingsDevicesPanel {
-                            base_url,
                             account_did,
                             device_id,
                             token,
-                            state_store,
                         }
                     }
 
                     if active_section == SettingsSection::Consent {
                         crate::views::settings::consent::ConsentSettingsPanel {
-                            base_url,
                             account_did,
                             token,
                         }
@@ -1357,9 +1354,7 @@ pub fn SettingsPanel(
 
                     if active_section == SettingsSection::Recovery {
                         crate::views::recovery::RecoveryPanel {
-                            base_url: base_url(),
                             token,
-                            state_store,
                             account_did,
                             device_id,
                         }
@@ -1459,11 +1454,9 @@ pub fn SettingsPanel(
                             // boot detection effect timing. NOT gated on
                             // `needs_mls_backup`.
                             mls_recovery::SettingsMlsRecoveryPanel {
-                                base_url,
                                 token,
                                 account_did,
                                 device_id,
-                                state_store,
                                 account_primary_handle: account_primary_handle.clone(),
                             }
                             details { class: "event", "data-testid": "key-backup-guidance",
@@ -1487,7 +1480,7 @@ pub fn SettingsPanel(
                                     }
                                 }
                                 div { class: "muted",
-                                    "Contract: ck.schema.key_backup.v1 over /_arkret/self/keys/backups/*. This is not required for encrypted-history recovery setup."
+                                    "Contract: ak.schema.key_backup.v1 over /_arkret/self/keys/backups/*. This is not required for encrypted-history recovery setup."
                                 }
                             }
                         }
@@ -1957,8 +1950,6 @@ pub fn SettingsPanel(
                                                     key: "{realm_id}",
                                                     realm_id: realm_id.clone(),
                                                     label,
-                                                    state_store,
-                                                    base_url,
                                                     token,
                                                 }
                                             }
@@ -2242,7 +2233,7 @@ pub fn SettingsPanel(
                                     },
                                     vec![],
                                 );
-                                // Also push to soland's ck.account_data.set
+                                // Also push to soland's ak.account_data.set
                                 // so other devices pick up the change.
                                 // Endpoint may 404/501 — we swallow and keep
                                 // local authoritative.
@@ -2286,7 +2277,7 @@ pub fn SettingsPanel(
                     }
                     for (realm_id, send) in read_receipt_realm_overrides() {
                             // Policy lock — when soland publishes a
-                            // ck.realm.read_receipt_policy with disclosure=
+                            // ak.realm.read_receipt_policy with disclosure=
                             // required|disabled, the toggle is disabled and
                             // we show a lock badge with the reason. Until
                             // sync (P0 M3) wires the snapshot, this returns
@@ -2901,8 +2892,8 @@ pub fn SettingsPanel(
 
                 // ── YG-HC-1 — Handle management (issuer-managed) ─────
                 // Per spec §3.2.3 / §3.4 inkson MUST NOT set or override
-                // handles via ck.profile.update / ck.member.identity.update.
-                // Handles come from signed ck.schema.handle_claim.v1
+                // handles via ak.profile.update / ak.member.identity.update.
+                // Handles come from signed ak.schema.handle_claim.v1
                 // evidence issued by the org's coauth issuer. So instead
                 // of an "edit your handle" affordance we show a managed
                 // notice + a link out to the issuer strand.
@@ -2937,7 +2928,6 @@ pub fn SettingsPanel(
                         // YG-HC-2 / YG-DIR-1/2 — own visible handle claims +
                         // §3.2.1 primary handle via list_handles_for_subject.
                         crate::views::helpers::WhyThisHandlePanel {
-                            base_url: base_url(),
                             token: token(),
                             subject_id: account_did(),
                         }
@@ -3134,7 +3124,6 @@ pub fn SettingsPanel(
                     if active_section == SettingsSection::InvitePolicy {
                         div { class: "settings-content-stack",
                             crate::views::settings::invite_policy::InvitePolicySettingsCard {
-                                base_url,
                                 token,
                                 account_did,
                             }
@@ -3145,10 +3134,8 @@ pub fn SettingsPanel(
                     if active_section == SettingsSection::Blocklist {
                         div { class: "settings-content-stack",
                             crate::views::settings::blocklist::BlocklistSettingsCard {
-                                base_url,
                                 account_did,
                                 token,
-                                state_store,
                             }
                         }
                     }
@@ -3157,10 +3144,8 @@ pub fn SettingsPanel(
                     if active_section == SettingsSection::Capabilities {
                         div { class: "settings-content-stack",
                             crate::views::settings::capabilities::CapabilitiesSettingsCard {
-                                base_url,
                                 account_did,
                                 token,
-                                state_store,
                             }
                         }
                     }
@@ -3169,10 +3154,8 @@ pub fn SettingsPanel(
                     if active_section == SettingsSection::Connections {
                         div { class: "settings-content-stack",
                             crate::views::settings::connections::ConnectionsSettingsCard {
-                                base_url,
                                 account_did,
                                 token,
-                                state_store,
                             }
                         }
                     }

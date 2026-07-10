@@ -3,7 +3,7 @@ use super::*;
 #[test]
 fn local_card_update_overlay_replays_queued_summary_and_body_on_top_of_projection() {
     // Simulate: server projection returns the pre-edit card; the user
-    // had queued a ck.strand.update locally that bumped summary + body.
+    // had queued a ak.strand.update locally that bumped summary + body.
     // After page refresh, the overlay must re-apply that patch so the
     // user doesn't see their edits silently disappear.
     let mut card = test_card("ak:strand:edit-me", "U");

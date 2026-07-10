@@ -391,7 +391,7 @@ pub fn ingest_realm_key_share(
     let payload: arkret_sdk::RealmKeySharePayload = match serde_json::from_value(content.clone()) {
         Ok(payload) => payload,
         Err(err) => {
-            tracing::debug!(%realm_id, error = %err, "skip malformed ck.realm_key.share");
+            tracing::debug!(%realm_id, error = %err, "skip malformed ak.realm_key.share");
             return 0;
         }
     };
@@ -408,7 +408,7 @@ pub fn ingest_realm_key_share(
     // fails closed for empty signatures.
     let sender_principal_id = realm_key_share_sender_principal_id(share_envelope);
     if !verify_realm_key_share_sender_signature(&payload, sender_principal_id.as_deref()) {
-        tracing::debug!(%realm_id, "reject ck.realm_key.share: sender_device_signature failed");
+        tracing::debug!(%realm_id, "reject ak.realm_key.share: sender_device_signature failed");
         return 0;
     }
     let Some(sealed) = payload
@@ -421,7 +421,7 @@ pub fn ingest_realm_key_share(
     let privkey = match super::load_device_hpke_private_key(secure_store, actor_id, device_id) {
         Ok(Some(privkey)) => privkey,
         Ok(None) => {
-            tracing::debug!(%realm_id, "no device HPKE key to open ck.realm_key.share");
+            tracing::debug!(%realm_id, "no device HPKE key to open ak.realm_key.share");
             return 0;
         }
         Err(err) => {
@@ -433,7 +433,7 @@ pub fn ingest_realm_key_share(
         match arkret_sdk::secret_share::open_history_secret_with_device_privkey(&privkey, sealed) {
             Ok(secrets) => secrets,
             Err(err) => {
-                tracing::debug!(%realm_id, error = %err, "open ck.realm_key.share failed");
+                tracing::debug!(%realm_id, error = %err, "open ak.realm_key.share failed");
                 return 0;
             }
         };

@@ -835,7 +835,7 @@ fn OrganizationBindPanel(
                                 };
 
                                 // Feed the SAME fields plus the signed proof into
-                                // the ck.realm.organization builder; it
+                                // the ak.realm.organization builder; it
                                 // reconstructs an identical payload so the
                                 // canonical signing bytes — and the proof — stay
                                 // valid on the wire.
@@ -897,7 +897,7 @@ fn OrganizationBindPanel(
                                     {
                                         Ok(resp) => {
                                             status_msg.set(format!(
-                                                "submitted ck.realm.organization: event_id={}",
+                                                "submitted ak.realm.organization: event_id={}",
                                                 short_protocol_id(&resp.event_id)
                                             ));
                                         }

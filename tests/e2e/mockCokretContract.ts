@@ -151,7 +151,7 @@ export function mockCokretContract(req) {
   }
 
   if (method === "POST" && path === "/_arkret/self/ephemeral") {
-    if (!["ak.receipt.read", "ck.typing", "ck.presence", "ck.call.signal"].includes(body.kind)) {
+    if (!["ak.receipt.read", "ck.typing", "ck.presence", "ak.call.signal"].includes(body.kind)) {
       return json(
         {
           ok: false,

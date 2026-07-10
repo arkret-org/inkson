@@ -252,7 +252,7 @@ pub fn ActionApproveDialog(
                             let approval_expires_at = approval_expires_at.clone();
                             let api_token = token();
                             spawn(async move {
-                                // Submit a ck.agent.action_approve
+                                // Submit a ak.agent.action_approve
                                 // event. The payload carries the
                                 // request_id + the digest we approved
                                 // so the reducer can match it back to
@@ -369,10 +369,10 @@ pub fn DraftApprovalPanel(
                 span { class: "badge blue", "ak.agent.* approval" }
             }
             div { class: "muted",
-                "Review agent-proposed drafts or action requests before anything reaches a shared Realm. Approve submits ck.agent.action_approve; reject submits ck.agent.action_reject with a human reason when provided."
+                "Review agent-proposed drafts or action requests before anything reaches a shared Realm. Approve submits ak.agent.action_approve; reject submits ak.agent.action_reject with a human reason when provided."
             }
             div { class: "muted", "data-testid": "agent-draft-data-source",
-                "Data source: controller-owned account-data over ck.self.account.subscribe; paste a ck.agent.draft.v1 or ck.agent.action_request payload below to review it now."
+                "Data source: controller-owned account-data over ak.self.account.subscribe; paste a ak.agent.draft.v1 or ak.agent.action_request payload below to review it now."
             }
             if principal_realm.is_none() {
                 div { class: "badge amber", "data-testid": "agent-draft-no-realm",
@@ -382,7 +382,7 @@ pub fn DraftApprovalPanel(
             div { class: "workflow-form",
                 Input {
                     "data-testid": "agent-draft-input",
-                    placeholder: "ak.agent.draft.v1 or ck.agent.action_request payload (JSON)",
+                    placeholder: "ak.agent.draft.v1 or ak.agent.action_request payload (JSON)",
                     value: "{draft_input}",
                     oninput: move |event: FormEvent| draft_input.set(event.value()),
                 }

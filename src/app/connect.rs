@@ -1333,14 +1333,14 @@ pub(super) fn connect(base: String, actor: String, device: String, ctx: ConnectC
                                         )
                                     else {
                                         tracing::warn!(
-                                            "ignoring malformed ck.presence.visibility account_data"
+                                            "ignoring malformed ak.presence.visibility account_data"
                                         );
                                         continue;
                                     };
                                     store.set_presence_visibility(visibility);
                                     continue;
                                 }
-                                // ck.presence.preference — manual presence
+                                // ak.presence.preference — manual presence
                                 // preference (profiles-presence.md §3.6).
                                 // Plaintext-readable bodies only appear from
                                 // same-account devices in dev / test
@@ -1371,7 +1371,7 @@ pub(super) fn connect(base: String, actor: String, device: String, ctx: ConnectC
                                         }
                                         Err(error) => {
                                             tracing::warn!(
-                                                "ignoring malformed ck.account.blocklist account_data: {error}"
+                                                "ignoring malformed ak.account.blocklist account_data: {error}"
                                             );
                                         }
                                     }

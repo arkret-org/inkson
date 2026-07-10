@@ -334,7 +334,7 @@ pub fn chinese_translations() -> TranslationDict {
     dict.set("realm_admin.admin_grant_title", "Realm 管理员");
     dict.set(
         "realm_admin.admin_grant_hint",
-        "授予或撤销 ck.realm.admin 权限。以签名 capability 事件提交;待 soland reducer 投影后生效。",
+        "授予或撤销 ak.realm.admin 权限。以签名 capability 事件提交;待 soland reducer 投影后生效。",
     );
     dict.set("realm_admin.admin_subject_label", "管理员主体(DID)");
     dict.set("realm_admin.admin_grant_id_label", "Grant ID");
@@ -373,7 +373,7 @@ pub fn chinese_translations() -> TranslationDict {
     );
     dict.set(
         "realm_admin.durability_intro",
-        "声明在全体成员设备失效或全员离职后谁能解开本 Realm 历史。改策略是控制面 Move：后续 ck.mls.commit 覆盖成员前沿后才对新 epoch 生效，并触发对成员的重新披露。",
+        "声明在全体成员设备失效或全员离职后谁能解开本 Realm 历史。改策略是控制面 Move：后续 ak.mls.commit 覆盖成员前沿后才对新 epoch 生效，并触发对成员的重新披露。",
     );
     dict.set(
         "realm_admin.durability_scheme_warning",
@@ -409,7 +409,7 @@ pub fn chinese_translations() -> TranslationDict {
     dict.set("realm_admin.durability_submitting", "提交中…");
     dict.set(
         "realm_admin.durability_submitted",
-        "已提交 ck.realm.policy_components；推进一次 ck.mls.commit 以激活封存并重新披露。",
+        "已提交 ak.realm.policy_components；推进一次 ak.mls.commit 以激活封存并重新披露。",
     );
     dict.set("realm_admin.durability_submit_failed", "提交失败：{error}");
     dict.set(

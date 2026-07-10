@@ -150,7 +150,7 @@ fn build_pairing_verification_content(
         "from_device": requesting_device_id,
         "timestamp": chrono::Utc::now().to_rfc3339(),
         "expires_at": expires_at,
-        "methods": ["ak.sas.v1", "ck.qr.v1"],
+        "methods": ["ak.sas.v1", "ak.qr.v1"],
         "purpose": "same_principal_device_authorization",
         "pairing_code": request_payload.get("pairing_code").cloned().unwrap_or(Value::Null),
         "new_device_pubkey": request_payload.get("new_device_pubkey").cloned().unwrap_or(Value::Null),
@@ -166,12 +166,13 @@ fn build_pairing_verification_content(
 
 #[component]
 pub fn SettingsDevicesPanel(
-    base_url: Signal<String>,
     account_did: Signal<String>,
     device_id: Signal<String>,
     token: Signal<String>,
-    state_store: Signal<LocalStateStore>,
 ) -> Element {
+    // A4 — base_url / state_store from session context instead of props.
+    let base_url = crate::app::SessionContext::get().base_url;
+    let state_store = crate::app::SessionContext::get().state_store;
     let route = use_route::<Route>();
     let pair_mode = matches!(route, Route::SettingsDevicesPair);
 

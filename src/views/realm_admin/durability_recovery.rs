@@ -30,7 +30,7 @@ use crate::local_state::LocalStateStore;
 fn parse_share_events(raw: &str) -> Result<Vec<Value>, String> {
     let trimmed = raw.trim();
     if trimmed.is_empty() {
-        return Err("paste the RRK-targeted ck.realm_key.share events".to_owned());
+        return Err("paste the RRK-targeted ak.realm_key.share events".to_owned());
     }
     let value: Value =
         serde_json::from_str(trimmed).map_err(|err| format!("invalid JSON: {err}"))?;
@@ -63,7 +63,7 @@ pub fn DurabilityRecoveryPanel(realm_id: String) -> Element {
                 span { class: "badge amber", "offline recovery key" }
             }
             div { class: "muted",
-                "全体成员设备失效或全员离职后，用离线恢复密钥（24 词；门限模式先按 key-management §8 重组私钥）解开 RRK 封存的 ck.realm_key.share，还原各 epoch 的 history_secret 以解密历史。"
+                "全体成员设备失效或全员离职后，用离线恢复密钥（24 词；门限模式先按 key-management §8 重组私钥）解开 RRK 封存的 ak.realm_key.share，还原各 epoch 的 history_secret 以解密历史。"
             }
 
             label { r#for: "rrk-recovery-key-input", "Recovery key (24 words)" }
@@ -75,9 +75,9 @@ pub fn DurabilityRecoveryPanel(realm_id: String) -> Element {
                 oninput: move |evt| recovery_key.set(evt.value()),
             }
 
-            label { r#for: "rrk-recovery-shares-input", "RRK ck.realm_key.share events (JSON)" }
+            label { r#for: "rrk-recovery-shares-input", "RRK ak.realm_key.share events (JSON)" }
             div { class: "muted",
-                "粘贴从 Realm 事件日志取回的 RRK-targeted ck.realm_key.share 事件（JSON 数组）。"
+                "粘贴从 Realm 事件日志取回的 RRK-targeted ak.realm_key.share 事件（JSON 数组）。"
             }
             textarea {
                 id: "rrk-recovery-shares-input",

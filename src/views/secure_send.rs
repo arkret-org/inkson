@@ -283,7 +283,7 @@ pub(crate) fn build_secure_send(
                 governance_binding,
             )
             .map_err(|err| format!("MLS commit payload failed: {err}"))?;
-            // Spec-canonical write path: ck.mls.commit event via ck.events.submit.
+            // Spec-canonical write path: ak.mls.commit event via ak.events.submit.
             let commit_builder = crate::operation::ck_ops::mls_commit_with_governance(
                 realm_id,
                 actor,

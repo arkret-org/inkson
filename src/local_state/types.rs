@@ -683,7 +683,7 @@ pub struct ClientLocalState {
     /// Values are XOR-encrypted with account_key and hex-encoded.
     #[serde(default)]
     pub private_data: BTreeMap<String, String>,
-    /// Private ck.read_cursor.advance cursors keyed by Realm + read_scope.
+    /// Private ak.read_cursor.advance cursors keyed by Realm + read_scope.
     #[serde(default)]
     pub read_cursors: BTreeMap<String, ReadMarkerRecord>,
     /// Persisted coauth `session_grant` payload. It is the client-visible

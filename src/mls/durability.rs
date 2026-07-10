@@ -185,7 +185,7 @@ pub fn open_rrk_share(
         rrk_private_key,
         sealed_ciphertext,
     )
-    .map_err(|err| format!("open RRK ck.realm_key.share: {err:?}"))
+    .map_err(|err| format!("open RRK ak.realm_key.share: {err:?}"))
 }
 
 /// Filter a batch of `ck.realm_key.share` events down to those an RRK holder can

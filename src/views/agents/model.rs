@@ -137,8 +137,8 @@ impl AgentGrantPreset {
     pub fn actions(self) -> &'static [&'static str] {
         match self {
             Self::Read => &["ak.event.read"],
-            Self::Draft => &["ak.agent.draft.propose", "ck.agent.action_request"],
-            Self::ReplyAsAgent => &["ak.message.create", "ck.reaction.add"],
+            Self::Draft => &["ak.agent.draft.propose", "ak.agent.action_request"],
+            Self::ReplyAsAgent => &["ak.message.create", "ak.reaction.add"],
             Self::ActOnBehalf => &["ak.message.create"],
             Self::Organizer => &[
                 "ak.strand.create",

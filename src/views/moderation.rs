@@ -147,7 +147,7 @@ pub fn project_moderation_queues(raw_ops: &[Value]) -> (Vec<StandingDecision>, V
                     appeal.state = "under_review".to_owned();
                 }
             }
-            Some("ak.moderation.appeal.decision") | Some("ck.moderation.appeal.close") => {
+            Some("ak.moderation.appeal.decision") | Some("ak.moderation.appeal.close") => {
                 if let Some(appeal_id) = body_str(payload, "appeal_id") {
                     appeals.remove(&appeal_id);
                 }

@@ -48,12 +48,13 @@ enum EnrollPhase {
 
 #[component]
 pub fn RecoveryPanel(
-    base_url: String,
     token: Signal<String>,
-    state_store: Signal<LocalStateStore>,
     account_did: Signal<String>,
     device_id: Signal<String>,
 ) -> Element {
+    // A4 — base_url / state_store from session context instead of props.
+    let base_url = crate::app::SessionContext::base_url_string();
+    let state_store = crate::app::SessionContext::get().state_store;
     let actor_key = account_did();
     let initial = load_state(&state_store, &actor_key);
 

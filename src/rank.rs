@@ -33,7 +33,7 @@ pub enum RankError {
     /// No rank exists strictly between `left` and `right`. Trigger a
     /// container rebalance.
     #[error(
-        "rank_exhausted: no valid rank between the given sentinels; trigger ck.container.rebalance"
+        "rank_exhausted: no valid rank between the given sentinels; trigger ak.container.rebalance"
     )]
     Exhausted,
     /// Input string contained characters outside the alphabet or

@@ -232,7 +232,7 @@ pub(crate) fn build_realm_key_share_event(
     payload.sender_device_signature = sign_realm_key_share_sender_signature(&payload)
         .ok_or_else(|| "ak.realm_key.share requires an active sender device signer".to_owned())?;
     let body = serde_json::to_value(&payload)
-        .map_err(|err| format!("serialize ck.realm_key.share payload: {err}"))?;
+        .map_err(|err| format!("serialize ak.realm_key.share payload: {err}"))?;
     crate::operation::OperationBuilder::new(
         realm_id,
         actor_id,
@@ -262,7 +262,7 @@ pub(crate) fn wrap_realm_key_share_payload_event(
     payload.sender_device_signature = sign_realm_key_share_sender_signature(&payload)
         .ok_or_else(|| "ak.realm_key.share requires an active sender device signer".to_owned())?;
     let body = serde_json::to_value(&payload)
-        .map_err(|err| format!("serialize ck.realm_key.share payload: {err}"))?;
+        .map_err(|err| format!("serialize ak.realm_key.share payload: {err}"))?;
     crate::operation::OperationBuilder::new(
         realm_id,
         actor_id,
