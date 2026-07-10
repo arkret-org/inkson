@@ -202,8 +202,6 @@ impl InksonClientRuntime {
 #[derive(Clone, Debug)]
 pub struct InksonRealmEventsTransport {
     http: arkret_sdk::http_client::Client,
-    max_duration_ms: Option<u64>,
-    heartbeat_ms: Option<u64>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -237,25 +235,14 @@ impl RealmEventsFrameSource for InksonRealmEventsFrameSource {
 
 impl InksonRealmEventsTransport {
     pub fn new(http: arkret_sdk::http_client::Client) -> Self {
-        Self {
-            http,
-            max_duration_ms: None,
-            heartbeat_ms: None,
-        }
+        Self { http }
     }
 
-    #[must_use]
-    pub fn with_max_duration_ms(mut self, max_duration_ms: u64) -> Self {
-        self.max_duration_ms = Some(max_duration_ms);
-        self
-    }
-
-    #[must_use]
-    pub fn with_heartbeat_ms(mut self, heartbeat_ms: u64) -> Self {
-        self.heartbeat_ms = Some(heartbeat_ms);
-        self
-    }
-
+    /// Build the subscribe options with the request-aware trace context: a
+    /// subscribe without a resume cursor is a catch-up request. The `catchup`
+    /// flag seeds the SDK frame stream's internal `StreamTraceValidator`, so
+    /// every frame this adapter yields has already passed the full §1.1 trace
+    /// state machine — there is no shape-only parsing bypass.
     fn subscribe_request(
         &self,
         realm_id: &arkret_sdk::RealmId,
@@ -271,10 +258,6 @@ impl InksonRealmEventsTransport {
         if let Some(after) = trace_context.after.as_deref() {
             options = options.after(after.to_owned());
         }
-        // The SDK's stream options no longer expose client-side timeout or
-        // heartbeat query parameters. Those controls are local transport
-        // concerns; keep the Inkson fields for backwards-compatible builder
-        // configuration but do not send unsupported wire parameters.
         (options, trace_context)
     }
 }
@@ -328,44 +311,15 @@ pub async fn account_subscribe_snapshot(
     }
 }
 
+/// One validated account-subscribe snapshot through the SDK's request-aware
+/// pipeline (SPI-INK-002). `account_subscribe_once` runs the full §1.1
+/// StreamTraceValidator over every frame — inkson no longer parses NDJSON
+/// shapes itself, so there is no trace-bypassing side path. Stream interrupts
+/// (`dropped` / `resync_required` / `unauthorized`) fold back into the typed
+/// [`AccountSubscribeSnapshotResult::ReconnectAfter`] the engine consumes.
 pub async fn account_subscribe_snapshot_outcome(
     http: &arkret_sdk::http_client::Client,
     after: Option<&str>,
-) -> anyhow::Result<AccountSubscribeSnapshotResult> {
-    account_subscribe_snapshot_outcome_with_options(
-        http,
-        after,
-        &arkret_sdk::http_client::ClientRequestOptions::default(),
-    )
-    .await
-}
-
-pub async fn account_subscribe_snapshot_with_options(
-    http: &arkret_sdk::http_client::Client,
-    after: Option<&str>,
-    options: &arkret_sdk::http_client::ClientRequestOptions,
-) -> anyhow::Result<crate::models::ClientSyncOutcome> {
-    match account_subscribe_snapshot_outcome_with_options(http, after, options).await? {
-        AccountSubscribeSnapshotResult::Delta(response) => Ok(*response),
-        AccountSubscribeSnapshotResult::ReconnectAfter {
-            reconnect_after_ms,
-            reconnect_cursor,
-            reason,
-            reset_cursor,
-        } => Err(AccountSubscribeReconnectAfter {
-            reconnect_after_ms,
-            reconnect_cursor,
-            reason,
-            reset_cursor,
-        }
-        .into()),
-    }
-}
-
-pub async fn account_subscribe_snapshot_outcome_with_options(
-    http: &arkret_sdk::http_client::Client,
-    after: Option<&str>,
-    options: &arkret_sdk::http_client::ClientRequestOptions,
 ) -> anyhow::Result<AccountSubscribeSnapshotResult> {
     let after = after
         .map(crate::wire_helpers::validate_cursor)
@@ -382,13 +336,49 @@ pub async fn account_subscribe_snapshot_outcome_with_options(
         subscriptions: None,
         wait_for: None,
     };
-    // The SDK now owns account-subscribe stream framing and folding.  Keep
-    // this wrapper's request-options argument for source compatibility, but
-    // delegate to the typed one-shot helper instead of reaching into the
-    // removed raw-response API (`account_subscribe_with_options`).
-    let _ = options;
-    let response = http.account_subscribe_once(&request).await?;
-    Ok(AccountSubscribeSnapshotResult::Delta(Box::new(response)))
+    match http.account_subscribe_once(&request).await {
+        Ok(outcome) => Ok(AccountSubscribeSnapshotResult::Delta(Box::new(outcome))),
+        Err(arkret_sdk::Error::AccountStreamInterrupt(interrupt)) => {
+            Ok(reconnect_result_from_interrupt(interrupt))
+        }
+        Err(error) => Err(error.into()),
+    }
+}
+
+fn reconnect_result_from_interrupt(
+    interrupt: arkret_sdk::AccountStreamInterrupt,
+) -> AccountSubscribeSnapshotResult {
+    let clamp = |raw: Option<u64>| {
+        raw.unwrap_or(arkret_sdk::DEFAULT_ACCOUNT_SUBSCRIBE_RECONNECT_AFTER_MS)
+            .min(arkret_sdk::MAX_ACCOUNT_SUBSCRIBE_RECONNECT_AFTER_MS)
+    };
+    match interrupt {
+        arkret_sdk::AccountStreamInterrupt::Dropped {
+            cursor,
+            reconnect_after_ms,
+        } => AccountSubscribeSnapshotResult::ReconnectAfter {
+            reconnect_after_ms: clamp(reconnect_after_ms),
+            reconnect_cursor: Some(cursor),
+            reason: None,
+            reset_cursor: false,
+        },
+        arkret_sdk::AccountStreamInterrupt::ResyncRequired { reconnect_after_ms } => {
+            AccountSubscribeSnapshotResult::ReconnectAfter {
+                reconnect_after_ms: clamp(reconnect_after_ms),
+                reconnect_cursor: None,
+                reason: None,
+                reset_cursor: true,
+            }
+        }
+        arkret_sdk::AccountStreamInterrupt::Unauthorized { reason } => {
+            AccountSubscribeSnapshotResult::ReconnectAfter {
+                reconnect_after_ms: clamp(None),
+                reconnect_cursor: None,
+                reason,
+                reset_cursor: false,
+            }
+        }
+    }
 }
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -445,9 +435,7 @@ mod tests {
     fn realm_events_request_retains_initial_and_resumed_trace_context() {
         let http = arkret_sdk::http_client::Client::new("https://service.example".parse().unwrap())
             .unwrap();
-        let transport = super::InksonRealmEventsTransport::new(http)
-            .with_max_duration_ms(30_000)
-            .with_heartbeat_ms(5_000);
+        let transport = super::InksonRealmEventsTransport::new(http);
         let realm_id =
             arkret_sdk::RealmId::new("ak:realm:01904100-0000-7000-8000-000000000001").unwrap();
 
@@ -548,7 +536,7 @@ mod tests {
 
         let request = request_rx.recv_timeout(Duration::from_secs(2)).unwrap();
         assert!(request.starts_with("GET /_arkret/self/events/subscribe?"));
-        assert!(request.contains("include_history=true"));
+        assert!(request.contains("catchup=true"));
         assert!(
             request
                 .to_ascii_lowercase()

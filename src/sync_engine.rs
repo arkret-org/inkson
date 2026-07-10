@@ -938,7 +938,14 @@ async fn run_iteration(
             // (fail-closed). Done here, not inside the synchronous
             // `apply_response`, because the directory query is async.
             route_inbound_call_signals(&api, &response, ctx).await;
-            if prefetch_persistent_event_sender_keys(&api, &response, ctx.did_cache).await {
+            let state_store_for_profiles = ctx.state_store;
+            if prefetch_persistent_event_sender_keys(&api, &response, ctx.did_cache, |realm_id| {
+                state_store_for_profiles
+                    .read()
+                    .realm_projection_is_minimal_metadata(realm_id)
+            })
+            .await
+            {
                 refresh_projection_events_from_sync_response(&response, is_full_sync, ctx);
             }
             // MID-5: prime the authoritative device signing keys for every
@@ -969,7 +976,7 @@ async fn run_iteration(
         }
         Ok(AccountSubscribeSnapshotResult::ReconnectAfter {
             reconnect_after_ms,
-            reconnect_cursor: _,
+            reconnect_cursor,
             reason,
             reset_cursor,
         }) => {
@@ -978,6 +985,14 @@ async fn run_iteration(
                 let mut sync_cursor = ctx.sync_cursor;
                 state_store.write().clear_sync_cursor();
                 sync_cursor.set(String::new());
+            } else if let Some(cursor) = reconnect_cursor {
+                // §1.1 rule 4 — a validated `dropped` cursor IS the reconnect
+                // position: persist it so the next subscribe resumes there
+                // instead of replaying from the stale pre-drop cursor.
+                let mut state_store = ctx.state_store;
+                let mut sync_cursor = ctx.sync_cursor;
+                state_store.write().save_sync_cursor(cursor.clone());
+                sync_cursor.set(cursor);
             }
             IterationOutcome::ReconnectAfter {
                 reconnect_after_ms,
@@ -1107,12 +1122,18 @@ async fn route_inbound_call_signals(
 /// Chat projection cannot await `keys/query` inline, so `apply_response` first
 /// renders unresolved proofs conservatively; this pass resolves missing sender
 /// device keys and the caller then recomputes the projection.
+///
+/// SPI-INK-001 (encryption-and-audit.md §2.10.3): Realms for which
+/// `is_minimal_metadata_realm(realm_id)` returns true are excluded — content
+/// authorship there is anchored to the active MLS LeafNode and MUST NOT form
+/// a principal-scoped `(actor, device)` `keys/query` pair.
 pub(crate) async fn prefetch_persistent_event_sender_keys(
     api: &ArkretApi,
     response: &ClientSyncOutcome,
     did_cache: Signal<crate::did_resolver::DidResolutionCache>,
+    is_minimal_metadata_realm: impl Fn(&str) -> bool,
 ) -> bool {
-    let pairs = collect_persistent_proof_sender_devices(response);
+    let pairs = collect_persistent_proof_sender_devices(response, &is_minimal_metadata_realm);
     prefetch_persistent_event_sender_key_pairs(api, pairs, did_cache).await
 }
 
@@ -1269,9 +1290,17 @@ fn refresh_projection_events_from_sync_response(
     projection_events.set(next_projection_events);
 }
 
-fn collect_persistent_proof_sender_devices(response: &ClientSyncOutcome) -> Vec<(String, String)> {
+fn collect_persistent_proof_sender_devices(
+    response: &ClientSyncOutcome,
+    is_minimal_metadata_realm: &impl Fn(&str) -> bool,
+) -> Vec<(String, String)> {
     let mut pairs = BTreeSet::<(String, String)>::new();
-    for body in response.realms.values() {
+    for (realm_id, body) in &response.realms {
+        // §2.10.3 — a minimal-metadata Realm's content authorship never forms
+        // a directory pair; its authors verify against the MLS LeafNode.
+        if is_minimal_metadata_realm(realm_id) {
+            continue;
+        }
         collect_proof_sender_devices_from_value(body, 0, &mut pairs);
     }
     pairs.into_iter().collect()
@@ -2331,6 +2360,56 @@ mod tests {
         .unwrap()
     }
 
+    #[test]
+    fn minimal_metadata_realms_never_form_directory_prefetch_pairs() {
+        // §2.10.3 / SPI-INK-001: a proof-bearing persistent event inside a
+        // minimal-metadata Realm must not contribute an `(actor, device)`
+        // `keys/query` prefetch pair; the same shape in an ordinary Realm
+        // does. This is the receiver-side "principal_directory_queries = 0"
+        // guarantee — no pair, no query.
+        let pairwise_envelope = json!({
+            "actor_id": "did:key:z6MkpairwiseAlice",
+            "device_id": "ak:device:0196419b-0000-7000-8000-0000000000aa",
+            "proofs": [{
+                "verification_method": "did:key:z6MkpairwiseAlice#z6MkpairwiseAuthorKey"
+            }],
+        });
+        let directory_envelope = json!({
+            "actor_id": "did:webvh:z6mkfixture:bob.example",
+            "device_id": "ak:device:0196419b-0000-7000-8000-0000000000bb",
+            "proofs": [{
+                "verification_method": "did:webvh:z6mkfixture:bob.example#key-1"
+            }],
+        });
+        let minimal_realm = "ak:realm:0196419b-0000-7000-8000-00000000aaaa";
+        let ordinary_realm = "ak:realm:0196419b-0000-7000-8000-00000000bbbb";
+        let mut response = empty_response("ak:cursor:minimal-metadata");
+        response.realms.insert(
+            minimal_realm.to_owned(),
+            json!({ "events": [pairwise_envelope] }),
+        );
+        response.realms.insert(
+            ordinary_realm.to_owned(),
+            json!({ "events": [directory_envelope] }),
+        );
+
+        let pairs = collect_persistent_proof_sender_devices(&response, &|realm_id: &str| {
+            realm_id == minimal_realm
+        });
+        assert_eq!(
+            pairs,
+            vec![(
+                "did:webvh:z6mkfixture:bob.example".to_owned(),
+                "ak:device:0196419b-0000-7000-8000-0000000000bb".to_owned()
+            )]
+        );
+
+        // Control: without the minimal-metadata classification both realms
+        // would have contributed pairs.
+        let all = collect_persistent_proof_sender_devices(&response, &|_: &str| false);
+        assert_eq!(all.len(), 2);
+    }
+
     #[tokio::test]
     async fn account_response_projects_client_events_and_decodes_realm_payloads() {
         let message_event = sdk_event(
@@ -2729,7 +2808,7 @@ mod tests {
             }),
         );
         assert_eq!(
-            collect_persistent_proof_sender_devices(&response),
+            collect_persistent_proof_sender_devices(&response, &|_: &str| false),
             vec![
                 (
                     "did:web:alice.example".to_owned(),

@@ -161,6 +161,40 @@ pub fn decrypt_application_payload(
     Some(plaintext)
 }
 
+/// SPI-INK-001 — resolve the locally verified MLS group state into the
+/// §2.10.3 minimal-metadata author view for `(group_id, epoch,
+/// group_state_ref)`. The ONLY trust anchor is the local snapshot the device
+/// verified through its own genesis / commit chain — no directory, no
+/// `keys/query`, no current-epoch fallback: a snapshot at a different epoch
+/// or group yields `None` and the caller MUST fail closed (render the author
+/// as unverified, never promote). `group_state_ref` is echoed into the view —
+/// the client's rollback guard is the (group_id, epoch) equality against its
+/// verified snapshot; the ref-vs-winning-commit adjudication is the server's
+/// (event log) duty.
+#[allow(clippy::too_many_arguments)]
+pub fn minimal_metadata_author_view(
+    state_store: &crate::local_state::LocalStateStore,
+    secure_store: &dyn SecureKeyStore,
+    realm_id: &str,
+    actor_id: &str,
+    device_id: &str,
+    group_id: &str,
+    epoch: u64,
+    group_state_ref: &str,
+) -> Option<arkret_sdk::mls::AuthorGroupStateView> {
+    let snapshot = state_store.mls_snapshot_for(realm_id)?;
+    if snapshot.epoch != epoch || snapshot.group_id != group_id {
+        return None;
+    }
+    let secret = load_device_snapshot_secret(secure_store, actor_id, device_id).ok()?;
+    // COR-04: read-only restore — no ratchet advance / persist on this path.
+    let group = crate::mls::persistence::restore_envelope(&snapshot, &secret, 0).ok()?;
+    if group.group_id() != group_id || group.epoch() != epoch {
+        return None;
+    }
+    Some(group.author_group_state_view(group_state_ref))
+}
+
 /// Tier-3 history decrypt: try every granted `history_secret` for this Realm
 /// against `payload`, decrypting the ciphertext as `mls-exporter-aead-v1`
 /// content (`encryption-and-audit.md` history sharing). The provider that
