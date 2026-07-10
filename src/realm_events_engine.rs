@@ -41,12 +41,6 @@ use crate::config::MultiProfileConfig;
 use crate::local_state::LocalStateStore;
 use crate::runtime::engine_loop::{EngineLoopDirective, run_engine_loop};
 
-/// How long the server holds each realm `events/subscribe` long-poll open. The
-/// buffered (wasm) reader only surfaces frames at close, so this is also the
-/// realtime latency floor for the board. Small enough to keep the board fresh,
-/// large enough to behave as a long-poll rather than a tight poll.
-const REALM_EVENTS_POLL_WINDOW_MS: u64 = 5_000;
-
 /// Floor / ceiling for the failure backoff. Mirrors the account engine's
 /// human-scale recovery cadence. The doubling ladder is [`garth::Backoff`];
 /// these are just its bounds, kept as `Duration` so the account and realm
@@ -216,8 +210,12 @@ async fn run_realm_iteration(
         return RealmIterationOutcome::Ok;
     }
 
-    let transport = crate::client_core::InksonRealmEventsTransport::new(sdk_http)
-        .with_max_duration_ms(REALM_EVENTS_POLL_WINDOW_MS);
+    // The transport passes the request-aware trace context (`catchup` from
+    // cursor presence) into the SDK frame stream, whose StreamTraceValidator
+    // — plus the garth driver's — enforces the §1.1 sequence rules on every
+    // frame. Stream duration is bounded by the server's own subscribe window
+    // (the client-side max_duration knob no longer exists in the SDK options).
+    let transport = crate::client_core::InksonRealmEventsTransport::new(sdk_http);
 
     // The garth driver loads/checkpoints this realm's cursor and remembers
     // dedupe ids through the root runtime adapter, which writes the exact

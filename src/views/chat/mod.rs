@@ -931,8 +931,17 @@ pub fn ChatPanel(
                         &sync.realms,
                     );
                 }
-                crate::sync_engine::prefetch_persistent_event_sender_keys(&api, &sync, did_cache)
-                    .await;
+                crate::sync_engine::prefetch_persistent_event_sender_keys(
+                    &api,
+                    &sync,
+                    did_cache,
+                    |realm_id| {
+                        state_store
+                            .read()
+                            .realm_projection_is_minimal_metadata(realm_id)
+                    },
+                )
+                .await;
                 loaded_messages.extend(chat_messages_from_sync_realms_with_sidecar(
                     &sync.realms,
                     Some(&state_store.read()),
@@ -957,12 +966,19 @@ pub fn ChatPanel(
                 && let Ok(backfill) = sub.backfill(&selected_realm_for_load).await
             {
                 let backfill_events = backfill.event_values();
-                crate::sync_engine::prefetch_persistent_event_sender_keys_from_values(
-                    &api,
-                    &backfill_events,
-                    did_cache,
-                )
-                .await;
+                // §2.10.3 — a minimal-metadata Realm's backfill never primes
+                // the device directory: authors verify against the MLS leaf.
+                let backfill_realm_is_minimal_metadata = state_store
+                    .read()
+                    .realm_projection_is_minimal_metadata(&selected_realm_for_load);
+                if !backfill_realm_is_minimal_metadata {
+                    crate::sync_engine::prefetch_persistent_event_sender_keys_from_values(
+                        &api,
+                        &backfill_events,
+                        did_cache,
+                    )
+                    .await;
+                }
                 merge_channels(
                     &mut channels.write(),
                     channels_from_events(&selected_realm_for_load, &backfill_events),

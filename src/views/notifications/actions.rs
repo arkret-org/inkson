@@ -318,16 +318,14 @@ fn accept_invite_notification(
             let submit = api
                 .accept_realm_invite(&accepted_realm_for_api, &account.did, &invite_id)
                 .await?;
+            // The SDK's account-subscribe surface no longer accepts a
+            // per-request wait-for option (client-sync.md: X-Arkret-Wait-For
+            // belongs to read endpoints); the accepted invite folds in via the
+            // snapshot or a following delta.
+            let _ = &submit.cursor;
             let read_api = api.clone();
             let sync = match read_api.sdk_http_client() {
-                Ok(http) => {
-                    let options = arkret_sdk::http_client::ClientRequestOptions::new()
-                        .wait_for(submit.cursor);
-                    crate::client_core::account_subscribe_snapshot_with_options(
-                        &http, None, &options,
-                    )
-                    .await
-                }
+                Ok(http) => crate::client_core::account_subscribe_snapshot(&http, None).await,
                 Err(error) => Err(error),
             };
             let invite_notifications = optional_invite_notifications(&read_api).await?;

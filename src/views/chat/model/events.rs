@@ -882,6 +882,172 @@ pub(crate) fn verify_chat_envelope_proof(event: &Value) -> ChatProofVerdict {
     }
 }
 
+/// SPI-INK-001 — realm-aware receiver proof gate (encryption-and-audit.md
+/// §2.10.3). For a Realm that declared
+/// `ak.profile.mls.minimal_metadata_realm.v1` the ONLY author trust anchor is
+/// the active MLS LeafNode at the envelope's `(group_id, epoch,
+/// group_state_ref)`, resolved from the locally verified MLS snapshot — this
+/// branch never forms an `(actor, device)` directory pair, so no `keys/query`
+/// can occur. Ordinary Realms keep the device-directory verification.
+/// `identity_link` is not consulted here at all: it only ever provides the
+/// OPTIONAL principal display promotion, never author-proof trust.
+pub(crate) fn verify_chat_envelope_proof_for_realm(
+    realm_id: &str,
+    event: &Value,
+    state_store: Option<&LocalStateStore>,
+    decrypt_identity: Option<(&str, &str)>,
+) -> ChatProofVerdict {
+    if let Some(store) = state_store
+        && store.realm_projection_is_minimal_metadata(realm_id)
+    {
+        return verify_minimal_metadata_chat_author(store, realm_id, event, decrypt_identity);
+    }
+    verify_chat_envelope_proof(event)
+}
+
+/// The §2.10.3 minimal-metadata branch: bind the Event proof to exactly one
+/// active BasicCredential leaf whose identity equals `utf8(actor_id)` and
+/// whose `signature_key` equals the proof key, at the envelope epoch. Every
+/// failure fails closed (`minimal_metadata_author_credential_invalid`
+/// semantics → the row is never rendered as a verified author); a local
+/// group-state view we cannot resolve (no snapshot / other epoch / no local
+/// identity) is `Unresolved` — flagged, not trusted, and NEVER escalated to a
+/// principal-scoped directory query.
+fn verify_minimal_metadata_chat_author(
+    store: &LocalStateStore,
+    realm_id: &str,
+    event: &Value,
+    decrypt_identity: Option<(&str, &str)>,
+) -> ChatProofVerdict {
+    let candidates = message_candidates(event);
+    let proof_bearing = candidates.iter().copied().find(|candidate| {
+        candidate
+            .get("proofs")
+            .and_then(Value::as_array)
+            .is_some_and(|proofs| !proofs.is_empty())
+            && candidate
+                .get("actor_id")
+                .and_then(Value::as_str)
+                .is_some_and(|actor| !actor.trim().is_empty())
+    });
+    let Some(envelope) = proof_bearing else {
+        let attributed = candidates.iter().copied().any(|candidate| {
+            candidate
+                .get("actor_id")
+                .and_then(Value::as_str)
+                .is_some_and(|actor| !actor.trim().is_empty())
+        });
+        return if attributed {
+            ChatProofVerdict::Unresolved
+        } else {
+            ChatProofVerdict::NotApplicable
+        };
+    };
+    let actor = envelope
+        .get("actor_id")
+        .and_then(Value::as_str)
+        .unwrap_or_default();
+    if actor.is_empty() || !persistent_proof_controllers_match_actor(envelope, actor) {
+        return ChatProofVerdict::Rejected;
+    }
+    // The envelope's encrypted-content coordinates are the trust-anchor
+    // selector; a proof-bearing minimal-metadata content row without them has
+    // no leaf to bind to.
+    let Some((group_id, epoch, group_state_ref)) =
+        minimal_metadata_content_coordinates(&candidates)
+    else {
+        return ChatProofVerdict::Rejected;
+    };
+    // The proof key comes purely from the pairwise verification-method
+    // multibase fragment — never a directory value.
+    let Some(proof_key_bytes) = envelope
+        .get("proofs")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(|proof| proof.get("verification_method").and_then(Value::as_str))
+        .find_map(|method| {
+            let no_query = method
+                .split_once('?')
+                .map(|(head, _)| head)
+                .unwrap_or(method);
+            let (controller, fragment) = no_query.split_once('#')?;
+            if controller != actor {
+                return None;
+            }
+            arkret_sdk::signatures::PublicKeyMaterial::Ed25519Multibase {
+                value: fragment.to_owned(),
+            }
+            .ed25519_bytes()
+            .ok()
+        })
+    else {
+        return ChatProofVerdict::Rejected;
+    };
+    let Some((self_actor, self_device)) = decrypt_identity else {
+        return ChatProofVerdict::Unresolved;
+    };
+    let secure_store = crate::secure_key_store::default_secure_key_store("inkson");
+    let Some(view) = crate::mls::runtime::minimal_metadata_author_view(
+        store,
+        secure_store.as_ref(),
+        realm_id,
+        self_actor,
+        self_device,
+        &group_id,
+        epoch,
+        &group_state_ref,
+    ) else {
+        // No locally verified group state at the envelope epoch — flag, do
+        // not trust, do not query a directory.
+        return ChatProofVerdict::Unresolved;
+    };
+    let Ok(actor_did) = arkret_sdk::Did::new(actor.to_owned()) else {
+        return ChatProofVerdict::Rejected;
+    };
+    let claim = arkret_sdk::mls::MinimalMetadataAuthorClaim {
+        group_id: &group_id,
+        epoch,
+        group_state_ref: &group_state_ref,
+        actor_id: &actor_did,
+        proof_public_key: &proof_key_bytes,
+    };
+    if arkret_sdk::mls::verify_minimal_metadata_author(&view, &claim).is_err() {
+        return ChatProofVerdict::Rejected;
+    }
+    // The LeafNode `signature_key` (byte-equal to the proof key after the
+    // claim admission) is the verifying key for the envelope's detached JWS.
+    let material = arkret_sdk::signatures::PublicKeyMaterial::Ed25519Raw {
+        bytes: proof_key_bytes.to_vec(),
+    };
+    if crate::device_directory::verify_persistent_envelope_proofs(envelope, &material) {
+        ChatProofVerdict::Verified
+    } else {
+        ChatProofVerdict::Rejected
+    }
+}
+
+/// Extract `(group_id, epoch, key_ref.group_state_ref)` from the first
+/// candidate layer carrying an `encrypted_content` envelope.
+fn minimal_metadata_content_coordinates(candidates: &[&Value]) -> Option<(String, u64, String)> {
+    let content = candidates.iter().find_map(|candidate| {
+        candidate.get("encrypted_content").or_else(|| {
+            candidate
+                .get("content")
+                .and_then(|content| content.get("encrypted_content"))
+        })
+    })?;
+    Some((
+        content.get("group_id")?.as_str()?.to_owned(),
+        content.get("epoch")?.as_u64()?,
+        content
+            .get("key_ref")?
+            .get("group_state_ref")?
+            .as_str()?
+            .to_owned(),
+    ))
+}
+
 fn persistent_proof_sender_device<'a>(envelope: &'a Value, actor: &str) -> Option<&'a str> {
     envelope
         .get("device_id")
@@ -956,8 +1122,11 @@ pub(crate) fn chat_message_from_event_with_sidecar(
 ) -> Option<ChatMessage> {
     // Receiver proof gate (device-lifecycle.md §8.2, fail-closed): a present
     // sender proof that fails verification (bad sig / revoked / absent device)
-    // MUST NOT enter the conversation view.
-    let proof_verdict = verify_chat_envelope_proof(event);
+    // MUST NOT enter the conversation view. Minimal-metadata Realms verify
+    // against the active MLS LeafNode instead of the device directory
+    // (§2.10.3, SPI-INK-001).
+    let proof_verdict =
+        verify_chat_envelope_proof_for_realm(realm_id, event, state_store, decrypt_identity);
     if proof_verdict == ChatProofVerdict::Rejected {
         return None;
     }

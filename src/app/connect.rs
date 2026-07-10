@@ -1489,6 +1489,11 @@ pub(super) fn connect(base: String, actor: String, device: String, ctx: ConnectC
                             &authed,
                             &sync,
                             ctx.did_cache,
+                            |realm_id| {
+                                state_store
+                                    .read()
+                                    .realm_projection_is_minimal_metadata(realm_id)
+                            },
                         )
                         .await;
                         let synced_projection_events = {
