@@ -855,7 +855,20 @@ fn group_members_with_owned_agents(
         }
     }
 
-    groups.into_values().collect()
+    let mut groups = groups.into_values().collect::<Vec<_>>();
+    groups.sort_by(|left, right| {
+        let left_is_self = left.controller.actor_id.trim() == fallback_controller_did.trim();
+        let right_is_self = right.controller.actor_id.trim() == fallback_controller_did.trim();
+        right_is_self
+            .cmp(&left_is_self)
+            .then_with(|| {
+                left.controller
+                    .primary_label()
+                    .cmp(&right.controller.primary_label())
+            })
+            .then_with(|| left.controller.actor_id.cmp(&right.controller.actor_id))
+    });
+    groups
 }
 
 fn split_member_profiles(members: Vec<MemberProfile>) -> (Vec<MemberProfile>, Vec<MemberProfile>) {
@@ -1978,6 +1991,24 @@ pub(crate) fn realm_key_request_answer_dedup_key(
     )
 }
 
+/// Resolve the durable policy/grant Control Move event ref that authorizes
+/// this device to deliver history-key shares in `realm_id`
+/// (`ak.realm_key.share.source_authorization_ref`,
+/// encryption-and-audit.md §2.3.5(c)).
+///
+/// The local realm projection does not yet retain the durability/history
+/// policy Control Move's event id, so this currently resolves to `None` and
+/// every share path fails closed (request left in the inbox / RRK epoch not
+/// treated as sealed, both eligible for retry). Wiring the projection to
+/// carry that event ref lights both paths back up through this single
+/// resolution point.
+pub(crate) fn realm_history_share_source_authorization_ref(
+    _store: &LocalStateStore,
+    _realm_id: &str,
+) -> Option<String> {
+    None
+}
+
 /// Provider-side: answer one `ak.realm_key.request` from a late joiner by
 /// sealing the retained `history_secret` range to the requester's advertised
 /// HPKE public key and submitting a durable `ak.realm_key.share`
@@ -1985,8 +2016,10 @@ pub(crate) fn realm_key_request_answer_dedup_key(
 ///
 /// Returns `Ok(true)` when a share was built and submitted, `Ok(false)` when
 /// the provider holds no history secret to share (it will be retried once the
-/// provider has retained one). `request` is the inbound `ak.realm_key.request`
-/// to-device envelope; `realm_id`/`actor_id`/`device_id` are the provider's.
+/// provider has retained one), or when the share cannot yet name its
+/// `source_authorization_ref` (same retry semantics). `request` is the inbound
+/// `ak.realm_key.request` to-device envelope; `realm_id`/`actor_id`/`device_id`
+/// are the provider's.
 pub(crate) async fn share_history_to_requester(
     api: &crate::api::ArkretApi,
     mut state_store: SyncSignal<LocalStateStore>,
@@ -2019,8 +2052,10 @@ pub(crate) async fn share_history_to_requester(
             &device_id,
         );
     }
-    let (all, policy_digest) = {
+    let (all, policy_digest, source_authorization_ref) = {
         let store = state_store.read();
+        let source_authorization_ref =
+            realm_history_share_source_authorization_ref(&store, &realm_id);
         let policy_digest = match store.genesis_policy_root_for_effective_scope(&realm_id, None) {
             Some(stored) => {
                 arkret_sdk::Hash::new(stored.clone()).map_err(|err| {
@@ -2036,11 +2071,21 @@ pub(crate) async fn share_history_to_requester(
             .as_str()
             .to_owned(),
         };
-        (store.history_secrets_for(&realm_id), policy_digest)
+        (store.history_secrets_for(&realm_id), policy_digest, source_authorization_ref)
     };
     if all.is_empty() {
         return Ok(false);
     }
+    // §2.3.5(c): every ak.realm_key.share must name the authorizing Control
+    // Move. Without it the answer fails closed; the request stays in the
+    // inbox and is retried once the projection carries the policy event ref.
+    let Some(source_authorization_ref) = source_authorization_ref else {
+        tracing::warn!(
+            realm = %short_protocol_id(&realm_id),
+            "cannot answer ak.realm_key.request: history share source_authorization_ref unavailable"
+        );
+        return Ok(false);
+    };
     let from = request.key_scope.from_epoch;
     let to = request.key_scope.to_epoch;
     let range: Vec<(u64, Vec<u8>)> = all
@@ -2061,17 +2106,6 @@ pub(crate) async fn share_history_to_requester(
         .fold((u64::MAX, 0_u64), |(lo, hi), (epoch, _)| {
             (lo.min(*epoch), hi.max(*epoch))
         });
-    let source_authorization_ref = {
-        let store = state_store.read();
-        store
-            .seal_view_for_realm(&realm_id)
-            .frontier
-            .iter()
-            .chain(store.seal_view_for_realm(&realm_id).leaves.iter())
-            .find_map(|value| arkret_sdk::EventId::new(value.clone()).ok())
-            .map(|event_id| event_id.as_str().to_owned())
-            .ok_or_else(|| anyhow::anyhow!("history-share source authorization ref unavailable"))?
-    };
     let share = crate::mls::admission::build_realm_key_share_event(
         &realm_id,
         &actor_id,
@@ -2081,8 +2115,8 @@ pub(crate) async fn share_history_to_requester(
         min_epoch,
         max_epoch,
         policy_digest,
-        &source_authorization_ref,
         sealed,
+        &source_authorization_ref,
     )
     .map_err(|err| anyhow::anyhow!(err))?;
     api.event_submitter()?
@@ -2148,30 +2182,13 @@ pub(crate) async fn seal_history_to_recovery_recipients(
             .state_root
             .map(Value::String)
             .unwrap_or(Value::Null);
-        let source_authorization_ref = store
-            .seal_view_for_realm(&realm_id)
-            .frontier
-            .iter()
-            .chain(store.seal_view_for_realm(&realm_id).leaves.iter())
-            .find_map(|value| arkret_sdk::EventId::new(value.clone()).ok())
-            .map(|event_id| event_id.as_str().to_owned());
-        (
-            policy,
-            history_secrets,
-            policy_digest,
-            source_authorization_ref,
-        )
+        let source_authorization_ref =
+            realm_history_share_source_authorization_ref(&store, &realm_id);
+        (policy, history_secrets, policy_digest, source_authorization_ref)
     };
     if history_secrets.is_empty() {
         return Ok((0, 0));
     }
-    let Some(source_authorization_ref) = source_authorization_ref else {
-        tracing::warn!(
-            realm = %short_protocol_id(&realm_id),
-            "history share skipped: source authorization ref unavailable"
-        );
-        return Ok((0, 0));
-    };
     // Fetch each recipient principal's raw DID Document (carrying service /
     // keyAgreement) so the SDK authority can verify the active RRK service entry.
     let mut did_documents: BTreeMap<String, Value> = BTreeMap::new();
@@ -2191,7 +2208,7 @@ pub(crate) async fn seal_history_to_recovery_recipients(
         &history_secrets,
         &did_documents,
         policy_digest,
-        &source_authorization_ref,
+        source_authorization_ref.as_deref(),
     );
     let mut events = Vec::new();
     let mut unverified = 0_usize;
@@ -4527,6 +4544,7 @@ mod tests {
             .expect("alice group exists");
         assert_eq!(alice.agents.len(), 1);
         assert_eq!(alice.agents[0].agent_principal_id, "did:web:agent.example");
+        assert_eq!(groups[0].controller.actor_id, "did:web:alice.example");
         assert!(
             groups
                 .iter()

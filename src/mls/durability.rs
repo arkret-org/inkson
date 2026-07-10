@@ -113,7 +113,9 @@ pub async fn verify_recovery_recipients(
 ///
 /// `policy_digest` binds the effective history-sharing policy at seal time;
 /// `sender_device_id` / `sender_device_signature` author the share (the caller's
-/// signing layer fills the detached signature).
+/// signing layer fills the detached signature). `source_authorization_ref` is
+/// the durable policy/grant Control Move event ref covering this delivery
+/// (encryption-and-audit.md §2.3.5(c)); the SDK rejects a non-event-ref value.
 #[allow(clippy::too_many_arguments)]
 pub fn seal_history_secrets(
     recovery_key: &ResolvedRealmHistoryRecoveryKey,
@@ -248,6 +250,14 @@ pub enum RecipientSealOutcome {
 ///
 /// `policy_digest` binds the effective history-sharing policy at seal time
 /// (e.g. the realm seal view `state_root`).
+///
+/// `source_authorization_ref` is the durable policy/grant Control Move event
+/// ref covering the RRK delivery (encryption-and-audit.md §2.3.5(c), required
+/// on every `ak.realm_key.share`). `None` fails closed: every recipient
+/// reports [`RecipientSealOutcome::Unverified`], the epoch is not treated as
+/// durably sealed, and the retained `history_secret` stays eligible for a
+/// later retry once the caller can name the authorizing event.
+#[allow(clippy::too_many_arguments)]
 pub fn build_eager_seal_events(
     realm_id: &str,
     actor_id: &str,
@@ -256,11 +266,27 @@ pub fn build_eager_seal_events(
     history_secrets: &[(u64, Vec<u8>)],
     did_documents: &std::collections::BTreeMap<String, Value>,
     policy_digest: Value,
-    source_authorization_ref: &str,
+    source_authorization_ref: Option<&str>,
 ) -> Vec<RecipientSealOutcome> {
     if history_secrets.is_empty() || !durability_is_effective(policy) {
         return Vec::new();
     }
+    let Some(source_authorization_ref) = source_authorization_ref
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    else {
+        return policy
+            .recovery_recipients
+            .iter()
+            .map(|recipient| RecipientSealOutcome::Unverified {
+                recipient_id: recipient.recipient_id.clone(),
+                reason: "history share source_authorization_ref unavailable: the realm \
+                         projection does not carry the durability-policy Control Move event \
+                         ref yet (encryption-and-audit.md §2.3.5(c))"
+                    .to_owned(),
+            })
+            .collect();
+    };
     let (from_epoch, to_epoch) = history_secrets
         .iter()
         .fold((u64::MAX, 0_u64), |(lo, hi), (epoch, _)| {
@@ -422,7 +448,7 @@ mod tests {
             8,
             json!("sha256:policy"),
             "ak:device:01904100-0000-7000-8000-00000000ae01",
-            "ak:event:01904100-0000-7000-8000-e2eeae0d0002",
+            "ak:event:01904100-0000-7000-8000-00000000ae02",
             json!({}),
         )
         .unwrap();

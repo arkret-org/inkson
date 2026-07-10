@@ -178,6 +178,11 @@ pub(crate) fn build_realm_mls_admission_events_from_claims(
 ///
 /// The provider MUST have built `sealed_ciphertext` against the recipient's
 /// HPKE public key; this builder does not derive or validate that key.
+///
+/// `source_authorization_ref` is the durable policy/grant Control Move event
+/// ref covering this delivery (encryption-and-audit.md §2.3.5(c)); the
+/// registered payload schema requires it, so this fails closed on a
+/// non-event-ref value.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn build_realm_key_share_event(
     realm_id: &str,
@@ -188,15 +193,16 @@ pub(crate) fn build_realm_key_share_event(
     from_epoch: u64,
     to_epoch: u64,
     policy_digest: String,
-    source_authorization_ref: &str,
     sealed_ciphertext: String,
+    source_authorization_ref: &str,
 ) -> Result<arkret_sdk::Event, String> {
+    let source_authorization_ref =
+        arkret_sdk::EventId::new(source_authorization_ref.trim().to_owned())
+            .map_err(|err| format!("invalid realm_key.share source_authorization_ref: {err:?}"))?;
     let recipient_did = arkret_sdk::Did::new(recipient_principal_id.trim().to_owned())
         .map_err(|err| format!("invalid realm_key.share recipient DID: {err:?}"))?;
     let policy_digest = arkret_sdk::Hash::new(policy_digest.trim().to_owned())
         .map_err(|err| format!("invalid realm_key.share policy_digest: {err:?}"))?;
-    arkret_sdk::EventId::new(source_authorization_ref.trim().to_owned())
-        .map_err(|err| format!("invalid realm_key.share source_authorization_ref: {err:?}"))?;
     let key_scope = arkret_sdk::RealmKeyScope {
         effective_scope: crate::operation::realm_effective_scope_value(realm_id)?,
         policy_digest: Value::String(policy_digest.as_str().to_owned()),
@@ -212,7 +218,7 @@ pub(crate) fn build_realm_key_share_event(
         recipient_verification_method: None,
         recovery_recipient_id: None,
         sender_device_id: sender_device_id.trim().to_owned(),
-        source_authorization_ref: source_authorization_ref.trim().to_owned(),
+        source_authorization_ref: source_authorization_ref.as_str().to_owned(),
         // Filled below with a real Ed25519 signature over
         // `RealmKeySharePayload::sender_signing_input()` (device-lifecycle.md
         // §13). Initialized empty only while constructing the signing input and
@@ -580,8 +586,8 @@ mod tests {
             0,
             2,
             policy_digest.clone(),
-            "ak:event:01904100-0000-7000-8000-0000000000d8",
             "c2VhbGVk".to_owned(),
+            "ak:event:01904100-0000-7000-8000-0000000000e7",
         )
         .unwrap();
 
