@@ -13,7 +13,7 @@ use crate::recovery_crypto::{
 };
 
 /// Serialize a SDK `KeyBackupContentItem` into the on-wire `contents[]` object.
-/// The content item is the spec-defined type (`ck.schema.key_backup.v1`); the
+/// The content item is the spec-defined type (`ak.schema.key_backup.v1`); the
 /// authoritative shape lives in `arkret_sdk::models::KeyBackupContentItem`, so
 /// neither inkson nor soland redefines it. `skip_serializing_if` keeps absent
 /// optionals (e.g. `secret_version` on share items) out of the canonical bytes.
@@ -242,7 +242,7 @@ pub fn build_did_recovery_backup_body(
 }
 
 /// AEAD identifiers for HPKE backups. This surface pins the v1 default-MUST
-/// application-layer HPKE suite `ck.hpke_x25519_aead_chacha20poly1305.v1`
+/// application-layer HPKE suite `ak.hpke_x25519_aead_chacha20poly1305.v1`
 /// (see [`crate::hpke_backup::HPKE_SUITE`]), whose AEAD is RFC 9180
 /// ChaCha20-Poly1305 (96-bit nonce). The `encryption.hpke_suite` selector is
 /// written explicitly so `aead.name` is unambiguously consistent with the

@@ -187,12 +187,13 @@ fn current_policy_revision(store: &LocalStateStore, realm_id: &str) -> u64 {
 /// Durability policy editor card. Mount inside the Realm admin Security section.
 #[component]
 pub fn DurabilityPolicyEditor(
-    base_url: String,
     token: Signal<String>,
     realm_id: String,
     actor_id: String,
-    state_store: Signal<LocalStateStore>,
 ) -> Element {
+    // A4 — base_url / state_store from session context instead of props.
+    let base_url = crate::app::SessionContext::base_url_string();
+    let state_store = crate::app::SessionContext::get().state_store;
     let scheme_ok = {
         let store = state_store.read();
         store

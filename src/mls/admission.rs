@@ -166,7 +166,7 @@ pub(crate) fn build_realm_mls_admission_events_from_claims(
     })
 }
 
-/// Build a `ck.realm_key.share` event carrying a HPKE-sealed bundle of
+/// Build a `ak.realm_key.share` event carrying a HPKE-sealed bundle of
 /// retained `history_secret`s so `recipient` can decrypt pre-join
 /// `mls-exporter-aead-v1` content (`encryption-and-audit.md` history sharing).
 ///
@@ -246,7 +246,7 @@ pub(crate) fn build_realm_key_share_event(
 /// Wrap an already-constructed [`arkret_sdk::RealmKeySharePayload`] (e.g. the
 /// provider-initiated RRK seal produced by
 /// `arkret_sdk::history_recovery::seal_history_secrets_to_recovery_recipient`)
-/// into a durable `ck.realm_key.share` Event, filling the
+/// into a durable `ak.realm_key.share` Event, filling the
 /// `sender_device_signature` with this device's active Ed25519 signer. The
 /// registered payload schema requires this signature, so this fails closed when
 /// no active signer is installed.
@@ -714,7 +714,7 @@ mod tests {
         // Regression for the encrypted-Realm fork: an admin who does any
         // non-policy work (create a space/strand, send a message) between
         // creating the Realm and inviting advances the Seal `state_root`. The
-        // add-member `ck.mls.commit` MUST still declare the genesis-locked
+        // add-member `ak.mls.commit` MUST still declare the genesis-locked
         // `policy_root`; otherwise soland rejects it `governance_binding_mismatch`
         // while its Welcome still lands, leaving the invitee at epoch N+1 and the
         // admin at epoch N — a permanent, mutually-undecryptable fork.

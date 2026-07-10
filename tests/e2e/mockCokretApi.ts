@@ -1616,9 +1616,9 @@ export async function mockCokretApi(
     }
 
     // NB: no `/_arkret/self/snapshot/head` route. The mock's describe does
-    // not advertise `ck.self.snapshot.query.manifest_head`, so the client falls back to
+    // not advertise `ak.self.snapshot.query.manifest_head`, so the client falls back to
     // event replay before issuing the request. The current wire shape is the
-    // full signed `ck.schema.snapshot.v1` manifest (self-id field `id`); the
+    // full signed `ak.schema.snapshot.v1` manifest (self-id field `id`); the
     // removed `snapshot_ref` pointer DTO is hard-rejected and MUST NOT be
     // reintroduced here.
     if (

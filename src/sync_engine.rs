@@ -144,7 +144,7 @@ pub struct SyncEngineContext {
     /// (same value the chat / realm-admin send paths use).
     pub device_id: Signal<String>,
     pub selected_realm_id: Signal<String>,
-    /// CKP-0007 P3B.4.3 — the active multi-profile configuration. The
+    /// AKP-0007 P3B.4.3 — the active multi-profile configuration. The
     /// engine reads `active_profile_id` at the top of every iteration
     /// and exits early when it differs from the profile id captured
     /// at spawn time; the lifecycle bumps `generation` so the next
@@ -156,11 +156,11 @@ pub struct SyncEngineContext {
     /// Y1/Y2 - session-scoped DID resolution cache handle, provided by
     /// `app.rs` via `use_context_provider` as documented there. While ingesting
     /// projections, the Y2 invalidation hook uses it to call `invalidate` for
-    /// related actor DIDs when `ck.cross_signing.reset` / `ck.device.revoke`
+    /// related actor DIDs when `ak.cross_signing.reset` / `ak.device.revoke`
     /// arrive, and `clear` on logout / trust-bundle reset. `Signal<T>` is
     /// `Copy`, so storing it here is zero-cost.
     pub did_cache: Signal<crate::did_resolver::DidResolutionCache>,
-    /// Receive side of `ck.call.signal`. The engine routes inbound
+    /// Receive side of `ak.call.signal`. The engine routes inbound
     /// call-signal envelopes from each incremental sync body into this hub
     /// (dedup → incoming ring / per-call inbox). `Copy`, zero-cost to hold.
     /// See `crate::views::call_signals`.
@@ -947,7 +947,7 @@ async fn run_iteration(
                 };
             }
             apply_response(&response, is_full_sync, ctx, invite_notifications);
-            // Receiver side of `ck.call.signal` (async, needs the directory):
+            // Receiver side of `ak.call.signal` (async, needs the directory):
             // verify each inbound envelope's proof against the sender's
             // authoritative verify key and route only verified signals
             // (fail-closed). Done here, not inside the synchronous
@@ -957,7 +957,7 @@ async fn run_iteration(
                 refresh_projection_events_from_sync_response(&response, is_full_sync, ctx);
             }
             // MID-5: prime the authoritative device signing keys for every
-            // `ck.member.identity.update` asserter in this response so the
+            // `ak.member.identity.update` asserter in this response so the
             // synchronous `MemberIdentityStore::current_identity` proof verifier
             // can resolve them (a Miss is fail-closed → the identity would be
             // dropped). Keyed by the proof `verification_method` (`actor#device`).
@@ -1071,7 +1071,7 @@ async fn run_iteration(
     }
 }
 
-/// Async receiver pass for inbound `ck.call.signal`: for each realm body,
+/// Async receiver pass for inbound `ak.call.signal`: for each realm body,
 /// verify every call-signal envelope's `proof` against the sender's
 /// authoritative directory verify key (`device_directory`) and route only
 /// verified signals into the call-signal hub (fail-closed). Runs after the
@@ -1131,7 +1131,7 @@ pub(crate) async fn prefetch_persistent_event_sender_keys(
 }
 
 /// MID-5: resolve the authoritative device signing key for every
-/// `ck.member.identity.update` asserter referenced by this sync response, so the
+/// `ak.member.identity.update` asserter referenced by this sync response, so the
 /// synchronous [`crate::member_identity_store::MemberIdentityStore`] proof
 /// verifier (which is cache-only and fail-closed) can validate the proofs. The
 /// `(actor, device)` pair is derived from each proof's `verification_method`
@@ -1148,7 +1148,7 @@ async fn prefetch_member_identity_proof_keys(
     prefetch_persistent_event_sender_key_pairs(api, pairs.into_iter().collect(), did_cache).await
 }
 
-/// Recursively scan a projection `Value` for `ck.member.identity.update`
+/// Recursively scan a projection `Value` for `ak.member.identity.update`
 /// proofs, extracting `(controller_did, device_id)` from each
 /// `member_identity.proof.verification_method`. Depth-bounded to mirror the
 /// persistent-event scanner.
@@ -1217,7 +1217,7 @@ pub(crate) async fn prefetch_persistent_event_sender_keys_from_values(
 
 /// Public alias of [`prefetch_persistent_event_sender_key_pairs`] for callers
 /// outside the persistent-event projection path (e.g. the history-share install
-/// loop priming `ck.realm_key.share` sender device keys before SEC-02
+/// loop priming `ak.realm_key.share` sender device keys before SEC-02
 /// fail-closed verification).
 pub(crate) async fn prefetch_device_key_pairs(
     api: &CokretApi,
@@ -1391,7 +1391,7 @@ pub fn apply_response(
     let account_did = ctx.account_did.read().clone();
 
     // Y2 invalidation hook: scan identity events in this response before writing
-    // projections. On `ck.cross_signing.reset` / `ck.device.revoke`, invalidate
+    // projections. On `ak.cross_signing.reset` / `ak.device.revoke`, invalidate
     // the related actor DID so the next authority resolution (`resolve_with_cache`)
     // walks the resolver chain instead of trusting a stale cache entry (old key
     // set). Keep this separate from the `state_store.write()` borrow so the two
@@ -1449,7 +1449,7 @@ pub fn apply_response(
                 // card-detail Discussion tab renders local-first instead of
                 // refetching + redecrypting the realm on every open.
                 ingest_message_events_from_projection(store, id, body);
-                // R3.1 MID-2 — harvest inlined `ck.member.identity.update`
+                // R3.1 MID-2 — harvest inlined `ak.member.identity.update`
                 // event envelopes off the `members[]` roster entries. The
                 // SDK's effective-set filter is applied lazily when a UI
                 // surface needs to resolve a display identity.
@@ -1470,13 +1470,13 @@ pub fn apply_response(
         }); // store.batch — single coalesced flush happens here
     }
 
-    // Receive side of `ck.call.signal`: route inbound call-signal envelopes
+    // Receive side of `ak.call.signal`: route inbound call-signal envelopes
     // from each realm body into the hub (dedup → incoming ring / per-call
     // inbox). Done after the `store` write guard is dropped so the hub Signal
     // writes don't nest inside the store borrow.
     //
     // NB: receiver proof verification + directory resolve for inbound
-    // `ck.call.signal` is async (needs `keys/query`); it cannot run here
+    // `ak.call.signal` is async (needs `keys/query`); it cannot run here
     // because `apply_response` is synchronous and holds no authenticated
     // client. The async routing pass lives in `run_iteration`
     // (`route_inbound_call_signals`) right after this call returns.
@@ -1544,7 +1544,7 @@ pub fn apply_response(
 
 /// R3.1 MID-2 — walk a Realm projection's `members[]` roster looking
 /// for inlined `identity_events[]` arrays. Each
-/// `ck.member.identity.update` envelope is recorded on the
+/// `ak.member.identity.update` envelope is recorded on the
 /// `LocalStateStore` keyed by `(realm_id, actor_id)`. Also handles the
 /// `state.events[]` form where the roster only carries
 /// `identity_event_ids[]` and the events themselves live in the
@@ -1800,7 +1800,7 @@ pub(crate) fn ingest_kanban_events(
     // strand.create, strand.update, strand.move/reorder, strand.archive/restore,
     // relation.*) into `raw_operations` so the event-sourced `project_board`
     // sees the full log. The prior code ingested only strand.update +
-    // space.create, which silently dropped remote `ck.strand.create` — the
+    // space.create, which silently dropped remote `ak.strand.create` — the
     // root cause of cross-member cards never appearing.
     let records = crate::projection::kanban_ops::kanban_operations_from_events(events);
     let mut changed = 0;
@@ -1961,7 +1961,7 @@ fn ingest_member_identity_events_from_projection(
             // Otherwise hydrate envelopes from `state.events[]` keyed
             // by id. Missing references are dropped silently — the
             // server will resend them on the next subscribe frame, or
-            // a `ck.self.events.query.scan` backfill will catch up.
+            // a `ak.self.events.query.scan` backfill will catch up.
             if let Some(refs) = map.get("identity_event_ids").and_then(Value::as_array) {
                 let mut resolved: Vec<Value> = Vec::new();
                 for r in refs {
@@ -1982,7 +1982,7 @@ fn ingest_member_identity_events_from_projection(
 
 /// Core scanner for the Y2 invalidation hook.
 ///
-/// Finds `ck.cross_signing.reset` / `ck.device.revoke` events in one Realm
+/// Finds `ak.cross_signing.reset` / `ak.device.revoke` events in one Realm
 /// projection `body`, then calls
 /// [`crate::did_resolver::DidResolutionCache::invalidate`] for the related actor
 /// DID. Events may appear in:

@@ -19,8 +19,8 @@ use crate::operation::sdk_event_local_operation_id;
 use crate::views::helpers::{short_protocol_id, with_authed_api};
 
 /// The MLS events an encrypted write must submit, in submit order: the
-/// one-time `ck.mls.genesis` (if not yet emitted) MUST precede any forced
-/// `ck.mls.commit` so the server has the group at epoch 0 before the commit
+/// one-time `ak.mls.genesis` (if not yet emitted) MUST precede any forced
+/// `ak.mls.commit` so the server has the group at epoch 0 before the commit
 /// bumps it.
 #[derive(Default, Debug)]
 pub(super) struct EncryptedWriteMlsEvents {
@@ -264,7 +264,7 @@ pub(super) fn dispatch_card_detail_update(
     }
 
     // Optimistic detail-panel feedback: apply the draft to the open card.
-    // The board itself re-renders from the appended `ck.strand.update` op
+    // The board itself re-renders from the appended `ak.strand.update` op
     // below — `columns` is a `use_memo` over `raw_operations`, folded by
     // `overlay_local_card_update_records`, so there is no direct signal write.
     let mut updated_card = current.clone();

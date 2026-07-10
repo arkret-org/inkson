@@ -66,7 +66,7 @@ pub struct LocalSealView {
     #[serde(default)]
     pub bottom_cells: BTreeMap<String, BottomCellInfo>,
     /// The current MLS epoch as published in the
-    /// `ck.component.mls.epoch.v1` cas-register cell, when sync surfaces
+    /// `ak.component.mls.epoch.v1` cas-register cell, when sync surfaces
     /// it. `None` means the Space hasn't published an MLS epoch yet (no
     /// E2EE group or pre-genesis state).
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -88,7 +88,7 @@ pub struct LocalSealView {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub covered_seals_lag: Option<u64>,
     /// MLS key-schedule content hash (`sha256:<hex>`) from the
-    /// `ck.component.key_schedule.v1` cas-register cell. The MLS commit
+    /// `ak.component.key_schedule.v1` cas-register cell. The MLS commit
     /// path uses this as `prev_schedule`; the new commit computes a
     /// fresh schedule on top of it. `None` means the Space has not
     /// published a key schedule yet (no prior MLS commit observed).
@@ -149,7 +149,7 @@ impl LocalSealView {
         }
         let head_a = &info.heads[0];
         let head_b = &info.heads[1];
-        let safer = if cell_ref.starts_with("ak:cell:ck.component.realm.organization.v1") {
+        let safer = if cell_ref.starts_with("ak:cell:ak.component.realm.organization.v1") {
             head_a.value.clone()
         } else {
             safer_value_for_cell(cell_ref, &head_a.value, &head_b.value)?
@@ -164,9 +164,9 @@ impl LocalSealView {
 /// is intentional: ban-vs-ban or revoke-vs-revoke is a content conflict,
 /// not a safety call, so we surface no preference and the operator picks.
 fn safer_value_for_cell(cell_ref: &str, a: &Value, b: &Value) -> Option<Value> {
-    let rank: fn(&Value) -> u8 = if cell_ref.starts_with("ak:cell:ck.component.member.state.v1") {
+    let rank: fn(&Value) -> u8 = if cell_ref.starts_with("ak:cell:ak.component.member.state.v1") {
         member_state_safety_rank
-    } else if cell_ref.starts_with("ak:cell:ck.component.capability.grant.v1") {
+    } else if cell_ref.starts_with("ak:cell:ak.component.capability.grant.v1") {
         capability_grant_safety_rank
     } else {
         return None;
@@ -220,7 +220,7 @@ impl LocalSealView {
     ///     "leaves":   ["sha256:..."],
     ///     "state_root": "ak:state:sha256:...",
     ///     "cells": {
-    ///       "ak:cell:ck.component.member.state.v1:did:web:alice": {
+    ///       "ak:cell:ak.component.member.state.v1:did:web:alice": {
     ///         "bottom": "expose"
     ///       }
     ///     }
@@ -299,14 +299,14 @@ impl LocalSealView {
                         .cloned()
                         .or_else(|| status.get("register").and_then(|r| r.get("value")).cloned())
                 };
-                if cell_ref.starts_with("ak:cell:ck.component.mls.epoch.v1")
+                if cell_ref.starts_with("ak:cell:ak.component.mls.epoch.v1")
                     && let Some(value) = value_for(status)
                 {
                     view.mls_epoch = value
                         .as_u64()
                         .or_else(|| value.get("epoch").and_then(|v| v.as_u64()));
                 }
-                if cell_ref.starts_with("ak:cell:ck.component.governance.covered_seals.v1")
+                if cell_ref.starts_with("ak:cell:ak.component.governance.covered_seals.v1")
                     && let Some(value) = value_for(status)
                 {
                     view.covered_seals = value.as_str().map(str::to_owned).or_else(|| {
@@ -319,7 +319,7 @@ impl LocalSealView {
                 // B3c: surface the MLS key schedule hash so the next
                 // commit's SDK MLS governance binding can carry the
                 // SDK-canonical "advance schedule" effect on it.
-                if cell_ref.starts_with("ak:cell:ck.component.key_schedule.v1")
+                if cell_ref.starts_with("ak:cell:ak.component.key_schedule.v1")
                     && let Some(value) = value_for(status)
                 {
                     view.key_schedule_hash = value.as_str().map(str::to_owned).or_else(|| {

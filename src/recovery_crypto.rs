@@ -124,7 +124,7 @@ pub struct VaultSealContext<'a> {
 
 /// Outcome of [`seal_vault`]: base64url ciphertext + the deterministic
 /// nonce/salt/nonce_salt and the `key_commitment`, ready to drop into a
-/// `ck.schema.key_backup.v1` envelope.
+/// `ak.schema.key_backup.v1` envelope.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct VaultSealed {
     pub ciphertext_b64: String,
@@ -136,7 +136,7 @@ pub struct VaultSealed {
 }
 
 /// Local passkey/WebAuthn PRF wrapper output. This is not a
-/// `ck.schema.key_backup.v1` wire envelope and deliberately does not introduce
+/// `ak.schema.key_backup.v1` wire envelope and deliberately does not introduce
 /// a new `recipient_method`; it is a browser-local convenience wrapper for the
 /// current 24-word Recovery Key.
 #[derive(Clone, Debug, PartialEq, Eq)]

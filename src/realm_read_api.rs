@@ -89,7 +89,7 @@ pub async fn effective_grants(
 
 // ── Views — collection projection (T20 / YOU-01-009 subtask 3) ──────
 //
-// Spec-registered operation `ck.self.views.collection_projection.command.materialize`
+// Spec-registered operation `ak.self.views.collection_projection.command.materialize`
 // (`POST /_arkret/self/views/{view_id}/projection`, spec commit
 // b0cfa89). The request body is the registered
 // `view_projection_request_body` (`{cursor?, limit?}` — an empty
@@ -120,7 +120,7 @@ pub async fn list_strand_projections(
 }
 
 /// Read the verified Realm ↔ organization relationships projection
-/// (`ck.self.realm_organization.query.list`,
+/// (`ak.self.realm_organization.query.list`,
 /// `GET /_arkret/self/realms/{realm_id}/organizations`).
 ///
 /// The server only returns `verified_active` / `revoked_or_expired`

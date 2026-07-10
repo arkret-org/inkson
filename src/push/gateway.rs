@@ -16,7 +16,7 @@ use serde_json::Value;
 
 use super::token_provider::vapid_public_key_from_describe;
 
-/// P4 (CKP-0007 hygiene): the previous hard-coded
+/// P4 (AKP-0007 hygiene): the previous hard-coded
 /// `https://push.example/_arkret/edge/push/notify` placeholder is gone.
 /// We now read `INKSON_FLORIA_URL` at the call site (see
 /// [`floria_gateway_url`]); when it's unset in dev we point at

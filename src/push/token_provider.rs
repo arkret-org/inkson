@@ -10,7 +10,7 @@
 //! * `WebPushTokenProvider` — drives `navigator.serviceWorker.register` + `pushManager.subscribe({
 //!   userVisibleOnly: true, applicationServerKey })` on wasm32 targets. The VAPID
 //!   `applicationServerKey` is fetched from soland's push-bridge describe endpoint
-//!   (ck.push.bridge.describe.v1), so deploys can rotate without rebuilding the client.
+//!   (ak.push.bridge.describe.v1), so deploys can rotate without rebuilding the client.
 //! * `FcmPushTokenProvider` / `ApnsPushTokenProvider` — feature-gated stubs for native targets. The
 //!   trait surface stays stable so a future `chime-fcm` / `chime-apns` adapter can drop in without
 //!   churn.

@@ -136,7 +136,7 @@ pub(super) const SECURITY_CLASS_OPTIONS: [(&str, &str, &str); 2] = [
 ];
 
 // Spec realm-and-space.md §2.3 — `federation_policy` reducer-derived
-// from `ck.realm.policy` events but seeded at create time. `open` is
+// from `ak.realm.policy` events but seeded at create time. `open` is
 // forbidden when security_class=high_assurance.
 pub(super) const FEDERATION_POLICY_OPTIONS: [(&str, &str, &str); 4] = [
     (

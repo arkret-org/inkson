@@ -59,7 +59,7 @@ pub fn production_release_workflows() -> Vec<ClientWorkflow> {
             name: "Recovery Key (24 words) backup upload",
             stage: WorkflowStage::ClientReady,
             client_surface: "Recovery panel: 24-word Recovery Key + Argon2id KDF + XChaCha20-Poly1305 AEAD",
-            server_dependency: "PUT /_arkret/self/keys/backups/{backup_id} (ck.schema.key_backup.v1 envelope)",
+            server_dependency: "PUT /_arkret/self/keys/backups/{backup_id} (ak.schema.key_backup.v1 envelope)",
         },
         ClientWorkflow {
             id: "recovery.key_backup_restore",

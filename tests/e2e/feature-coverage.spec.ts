@@ -180,7 +180,7 @@ test.describe("feature coverage placeholders", () => {
     // D2 — formerly unwritten. The verify-device panel now runs the
     // CrossSigningExecutor locally (PSK/SSK/USK gen + SDK-validated
     // binding signatures + persist to a SecureKeyStore), then submits
-    // the publish content as `ck.cross_signing.publish` into the
+    // the publish content as `ak.cross_signing.publish` into the
     // principal control Realm. This test
     // catches regressions in: (a) the executor's wire-shape contract,
     // (b) the control-Realm pinning, (c) the SDK binding alg field, and
@@ -511,7 +511,7 @@ test.describe("feature coverage placeholders", () => {
   // spec: crypto-media/webrtc-signaling.md
   test("call: SFU mode never enters plaintext path; recording requires explicit grant", async ({ page }) => {
     // inkson ships the call SIGNALING surface
-    // (`ck.call.signal` / `ck.call.state` / `ck.call.recording.start`)
+    // (`ak.call.signal` / `ak.call.state` / `ak.call.recording.start`)
     // but the WebRTC media stack is renderer-provided and hidden from
     // the default local 1.0 UI until `experimental-webrtc` is enabled.
     await page.goto("/call", { waitUntil: "domcontentloaded", timeout: 120_000 });

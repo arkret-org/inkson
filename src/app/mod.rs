@@ -42,7 +42,7 @@ use crate::views::helpers::{display_name_for_did, persist_config, short_protocol
 const REALM_KEY_SHARE_ANSWER_RETRY_BACKOFF_MS: u64 = 60_000;
 
 /// Entry cap for the realm-key answer retry cooldown table. A single device only
-/// tracks the handful of unanswered `ck.realm_key.request` dedup keys currently
+/// tracks the handful of unanswered `ak.realm_key.request` dedup keys currently
 /// backing off; the cap bounds a pathological key space.
 const REALM_KEY_ANSWER_BACKOFF_MAX_ENTRIES: usize = 64;
 
@@ -558,7 +558,7 @@ pub fn RouterView() -> Element {
     // gate when no grants for the subject are loaded yet, so the existing
     // "trust the server" behavior is preserved until something hydrates
     // grants. The capability-grant hydrate path is a follow-up — once
-    // `ck.capability.grant` projection events ship, the post-login strand
+    // `ak.capability.grant` projection events ship, the post-login strand
     // will `engine.write().add_grant(...)` and the kanban Archive /
     // Restore buttons will start gating themselves.
     use_context_provider::<Signal<crate::capability::CapabilityEngine>>(|| {
@@ -793,13 +793,13 @@ pub fn RouterView() -> Element {
     // admin gets ONE visible line per cause instead of one per sync tick.
     let mls_admission_diag_last = use_signal(String::new);
     // History sharing (encryption-and-audit.md): single-flight guard for the
-    // to-device `ck.realm_key.share` ingest + `ck.realm_key.request` provider
+    // to-device `ak.realm_key.share` ingest + `ak.realm_key.request` provider
     // response pass, so per-sync retries cannot overlap.
     let realm_key_sharing_in_flight = use_signal(|| false);
     // History sharing (receiver-initiated pull): dedup key of the last
-    // `ck.realm_key.request` this device emitted, as
+    // `ak.realm_key.request` this device emitted, as
     // `"{realm}|{from}|{to}|{installed_signature}"`. The installed-secret
-    // signature is folded in so that once a `ck.realm_key.share` lands and
+    // signature is folded in so that once a `ak.realm_key.share` lands and
     // installs a `history_secret`, the key changes and a still-open gap can be
     // re-requested — but an unchanged state never re-emits the same request on
     // every sync tick.
@@ -845,7 +845,7 @@ pub fn RouterView() -> Element {
     // backup prompt on directly, WITHOUT relying on the fragile boot-time
     // detection effect (X11). See `maybe_flag_mls_backup_after_encrypted_write`.
     use_context_provider(|| crate::components::MlsBackupSignal(needs_mls_backup));
-    // Call-signaling hub — the receive side of `ck.call.signal`. Provided
+    // Call-signaling hub — the receive side of `ak.call.signal`. Provided
     // once at the app root; the sync apply paths route inbound envelopes into
     // it and `CallPanel` drains it to drive the transport / call FSM. See
     // `crate::views::call_signals`.
@@ -1056,7 +1056,7 @@ pub fn RouterView() -> Element {
         });
     }
 
-    // CKP-0007 P3B.4.3 — active multi-profile snapshot, threaded into
+    // AKP-0007 P3B.4.3 — active multi-profile snapshot, threaded into
     // the sync engine context so the loop can detect a profile rotation
     // and exit cleanly. The shell is currently single-profile; the
     // signal stays default-empty until the account switcher writes to
@@ -1312,7 +1312,7 @@ pub fn RouterView() -> Element {
             // the sync engine so the Y2 invalidation hook can invalidate/clear
             // entries while ingesting projections.
             did_cache,
-            // Receive side of `ck.call.signal`: the engine routes inbound
+            // Receive side of `ak.call.signal`: the engine routes inbound
             // call-signal envelopes from every incremental sync body into
             // this hub (the same hub `CallPanel` drains).
             call_signal_hub,
@@ -2034,7 +2034,7 @@ pub fn RouterView() -> Element {
                 return;
             }
             // Gate on device authorization. Publishing a KeyPackage requires an
-            // ACCEPTED `ck.device.authorize` — soland rejects the upload with
+            // ACCEPTED `ak.device.authorize` — soland rejects the upload with
             // `claim_generation_mismatch` ("accepted device authorization is
             // required") otherwise. The device-authorization check + auto-enroll
             // (app/connect.rs) runs CONCURRENTLY with this publish effect; without
@@ -2088,7 +2088,7 @@ pub fn RouterView() -> Element {
         // Admin-side MLS admission reconciliation — the producer counterpart of
         // the invitee Welcome bootstrap below. When a member actually joins an
         // encrypted Realm this device administers, (re)admit anyone not yet in
-        // the MLS group so their `ck.mls.welcome` is finally produced. Closes
+        // the MLS group so their `ak.mls.welcome` is finally produced. Closes
         // the invite-time race where admission ran before the invitee had
         // published a KeyPackage: re-runs each sync round (via `sync_cursor`)
         // so a member who publishes their KeyPackage after joining is picked up.
@@ -2288,10 +2288,10 @@ pub fn RouterView() -> Element {
     }
     {
         // History sharing (encryption-and-audit.md): drain the to-device inbox
-        // for this Realm, (a) installing every inbound `ck.realm_key.share`'s
+        // for this Realm, (a) installing every inbound `ak.realm_key.share`'s
         // sealed `history_secret`s so pre-join content becomes decryptable
         // (tier-3), and (b) — as a provider — answering every inbound
-        // `ck.realm_key.request` by sealing the retained history range back to
+        // `ak.realm_key.request` by sealing the retained history range back to
         // the requester. Re-runs each sync round so a late share/request is
         // picked up; a single-flight guard prevents overlap.
         let share_route_uses_realm_context = route_uses_realm_context;
@@ -3358,7 +3358,7 @@ pub fn RouterView() -> Element {
             // ToastHost: stacked transient toasts. Drains the generic
             // toast queue plus the policy-deny queue (fed by
             // `api_error::decode_arkret_error`'s policy-deny dispatch,
-            // G3.Y3) and the CKP-0007 circle-error queue (fed by
+            // G3.Y3) and the AKP-0007 circle-error queue (fed by
             // `maybe_dispatch_circle_error`), so any 403 / Circle error
             // is surfaced without each call site wiring its own UI.
             crate::components::ToastHost {}
@@ -3505,7 +3505,7 @@ pub fn RouterView() -> Element {
                         theme.set(next.clone());
                         state_store.write().save_private_data(&account_did(), "theme", next.clone());
                         // A4a — best-effort cross-device sync via
-                        // `ck.account_data.set(client.ui)`.
+                        // `ak.account_data.set(client.ui)`.
                         crate::views::settings::push_client_ui_account_data(
                             base_url(),
                             token(),
@@ -4796,7 +4796,7 @@ pub fn RouterView() -> Element {
                                 theme.set(next.clone());
                                 state_store.write().save_private_data(&account_did(), "theme", next.clone());
                                 // A4a — best-effort cross-device sync
-                                // via `ck.account_data.set(client.ui)`.
+                                // via `ak.account_data.set(client.ui)`.
                                 crate::views::settings::push_client_ui_account_data(
                                     base_url(),
                                     token(),

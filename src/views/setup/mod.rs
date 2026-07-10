@@ -3,8 +3,8 @@
 //! `SetupPanel` is a thin router over three section components, split out by
 //! responsibility:
 //! - [`overview::OverviewSection`] — the setup surface map.
-//! - [`realms::RealmsSection`] — the `ck.realm.create` wizard.
-//! - [`new_space::NewSpaceSection`] — the `ck.space.create` form + lifecycle.
+//! - [`realms::RealmsSection`] — the `ak.realm.create` wizard.
+//! - [`new_space::NewSpaceSection`] — the `ak.space.create` form + lifecycle.
 //!
 //! Shared static option tables live in [`data`], the section / wizard-step
 //! enums in [`model`], and pure helpers in [`helpers`].
@@ -12,7 +12,6 @@
 use dioxus::prelude::*;
 
 use crate::config::LocalConfigStore;
-use crate::local_state::LocalStateStore;
 use crate::models::RealmTreeNode;
 
 mod data;
@@ -74,7 +73,7 @@ pub fn SetupPanel(
     let pending_recovery_gate = use_signal(|| false);
     let recovery_gate_acknowledged = use_signal(|| false);
 
-    // Phase 3 — `ck.space.create` form state.
+    // Phase 3 — `ak.space.create` form state.
     let new_space_realm_id = use_signal(String::new);
     let new_space_title = use_signal(String::new);
     let new_space_summary = use_signal(String::new);

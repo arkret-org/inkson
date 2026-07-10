@@ -1,12 +1,12 @@
 //! Capability grant / revoke builders.
 //!
-//! Capability grants write the OrSet cell `ck.component.capability.grant.v1`.
+//! Capability grants write the OrSet cell `ak.component.capability.grant.v1`.
 
 use serde_json::{Value, json};
 
 use super::{OperationBuilder, payload_value, trim_realm_id};
 
-/// `ck.capability.revoke` — drop a standing grant, addressed by `grant_id`.
+/// `ak.capability.revoke` — drop a standing grant, addressed by `grant_id`.
 /// `reason` shows up in the audit trail and lets the UI explain why the
 /// capability was dropped.
 ///
@@ -36,12 +36,12 @@ pub fn capability_revoke(
     .body(payload_value(&payload, "capability_revoke payload")?))
 }
 
-/// `ck.capability.grant` event carrying the canonical
+/// `ak.capability.grant` event carrying the canonical
 /// `capability_grant_payload` wrapper (`{grant_id, grant:{…}}`) the P1
 /// soland reducer (`apply_capability`) reads `issuer` / `subject` /
 /// `actions` / `resources` from. This is the only capability-grant
 /// builder: every directed grant (e.g. setting a Realm admin via
-/// `actions=[ck.realm.admin]`, or an admin-panel capability grant to a
+/// `actions=[ak.realm.admin]`, or an admin-panel capability grant to a
 /// `subject`) carries the full grant object, because the reducer fails
 /// closed on a grant body with no `issuer` or no `actions`.
 ///

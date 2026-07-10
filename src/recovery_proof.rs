@@ -1,6 +1,6 @@
 //! 6.3 — `principal_signing` recovery-proof transcript (client side).
 //!
-//! Builds the canonical `ck.identity.recovery_proof.v1` transcript a recovering
+//! Builds the canonical `ak.identity.recovery_proof.v1` transcript a recovering
 //! device signs, byte-for-byte identical to soland's reconstruction
 //! (`soland/src/routing/identity/recovery.rs::recovery_proof_transcript` +
 //! arkret-spec `recovery-session.schema.json` `$defs/principal_signing_transcript`).
@@ -17,7 +17,7 @@ use ed25519_dalek::{Signer, SigningKey};
 use serde_json::{Value, json};
 
 /// Build the canonical `principal_signing` proof transcript from a recovery
-/// session JSON (the `ck.schema.recovery_session.v1` create/get response).
+/// session JSON (the `ak.schema.recovery_session.v1` create/get response).
 pub fn principal_signing_proof_transcript(session: &Value) -> anyhow::Result<Value> {
     let field = |name: &str| -> anyhow::Result<Value> {
         session

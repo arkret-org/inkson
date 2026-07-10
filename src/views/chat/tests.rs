@@ -2,7 +2,7 @@ use super::*;
 
 /// The Welcome-receive shuttle iterates `events[]` from
 /// `DeviceMessagesGetOutcome` and surfaces only
-/// `ck.mls.welcome` payloads.
+/// `ak.mls.welcome` payloads.
 #[cfg(not(target_arch = "wasm32"))]
 #[test]
 fn collect_welcome_entries_filters_cx_mls_welcome_and_drops_other_kinds() {
@@ -778,7 +778,7 @@ fn restores_canonical_actor_id_from_local_raw_operations() {
 
 #[test]
 fn message_operations_from_events_folds_create_and_renders_local_first() {
-    // Discussion local-first: a canonical `ck.message.create` from the realm
+    // Discussion local-first: a canonical `ak.message.create` from the realm
     // timeline folds into a `raw_operations` record (full event payload,
     // dedup id = event_id) that `chat_messages_from_local_state_with_sidecar`
     // renders WITHOUT any backfill — the event-sourced replacement for the
@@ -1329,7 +1329,7 @@ fn merge_chat_messages_keeps_newer_revision_when_older_create_arrives_late() {
 #[test]
 fn message_operations_redaction_tombstone_dedupes_over_create_by_event_id() {
     // The server folds a redaction into a tombstone form reusing the same
-    // `ck.message.create` kind + `event_id`. Both fold to the SAME
+    // `ak.message.create` kind + `event_id`. Both fold to the SAME
     // `operation_id`, so `upsert_raw_operation` replaces the create with the
     // tombstone and the local-first render shows the redacted marker.
     let create = json!({
@@ -2117,7 +2117,7 @@ fn mention_inline_parts_marks_external_handles_remote() {
 fn participant_with_agent_id_renders_with_agent_badge() {
     // Three participants in the realm: Alice (the local account),
     // Bob (a real human member), and a Researcher Agent registered
-    // via `ck.agent.endpoint`. After `annotate_agent_participants`
+    // via `ak.agent.endpoint`. After `annotate_agent_participants`
     // the agent DID must carry `is_agent = true` while the human
     // members stay `false`.
     let mut participants = vec![

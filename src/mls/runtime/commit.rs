@@ -8,7 +8,7 @@ use crate::secure_key_store::SecureKeyStore;
 /// `POST /_arkret/self/mls/rotate` HTTP shim. Restores the Realm group
 /// from the local snapshot, performs a self-update commit, and returns
 /// the commit envelope plus the encrypted POST-commit snapshot. The
-/// caller MUST submit the matching `ck.mls.commit` event and persist the
+/// caller MUST submit the matching `ak.mls.commit` event and persist the
 /// returned snapshot ONLY after the server accepts it (persist-on-accept,
 /// same contract as the kanban encrypted-write path).
 pub fn force_epoch_rotation_commit(
@@ -137,7 +137,7 @@ pub fn build_mls_remove_commit_for_effective_scope(
 
 /// Canonicalize the governance frontier required for an MLS Remove commit.
 ///
-/// The caller must pass the accepted `ck.device.revoke` event id or the
+/// The caller must pass the accepted `ak.device.revoke` event id or the
 /// Realm/Circle governance Control Move that imported that revocation. This
 /// helper deliberately does not fall back to `LocalSealView.frontier` or
 /// `leaves`: those sets are useful for ordinary commit freshness but are not
@@ -338,7 +338,7 @@ pub fn idle_self_update_jitter_passed(
 ///
 /// Returns `Ok(None)` when not yet due (the common case — most idle passes do
 /// nothing), or `Ok(Some((commit, snapshot)))` when the caller SHOULD submit
-/// the `ck.mls.commit` and, on server-accept, persist the snapshot
+/// the `ak.mls.commit` and, on server-accept, persist the snapshot
 /// (persist-on-accept, identical contract to the send path and
 /// [`force_epoch_rotation_commit`]).
 ///
@@ -439,7 +439,7 @@ pub const SELF_PRESERVATION_MAX_EPOCH_AGE_DAYS: i64 = 7;
 /// For a normal Realm this implements the §5.6 self-preservation SHOULD: a
 /// self-update Commit is due once the current epoch has observed ≥ 1000
 /// application messages OR has lived ≥ 7 days. §5.6 duplicate commit suppression
-/// (normative): when a pending `ck.mls.commit` for this scope is already in
+/// (normative): when a pending `ak.mls.commit` for this scope is already in
 /// flight (`has_pending_commit`), a new self-preservation commit MUST NOT be
 /// initiated — the pending commit will achieve the same epoch advance.
 /// Clock skew (`now < epoch_started_at`) never reads as overdue.

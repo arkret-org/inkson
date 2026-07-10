@@ -57,7 +57,7 @@ fn seal_view_bottom_cells_signal_conflict() {
     let mut view = LocalSealView::default();
     assert!(!view.has_bottom_cells());
     view.bottom_cells.insert(
-        "ak:cell:ck.component.member.state.v1:did:web:alice".to_owned(),
+        "ak:cell:ak.component.member.state.v1:did:web:alice".to_owned(),
         BottomCellInfo {
             status: "expose".to_owned(),
             heads: vec![],
@@ -69,7 +69,7 @@ fn seal_view_bottom_cells_signal_conflict() {
 #[test]
 fn safer_winner_for_member_state_prefers_ban_over_join() {
     let mut view = LocalSealView::default();
-    let cell = "ak:cell:ck.component.member.state.v1:did:web:alice".to_owned();
+    let cell = "ak:cell:ak.component.member.state.v1:did:web:alice".to_owned();
     view.bottom_cells.insert(
         cell.clone(),
         BottomCellInfo {
@@ -98,7 +98,7 @@ fn safer_winner_for_member_state_prefers_ban_over_join() {
 #[test]
 fn safer_winner_for_capability_grant_prefers_revoked_over_active() {
     let mut view = LocalSealView::default();
-    let cell = "ak:cell:ck.component.capability.grant.v1:ck.grant.01".to_owned();
+    let cell = "ak:cell:ak.component.capability.grant.v1:ak.grant.01".to_owned();
     view.bottom_cells.insert(
         cell.clone(),
         BottomCellInfo {
@@ -125,7 +125,7 @@ fn safer_winner_for_capability_grant_prefers_revoked_over_active() {
 #[test]
 fn safer_winner_for_unknown_cell_family_returns_none() {
     let mut view = LocalSealView::default();
-    let cell = "ak:cell:ck.component.test.unknown.v1:ak:realm:demo".to_owned();
+    let cell = "ak:cell:ak.component.test.unknown.v1:ak:realm:demo".to_owned();
     view.bottom_cells.insert(
         cell.clone(),
         BottomCellInfo {
@@ -150,7 +150,7 @@ fn safer_winner_for_unknown_cell_family_returns_none() {
 #[test]
 fn safer_winner_for_tied_heads_returns_none() {
     let mut view = LocalSealView::default();
-    let cell = "ak:cell:ck.component.member.state.v1:did:web:alice".to_owned();
+    let cell = "ak:cell:ak.component.member.state.v1:did:web:alice".to_owned();
     view.bottom_cells.insert(
         cell.clone(),
         BottomCellInfo {
@@ -174,7 +174,7 @@ fn safer_winner_for_tied_heads_returns_none() {
 #[test]
 fn safer_winner_for_missing_heads_returns_none() {
     let mut view = LocalSealView::default();
-    let cell = "ak:cell:ck.component.member.state.v1:did:web:alice".to_owned();
+    let cell = "ak:cell:ak.component.member.state.v1:did:web:alice".to_owned();
     view.bottom_cells.insert(
         cell.clone(),
         BottomCellInfo {
@@ -193,7 +193,7 @@ fn seal_view_from_sync_body_parses_full_payload() {
             "leaves":   ["sha256:lf1"],
             "state_root": "ak:state:sha256:abc",
             "cells": {
-                "ak:cell:ck.component.member.state.v1:did:web:alice": {
+                "ak:cell:ak.component.member.state.v1:did:web:alice": {
                     "bottom": "expose",
                     "heads": [
                         {
@@ -206,7 +206,7 @@ fn seal_view_from_sync_body_parses_full_payload() {
                         }
                     ]
                 },
-                "ak:cell:ck.component.consent.grant.v1:cnt.x":         { "bottom": "reject" }
+                "ak:cell:ak.component.consent.grant.v1:cnt.x":         { "bottom": "reject" }
             }
         }
     });
@@ -219,7 +219,7 @@ fn seal_view_from_sync_body_parses_full_payload() {
     assert_eq!(view.bottom_cells.len(), 1);
     let info = view
         .bottom_cells
-        .get("ak:cell:ck.component.member.state.v1:did:web:alice")
+        .get("ak:cell:ak.component.member.state.v1:did:web:alice")
         .expect("expose cell present");
     assert_eq!(info.status, "expose");
     assert_eq!(info.heads.len(), 2);
@@ -237,12 +237,12 @@ fn seal_view_from_sync_body_parses_full_payload() {
 fn seal_view_from_sync_body_parses_structured_bottoms() {
     let body = serde_json::json!({
         "bottoms": [{
-            "cell": "ak:cell:ck.component.strand.position.v1:ak:space:board:ak:strand:card",
+            "cell": "ak:cell:ak.component.strand.position.v1:ak:space:board:ak:strand:card",
             "status": "conflict",
             "bottom": {
                 "kind": "conflict",
                 "cells": [
-                    "ak:cell:ck.component.strand.position.v1:ak:space:board:ak:strand:card"
+                    "ak:cell:ak.component.strand.position.v1:ak:space:board:ak:strand:card"
                 ],
                 "event_ids": [
                     "ak:event:0196419b-0000-7000-8000-000000000001",
@@ -259,7 +259,7 @@ fn seal_view_from_sync_body_parses_structured_bottoms() {
     let view = LocalSealView::from_sync_body(&body);
     let info = view
         .bottom_cells
-        .get("ak:cell:ck.component.strand.position.v1:ak:space:board:ak:strand:card")
+        .get("ak:cell:ak.component.strand.position.v1:ak:space:board:ak:strand:card")
         .expect("structured bottom conflict surfaced");
     assert_eq!(info.status, "conflict");
     assert_eq!(info.heads.len(), 2);
@@ -283,10 +283,10 @@ fn seal_view_from_sync_body_extracts_mls_epoch_and_covered_seals() {
             "frontier": ["ak:seal:sha256:aaa"],
             "leaves": [],
             "cells": {
-                "ak:cell:ck.component.mls.epoch.v1:ak:realm:demo": {
+                "ak:cell:ak.component.mls.epoch.v1:ak:realm:demo": {
                     "value": 7
                 },
-                "ak:cell:ck.component.governance.covered_seals.v1:ak:realm:demo": {
+                "ak:cell:ak.component.governance.covered_seals.v1:ak:realm:demo": {
                     "register": { "value": "ak:state:sha256:abcd" }
                 }
             }
@@ -305,7 +305,7 @@ fn seal_view_mls_epoch_supports_object_value_with_epoch_field() {
         "seal_view": {
             "frontier": [],
             "cells": {
-                "ak:cell:ck.component.mls.epoch.v1:ak:realm:demo": {
+                "ak:cell:ak.component.mls.epoch.v1:ak:realm:demo": {
                     "value": { "epoch": 42, "members": 3 }
                 }
             }

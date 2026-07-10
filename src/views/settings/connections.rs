@@ -4,7 +4,7 @@
 //! `identity/tsp-integration.md` status header): v1 core defaults to HTTPS
 //! JWE / MLS DM. This surface lets a user establish and review pairwise TSP
 //! relationships with external VID endpoints (`did:web` / `did:webs` orgs
-//! that publish a `ck.service.tsp` endpoint).
+//! that publish a `ak.service.tsp` endpoint).
 //!
 //! Surfaces (referenced by `cotest/e2e/scenarios/identity/tsp-bootstrap.md`):
 //! - `connections-panel` wrapper
@@ -96,7 +96,7 @@ pub fn ConnectionsSettingsCard(
             return;
         }
         // The actual TSP relationship bootstrap is performed against the
-        // remote `ck.service.tsp` endpoint; TSP being an opt-in extension
+        // remote `ak.service.tsp` endpoint; TSP being an opt-in extension
         // profile, the client records the established relationship locally so
         // the connections list and trust-level badge reflect it. The trust
         // level starts as `verified` and downgrades to `degraded_no_witness`

@@ -6,7 +6,7 @@
 //! relationship". This panel makes the lifecycle states explicit.
 //!
 //! Read side: the verified relationships and declared hints are read from the
-//! spec-canonical projection `ck.self.realm_organization.query.list`
+//! spec-canonical projection `ak.self.realm_organization.query.list`
 //! (`GET /_arkret/self/realms/{realm_id}/organizations`) via
 //! [`crate::api::CokretApi::list_realm_organizations`]. The server only returns
 //! `verified_active` / `revoked_or_expired` rows plus
@@ -286,15 +286,16 @@ fn dtos_from_list(list: &RealmOrganizationRelationshipList) -> Vec<OrgRelationsh
 /// YGN-ORG-03 panel. Rendered inside the realm_admin Federation section.
 #[component]
 pub fn RealmOrganizationPanel(
-    base_url: String,
     token: Signal<String>,
     realm_id: String,
     /// Authenticated account DID (the operator). Used to scope the locally
     /// stored organization control keys + created-organization index, and as the
     /// outer event `actor`.
     account_did: String,
-    state_store: Signal<crate::local_state::LocalStateStore>,
 ) -> Element {
+    // A4 — base_url from session context instead of a prop. (state_store is read
+    // from context directly by the Create/Bind sub-panels; this panel doesn't need it.)
+    let base_url = crate::app::SessionContext::base_url_string();
     // D0/D4 gate: the organization create + bind/revoke write UI is rendered ONLY
     // for a proven server administrator (`AccountView.is_server_admin`). Read the
     // context signal here so the whole write surface can be conditionally
@@ -399,17 +400,13 @@ pub fn RealmOrganizationPanel(
             // see these controls (D4) and keep only the read-only list above.
             if server_admin {
                 OrganizationCreatePanel {
-                    base_url: base_url.clone(),
                     token,
                     account_did: account_did.clone(),
-                    state_store,
                 }
                 OrganizationBindPanel {
-                    base_url: base_url.clone(),
                     token,
                     realm_id: realm_id.clone(),
                     account_did: account_did.clone(),
-                    state_store,
                 }
             } else {
                 div { class: "muted", "data-testid": "org-bind-readonly-note",
@@ -427,12 +424,10 @@ pub fn RealmOrganizationPanel(
 /// key locally, and display the minted DID. Server-administrator only (mounted
 /// only when `is_server_admin()` is true).
 #[component]
-fn OrganizationCreatePanel(
-    base_url: String,
-    token: Signal<String>,
-    account_did: String,
-    state_store: Signal<crate::local_state::LocalStateStore>,
-) -> Element {
+fn OrganizationCreatePanel(token: Signal<String>, account_did: String) -> Element {
+    // A4 — base_url / state_store from session context instead of props.
+    let base_url = crate::app::SessionContext::base_url_string();
+    let mut state_store = crate::app::SessionContext::get().state_store;
     let mut display_name = use_signal(String::new);
     let mut handle = use_signal(String::new);
     let mut status_msg = use_signal(String::new);
@@ -616,16 +611,13 @@ fn OrganizationCreatePanel(
 
 /// D3 — bind a created organization to this Realm (or revoke a prior binding).
 /// The organization-side statement proof is signed with the organization control
-/// key; the resulting `ck.realm.organization` event is submitted on the
+/// key; the resulting `ak.realm.organization` event is submitted on the
 /// operator's self plane. Server-administrator only.
 #[component]
-fn OrganizationBindPanel(
-    base_url: String,
-    token: Signal<String>,
-    realm_id: String,
-    account_did: String,
-    state_store: Signal<crate::local_state::LocalStateStore>,
-) -> Element {
+fn OrganizationBindPanel(token: Signal<String>, realm_id: String, account_did: String) -> Element {
+    // A4 — base_url / state_store from session context instead of props.
+    let base_url = crate::app::SessionContext::base_url_string();
+    let state_store = crate::app::SessionContext::get().state_store;
     let created = use_memo({
         let account_did = account_did.clone();
         move || load_created_organizations(&state_store.read(), &account_did)

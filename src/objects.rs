@@ -11,7 +11,7 @@ use serde_json::{Value, json};
 
 use crate::operation::OperationBuilder;
 
-/// Build a `ck.morph.create` operation. Body shape mirrors
+/// Build a `ak.morph.create` operation. Body shape mirrors
 /// `models/morph.md` §3 (typed Morph object).
 pub fn build_morph_create(
     realm_id: &str,
@@ -34,10 +34,10 @@ pub fn build_morph_create(
     .body(body))
 }
 
-/// Build a `ck.morph.update` operation. `patch` is a JSON object of fields to
+/// Build a `ak.morph.update` operation. `patch` is a JSON object of fields to
 /// set/replace; the reducer applies these against the existing Morph state.
 ///
-/// `ck.morph.update` uses the shared object patch payload shape
+/// `ak.morph.update` uses the shared object patch payload shape
 /// (`required:["target_ref","patch"]`, `additionalProperties:false`): the
 /// target Morph is single-sourced by `target_ref`, and forbidden patch paths
 /// such as `morph_type` / `stage` are rejected by the SDK patch type.
@@ -63,7 +63,7 @@ pub fn build_morph_update(
     .body(body))
 }
 
-/// Build a `ck.relation.create` operation. `kind` is a registered
+/// Build a `ak.relation.create` operation. `kind` is a registered
 /// `relation_kind` canonical id (for example `contains`); `from_ref` and
 /// `to_ref` are the typed-id endpoints.
 ///
@@ -93,7 +93,7 @@ pub fn build_relation_create(
     .body(body))
 }
 
-/// Build a `ck.relation.tombstone` operation by id.
+/// Build a `ak.relation.tombstone` operation by id.
 pub fn build_relation_delete(realm_id: &str, actor: &str, relation_id: &str) -> OperationBuilder {
     OperationBuilder::new(
         realm_id,
@@ -104,7 +104,7 @@ pub fn build_relation_delete(realm_id: &str, actor: &str, relation_id: &str) -> 
     .body(json!({"relation_id": relation_id}))
 }
 
-/// Build a `ck.container.move_item` operation. Payload shape mirrors
+/// Build a `ak.container.move_item` operation. Payload shape mirrors
 /// `container_position_payload`: `container_ref`, `source_ref`, `target_ref`,
 /// and the new ordering `rank`.
 pub fn build_container_move_item(
@@ -132,7 +132,7 @@ pub fn build_container_move_item(
     .body(body))
 }
 
-/// Build a `ck.container.rebalance` operation. The required position fields
+/// Build a `ak.container.rebalance` operation. The required position fields
 /// remain at top level; `items` carries optional profile-specific batch detail.
 pub fn build_container_rebalance(
     realm_id: &str,

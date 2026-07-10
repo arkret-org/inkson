@@ -31,7 +31,7 @@
 // 4. Push paths default to masked payloads (`background_sync_needed`); the body is decrypted
 //    locally.
 // 5. The Auth Service can only issue short-lived `ak.session.grant`; any change to the long-lived
-//    device set must go through `ck.device.authorize`.
+//    device set must go through `ak.device.authorize`.
 
 pub mod agents;
 pub mod applets;
@@ -61,7 +61,7 @@ pub mod login;
 /// `appeal_*` API. Companion to the appellant-facing [`moderation_appeal`].
 pub mod moderation;
 /// Round R2/R3 (T06) — moderation appeal user strand. Entrypoint button +
-/// `ck.moderation.appeal.submit` builder. Renders near user-facing
+/// `ak.moderation.appeal.submit` builder. Renders near user-facing
 /// moderation decisions; reviewer surface is admin-scope.
 pub mod moderation_appeal;
 pub mod notifications;
@@ -73,7 +73,7 @@ pub mod quarantine;
 pub mod realm_admin;
 pub mod recovery;
 /// Shared E2EE "Send Secure" pipeline (MLS encrypt → forced commit →
-/// encrypted `ck.message.create`) used by chat message writes.
+/// encrypted `ak.message.create`) used by chat message writes.
 pub mod secure_send;
 /// `views::settings` is a module directory. The aggregate entry lives in
 /// `settings/mod.rs`; per-card panels live in sibling files. See the
@@ -106,8 +106,8 @@ pub enum AppView {
     Applets,
     /// Notifications. Per `models/object-model-core.md` §1,
     /// `notification` is a *derived* projection — NOT a canonical wire object.
-    /// The only canonical events feeding this view are `ck.read_cursor.advance`,
-    /// `ck.receipt.read`, `@-mention` extractions, plus capability/grant
+    /// The only canonical events feeding this view are `ak.read_cursor.advance`,
+    /// `ak.receipt.read`, `@-mention` extractions, plus capability/grant
     /// approval requests. Writes here MUST land on those canonical kinds, not
     /// on a synthetic `ck.notification.*` event.
     Notifications,
@@ -127,8 +127,8 @@ pub enum AppView {
     /// `/_arkret/local/admin/invite-quarantine/{id}/resolve`.
     Quarantine,
     /// Agent endpoint + interop_session monitor.
-    /// Spec `extensions/agent-integration.md`. Writes `ck.agent.endpoint` /
-    /// `ck.agent.interop_session.{start,status,result}` via
+    /// Spec `extensions/agent-integration.md`. Writes `ak.agent.endpoint` /
+    /// `ak.agent.interop_session.{start,status,result}` via
     /// `crate::operation::ck_ops::agent_*` builders.
     Agents,
     /// A6.1 — global cross-Space message search panel. Triggered by

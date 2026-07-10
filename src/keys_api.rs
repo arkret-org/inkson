@@ -12,7 +12,7 @@
 //! The key-backup / recovery / device-pairing / device-revoke methods and the
 //! device-message pull loop (receive / ack / cursor) carry signing,
 //! trust-anchor, or durable cursor semantics and remain inherent `CokretApi`
-//! methods. The one-shot device-message send and the `ck.realm_key.request`
+//! methods. The one-shot device-message send and the `ak.realm_key.request`
 //! ephemeral relay below are plain transport writes (the caller prepares any
 //! signed `content`; the request itself carries `proof: None`), so they are
 //! migrated here.
@@ -73,16 +73,16 @@ pub async fn send_device_message_envelope(
         .map_err(anyhow::Error::from)
 }
 
-/// Submit an ephemeral `ck.realm_key.request` (realm-and-space.md
+/// Submit an ephemeral `ak.realm_key.request` (realm-and-space.md
 /// history-sharing): a late-joining device asks the provider device named by
 /// `target_source_ref` to seal the retained `history_secret` range to
 /// `recipient_hpke_public_key`. soland relays it to the provider's to-device
 /// queue (`relay_ephemeral_realm_key_request`); the provider answers with a
-/// durable `ck.realm_key.share`.
+/// durable `ak.realm_key.share`.
 ///
 /// Posts directly to `/_arkret/self/ephemeral` rather than via the broadcast
 /// ephemeral submitter, whose SDK guard only admits the broadcast ephemeral
-/// allowlist (`ck.realm_key.request` is a directed relay, not a broadcast
+/// allowlist (`ak.realm_key.request` is a directed relay, not a broadcast
 /// signal).
 #[allow(clippy::too_many_arguments)]
 pub async fn submit_realm_key_request(
@@ -122,7 +122,7 @@ pub async fn submit_realm_key_request(
         .map_err(|err| anyhow::anyhow!("ak.realm_key.request invalid: {err}"))?;
     let sent_at = crate::clock::now_utc();
     let envelope = arkret_sdk::EphemeralEnvelope {
-        // `ck.realm_key.request` is a directed ephemeral relay, not a broadcast
+        // `ak.realm_key.request` is a directed ephemeral relay, not a broadcast
         // signal, so it has no `events::kinds` constant; the literal is the
         // wire kind soland's `relay_ephemeral_realm_key_request` matches on.
         kind: "ak.realm_key.request".to_owned(),

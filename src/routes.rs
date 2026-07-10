@@ -101,7 +101,7 @@ pub enum Route {
     #[route("/kanban/:realm_id", KanbanRealmPage)]
     KanbanRealm { realm_id: String },
 
-    /// CKP board-persistence — the selected Board id is part of the URL
+    /// AKP board-persistence — the selected Board id is part of the URL
     /// so a page refresh (or a deep link) restores the exact board the
     /// user was looking at instead of falling back to
     /// `board_options.first()`. `realm_id` is the Realm id; `board_id`

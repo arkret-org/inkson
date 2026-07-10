@@ -16,7 +16,6 @@ use crate::components::HelpTip;
 // component, overriding the "Local" label to "Not backed up yet" — the badge
 // semantics stay global, only this view's copy changes. See C1.
 use crate::components::SyncBadgeState as SyncBadge;
-use crate::local_state::LocalStateStore;
 use crate::operation::uuid_v7;
 use crate::recovery_crypto::{
     RecoveryKeyConfirmationDiff, fingerprint_recovery_key, generate_passkey_wrap_salt,

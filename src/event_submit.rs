@@ -45,7 +45,7 @@ impl EventSubmitter {
 
     /// The shared SDK http-client backing this submitter. Event-authoring free
     /// functions that also need a plain transport call (for example the
-    /// account-data actor-scope lookup preceding a `ck.account_data.set`) reach
+    /// account-data actor-scope lookup preceding a `ak.account_data.set`) reach
     /// it through here instead of holding a second `Client`.
     pub(crate) fn http(&self) -> &arkret_sdk::http_client::Client {
         &self.http
@@ -102,8 +102,8 @@ impl EventSubmitter {
     ///
     /// Round R2/R3 (T02) — typing notifications are wire-scope-ephemeral
     /// (`ck.typing`). They MUST strand through the canonical
-    /// `ck.self.ephemeral.command.send` operation (`POST /_arkret/self/ephemeral`), never
-    /// through `ck.self.events.command.submit` or a deployment-local typing shim.
+    /// `ak.self.ephemeral.command.send` operation (`POST /_arkret/self/ephemeral`), never
+    /// through `ak.self.events.command.submit` or a deployment-local typing shim.
     pub async fn send_typing(
         &self,
         realm_id: &str,
@@ -144,9 +144,9 @@ impl EventSubmitter {
         })
     }
 
-    /// Round R2/R3 (T02) — read receipts (`ck.receipt.read`) are wire-scope-
-    /// ephemeral. They MUST strand through `ck.self.ephemeral.command.send`; the
-    /// `ck.self.events.command.submit` durable path and deployment-local `/receipts`
+    /// Round R2/R3 (T02) — read receipts (`ak.receipt.read`) are wire-scope-
+    /// ephemeral. They MUST strand through `ak.self.ephemeral.command.send`; the
+    /// `ak.self.events.command.submit` durable path and deployment-local `/receipts`
     /// shims MUST NOT be used.
     pub async fn send_receipt(
         &self,
@@ -157,7 +157,7 @@ impl EventSubmitter {
         event_id: &str,
         receipt_type: &str,
     ) -> anyhow::Result<ReceiptResult> {
-        // Only `ck.receipt.read` is an ephemeral receipt; other receipt
+        // Only `ak.receipt.read` is an ephemeral receipt; other receipt
         // types (delivered/franking/etc.) stay on their own paths. Guard
         // the kind here so we don't accidentally widen the contract.
         if receipt_type != "ak.receipt.read" {
@@ -231,7 +231,7 @@ impl EventSubmitter {
     }
 
     /// `GET /_arkret/self/events/describe` — spec binds the response to the
-    /// canonical `ServiceDescribe` shape (OpenAPI `ck.self.events.query.describe`).
+    /// canonical `ServiceDescribe` shape (OpenAPI `ak.self.events.query.describe`).
     /// YOU-01-016: the former soland-private `SolandEventsDescribeResBody`
     /// mirror (with its non-spec `capabilities` blob) was removed.
     pub async fn events_describe(&self) -> anyhow::Result<arkret_sdk::ServiceDescribe> {
@@ -404,7 +404,7 @@ impl EventSubmitter {
         }
     }
 
-    /// `ck.self.events.command.submit` in batch form over typed envelopes. Spec binds
+    /// `ak.self.events.command.submit` in batch form over typed envelopes. Spec binds
     /// events.submit to `POST /_arkret/self/events` and distinguishes the three
     /// accepted body shapes (single envelope,
     /// [`arkret_sdk::EventsSubmitBatchRequestBody`],
@@ -423,7 +423,7 @@ impl EventSubmitter {
     ) -> anyhow::Result<arkret_sdk::EventsSubmitOutcome> {
         // YOU-01-016: the former `capabilities.batch_submit` probe (a
         // non-spec soland capability field) was removed. The batch request
-        // body is one of the three spec-defined `ck.self.events.command.submit`
+        // body is one of the three spec-defined `ak.self.events.command.submit`
         // shapes (distinguished by JSON shape), so it is sent
         // unconditionally — no capability negotiation exists in the spec.
         for sdk_event in sdk_events {
@@ -481,10 +481,10 @@ impl EventSubmitter {
     /// Round R2/R3 (T02) — POST a broadcast ephemeral signal to the
     /// canonical ephemeral channel (`POST /_arkret/self/ephemeral`) instead of the
     /// durable `/_arkret/self/events` endpoint. The envelope MUST validate against
-    /// `ck.schema.ephemeral_envelope.v1` (kind in
-    /// {`ck.call.signal`, `ck.presence`, `ck.typing`, `ck.receipt.read`}, and
+    /// `ak.schema.ephemeral_envelope.v1` (kind in
+    /// {`ak.call.signal`, `ck.presence`, `ck.typing`, `ak.receipt.read`}, and
     /// `expires_at - sent_at <= 300_000` ms). The four broadcast ephemeral
-    /// signal kinds MUST NOT travel via `ck.self.events.command.submit`; this method is
+    /// signal kinds MUST NOT travel via `ak.self.events.command.submit`; this method is
     /// the single approved network path.
     pub async fn submit_ephemeral_envelope(
         &self,
@@ -518,7 +518,7 @@ impl EventSubmitter {
     }
 
     /// `POST /_arkret/gate/account/agent-key-pair` —
-    /// `ck.gate.account.command.pair_agent_key`. The runtime generated the
+    /// `ak.gate.account.command.pair_agent_key`. The runtime generated the
     /// key and PoP; the controller signs `authorize_event` locally before this
     /// method submits the pairing request.
     async fn agent_key_pair(

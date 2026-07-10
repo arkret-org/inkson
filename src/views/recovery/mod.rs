@@ -11,7 +11,7 @@
 //!   already wrote down. Local metadata (SHA-256 fingerprint + rotation timestamp, via
 //!   `LocalStateStore::save_private_data`) stays pending until the user passes the transcription
 //!   check; the words themselves are never uploaded.
-//! - **Backup history**: summarizes the server-side `ck.schema.key_backup.v1` ciphertext envelopes
+//! - **Backup history**: summarizes the server-side `ak.schema.key_backup.v1` ciphertext envelopes
 //!   by creation time, emphasizing the latest encrypted backup without exposing per-backup
 //!   controls.
 //! - **Social Recovery** (advanced, local bookkeeping only): guardian list + Shamir threshold +

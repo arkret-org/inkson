@@ -7,10 +7,10 @@
 //!
 //! Spec sources:
 //! - `crypto-media/device-lifecycle.md` — the three concerns stay separate (login factor / device
-//!   authorization / device verification), and `ck.device.revoke` is the only event that mutates
+//!   authorization / device verification), and `ak.device.revoke` is the only event that mutates
 //!   the device set.
 //! - `crypto-media/encryption-and-audit.md` — MLS leaf removal is performed via the chain
-//!   `ck.mls.proposal` (Remove) → `ck.mls.commit` (epoch++) → `ck.mls.welcome` (to bring
+//!   `ak.mls.proposal` (Remove) → `ak.mls.commit` (epoch++) → `ak.mls.welcome` (to bring
 //!   still-present members up to the new epoch).
 //!
 //! Current SDK surface:
@@ -45,27 +45,27 @@ pub enum DeviceRevokeStep {
     /// change only, no outbound event.
     LocalRevoke,
     /// Write the revocation proof into the actor event chain.
-    /// canonical event = `ck.device.revoke`.
+    /// canonical event = `ak.device.revoke`.
     DeviceRevoked,
     /// Rotate the account MLS snapshot secret and publish fresh key backups
     /// before any future encrypted history is uploaded under the old secret.
     RotateAccountMlsSecret,
     /// Issue a Remove proposal in every affected MLS group.
-    /// canonical event = `ck.mls.proposal` (type = remove).
+    /// canonical event = `ak.mls.proposal` (type = remove).
     MlsProposeRemove { group_id: String },
     /// Commit the proposal into the group; epoch advances by 1.
-    /// canonical event = `ck.mls.commit`.
+    /// canonical event = `ak.mls.commit`.
     MlsCommit { group_id: String },
     /// Send Welcome to the remaining members so lazy / offline peers can
     /// catch up to the new epoch.
-    /// canonical event = `ck.mls.welcome`.
+    /// canonical event = `ak.mls.welcome`.
     MlsWelcome {
         group_id: String,
         recipient_count: usize,
     },
     /// Invalidate the revoked device's unconsumed KeyPackages in the OTK
     /// pool so new joiners do not mistake them for usable leaves.
-    /// canonical event = `ck.mls.keypackage` (status = revoked).
+    /// canonical event = `ak.mls.keypackage` (status = revoked).
     InvalidateKeyPackages,
     /// Ask the push gateway to drop the device's masked wake-up registration
     /// so we stop pushing to a revoked device. Not a canonical event; this
@@ -290,8 +290,8 @@ pub struct DeviceRevokeFullSnapshot {
 // When the device-revocation handler executes the plan, every MLS group
 // the revoked device was a leaf in needs **two** Moves to fully advance:
 //
-// 1. an MLS commit Move that removes the device's leaf (`ck.mls.commit` via the
-//    `ck.component.mls.epoch.v1` cas-register), and
+// 1. an MLS commit Move that removes the device's leaf (`ak.mls.commit` via the
+//    `ak.component.mls.epoch.v1` cas-register), and
 // 2. an epoch-advance Move that bumps `covered_seals` so subsequent message Events can reference
 //    the post-revocation MLS state.
 //

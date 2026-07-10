@@ -1,8 +1,8 @@
 //! Invite-claim strand helpers.
 //!
-//! The `ck.invite.claim` wire shape carries a verification-service
+//! The `ak.invite.claim` wire shape carries a verification-service
 //! `binding_proof` plus a subject-signed proof over the SDK-owned
-//! `ck.invite.claim.subject_proof.v1` transcript.
+//! `ak.invite.claim.subject_proof.v1` transcript.
 //!
 //! Plus five terminal states the receiver-side reducer surfaces to the
 //! UI: `claimed`, `send_failed`, `revoked_by_capability_loss`,
@@ -112,7 +112,7 @@ impl InviteTerminalState {
     }
 }
 
-/// Assemble a `ck.invite.claim` event body carrying the verification-service
+/// Assemble a `ak.invite.claim` event body carrying the verification-service
 /// `binding_proof` and subject-signed SDK [`arkret_sdk::InviteSubjectProof`].
 ///
 /// Returns the raw JSON body for the caller to wrap with

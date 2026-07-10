@@ -1,6 +1,6 @@
 //! Ephemeral / durable envelope builders and submit-acceptance helpers for the
 //! self client: outgoing-payload schema validation, read-cursor advance events,
-//! the `ck.typing` / `ck.receipt.read` / `ck.presence` / `ck.call.signal`
+//! the `ck.typing` / `ak.receipt.read` / `ck.presence` / `ak.call.signal`
 //! ephemeral envelopes, and the events-batch acceptance gate.
 
 use chrono::Timelike as _;
@@ -78,7 +78,7 @@ pub(crate) fn ensure_events_submit_accepted(
 }
 
 /// Round R2/R3 (T02) — default ephemeral TTL for long-lived ephemeral
-/// fanout such as `ck.presence` / `ck.receipt.read`. 30 seconds is
+/// fanout such as `ck.presence` / `ak.receipt.read`. 30 seconds is
 /// comfortably below the 5-minute hard ceiling.
 const EPHEMERAL_DEFAULT_TTL_SECS: i64 = 30;
 const TYPING_EPHEMERAL_TTL_SECS: i64 = 5;
@@ -129,7 +129,7 @@ pub fn build_typing_envelope(
     .map_err(|err| anyhow::anyhow!("typing envelope rejected: {err}"))
 }
 
-/// Round R2/R3 (T02) — build a `ck.receipt.read` `EphemeralEnvelope`.
+/// Round R2/R3 (T02) — build a `ak.receipt.read` `EphemeralEnvelope`.
 pub fn build_receipt_read_envelope(
     realm_id: &str,
     actor_id: &str,
@@ -238,7 +238,7 @@ fn bucket_presence_timestamp(ts: chrono::DateTime<chrono::Utc>) -> String {
     format!("{start}/PT1H")
 }
 
-/// Round 4 (spec a77b995) — build a `ck.call.signal` `EphemeralEnvelope`.
+/// Round 4 (spec a77b995) — build a `ak.call.signal` `EphemeralEnvelope`.
 ///
 /// Wire-breaking vs. the round R2/R3 form: the payload shape moved from
 /// `{call_id, kind, payload}` to the canonical

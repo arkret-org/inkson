@@ -47,7 +47,7 @@ pub struct NotificationClientState {
     pub archived: bool,
 }
 
-/// Realm-scoped cache for `ck.find.directory.query.list_handles_for_subject`.
+/// Realm-scoped cache for `ak.find.directory.query.list_handles_for_subject`.
 ///
 /// Handles are display evidence, not identity keys. Cache entries are
 /// therefore bound to the visible subject DID, the Realm context, and the
@@ -133,12 +133,12 @@ impl ReadMarkerRecord {
     }
 }
 
-/// Server-declared `ck.realm.read_receipt_policy` snapshot for a Realm, as
+/// Server-declared `ak.realm.read_receipt_policy` snapshot for a Realm, as
 /// surfaced to clients via the Seal view (P0 M3) once sync.rs lands.
 /// Locks the per-scope toggle in the settings UI when `disclosure` is
 /// `required` (server forces send) or `disabled` (server forbids send).
 ///
-/// Until the sync wires the policy from soland's `ck.component.realm.read_receipt_policy.v1`
+/// Until the sync wires the policy from soland's `ak.component.realm.read_receipt_policy.v1`
 /// cas-register cell, this is populated by tests / dev tooling only.
 /// See `_todos.md` C10.D "Policy lock UI".
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -214,7 +214,7 @@ impl PresenceVisibility {
     }
 }
 
-/// Local mirror of the `ck.presence.preference` account-data payload
+/// Local mirror of the `ak.presence.preference` account-data payload
 /// (profiles-presence.md §3.6): the user's pinned manual presence state,
 /// transient status message and expiry. Enforced on the send side — the
 /// broadcast loop reads this before every `ck.presence`.
@@ -534,12 +534,12 @@ impl MoveSubmissionState {
 /// Per-Move tracking record persisted in the local state store. `move_id`
 /// is content-addressed (`sha256:...`); the reducer round-trips
 /// `realm_id` so client UIs can scope filtering. `kind` is a free-form
-/// classifier the UI uses for icons (e.g. `ck.consent.grant`,
-/// `ck.message.create`, `mls_commit`).
+/// classifier the UI uses for icons (e.g. `ak.consent.grant`,
+/// `ak.message.create`, `mls_commit`).
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct MoveSubmissionRecord {
     pub move_id: String,
-    /// Server-assigned Event id returned by `ck.self.events.command.submit`. Older
+    /// Server-assigned Event id returned by `ak.self.events.command.submit`. Older
     /// records may only have `move_id` (the local idempotency alias);
     /// sync `event_states[]` uses this id, so new records persist it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -571,7 +571,7 @@ pub struct SnapshotSyncStatus {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ClientLocalState {
     pub sync_cursor: Option<String>,
-    /// Per-realm `ck.self.events.stream.subscribe` resume cursors, keyed by
+    /// Per-realm `ak.self.events.stream.subscribe` resume cursors, keyed by
     /// realm id. Kept PHYSICALLY SEPARATE from the account-aggregate
     /// `sync_cursor`: the realm events stream and the account stream are
     /// bound to different `filter_digest`s (encoding.md §8.3.1), so their
@@ -587,13 +587,13 @@ pub struct ClientLocalState {
     #[serde(default)]
     pub snapshot_sync: BTreeMap<String, SnapshotSyncStatus>,
     /// Migrated principal-private draft account-data values, keyed by
-    /// `ck.draft.v1:<kind>:<target_key>:<slot_key>`. The older `drafts`
+    /// `ak.draft.v1:<kind>:<target_key>:<slot_key>`. The older `drafts`
     /// map remains a local UI cache; this map is the cross-device sync
     /// staging area created by explicit migration.
     #[serde(default)]
     pub draft_account_data: BTreeMap<String, Value>,
     /// Migrated principal-private saved-item account-data values, keyed by
-    /// `ck.saved.v1:<collection_key>:<target_key>`.
+    /// `ak.saved.v1:<collection_key>:<target_key>`.
     #[serde(default)]
     pub saved_account_data: BTreeMap<String, Value>,
     pub drafts: BTreeMap<String, String>,
@@ -604,7 +604,7 @@ pub struct ClientLocalState {
     pub presence_projection: Vec<Value>,
     #[serde(default)]
     pub presence_visibility: PresenceVisibility,
-    /// Manual presence preference (`ck.presence.preference`,
+    /// Manual presence preference (`ak.presence.preference`,
     /// profiles-presence.md §3.6). Local state is authoritative; the
     /// account-data push is best-effort and encrypted.
     #[serde(default)]
@@ -633,11 +633,11 @@ pub struct ClientLocalState {
     pub notification_dnd_settings: Option<DndSettings>,
     /// Read receipt preferences (spec
     /// `discovery/client-preferences.md` §3.6, account-data key
-    /// `ck.read_receipt.preferences`).
+    /// `ak.read_receipt.preferences`).
     ///
     /// Send and display preferences resolve independently.
     /// Send and display override maps share the same scope order.
-    /// Until the server wires `ck.account_data.set` for this key,
+    /// Until the server wires `ak.account_data.set` for this key,
     /// preferences live only on this device.
     #[serde(default = "default_true")]
     pub read_receipt_default_send: bool,
@@ -651,10 +651,10 @@ pub struct ClientLocalState {
     pub read_receipt_strand_overrides: BTreeMap<String, bool>,
     #[serde(default)]
     pub read_receipt_strand_display_overrides: BTreeMap<String, bool>,
-    /// Server-declared `ck.realm.read_receipt_policy` snapshots, keyed by
+    /// Server-declared `ak.realm.read_receipt_policy` snapshots, keyed by
     /// realm id. Populated when sync (P0 M3) lands — surfaces the
     /// disclosure / visibility values from the
-    /// `ck.component.realm.read_receipt_policy.v1` cas-register cell so
+    /// `ak.component.realm.read_receipt_policy.v1` cas-register cell so
     /// the settings UI can lock per-Realm toggles when the server's
     /// policy is `required` or `disabled`.
     #[serde(default)]
@@ -710,20 +710,20 @@ pub struct ClientLocalState {
     /// rather than rejoining via Welcome from scratch.
     #[serde(default)]
     pub mls_snapshots: BTreeMap<String, crate::mls::persistence::MlsSnapshotEnvelope>,
-    /// Realms whose `ck.mls.genesis` event has already been submitted to
+    /// Realms whose `ak.mls.genesis` event has already been submitted to
     /// soland. Tracked per-Realm so genesis is emitted exactly once for a
     /// locally-created creator group (the server also rejects a duplicate
     /// genesis with `mls_genesis_already_exists`, but this avoids the
     /// needless round-trip on every encrypted write after the first).
     #[serde(default)]
     pub mls_genesis_emitted: BTreeSet<String>,
-    /// MLS governance `policy_root` locked at `ck.mls.genesis`, keyed by the
+    /// MLS governance `policy_root` locked at `ak.mls.genesis`, keyed by the
     /// same effective-scope key as [`Self::mls_genesis_emitted`]
     /// (`mls_effective_scope_snapshot_key`).
     ///
     /// `encryption-and-audit.md` §2.5.1: the genesis-locked `policy_root` binds
     /// the group's epoch chain; soland's `apply_commit_epoch` carries it forward
-    /// unchanged on every commit and rejects any `ck.mls.commit` whose binding
+    /// unchanged on every commit and rejects any `ak.mls.commit` whose binding
     /// declares a different value with `governance_binding_mismatch`. Deriving
     /// `policy_root` from the live Seal `state_root` (which advances on every
     /// non-policy event — space/strand/message create) made the admission commit
@@ -779,7 +779,7 @@ pub struct ClientLocalState {
     #[serde(default, skip_serializing)]
     pub mls_decrypted_plaintext: BTreeMap<String, BTreeMap<String, String>>,
     /// Per-(realm, epoch) MLS `history_secret`s installed from an inbound
-    /// `ck.realm_key.share` (encryption-and-audit.md history-sharing). Each
+    /// `ak.realm_key.share` (encryption-and-audit.md history-sharing). Each
     /// value is a 32-byte exporter-derived secret that lets this device
     /// decrypt `mls-exporter-aead-v1` content authored at that epoch — even
     /// epochs that predate this device's join (tier-3 history decrypt).
@@ -807,22 +807,22 @@ pub struct ClientLocalState {
     pub realm_remarks: BTreeMap<String, crate::account_data::RealmRemark>,
     /// Actor-private contact remarks per
     /// `discovery/client-preferences.md` §3.6. Keyed by actor DID and
-    /// hydrated from `ck.contacts.actor.<did>` account_data entries.
+    /// hydrated from `ak.contacts.actor.<did>` account_data entries.
     #[serde(default)]
     pub contact_remarks: BTreeMap<String, crate::account_data::ContactRemark>,
     /// Actor-private personal blocklist per
-    /// `discovery/client-preferences.md` (`ck.account.blocklist`). Each
+    /// `discovery/client-preferences.md` (`ak.account.blocklist`). Each
     /// entry hides messages from the targeted DID in chat
     /// renderers and surfaces in the Settings → Privacy panel. The
     /// shape mirrors the wire body so the future
-    /// `ck.account_data.set("ak.account.blocklist", …)` push can serialise
+    /// `ak.account_data.set("ak.account.blocklist", …)` push can serialise
     /// straight from this `Vec`.
     #[serde(default)]
     pub client_blocklist: Vec<crate::account_data::BlocklistEntry>,
     /// Round 4 (spec a77b995) — last `trust_domain` advertised by the
     /// connected principal server's Round 4 `ServiceDescribe` response.
     /// Threaded through to strands that need to canonicalise into
-    /// transport / signing transcripts (e.g. `ck.cross_signing.publish`).
+    /// transport / signing transcripts (e.g. `ak.cross_signing.publish`).
     /// `None` until the first successful `/server/describe` lands.
     #[serde(default)]
     pub server_trust_domain: Option<String>,
@@ -838,7 +838,7 @@ pub struct ClientLocalState {
     /// SubtleCrypto during app initialization.
     #[serde(default)]
     pub dpop_device_key: Option<DpopDeviceKeyRecord>,
-    /// R3.1 (MID-2) — raw inlined `ck.member.identity.update` event
+    /// R3.1 (MID-2) — raw inlined `ak.member.identity.update` event
     /// envelopes harvested from `account.subscribe` `members[]` entries.
     /// Keyed by `realm_id -> actor_id -> Vec<envelope>`. The runtime
     /// store ([`crate::member_identity_store::MemberIdentityStore`]) is
@@ -849,7 +849,7 @@ pub struct ClientLocalState {
     #[serde(default)]
     pub member_identity_events: BTreeMap<String, BTreeMap<String, Vec<Value>>>,
     /// Display-only cache for reverse handle lookup by subject DID. Entries
-    /// come from validated `ck.find.directory.query.list_handles_for_subject` responses
+    /// come from validated `ak.find.directory.query.list_handles_for_subject` responses
     /// or equivalent roster evidence and are never used as authority for
     /// ACL, attribution, membership, or delivery.
     #[serde(default)]

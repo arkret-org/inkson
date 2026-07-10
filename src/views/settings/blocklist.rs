@@ -3,7 +3,7 @@
 //! Actor-private list of blocked DIDs. Spec
 //! `governance/content-moderation.md` §4 — personal blocklist is a
 //! client-side filter; spec `discovery/client-preferences.md` §2
-//! defines the `ck.account.blocklist` account_data shape.
+//! defines the `ak.account.blocklist` account_data shape.
 //!
 //! Surfaces:
 //! - `blocked-users-panel` wrapper
@@ -20,7 +20,6 @@ use dioxus::prelude::*;
 use dioxus_primitives::checkbox::CheckboxState;
 
 use crate::components::{EmptyState, EmptyStateKind};
-use crate::local_state::LocalStateStore;
 use crate::ui::button::{Button, ButtonVariant};
 use crate::ui::checkbox::Checkbox;
 use crate::ui::input::Input;
@@ -422,7 +421,7 @@ mod tests {
 
     #[test]
     fn blocklist_uses_client_blocklist_state_store_methods() {
-        let mut store = LocalStateStore::default();
+        let mut store = crate::local_state::LocalStateStore::default();
         assert!(store.client_blocklist().is_empty());
 
         assert!(store.block_user("did:web:bob.example", None));

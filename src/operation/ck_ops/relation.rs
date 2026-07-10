@@ -4,7 +4,7 @@ use serde_json::json;
 
 use super::{OperationBuilder, relation_create_payload_value};
 
-/// Build a schema-legal `ck.relation.create` event. The Relation id is
+/// Build a schema-legal `ak.relation.create` event. The Relation id is
 /// server-normalized from the accepted event id; payload keeps only the
 /// v1 `kind` / `from_ref` / `to_ref` endpoints.
 pub fn relation_create(
@@ -23,7 +23,7 @@ pub fn relation_create(
     .body(relation_create_payload_value(kind, from_ref, to_ref)?))
 }
 
-/// Build a `ck.relation.tombstone` event targeting an existing Relation.
+/// Build a `ak.relation.tombstone` event targeting an existing Relation.
 pub fn relation_tombstone(realm_id: &str, actor: &str, relation_id: &str) -> OperationBuilder {
     OperationBuilder::new(
         realm_id,

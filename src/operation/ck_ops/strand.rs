@@ -8,9 +8,9 @@ use super::{
     strand_tracks_update_payload_value, strand_watch_set_payload_value,
 };
 
-/// Build a `ck.strand.watch.set` operation. Spec:
+/// Build a `ak.strand.watch.set` operation. Spec:
 /// `arkret-spec/spec/v1/zh/models/strand-and-message.md §8.3` —
-/// writes the cas-register cell `ck.component.strand.watch.v1` keyed by
+/// writes the cas-register cell `ak.component.strand.watch.v1` keyed by
 /// `(strand_id, watcher_actor_id)`.
 ///
 /// `level` is one of `mentions_only` / `participating` / `all` / `muted`,
@@ -20,7 +20,7 @@ use super::{
 /// stays invisible). Caller MUST omit `level_public` when `level` is None.
 ///
 /// Default reducer invariant: `target_actor` MUST equal `sender_actor`
-/// unless the sender holds `ck.strand.watch.set.others`. Callers
+/// unless the sender holds `ak.strand.watch.set.others`. Callers
 /// helping someone else subscribe (e.g. Strand creator seeding
 /// watchers on create) need that capability.
 pub fn strand_watch_set(
@@ -44,12 +44,12 @@ pub fn strand_watch_set(
     .body(payload))
 }
 
-/// Build a `ck.strand.tracks.update` operation. Spec:
+/// Build a `ak.strand.tracks.update` operation. Spec:
 /// `arkret-spec/spec/v1/zh/models/strand-and-message.md §3` (post dc01ad7).
 ///
 /// This is the single unified track-mutation event that replaces
-/// `ck.strand.track.{enable,disable,update,set_primary}`.
-/// `patch` is a `ck.patch.v1` JSON Patch object against the `Strand.tracks`
+/// `ak.strand.track.{enable,disable,update,set_primary}`.
+/// `patch` is a `ak.patch.v1` JSON Patch object against the `Strand.tracks`
 /// map (keys are track names like `synthesis` / `discussion`). For
 /// example, enabling the `discussion` track is:
 ///
@@ -78,7 +78,7 @@ pub fn strand_tracks_update(
 }
 
 /// Convenience wrapper: enable `track` on `strand_id`. Emits the unified
-/// `ck.strand.tracks.update` event with a `ck.patch.v1` set-op against
+/// `ak.strand.tracks.update` event with a `ak.patch.v1` set-op against
 /// `tracks.<name>.enabled`.
 pub fn strand_tracks_update_enable(
     realm_id: &str,
@@ -117,7 +117,7 @@ pub fn strand_tracks_update_set_primary(
     strand_tracks_update(realm_id, actor, strand_id, patch)
 }
 
-/// Build a `ck.strand.archive` operation. Spec: `strand-and-message.md §3`
+/// Build a `ak.strand.archive` operation. Spec: `strand-and-message.md §3`
 /// and `common-fields.md §5.1`; payload shape is the
 /// `object_lifecycle_payload` from
 /// `artifacts/schemas/event-payload.schema.json`, which requires
@@ -137,7 +137,7 @@ pub fn strand_archive(
     .body(object_lifecycle_payload_value(strand_id)?))
 }
 
-/// Build a `ck.strand.restore` operation. Reverses [`strand_archive`]
+/// Build a `ak.strand.restore` operation. Reverses [`strand_archive`]
 /// (`archived -> active`). SDK reducer rejects with `strand_not_archived`
 /// when source state is not `archived`. Payload shape mirrors the
 /// archive op (spec `object_lifecycle_payload`).
@@ -155,8 +155,8 @@ pub fn strand_restore(
     .body(object_lifecycle_payload_value(strand_id)?))
 }
 
-/// Build a `ck.strand.update` delta operation using the canonical
-/// `ck.patch.v1` payload shape. Non-create Strand updates should carry
+/// Build a `ak.strand.update` delta operation using the canonical
+/// `ak.patch.v1` payload shape. Non-create Strand updates should carry
 /// only changed fields; callers are responsible for composing patch paths
 /// that are valid for the Strand schema/profile.
 pub fn strand_update_patch(

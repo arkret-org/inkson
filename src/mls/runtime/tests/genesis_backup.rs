@@ -1,4 +1,4 @@
-//! Tests for `ck.mls.genesis` payload construction and MLS-history backup
+//! Tests for `ak.mls.genesis` payload construction and MLS-history backup
 //! encode / decode / restore.
 
 use serde_json::json;

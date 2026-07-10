@@ -54,7 +54,7 @@ fn reaction_routing_tag_normalises_to_nfc() {
 #[test]
 fn minimal_metadata_reaction_forces_commit_when_epoch_overdue() {
     // SEC-08 end-to-end (native): a minimal-metadata Realm whose epoch is
-    // older than 1h must force a `ck.mls.commit` (epoch advance) on the next
+    // older than 1h must force a `ak.mls.commit` (epoch advance) on the next
     // reaction, and MUST NOT persist the advanced snapshot internally
     // (X14 persist-on-accept) — the snapshot is handed back instead.
     use serde_json::json;

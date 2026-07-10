@@ -245,7 +245,7 @@ fn realm_tree_projection_value_content_scheme(body: &Value) -> Option<String> {
 }
 
 /// SEC-08 (`encryption-and-audit.md` §2.9) — does a cached realm-tree
-/// projection declare the `ck.profile.mls.minimal_metadata_realm.v1` profile?
+/// projection declare the `ak.profile.mls.minimal_metadata_realm.v1` profile?
 ///
 /// Mirrors soland's server-side `payload_declares_minimal_metadata_realm`
 /// (`profiles[]` / `active_profiles[]` arrays) but scans the same nested

@@ -449,7 +449,7 @@ fn encrypted_write_uses_device_key_snapshot_when_ready() {
 
 /// X14 — persist-on-accept contract for forced commits: the stored snapshot
 /// epoch only moves when the caller saves the returned envelope (which it
-/// does ONLY after the server accepts the `ck.mls.commit`). This is the
+/// does ONLY after the server accepts the `ak.mls.commit`). This is the
 /// invariant that keeps `snapshot.epoch == server.epoch` in lockstep and
 /// prevents the permanent `mls_epoch_skew` that optimistic pre-accept
 /// persistence caused.
@@ -721,7 +721,7 @@ fn local_welcome_hint_filters_by_realm_group_id() {
 // ── History sharing (encryption-and-audit.md): provider push +
 //    receiver ingest + tier-3 history decrypt ──────────────────────
 
-/// Build a `ck.realm_key.share` envelope sealing `secrets` to `recipient_pub`,
+/// Build a `ak.realm_key.share` envelope sealing `secrets` to `recipient_pub`,
 /// as the provider's `build_realm_key_share_event` would emit it on the wire
 /// (the `content` is the `RealmKeySharePayload`).
 #[cfg(not(target_arch = "wasm32"))]

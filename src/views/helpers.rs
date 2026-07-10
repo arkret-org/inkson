@@ -221,8 +221,8 @@ pub fn active_sync_token(sync_cursor: impl AsRef<str>) -> Option<String> {
 /// This is a display-only fallback for common materialized subject shapes:
 /// `did:web:<domain>:users:<localpart>` and
 /// `did:webvh:<scid>:<domain>:users:<localpart>`. Verified handle display
-/// still comes from signed `ck.schema.handle_claim.v1` evidence or
-/// `ck.find.directory.query.list_handles_for_subject`; this helper only keeps UI
+/// still comes from signed `ak.schema.handle_claim.v1` evidence or
+/// `ak.find.directory.query.list_handles_for_subject`; this helper only keeps UI
 /// rows readable while soland's roster handle-claim inline path is still
 /// being wired.
 pub fn handle_display_from_did(did: &str) -> Option<String> {
@@ -257,7 +257,7 @@ pub fn handle_display_from_did(did: &str) -> Option<String> {
 /// reused everywhere inkson would otherwise show a raw `did:web:...`.
 ///
 /// The actor's `ContactRemark` rows arrive via account_data sync
-/// (`ck.contacts.actor.<did>`) and live on `LocalStateStore`. Each
+/// (`ak.contacts.actor.<did>`) and live on `LocalStateStore`. Each
 /// view used to fall back to the raw DID — this helper centralises the
 /// "prefer the user's chosen alias, else the canonical DID" decision so
 /// chat headers, @mention popovers, directory rows, verify-device peer
@@ -406,7 +406,7 @@ pub struct RenderedMention {
 /// `accepted_issuers` policy. When a verified primary handle wins it is
 /// shown as `@{localpart}:{domain}`.
 ///
-/// Step 2 (live `ck.find.directory.query.list_handles_for_subject` resolution) is
+/// Step 2 (live `ak.find.directory.query.list_handles_for_subject` resolution) is
 /// wired through [`crate::views::helpers::list_handles_for_subject_ui`] /
 /// the "Why am I seeing this handle?" panel and feeds the same
 /// `claim_set_snapshot` — `TODO(R3.2.1)`: plumb the live result back into
@@ -473,7 +473,7 @@ pub fn render_actor_mention(
 
 /// R3.2 (YG-DIR-1/2) — one row in the "Why am I seeing this handle?"
 /// transparency panel. Flattens the audit-relevant fields of a signed
-/// `ck.schema.handle_claim.v1` into display strings.
+/// `ak.schema.handle_claim.v1` into display strings.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct HandleClaimRow {
     pub handle: String,
@@ -525,7 +525,7 @@ pub fn handle_claim_rows(
 
 /// R3.2 (YG-DIR-1/2) — "Why am I seeing this handle?" transparency
 /// panel. Given a subject (principal) DID it calls the directory
-/// `ck.find.directory.query.list_handles_for_subject` op and renders the visible
+/// `ak.find.directory.query.list_handles_for_subject` op and renders the visible
 /// signed handle claims (issuer / binding_state / created_at / expiry /
 /// claim_digest) plus the §3.2.1 primary handle. This is the user-facing
 /// disclosure surface mandated by §3.8 — handles are never authoritative

@@ -8,8 +8,8 @@
 //!   matching the local `LocalStateStore::device_id`
 //! - `device-revoke-button` per row, which opens a confirmation modal
 //! - `device-revoke-confirm-button` / `device-revoke-status` after the user confirms; revoke
-//!   submits the spec-canonical durable `ck.device.revoke` Control Move on the principal control
-//!   stream (envelope `seal_basis` minted from `ck.self.events.query.frontier`, SPEC-SOL-003) with
+//!   submits the spec-canonical durable `ak.device.revoke` Control Move on the principal control
+//!   stream (envelope `seal_basis` minted from `ak.self.events.query.frontier`, SPEC-SOL-003) with
 //!   a [`crate::api::CokretApi::revoke_device`], then rotates the account MLS history secret and
 //!   rewraps local `mls_history` backups.
 //!
@@ -24,7 +24,7 @@
 //! Spec references:
 //! - `crypto-media/device-lifecycle.md` §2.1 (5-step pairing), §2.2 (revoke), §5.1–§5.2
 //!   (cross-signing binding), §6 (device list)
-//! - `identity/key-management.md` §5.0–§5.2 (`ck.device.authorize` / `ck.device.revoke`)
+//! - `identity/key-management.md` §5.0–§5.2 (`ak.device.authorize` / `ak.device.revoke`)
 //!
 //! ## Endpoints
 //!
@@ -109,7 +109,7 @@ fn parse_devices(value: &Value) -> (Option<String>, Vec<DeviceRow>) {
 /// Build the QR / paste payload that an already-authorized device approves.
 /// The new device owns `requesting_device_id` and its device-identity public
 /// key; the existing device turns this payload into
-/// `ck.gate.account.command.pair_device`.
+/// `ak.gate.account.command.pair_device`.
 fn build_pair_payload(
     account_did: &str,
     requesting_device_id: &str,

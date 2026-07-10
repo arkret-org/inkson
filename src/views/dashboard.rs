@@ -3,7 +3,7 @@ use dioxus_router::Link;
 
 use crate::components::{HelpTip, UiIcon};
 use crate::i18n::tr;
-use crate::local_state::{ClientLocalState, LocalStateStore};
+use crate::local_state::ClientLocalState;
 use crate::models::{RealmTreeNode, RealmTreeNodeKind, projection_realm_id_for_known_node};
 use crate::routes::Route;
 use crate::ui::button::{Button, ButtonSize, ButtonVariant};

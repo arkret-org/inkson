@@ -7,8 +7,8 @@ pub(crate) struct KanbanColumn {
     pub(crate) rank: String,
     pub(crate) cards: Vec<KanbanCard>,
     /// Space-container lifecycle state. `Active` is the wire default; `Archived` is set
-    /// optimistically after a successful `ck.space.archive` submit and reset
-    /// after `ck.space.restore`. Spec: `models/realm-and-space.md §4.4`.
+    /// optimistically after a successful `ak.space.archive` submit and reset
+    /// after `ak.space.restore`. Spec: `models/realm-and-space.md §4.4`.
     /// `Tombstoned` is irreversible and modeled here for completeness but the
     /// UI currently has no tombstone affordance — server-only path.
     pub(crate) state: SpaceContainerLifecycleState,
@@ -28,9 +28,9 @@ pub(crate) enum SpaceContainerLifecycleState {
 pub(crate) struct KanbanCard {
     pub(crate) id: String,
     /// The card's current rank inside its column. This is the local
-    /// mirror of the `ck.component.strand.position.v1` cell's `rank`
+    /// mirror of the `ak.component.strand.position.v1` cell's `rank`
     /// field and seeds the `expected_position` of any subsequent
-    /// `ck.strand.move` / `ck.strand.reorder` Move. When the projection
+    /// `ak.strand.move` / `ak.strand.reorder` Move. When the projection
     /// refreshes (server-side cell update), this must be re-synced.
     pub(crate) rank: String,
     pub(crate) title: String,
@@ -184,7 +184,7 @@ pub(crate) struct LockedStrand {
 /// Snapshot of the card-being-dragged's pre-move state. The cas-register
 /// model in [`operations-sync.md` §9.1](../../arkret-spec/spec/v1/zh/sync/operations-sync.md)
 /// requires the source `(list_space_id, rank)` to seed `head_eq` on the
-/// resulting `ck.strand.move` / `ck.strand.reorder` Move. We capture it on
+/// resulting `ak.strand.move` / `ak.strand.reorder` Move. We capture it on
 /// `ondragstart` so the drop handler doesn't have to re-derive it from
 /// the column state (which may have been mutated optimistically in the
 /// meantime).
@@ -355,9 +355,9 @@ pub(crate) fn card_state_from_write_state(write_state: &str) -> CardState {
 /// Board write records track a Move pipeline submission. The Move's
 /// canonical body lives in `cell_id` + `effect_summary` (string preview);
 /// `move_id` is the content-addressed `sha256:...` id. `kind`
-/// mirrors the MoveSubmissionState classifier (`ck.space.create` /
-/// `ck.strand.create` /
-/// `ck.strand.position`) so the tracker UI can decorate state pills.
+/// mirrors the MoveSubmissionState classifier (`ak.space.create` /
+/// `ak.strand.create` /
+/// `ak.strand.position`) so the tracker UI can decorate state pills.
 ///
 /// `signed_move_json` is the typed [`arkret_sdk::Move`] serialised to
 /// JSON. We persist it on the queued record so that Replay can re-POST

@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 /// App-local current-account projection derived from the spec
-/// `ck.self.account.query.viewer` response. `handle` is populated only from a
+/// `ak.self.account.query.viewer` response. `handle` is populated only from a
 /// signed `primary_handle_claim.handle`; an empty string means the server did
 /// not include handle evidence in the viewer response.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -71,7 +71,7 @@ pub struct ContactListRow {
     /// Accepts a couple of likely wire spellings for forward compatibility.
     #[serde(default, alias = "requester_service_did", alias = "source_service_did")]
     pub peer_service_did: Option<String>,
-    /// U3 — event ref of the `ck.consent.grant` this peer gave me for the
+    /// U3 — event ref of the `ak.consent.grant` this peer gave me for the
     /// `invite` (or `any`) scope. When present, the realm-invite "from contacts"
     /// path can build `IntroductionEvidence::ConsentGrant { consent_grant_ref }`
     /// instead of requiring a locator URL.
@@ -234,7 +234,7 @@ pub fn default_invite_receive_policy(subject_id: &str) -> InviteReceivePolicy {
     }
 }
 
-/// R15: result of `ck.realm.create`. Carries a `ak:realm:*` id under the
+/// R15: result of `ak.realm.create`. Carries a `ak:realm:*` id under the
 /// canonical `realm_id` field (was previously squeezed into a shared
 /// `space_id` on the old shared lifecycle result). `state` replaces the old
 /// `deleted: bool`, matching the spec lifecycle-state enum
@@ -249,7 +249,7 @@ pub struct RealmCreateResult {
     pub state: String,
 }
 
-/// R15: result of `ck.space.create`. A Space (`ak:space:*`) lives inside a
+/// R15: result of `ak.space.create`. A Space (`ak:space:*`) lives inside a
 /// Realm and inherits its membership / encryption. `state` mirrors the spec
 /// lifecycle enum (see [`RealmCreateResult`]).
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -275,7 +275,7 @@ pub enum AccountDataSetResult {
     /// echoed body for any server-derived metadata, but most callers can
     /// ignore the `Value`.
     Stored { response: serde_json::Value },
-    /// Server doesn't yet support the canonical `ck.account_data.set` submit
+    /// Server doesn't yet support the canonical `ak.account_data.set` submit
     /// path needed for this setting; the client logged a `tracing::warn` and
     /// the local state remains the authoritative copy.
     Unsupported { status: reqwest::StatusCode },
@@ -382,13 +382,13 @@ impl ServerDescriptionExt for ServerDescription {
     }
 }
 
-// R35: `ck.identity.describe` body. The SDK's canonical type is
+// R35: `ak.identity.describe` body. The SDK's canonical type is
 // `IdentityDescription` (same fields, with `service_did: Did` validated on
 // construction); the SDK's own `IdentityDescribeOutcome` is a transparent
 // newtype around it. We re-export the inner struct under the inkson-local
 // name so call sites (`registry_mode` read in `views/dashboard.rs`) stay
 // unchanged while the field shapes are now SDK-owned.
-// `ck.self.account.query.describe` decodes into the SDK's authoritative
+// `ak.self.account.query.describe` decodes into the SDK's authoritative
 // `arkret_sdk::models::SyncDescription`; the former inkson-local
 // `SyncDescribeView` mirror was removed in favor of the wire type.
 /// Directory `describe` response. The SDK's `DirectoryDescribeOutcome` is a
@@ -824,16 +824,16 @@ impl From<arkret_sdk::EventsQueryOutcome> for BackfillView {
     }
 }
 
-// `ck.self.snapshot.query.manifest_head` returns the full signed
-// `ck.schema.snapshot.v1` manifest. See `api::CokretApi::snapshot_head`.
+// `ak.self.snapshot.query.manifest_head` returns the full signed
+// `ak.schema.snapshot.v1` manifest. See `api::CokretApi::snapshot_head`.
 
 pub use arkret_sdk::models::AuthzCheckOutcome;
-/// `ck.self.authz.invites` decodes into the SDK's authoritative
+/// `ak.self.authz.invites` decodes into the SDK's authoritative
 /// `AuthzInviteList` (`invites: Vec<Invite>`, `next_cursor`, `has_more`); the
 /// former inkson-local `InvitesView` mirror was removed in favor of the wire
 /// type.
 pub use arkret_sdk::models::AuthzInviteList;
-/// `ck.self.authz.grants.query.effective` response. soland serialises the SDK
+/// `ak.self.authz.grants.query.effective` response. soland serialises the SDK
 /// `GrantList` (`grants: Vec<CapabilityGrant>`) verbatim, so the client
 /// decodes the same authoritative wire contract instead of a weakly-typed
 /// local mirror.
@@ -1018,7 +1018,7 @@ pub struct ReceiptResult {
 
 // ── Device & Crypto ─────────────────────────────────────────────
 
-/// `ck.self.events.command.submit` response.
+/// `ak.self.events.command.submit` response.
 ///
 /// Decodes **only** the canonical `EventsSubmitOutcome` wire shape —
 /// `{status, accepted[], duplicate[], rejected[], actor_frontier,
@@ -1130,15 +1130,15 @@ impl<'de> Deserialize<'de> for SubmitEventResult {
 pub use arkret_sdk::models::{MediaIceConfigOutcome, MediaIceConfigRequestBody};
 
 // WebRTC call signaling/recording no longer round-trips through bespoke
-// `/_arkret/self/webrtc/*` outcomes: signaling is a `ck.call.signal`
+// `/_arkret/self/webrtc/*` outcomes: signaling is a `ak.call.signal`
 // ephemeral envelope (EphemeralSubmitResult) and recording is a durable
-// `ck.call.recording.start` event (SubmitEventResult). See
+// `ak.call.recording.start` event (SubmitEventResult). See
 // `crypto-media/webrtc-signaling.md` §5/§7. The former
 // CreateWebrtcSessionOutcome / WebrtcSignalOutcome / CallRecordingStartOutcome
 // mirrors were removed (YOU-01-002).
 
 // ─────────────────────────────────────────────────────────────────────
-// CKP-0008 / CKP-0009 — Personal Agent HTTP wire types.
+// AKP-0008 / AKP-0009 — Personal Agent HTTP wire types.
 //
 // YOU-01-005: the former hand-rolled `Agent*ReqBody` / `Agent*ResBody`
 // mirrors drifted from `agent-operations.schema.json` (extra required

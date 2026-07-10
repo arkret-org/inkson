@@ -43,7 +43,7 @@ struct ApiErrorBody {
 ///      a local shadow type that defaults it to `"unknown"`.
 ///
 /// If none match, we synthesise a minimal envelope tagged
-/// `ck.error.http_status` so downstream code always has something
+/// `ak.error.http_status` so downstream code always has something
 /// well-formed to surface.
 ///
 /// G3.Y3 — additionally, when `status` is 403 *and* the decoded

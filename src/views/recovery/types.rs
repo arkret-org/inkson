@@ -36,7 +36,7 @@ pub(crate) struct PasskeyRecoveryWrap {
 }
 
 /// One row in the backup history summary. The server returns the full
-/// `ck.schema.key_backup.v1` envelope; the user-facing panel keeps only the
+/// `ak.schema.key_backup.v1` envelope; the user-facing panel keeps only the
 /// fields needed for aggregate status and timestamp display.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct BackupSummaryRow {

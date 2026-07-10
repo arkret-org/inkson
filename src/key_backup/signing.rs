@@ -54,7 +54,7 @@ pub enum KeyBackupDeviceTrustAnchor {
     DeviceAuthorizeEventId(String),
 }
 
-/// Phase 2 (key-management.md §7.4.1, CKP-0013): sign a key-backup envelope with
+/// Phase 2 (key-management.md §7.4.1, AKP-0013): sign a key-backup envelope with
 /// the device Ed25519 key. The signature covers
 /// `canonical_json(envelope without auth_data.signature)` — i.e. the rest of
 /// `auth_data` is bound too, so it cannot be tampered. The trust anchor seals

@@ -344,7 +344,7 @@ fn inkson_accepts_server_contract_payloads() {
     assert_eq!(authz.decision, arkret_sdk::models::AuthzDecision::Allow);
 
     // `GrantList` is the SDK authoritative wire type (soland serialises it
-    // verbatim), so rows must be full `ck.schema.capability_grant.v1`
+    // verbatim), so rows must be full `ak.schema.capability_grant.v1`
     // grants rather than free-form objects.
     let grants: inkson::models::GrantList = serde_json::from_value(json!({
         "grants": [{
@@ -901,13 +901,13 @@ fn decoder_handles_all_envelope_shapes() {
     //    surface them.
     let wrapped = decode_arkret_error(
         StatusCode::CONFLICT,
-        br#"{"ok":false,"error":{"code":"expected_head_mismatch","message":"head mismatch","retry_after_ms":250,"details":{"cell":"ak:cell:ck.component.strand.position.v1:demo"}}}"#,
+        br#"{"ok":false,"error":{"code":"expected_head_mismatch","message":"head mismatch","retry_after_ms":250,"details":{"cell":"ak:cell:ak.component.strand.position.v1:demo"}}}"#,
     );
     assert_eq!(wrapped.code(), "expected_head_mismatch");
     assert_eq!(wrapped.retry_after_ms(), Some(250));
     assert_eq!(
         wrapped.details()["cell"],
-        "ak:cell:ck.component.strand.position.v1:demo"
+        "ak:cell:ak.component.strand.position.v1:demo"
     );
 
     // 2. Plain envelope without `request_id`.

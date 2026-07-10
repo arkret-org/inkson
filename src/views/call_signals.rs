@@ -1,4 +1,4 @@
-//! App-level call-signaling hub — the receive side of `ck.call.signal`.
+//! App-level call-signaling hub — the receive side of `ak.call.signal`.
 //!
 //! soland delivers inbound call signaling inline on each realm's sync body:
 //! `body.ephemeral[]` carries a typed item
@@ -148,7 +148,7 @@ impl Default for CallSignalHub {
     }
 }
 
-/// A decoded inbound `ck.call.signal` envelope, ready to route.
+/// A decoded inbound `ak.call.signal` envelope, ready to route.
 #[derive(Clone, Debug, PartialEq)]
 pub struct DecodedCallSignal {
     pub realm_id: String,
@@ -206,7 +206,7 @@ pub fn decode_realm_call_signals(realm_id: &str, body: &Value) -> Vec<DecodedCal
     out
 }
 
-/// Decode a single signed `ck.call.signal` envelope. Returns `None` when the
+/// Decode a single signed `ak.call.signal` envelope. Returns `None` when the
 /// envelope is structurally invalid (wrong kind, missing
 /// `payload.{call_id,signal_type,seq}` / `actor_id`).
 fn decode_call_signal_envelope(realm_id: &str, envelope: &Value) -> Option<DecodedCallSignal> {
@@ -895,7 +895,7 @@ mod tests {
 
     // ── Receiver proof verification (device-identity Phase 2) ──────────
 
-    /// Build a real signed `ck.call.signal` envelope the same way the sender
+    /// Build a real signed `ak.call.signal` envelope the same way the sender
     /// (`ephemeral::attach_broadcast_ephemeral_proof`) does: a detached JWS
     /// over the SDK's authoritative proof binding object (which folds in the
     /// `context = "ak.event-proof-v1"` domain tag), with `event_digest` =

@@ -1,8 +1,8 @@
 //! Applet protocol-family builders.
 //!
 //! Spec: `extensions/applet-integration.md` + canonical event-kind
-//! registry rows `ck.applet.registration` / `ck.applet.discovery` /
-//! `ck.applet.interop_session.{start,status}` / `ck.applet.bridge_error`.
+//! registry rows `ak.applet.registration` / `ak.applet.discovery` /
+//! `ak.applet.interop_session.{start,status}` / `ak.applet.bridge_error`.
 //!
 //! The builders below produce the wire shape soland validators and the
 //! SDK reducer consume. Each carries the canonical `applet_id` (or
@@ -34,7 +34,7 @@ fn parse_runtime_status(runtime_status: &str) -> anyhow::Result<arkret_sdk::Appl
     })
 }
 
-/// `ck.applet.registration` — declare an applet service_did + the
+/// `ak.applet.registration` — declare an applet service_did + the
 /// event-kind subset / namespaces / capabilities it can write.
 pub fn applet_registration(
     realm_id: &str,
@@ -56,7 +56,7 @@ pub fn applet_registration(
     }))
 }
 
-/// `ck.applet.discovery` — the network discovery surface that lists
+/// `ak.applet.discovery` — the network discovery surface that lists
 /// what an applet exposes; emitted by directory crawlers and by the
 /// applet itself on registration round-trip.
 pub fn applet_discovery(
@@ -99,7 +99,7 @@ pub fn parse_applet_identifier(applet_id: &str) -> Result<arkret_sdk::AppletIden
     }
 }
 
-/// `ck.applet.interop_session.start` — open a per-session channel
+/// `ak.applet.interop_session.start` — open a per-session channel
 /// between a Realm member and an applet (used for portal-style RPC
 /// + agent invocation).
 pub fn applet_interop_session_start(
@@ -127,7 +127,7 @@ pub fn applet_interop_session_start(
     .body(body))
 }
 
-/// `ck.applet.interop_session.status` — applet → caller status push
+/// `ak.applet.interop_session.status` — applet → caller status push
 /// (progress, intermediate result, completion).
 pub fn applet_interop_session_status(
     realm_id: &str,
@@ -158,7 +158,7 @@ pub fn applet_interop_session_status(
     .body(body))
 }
 
-/// `ck.applet.bridge_error` — emitted by the applet bridge when a
+/// `ak.applet.bridge_error` — emitted by the applet bridge when a
 /// interop_session call fails outside the spec's typed result.
 pub fn applet_bridge_error(
     realm_id: &str,

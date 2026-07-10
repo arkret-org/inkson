@@ -1,4 +1,4 @@
-//! MLS Governance Binding helpers (`ck.profile.mls_governance_binding.full.v1`).
+//! MLS Governance Binding helpers (`ak.profile.mls_governance_binding.full.v1`).
 //!
 //! Spec: `crypto-media/encryption-and-audit.md` §10. Every MLS commit MUST
 //! carry preconditions binding it to:
@@ -13,7 +13,7 @@
 //!
 //! This module wraps `arkret_sdk::mls_move::*` so inkson can produce the
 //! canonical Move precondition / effect tuples used by the hardening profile.
-//! It is not the `ck.mls.commit` event payload type; event payloads must use
+//! It is not the `ak.mls.commit` event payload type; event payloads must use
 //! `arkret_sdk::MlsCommitPayload` and `arkret_sdk::MlsGovernanceBindingPayload`.
 
 use arkret_sdk::mls_move::{
@@ -111,7 +111,7 @@ impl GovernanceBindingPayload {
 
     /// Render the binding as the internal Move tuple JSON shape.
     ///
-    /// Do not use this as a `ck.mls.commit` event payload. That wire surface
+    /// Do not use this as a `ak.mls.commit` event payload. That wire surface
     /// is sealed by `arkret_sdk::MlsCommitPayload`.
     pub fn to_move_binding_body(&self) -> serde_json::Value {
         serde_json::json!({
@@ -129,7 +129,7 @@ impl GovernanceBindingPayload {
     }
 }
 
-/// The `ck.profile.mls_governance_binding.full.v1` profile id. Mirrors the
+/// The `ak.profile.mls_governance_binding.full.v1` profile id. Mirrors the
 /// hardening profile registered in `spec/v1/artifacts/profiles/conformance-profiles.json`.
 pub const PROFILE_MLS_GOVERNANCE_BINDING_FULL: &str = "ak.profile.mls_governance_binding.full.v1";
 

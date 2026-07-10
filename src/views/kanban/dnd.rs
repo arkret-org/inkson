@@ -50,7 +50,7 @@ pub(super) fn submit_kanban_operation_event(
     // `navigator.replace(...)` to route to the new board IMMEDIATELY after
     // calling this — a `spawn`-ed task is tied to the current component scope
     // and gets dropped/cancelled when that route change unmounts the panel,
-    // so the `ck.space.create` POST never left the client (board stuck
+    // so the `ak.space.create` POST never left the client (board stuck
     // `write_state:"queued"`, never reaching the server → other devices saw a
     // nameless `ak:space:...` board). `spawn_forever` (ScopeId::ROOT) detaches
     // the task so the submit completes regardless of navigation/unmount.
@@ -152,7 +152,7 @@ pub(super) fn submit_column_order_updates(
     }
 }
 
-/// Rename a list (column) by submitting a `ck.space.update` title patch.
+/// Rename a list (column) by submitting a `ak.space.update` title patch.
 /// The optimistic projection folds the patch into the `columns` memo, so the
 /// new title renders immediately while the envelope is in flight
 /// (design/kanban-baseline.md M1).
@@ -210,9 +210,9 @@ pub(super) fn submit_column_rename(
 }
 
 /// Build + submit a Kanban event and record it in the board write queue.
-/// Card creates emit real `ck.strand.create` envelopes with an initial
-/// `ck.component.strand.position.v1` component; metadata writes go through
-/// the canonical `ck.strand.update` patch helper.
+/// Card creates emit real `ak.strand.create` envelopes with an initial
+/// `ak.component.strand.position.v1` component; metadata writes go through
+/// the canonical `ak.strand.update` patch helper.
 pub(super) fn submit_kanban_move(
     base_url: String,
     token: Signal<String>,
@@ -291,7 +291,7 @@ pub(super) fn submit_kanban_move(
         .get("board_space_id")
         .and_then(Value::as_str)
         .map(|board_space_id| strand_position_cell_id(board_space_id, &subject))
-        .unwrap_or_else(|| format!("ak:cell:ck.component.strand.position.v1:{subject}"));
+        .unwrap_or_else(|| format!("ak:cell:ak.component.strand.position.v1:{subject}"));
     let effect_summary = if kind == "ak.strand.create" {
         serde_json::to_string(&event.payload).unwrap_or_else(|_| "{}".to_owned())
     } else {
@@ -410,9 +410,9 @@ pub(super) struct ColumnNeighbours {
 ///
 /// Spec mapping ([views.md §2.6](../../arkret-spec/spec/v1/zh/models/views.md)):
 ///
-/// - Cross-column drop ⇒ `ck.strand.move` Event kind.
-/// - Same-column drop ⇒ `ck.strand.reorder`.
-/// - Both compile to the same `ak:cell:ck.component.strand.position.v1:<board>:<strand>`
+/// - Cross-column drop ⇒ `ak.strand.move` Event kind.
+/// - Same-column drop ⇒ `ak.strand.reorder`.
+/// - Both compile to the same `ak:cell:ak.component.strand.position.v1:<board>:<strand>`
 ///   cas-register cell; the difference is whether `effect.list_space_id` equals
 ///   `expected.list_space_id`.
 pub(super) fn dispatch_strand_position_move(
@@ -575,7 +575,7 @@ pub(super) fn capability_gate_for_strand(
     engine.read().ui_gate(actor, action, &resource, &ctx)
 }
 
-/// Dispatch a `ck.space.archive` or `ck.space.restore` operation against
+/// Dispatch a `ak.space.archive` or `ak.space.restore` operation against
 /// the given list (container Space) and mark the local row pending while
 /// the column's `SpaceContainerLifecycleState` in the UI signal. Spec:
 /// `models/realm-and-space.md §4.4`. Soland's lifecycle
@@ -674,7 +674,7 @@ pub(super) fn dispatch_space_container_lifecycle(
     });
 }
 
-/// Dispatch `ck.strand.archive` or `ck.strand.restore` for a card and
+/// Dispatch `ak.strand.archive` or `ak.strand.restore` for a card and
 /// mark its `StrandLifecycleState` pending locally. Mirrors
 /// `dispatch_space_container_lifecycle` but at the Strand object layer. Spec:
 /// `strand-and-message.md §3`, `common-fields.md §5.1`. SDK reducer
@@ -714,7 +714,7 @@ pub(super) fn dispatch_strand_lifecycle(
     let kind = event.kind.as_str().to_owned();
     let operation_id = sdk_event_local_operation_id(&event).to_owned();
     // Append the lifecycle op so the `columns` `use_memo` folds the optimistic
-    // flip via `project_board` (`ck.strand.archive` / `ck.strand.restore`). On
+    // flip via `project_board` (`ak.strand.archive` / `ak.strand.restore`). On
     // submit failure we mark it `dropped` to revert — no direct signal write.
     state_store.write().append_raw_operation(
         operation_id.clone(),
@@ -767,8 +767,8 @@ pub(super) fn dispatch_strand_lifecycle(
 /// card and list, then archive the board container Space itself. v1 has
 /// no server-side Space->Strand archive cascade (Strand lifecycle is
 /// independent of its enclosing Space per `strand-and-message.md` §3), so
-/// the client drives the cascade explicitly: each `ck.strand.archive`
-/// and `ck.space.archive` is its own durable event. The board Space is
+/// the client drives the cascade explicitly: each `ak.strand.archive`
+/// and `ak.space.archive` is its own durable event. The board Space is
 /// archived last so that, if any child archive is rejected, the board is
 /// not left archived while cards remain active.
 #[allow(clippy::too_many_arguments)]
@@ -913,7 +913,7 @@ pub(super) fn dispatch_board_archive_cascade(
     });
 }
 
-/// Build, sign, and submit a `ck.strand.move` / `ck.strand.reorder` CAS
+/// Build, sign, and submit a `ak.strand.move` / `ak.strand.reorder` CAS
 /// Move via the new spec-compliant builder. Tracks the submission in
 /// `write_records` and, on failed precondition, kicks off automatic
 /// rebase via [`rebase_strand_position_after_conflict`] up to
@@ -1327,7 +1327,7 @@ pub(super) fn locate_strand_position_in_projection(
 ///
 /// This is NOT a replay yet: event submit is the only write surface now, and
 /// a failed write needs the UI to reconstruct the equivalent
-/// `ck.strand.update` / `ck.component.strand.position.v1` envelope via
+/// `ak.strand.update` / `ak.component.strand.position.v1` envelope via
 /// `ck_ops::strand_position_*` rather than replay stale bytes. That
 /// reconstruction is tracked by **YOU-07-002 (kanban write replay)**; until it
 /// lands, the matching toolbar control is labelled "Quarantine for Review"

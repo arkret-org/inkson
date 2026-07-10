@@ -57,7 +57,7 @@ pub(super) fn did_id(value: &str) -> anyhow::Result<arkret_sdk::Did> {
 }
 
 /// Build a spec `invite_payload` (invite_id-ref anyOf branch) value for
-/// `ck.invite.accept` / `ck.invite.cancel` via the SDK strong type.
+/// `ak.invite.accept` / `ak.invite.cancel` via the SDK strong type.
 pub(super) fn invite_ref_payload_value(
     invite_id: &str,
     reason: Option<&str>,

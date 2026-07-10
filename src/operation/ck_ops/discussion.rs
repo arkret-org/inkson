@@ -5,13 +5,13 @@ use super::{
     relation_create_payload_value, trim_realm_id,
 };
 
-/// Build a canonical `ck.strand.create` discussion operation with the full
+/// Build a canonical `ak.strand.create` discussion operation with the full
 /// typed Strand payload expected by the current reducers.
 ///
 /// The full Strand lives under the spec-canonical `object` key —
 /// see soland `routing/events/operations.rs::STRAND_CREATE_REQUIREMENTS`
 /// and SDK `crates/core/src/schema/payloads.rs` which both gate
-/// `ck.strand.create` on `payload.object`.
+/// `ak.strand.create` on `payload.object`.
 pub fn discussion_strand_create(
     realm_id: &str,
     actor: &str,
@@ -42,7 +42,7 @@ pub fn discussion_strand_create(
     .body(payload))
 }
 
-/// Build a canonical `ck.circle.create` operation for a private
+/// Build a canonical `ak.circle.create` operation for a private
 /// discussion scope inside `realm_id`.
 pub fn discussion_circle_create(
     realm_id: &str,
@@ -74,7 +74,7 @@ pub fn discussion_circle_create(
     .body(body))
 }
 
-/// Build a `ck.strand.create` operation whose full Strand scope is a
+/// Build a `ak.strand.create` operation whose full Strand scope is a
 /// private discussion Circle.
 pub fn scoped_discussion_strand_create(
     realm_id: &str,

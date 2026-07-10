@@ -125,7 +125,7 @@ fn value_has_backend_direct_transcript_ref(value: &Value) -> bool {
 }
 
 /// Derive the realm's anchored media-service DIDs and preferred focus from
-/// the local `ck.realm.media_service` projection.
+/// the local `ak.realm.media_service` projection.
 pub(super) fn media_service_selection(
     state: &crate::local_state::ClientLocalState,
     realm_id: &str,
@@ -295,7 +295,7 @@ pub(super) fn call_state_participant_identities(
 }
 
 /// Read the `participant_identity → device_id` map from the durable
-/// `ck.call.state.participants[]` projection for this call. Used to build a
+/// `ak.call.state.participants[]` projection for this call. Used to build a
 /// remote sender's SFrame [`FrameKeyContext`] (`media-service-binding.md` §8.1
 /// binds the sender's own `(participant_identity, device_id)`): when a remote
 /// connects, its `device_id` is looked up here so the receiver can recompute

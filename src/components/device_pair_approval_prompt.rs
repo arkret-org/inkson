@@ -2,7 +2,7 @@
 //! (`crypto-media/device-lifecycle.md` §2.1 / §7).
 //!
 //! Mounted once near the app shell. When a new device asks to be authorized it
-//! sends a `ck.key.verification.request` (`purpose =
+//! sends a `ak.key.verification.request` (`purpose =
 //! "same_principal_device_authorization"`) to every already-authorized sibling;
 //! `sync_engine` delivers it into `to_device_inbox`. This prompt surfaces the
 //! first such pending request on ANY authorized device as a modal — the user

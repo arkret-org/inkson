@@ -38,7 +38,7 @@ Spec round 4 (`arkret-spec` range `2a4d39b..a77b995`, 8 commits) brings
 several client-visible changes. The canonical wire-breaking list is this
 section plus the protocol spec history in `../arkret-spec/spec/v1/`.
 
-- **`ck.call.signal` v2** — 13 signal types, required device `proof`,
+- **`ak.call.signal` v2** — 13 signal types, required device `proof`,
   per-`(realm, call, actor, device)` monotonic `seq`. Seq rollback
   aborts the call.
 - **Typed `EventsSubscribe` frames** — NDJSON parser switched to
@@ -61,9 +61,9 @@ Spec rounds 2+3 (2026-05-20) added a handful of end-user changes — see
 the protocol spec tree (`../arkret-spec/spec/v1/`) for the normative source.
 
 - **Ephemeral signal routing change** — typing / receipts / presence /
-  call-signal no longer travel through the durable `ck.self.events.command.submit`
-  path. They go through a dedicated `ck.schema.ephemeral_envelope.v1`
-  channel (broadcast) or `ck.schema.device_message.v1` (to-device key
+  call-signal no longer travel through the durable `ak.self.events.command.submit`
+  path. They go through a dedicated `ak.schema.ephemeral_envelope.v1`
+  channel (broadcast) or `ak.schema.device_message.v1` (to-device key
   verification). This is transparent to end users but is a
   wire-breaking change for any third-party client built against the
   old inkson behaviour.
@@ -205,4 +205,4 @@ Unauthenticated users see only the login or registration entry screen. After a r
 <!-- circle-rollout milestone pointer -->
 > **Active milestone tracking** (local-only, gitignored): see
 > `_inkson_todos.md` in the parent `arkret/` directory for the
-> circle-rollout (CKP-0007) work item list and per-stage checkpoints.
+> circle-rollout (AKP-0007) work item list and per-stage checkpoints.

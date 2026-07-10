@@ -1164,7 +1164,7 @@ mod tests {
             ),
             Some("ak:space:root".to_owned())
         );
-        // `ck.space.parent` state event.
+        // `ak.space.parent` state event.
         assert_eq!(
             extract_parent_space_id(
                 "ak:space:child",

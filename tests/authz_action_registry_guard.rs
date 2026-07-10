@@ -77,7 +77,7 @@ fn member_placeholder_actions_never_reach_protocol_wire() {
         "unregistered member capability placeholder(s) leaked outside src/capability.rs \
          (likely sent on the authz wire). These tokens are not in \
          capability-action-registry.json and must stay UI-label-only. Use a registered \
-         action such as `ck.realm.admin` for member-management authz probes. Violations:\n{}",
+         action such as `ak.realm.admin` for member-management authz probes. Violations:\n{}",
         violations.join("\n")
     );
 }

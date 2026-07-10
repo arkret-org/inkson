@@ -257,8 +257,8 @@ fn space_bootstrap_events_use_canonical_create_and_facet_kinds() {
         .collect::<Vec<_>>();
     // Spec realm-and-space.md §2.6: the creator-join cell is
     // populated atomically by the reducer when it accepts
-    // `ck.realm.create`. The bootstrap chain MUST NOT include an
-    // explicit `ck.member.state{join}` for the creator.
+    // `ak.realm.create`. The bootstrap chain MUST NOT include an
+    // explicit `ak.member.state{join}` for the creator.
     assert_eq!(
         kinds,
         vec![
@@ -311,7 +311,7 @@ fn space_bootstrap_events_use_canonical_create_and_facet_kinds() {
     );
     assert_eq!(
         create.effects[0].cell.to_string(),
-        "ak:cell:ck.component.realm.create.v1:ak:realm:0196419b-0000-7000-8000-000000000001"
+        "ak:cell:ak.component.realm.create.v1:ak:realm:0196419b-0000-7000-8000-000000000001"
     );
     assert_eq!(create.effects[0].op.op_type, arkret_sdk::LatticeOpType::Set);
     // seal_ref starts unset on the typed envelope. Realm genesis
@@ -511,7 +511,7 @@ fn bootstrap_envelopes_have_no_sdk_digest_drift() {
         "single_did",
         "sha256",
         "ak:trust_domain:server.example",
-        // an invitee exercises the `ck.member.state` `from: null → invite`
+        // an invitee exercises the `ak.member.state` `from: null → invite`
         // transition (LatticeOp.from carries an explicit null). Bootstrap
         // accepts only authoritative DID input; handle strings require
         // Directory-resolved invite/address evidence.
@@ -588,13 +588,13 @@ fn member_state_ban_event_uses_realm_scoped_member_cell() {
     assert_eq!(event.preconditions.len(), 1);
     assert_eq!(
         event.preconditions[0].cell.as_str(),
-        "ak:cell:ck.component.member.state.v1:did:web:bob.example"
+        "ak:cell:ak.component.member.state.v1:did:web:bob.example"
     );
     assert_eq!(event.preconditions[0].predicate.value, Some(json!("join")));
     assert_eq!(event.effects.len(), 1);
     assert_eq!(
         event.effects[0].cell.as_str(),
-        "ak:cell:ck.component.member.state.v1:did:web:bob.example"
+        "ak:cell:ak.component.member.state.v1:did:web:bob.example"
     );
     assert_eq!(event.effects[0].op.from, Some(json!("join")));
     assert_eq!(event.effects[0].op.to, Some(json!("ban")));
@@ -703,7 +703,7 @@ fn realm_bootstrap_payloads_match_spec_schema() {
 }
 
 /// R3 — `build_device_message_envelope` MUST emit the canonical
-/// `ck.schema.device_message.v1` send shape:
+/// `ak.schema.device_message.v1` send shape:
 /// `{messages: {<actor>: {<device_id>: {kind, expires_at, content}}}}`.
 /// This matches the SDK `DeviceMessageTarget` and `device-lifecycle.md`
 /// §7, which both make `kind` and `expires_at` required. If the wire
@@ -744,7 +744,7 @@ fn device_message_envelope_matches_schema_v1() {
     );
 }
 
-/// R3 — empty content is still a valid envelope. `ck.key.verification.done`
+/// R3 — empty content is still a valid envelope. `ak.key.verification.done`
 /// for example carries only a transaction id; the test ensures we don't
 /// require a populated content map.
 #[test]

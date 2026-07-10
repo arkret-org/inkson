@@ -21,7 +21,7 @@
 //! `ExternalE2EEKeyProvider`, publishes mic/cam, and forwards each real
 //! `RoomEvent.ParticipantConnected` identity back over the bridge. A spawned
 //! task cross-checks every reported identity against the durable
-//! `ck.call.state.participants[]` roster (MEDIA-2) before surfacing it, and
+//! `ak.call.state.participants[]` roster (MEDIA-2) before surfacing it, and
 //! only flips the FSM to [`TransportState::Connected`] when the driver reports
 //! a real `room.connect` success. A rejected connect emits `failed`, so the
 //! transport stays out of `Connected` (fail-closed) — it never fabricates a
@@ -100,7 +100,7 @@ pub struct NativeRtcTransport {
     local_identity: String,
     /// Per-sender remote frame-key deriver (retains the live MLS exporter) plus
     /// the `participant_identity → device_id` map from the verified
-    /// `ck.call.state.participants[]` roster. Moved into the driver event loop
+    /// `ak.call.state.participants[]` roster. Moved into the driver event loop
     /// so each remote sender's recomputed key is injected into the webview
     /// LiveKit provider under the remote identity.
     remote_keys: Option<Rc<PerSenderFrameKeys>>,
@@ -108,7 +108,7 @@ pub struct NativeRtcTransport {
     local: LocalMediaState,
     state: Rc<RefCell<TransportState>>,
     remotes: Rc<RefCell<Vec<RemoteParticipant>>>,
-    /// Expected `ck.call.state.participants[]` SFU-local identities, seeded by
+    /// Expected `ak.call.state.participants[]` SFU-local identities, seeded by
     /// the controller before `connect_sfu` and read inside the event loop for
     /// the MEDIA-2 cross-check.
     expected_participants: Rc<RefCell<BTreeSet<String>>>,

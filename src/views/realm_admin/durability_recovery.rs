@@ -2,7 +2,7 @@
 //! recovery key (encryption-and-audit.md §2.10.8 storage & recovery read path).
 //!
 //! When every member device is lost / everyone has left, an RRK holder takes the
-//! offline recovery key out, opens the durable RRK-targeted `ck.realm_key.share`
+//! offline recovery key out, opens the durable RRK-targeted `ak.realm_key.share`
 //! Events from the Realm event log, and recovers each epoch's `history_secret`
 //! (→ `K_content[N]` → decrypt history per §2.10.1).
 //!
@@ -13,7 +13,7 @@
 //!   §8 threshold recovery policy; once reconstructed, the recovery key text is the same canonical
 //!   24-word form and lands the same way.
 //!
-//! Input: the durable `ck.realm_key.share` Events addressed to the RRK (recovered
+//! Input: the durable `ak.realm_key.share` Events addressed to the RRK (recovered
 //! from the Realm event log). This editor accepts them as a pasted JSON array so
 //! an operator can drive recovery from an exported log; wiring an automatic pull
 //! from a soland recovery-read endpoint is a follow-up (aligns with the soland
@@ -22,7 +22,6 @@
 use dioxus::prelude::*;
 use serde_json::Value;
 
-use crate::local_state::LocalStateStore;
 
 /// Parse the pasted JSON: either a top-level array of share Events, or an object
 /// with a `shares` / `events` array. Each element may be the Event or its

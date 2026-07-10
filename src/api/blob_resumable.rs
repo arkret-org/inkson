@@ -1,7 +1,7 @@
 //! Resumable (tus 1.0.0) blob upload client.
 //!
 //! Spec: crypto-media/media-and-blob.md §2.1. Discovery is describe-first:
-//! the server advertises `ck.feature.blob.resumable_upload.tus.v1` in
+//! the server advertises `ak.feature.blob.resumable_upload.tus.v1` in
 //! `supported_features` plus a `kind="tus"` entry in `supported_bindings`;
 //! only then does the client speak tus against that binding's `base_url`.
 //! No blind endpoint probing.
@@ -25,7 +25,7 @@ impl CokretApi {
     /// Describe-gated tus endpoint discovery. Returns the binding
     /// `base_url` only when the server advertises both the protocol
     /// feature id and a `kind="tus"` binding that covers
-    /// `ck.self.blob.upload.create`.
+    /// `ak.self.blob.upload.create`.
     pub async fn resumable_upload_base_url(&self) -> Option<Url> {
         let describe = self.describe_cached().await.ok()?;
         arkret_sdk::http_client::blob_resumable_upload_base_url(describe)

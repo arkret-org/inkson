@@ -1041,7 +1041,7 @@ fn message_revise_builder_uses_content_payload_schema() {
 // the registered spec schema, plus negative coverage for missing delegation,
 // missing proof, and the status / revocation coupling. These are the
 // client-side counterparts of the SDK statement verifier tests; the helper
-// produces real `ck.realm.organization` events that cotest can reuse.
+// produces real `ak.realm.organization` events that cotest can reuse.
 mod realm_organization_builder_tests {
     use arkret_sdk::models::{
         RealmOrganizationControlScope, RealmOrganizationIssuerRole, RealmOrganizationRelationship,

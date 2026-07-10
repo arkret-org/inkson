@@ -114,7 +114,7 @@ fn add_r3_error_keys_zh(dict: &mut TranslationDict) {
         "Recovery 挑战证明验证失败。请重新采集证明后再试。",
     );
 
-    // R3.3 (CKP-0011) — shareable object links (English dict). Error copy in
+    // R3.3 (AKP-0011) — shareable object links (English dict). Error copy in
     // this dict follows the existing Chinese-first convention for `error.*`;
     // the dedicated zh dict carries the Chinese UI strings.
     dict.set("object_link.share", "Share link");

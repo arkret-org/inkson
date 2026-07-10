@@ -11,7 +11,7 @@
 //!
 //! - `CrossSigningPublishContent` / `SignedCrossSigningKey` / `CrossSigningBinding`: spec §5.1 wire
 //!   envelope.
-//! - `DeviceTrustBinding`: spec §5.2 `ck.device.authorize.cross_signing_binding` field.
+//! - `DeviceTrustBinding`: spec §5.2 `ak.device.authorize.cross_signing_binding` field.
 //! - `CrossSigningResetContent`: spec §14.1 reset envelope.
 //! - `DeviceManager::record_cross_signing_publish` / `record_cross_signing_reset` /
 //!   `evaluate_trust_chain`: local state machine.
@@ -51,14 +51,14 @@ pub enum CrossSigningSetupStep {
     /// canonical_json(...).
     SignSubordinateBindings,
     /// Write the SSK / USK private keys into an encrypted
-    /// `ck.schema.key_backup.v1` envelope (`backup_class="secret_storage"`).
+    /// `ak.schema.key_backup.v1` envelope (`backup_class="secret_storage"`).
     /// spec §11 + §7.1 domain separation.
     PublishSecretStorageBackup,
-    /// Publish `ck.cross_signing.publish` to the principal control Realm.
+    /// Publish `ak.cross_signing.publish` to the principal control Realm.
     EmitCrossSigningPublish,
     /// Use the SSK to issue a `cross_signing_binding` over the current
     /// device's verify_key (spec §5.2), and attach it to the latest
-    /// `ck.device.authorize` event.
+    /// `ak.device.authorize` event.
     SignCurrentDeviceBinding,
     /// Trigger trust-chain re-evaluation for every known device of this
     /// principal; devices ending up in `NeedsReverification` are flagged in
@@ -72,14 +72,14 @@ impl CrossSigningSetupStep {
     ///
     /// F-CXSIGN-KIND-1 (2026-05-19): the spec `event-kind-registry.json`
     /// declares cross-signing events without a `.v1` suffix
-    /// (`ck.cross_signing.publish`, `ck.cross_signing.reset`); the
+    /// (`ak.cross_signing.publish`, `ak.cross_signing.reset`); the
     /// suffix is reserved for `schema-registry.json` entries. Inkson
     /// historically wrote the suffixed forms everywhere — this method,
     /// the OperationBuilder kind constant, the conformance test
     /// assertions, the workflows.rs dependency note, the verify_device
     /// test, and the e2e specs were all aligned in one pass.
     ///
-    /// `PublishSecretStorageBackup` keeps `ck.schema.key_backup.v1`
+    /// `PublishSecretStorageBackup` keeps `ak.schema.key_backup.v1`
     /// because key-backup is uploaded via PUT /_arkret/self/keys/backups/*
     /// rather than emitted as a wire event — the value here is the
     /// schema_id of the request body envelope, intentionally
@@ -123,7 +123,7 @@ impl CrossSigningSetupStep {
 }
 
 /// Initial setup and cross-signing reset share the same plan skeleton; reset
-/// carries an extra prelude step (writing `ck.cross_signing.reset`).
+/// carries an extra prelude step (writing `ak.cross_signing.reset`).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum CrossSigningSetupMode {
@@ -163,7 +163,7 @@ impl CrossSigningSetupPlan {
         }
     }
 
-    /// Build a reset plan; carries an extra `ck.cross_signing.reset`
+    /// Build a reset plan; carries an extra `ak.cross_signing.reset`
     /// prelude event but does not regenerate the PSK (PSK comes from the DID
     /// control chain and is out of scope for a cross-signing reset).
     pub fn build_reset(principal_id: &str, device_id: &str, previous_generation: u64) -> Self {
@@ -253,7 +253,7 @@ impl CrossSigningTrustState {
 /// Executor for [`CrossSigningSetupPlan`]. Generates the three keypairs
 /// locally, computes the PSK-signed bindings for SSK / USK, and assembles
 /// the [`CrossSigningPublishContent`] body the caller must submit as a
-/// `ck.cross_signing.publish` operation.
+/// `ak.cross_signing.publish` operation.
 ///
 /// What this executor **does** (per spec §5.1):
 ///   * Generates Ed25519 keypairs for PSK, SSK, USK via the platform RNG.
@@ -270,7 +270,7 @@ impl CrossSigningTrustState {
 ///   * Persist the generated private keys to disk. The caller decides whether to push them through
 ///     `secure_key_store::SecureKeyStore` (preferred) or hand them to the recovery vault for
 ///     backup. Both paths are downstream consumers of [`CrossSigningSetupOutput`].
-///   * Emit `ck.schema.key_backup.v1`, `ck.cross_signing.publish`, or `ck.device.authorize` to the
+///   * Emit `ak.schema.key_backup.v1`, `ak.cross_signing.publish`, or `ak.device.authorize` to the
 ///     server. Those are API-bound side effects; the executor returns the canonical event bodies
 ///     and the caller (a view handler / orchestrator) drives the API.
 ///   * Recompute device trust states. That requires reading the device manager state and is a
@@ -295,7 +295,7 @@ pub struct CrossSigningSetupOutput {
     pub self_signing_key: SigningKey,
     pub user_signing_key: SigningKey,
     /// The fully validated publish content the caller submits as
-    /// `ck.cross_signing.publish`.
+    /// `ak.cross_signing.publish`.
     pub publish_content: CrossSigningPublishContent,
 }
 
@@ -379,7 +379,7 @@ impl CrossSigningSetupOutput {
     }
 
     /// Construct the SDK Event inkson submits to write the
-    /// `ck.cross_signing.publish` event. The caller supplies the
+    /// `ak.cross_signing.publish` event. The caller supplies the
     /// `realm_id` of the principal's control Realm and the `actor` DID
     /// (typically the same as the principal). The envelope is unsigned;
     /// callers attach a `proof` via the standard SDK event signing pipeline.
@@ -595,7 +595,7 @@ mod tests {
     use super::*;
 
     /// Round 4 — every executor test thread needs a TypedTrustDomainId
-    /// for the Round 4 `ck.cross_signing.publish` shape.
+    /// for the Round 4 `ak.cross_signing.publish` shape.
     fn test_trust_domain() -> TypedTrustDomainId {
         TypedTrustDomainId::new("ak:trust_domain:example.net").unwrap()
     }

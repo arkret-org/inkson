@@ -1,9 +1,9 @@
-//! Real RTC media wiring (CKP-0010, `media-service-binding.md`).
+//! Real RTC media wiring (AKP-0010, `media-service-binding.md`).
 //!
 //! This module is the single source of truth for joining a call's media
 //! plane. The flow is:
 //!
-//! 1. **CALL-1** — `media_token_exchange` POSTs `ck.self.call.media.exchange.issue_token` to
+//! 1. **CALL-1** — `media_token_exchange` POSTs `ak.self.call.media.exchange.issue_token` to
 //!    soland's `/_arkret/self/rtc/token`, then anchors + verifies the response via
 //!    [`arkret_sdk::verify_call_media_token_outcome`] (issuer anchoring, ≤600s TTL, six-tuple
 //!    binding).
@@ -19,7 +19,7 @@
 //! verified [`JoinedMediaSession`] this module returns: connect URL,
 //! backend token, ICE servers, and the SFrame key bytes.
 
-/// Stable label registered on the `ck.profile.media_service_binding.v1`
+/// Stable label registered on the `ak.profile.media_service_binding.v1`
 /// profile for the SFrame frame key derivation (`media-service-binding.md
 /// §8.1`). Re-exported from the SDK so the renderer pins exactly one value.
 pub use arkret_sdk::FRAME_KEY_LABEL as SFRAME_FRAME_KEY_LABEL;
@@ -38,7 +38,7 @@ use serde_json::Value;
 use crate::api::CokretApi;
 
 /// Spec-mandated TTL ceiling for media tokens
-/// (`ck.self.call.media.exchange.issue_token`). Soland defaults to 300s; the
+/// (`ak.self.call.media.exchange.issue_token`). Soland defaults to 300s; the
 /// ceiling is 600s.
 pub const MEDIA_TOKEN_TTL_MAX_SECS: u64 = arkret_sdk::MEDIA_TOKEN_TTL_MAX_SECS;
 
@@ -54,17 +54,17 @@ pub enum RtcClientError {
     FocusUnavailableForClient,
     /// Server-reported focus disagrees with the call-state commit.
     FocusMismatch,
-    /// `ck.realm.media_service.foci[].type` not one of the five
+    /// `ak.realm.media_service.foci[].type` not one of the five
     /// canonical enums (`livekit | mediasoup | janus | arkret-native
     /// | moq-relay`).
     UnknownFocusType,
     /// Token issuer kid does not resolve to the current
-    /// `ck.realm.media_service.service_id`.
+    /// `ak.realm.media_service.service_id`.
     TokenIssuerUnauthorised,
     /// `participant_binding` failed signature / TTL / tuple validation.
     ParticipantBindingInvalid,
     /// SFU reported a `ParticipantConnected` whose identity is NOT in
-    /// `ck.call.state.participants[]`. Receiver MUST fail closed.
+    /// `ak.call.state.participants[]`. Receiver MUST fail closed.
     ParticipantIdentityUnrecognised,
     /// Frame key source was not the MLS Exporter. Any backend-supplied
     /// key (e.g. LiveKit-side key vault) is rejected.
@@ -74,7 +74,7 @@ pub enum RtcClientError {
     RecordingArtifactPipelineBypassed,
     /// Transcription artifact was produced outside the Arkret blob pipeline.
     TranscriptionArtifactPipelineBypassed,
-    /// `ck.realm.media_service` is not covered by the current epoch's MLS
+    /// `ak.realm.media_service` is not covered by the current epoch's MLS
     /// governance binding, so issuer anchoring must not proceed.
     MediaServiceBindingUncovered,
     /// The Realm policy did not authorize this media service to see
@@ -140,7 +140,7 @@ impl RtcClientError {
     }
 
     /// Parses a soland error `code` string into a typed [`RtcClientError`].
-    /// Returns `None` for codes outside the CKP-0010 media binding set —
+    /// Returns `None` for codes outside the AKP-0010 media binding set —
     /// callers should fall back to the generic error path.
     pub fn from_wire(code: &str) -> Option<Self> {
         Some(match code {
@@ -244,10 +244,10 @@ pub struct MediaJoinRequest {
     pub epoch_id: u64,
     pub desired_media: DesiredMedia,
     /// Media-service DIDs anchored by the realm's current
-    /// `ck.realm.media_service.service_id`. Token + ICE issuers MUST
+    /// `ak.realm.media_service.service_id`. Token + ICE issuers MUST
     /// resolve to one of these; an empty set fails closed.
     pub media_service_dids: Vec<String>,
-    /// Local evidence that the selected `ck.realm.media_service` event is
+    /// Local evidence that the selected `ak.realm.media_service` event is
     /// covered by the current MLS governance binding. Token/ICE issuer anchors
     /// are not trusted until this verifies.
     pub governance_evidence: Option<MediaGovernanceEvidence>,
@@ -546,10 +546,10 @@ pub struct JoinedMediaSession {
     /// Opaque backend join token (LiveKit JWT, etc.).
     pub backend_token: String,
     /// SFU-local participant identity, cross-checked against
-    /// `ck.call.state.participants[]` on `ParticipantConnected`.
+    /// `ak.call.state.participants[]` on `ParticipantConnected`.
     pub participant_identity: String,
     /// Token issuer's signed tuple for the local participant. The call
-    /// controller writes this into `ck.call.state.participants[]` before
+    /// controller writes this into `ak.call.state.participants[]` before
     /// connecting the SFU so remote streams have a durable roster to check.
     pub participant_binding: CallMediaParticipantBinding,
     /// Verified ICE configuration (STUN/TURN + force_turn + ttl).
@@ -624,7 +624,7 @@ impl PerSenderFrameKeys {
 
     /// Derive the SFrame frame key for one *remote* sender, identified by its
     /// `(participant_identity, device_id)` from the verified
-    /// `ck.call.state.participants[]` roster.
+    /// `ak.call.state.participants[]` roster.
     ///
     /// Fail-closed (`Err`) when the ids are malformed or the exporter rejects
     /// the context; the caller skips installing that one remote's key (its
@@ -738,7 +738,7 @@ pub async fn join_call_media(
 }
 
 /// MEDIA-2 — cross-check an SFU-reported `ParticipantConnected` identity
-/// against the `ck.call.state.participants[]` projection. A mismatch is
+/// against the `ak.call.state.participants[]` projection. A mismatch is
 /// fail-closed; the transport MUST drop the connection.
 pub fn cross_check_participant_identity(
     reported_identity: &str,

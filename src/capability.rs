@@ -52,9 +52,9 @@ impl ActionGroup {
                 "ak.strand.reorder",
                 // Per arkret-spec dc01ad7 the four
                 // `strand.track.{enable,disable,update,set_primary}`
-                // verbs were unified into a single `ck.strand.tracks.update`
+                // verbs were unified into a single `ak.strand.tracks.update`
                 // capability covering all track mutations via a
-                // `ck.patch.v1` JSON Patch against `Strand.tracks`.
+                // `ak.patch.v1` JSON Patch against `Strand.tracks`.
                 "ak.strand.tracks.update",
             ],
             Self::Conversation => &[
@@ -78,7 +78,7 @@ impl ActionGroup {
                 "ak.morph.update",
                 "ak.morph.archive",
                 "ak.morph.restore",
-                // R14: `ck.morph.tombstone` is not in
+                // R14: `ak.morph.tombstone` is not in
                 // capability-action-registry.json; inkson-local UI grouping
                 // placeholder only.
                 "ak.morph.tombstone",
@@ -92,8 +92,8 @@ impl ActionGroup {
                 "ak.schema.update",
                 // R14: `ck.member.{invite,remove,role_change}` are not in
                 // capability-action-registry.json. Member lifecycle is driven
-                // by the `ck.circle.member.*` / `ck.invite.*` registry actions
-                // and the `ck.member.state` FSM; these three remain
+                // by the `ak.circle.member.*` / `ck.invite.*` registry actions
+                // and the `ak.member.state` FSM; these three remain
                 // inkson-local UI grouping placeholders only.
                 "ak.member.invite",
                 "ak.member.remove",
@@ -475,7 +475,7 @@ impl CapabilityEngine {
     ///
     /// **Security note:** this is a UI hydrate hook only. It deliberately
     /// does **not** verify any proof/signature — the server is the sole
-    /// authority for grant validity (R5). When the `ck.capability.grant`
+    /// authority for grant validity (R5). When the `ak.capability.grant`
     /// projection path is wired up, grants arrive already
     /// server-validated; inkson simply mirrors them to pre-gate buttons.
     /// Do not treat a grant present here as proof of authorization.
@@ -561,7 +561,7 @@ impl CapabilityEngine {
     /// engine carries no grants for `subject` at all the gate stays open
     /// (inkson still trusts the server's authoritative check). Once the
     /// engine has been seeded with grants for the actor — typically by
-    /// hydrating `ck.capability.grant` events on login — the gate
+    /// hydrating `ak.capability.grant` events on login — the gate
     /// disables the control whenever `check` returns anything other than
     /// `Allow`, so users get immediate feedback before they hit the
     /// server's 403.

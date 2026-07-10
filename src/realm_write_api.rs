@@ -25,17 +25,17 @@ use crate::realm_helpers::{
     canonical_space_join_rule_v1, patch_touches_create_locked_encryption_profile,
 };
 
-/// Build + submit the spec-canonical `ck.realm.create` event bundle
-/// (and its facet follow-ups) via `ck.self.events.command.submit`
+/// Build + submit the spec-canonical `ak.realm.create` event bundle
+/// (and its facet follow-ups) via `ak.self.events.command.submit`
 /// (`POST /_arkret/self/events`).
 ///
 /// Per spec realm-and-space.md §2.5 the create event itself is the
 /// genesis-member declaration for `created_by`. The
 /// server reducer bootstraps the member set atomically with the
 /// metadata, so the same actor's per-facet follow-ups
-/// (`ck.realm.join_rule` / `ck.realm.history_visibility` /
-/// `ck.realm.discovery` / `ck.realm.plaintext_visible_services` /
-/// invitee `ck.member.state` invites) all pass the regular
+/// (`ak.realm.join_rule` / `ak.realm.history_visibility` /
+/// `ak.realm.discovery` / `ak.realm.plaintext_visible_services` /
+/// invitee `ak.member.state` invites) all pass the regular
 /// `realm_has_member` authz check naturally.
 ///
 /// All five create-locked fields per spec §2.3 (`encryption_profile`,
@@ -96,7 +96,7 @@ pub async fn create_realm(
         content_scheme,
     )?;
     // Genesis Realm bootstrap has no prior snapshot head. The
-    // `ck.realm.create` precondition asserts `head_eq null`; follow-up
+    // `ak.realm.create` precondition asserts `head_eq null`; follow-up
     // facet events in the same batch are admitted after soland
     // materialises the creator membership from the create event.
     // Sign every SDK Event before it reaches the wire; the batch
@@ -134,7 +134,7 @@ pub async fn create_realm(
 }
 
 /// Create a Space (product-structure container) inside an existing
-/// Realm. Emits `ck.space.create` per spec realm-and-space.md §3.
+/// Realm. Emits `ak.space.create` per spec realm-and-space.md §3.
 /// Unlike `create_realm`, this does NOT bootstrap MLS / membership
 /// / federation — those live on the Realm and Space inherits them.
 #[allow(clippy::too_many_arguments)]
@@ -212,8 +212,8 @@ pub async fn change_space_lifecycle(
 }
 
 /// Member-state FSM transition (kick / ban / unban / leave) on the
-/// Realm's `ck.component.member.state.v1` cell. Submits a `ck.member.state`
-/// event via `ck.self.events.command.submit`; deployment-local member REST shims are
+/// Realm's `ak.component.member.state.v1` cell. Submits a `ak.member.state`
+/// event via `ak.self.events.command.submit`; deployment-local member REST shims are
 /// intentionally not used.
 pub async fn transition_member_state(
     submitter: &EventSubmitter,
@@ -227,7 +227,7 @@ pub async fn transition_member_state(
     let mut event = build_member_state_transition_event(
         realm_id, actor_id, member, from_state, to_state, reason,
     )?;
-    // `ck.member.state` is CBA-exempt in the shared stamper only because the
+    // `ak.member.state` is CBA-exempt in the shared stamper only because the
     // Realm-bootstrap batch submits it pre-signed without a seal frontier.
     // Post-bootstrap transitions (ban / kick / leave / unban) carry effects,
     // and the server rejects effects-carrying Control Moves without
@@ -242,7 +242,7 @@ pub async fn transition_member_state(
 
 // ── Space / Realm Management (all writes go through ak.self.events.command.submit) ─
 
-/// Update a Realm's metadata via `ck.realm.update` event (spec-canonical).
+/// Update a Realm's metadata via `ak.realm.update` event (spec-canonical).
 /// `patch` carries the merge-shape body the server reducer applies to the
 /// realm row.
 pub async fn update_realm_metadata(
@@ -262,8 +262,8 @@ pub async fn update_realm_metadata(
 }
 
 /// Update the Realm plaintext-visible service facet through the
-/// dedicated `ck.realm.plaintext_visible_services` event. This is not a
-/// `ck.realm.update` metadata patch: servers enforce plaintext access from
+/// dedicated `ak.realm.plaintext_visible_services` event. This is not a
+/// `ak.realm.update` metadata patch: servers enforce plaintext access from
 /// the typed facet projection.
 pub async fn update_realm_plaintext_visible_services(
     submitter: &EventSubmitter,
@@ -282,7 +282,7 @@ pub async fn update_realm_plaintext_visible_services(
     submitter.submit_sdk_event(&event).await
 }
 
-/// Update a structural Space object's metadata via `ck.space.update`.
+/// Update a structural Space object's metadata via `ak.space.update`.
 /// The event is submitted to the Space's home Realm (`realm_id`), while
 /// `space_id` identifies the Space object being patched.
 pub async fn update_space_metadata(
@@ -298,7 +298,7 @@ pub async fn update_space_metadata(
 }
 
 /// Set Realm join_rule + history_visibility policy, optionally also
-/// emitting `ck.realm.policy_components` for Join Policy gates.
+/// emitting `ak.realm.policy_components` for Join Policy gates.
 pub async fn set_realm_policy_events(
     submitter: &EventSubmitter,
     realm_id: &str,
@@ -371,13 +371,13 @@ pub async fn set_realm_policy_events(
 }
 
 /// Set (or clear) the Realm Recovery Key (RRK) `durability_policy` via a
-/// `ck.realm.policy_components` event (realm-and-space.md §2.3.1 write path —
+/// `ak.realm.policy_components` event (realm-and-space.md §2.3.1 write path —
 /// no new event kind; durability is a policy component).
 ///
 /// `policy` is the SDK-typed [`arkret_sdk::models::DurabilityPolicy`]
 /// so the client never re-defines the spec shape. `policy_revision` MUST be a
 /// monotonic increment of the Realm's current policy revision (the reducer
-/// rejects a stale revision). After this lands, a subsequent `ck.mls.commit`
+/// rejects a stale revision). After this lands, a subsequent `ak.mls.commit`
 /// covering the membership frontier activates the new epoch's sealing
 /// obligation and triggers re-disclosure (§2.10.8) — the caller SHOULD prompt
 /// an MLS commit / self-update afterward.
@@ -415,7 +415,7 @@ pub async fn set_realm_durability_policy(
     Ok(())
 }
 
-/// Reject an invite via `ck.invite.cancel` event (spec-canonical).
+/// Reject an invite via `ak.invite.cancel` event (spec-canonical).
 pub async fn reject_realm_invite(
     submitter: &EventSubmitter,
     realm_id: &str,
@@ -428,7 +428,7 @@ pub async fn reject_realm_invite(
     submitter.submit_sdk_event(&event).await
 }
 
-/// Leave a Realm via `ck.member.state` event (`join → leave` FSM).
+/// Leave a Realm via `ak.member.state` event (`join → leave` FSM).
 pub async fn leave_realm(
     submitter: &EventSubmitter,
     realm_id: &str,
@@ -446,7 +446,7 @@ pub async fn leave_realm(
     .await
 }
 
-/// Archive a Realm via the reversible `ck.realm.archive` lifecycle facet.
+/// Archive a Realm via the reversible `ak.realm.archive` lifecycle facet.
 pub async fn archive_realm(
     submitter: &EventSubmitter,
     realm_id: &str,
@@ -456,7 +456,7 @@ pub async fn archive_realm(
     submitter.submit_sdk_event(&event).await
 }
 
-/// Permanently retire a Realm via `ck.realm.destroy`.
+/// Permanently retire a Realm via `ak.realm.destroy`.
 pub async fn destroy_realm(
     submitter: &EventSubmitter,
     realm_id: &str,
@@ -467,7 +467,7 @@ pub async fn destroy_realm(
     submitter.submit_sdk_event(&event).await
 }
 
-/// Ban a member via `ck.member.state` event (`join → ban` FSM).
+/// Ban a member via `ak.member.state` event (`join → ban` FSM).
 pub async fn ban_member(
     submitter: &EventSubmitter,
     realm_id: &str,
@@ -490,18 +490,18 @@ pub async fn ban_member(
 //
 // Setting / revoking Realm admins, sealing moderation decisions, and
 // running the appeal loop are now self-authored protocol Moves submitted
-// via `ck.self.events.command.submit` (`POST /_arkret/self/events`) —
+// via `ak.self.events.command.submit` (`POST /_arkret/self/events`) —
 // mirroring `transition_member_state` / `ban_member`. P1 (capability)
 // and P2 (moderation) projected the matching reducers in soland and the
 // sodmin-side admin write paths were retired; these are the inkson-side
 // submitters that drive them.
 
 /// Grant Realm admin authority to `subject` by emitting a
-/// `ck.capability.grant{actions:[ck.realm.admin], subject}` event.
+/// `ak.capability.grant{actions:[ak.realm.admin], subject}` event.
 /// `grant_id` is minted client-side so the caller can correlate the
 /// optimistic row with the eventual projection. P1's `apply_capability`
 /// folds this into the soland authz index, so subsequent
-/// `ck.realm.admin` checks for `subject` pass.
+/// `ak.realm.admin` checks for `subject` pass.
 pub async fn grant_realm_admin(
     submitter: &EventSubmitter,
     realm_id: &str,
@@ -522,7 +522,7 @@ pub async fn grant_realm_admin(
     submitter.submit_sdk_event(&event).await
 }
 
-/// Revoke a Realm-admin grant via `ck.capability.revoke`. `grant_id`
+/// Revoke a Realm-admin grant via `ak.capability.revoke`. `grant_id`
 /// MUST be the id of the grant established by [`grant_realm_admin`]
 /// (the soland reducer locates the cell by `grant_id`).
 pub async fn revoke_realm_admin(
@@ -537,7 +537,7 @@ pub async fn revoke_realm_admin(
     submitter.submit_sdk_event(&event).await
 }
 
-/// Seal a moderation disposition via `ck.moderation.decision`. The cell
+/// Seal a moderation disposition via `ak.moderation.decision`. The cell
 /// subject is the moderated `target_ref`; the sealed decision Event's own
 /// id is the reference later lift / appeal events resolve. `decision` is
 /// the closed-enum runtime verb (`hard_deny` / `soft_deny` / `quarantine`
@@ -556,7 +556,7 @@ pub async fn moderation_decide(
 }
 
 /// Lift a previously sealed moderation decision via
-/// `ck.moderation.decision.lift`. `target_ref` is the moderated target
+/// `ak.moderation.decision.lift`. `target_ref` is the moderated target
 /// (the cell subject shared with the original decision); `decision_ref`
 /// is the `ak:event:` id of the decision being lifted.
 pub async fn moderation_lift(
@@ -578,7 +578,7 @@ pub async fn moderation_lift(
     submitter.submit_sdk_event(&event).await
 }
 
-/// Take an appeal under review (`ck.moderation.appeal.review`).
+/// Take an appeal under review (`ak.moderation.appeal.review`).
 pub async fn appeal_review(
     submitter: &EventSubmitter,
     realm_id: &str,
@@ -591,7 +591,7 @@ pub async fn appeal_review(
     submitter.submit_sdk_event(&event).await
 }
 
-/// Decide an appeal (`ck.moderation.appeal.decision`). For an
+/// Decide an appeal (`ak.moderation.appeal.decision`). For an
 /// `overturn` verdict the caller MUST also submit a matching
 /// [`moderation_lift`] in the same ordered batch; for `modify`,
 /// pass the replacement decision id as `modify_decision_ref` and submit
@@ -620,7 +620,7 @@ pub async fn appeal_decide(
 
 /// `governance/content-moderation.md` §5.5.1.1 — atomically decide an
 /// appeal `verdict=overturn`. The reducer rejects an overturn whose
-/// matching `ck.moderation.decision.lift` (target = `decision_ref`) is not
+/// matching `ak.moderation.decision.lift` (target = `decision_ref`) is not
 /// in the SAME ordered submit batch (`appeal_overturn_missing_lift`), so
 /// this helper builds BOTH events, signs them, and submits them via
 /// [`EventSubmitter::submit_signed_sdk_events_batch`] as one transaction.
@@ -658,7 +658,7 @@ pub async fn appeal_overturn_atomic(
 
 /// `governance/content-moderation.md` §5.5.1.1 — atomically decide an
 /// appeal `verdict=modify`. The reducer rejects a modify whose
-/// replacement `ck.moderation.decision` (target = original target) is not
+/// replacement `ak.moderation.decision` (target = original target) is not
 /// in the same batch, and cross-checks that the appeal-decision's
 /// `modify_decision_ref` equals that new decision's event id. This helper
 /// mints the replacement decision id, stamps it as `modify_decision_ref`,
@@ -728,7 +728,7 @@ async fn sign_and_submit_moderation_batch(
         .await
 }
 
-/// Close an appeal (`ck.moderation.appeal.close`). Reviewer close or
+/// Close an appeal (`ak.moderation.appeal.close`). Reviewer close or
 /// appellant withdrawal (the reducer authorizes withdrawal via
 /// `closer == appellant`).
 pub async fn appeal_close(

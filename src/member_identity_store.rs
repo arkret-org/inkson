@@ -1,4 +1,4 @@
-//! R3.2 — Realm-scoped `ck.member.identity.update` event store.
+//! R3.2 — Realm-scoped `ak.member.identity.update` event store.
 //!
 //! Spec source: arkret-spec @ b56cab1 (2026-05-28)
 //! `models/member-identity.md` + `artifacts/schemas/member-identity.schema.json`.
@@ -21,7 +21,7 @@
 //! candidate that fails either check is dropped from the effective plaintext
 //! set, mirroring the Welcome `claim_envelope` directory-resolution +
 //! fail-closed pattern in `mls/runtime/message.rs`. Handle now comes from the
-//! `ck.schema.handle_claim.v1` set via §3.2.1 primary handle selection —
+//! `ak.schema.handle_claim.v1` set via §3.2.1 primary handle selection —
 //! `MemberIdentity` no longer carries `primary_handle` / `handles[]`.
 
 use std::collections::BTreeMap;
@@ -41,7 +41,7 @@ pub struct ActorKey {
     pub actor_id: String,
 }
 
-/// Stored `ck.member.identity.update` event record. Carries the parsed
+/// Stored `ak.member.identity.update` event record. Carries the parsed
 /// SDK payload + the raw envelope (so we can re-hash it for replacement
 /// edge verification). `decryption_pending` is set when the carrier was
 /// an `encrypted_content` envelope we couldn't decrypt yet (missing MLS epoch).
@@ -52,7 +52,7 @@ pub struct StoredIdentityEvent {
     pub decryption_pending: bool,
 }
 
-/// Per-(realm, actor) collection of `ck.member.identity.update` event
+/// Per-(realm, actor) collection of `ak.member.identity.update` event
 /// records. Keyed by event id; insertion is idempotent.
 #[derive(Clone, Debug, Default)]
 pub struct MemberIdentityStore {
@@ -64,7 +64,7 @@ impl MemberIdentityStore {
         Self::default()
     }
 
-    /// MID-2 — record a `ck.member.identity.update` event for a given
+    /// MID-2 — record a `ak.member.identity.update` event for a given
     /// actor. Idempotent on `event_id`.
     pub fn insert(&mut self, key: ActorKey, event: StoredIdentityEvent) {
         self.inner
@@ -214,7 +214,7 @@ impl MemberIdentityStore {
     }
 
     /// Returns `true` when the actor has at least one
-    /// `ck.member.identity.update` event but every effective event is
+    /// `ak.member.identity.update` event but every effective event is
     /// still `decryption_pending`. Drives the "muted placeholder" UI
     /// state per MID-6.
     pub fn is_decryption_pending(&self, realm_id: &str, actor_id: &str) -> bool {
@@ -332,7 +332,7 @@ mod tests {
     const TEST_REALM: &str = "ak:realm:01904100-0000-7000-8000-000000000001";
     const TEST_DEVICE: &str = "ak:device:01904100-0000-7000-8000-00000000d001";
 
-    /// Build a `ck.member.identity.update` payload whose `member_identity`
+    /// Build a `ak.member.identity.update` payload whose `member_identity`
     /// proof is a real Ed25519 signature over the canonical payload bytes,
     /// signed by `signer`. `verification_method` selects `actor#device`.
     fn signed_payload(actor_id: &str, device_id: &str, name: &str, signer: &SigningKey) -> Value {

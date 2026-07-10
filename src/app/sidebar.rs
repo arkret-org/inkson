@@ -244,8 +244,8 @@ pub(super) fn sidebar_authz_allowed(value: &Value) -> bool {
         })
 }
 
-/// Lazily probe whether `actor` may add members (`ck.invite.create`) or edit
-/// settings (`ck.realm.update`) on `realm_id`, caching the verdict in
+/// Lazily probe whether `actor` may add members (`ak.invite.create`) or edit
+/// settings (`ak.realm.update`) on `realm_id`, caching the verdict in
 /// `perms_cache`.
 ///
 /// Triggered when a sidebar row's kebab menu opens, so at most two authz

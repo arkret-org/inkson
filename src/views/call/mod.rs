@@ -4,7 +4,7 @@
 //! MLS-exporter SFrame keying (`crate::media::rtc::join_call_media`), the
 //! platform WebRTC transport (`crate::rtc_transport`), and the call FSM
 //! (idle → ringing → connecting → active → ended). It handles both the 1:1
-//! P2P path (offer/answer/candidate relayed over `ck.call.signal`) and SFU
+//! P2P path (offer/answer/candidate relayed over `ak.call.signal`) and SFU
 //! group calls (room join + participant cross-check), plus moderator
 //! controls and opt-in recording.
 //!

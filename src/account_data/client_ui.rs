@@ -4,7 +4,7 @@
 //! Spec: `discovery/client-preferences.md` §2 — the `client.ui`
 //! account-data key carries cross-device UI preferences. Inkson persists
 //! theme + sidebar state locally and best-effort syncs them across
-//! devices via `ck.account_data.set`.
+//! devices via `ak.account_data.set`.
 
 use std::collections::BTreeMap;
 
@@ -15,7 +15,7 @@ use serde_json::Value;
 // Spec: `discovery/client-preferences.md` §2 — the `client.ui`
 // account-data key carries cross-device UI preferences. Inkson persists
 // theme + sidebar state locally and best-effort syncs them across
-// devices via `ck.account_data.set`.
+// devices via `ak.account_data.set`.
 // ─────────────────────────────────────────────────────────────────────────
 
 /// Build the canonical `content` body for the `client.ui` account-data
@@ -28,7 +28,7 @@ use serde_json::Value;
 /// `avatar_blob_ref` (A4b) carries the actor-private cross-device cache
 /// of the most-recently uploaded avatar reference. The blob_ref itself
 /// (`ak:blob:sha256:<hex>`) is public — the avatar is also published via
-/// `ck.self.account.command.update_profile` so other actors see it through the
+/// `ak.self.account.command.update_profile` so other actors see it through the
 /// directory. We mirror it here so a second device that signs in picks
 /// up the same blob without needing to re-fetch the account viewer.
 pub fn build_client_ui_body(

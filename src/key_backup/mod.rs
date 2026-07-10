@@ -20,7 +20,7 @@ pub const DEFAULT_SSK_GENERATION: u64 = 1;
 pub use arkret_sdk::BackupClass as KeyBackupClass;
 
 /// Envelope fields the backup `auth_data.signature` MUST cover (key-management.md
-/// §7.4.1 / §7.6 + the `ck.schema.key_backup.v1` `signed_fields.allOf`). Optional
+/// §7.4.1 / §7.6 + the `ak.schema.key_backup.v1` `signed_fields.allOf`). Optional
 /// fields (`supersedes`, `supersedes_digest`, `frontier_ref`) are only listed
 /// when present on the envelope.
 pub const KEY_BACKUP_SIGNED_FIELDS: &[&str] = &[

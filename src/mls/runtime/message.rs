@@ -113,7 +113,7 @@ pub fn decrypt_application_payload(
             // at epoch N can derive `history_secret[N]` directly from the group.
             // Do so and open it — this keeps post-join content readable once a
             // Realm uses the exporter-aead content scheme, without depending on a
-            // prior retain or a `ck.realm_key.share`. Past-epoch / pre-join
+            // prior retain or a `ak.realm_key.share`. Past-epoch / pre-join
             // content (epoch != current) still needs a retained or granted
             // secret, handled by the group-free standalone path below.
             if payload.scheme == arkret_sdk::EncryptedPayloadScheme::MlsExporterAeadV1
@@ -209,7 +209,7 @@ fn try_history_decrypt_standalone(
 
 /// Provider-side: derive + retain the **current** epoch `history_secret` for a
 /// Realm and persist it locally, so this device can later seal it into a
-/// `ck.realm_key.share` for a late joiner (`encryption-and-audit.md` history
+/// `ak.realm_key.share` for a late joiner (`encryption-and-audit.md` history
 /// sharing). MUST be called while the group is at the epoch whose key is being
 /// retained (OpenMLS only exports the current epoch). Returns
 /// `(epoch, history_secret)` on success.
@@ -279,7 +279,7 @@ fn realm_key_share_payload_value(envelope: &serde_json::Value) -> Option<&serde_
         .or_else(|| realm_key_share_payload_candidate(envelope))
 }
 
-/// Extract the Realm named by a `ck.realm_key.share` to-device/event envelope.
+/// Extract the Realm named by a `ak.realm_key.share` to-device/event envelope.
 /// The spec payload binds it under `key_scope.effective_scope.realm_id`; soland's
 /// to-device projection also repeats it at top-level for routing. If both are
 /// present they must agree, otherwise the envelope is ignored fail-closed.
@@ -309,7 +309,7 @@ pub fn realm_key_share_message_realm_id(envelope: &serde_json::Value) -> Option<
     }
 }
 
-/// Stable source Event identifier for a projected `ck.realm_key.share`, when
+/// Stable source Event identifier for a projected `ak.realm_key.share`, when
 /// present. Used only for local inbox dismissal after successful install.
 pub fn realm_key_share_message_operation_id(envelope: &serde_json::Value) -> Option<String> {
     envelope
@@ -347,7 +347,7 @@ pub fn realm_key_share_message_operation_id(envelope: &serde_json::Value) -> Opt
 }
 
 /// Filter a to-device inbox / device-messages batch down to the
-/// `ck.realm_key.share` envelopes addressed at this Realm. The discriminator is
+/// `ak.realm_key.share` envelopes addressed at this Realm. The discriminator is
 /// the envelope `kind`; the Realm binding is the share payload's
 /// `key_scope.effective_scope.realm_id` (set by
 /// [`crate::mls::admission::build_realm_key_share_event`]).
@@ -370,7 +370,7 @@ pub fn collect_realm_key_share_messages_for_realm(
         .collect()
 }
 
-/// Open one inbound `ck.realm_key.share` with this device's HPKE private key and
+/// Open one inbound `ak.realm_key.share` with this device's HPKE private key and
 /// install every recovered `(epoch, history_secret)` into local state, so the
 /// tier-3 decrypt path can read pre-join content. Returns the number of secrets
 /// installed (0 when the share is not for this device / does not open / carries
@@ -448,7 +448,7 @@ pub fn ingest_realm_key_share(
     installed
 }
 
-/// Extract the sender's principal DID from a `ck.realm_key.share` to-device
+/// Extract the sender's principal DID from a `ak.realm_key.share` to-device
 /// envelope so [`verify_realm_key_share_sender_signature`] can bind the signing
 /// key to the sender's device-directory record. To-device / event envelopes
 /// expose the sender under one of these top-level keys.
@@ -471,7 +471,7 @@ fn realm_key_share_sender_principal_id(envelope: &serde_json::Value) -> Option<S
 }
 
 /// SEC-02: derive the `(sender_principal_id, sender_device_id)` directory pair
-/// for a `ck.realm_key.share` to-device envelope. Callers prime the
+/// for a `ak.realm_key.share` to-device envelope. Callers prime the
 /// device-directory cache with this pair (a `keys/query`) before
 /// [`ingest_realm_key_share`] runs, so the synchronous
 /// [`verify_realm_key_share_sender_signature`] can fail-closed on a directory
@@ -497,7 +497,7 @@ pub fn realm_key_share_sender_device_pair(
     Some((principal, device_id))
 }
 
-/// Verify a `ck.realm_key.share` payload's `sender_device_signature`
+/// Verify a `ak.realm_key.share` payload's `sender_device_signature`
 /// (device-lifecycle.md §13), binding the verifying key to the sender's device
 /// directory record when available (SEC-02).
 ///
@@ -1024,7 +1024,7 @@ pub fn apply_welcome_messages_with_device_snapshot(
             continue;
         }
         // The admission's Welcome carries the same `governance_binding` as its
-        // `ck.mls.commit`, so the joining member records the genesis-locked
+        // `ak.mls.commit`, so the joining member records the genesis-locked
         // `policy_root` here. Without it, a later self-update commit by this
         // member would recompute `policy_root` from its own moving Seal
         // `state_root` and be rejected `governance_binding_mismatch`.
@@ -1257,7 +1257,7 @@ pub fn encrypt_values_with_device_snapshot(
     // lazy decrypt-path retain (see `decrypt_application_payload`) never fires
     // for content this device wrote. Without an explicit retain here the secret
     // is lost the moment the epoch advances (forward secrecy), so a later
-    // `ck.realm_key.request` finds nothing in `history_secrets_for` and
+    // `ak.realm_key.request` finds nothing in `history_secrets_for` and
     // `share_history_to_requester` returns `Ok(false)` — leaving every late
     // joiner's pre-join cards permanently locked. `group.epoch()` is read after
     // any forced commit above, so it matches the epoch the content rides.
@@ -1291,7 +1291,7 @@ pub fn encrypt_values_with_device_snapshot(
     );
     if commit_envelope.is_some() {
         // Persist-on-accept: forced epoch advances must only be saved after the
-        // server accepts the matching `ck.mls.commit`. The messages encrypted
+        // server accepts the matching `ak.mls.commit`. The messages encrypted
         // above already ride the NEW epoch, so the §5.6 observed-message
         // counter restarts at their count.
         return Ok((
@@ -1313,7 +1313,7 @@ pub fn encrypt_values_with_device_snapshot(
 /// `aad` into the payload digest, and return the structured
 /// [`arkret_sdk::EncryptedPayload`] (not yet wrapped as a wire envelope).
 ///
-/// The caller assembles the spec-canonical `ck.schema.encrypted_envelope.v1`
+/// The caller assembles the spec-canonical `ak.schema.encrypted_envelope.v1`
 /// wire shape via [`arkret_sdk::EncryptedEnvelopeV1::from_payload`] once it
 /// knows the accepted group-state reference for this epoch (genesis, latest
 /// winning commit, or a forced commit returned by this helper). `aad` MUST be
@@ -1420,7 +1420,7 @@ pub fn encrypt_message_with_device_snapshot(
     );
     if commit_envelope.is_some() {
         // Persist-on-accept: forced epoch advances must only be saved after the
-        // server accepts the matching `ck.mls.commit`. The single message
+        // server accepts the matching `ak.mls.commit`. The single message
         // encrypted above rides the NEW epoch (§5.6 counter restarts at 1).
         return Ok((
             schedule_hash,
@@ -1455,7 +1455,7 @@ pub fn assert_minimal_metadata_aad(
 }
 
 /// SEC-08 — infer the [`arkret_sdk::AadVisibility`] discriminator from a
-/// canonical `ck.schema.encrypted_envelope.v1` AAD value.
+/// canonical `ak.schema.encrypted_envelope.v1` AAD value.
 ///
 /// The schema discriminator is structural (`encryption-and-audit.md` §2.9): a
 /// `hidden` envelope omits both `event_id` and `event_ref_digest`; an

@@ -18,7 +18,7 @@
 | PCR | Principal Control Realm，与 principal DID 1:1 绑定的身份控制流 Realm，`encryption_profile` 固定 `mls_rfc9420`（协议层不存在"未加密的 PCR"）。 |
 | Recovery Key | 24 词 BIP-39 助记词，编码 recovery private key 的种子（key-management §3.3）。它同时是 DID 恢复凭证和内容备份的解密凭证（§7.5.2 / §7.7），**不存在独立的 vault 口令**。 |
 | 三个备份域 | `did_recovery`（DID 控制链恢复材料）/ `secret_storage`（SSK / USK / account secret）/ `mls_history`（MLS 群组历史密钥）。域间密钥严格隔离（§7.1）。 |
-| 登录 / 授权 / 验证 | 三件不同的事（device-lifecycle §1.2）：登录因子只产出短期 session grant；设备授权 = `ck.device.authorize` 落入 PCR，改变设备集合；设备验证 = SAS/QR 人工确认 key，本身不授予任何权力。 |
+| 登录 / 授权 / 验证 | 三件不同的事（device-lifecycle §1.2）：登录因子只产出短期 session grant；设备授权 = `ak.device.authorize` 落入 PCR，改变设备集合；设备验证 = SAS/QR 人工确认 key，本身不授予任何权力。 |
 | First-backup gate | inception key 退场的硬前置：发布 `did_recovery` 域 `series_seq=0` 备份 envelope，或离线 sealed receipt（key-management §5.0.1 step 7）。 |
 | SPOF | `single_point_of_failure=true`：personal_node 用户拒绝 first-backup gate 后的账号标记，每次启动提醒。 |
 | 推荐加密地板 | `encryption_profile=mls_rfc9420` 且 `content_encryption_floor=e2ee_required` 且 `metadata_encryption_floor=e2ee_required`。floor 是单向 ratchet，只能收紧不能降级。 |
@@ -31,7 +31,7 @@
 
 | 变量 | 取值 | 判定来源 |
 | --- | --- | --- |
-| **V1 设备信任** `device_trust` | `first`（首台，inception bootstrap）/ `authorized`（已在设备集合）/ `new_with_peer`（新设备，有可用旧设备）/ `new_no_peer`（新设备，无可用旧设备） | durable device list（PCR 中的 `ck.device.authorize` / `ck.device.list_update`） |
+| **V1 设备信任** `device_trust` | `first`（首台，inception bootstrap）/ `authorized`（已在设备集合）/ `new_with_peer`（新设备，有可用旧设备）/ `new_no_peer`（新设备，无可用旧设备） | durable device list（PCR 中的 `ak.device.authorize` / `ak.device.list_update`） |
 | **V2 恢复配置** `recovery_state` | `configured`（genesis recovery policy accepted + `did_recovery` series_seq=0 存在，或离线 sealed receipt）/ `none`（SPOF） | `GET /_arkret/root/identity/recovery-policy`（`active_policy=null` ⇒ `none`）+ `GET /_arkret/self/keys/backups?backup_class=did_recovery` |
 | **V3 E2EE 材料/备份** `e2ee_backup` | `in_sync` / `needs_unlock`（服务器有备份、本地无材料）/ `needs_backup`（本地有材料、服务器无或落后）/ `none`（无任何材料，仅异常存量账号） | 本地 secret storage vs 服务端 backup series |
 | **V4 加密地板** `floor_state` | `recommended`（PCR 与全部私有 Realm 达推荐地板）/ `low`（PCR floor 缺失或存在显式低地板的 Realm）/ `unknown`（projection 不足，不弹） | realm projections（PCR 优先，PCR 在视野内时以 PCR 为准） |
@@ -73,7 +73,7 @@ flowchart TD
 设计要点：
 
 - 优先级 1–3 是**功能性阻塞**（不处理就丢数据或用不了 E2EE），4–5 是**建议性**。
-- 第 2 步优先旧设备直传（device-lifecycle §10.7 `ck.secret.request/send`，服务端零知识），用户体验上"旧设备点一下确认"优于重新输入 24 词；旧设备不可用才回落到助记词。
+- 第 2 步优先旧设备直传（device-lifecycle §10.7 `ak.secret.request/send`，服务端零知识），用户体验上"旧设备点一下确认"优于重新输入 24 词；旧设备不可用才回落到助记词。
 - 第 4 步弹窗（即 inkson 的 `EncryptionFloorPrompt`）内嵌第 5 步的依赖：启用推荐加密前必须先有 Recovery Key，否则刚产生的 MLS 材料没有备份归宿。
 - `needs_mls_unlock` 与 `needs_mls_backup` 互斥，unlock 优先（先恢复再谈备份）。
 
@@ -89,7 +89,7 @@ flowchart TD
 | S4 | 换设备・无旧设备・有 24 词 | `new_no_peer` + `configured` | recovery session → 输入 24 词 → 解锁备份取 SSK → 客户端自签授权 → 解锁其余备份 → Welcome replay → receipt | 只可能弹 floor（4），不会弹助记词设置 |
 | S5 | 换设备・无旧设备・无 24 词 | `new_no_peer` + `none` | **协议层 fail closed**。只能：受限登录（无 E2EE）/ 等旧设备转 S3 / cross-signing reset + 身份重建（历史不可恢复） | 持续显示"无恢复路径"警告 |
 | S6 | 创建新加密 Realm | `authorized` | 默认 `mls_rfc9420` + 双 floor `e2ee_required`；创建前检查 V2 | `recovery=none` → **soft-gate**：先引导设置 24 词并备份，可显式跳过（标 SPOF） |
-| S7 | 旧设备撤销 / 泄露响应 | `authorized` | `ck.device.revoke` → MLS Remove 推进 epoch → 受影响备份开新 series → 确认新备份可恢复后删旧 series | 备份轮换期间弹（3） |
+| S7 | 旧设备撤销 / 泄露响应 | `authorized` | `ak.device.revoke` → MLS Remove 推进 epoch → 受影响备份开新 series → 确认新备份可恢复后删旧 series | 备份轮换期间弹（3） |
 
 ---
 
@@ -132,7 +132,7 @@ sequenceDiagram
     N->>S: 登录因子 (密码/passkey/OIDC)
     S-->>N: fresh-device 受限 session grant<br/>(只能做 ak.key.verification.* bootstrap,<br/>不能读 E2EE 历史/解备份/请求 ck.secret.*)
     N->>N: 本地生成 device key
-    N->>S: POST /_arkret/self/device_messages<br/>ck.key.verification.request<br/>purpose=same_principal_device_authorization<br/>+ pairing_code + new_device_pubkey + challenge_signature
+    N->>S: POST /_arkret/self/device_messages<br/>ak.key.verification.request<br/>purpose=same_principal_device_authorization<br/>+ pairing_code + new_device_pubkey + challenge_signature
     S-->>O: account subscribe delta.to_device<br/>(push 仅作唤醒)
     O->>O: UI 展示新设备 metadata + pairing code<br/>用户与新设备屏幕比对
     Note over N,O: SAS / QR transcript<br/>(start→accept→key→mac→done)
@@ -179,7 +179,7 @@ sequenceDiagram
     N->>S: 创建 recovery session<br/>(snapshot policy_id/version/ssk_generation,<br/>256-bit challenge, TTL 900s)
     N->>N: 用户输入 24 词助记词<br/>→ 派生 recovery private key<br/>(指纹本地校验, 防输错)
     N->>S: 解析 active-series record → LIST 备份链<br/>重建 series 链, 校验 supersedes_digest
-    N->>S: POST .../backups/{id}/unlock<br/>(ck.schema.key_backup_unlock_proof.v1 + fresh device proof)
+    N->>S: POST .../backups/{id}/unlock<br/>(ak.schema.key_backup_unlock_proof.v1 + fresh device proof)
     S-->>N: 尾部 envelope 完整密文
     N->>N: HPKE-open → 取出 SSK<br/>(解锁次序: 授权前只解承载 SSK 的恢复域备份)
     N->>N: 用 SSK 签 cross_signing_binding<br/>(ssk_generation == session snapshot)

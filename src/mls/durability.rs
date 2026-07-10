@@ -108,7 +108,7 @@ pub async fn verify_recovery_recipients(
 }
 
 /// HPKE-seal the retained `(epoch, history_secret)` rows to a resolved RRK and
-/// return the durable `ck.realm_key.share` payload. Pure delegation to the SDK
+/// return the durable `ak.realm_key.share` payload. Pure delegation to the SDK
 /// authority [`seal_history_secrets_to_recovery_recipient`].
 ///
 /// `policy_digest` binds the effective history-sharing policy at seal time;
@@ -174,7 +174,7 @@ pub fn derive_rrk_keypair_from_recovery_key(
     Ok((*secret.as_bytes(), *public.as_bytes()))
 }
 
-/// Open one RRK-targeted `ck.realm_key.share` ciphertext with the recovered RRK
+/// Open one RRK-targeted `ak.realm_key.share` ciphertext with the recovered RRK
 /// private key, returning the `[(epoch, history_secret)]` rows. Pure delegation
 /// to the SDK open primitive (the seal/open pair is symmetric and domain-bound).
 pub fn open_rrk_share(
@@ -188,7 +188,7 @@ pub fn open_rrk_share(
     .map_err(|err| format!("open RRK ak.realm_key.share: {err:?}"))
 }
 
-/// Filter a batch of `ck.realm_key.share` events down to those an RRK holder can
+/// Filter a batch of `ak.realm_key.share` events down to those an RRK holder can
 /// open: the ones whose payload `ciphertext` decrypts with `rrk_private_key`.
 /// Returns every recovered `(epoch, history_secret)` row across all openable
 /// shares, deduplicated by epoch (last wins). The caller installs these to
@@ -220,7 +220,7 @@ pub fn recover_history_from_rrk_shares(
 }
 
 /// Per-recipient outcome of an eager seal pass (encryption-and-audit.md
-/// §2.10.8). `Sealed` carries the ready-to-submit `ck.realm_key.share` Event;
+/// §2.10.8). `Sealed` carries the ready-to-submit `ak.realm_key.share` Event;
 /// `Unverified` records a fail-closed recipient (the seal MUST NOT proceed for
 /// it and the RYW guard MUST treat that recipient as not-yet-sealed).
 pub enum RecipientSealOutcome {
@@ -239,7 +239,7 @@ pub enum RecipientSealOutcome {
 ///
 /// Pure orchestration over the SDK authority: resolve each recipient against its
 /// pre-fetched raw DID Document (`did_documents[recipient_id]`), seal the
-/// `(epoch, secret)` rows, and wrap + sign a `ck.realm_key.share` Event. A
+/// `(epoch, secret)` rows, and wrap + sign a `ak.realm_key.share` Event. A
 /// recipient whose DID Document is missing or whose RRK is unverified yields an
 /// [`RecipientSealOutcome::Unverified`] — the caller's RYW guard then refuses to
 /// treat that epoch as durably sealed.

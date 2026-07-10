@@ -104,7 +104,7 @@ pub async fn account_me(http: &arkret_sdk::http_client::Client) -> anyhow::Resul
 
 /// A4b — update the authenticated principal's public profile
 /// (display_name / bio / avatar_blob_ref). Mirrors the
-/// `ck.self.account.command.update_profile` wire shape: each field is
+/// `ak.self.account.command.update_profile` wire shape: each field is
 /// `Option<String>`; `None` leaves the field untouched server-side,
 /// `Some("")` explicitly clears it. The server normalises empty
 /// strings to `None` on write.
@@ -237,7 +237,7 @@ pub async fn contacts(http: &arkret_sdk::http_client::Client) -> anyhow::Result<
 /// Read the actor's `invite_receive_policy` ("who can invite me", U4).
 ///
 /// Spec `invite-addressing.md` §5 / OpenAPI
-/// `ck.self.invite_receive_policy.resource.get`: served from the self plane at
+/// `ak.self.invite_receive_policy.resource.get`: served from the self plane at
 /// `GET /_arkret/self/invite-receive-policy` and returns the bare
 /// `arkret_sdk::InviteReceivePolicy` (soland echoes the stored override or
 /// its recommended default). When the deployment does not yet wire this
@@ -253,7 +253,7 @@ pub async fn get_invite_receive_policy(
 
 /// Persist the actor's `invite_receive_policy` (U4).
 ///
-/// Spec `ck.self.invite_receive_policy.resource.replace`:
+/// Spec `ak.self.invite_receive_policy.resource.replace`:
 /// `PUT /_arkret/self/invite-receive-policy` with the bare
 /// `arkret_sdk::InviteReceivePolicy` as the body. The handler enforces
 /// `subject_id == session actor` and requires the `schema` constant, so the
@@ -285,7 +285,7 @@ pub async fn direct_conversation_resolve(
 
 /// List the holder-private consent cells visible to the authenticated
 /// actor (cells where the actor is either holder or peer). Spec
-/// `identity/consent-model.md` §3 / OpenAPI `ck.self.consent.query.list`.
+/// `identity/consent-model.md` §3 / OpenAPI `ak.self.consent.query.list`.
 pub async fn consent_cells(
     http: &arkret_sdk::http_client::Client,
 ) -> anyhow::Result<arkret_sdk::ConsentCellList> {
@@ -391,7 +391,7 @@ pub async fn tombstone_contact(
 
 /// Grant scoped consent to `peer` from the holder cell. `expires_at` is an
 /// optional RFC 3339 time window upper bound. Spec OpenAPI
-/// `ck.self.consent.command.grant`.
+/// `ak.self.consent.command.grant`.
 pub async fn grant_consent(
     http: &arkret_sdk::http_client::Client,
     holder: &str,
@@ -413,7 +413,7 @@ pub async fn grant_consent(
 }
 
 /// Revoke scoped consent from `peer`. Spec OpenAPI
-/// `ck.self.consent.command.revoke`.
+/// `ak.self.consent.command.revoke`.
 pub async fn revoke_consent(
     http: &arkret_sdk::http_client::Client,
     holder: &str,
@@ -435,7 +435,7 @@ pub async fn revoke_consent(
 
 /// Open an outbound consent request: ask `holder` to grant the
 /// authenticated actor (`peer`) the given scope. Produces a holder-side
-/// pending cell. Spec OpenAPI `ck.self.consent.command.request`.
+/// pending cell. Spec OpenAPI `ak.self.consent.command.request`.
 pub async fn request_consent(
     http: &arkret_sdk::http_client::Client,
     holder: &str,
@@ -454,7 +454,7 @@ pub async fn request_consent(
 
 /// Submit a `did:webvh` DID operation (inception / rotation) to soland's
 /// embedded identity provider. Spec op
-/// `ck.root.identity.command.submit_did_operation`
+/// `ak.root.identity.command.submit_did_operation`
 /// (`POST /_arkret/root/identity/submit-did-operation`). The body is the
 /// SDK-built `submit_body` from `arkret_sdk::webvh::prepare_inception`.
 pub async fn submit_did_operation(
@@ -476,8 +476,8 @@ async fn account_data_actor_scope(
     Ok((account.did, realm_id.to_string()))
 }
 
-/// Submit a per-account `ck.account_data.set` event so settings UIs can
-/// push preferences (for example `ck.read_receipt.preferences`) to soland
+/// Submit a per-account `ak.account_data.set` event so settings UIs can
+/// push preferences (for example `ak.read_receipt.preferences`) to soland
 /// for cross-device sync. If the current server cannot resolve the
 /// principal control Realm yet, 404 / 501 / 405 still degrade to
 /// `Unsupported` and local state remains authoritative.
@@ -569,7 +569,7 @@ pub async fn set_private_account_data_with_cas(
     }
 }
 
-/// Tombstone an account_data entry by submitting `ck.account_data.set` with
+/// Tombstone an account_data entry by submitting `ak.account_data.set` with
 /// `tombstone: true`. Same graceful-degradation contract as
 /// [`set_account_data`].
 pub async fn delete_account_data(submitter: &EventSubmitter, type_key: &str) -> anyhow::Result<()> {

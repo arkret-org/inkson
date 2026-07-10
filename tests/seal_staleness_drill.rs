@@ -262,7 +262,7 @@ fn roundtrip_through_live_principal_endpoint() {
     // The live path needs:
     //   1. A test CokretApi pointed at `url`.
     //   2. An installed real Ed25519 signer (inkson::event_signer::install_active_signer).
-    //   3. A `ck.realm.create` round-trip whose returned envelope must pass the same assertions
+    //   3. A `ak.realm.create` round-trip whose returned envelope must pass the same assertions
     //      exercised above.
     //
     // The shape below is reachable but assumes the test soland

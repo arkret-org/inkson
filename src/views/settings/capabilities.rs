@@ -16,7 +16,6 @@ use arkret_sdk::models::{Capability, CapabilitySubject};
 use dioxus::prelude::*;
 
 use crate::components::{EmptyState, EmptyStateKind};
-use crate::local_state::LocalStateStore;
 use crate::ui::button::{Button, ButtonSize, ButtonVariant};
 use crate::ui::dialog::Dialog;
 use crate::views::helpers::{display_name_for_did, short_protocol_id, with_authed_sdk_client};
@@ -24,7 +23,7 @@ use crate::views::helpers::{display_name_for_did, short_protocol_id, with_authed
 /// One row in the user's capability list. Backed by either the user
 /// being the subject (capability held) or the issuer (capability
 /// delegated to someone else). Mapped from the authoritative SDK
-/// [`Capability`] grant rows that `ck.self.authz.grants.query.effective`
+/// [`Capability`] grant rows that `ak.self.authz.grants.query.effective`
 /// returns (soland serialises the SDK `GrantList` verbatim).
 #[derive(Clone, Debug, PartialEq)]
 struct CapabilityRow {

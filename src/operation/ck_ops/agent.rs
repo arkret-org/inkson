@@ -1,7 +1,7 @@
 //! Agent protocol-family builders.
 //!
 //! Spec: `extensions/agent-integration.md` + canonical event-kind
-//! registry rows `ck.agent.endpoint` / `ck.agent.interop_session.
+//! registry rows `ak.agent.endpoint` / `ak.agent.interop_session.
 //! {start,status,result}`. Agents are server-side delegates a member
 //! grants narrow capabilities to (e.g. a read-strand Researcher Agent);
 //! the wire shape lets soland and the SDK reducer track which agent
@@ -60,7 +60,7 @@ fn parse_session_status(status: &str) -> anyhow::Result<arkret_sdk::AgentInterop
         .map_err(|_| anyhow::anyhow!("unknown agent interop session status {status:?}"))
 }
 
-/// `ck.agent.endpoint` — register an agent id + invocation endpoints.
+/// `ak.agent.endpoint` — register an agent id + invocation endpoints.
 pub fn agent_endpoint(
     realm_id: &str,
     actor: &str,
@@ -86,7 +86,7 @@ pub fn agent_endpoint(
     .body(body))
 }
 
-/// `ck.agent.interop_session.start` — kick off an agent
+/// `ak.agent.interop_session.start` — kick off an agent
 /// invocation;  body carries the parameter payload + the
 /// capability proof bundle.
 pub fn agent_interop_session_start(
@@ -146,7 +146,7 @@ pub fn interop_capability_constraint(
     })
 }
 
-/// `ck.agent.interop_session.status` — agent progress signal.
+/// `ak.agent.interop_session.status` — agent progress signal.
 pub fn agent_interop_session_status(
     realm_id: &str,
     actor: &str,
@@ -169,7 +169,7 @@ pub fn agent_interop_session_status(
     .body(body))
 }
 
-/// `ck.agent.interop_session.result` — terminal event carrying the
+/// `ak.agent.interop_session.result` — terminal event carrying the
 /// agent's result objects and any artifact objects emitted by the session.
 pub fn agent_interop_session_result(
     realm_id: &str,
@@ -204,7 +204,7 @@ pub fn agent_interop_session_result(
     .body(body))
 }
 
-/// Build the publish-to-source `ck.strand.create` operation for an
+/// Build the publish-to-source `ak.strand.create` operation for an
 /// agent handoff result (agent-protocol-interop.md §5.4 / §6 step 8-9).
 ///
 /// The new Strand is authored by the controller (`actor` =

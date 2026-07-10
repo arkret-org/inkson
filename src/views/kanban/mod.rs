@@ -56,7 +56,6 @@ static TOAST_EDITOR_CSS: Asset = asset!(
 #[component]
 fn CardMarkdownEditor(
     value: String,
-    base_url: String,
     token: String,
     realm_id: String,
     on_change: EventHandler<String>,
@@ -66,6 +65,8 @@ fn CardMarkdownEditor(
     /// `"description"` slot used by existing data-testids.
     slot: Option<String>,
 ) -> Element {
+    // A4 — base_url from session context instead of a prop.
+    let base_url = crate::app::SessionContext::base_url_string();
     let slot = slot.unwrap_or_else(|| "description".to_owned());
     let host_id = format!("card-detail-{slot}-toast-editor");
     let fallback_id = format!("card-detail-{slot}-input");
@@ -781,8 +782,8 @@ pub fn KanbanPanel(
     // (design/kanban-baseline.md M1). Cleared on dragleave / drop / dragend.
     let mut drop_target_column = use_signal(|| Option::<String>::None);
     // Inline list-rename state (design/kanban-baseline.md M1): the id of the
-    // column being renamed and its draft title. Double-clicking the title
-    // opens the editor; Enter commits a `ck.space.update`, Esc cancels.
+    // column being renamed and its draft`ak.space.updatelicking the title
+    // opens the editor; Enter commits a `ak.space.update`, Esc cancels.
     let mut editing_column_id = use_signal(|| Option::<String>::None);
     let mut editing_column_title = use_signal(String::new);
     let write_records = use_signal(Vec::<BoardWriteRecord>::new);
@@ -903,8 +904,8 @@ pub fn KanbanPanel(
         });
     }
 
-    // Synthesis track projection (option B, event-sourced). The track is built
-    // by decrypting and replaying every `ck.strand.update` op for this strand
+    // Synthesis track projection (option`ak.strand.update). The track is built
+    // by decrypting and replaying every `ak.strand.update` op for this strand
     // from the LOCAL `raw_operations` log. Those ops are kept current by the
     // per-realm events engine (`realm_events_engine` → `ingest_kanban_events`),
     // which folds the full realm history — including each update's
@@ -1821,8 +1822,8 @@ pub fn KanbanPanel(
                                     "data-testid": "add-column-button",
                                     onclick: {
                                         // Lists are Space containers in v1. The local column is
-                                        // visible immediately but remains in sending/failed state
-                                        // until `ck.self.events.command.submit` returns.
+                                        // visibl`ak.self.eventsut remains in sending/failed state
+                                        // until `ak.self.events.command.submit` returns.
                                         let base = base_url.clone();
                                         let realm = selected_realm_id.clone();
                                         let actor = account_did.clone();
@@ -1873,8 +1874,8 @@ pub fn KanbanPanel(
                                                 board_status.set(reason);
                                                 return;
                                             }
-                                            // The new list appears immediately: `submit_kanban_operation_event`
-                                            // appends the `ck.space.create` op, which the `columns` memo folds.
+                                            // The new list`ak.space.createtely: `submit_kanban_operation_event`
+                                            // appends the `ak.space.create` op, which the `columns` memo folds.
                                             submit_kanban_operation_event(
                                                 base.clone(),
                                                 token,
@@ -1982,8 +1983,8 @@ pub fn KanbanPanel(
                                                     board_status.set(reason);
                                                     return;
                                                 }
-                                                // Select the new board now; its option + (empty) columns
-                                                // derive from the appended `ck.space.create` op via the
+                                                // Select the new board now;`ak.space.creatempty) columns
+                                                // derive from the appended `ak.space.create` op via the
                                                 // options-sync effect and the `columns` memo.
                                                 selected_board_space_id.set(board_space_id.clone());
                                                 adding_card_to.set(None);
@@ -2414,8 +2415,8 @@ pub fn KanbanPanel(
                                         return;
                                     };
                                     dragging_column.set(None);
-                                    // Compute the new column order off a read-only snapshot, then
-                                    // submit the per-column `ck.space.update` rank patches. Each
+                                    // Compute the new column`ak.space.updated-only snapshot, then
+                                    // submit the per-column `ak.space.update` rank patches. Each
                                     // appended op folds into the `columns` memo via the space-update
                                     // reducer, so the reorder renders without a direct signal write.
                                     let reordered_columns = {
@@ -2756,8 +2757,8 @@ pub fn KanbanPanel(
                                         );
                                         // Block archive until the card's create
                                         // event is server-acked. The SDK reducer
-                                        // enforces `state == active` for
-                                        // `ck.strand.archive`, so archiving a still-
+                                        // `ak.strand.archive active` for
+                                        // `ak.strand.archive`, so archiving a still-
                                         // draft card would just round-trip to a
                                         // rejection; we fail closed locally and tell
                                         // the user to wait for the draft to settle.
@@ -2767,7 +2768,7 @@ pub fn KanbanPanel(
                                         let title_text = if !card_settled {
                                             crate::i18n::tr("kanban.archive_draft_blocked")
                                         } else if gate.enabled {
-                                            "Archive this card (ck.strand.archive)".to_owned()
+                                            "Archive this card (ak.strand.archive)".to_owned()
                                         } else {
                                             format!("Archive gated: {}", gate.reason)
                                         };
@@ -2899,8 +2900,8 @@ pub fn KanbanPanel(
                                                     None,
                                                 )
                                                 .unwrap_or_else(|_| "U".to_owned());
-                                                // The new card appears immediately: `submit_kanban_move`
-                                                // appends the `ck.strand.create` op (write_state queued),
+                                                // The new card`ak.strand.createely: `submit_kanban_move`
+                                                // appends the `ak.strand.create` op (write_state queued),
                                                 // which the `columns` memo folds via `strand_views_from_ops`.
                                                 let value = json!({
                                                     "strand_id": strand_id,
@@ -2967,7 +2968,7 @@ pub fn KanbanPanel(
                                 "ak.space.archive",
                             );
                             let title_text = if gate.enabled {
-                                "Archive this list (ck.space.archive)".to_owned()
+                                "Archive this list (ak.space.archive)".to_owned()
                             } else {
                                 format!("Archive gated: {}", gate.reason)
                             };
@@ -2984,8 +2985,8 @@ pub fn KanbanPanel(
                                     onclick: {
                                         // Archiving a list hides all of its cards
                                         // from the board grid, so route the click
-                                        // through the confirmation dialog instead
-                                        // of submitting `ck.space.archive` directly.
+                                        // through the co`ak.space.archive instead
+                                        // of submitting `ak.space.archive` directly.
                                         let space_container_id = column.id.clone();
                                         let list_title = column.title.clone();
                                         let active_card_count = column
@@ -3015,10 +3016,10 @@ pub fn KanbanPanel(
                 }
             }
 
-            // Archived lists panel — container Space lifecycle `archived` state.
-            // Lists appear here after `ck.space.archive` is accepted and
-            // are removed from the main board-grid above. Each row carries
-            // a Restore button that submits `ck.space.restore` (SDK reducer
+            // Archived lists panel — c`ak.space.archivefecycle `archived` state.
+            // Lists appear here after `ak.space.archive` is accepted and
+            // are removed from the main boar`ak.space.restoreh row carries
+            // a Restore button that submits `ak.space.restore` (SDK reducer
             // enforces `state == archived` server-side / next sync).
             {
                 let archived: Vec<KanbanColumn> = columns()
@@ -3051,7 +3052,7 @@ pub fn KanbanPanel(
                                                 "ak.space.restore",
                                             );
                                             let title_text = if gate.enabled {
-                                                "Restore this list (ck.space.restore)".to_owned()
+                                                "Restore this list (ak.space.restore)".to_owned()
                                             } else {
                                                 format!("Restore gated: {}", gate.reason)
                                             };
@@ -3096,11 +3097,11 @@ pub fn KanbanPanel(
                 }
             }
 
-            // Archived cards drawer — Strand lifecycle `archived` state.
-            // Cards appear here after `ck.strand.archive` is accepted and
+            // Archived cards drawer — `ak.strand.archivearchived` state.
+            // Cards appear here after `ak.strand.archive` is accepted and
             // are removed from the column above. Each row carries the
-            // column title (where it came from) + a Restore button that
-            // submits `ck.strand.restore` (SDK reducer enforces
+            // column t`ak.strand.restoree from) + a Restore button that
+            // submits `ak.strand.restore` (SDK reducer enforces
             // `state == archived` per common-fields.md §5.1).
             {
                 #[derive(Clone)]
@@ -3157,7 +3158,7 @@ pub fn KanbanPanel(
                                                 "ak.strand.restore",
                                             );
                                             let title_text = if gate.enabled {
-                                                "Restore this card (ck.strand.restore)".to_owned()
+                                                "Restore this card (ak.strand.restore)".to_owned()
                                             } else {
                                                 format!("Restore gated: {}", gate.reason)
                                             };
@@ -3791,7 +3792,6 @@ pub fn KanbanPanel(
                                                             Label { html_for: "card-detail-summary-input", "Summary" }
                                                             CardMarkdownEditor {
                                                                 value: card_edit_description(),
-                                                                base_url: base_url.clone(),
                                                                 token: token(),
                                                                 realm_id: selected_realm_id.clone(),
                                                                 on_change: move |value| card_edit_description.set(value),
@@ -3930,7 +3930,6 @@ pub fn KanbanPanel(
                                                                     Label { html_for: "card-detail-description-input", "Description" }
                                                                     CardMarkdownEditor {
                                                                         value: card_edit_body(),
-                                                                        base_url: base_url.clone(),
                                                                         token: token(),
                                                                         realm_id: selected_realm_id.clone(),
                                                                         on_change: move |value| card_edit_body.set(value),
@@ -4304,7 +4303,6 @@ pub fn KanbanPanel(
                                                                                             Label { html_for: "card-detail-synthesis-input", "Synthesis" }
                                                                                             CardMarkdownEditor {
                                                                                                 value: card_edit_synthesis(),
-                                                                                                base_url: base_url.clone(),
                                                                                                 token: token(),
                                                                                                 realm_id: selected_realm_id.clone(),
                                                                                                 on_change: move |value| card_edit_synthesis.set(value),
@@ -4392,7 +4390,6 @@ pub fn KanbanPanel(
                                                                     Label { html_for: "card-detail-synthesis-input", "Synthesis" }
                                                                     CardMarkdownEditor {
                                                                         value: card_edit_synthesis(),
-                                                                        base_url: base_url.clone(),
                                                                         token: token(),
                                                                         realm_id: selected_realm_id.clone(),
                                                                         on_change: move |value| card_edit_synthesis.set(value),
@@ -5412,10 +5409,10 @@ pub fn KanbanPanel(
                                                                         let did = row.actor_id.clone();
                                                                         // R3.1 MID-6 — pull the resolved
                                                                         // MemberIdentity from the
-                                                                        // `ck.member.identity.update` event
+                                                                        // `ak.member.identity.update` event
                                                                         // store. `None` means either no
                                                                         // identity event has been observed
-                                                                        // yet, or every effective event is
+                                                                        // `ak.member.identitytive event is
                                                                         // still `decryption_pending` (MLS
                                                                         // epoch missing — MID-4 stub).
                                                                         // member_display_label falls back to

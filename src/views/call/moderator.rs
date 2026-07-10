@@ -7,13 +7,12 @@ use crate::ui::button::{Button, ButtonVariant};
 
 /// Moderator controls (kick / ban / mute-all / end-for-all). Rendered inside
 /// the active call panel. Per `webrtc-signaling.md` §3a / §6.1: kick / ban /
-/// end-for-all ride `ck.call.signal{signal_type=moderation}` with a
+/// end-for-all ride `ak.call.signal{signal_type=moderation}` with a
 /// `data.action`; moderator-forced mute rides `mute_state{by=moderator}` (it
-/// is NOT a moderation action). All frames require `ck.call.moderate`.
+/// is NOT a moderation action). All frames require `ak.call.moderate`.
 #[component]
 #[allow(clippy::too_many_arguments)]
 pub(super) fn ModeratorControls(
-    base_url: String,
     token: Signal<String>,
     realm_id: String,
     call_id: String,
@@ -22,6 +21,8 @@ pub(super) fn ModeratorControls(
     participants: Signal<Vec<CallParticipant>>,
     call_seq: Signal<u64>,
 ) -> Element {
+    // A4 — base_url from session context instead of a prop.
+    let base_url = crate::app::SessionContext::base_url_string();
     rsx! {
         div { class: "event", "data-testid": "call-moderator-controls",
             div { class: "event-head",

@@ -19,7 +19,7 @@ use dioxus::prelude::*;
 use crate::did_resolver::{CachedDidEntry, Freshness};
 
 // TRUST-CACHE: `NeedsVerificationBadge` and `RealmClassBadge` are
-// cache-allowed surfaces per CKP B-E §1 / identity-handles §6. They
+// cache-allowed surfaces per AKP B-E §1 / identity-handles §6. They
 // render the locally-cached binding state but MUST downgrade to the
 // "needs verification" tint on a cache miss or any §6.1.2 trigger.
 // Authority surfaces (wallet disclosure / accept invite / audit-trail
@@ -47,7 +47,7 @@ pub fn NeedsVerificationBadge(active: bool) -> Element {
 
 /// Realm classification used by [`RealmClassBadge`]. Sourced from the
 /// Realm's `security_class` field (`principal` | `collaboration`)
-/// surfaced by `ck.realm.create`.
+/// surfaced by `ak.realm.create`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum RealmClass {
     /// The user's home Realm — carries the federation identity, the

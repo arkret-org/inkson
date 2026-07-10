@@ -9,9 +9,9 @@
 //! without the user re-entering the 24-word Recovery Key.
 //!
 //! Two to-device kinds carry the strand:
-//!   * `ck.secret.request` — new device → existing device, advertising the HPKE public key to seal
+//!   * `ak.secret.request` — new device → existing device, advertising the HPKE public key to seal
 //!     to. Carries no secret material.
-//!   * `ck.secret.send` — existing device → new device, the secret HPKE-sealed (RFC 9180, via
+//!   * `ak.secret.send` — existing device → new device, the secret HPKE-sealed (RFC 9180, via
 //!     [`crate::hpke_backup`]) to that public key.
 //!
 //! The sealed plaintext (`{account_secret, secret_version, request_id,
@@ -37,7 +37,7 @@ use crate::secure_key_store::SecureKeyStore;
 pub const SECRET_SHARE_KIND_REQUEST: &str = "ak.secret.request";
 /// Wire `kind` for the sealed secret response.
 pub const SECRET_SHARE_KIND_SEND: &str = "ak.secret.send";
-/// HPKE scheme label on `ck.secret.send.content.scheme`. Matches the canonical
+/// HPKE scheme label on `ak.secret.send.content.scheme`. Matches the canonical
 /// device HPKE label in `device-lifecycle.md` §4. The crypto suite is the
 /// RFC 9180 base mode of [`crate::hpke_backup`] (DHKEM-X25519 / HKDF-SHA256 /
 /// ChaCha20Poly1305).
@@ -52,14 +52,14 @@ pub const SECRET_SHARE_SECRET_ID: &str = "inkson_mls_account_secret";
 const SECRET_SHARE_HPKE_INFO: &[u8] = b"ak.secret-share/v1";
 
 /// Per-strand state held by the requesting (new) device between sending
-/// `ck.secret.request` and opening the matching `ck.secret.send`. The private
+/// `ak.secret.request` and opening the matching `ak.secret.send`. The private
 /// key never leaves the device.
 pub struct SecretShareRequester {
     /// One-time random correlation id; bound into the sealed plaintext.
     pub request_id: String,
     /// X25519 HPKE private key the sibling device's response is sealed to.
     recipient_private_key: Vec<u8>,
-    /// base64url public half advertised in `ck.secret.request`.
+    /// base64url public half advertised in `ak.secret.request`.
     pub recipient_public_b64: String,
 }
 
@@ -74,7 +74,7 @@ impl std::fmt::Debug for SecretShareRequester {
     }
 }
 
-/// `ck.secret.request.content`, parsed by the responding (existing) device.
+/// `ak.secret.request.content`, parsed by the responding (existing) device.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ParsedSecretRequest {
     pub request_id: String,
@@ -105,7 +105,7 @@ pub fn new_secret_request() -> Result<SecretShareRequester> {
     })
 }
 
-/// Build `ck.secret.request.content` for the requesting device.
+/// Build `ak.secret.request.content` for the requesting device.
 pub fn build_request_content(
     req: &SecretShareRequester,
     requesting_device_id: &str,
@@ -121,7 +121,7 @@ pub fn build_request_content(
         .map_err(|err| anyhow!("serialize ak.secret.request content: {err}"))
 }
 
-/// Parse and validate an inbound `ck.secret.request.content`.
+/// Parse and validate an inbound `ak.secret.request.content`.
 pub fn parse_request_content(content: &Value) -> Result<ParsedSecretRequest> {
     let content: arkret_sdk::SecretShareRequestContent = serde_json::from_value(content.clone())
         .map_err(|err| anyhow!("decode ak.secret.request.content: {err}"))?;
@@ -140,7 +140,7 @@ pub fn parse_request_content(content: &Value) -> Result<ParsedSecretRequest> {
     })
 }
 
-/// Build `ck.secret.send.content` on the responding (existing) device: seal the
+/// Build `ak.secret.send.content` on the responding (existing) device: seal the
 /// account secret to the requester's HPKE public key.
 ///
 /// `account_did` is the shared principal DID of both devices (same-account
@@ -183,7 +183,7 @@ pub fn build_send_content(
     serde_json::to_value(content).map_err(|err| anyhow!("serialize ak.secret.send content: {err}"))
 }
 
-/// Open an inbound `ck.secret.send.content` on the requesting (new) device.
+/// Open an inbound `ak.secret.send.content` on the requesting (new) device.
 ///
 /// Rejects unsolicited sends (no matching pending `request_id`), wrong scheme,
 /// AAD/identity tampering (HPKE open fails), and inner/outer field mismatch.
@@ -276,7 +276,7 @@ pub fn land_opened_secret(
     .map_err(|err| anyhow!("replace account mls secret from D2D share: {err}"))
 }
 
-/// Send `ck.secret.request` from the requesting (new) device to a sibling
+/// Send `ak.secret.request` from the requesting (new) device to a sibling
 /// (existing) device. TTL 30m (well under the §7 24h cap).
 pub async fn send_request(
     api: &crate::api::CokretApi,
@@ -300,8 +300,8 @@ pub async fn send_request(
     Ok(())
 }
 
-/// Respond to an inbound `ck.secret.request` from the responding (existing)
-/// device: seal the account secret and ship `ck.secret.send`. The `expires_at`
+/// Respond to an inbound `ak.secret.request` from the responding (existing)
+/// device: seal the account secret and ship `ak.secret.send`. The `expires_at`
 /// is computed once here and used for BOTH the HPKE AAD and the wire envelope,
 /// so the two can never drift. TTL 30m.
 ///
@@ -338,7 +338,7 @@ pub async fn respond_to_request(
     Ok(())
 }
 
-/// Try to open a single received `DeviceMessageEnvelope` as a `ck.secret.send`
+/// Try to open a single received `DeviceMessageEnvelope` as a `ak.secret.send`
 /// response. Returns `Ok(None)` for any other kind so a poll loop can pass the
 /// whole inbox through. The envelope `sender_device_id` and `expires_at` feed
 /// the AAD, so they are read from the received envelope rather than guessed.
@@ -367,7 +367,7 @@ pub fn try_open_envelope(
     Ok(Some(opened))
 }
 
-/// Canonical HPKE AAD for `ck.secret.send` (device-lifecycle.md §10.7): the
+/// Canonical HPKE AAD for `ak.secret.send` (device-lifecycle.md §10.7): the
 /// RFC 8785 JCS bytes of the six envelope binding fields both sides
 /// reconstruct. `expires_at` is normalized to integer Unix seconds
 /// (`expires_at_unix`) so the AAD is invariant to RFC3339 string reformatting

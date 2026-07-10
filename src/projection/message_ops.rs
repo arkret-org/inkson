@@ -116,7 +116,7 @@ fn message_raw_operation_from_event(realm_id: &str, event: &Value) -> Option<Raw
     let candidates = message_candidates(event);
     // Dedup key: the canonical event id. Server-folded redaction/expiry
     // tombstones that carry the same `event_id` upsert over the create, while
-    // independent `ck.message.redact` events keep their own record and are
+    // independent `ak.message.redact` events keep their own record and are
     // folded by the chat projector.
     let operation_id = value_string_at(event, &["event_id", "id"])
         .or_else(|| first_string_in_candidates(&candidates, &["event_id", "message_id", "id"]))?

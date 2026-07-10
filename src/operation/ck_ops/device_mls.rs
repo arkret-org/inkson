@@ -4,7 +4,7 @@ use serde_json::Value;
 
 use super::OperationBuilder;
 
-/// Durable `ck.device.revoke` Control Move on the principal control
+/// Durable `ak.device.revoke` Control Move on the principal control
 /// stream (`crypto-media/device-lifecycle.md` §2.2, SPEC-SOL-003
 /// resolution). `realm_id` MUST be the principal's control realm
 /// (`arkret_sdk::auth::principal_control_realm_id`); the caller MUST
@@ -45,7 +45,7 @@ pub fn device_revoke(
     .body(body))
 }
 
-/// `ck.mls.commit` event carrying the current wire-schema MLS
+/// `ak.mls.commit` event carrying the current wire-schema MLS
 /// governance binding. The commit bytes themselves are stored out of
 /// band; the event carries `commit_digest` plus the schema-closed
 /// epoch and governance binding fields soland validates before
@@ -66,7 +66,7 @@ pub fn mls_commit_with_governance(
     .body(body))
 }
 
-/// `ck.mls.proposal` event for a durable MLS membership-change intent.
+/// `ak.mls.proposal` event for a durable MLS membership-change intent.
 pub fn mls_proposal_with_governance(
     realm_id: &str,
     actor: &str,
@@ -83,11 +83,11 @@ pub fn mls_proposal_with_governance(
     .body(body))
 }
 
-/// `ck.mls.genesis` event installing an MLS group at epoch 0. Emitted
+/// `ak.mls.genesis` event installing an MLS group at epoch 0. Emitted
 /// once when a creator's local group is first observed by the server so
 /// the canonical audit record + creator/covered_seals seed exist and
 /// the server epoch starts in lockstep with the local snapshot before
-/// the first `ck.mls.commit` bumps it to 1.
+/// the first `ak.mls.commit` bumps it to 1.
 ///
 /// `payload` is the full canonical `mls_genesis_payload` Value (see
 /// [`crate::mls::runtime::build_mls_genesis_payload`]); `group_id` is the
@@ -107,7 +107,7 @@ pub fn mls_genesis_with_governance(
     .body(payload.clone())
 }
 
-/// `ck.mls.welcome` event carrying the durable Welcome claim envelope and
+/// `ak.mls.welcome` event carrying the durable Welcome claim envelope and
 /// opaque Welcome ciphertext. The payload is passed as `Value` so callers can
 /// build from the actual MLS runtime output while still validating against the
 /// registered payload schema before submit.

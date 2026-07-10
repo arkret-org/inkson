@@ -55,7 +55,7 @@ pub(super) async fn relay_local_signals(
     }
 }
 
-/// Apply a batch of inbound `ck.call.signal` items (the receive side) to the
+/// Apply a batch of inbound `ak.call.signal` items (the receive side) to the
 /// transport and the call FSM.
 ///
 /// Routing per `signal_type` (`data` shapes mirror the sender side —
@@ -383,7 +383,7 @@ pub(super) fn emit_async(
     });
 }
 
-/// Submit a single `ck.call.signal` ephemeral envelope.
+/// Submit a single `ak.call.signal` ephemeral envelope.
 #[allow(clippy::too_many_arguments)]
 pub(super) async fn emit_signal(
     base: &str,

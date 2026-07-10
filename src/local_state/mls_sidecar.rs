@@ -55,7 +55,7 @@ impl LocalStateStore {
     // ── MLS history-secret persistence (history sharing) ────────────
 
     /// Install a per-(realm, epoch) MLS `history_secret` recovered from an
-    /// inbound `ck.realm_key.share`. Idempotent: a re-install at the same
+    /// inbound `ak.realm_key.share`. Idempotent: a re-install at the same
     /// `(realm, epoch)` overwrites with the (identical) secret. Empty secrets
     /// are ignored so a malformed share can never shadow a real key.
     pub fn save_history_secret(
@@ -292,7 +292,7 @@ impl LocalStateStore {
         let _ = self.flush();
     }
 
-    /// True once a `ck.mls.genesis` event has been submitted for this Realm.
+    /// True once a `ak.mls.genesis` event has been submitted for this Realm.
     pub fn mls_genesis_emitted_for(&self, realm_id: &str) -> bool {
         self.mls_genesis_emitted_for_effective_scope(realm_id, None)
     }
@@ -306,13 +306,13 @@ impl LocalStateStore {
         self.load().mls_genesis_emitted.contains(&key)
     }
 
-    /// Record that a `ck.mls.genesis` event has been submitted for this
+    /// Record that a `ak.mls.genesis` event has been submitted for this
     /// Realm so it is never re-emitted (idempotent).
     pub fn mark_mls_genesis_emitted(&mut self, realm_id: impl Into<String>) {
         self.mark_mls_genesis_emitted_for_effective_scope(realm_id, None);
     }
 
-    /// Record a successfully accepted `ck.mls.genesis` event and seed the
+    /// Record a successfully accepted `ak.mls.genesis` event and seed the
     /// local MLS group-state frontier with that accepted Event id. This lets an
     /// immediately-following self-update or AddMember commit cite a real
     /// `ak:event:*` base group-state ref before the next sync response arrives.
@@ -530,8 +530,8 @@ impl LocalStateStore {
     /// The genesis-locked MLS `policy_root` for this Realm's group, if recorded.
     ///
     /// See [`crate::local_state::types::PersistedState::mls_genesis_policy_root`]:
-    /// every `ck.mls.commit` MUST declare the exact `policy_root` that
-    /// `ck.mls.genesis` locked, or soland rejects it with
+    /// every `ak.mls.commit` MUST declare the exact `policy_root` that
+    /// `ak.mls.genesis` locked, or soland rejects it with
     /// `governance_binding_mismatch`. Commit builders read this so they reuse the
     /// locked bytes instead of recomputing from the moving Seal `state_root`.
     pub fn genesis_policy_root_for_effective_scope(

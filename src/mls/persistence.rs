@@ -24,7 +24,7 @@
 //! [`arkret_sdk::CokretMlsGroup::join_from_welcome`].
 //!
 //! 2. **Persist via key_backup.** [`MlsSnapshotEnvelope::to_key_backup_body`] produces the
-//!    `ck.schema.key_backup.v1` request body used by `PUT /_arkret/self/keys/backups/{backup_id}`.
+//!    `ak.schema.key_backup.v1` request body used by `PUT /_arkret/self/keys/backups/{backup_id}`.
 //!    The blob is opaque to soland; device-secret-derived encryption keeps the server
 //!    zero-knowledge of group keys.
 //!

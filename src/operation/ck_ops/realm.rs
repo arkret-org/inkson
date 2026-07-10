@@ -11,7 +11,7 @@ use super::{
     space_state_transition_payload_value,
 };
 
-/// Build a `ck.space.archive` operation against a container Space. The
+/// Build a `ak.space.archive` operation against a container Space. The
 /// Space transitions from `Active` to `Archived`; reversible via
 /// `space_restore`. Spec: `models/realm-and-space.md` §4.4. The wire
 /// payload uses canonical `space_id`.
@@ -32,7 +32,7 @@ pub fn realm_archive(
     )?))
 }
 
-/// Build a `ck.message.revise` operation carrying the replacement content
+/// Build a `ak.message.revise` operation carrying the replacement content
 /// block required by `message_revise_payload`.
 pub fn message_revise_content(
     realm_id: &str,
@@ -71,7 +71,7 @@ pub fn message_revise_content(
     .body(body))
 }
 
-/// Build a `ck.realm.update` patch operation. The reducer accepts
+/// Build a `ak.realm.update` patch operation. The reducer accepts
 /// both flat fields (action/owner/title/security_class) and
 /// `payload.patch`; the patch shape is preferred for non-lifecycle
 /// edits (title / description).
@@ -91,7 +91,7 @@ pub fn realm_update_patch(
     .body(object_patch_payload_value(realm_id, patch)?))
 }
 
-/// Explicit, externally-sourced authorization for a `ck.realm.organization`
+/// Explicit, externally-sourced authorization for a `ak.realm.organization`
 /// statement (YGN-ORG-02).
 ///
 /// The client NEVER signs an organization statement from a human login
@@ -124,7 +124,7 @@ pub struct RealmOrganizationAuthorizationInput {
     pub proof: SignatureMaterial,
 }
 
-/// Build a `ck.realm.organization` statement operation (YGN-ORG-02).
+/// Build a `ak.realm.organization` statement operation (YGN-ORG-02).
 ///
 /// Constructs the spec-canonical [`RealmOrganizationPayload`] via the SDK
 /// strong type — the client never hand-rolls the wire object. Supports both

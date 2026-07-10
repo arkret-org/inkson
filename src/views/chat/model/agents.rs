@@ -138,7 +138,7 @@ fn merge_agent_metadata(existing: &mut AgentParticipantMetadata, next: AgentPart
     }
 }
 
-/// Scan local raw operations for `ck.agent.endpoint` rows and return
+/// Scan local raw operations for `ak.agent.endpoint` rows and return
 /// display metadata keyed by agent DID. The endpoint event only requires
 /// `agent_id`; controller / slug / display fields are optional and are
 /// consumed only when present. Missing controller falls back to the

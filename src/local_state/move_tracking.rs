@@ -6,8 +6,8 @@ impl LocalStateStore {
     /// Record a freshly-submitted Move and its initial state. The
     /// caller has just received soland's `SubmitMoveOutcome`; the
     /// state is mapped in via [`MoveSubmissionState::from_submit_state`].
-    /// `kind` is a free-form classifier (e.g. `ck.consent.grant`,
-    /// `ck.message.create`, `mls_commit`) the UI uses to decorate
+    /// `kind` is a free-form classifier (e.g. `ak.consent.grant`,
+    /// `ak.message.create`, `mls_commit`) the UI uses to decorate
     /// pills + icons.
     pub fn record_move_submission(
         &mut self,

@@ -61,7 +61,7 @@ impl CokretApi {
 
     // YOU-01-009: the former `rotate_mls_epoch` helper (non-spec
     // `POST /_arkret/self/mls/rotate` shim) was removed — epoch rotation
-    // is carried by the canonical `ck.mls.commit` event built from a
+    // is carried by the canonical `ak.mls.commit` event built from a
     // local `self_update_commit`
     // (`crate::mls::runtime::force_epoch_rotation_commit`).
 }

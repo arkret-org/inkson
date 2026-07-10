@@ -34,7 +34,7 @@ pub async fn ice_config(
         .map_err(anyhow::Error::from)
 }
 
-/// `POST /_arkret/self/rtc/token` — `ck.self.call.media.exchange.issue_token`.
+/// `POST /_arkret/self/rtc/token` — `ak.self.call.media.exchange.issue_token`.
 /// Returns the raw outcome (backend connect URL + token + participant
 /// binding). Callers MUST run the response through
 /// `arkret_sdk::verify_call_media_token_outcome` against the realm
@@ -51,14 +51,14 @@ pub async fn media_token_exchange(
 // ── WebRTC calls ───────────────────────────────────────────────
 //
 // Spec (`crypto-media/webrtc-signaling.md` §5): call signaling frames
-// are `ck.schema.ephemeral_envelope.v1` broadcast envelopes carried on
-// `POST /_arkret/self/ephemeral`; the `ck.call.signal` branch MUST carry
+// are `ak.schema.ephemeral_envelope.v1` broadcast envelopes carried on
+// `POST /_arkret/self/ephemeral`; the `ak.call.signal` branch MUST carry
 // `device_id` + `proof` (a detached signature over the canonical
 // envelope bytes, excluding `proof`). Recording is a durable
-// `ck.call.recording.start` event. There is NO `/_arkret/self/webrtc/*`
+// `ak.call.recording.start` event. There is NO `/_arkret/self/webrtc/*`
 // session or signal endpoint in the spec OpenAPI.
 
-/// Build, device-sign, and submit a `ck.call.signal` ephemeral
+/// Build, device-sign, and submit a `ak.call.signal` ephemeral
 /// envelope over the canonical ephemeral channel. The proof is a real
 /// detached JWS from the active signer; submission fails closed if no
 /// signer is installed rather than shipping a placeholder proof.
@@ -92,10 +92,10 @@ pub async fn submit_call_signal_v1(
     submitter.submit_ephemeral_envelope(&envelope).await
 }
 
-/// Submit a durable `ck.call.recording.start` event marking opt-in
+/// Submit a durable `ak.call.recording.start` event marking opt-in
 /// recording (webrtc-signaling.md §7 / event-kind-registry). The
 /// envelope is signed and submitted through the unified
-/// `ck.self.events.command.submit` path.
+/// `ak.self.events.command.submit` path.
 pub async fn submit_call_recording_start(
     submitter: &EventSubmitter,
     realm_id: &str,
@@ -116,9 +116,9 @@ pub async fn submit_call_recording_start(
     .await
 }
 
-/// Submit the transcript branch of `ck.call.recording.start`
+/// Submit the transcript branch of `ak.call.recording.start`
 /// (`capture_kind=transcript`). The resulting transcript lifecycle is
-/// then projected through `ck.call.state.transcript_state`.
+/// then projected through `ak.call.state.transcript_state`.
 pub async fn submit_call_transcription_start(
     submitter: &EventSubmitter,
     realm_id: &str,

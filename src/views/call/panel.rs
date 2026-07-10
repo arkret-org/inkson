@@ -18,7 +18,6 @@ use super::signaling::{
 use super::types::{
     CallMode, CallParticipant, CallStage, RecordingState, SharedTransport, TranscriptionState,
 };
-use crate::local_state::LocalStateStore;
 use crate::media::rtc::{DesiredMedia, MediaJoinRequest};
 use crate::ui::button::{Button, ButtonVariant};
 use crate::ui::checkbox::Checkbox;
@@ -80,7 +79,7 @@ pub fn CallPanel(
     let mut transport_handle = transport;
 
     // Receive side: the app-level signaling hub (`crate::views::call_signals`)
-    // the sync apply paths feed inbound `ck.call.signal` envelopes into. The
+    // the sync apply paths feed inbound `ak.call.signal` envelopes into. The
     // drain effect below consumes this call's inbox and applies each item to
     // the transport / FSM. Best-effort: `None` under isolated unit renders.
     let call_signal_hub = CallSignalHub::try_use();
@@ -238,7 +237,7 @@ pub fn CallPanel(
             let invite_peers = peers.clone();
 
             spawn(async move {
-                // 1) Invite signal opens the call (ephemeral `ck.call.signal`).
+                // 1) Invite signal opens the call (ephemeral `ak.call.signal`).
                 if matches!(mode, CallMode::P2p) {
                     let invite_data =
                         json!({ "participants": invite_peers.clone(), "video": want_video });
@@ -1037,7 +1036,6 @@ pub fn CallPanel(
 
                         // Moderator controls.
                         ModeratorControls {
-                            base_url: base_url.clone(),
                             token,
                             realm_id: active_realm(),
                             call_id: active_call_id(),

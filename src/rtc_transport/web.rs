@@ -11,7 +11,7 @@
 //! ## Two media paths
 //!
 //! - **1:1 P2P** stays on the native browser [`web_sys::RtcPeerConnection`]: the SDP offer/answer
-//!   is relayed over `ck.call.signal`, so no SFU-specific signaling protocol is involved and a raw
+//!   is relayed over `ak.call.signal`, so no SFU-specific signaling protocol is involved and a raw
 //!   peer connection is correct.
 //! - **SFU group calls** go through the real **livekit-client** JS SDK via the thin shim in
 //!   [`assets/livekit_shim.js`] (bound by [`crate::rtc_transport::livekit_shim`]). LiveKit speaks a
@@ -67,7 +67,7 @@ pub struct WebRtcTransport {
     /// Shared remote roster (cross-checked SFU participants on the LiveKit
     /// path; populated synchronously on the P2P path).
     remotes: Rc<RefCell<Vec<RemoteParticipant>>>,
-    /// Expected `ck.call.state.participants[]` SFU-local identities, seeded by
+    /// Expected `ak.call.state.participants[]` SFU-local identities, seeded by
     /// the controller before `connect_sfu` and read inside the LiveKit
     /// `ParticipantConnected` callback for the MEDIA-2 cross-check.
     expected_participants: Rc<RefCell<BTreeSet<String>>>,
@@ -76,7 +76,7 @@ pub struct WebRtcTransport {
     local_identity: String,
     /// Per-sender remote frame-key deriver (retains the live MLS exporter) plus
     /// the `participant_identity → device_id` map from the verified
-    /// `ck.call.state.participants[]` roster. Shared into the LiveKit
+    /// `ak.call.state.participants[]` roster. Shared into the LiveKit
     /// `ParticipantConnected` callback so each remote sender's key is derived
     /// (same group exporter + epoch, the remote's own context) and installed.
     remote_keys: Rc<RefCell<Option<Rc<PerSenderFrameKeys>>>>,

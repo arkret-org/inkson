@@ -7,7 +7,7 @@ use super::{
     strand_update_patch, trim_realm_id,
 };
 
-/// Build a `ck.strand.create` for an incident response Strand. The
+/// Build a `ak.strand.create` for an incident response Strand. The
 /// common incident workflow status is carried in `fields.status` so
 /// soland can enforce the profile FSM and emit
 /// `incident.status.transition` audit rows on subsequent updates.
@@ -51,7 +51,7 @@ pub fn incident_strand_create(
     )?))
 }
 
-/// Build a `ck.strand.update` for the incident `fields.status` FSM.
+/// Build a `ak.strand.update` for the incident `fields.status` FSM.
 pub fn incident_status_update(
     realm_id: &str,
     actor: &str,
@@ -66,7 +66,7 @@ pub fn incident_status_update(
     )
 }
 
-/// Build a `ck.strand.create` for a Kanban card Strand and include the
+/// Build a `ak.strand.create` for a Kanban card Strand and include the
 /// initial Board/List position component used by board projections.
 pub fn kanban_card_strand_create(
     realm_id: &str,

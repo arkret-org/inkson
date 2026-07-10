@@ -1221,7 +1221,7 @@ fn MemberRowActions(
 ) -> Element {
     // A4 — base_url / state_store from session context instead of props.
     let base_url = crate::app::SessionContext::base_url_string();
-    let state_store = crate::app::SessionContext::get().state_store;
+    let mut state_store = crate::app::SessionContext::get().state_store;
     let leave_title = leave_disabled_reason
         .clone()
         .unwrap_or_else(|| crate::i18n::tr("realm_admin.leave_realm"));
@@ -1487,7 +1487,7 @@ fn PendingInviteRow(
 ) -> Element {
     // A4 — base_url / state_store from session context instead of props.
     let base_url = crate::app::SessionContext::base_url_string();
-    let state_store = crate::app::SessionContext::get().state_store;
+    let mut state_store = crate::app::SessionContext::get().state_store;
     let member = profile.actor_id.clone();
     let member_label = profile.primary_label();
     let avatar_initial = member_avatar_initial(&profile);
@@ -1759,7 +1759,7 @@ pub(crate) async fn submit_mls_admission_for_invitee(
     };
     let next_epoch = admission.snapshot.epoch;
     let invitee_device_id = claim.device_id.clone();
-    // Fail-closed ordering: submit the add-member `ck.mls.commit` FIRST and
+    // Fail-closed ordering: submit the add-member `ak.mls.commit` FIRST and
     // confirm soland accepted it BEFORE delivering the Welcome. The Welcome
     // hands the invitee the post-add (epoch N+1) group state; if it landed while
     // the commit was rejected (e.g. `governance_binding_mismatch`), the invitee
@@ -1824,12 +1824,12 @@ pub(crate) async fn submit_mls_admission_for_invitee(
             );
         }
     }
-    // Proactive provider push of `ck.realm_key.share` at admission time would
+    // Proactive provider push of `ak.realm_key.share` at admission time would
     // need the invitee device's HPKE public key. The claimed KeyPackage's
     // X25519 init key is not surfaced by the current SDK, and inkson seals to a
     // dedicated per-device HPKE key the invitee advertises in a
-    // `ck.realm_key.request`. So the proactive push is deferred to the
-    // request-driven path: the invitee sends `ck.realm_key.request` (advertising
+    // `ak.realm_key.request`. So the proactive push is deferred to the
+    // request-driven path: the invitee sends `ak.realm_key.request` (advertising
     // its HPKE public key), and `share_history_to_requester` answers it.
     // TODO(history-share): seal proactively once the invitee HPKE pubkey is
     // resolvable at admission time.
@@ -1903,7 +1903,7 @@ fn realm_key_request_envelope_realm_id(envelope: &Value) -> Option<String> {
         .map(ToOwned::to_owned)
 }
 
-/// Parse a server/local to-device `ck.realm_key.request` envelope. soland's
+/// Parse a server/local to-device `ak.realm_key.request` envelope. soland's
 /// relay shape carries the spec request body under `payload`; older local test
 /// envelopes used `content`. The payload's `key_scope.effective_scope.realm_id`
 /// is authoritative, and any repeated envelope-level Realm must match it.
@@ -1978,14 +1978,14 @@ pub(crate) fn realm_key_request_answer_dedup_key(
     )
 }
 
-/// Provider-side: answer one `ck.realm_key.request` from a late joiner by
+/// Provider-side: answer one `ak.realm_key.request` from a late joiner by
 /// sealing the retained `history_secret` range to the requester's advertised
-/// HPKE public key and submitting a durable `ck.realm_key.share`
+/// HPKE public key and submitting a durable `ak.realm_key.share`
 /// (`encryption-and-audit.md` history sharing).
 ///
 /// Returns `Ok(true)` when a share was built and submitted, `Ok(false)` when
 /// the provider holds no history secret to share (it will be retried once the
-/// provider has retained one). `request` is the inbound `ck.realm_key.request`
+/// provider has retained one). `request` is the inbound `ak.realm_key.request`
 /// to-device envelope; `realm_id`/`actor_id`/`device_id` are the provider's.
 pub(crate) async fn share_history_to_requester(
     api: &crate::api::CokretApi,
@@ -2083,7 +2083,7 @@ pub(crate) async fn share_history_to_requester(
 /// advances `realm_id`'s epoch and this device has retained the new epoch's
 /// `history_secret`, seal every retained `(epoch, history_secret)` to each
 /// `durability_policy.recovery_recipients[]` and submit the
-/// provider-initiated `ck.realm_key.share` Events.
+/// provider-initiated `ak.realm_key.share` Events.
 ///
 /// MUST run only when the Realm's effective durability is RRK-active
 /// (`mode != none` AND `content_scheme == mls-exporter-aead-v1`); the caller
@@ -2234,7 +2234,7 @@ fn projected_history_visibility_for_realm(
     })
 }
 
-/// A planned `ck.realm_key.request`: the provider device to ask and the epoch
+/// A planned `ak.realm_key.request`: the provider device to ask and the epoch
 /// range whose `history_secret`s are missing locally.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct HistoryKeyRequestPlan {
@@ -2255,7 +2255,7 @@ pub(crate) struct HistoryKeyRequestDiagnostics {
 }
 
 /// Pure planning core for the receiver-initiated history pull. Decides whether
-/// to emit a `ck.realm_key.request` and, if so, against which provider and over
+/// to emit a `ak.realm_key.request` and, if so, against which provider and over
 /// which epoch range — given only plain inputs so it is unit-testable without a
 /// store or network.
 ///
@@ -2306,7 +2306,7 @@ pub(crate) fn plan_history_key_request(
 }
 
 /// Provider candidates `(sender_principal, sender_device_id)` harvested from the
-/// to-device inbox: every `ck.mls.welcome` / `ck.mls.commit` / `ck.realm_key.share`
+/// to-device inbox: every `ak.mls.welcome` / `ak.mls.commit` / `ak.realm_key.share`
 /// soland relays carries the *sending* (admitting / sharing) device's
 /// `(sender, sender_device_id)`. That device is by construction a joined member
 /// that holds Realm history, and soland's relay addresses the provider by
@@ -2448,7 +2448,7 @@ pub(crate) fn history_key_request_diagnostics(
 /// Receiver-initiated history pull (history sharing, last leg): when this device
 /// holds an MLS snapshot for an mls-encrypted Realm but cannot read some pre-join
 /// epoch's content (no installed `history_secret`) and the Realm's
-/// `history_visibility` admits a pre-join window, emit one `ck.realm_key.request`
+/// `history_visibility` admits a pre-join window, emit one `ak.realm_key.request`
 /// to a joined provider device asking it to seal the missing range back.
 ///
 /// Returns `Some((from_epoch, to_epoch))` of the range actually requested (so the
@@ -2642,7 +2642,7 @@ pub(crate) fn mls_admission_candidate_realms_for_actor(
 ///
 /// `submit_mls_admission_for_invitee` historically ran the instant an invite
 /// was sent, before the invitee had accepted and published an MLS KeyPackage:
-/// the claim failed, no `ck.mls.welcome` was produced, and the invitee was
+/// the claim failed, no `ak.mls.welcome` was produced, and the invitee was
 /// stuck "waiting for a Welcome". This pass runs on sync — for every Realm
 /// member who has actually joined (`membership=join`) but is not yet in this
 /// device's MLS group, it (re)attempts admission. Members already in the group
@@ -2841,7 +2841,7 @@ pub(crate) async fn submit_mls_admission_for_invitees(
         .map_err(|err| anyhow::anyhow!(err))?
     };
     // Fail-closed ordering (see `submit_mls_admission_for_invitee`): the
-    // batched add-member `ck.mls.commit` MUST be accepted before its Welcomes
+    // batched add-member `ak.mls.commit` MUST be accepted before its Welcomes
     // ship, or rejected-commit-but-delivered-Welcome forks the invitees onto an
     // epoch this admin and the server never reach.
     let commit_event_id = admission.commit.event_id.clone();
@@ -3137,9 +3137,9 @@ pub fn RealmMembersPanel(
                         .await;
                         // Member removal has no standalone capability action in
                         // v1; it is governed by Realm management authority. Probe
-                        // the registered `ck.realm.admin` action (management,
+                        // the registered `ak.realm.admin` action (management,
                         // high-risk) instead of the unregistered placeholder
-                        // `ck.member.remove`, which is not in
+                        // `ak.member.remove`, which is not in
                         // capability-action-registry.json and would be treated as
                         // an unknown high-risk action (fail-closed) by a
                         // spec-conformant server.
@@ -5012,7 +5012,7 @@ mod tests {
         assert!(selection.accept_third_party_mention);
     }
 
-    // ── Receiver-initiated history pull (ck.realm_key.request) ──────────
+    // ── Receiver-initiated history pull (ak.realm_key.request) ──────────
 
     const PROVIDER_DID: &str = "did:web:provider.example";
     const SELF_DID: &str = "did:web:self.example";

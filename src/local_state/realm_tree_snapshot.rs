@@ -2,7 +2,7 @@ use super::*;
 
 impl LocalStateStore {
     /// Round R2/R3 (T07) — has the Realm (security boundary, formerly Space)
-    /// emitted a `ck.realm.destroy` event we've already received? The
+    /// emitted a `ak.realm.destroy` event we've already received? The
     /// chat UI MUST gray out the send box and surface the
     /// "permanently retired" banner once this returns true.
     ///
@@ -248,7 +248,7 @@ impl LocalStateStore {
 
     /// SEC-08 (`encryption-and-audit.md` §2.9) — does the latest cached
     /// realm-tree projection declare the
-    /// `ck.profile.mls.minimal_metadata_realm.v1` profile? The committer uses
+    /// `ak.profile.mls.minimal_metadata_realm.v1` profile? The committer uses
     /// this to decide whether the ≤1h epoch-lifetime cap and the
     /// `aad_visibility=hidden` MUST apply to a given Realm. Unknown / absent
     /// projection ⇒ `false` (the realm is treated as a normal realm).

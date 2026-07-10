@@ -29,7 +29,7 @@ pub mod build_info;
 pub mod canonical;
 pub mod capability;
 pub mod card_comments;
-/// CKP-0007 P3B.2 — Circle UX types, scope picker, error-code mapping.
+/// AKP-0007 P3B.2 — Circle UX types, scope picker, error-code mapping.
 /// `Circle` is the intra-Realm cryptographic sub-boundary (strict
 /// subset of Realm membership + independent MLS group). This module is
 /// the client-side surface; the canonical struct lives in
@@ -81,7 +81,7 @@ pub mod local_state;
 pub mod media;
 pub mod media_api;
 /// R3.1 (arkret-spec @ 7157ee8) — Realm-scoped
-/// `ck.member.identity.update` event store. Sync ingests inlined
+/// `ak.member.identity.update` event store. Sync ingests inlined
 /// `members[].identity_events[]` here; UI views resolve the current
 /// effective [`arkret_sdk::MemberIdentity`] via the SDK's
 /// replacement-edge filter helper. MLS decryption (MID-4) + proof

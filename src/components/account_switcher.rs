@@ -77,7 +77,7 @@ pub fn AccountSwitcher(
                                             role: "menuitem",
                                             disabled: is_active,
                                             onclick: move |_| {
-                                                // CKP-0007 P3B.4.3 — emit the
+                                                // AKP-0007 P3B.4.3 — emit the
                                                 // typed switch event published
                                                 // by the shell.
                                                 if let Some(event) =

@@ -12,7 +12,6 @@ use super::model::{
     AuditChainVerifyOutcome, HandoffState, InteropApprovalState, LiveSessionRow, PublishModalState,
     live_session_rows, verify_agent_audit_binding, verify_audit_chain,
 };
-use crate::local_state::LocalStateStore;
 use crate::ui::button::{Button, ButtonVariant};
 use crate::ui::input::Input;
 use crate::views::helpers::{short_protocol_id, with_authed_api};
@@ -50,7 +49,7 @@ pub fn AgentsPanel(
     let mut incoming_status = use_signal(String::new);
     let mut incoming_last_poll_at = use_signal(String::new);
 
-    // G3.Y4 (Phase C) — every `ck.agent.interop_session.*` event fetched
+    // G3.Y4 (Phase C) — every `ak.agent.interop_session.*` event fetched
     // from soland, in causal order, so the live session transcript can
     // be folded by `live_session_rows`. Distinct from `incoming_results`
     // (which is `.result`-only for the audit-binding badges).
@@ -289,7 +288,7 @@ pub fn AgentsPanel(
                         "aria-label": "Agent invocation protocol",
                         "aria-describedby": "agent-register-form-help",
                         value: "{protocol}",
-                        placeholder: "protocol (ck.agent.v1)",
+                        placeholder: "protocol (ak.agent.v1)",
                         oninput: move |event: FormEvent| protocol.set(event.value()),
                     }
                     Input {
@@ -487,7 +486,7 @@ pub fn AgentsPanel(
                     }
                 }
             }
-            // Incoming `ck.agent.interop_session.result` events
+            // Incoming `ak.agent.interop_session.result` events
             // fetched from soland, with per-event Ed25519
             // audit-binding verification badge.
             div { class: "event", "data-testid": "agent-incoming-results",
@@ -762,7 +761,7 @@ pub fn AgentsPanel(
             // ─────────────────────────────────────────────────────
             // G3.Y4 (Phase B) — interop capability-approval surface.
             // Authors a ak.capability.grant carrying
-            // actions=[ck.agent.interop_session.start] + the §7
+            // actions=[ak.agent.interop_session.start] + the §7
             // constraint, gated behind an explicit human-approval
             // acknowledgement (spec §4 / §8).
             // ─────────────────────────────────────────────────────

@@ -98,8 +98,8 @@ pub(super) fn kanban_event_carries_plaintext_private_content(event: &arkret_sdk:
 
 /// Event kinds that carry ONLY non-secret structural metadata (container
 /// title / kind / parent / rank) and therefore MUST submit to the server as
-/// plaintext even inside an encrypted Realm. Container creation (`ck.space.create`
-/// for Board and List) and structural updates (`ck.space.update`) are the
+/// plaintext even inside an encrypted Realm. Container creation (`ak.space.create`
+/// for Board and List) and structural updates (`ak.space.update`) are the
 /// canonical examples: a second device needs the plaintext title/rank to
 /// render the Board/List name and order instead of falling back to
 /// `generated_board_fallback_title` (`ak:space:...`) or stale rank order. Only

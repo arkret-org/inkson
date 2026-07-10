@@ -18,7 +18,7 @@
 //!    computation.
 //!
 //! Round 4 (spec a77b995) — the banner is now sourced from the
-//! `ck.audit.policy_access` event whose `access_kind ==
+//! `ak.audit.policy_access` event whose `access_kind ==
 //! e2ee_late_recovery` carries
 //! [`late_recovery_original_event_id`](arkret_sdk::AuditPolicyAccessPayload::late_recovery_original_event_id).
 //! See [`LateRecoveredEvent::from_audit_policy_access`] for the typed
@@ -213,7 +213,7 @@ pub fn evaluate_late_recovery_transition_event(event: &Value) -> LateRecoveryTra
     }
 }
 
-/// Guarded conversion for `ck.audit.policy_access` late-recovery markers.
+/// Guarded conversion for `ak.audit.policy_access` late-recovery markers.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum LateRecoveryAuditAccessConversion {
     NotLateRecovery,
@@ -222,7 +222,7 @@ pub enum LateRecoveryAuditAccessConversion {
 }
 
 /// Build the user-facing late recovery marker from a synced
-/// `ck.audit.policy_access` event only after the same late-recovery guards pass.
+/// `ak.audit.policy_access` event only after the same late-recovery guards pass.
 pub fn late_recovered_event_from_audit_policy_access_event(
     event: &Value,
     actor_revoked_at_recovery: bool,
@@ -406,7 +406,7 @@ impl LateRecoveredEvent {
 }
 
 impl LateRecoveredEvent {
-    /// Round 4 — construct from a `ck.audit.policy_access` payload
+    /// Round 4 — construct from a `ak.audit.policy_access` payload
     /// whose `access_kind` is
     /// [`AccessKind::E2EELateRecovery`](arkret_sdk::AccessKind::E2EELateRecovery).
     /// Returns `None` if the access_kind is not e2ee_late_recovery or

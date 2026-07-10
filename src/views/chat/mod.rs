@@ -274,7 +274,7 @@ pub fn ChatPanel(
     // `discussion-promoted-indicator` row. Populated optimistically
     // on submit and updated from the server response.
     let mut promoted_targets = use_signal(std::collections::BTreeMap::<String, String>::new);
-    // G3.Y2 — `ck.read_cursor.advance` book-keeping. `latest_read_cursor`
+    // G3.Y2 — `ak.read_cursor.advance` book-keeping. `latest_read_cursor`
     // stores the highest event_id we've posted a read marker for so
     // we don't spam soland on every render tick.
     let mut latest_read_cursor = use_signal(String::new);
@@ -408,7 +408,7 @@ pub fn ChatPanel(
     }
 
     // Reconnect drain: when connectivity returns and the outbox is non-empty,
-    // resubmit each parked message through the normal `ck.message.create`
+    // resubmit each parked message through the normal `ak.message.create`
     // path, then clear it from the queue. Entries reuse their stable local
     // id so the reducer collapses the replay with the optimistic row.
     {
@@ -590,7 +590,7 @@ pub fn ChatPanel(
             selected_realm_id.trim().is_empty() || prompt.realm_id == selected_realm_id
         })
         .collect::<Vec<_>>();
-    // CKP-0007 P3B.2.4 — per-strand Circle-scope lookup used by the
+    // AKP-0007 P3B.2.4 — per-strand Circle-scope lookup used by the
     // message accent rail. We index by `strand_id` once instead of
     // searching the `channels` Vec for every rendered message.
     let strand_scope_lookup: std::collections::BTreeMap<String, StrandScopeCircle> = all_channels
@@ -619,7 +619,7 @@ pub fn ChatPanel(
     // loop instead of triggering a full-set clone per message.
     let private_saved_target_set = private_saved_targets();
     // G3.Y2 — derive the highest visible event id so we can post a
-    // `ck.read_cursor.advance` covering everything we've rendered. The marker
+    // `ak.read_cursor.advance` covering everything we've rendered. The marker
     // itself is actor-private (`discovery/read-receipts.md §3.1`).
     let highest_visible_event_id: Option<String> = visible_messages
         .iter()
@@ -709,7 +709,7 @@ pub fn ChatPanel(
     }
     // Mark agent endpoints registered in this Realm so the @mention
     // picker, member list, and sender row can render a 🤖 badge.
-    // Source of truth is the local store's `ck.agent.endpoint` raw
+    // Source of truth is the local store's `ak.agent.endpoint` raw
     // operations (same projection the Agents panel reads from).
     {
         let mut agent_metadata = agent_metadata_from_raw_operations(
@@ -1478,7 +1478,7 @@ pub fn ChatPanel(
                             }
                         }
                         // T7.2: watch-level fast switcher. Issues a
-                        // `ck.strand.watch.set` event on selection. We
+                        // `ak.strand.watch.set` event on selection. We
                         // optimistically update the local signal first;
                         // a network failure rolls back via status_msg.
                         {
@@ -1666,7 +1666,7 @@ pub fn ChatPanel(
                 }
 
                 // Shared pin bar. Source is the `ck.pin.*` shared event
-                // projection only; holder-private `ck.saved.v1:*`
+                // projection only; holder-private `ak.saved.v1:*`
                 // account-data is rendered on message rows instead.
                 {
                     let shared_pins_now = shared_pins();
@@ -1810,7 +1810,6 @@ pub fn ChatPanel(
                                     appellant: account_did.clone(),
                                     decision_event_id: prompt.decision_ref.clone(),
                                     target_ref: prompt.target_ref.clone(),
-                                    base_url: base_url.clone(),
                                     api_token,
                                     current_state,
                                 }
@@ -1891,8 +1890,8 @@ pub fn ChatPanel(
                             });
                             // T7: holder-private save, shared between the context
                             // menu and the hover `chat-save-button`. Writes the
-                            // `ck.saved.v1:*` account-data entry exactly like the
-                            // former inline context-menu handler.
+                            // `ak.saved.v1:*` account-data entry exactly like the
+                            // `ak.saved.v1e context-menu handler.
                             let private_save_action: std::rc::Rc<dyn Fn()> = std::rc::Rc::new({
                                 let actor_for_saved = account_did.clone();
                                 let device_for_saved = device_id.clone();
@@ -2047,7 +2046,7 @@ pub fn ChatPanel(
                                     message_context_menu.set(next);
                                 }
                             },
-                            // CKP-0007 P3B.2.4 — Circle scope accent
+                            // AKP-0007 P3B.2.4 — Circle scope accent
                             // rail. Renders a left-edge coloured ribbon
                             // with the Circle title as a tooltip when
                             // the message's enclosing Strand has a
@@ -2065,8 +2064,8 @@ pub fn ChatPanel(
                                 }
                             }
                             // Tiny pop-out menu. Shared pin writes durable
-                            // `ck.pin.*`; private save writes `ck.saved.v1:*`
-                            // through holder-private account-data.
+                            // `ck.pin.*`; private save writes `ak.saved.v1:*`
+                            // through holder-private account-d`ak.saved.v1
                             // The render condition checks per-message
                             // so only one menu is visible at a time.
                             if message_context_menu().as_deref() == Some(msg.id.as_str()) {
@@ -2361,7 +2360,7 @@ pub fn ChatPanel(
                                                     &participants_for_messages,
                                                 )
                                             });
-                                        // CKP-0008 §4.10 — act-on-behalf: the
+                                        // AKP-0008 §4.10 — act-on-behalf: the
                                         // controller (actor_id = msg.sender) is
                                         // the primary name, the agent executor
                                         // (executed_by) renders as "via {agent}".
@@ -2923,14 +2922,14 @@ pub fn ChatPanel(
                                 }
                                 // G3.Y2 — per-message read-receipt
                                 // indicator. Surfaces the set of actors
-                                // who have published a `ck.read_cursor.advance`
-                                // covering this message. Empty (`hidden`)
+                                // who have published a `ak.read_cursor.advance`
+                                // covering this message`ak.read_cursor.advance
                                 // until the receive path is wired.
                                 //
                                 // TODO(G3.Y2-followup): populate from the
                                 // soland sync projection once it carries
-                                // per-message `ck.read_cursor.advance`
-                                // coverage.
+                                // per-message `ak.read_cursor.advance`
+                                // coverage.`ak.read_cursor.advance
                                 {
                                     // TODO(G3.Y2-followup): fill from the
                                     // sync projection read-cursor coverage
@@ -3637,8 +3636,8 @@ pub fn ChatPanel(
                 // same actor-private account_data that /settings already
                 // edits, so a change here mirrors immediately into the
                 // global view. "Shared history" is a Realm-scoped policy
-                // event (`ck.realm.history_visibility`) — it's not a
-                // client-side per-discussion toggle, so the third row
+                // event (`ak.realm.history_visibility`) — it's not a
+                // client-`ak.realm.history_visibilityso the third row
                 // shows an explanatory hint instead of pretending to be
                 // a checkbox.
                 let realm_id_for_mute = selected_realm_id.clone();
@@ -3867,8 +3866,8 @@ pub fn ChatPanel(
 
             // G3.Y2 — read-receipt marker bar. A horizontal divider
             // sealed at the highest event id we've sent a
-            // `ck.read_cursor.advance` for; renders only when we have one. The
-            // bar appears below the message list so users can see the
+            // `ak.read_cursor.advance` for; renders only when we have one. The
+            // `ak.read_cursor.advanceessage list so users can see the
             // "everyone read up to here" seal without scrolling
             // around. The marker itself is actor-private — see
             // discovery/read-receipts.md §3.1.
@@ -3890,7 +3889,7 @@ pub fn ChatPanel(
 
             if !visible_channels_empty {
             div { class: "{composer_class}", "data-testid": "chat-composer",
-                // CKP-0007 P3B.2.3 — Circle composer banner. Rendered
+                // AKP-0007 P3B.2.3 — Circle composer banner. Rendered
                 // at the top of the composer surface when the active
                 // Strand carries a `scope_circle_id`. The component is
                 // pure: `CircleScope::Realm` renders nothing, so the
@@ -4969,8 +4968,8 @@ pub fn ChatPanel(
                                     return;
                                 }
                                 // P1: encrypt the canonical Content Block JSON
-                                // (`ck.content.text`), NOT the bare body bytes, so
-                                // strict receivers can parse the decrypted payload
+                                // (`ak.content.text`), NOT the bare body bytes, so
+                                // s`ak.content.textcan parse the decrypted payload
                                 // as `application/vnd.arkret.message+json` and the
                                 // decrypt-on-read path round-trips it back to text.
                                 let secure_content_block = match chat_content_block_for_body(&body)
@@ -5057,8 +5056,8 @@ pub fn ChatPanel(
                                 // Shared MLS core: encrypt → forced ak.mls.commit
                                 // envelope (governance / prev→post epoch /
                                 // policy_root / membership_frontier) → spec
-                                // `ck.schema.encrypted_envelope.v1` wrap →
-                                // ak.message.create payload. This mirrors the
+                                // `ak.schema.encrypted_envelope.v1` wrap →
+                                // `ak.schema.encrypted_envelopeis mirrors the
                                 // shared secure send builder.
                                 let secure_build = match crate::views::secure_send::build_secure_send(
                                     state_store,
@@ -5271,8 +5270,8 @@ pub fn ChatPanel(
                                     }
 
                                     // Disclosed-audit hardening profile
-                                    // (`ck.profile.disclosed_audit.e2ee.v1`): emit a
-                                    // per-actor read-your-write receipt right after a
+                                    // (`ak.profile.disclosed_audit.e2ee.v1`): emit a
+                                    // p`ak.profile.disclosed_auditceipt right after a
                                     // successful E2EE commit. Actor-private +
                                     // fire-and-forget; non-profile servers store it
                                     // as a regular operation.

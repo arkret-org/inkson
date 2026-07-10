@@ -7,14 +7,14 @@
 //! Re-exports the SDK's [`Attachment`] / [`MediaMetadata`] / [`Thumbnail`]
 //! structures and provides operation builders for blob register / revoke
 //! events. The actual upload bytes go to the Principal Server's
-//! `ck.self.blob.upload.create` endpoint; this module covers the durable event side.
+//! `ak.self.blob.upload.create` endpoint; this module covers the durable event side.
 //!
 //! # Attachment AEAD is the SDK's canonical codec
 //!
 //! All client-side attachment encryption is delegated to
 //! [`arkret_sdk::blob_aead`], the canonical implementation of
-//! `ck.blob.stream_aead.v1` (chunked streaming AEAD) and
-//! `ck.blob.whole_file_aead.v1` (whole-file AEAD). Inkson no longer ships a
+//! `ak.blob.stream_aead.v1` (chunked streaming AEAD) and
+//! `ak.blob.whole_file_aead.v1` (whole-file AEAD). Inkson no longer ships a
 //! private XChaCha envelope or its own nonce derivation; the
 //! `mls_exported_secret` (32 bytes from the MLS exporter) is passed straight
 //! through as the SDK `content_key`. The envelope carried on the wire is the
@@ -227,13 +227,13 @@ pub fn encrypt_mls_asset(
     )
 }
 
-// YOU-01-011: the former `ck.blob.register` / `ck.blob.revoke` /
-// `ck.blob.grant` event builders were removed — none of those kinds is in
+// YOU-01-011: the former `ak.blob.register` / `ak.blob.revoke` /
+// `ak.blob.grant` event builders were removed — none of those kinds is in
 // the spec event-kind-registry, and unregistered wire kinds must not be
-// mintable from client code. Re-add once the kinds are registered via CKP.
+// mintable from client code. Re-add once the kinds are registered via AKP.
 
 /// Wrap a [`MediaMetadata`] reference in the canonical event payload shape
-/// used by `ck.message.create` attachments. Useful for building chat /
+/// used by `ak.message.create` attachments. Useful for building chat /
 /// message event bodies that carry a single attached blob.
 pub fn attachment_payload(metadata: &MediaMetadata) -> anyhow::Result<Value> {
     Ok(json!({

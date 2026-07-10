@@ -20,7 +20,7 @@
 //! The default implementation buffers entries into
 //! `LocalStateStore::telemetry_log` (bounded at
 //! `TELEMETRY_BUFFER_CAP`). A separate flush path (future round) drains
-//! the buffer and ships entries to soland's `ck.audit.user_action`
+//! the buffer and ships entries to soland's `ak.audit.user_action`
 //! endpoint. Until then the buffer is durable, ordered, and survives a
 //! browser refresh / desktop restart because it rides on the same
 //! `state.json` / `localStorage` channel as the rest of the local state.
@@ -36,7 +36,7 @@ use tracing::info;
 
 use crate::local_state::{LocalStateStore, UserActionLogEntry};
 
-/// CKP-0007 P3B.8.1 — initialise the opt-in Sentry client.
+/// AKP-0007 P3B.8.1 — initialise the opt-in Sentry client.
 ///
 /// The init is gated on TWO conditions:
 ///   1. `prefs.enabled == true` — the user explicitly opted in via

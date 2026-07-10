@@ -1,4 +1,4 @@
-//! Realm bootstrap wizard (`ck.realm.create`) section component.
+//! Realm bootstrap wizard (`ak.realm.create`) section component.
 
 use dioxus::prelude::*;
 use dioxus_router::Link;
@@ -15,7 +15,6 @@ use super::helpers::{
 use super::model::{NEW_REALM_STEPS, NewRealmStep};
 use crate::api_error::is_auth_expired_error;
 use crate::config::LocalConfigStore;
-use crate::local_state::LocalStateStore;
 use crate::routes::Route;
 use crate::ui::button::{Button, ButtonVariant};
 use crate::ui::input::Input;

@@ -2,15 +2,15 @@
 //! helpers.
 //!
 //! Spec: `discovery/client-preferences.md` §3.6 (contact remarks) and §3.7
-//! (Realm remarks). Stored under `ck.contacts.actor.<did>` and
-//! `ck.contacts.realm.<realm_id>` respectively.
+//! (Realm remarks). Stored under `ak.contacts.actor.<did>` and
+//! `ak.contacts.realm.<realm_id>` respectively.
 
 use serde::{Deserialize, Serialize};
 
 /// Wire-key for an actor-private Realm remark per
-/// `discovery/client-preferences.md` §3.7: `ck.contacts.realm.<realm_id>`.
+/// `discovery/client-preferences.md` §3.7: `ak.contacts.realm.<realm_id>`.
 ///
-/// The same string is the `key` used in `ck.account_data.set`. Callers should
+/// The same string is the `key` used in `ak.account_data.set`. Callers should
 /// already have validated `realm_id` shape (`ak:realm:<uuid>`).
 pub fn realm_remark_account_data_key(realm_id: &str) -> String {
     format!("ak.contacts.realm.{realm_id}")
@@ -24,7 +24,7 @@ pub fn realm_id_from_realm_remark_key(key: &str) -> Option<&str> {
 }
 
 /// Wire-key for an actor-private contact remark per
-/// `discovery/client-preferences.md` §3.6: `ck.contacts.actor.<did>`.
+/// `discovery/client-preferences.md` §3.6: `ak.contacts.actor.<did>`.
 pub fn contact_remark_account_data_key(actor_id: &str) -> String {
     format!("ak.contacts.actor.{actor_id}")
 }
@@ -38,13 +38,13 @@ pub fn actor_id_from_contact_remark_key(key: &str) -> Option<&str> {
 /// User-private Realm remark per `discovery/client-preferences.md` §3.7.
 ///
 /// Persisted as the `content` payload under
-/// `ck.contacts.realm.<realm_id>` (the wire key built by
+/// `ak.contacts.realm.<realm_id>` (the wire key built by
 /// [`realm_remark_account_data_key`]). The protocol treats the payload as
 /// opaque on the server; this struct is the canonical local shape so the
 /// settings UI and the sidebar agree.
 ///
 /// All fields are spec-aligned; the struct intentionally mirrors the §3.6
-/// `ck.contacts.actor.<did>` shape so future cross-actor / cross-Realm
+/// `ak.contacts.actor.<did>` shape so future cross-actor / cross-Realm
 /// editing UIs can be unified.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RealmRemark {
@@ -63,7 +63,7 @@ pub struct RealmRemark {
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub note: String,
     /// Spec §3.7 `tags` — private grouping labels; namespace shared with
-    /// `ck.tags.realm.<realm_id>` so the same label can drive both UIs.
+    /// `ak.tags.realm.<realm_id>` so the same label can drive both UIs.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub tags: Vec<String>,
     /// Spec §3.7 `pinned` — whether the Realm sticks to the top of the
@@ -185,7 +185,7 @@ impl RealmRemark {
 /// User-private actor/contact remark per
 /// `discovery/client-preferences.md` §3.6.
 ///
-/// Stored under `ck.contacts.actor.<did>` and intentionally never embedded in
+/// Stored under `ak.contacts.actor.<did>` and intentionally never embedded in
 /// public profile, mention, message, search, or push payloads.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ContactRemark {

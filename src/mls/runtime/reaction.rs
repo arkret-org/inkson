@@ -27,7 +27,7 @@ pub struct EncryptedReaction {
     /// SEC-08 (`encryption-and-audit.md` §2.9) — present ONLY when this
     /// reaction force-advanced the MLS epoch because the
     /// `minimal_metadata_realm` 1h cap was exceeded. The caller MUST submit
-    /// this `ck.mls.commit` and, on server-accept, persist
+    /// this `ak.mls.commit` and, on server-accept, persist
     /// [`Self::forced_commit_snapshot`] (X14 persist-on-accept). When `None`
     /// the reaction rode the current epoch and its snapshot was already
     /// persisted internally (epoch unchanged ⇒ no epoch-skew risk).
@@ -133,7 +133,7 @@ pub fn encrypt_reaction_with_device_snapshot(
     // SEC-08 (§2.9) — minimal-metadata epoch lifetime ≤ 1h. A reaction normally
     // reuses the current epoch (no commit), so on a minimal Realm we MUST roll
     // the epoch once it has outlived the cap, bounding within-epoch reaction
-    // frequency to a ≤1h window. The forced `ck.mls.commit` is surfaced to the
+    // frequency to a ≤1h window. The forced `ak.mls.commit` is surfaced to the
     // caller (X14 persist-on-accept) rather than persisted optimistically.
     // COR-08: use the injectable clock (same source as `snapshot.epoch_started_at`)
     // so the §2.9 1h epoch-lifetime comparison is not split across two clock sources.
@@ -195,7 +195,7 @@ pub fn encrypt_reaction_with_device_snapshot(
 
     if forced_commit.is_some() {
         // X14 — a forced epoch advance must NOT be persisted before the server
-        // accepts the `ck.mls.commit`, or the local epoch races ahead and every
+        // accepts the `ak.mls.commit`, or the local epoch races ahead and every
         // later write is rejected with `mls_epoch_skew`. Hand the snapshot back
         // for the caller to persist on accept.
         Ok(EncryptedReaction {

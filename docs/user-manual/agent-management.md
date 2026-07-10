@@ -32,10 +32,10 @@ The agent surface lives in `/agents` and is gated by the
 2. Scroll to **Register an automated member**.
 3. Fill in:
    - **agent_id** — e.g. `assistant:example.com`.
-   - **protocol** — e.g. `ck.agent.v1`.
+   - **protocol** — e.g. `ak.agent.v1`.
    - **capabilities** — comma-separated. Use the autocomplete to pick
      from the 14 canonical capabilities.
-4. Click **Register**. inkson submits a `ck.agent.endpoint` envelope.
+4. Click **Register**. inkson submits a `ak.agent.endpoint` envelope.
 
 <!-- TODO(screenshot): agent-register-form.png -->
 
@@ -84,11 +84,11 @@ When an agent requests a capability action you'll see an
 
 - **Payload digest** — sha256 of the requested operation.
 - **Expiry** — single-use nonce window.
-- **Sidecar exposure disclosure** — `CKP-0009 §3 invariant 10`. Read it.
+- **Sidecar exposure disclosure** — `AKP-0009 §3 invariant 10`. Read it.
 
 <!-- TODO(screenshot): action-approve-dialog.png -->
 
-Approving emits a `ck.agent.protocol_session.start` envelope. The
+Approving emits a `ak.agent.protocol_session.start` envelope. The
 lifecycle goes `start → status* → result`. The result event carries the
 `audit_binding` proof so the audit timeline can verify the agent's output
 matches the signed input.
@@ -97,7 +97,7 @@ matches the signed input.
 
 ## 6. Audit trail
 
-Visit `/audit` and filter by `kind=ck.agent.protocol_session.*`. Each
+Visit `/audit` and filter by `kind=ak.agent.protocol_session.*`. Each
 result row shows a verification badge:
 
 - **Green tick** — `verify_audit_binding_by_kind` succeeded.
@@ -117,7 +117,7 @@ full chain (start → status* → result) and surface the outcome via the
 1. Click **Deactivate** on the agent row.
 2. Type `DEACTIVATE` in the confirmation field.
 3. Click **Confirm — destructive**.
-4. inkson publishes a `ck.agent.lifecycle.deactivate` envelope. The agent
+4. inkson publishes a `ak.agent.lifecycle.deactivate` envelope. The agent
    can no longer be summoned by any controller.
 
 <!-- TODO(screenshot): agent-deactivate-confirm.png -->

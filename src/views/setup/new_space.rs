@@ -1,11 +1,10 @@
-//! `ck.space.create` form + Space lifecycle actions section component.
+//! `ak.space.create` form + Space lifecycle actions section component.
 
 use arkret_sdk::events::EventKind;
 use dioxus::prelude::*;
 use serde_json::Value;
 
 use super::data::SPACE_KIND_OPTIONS;
-use crate::local_state::LocalStateStore;
 use crate::models::{RealmTreeNode, RealmTreeNodeKind};
 use crate::ui::button::{Button, ButtonVariant};
 use crate::ui::input::Input;

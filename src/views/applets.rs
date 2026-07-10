@@ -3,7 +3,7 @@
 //! Spec: `arkret-spec/spec/v1/zh/extensions/applet-integration.md`.
 //!
 //! What the panel does today:
-//!   * Reads `ck.applet.registration` / `ck.applet.discovery` events out of the local raw-operation
+//!   * Reads `ak.applet.registration` / `ak.applet.discovery` events out of the local raw-operation
 //!     projection and renders them as registry rows so users see which applets the Space already
 //!     accepts.
 //!   * Surfaces a registration form bound to [`crate::operation::ck_ops::applet_registration`] —
@@ -37,7 +37,6 @@ use dioxus::prelude::*;
 use dioxus_primitives::checkbox::CheckboxState;
 use serde_json::{Value, json};
 
-use crate::local_state::LocalStateStore;
 use crate::ui::button::{Button, ButtonVariant};
 use crate::ui::checkbox::Checkbox;
 use crate::ui::dialog::Dialog;
@@ -62,7 +61,7 @@ pub fn applet_package_from_manifest(kind: &ManifestInputKind) -> Option<Value> {
 /// installs the applet Realm-wide; a `ak:circle:…` id scopes it to that Circle
 /// only (spec §4b: a single install carries exactly one `effective_scope`, and a
 /// Circle install MUST NOT widen to a Realm-wide grant). soland gates the write
-/// on `ck.realm.admin` over the resolved scope either way.
+/// on `ak.realm.admin` over the resolved scope either way.
 pub fn applet_effective_scope(
     realm_id: &str,
     circle_id: Option<&str>,
@@ -965,7 +964,7 @@ pub fn AppletsPanel(
 mod tests {
 
     /// Pin the current lightweight registration form. The full durable
-    /// `ck.applet.registration` payload still requires controller proof and
+    /// `ak.applet.registration` payload still requires controller proof and
     /// package metadata that this panel does not collect yet.
     #[test]
     fn applet_registration_body_keys_pin_canonical_wire() {

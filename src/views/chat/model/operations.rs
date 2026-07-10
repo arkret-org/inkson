@@ -269,7 +269,7 @@ pub(crate) fn chat_reaction_add_operation_encrypted(
     .build_sdk_event("inkson")
 }
 
-/// Build the `ck.reaction.add` operation for a tapped emoji, choosing the
+/// Build the `ak.reaction.add` operation for a tapped emoji, choosing the
 /// plaintext or E2EE (§2.9 routing-tag) shape based on whether the channel
 /// is encrypted. On any MLS failure in an encrypted channel the reaction is
 /// dropped (returns `None`) rather than leaking the emoji in plaintext.

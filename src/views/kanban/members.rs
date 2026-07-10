@@ -14,11 +14,11 @@ use crate::views::helpers::{display_name_for_did, handle_display_from_did, short
 /// handle / display fields. Identity resolution happens by following
 /// `identity_event_ids[]` (or inline `identity_events[]`) and applying
 /// the SDK's `effective_identity_events` helper. Handle strings only ever
-/// appear inside signed `ck.schema.handle_claim.v1` evidence.
+/// appear inside signed `ak.schema.handle_claim.v1` evidence.
 ///
 /// `actor_id` is the actor DID. `membership` is `join` / `invite` /
 /// `knock`. `identity_event_ids` are the effective
-/// `ck.member.identity.update` event ids (after replacement edges).
+/// `ak.member.identity.update` event ids (after replacement edges).
 /// `member_display_state_digest` is the roster display cache key (R3.2
 /// rename of the prior `identity_state_digest`; now folds the visible
 /// handle-claim digest set). `subject_id` is the disclosed principal DID

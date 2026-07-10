@@ -1,4 +1,4 @@
-//! `ck.account_data.set` operation envelope builders and private
+//! `ak.account_data.set` operation envelope builders and private
 //! account-data key derivation/validation helpers.
 
 use serde_json::Value;
@@ -6,9 +6,9 @@ use serde_json::Value;
 use super::AccountDataKey;
 use crate::operation::OperationBuilder;
 
-/// Build a `ck.account_data.set` operation envelope for `key` -> `value`.
+/// Build a `ak.account_data.set` operation envelope for `key` -> `value`.
 ///
-/// `ck.account_data.set` is classified `actor_private_event` in
+/// `ak.account_data.set` is classified `actor_private_event` in
 /// `conformance.rs:393`; reducers MUST NOT include it in shared Realm state.
 pub fn build_account_data_set(
     realm_id: &str,

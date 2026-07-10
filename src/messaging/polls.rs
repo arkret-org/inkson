@@ -2,9 +2,9 @@
 //!
 //! Wire shape (spec: `models/content-types.md §4.9`, canonical schema
 //! `content-block-poll.schema.json`, `additionalProperties: false`):
-//! * `ck.message.create` with a `poll_block` content block `{kind: "ak.content.poll", body, poll:
+//! * `ak.message.create` with a `poll_block` content block `{kind: "ak.content.poll", body, poll:
 //!   {kind: "disclosed", max_selections, answers: [{id, text}]}}` creates a poll.
-//! * `ck.message.create` with a `poll_response_block` `{kind: "ak.content.poll.response", body,
+//! * `ak.message.create` with a `poll_response_block` `{kind: "ak.content.poll.response", body,
 //!   poll_response: {poll_ref: id:message, selections: [answer_id]}}` records a response.
 //!
 //! Closing a poll has NO carrier in spec v1 (the content-block schema's
@@ -199,7 +199,7 @@ impl PollCard {
     /// Parse a canonical `poll_block`
     /// (`content-block-poll.schema.json#/$defs/poll_block`). `poll_ref` is
     /// the wire message id (`ak:message:<uuid7>`) carried by the enclosing
-    /// `ck.message.create` — it becomes the card's `poll_id` (the identity
+    /// `ak.message.create` — it becomes the card's `poll_id` (the identity
     /// `poll_response.poll_ref` points at); `message_id` stays the local
     /// render identity. Non-canonical shapes (missing `poll`, unknown
     /// `poll.kind`) fail closed to `None`.
@@ -301,7 +301,7 @@ fn content_kind(content: &Value) -> Option<&str> {
 
 /// Build the canonical `poll_block` message
 /// (`content-block-poll.schema.json#/$defs/poll_block`) as a
-/// `ck.message.create` event. The poll's wire identity is the stamped
+/// `ak.message.create` event. The poll's wire identity is the stamped
 /// `message_id` (`ak:message:<uuid7>` derived from the event id) — callers
 /// read it back from `event.payload["message_id"]` to address later
 /// `poll_response.poll_ref`s at this poll.
@@ -375,7 +375,7 @@ pub fn poll_message_ref(event: &arkret_sdk::Event) -> Option<String> {
 
 /// Build the canonical `poll_response_block`
 /// (`content-block-poll.schema.json#/$defs/poll_response_block`) as a
-/// `ck.message.create` event on the poll's own Strand. `poll_ref` MUST be
+/// `ak.message.create` event on the poll's own Strand. `poll_ref` MUST be
 /// the poll message's wire id (`ak:message:<uuid7>`) — fail-closed
 /// otherwise (a locally generated optimistic id never reaches the wire).
 pub fn build_poll_vote_op(

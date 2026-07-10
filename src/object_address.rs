@@ -1,4 +1,4 @@
-//! R3.3 (CKP-0011, arkret-spec @ cced4b8) — client-side shareable object
+//! R3.3 (AKP-0011, arkret-spec @ cced4b8) — client-side shareable object
 //! links.
 //!
 //! A user can share a Realm / Strand / Message as a link. This module is the
@@ -173,7 +173,7 @@ impl ShareTarget {
     }
 
     /// Build a `preview` link pair. Preview tokens are policy-limited by
-    /// `ck.realm.preview_policy`; they do not grant membership, write access or
+    /// `ak.realm.preview_policy`; they do not grant membership, write access or
     /// join routing.
     pub fn build_preview_links(
         &self,

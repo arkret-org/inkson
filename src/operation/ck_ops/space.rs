@@ -5,7 +5,7 @@ use super::{
     space_id_value, space_patch_payload_value, space_state_transition_payload_value, trim_realm_id,
 };
 
-/// Build a `ck.space.create` operation for Board/List container Spaces.
+/// Build a `ak.space.create` operation for Board/List container Spaces.
 ///
 /// Board/List containers are Space objects and the security boundary is
 /// Realm. The optional
@@ -43,7 +43,7 @@ pub fn space_create(
     .body(body))
 }
 
-/// Build a `ck.space.restore` operation. Reverses `realm_archive`
+/// Build a `ak.space.restore` operation. Reverses `realm_archive`
 /// (`archived -> active`). The SDK reducer enforces `state == archived`
 /// at apply time; tombstoned container Spaces MUST NOT be restored. Spec:
 /// `models/realm-and-space.md` §4.4, `common-fields.md §5`.
@@ -64,7 +64,7 @@ pub fn space_restore(
     )?))
 }
 
-/// Build a `ck.space.update` patch operation for structural Space
+/// Build a `ak.space.update` patch operation for structural Space
 /// metadata (`title`, `summary`, `rank`, `fields`, ...). The event lives
 /// in the Space's home Realm; `space_id` stays as the object target.
 pub fn space_update_patch(

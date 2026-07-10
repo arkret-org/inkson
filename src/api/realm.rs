@@ -2,7 +2,7 @@ use super::*;
 use crate::realm_helpers::select_join_candidate;
 
 impl CokretApi {
-    /// Accept an invite via `ck.invite.accept` event (spec-canonical).
+    /// Accept an invite via `ak.invite.accept` event (spec-canonical).
     pub async fn accept_realm_invite(
         &self,
         realm_id: &str,

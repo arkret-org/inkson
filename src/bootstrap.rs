@@ -654,7 +654,7 @@ pub(crate) async fn bootstrap_mls_welcome_for_realm(
     // history-key provider. The welcome is fetched + acked on this bootstrap
     // path WITHOUT going through the sync engine, so without this ingest the
     // inbox stays empty and `provider_candidates_from_inbox` finds nobody to
-    // request `ck.realm_key.share` from. Each envelope already carries
+    // request `ak.realm_key.share` from. Each envelope already carries
     // `sender_principal_id` + `sender_device_id`, which is exactly the
     // (principal, device) tuple the request planner needs.
     if let Some(welcome_messages) = messages_value

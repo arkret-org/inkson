@@ -6,7 +6,7 @@
 //! the private-plaintext sidecar already re-upload after encrypted writes
 //! (`mls_backup_prompt::schedule_mls_private_plaintext_backup_after_encrypted_write`);
 //! this module closes the remaining gap: re-uploading the per-Realm
-//! `mls_history` group-state envelope after every accepted `ck.mls.commit`
+//! `mls_history` group-state envelope after every accepted `ak.mls.commit`
 //! (epoch advance) so a fresh device can recover up-to-date epoch material.
 //!
 //! Wire shape (soland-audited):
@@ -171,7 +171,7 @@ fn upsert_mls_history_backup_job(
     })
 }
 
-/// Hook: call after a `ck.mls.commit` was ACCEPTED by the server and the local
+/// Hook: call after a `ak.mls.commit` was ACCEPTED by the server and the local
 /// MLS snapshot advanced (persist-on-accept), or after a Welcome application
 /// persisted a fresh snapshot. Debounced + deduped; no-op until the 24-word
 /// Recovery Key strand has configured server-side recovery

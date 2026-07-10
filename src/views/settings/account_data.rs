@@ -1,5 +1,5 @@
 //! Account-data push helpers and small per-realm builders factored out of
-//! the settings panel. These spawn fire-and-forget `ck.account_data.set`
+//! the settings panel. These spawn fire-and-forget `ak.account_data.set`
 //! tasks (local state stays authoritative) plus a couple of label / option
 //! derivations used by the notification override picker.
 
@@ -51,7 +51,7 @@ pub(super) fn encrypted_account_data_marker(
 }
 
 /// Spawn a fire-and-forget task that pushes the current read-receipt
-/// preferences to soland through `ck.account_data.set`. Read latest values
+/// preferences to soland through `ak.account_data.set`. Read latest values
 /// from the local state store at call time —
 /// the local state is always authoritative; the server-sync is best-effort.
 /// Swallows 404/501/405 via [`AccountDataSetResult::Unsupported`] so older
@@ -107,10 +107,10 @@ pub(super) fn build_presence_preference_body(
     serde_json::Value::Object(body)
 }
 
-/// Best-effort cross-device sync of `ck.presence.preference`
+/// Best-effort cross-device sync of `ak.presence.preference`
 /// (profiles-presence.md §3.6). Local state stays authoritative; the
 /// payload goes up encrypted because servers MUST NOT read or project
-/// this key (unlike the minimal `ck.presence.visibility` projection).
+/// this key (unlike the minimal `ak.presence.visibility` projection).
 /// An empty preference deletes the key instead of storing an empty body.
 pub(super) fn push_presence_preference_account_data(
     base_url: String,

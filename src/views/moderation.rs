@@ -24,19 +24,18 @@
 use dioxus::prelude::*;
 use serde_json::Value;
 
-use crate::local_state::LocalStateStore;
 use crate::ui::button::{Button, ButtonVariant};
 use crate::ui::input::Input;
 use crate::ui::textarea::Textarea;
 use crate::views::helpers::{short_protocol_id, with_event_submitter};
 
 /// `governance/content-moderation.md` §5.5.1.1 — the closed `verdict` enum for
-/// `ck.moderation.appeal.decision`. Authoritative set, drives both the UI
+/// `ak.moderation.appeal.decision`. Authoritative set, drives both the UI
 /// dropdown and the per-verdict submit path. Any other value is a
 /// `schema_violation` server-side, so the workbench never offers one.
 pub const APPEAL_VERDICTS: &[&str] = &["uphold", "overturn", "modify"];
 
-/// The closed `decision` enum for `ck.moderation.decision`
+/// The closed `decision` enum for `ak.moderation.decision`
 /// (`event-payload.schema.json#/$defs/moderation_decision_payload`). Any
 /// other value is a `schema_violation` server-side, so the workbench only
 /// ever offers this authoritative set (the earlier `deny` / `allow` values
@@ -92,9 +91,9 @@ fn payload_kind(payload: &Value) -> Option<&str> {
 /// queues. Pure (no Dioxus / IO) so the lifecycle folding is unit-tested.
 ///
 /// Folding rules (latest-wins by log order, which is receive order):
-///   * `ck.moderation.decision` adds a standing decision; `ck.moderation.decision.lift` removes the
+///   * `ak.moderation.decision` adds a standing decision; `ak.moderation.decision.lift` removes the
 ///     one it targets.
-///   * `ck.moderation.appeal.submit` opens an appeal (`submitted`); `…appeal.review` moves it to
+///   * `ak.moderation.appeal.submit` opens an appeal (`submitted`); `…appeal.review` moves it to
 ///     `under_review`; `…appeal.decision` and `…appeal.close` are terminal and remove it from the
 ///     open queue.
 pub fn project_moderation_queues(raw_ops: &[Value]) -> (Vec<StandingDecision>, Vec<OpenAppeal>) {
@@ -361,7 +360,6 @@ pub fn ModerationWorkbench(
                     for appeal in open_appeals.iter().cloned() {
                         AppealReviewRow {
                             key: "{appeal.appeal_id}",
-                            base_url: base_url.clone(),
                             account_did: account_did.clone(),
                             token,
                             selected_realm_id: selected_realm_id.clone(),
@@ -379,13 +377,14 @@ pub fn ModerationWorkbench(
 /// correct (possibly atomic-batch) submit path per §5.5.1.1.
 #[component]
 fn AppealReviewRow(
-    base_url: String,
     account_did: String,
     token: Signal<String>,
     selected_realm_id: String,
     appeal: OpenAppeal,
     status: Signal<String>,
 ) -> Element {
+    // A4 — base_url from session context instead of a prop.
+    let base_url = crate::app::SessionContext::base_url_string();
     let mut verdict = use_signal(|| "uphold".to_owned());
     let mut reason = use_signal(String::new);
     let mut status = status;

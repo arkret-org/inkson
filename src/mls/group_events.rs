@@ -1,5 +1,5 @@
-//! MLS group-lifecycle event construction: `ck.mls.genesis` for a creator
-//! group and `ck.mls.commit` (self-update / add / remove) with the
+//! MLS group-lifecycle event construction: `ak.mls.genesis` for a creator
+//! group and `ak.mls.commit` (self-update / add / remove) with the
 //! governance binding, for any effective scope (Realm-wide or Circle).
 //!
 //! YGN-ARCH-01 step 2 (pure move from `views/kanban/mls_encrypt.rs`, zero
@@ -136,12 +136,12 @@ pub(crate) fn mls_policy_root_from_seal_view(
     arkret_sdk::Hash::new(hash).map_err(|err| format!("invalid MLS policy root hash: {err:?}"))
 }
 
-/// Resolve the `policy_root` a `ck.mls.commit` MUST declare for this group.
+/// Resolve the `policy_root` a `ak.mls.commit` MUST declare for this group.
 ///
 /// soland's `apply_commit_epoch` carries the genesis-locked `policy_root`
 /// forward unchanged on every epoch advance and rejects any commit whose
 /// binding declares a different value (`governance_binding_mismatch`). So a
-/// commit MUST reuse the exact bytes `ck.mls.genesis` locked — NOT recompute
+/// commit MUST reuse the exact bytes `ak.mls.genesis` locked — NOT recompute
 /// from the live Seal `state_root`, which advances on every non-policy event
 /// and would drift the commit away from genesis. We return the recorded
 /// genesis-locked root when present, falling back to the Seal-derived root only
@@ -231,7 +231,7 @@ pub(crate) fn ensure_creator_mls_snapshot_for_encrypted_scope(
     .map_err(|err| err.user_message())
 }
 
-/// Build the `ck.mls.genesis` SDK event for a creator group that has a
+/// Build the `ak.mls.genesis` SDK event for a creator group that has a
 /// local snapshot but whose genesis has not yet been submitted to soland.
 ///
 /// Returns `None` when genesis was already emitted for this Realm (idempotent —
@@ -293,7 +293,7 @@ pub(crate) fn build_creator_mls_genesis_event_for_effective_scope(
         .map_err(|err| format!("invalid MLS genesis Realm id: {err:?}"))?;
     let membership_frontier = mls_membership_frontier_from_seal_view(&seal_view, &event_id_typed);
     let policy_root = mls_policy_root_from_seal_view(&seal_view, realm_id)?;
-    // Lock the genesis `policy_root` so every later `ck.mls.commit` reuses these
+    // Lock the genesis `policy_root` so every later `ak.mls.commit` reuses these
     // exact bytes instead of recomputing from the moving Seal `state_root`
     // (which drifts the moment the creator does any non-policy work before
     // inviting, getting the add-member commit rejected with
@@ -358,7 +358,7 @@ pub(crate) fn build_creator_mls_genesis_event_for_effective_scope(
 
 // pub(crate): the realm_admin epoch-rotation button (YOU-01-009) reuses
 // this builder to wrap a forced `self_update_commit` into the canonical
-// `ck.mls.commit` event with the governance binding.
+// `ak.mls.commit` event with the governance binding.
 pub(crate) fn mls_commit_event_from_store(
     state_store: &LocalStateStore,
     realm_id: &str,

@@ -419,7 +419,7 @@ fn tier2_accepted_key(
 
 /// Accept a managed-DID service-attested device record (§5.4) only when the
 /// active directory key is accompanied by the current device-set projection
-/// anchors: the accepted `ck.device.authorize` id and the enrollment authority
+/// anchors: the accepted `ak.device.authorize` id and the enrollment authority
 /// binding that caused the projection.
 fn service_attested_accepted_key(
     outcome: &arkret_sdk::models::KeysQueryOutcome,
@@ -681,7 +681,7 @@ pub fn verify_persistent_envelope_proofs(
 }
 
 /// Drop the cached entry for one `(actor, device)` (e.g. after observing a
-/// `ck.device.revoke` locally) so the next lookup re-queries.
+/// `ak.device.revoke` locally) so the next lookup re-queries.
 pub fn invalidate(actor: &str, device: &str) {
     let mut guard = match CACHE.write() {
         Ok(g) => g,

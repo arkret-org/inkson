@@ -66,7 +66,7 @@ impl PromoteIds {
     }
 }
 
-/// Build the `ck.circle.create` event for the private discussion scope.
+/// Build the `ak.circle.create` event for the private discussion scope.
 pub fn build_discussion_circle_create_op(
     realm_id: &str,
     actor: &str,
@@ -77,7 +77,7 @@ pub fn build_discussion_circle_create_op(
         .build_sdk_event("inkson")
 }
 
-/// Build the `ck.strand.create` event for the new private discussion Strand.
+/// Build the `ak.strand.create` event for the new private discussion Strand.
 pub fn build_discussion_strand_create_op(
     realm_id: &str,
     actor: &str,
@@ -94,7 +94,7 @@ pub fn build_discussion_strand_create_op(
     .build_sdk_event("inkson")
 }
 
-/// Build the `ck.relation.create` event that links the private Strand back
+/// Build the `ak.relation.create` event that links the private Strand back
 /// to the source public Strand/message.
 pub fn build_confidential_discussion_relation_op(
     realm_id: &str,

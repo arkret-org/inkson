@@ -32,7 +32,7 @@ pub fn english_translations() -> TranslationDict {
     dict.set("contacts.empty", "No contacts yet");
     dict.set("contacts.sign_in", "Sign in to load contacts");
 
-    // CKP-0007 Circle error keys (P3B.3.2)
+    // AKP-0007 Circle error keys (P3B.3.2)
     add_circle_error_keys(&mut dict);
 
     // Login
@@ -988,7 +988,7 @@ pub fn english_translations() -> TranslationDict {
     dict.set("shortcuts.list.palette", "Open command palette");
     dict.set("shortcuts.list.palette_mac", "Open command palette (macOS)");
     dict.set("shortcuts.list.send", "Send the current message");
-    // Personal blocklist (A5) — actor-private `ck.account.blocklist`
+    // Personal blocklist (A5) — actor-private `ak.account.blocklist`
     // account-data namespace. Used by the Settings → Privacy panel, the
     // member-row context action, and the message "blocked user"
     // placeholder row.
@@ -1247,7 +1247,7 @@ pub fn english_translations() -> TranslationDict {
     );
 
     // R3 spec sync (b47ff6ec) — new error toast strings surfaced by the
-    // arkret-spec error code expansion (CKP-0010 media binding,
+    // arkret-spec error code expansion (AKP-0010 media binding,
     // agent FSM, handle homograph wire-level enforce, recovery
     // policy). The HTTP error reply carries a stable
     // `code` / `reason` field that the toast layer maps via these
@@ -1696,7 +1696,7 @@ fn add_r3_error_keys(dict: &mut TranslationDict) {
         "This approval nonce was already consumed. Request a fresh approval.",
     );
 
-    // Media binding (CKP-0010).
+    // Media binding (AKP-0010).
     dict.set(
         "error.call.focus_unavailable_for_client",
         "The selected media focus is unavailable for this client. Retry or leave the call.",
@@ -1783,7 +1783,7 @@ fn add_r3_error_keys(dict: &mut TranslationDict) {
     );
 }
 
-/// English i18n strings for the 6 CKP-0007 reason / error codes
+/// English i18n strings for the 6 AKP-0007 reason / error codes
 /// surfaced by [`crate::circle::CircleErrorKind`] (P3B.3.2). Zh / Ar
 /// translations follow in a later milestone; the toast falls back to
 /// the English string when the locale doesn't carry the key.
@@ -1833,7 +1833,7 @@ fn add_circle_error_keys(dict: &mut TranslationDict) {
     dict.set("circle.status.archived", "Archived");
     dict.set("circle.status.tombstoned", "Tombstoned");
 
-    // R3.3 (CKP-0011) — shareable object links (Chinese-first).
+    // R3.3 (AKP-0011) — shareable object links (Chinese-first).
     dict.set("object_link.share", "分享链接");
     dict.set("object_link.share_realm", "分享此领域");
     dict.set("object_link.share_strand", "分享此流程");

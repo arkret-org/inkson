@@ -5,21 +5,21 @@
 //! the spec's three signaling event kinds so the renderer can publish into the
 //! durable event chain without re-discovering the body shape:
 //!
-//! - `ck.call.signal` — ephemeral SDP / ICE candidate exchange (classified `ephemeral_event`;
+//! - `ak.call.signal` — ephemeral SDP / ICE candidate exchange (classified `ephemeral_event`;
 //!   reducers MUST NOT use it as state input). Round 4 wire shape; carries `device_id` + `proof`
 //!   + `payload.{call_id, signal_type, seq}`. Receivers use [`CallSignalReceiver`] to reject
 //!     replay/rollback per `(realm, call, actor, device)` and SHOULD emit `hangup` for that call on
 //!     a rollback.
-//! - `ck.call.state` — durable call state transitions (start / answer / end).
-//! - `ck.call.recording.start` — durable opt-in recording marker.
+//! - `ak.call.state` — durable call state transitions (start / answer / end).
+//! - `ak.call.recording.start` — durable opt-in recording marker.
 
 use serde_json::json;
 
 use crate::operation::OperationBuilder;
 
-// NOTE: `ck.call.signal` is an ephemeral kind and MUST route through
-// `EphemeralEnvelope` (`ck.schema.ephemeral_envelope.v1`), NOT through
-// `ck.self.events.command.submit`. The canonical builder lives in
+// NOTE: `ak.call.signal` is an ephemeral kind and MUST route through
+// `EphemeralEnvelope` (`ak.schema.ephemeral_envelope.v1`), NOT through
+// `ak.self.events.command.submit`. The canonical builder lives in
 // `crate::ephemeral::build_call_signal_envelope_v1` and accepts the v1
 // canonical signal_type values (`invite`, `answer`, `candidate`,
 // `renegotiate`, `hangup`, `ack`, `reject`, `mute_state`, `media_state`,
@@ -27,7 +27,7 @@ use crate::operation::OperationBuilder;
 // NOT re-introduce a durable `OperationBuilder`-based helper or a parallel
 // `CallSignalKind` enum here — it would violate the wire spec.
 
-/// Call lifecycle state for `ck.call.state`.
+/// Call lifecycle state for `ak.call.state`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum CallState {
     Scheduled,
@@ -55,7 +55,7 @@ impl CallState {
     }
 }
 
-/// Build a `ck.call.state` event — durable call lifecycle transition.
+/// Build a `ak.call.state` event — durable call lifecycle transition.
 pub fn build_call_state(
     realm_id: &str,
     actor: &str,
@@ -76,7 +76,7 @@ pub fn build_call_state(
     }))
 }
 
-/// Round 4 — outcome of feeding an incoming `ck.call.signal` envelope
+/// Round 4 — outcome of feeding an incoming `ak.call.signal` envelope
 /// through the receiver. Carries the canonical
 /// [`arkret_sdk::CallSignalPayload`] when accepted; on a seq rollback
 /// the renderer SHOULD emit a local `hangup` for the offending call.
@@ -97,7 +97,7 @@ pub enum CallSignalIngestOutcome {
     Rejected { reason: String },
 }
 
-/// Round 4 — typed receiver for incoming `ck.call.signal` envelopes.
+/// Round 4 — typed receiver for incoming `ak.call.signal` envelopes.
 ///
 /// Wraps [`arkret_sdk::CallSignalState`] so the renderer can plug a
 /// single state into the signal stream and get back a typed outcome
@@ -159,7 +159,7 @@ impl Default for CallSignalReceiver {
     }
 }
 
-/// Build a `ck.call.recording.start` event — durable opt-in recording marker.
+/// Build a `ak.call.recording.start` event — durable opt-in recording marker.
 /// The spec REQUIRES this be written before any recording stream begins so
 /// participants have an auditable signal.
 pub fn build_call_recording_start(

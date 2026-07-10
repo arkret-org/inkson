@@ -334,7 +334,7 @@ impl InksonEventSigner {
     /// using the active backend, matching the alg-only protected header
     /// shape [`Self::sign_envelope_with_context`] uses. Control-plane
     /// signatures that are NOT [`EventEnvelope`] proofs — notably the
-    /// `ck.call.signal` ephemeral envelope `proof` (spec
+    /// `ak.call.signal` ephemeral envelope `proof` (spec
     /// `webrtc-signaling.md` §5: detached signature over canonical
     /// envelope bytes excluding `proof`) — go through this helper instead
     /// of re-deriving the JWS reassembly.

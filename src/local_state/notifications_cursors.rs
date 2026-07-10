@@ -434,7 +434,7 @@ impl LocalStateStore {
 
     /// Replace the server-declared policy snapshot for a Realm. Called from
     /// the sync path once the Seal view (P0 M3) surfaces
-    /// `ck.component.realm.read_receipt_policy.v1` cell value; tests use
+    /// `ak.component.realm.read_receipt_policy.v1` cell value; tests use
     /// this to seed lock-state UI behavior.
     pub fn set_read_receipt_policy_snapshot(
         &mut self,
@@ -465,7 +465,7 @@ impl LocalStateStore {
     /// realm → default). Mirror of
     /// `arkret_sdk::ReadReceiptPreferences::effective_send` extended with
     /// server-declared policy lock: when the Realm publishes a
-    /// `ck.realm.read_receipt_policy` with `disclosure="required"` the
+    /// `ak.realm.read_receipt_policy` with `disclosure="required"` the
     /// answer is forced `true`; with `disclosure="disabled"` it's forced
     /// `false`. User-level overrides are ignored in those cases (matching
     /// the lock UI in settings).

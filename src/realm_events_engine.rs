@@ -1,4 +1,4 @@
-//! Per-realm `ck.self.events.stream.subscribe` long-poll engine.
+//! Per-realm `ak.self.events.stream.subscribe` long-poll engine.
 //!
 //! This is the realm-scoped counterpart to [`crate::sync_engine`]. The account
 //! engine drives `/_arkret/self/account/subscribe` (the account-aggregate

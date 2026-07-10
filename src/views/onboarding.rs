@@ -24,7 +24,6 @@ use dioxus_router::Link;
 
 use crate::api::CokretApi;
 use crate::identity_handle::{detect_handle_homograph_risk, handle_will_be_nfc_normalised};
-use crate::local_state::LocalStateStore;
 use crate::recovery_strand::{
     FirstBackupGateBlockReason, FirstBackupGateStatus, first_backup_gate_status_from_payloads,
 };
@@ -475,8 +474,8 @@ pub fn OnboardingPanel(
                         }
                     }
 
-                    // CKP B-C first-backup gate (spec head 37ce729 /
-                    // CKP-0008 §4 / device-lifecycle §10-§13).
+                    // AKP B-C first-backup gate (spec head 37ce729 /
+                    // AKP-0008 §4 / device-lifecycle §10-§13).
                     //
                     // The inception key (the very first device key
                     // authorized at account bootstrap) MUST NOT be
@@ -488,7 +487,6 @@ pub fn OnboardingPanel(
                     // until the first did_recovery envelope is
                     // observed via `GET /_arkret/self/keys/backups`.
                     FirstBackupGate {
-                        base_url: base_url.clone(),
                         token,
                         account_did: account_did(),
                     }
@@ -588,13 +586,15 @@ pub fn OnboardingPanel(
     }
 }
 
-/// CKP B-C — first-backup gate. The inception key cannot retire
+/// AKP B-C — first-backup gate. The inception key cannot retire
 /// until an accepted `backup_class=did_recovery` first envelope matches the
 /// active recovery policy. This component reads the active recovery policy,
 /// lists did_recovery backups, and renders a blocked panel until the list
 /// contains a matching `recovery_public_key` backup.
 #[component]
-pub fn FirstBackupGate(base_url: String, token: Signal<String>, account_did: String) -> Element {
+pub fn FirstBackupGate(token: Signal<String>, account_did: String) -> Element {
+    // A4 — base_url from session context instead of a prop.
+    let base_url = crate::app::SessionContext::base_url_string();
     let mut gate_satisfied = use_signal(|| false);
     let mut status = use_signal(|| "checking did_recovery backup envelope…".to_owned());
     let mut last_error_code = use_signal(String::new);
@@ -694,7 +694,7 @@ pub fn FirstBackupGate(base_url: String, token: Signal<String>, account_did: Str
             "aria-labelledby": "first-backup-gate-heading",
             "aria-describedby": "first-backup-gate-help",
             div { class: "event-head",
-                span { id: "first-backup-gate-heading", "First-backup gate (CKP B-C)" }
+                span { id: "first-backup-gate-heading", "First-backup gate (AKP B-C)" }
                 if gate_satisfied() {
                     span { class: "badge green", "aria-label": "First backup envelope satisfied", "satisfied" }
                 } else {
@@ -702,7 +702,7 @@ pub fn FirstBackupGate(base_url: String, token: Signal<String>, account_did: Str
                 }
             }
             div { id: "first-backup-gate-help", class: "muted",
-                "The inception key MUST NOT retire until a backup_class=did_recovery envelope has been published. This is a hard gate (CKP B-C / device-lifecycle §10-§13) — without it the Arkret principal control state could become permanently unrecoverable."
+                "The inception key MUST NOT retire until a backup_class=did_recovery envelope has been published. This is a hard gate (AKP B-C / device-lifecycle §10-§13) — without it the Arkret principal control state could become permanently unrecoverable."
             }
             div {
                 class: "muted",

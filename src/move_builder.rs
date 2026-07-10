@@ -3,7 +3,7 @@
 //!
 //! The full Move construction + signing surface (`build_*_move`,
 //! `sign_unsigned_move`, `UnsignedMove`, …) has been removed: all writes
-//! now go through `ck.self.events.command.submit` via the Event Envelope path
+//! now go through `ak.self.events.command.submit` via the Event Envelope path
 //! (`operation.rs` / `api/events.rs`), with `effects[]` inlined in the
 //! envelope. Only the few standalone helpers that other modules still
 //! depend on survive here:
@@ -18,10 +18,10 @@
 /// a given Board. Per
 /// [`spec/v1/zh/models/realm-and-space.md`
 /// §3.6](../../arkret-spec/spec/v1/zh/models/realm-and-space.md) the cell key is
-/// `ak:cell:ck.component.strand.position.v1:<board_space_id>:<strand_id>` — a Strand can appear on
+/// `ak:cell:ak.component.strand.position.v1:<board_space_id>:<strand_id>` — a Strand can appear on
 /// multiple Boards with **independent** position cells, so the Board id is part of the subject.
 pub fn strand_position_cell_id(board_space_id: &str, strand_id: &str) -> String {
-    format!("ak:cell:ck.component.strand.position.v1:{board_space_id}:{strand_id}")
+    format!("ak:cell:ak.component.strand.position.v1:{board_space_id}:{strand_id}")
 }
 
 /// CAS pre-state that the caller expects to find on the position cell
@@ -46,7 +46,7 @@ pub enum StrandPositionExpectation {
     At { list_space_id: String, rank: String },
 }
 
-/// Effect value for a `ck.strand.move` / `ck.strand.reorder` write. Compiles
+/// Effect value for a `ak.strand.move` / `ak.strand.reorder` write. Compiles
 /// to a cas-register `set` with `{"list_space_id", "rank"}` per
 /// [`operations-sync.md` §9.1-9.2](../../arkret-spec/spec/v1/zh/sync/operations-sync.md).
 ///
@@ -66,7 +66,7 @@ mod tests {
     use super::*;
 
     /// spec/v1/zh/models/realm-and-space.md §3.6: the position cell key is
-    /// `ak:cell:ck.component.strand.position.v1:<board_space_id>:<strand_id>`.
+    /// `ak:cell:ak.component.strand.position.v1:<board_space_id>:<strand_id>`.
     /// This pins the composite subject so a future refactor that drops one
     /// segment fails loudly.
     #[test]
@@ -77,7 +77,7 @@ mod tests {
         );
         assert_eq!(
             cell,
-            "ak:cell:ck.component.strand.position.v1:ak:space:0196419b-0000-7000-8000-000000000010:ak:strand:01abcd"
+            "ak:cell:ak.component.strand.position.v1:ak:space:0196419b-0000-7000-8000-000000000010:ak:strand:01abcd"
         );
     }
 }

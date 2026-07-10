@@ -1,7 +1,7 @@
 //! Audit view — read-only inspector for audited E2EE events.
 //!
-//! Surfaces `ck.audit.accessed` (attested-audit reads) and
-//! `ck.audit.ryw_receipt` (disclosed-audit write receipts) from the local
+//! Surfaces `ak.audit.accessed` (attested-audit reads) and
+//! `ak.audit.ryw_receipt` (disclosed-audit write receipts) from the local
 //! raw-operation log, so administrators / users can verify the audit
 //! channel is firing under the active policy.
 //!
@@ -12,7 +12,6 @@ use dioxus::prelude::*;
 use serde_json::Value;
 
 use crate::components::{EmptyState, EmptyStateKind, HelpTip};
-use crate::local_state::LocalStateStore;
 use crate::views::helpers::short_protocol_id;
 
 #[derive(Clone, Debug, PartialEq)]

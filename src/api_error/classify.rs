@@ -51,7 +51,7 @@ pub fn is_auth_expired_error(error: &anyhow::Error) -> bool {
 ///   (unverified / unpaired device writing the account Recovery Key backup).
 /// - `recovery_policy_device_not_authorized` — the recovery-policy genesis path falls back to the
 ///   projected device row's `device_public_key`; a session device that was never enrolled (no
-///   `ck.device.authorize`) has no key there.
+///   `ak.device.authorize`) has no key there.
 /// - `device_enrollment_authority_not_designated` — the `service_attested` enrollment path could
 ///   not anchor an authority for this device (device-lifecycle.md §5.4).
 ///

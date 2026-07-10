@@ -12,7 +12,7 @@
 |---|---|---|
 | 全局 `status: Signal<String>` | `app/mod.rs` 数十处、`app/sidebar.rs:85/115`、`realm_admin/*` 40+ 处 | 错误、成功、进度、导航提示全塞一行字符串，大多硬编码英文 |
 | `PolicyDenyBanner` | `components/policy_deny_banner.rs` | 仅 HTTP 403 policy/capability denied，8 秒自动消失 |
-| `CircleErrorToast` | `components/circle_error_toast.rs` | 仅 CKP-0007 Circle 错误，单条覆盖不堆叠 |
+| `CircleErrorToast` | `components/circle_error_toast.rs` | 仅 AKP-0007 Circle 错误，单条覆盖不堆叠 |
 | `.event.error-banner` / `.badge.red|amber` | 各 view 内散落 | 持久告警（notary_paused、covered_seals 等） |
 | `.form-hint-warn` / `.field .err` | 表单 | 字段级内联错误 |
 
@@ -61,7 +61,7 @@ pub fn use_feedback() -> FeedbackHandle;   // handle.toast(...), handle.banner(.
 ### 3.2 收编既有机制
 
 - `PolicyDenyBanner`（403）→ toast host 的 Warning 来源，保留其"从 API 层拦截"的产生方式。
-- `CircleErrorToast`（CKP-0007）→ toast host 的 Error 来源；其"新错误覆盖旧错误"语义改为正常堆叠。
+- `CircleErrorToast`（AKP-0007）→ toast host 的 Error 来源；其"新错误覆盖旧错误"语义改为正常堆叠。
 - `.event.error-banner` 类持久告警（notary_paused 等）→ 保留在各 view 内（它们是**内容**而非**反馈**），不收编，但文案 i18n 化归 H4/H12。
 - 字段级 `.form-hint-warn` → 保持现状，即第三层。
 

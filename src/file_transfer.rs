@@ -1,8 +1,8 @@
-//! Principal-private file transfer support (`ck.profile.file_transfer.v1`).
+//! Principal-private file transfer support (`ak.profile.file_transfer.v1`).
 //!
 //! The feature is intentionally account-scoped: encrypted blob bytes live in
 //! the blob service, while the transfer record is sealed before being written
-//! as private account-data under `ck.file_transfer.v1:<transfer_key>`.
+//! as private account-data under `ak.file_transfer.v1:<transfer_key>`.
 
 pub use arkret_sdk::{
     FileTransferAad, FileTransferAccess, FileTransferAccessVisibility, FileTransferEncryption,

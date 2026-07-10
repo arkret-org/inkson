@@ -580,7 +580,7 @@ mod tests {
         // Server advertises exactly the operations SDK's
         // `requirements_for(PROFILE_MINIMAL_CLIENT)` requires — minimal
         // client should be ready. `chat_mvp` additionally requires
-        // `ck.self.account.stream.subscribe` which the fixture intentionally omits, so
+        // `ak.self.account.stream.subscribe` which the fixture intentionally omits, so
         // the readiness gate flags it as missing.
         let server: ServerDescription = serde_json::from_value(json!({
             "service_did": "did:web:server.example",

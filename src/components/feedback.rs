@@ -203,7 +203,7 @@ pub fn policy_deny_to_toast(event: PolicyDenyEvent) -> Toast {
     }
 }
 
-/// Bridge: a queued CKP-0007 [`CircleErrorKind`] becomes an Error
+/// Bridge: a queued AKP-0007 [`CircleErrorKind`] becomes an Error
 /// toast. The kind's English fallback covers locales that don't carry
 /// the `error.circle.*` key yet.
 pub fn circle_error_to_toast(kind: CircleErrorKind) -> Toast {

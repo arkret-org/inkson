@@ -4,17 +4,17 @@
 //! moderation decision the reducer emits MUST give the affected user an
 //! "Appeal this decision" entrypoint. The four-event lifecycle is:
 //!
-//! - `ck.moderation.appeal.submit`   — user files the appeal
-//! - `ck.moderation.appeal.review`   — reviewer takes the file
-//! - `ck.moderation.appeal.decision` — reviewer decides (uphold / overturn / modify)
-//! - `ck.moderation.appeal.close`    — appeal terminal
+//! - `ak.moderation.appeal.submit`   — user files the appeal
+//! - `ak.moderation.appeal.review`   — reviewer takes the file
+//! - `ak.moderation.appeal.decision` — reviewer decides (uphold / overturn / modify)
+//! - `ak.moderation.appeal.close`    — appeal terminal
 //!
 //! This module exposes:
 //!
 //! 1. `AppealState` — UI-side projection of the four wire states the user sees (submitted /
 //!    under_review / decided / closed).
 //! 2. `AppealSubmitter` component — renders the entrypoint button near a moderation decision and
-//!    submits the `ck.moderation.appeal.submit` event via the durable event channel.
+//!    submits the `ak.moderation.appeal.submit` event via the durable event channel.
 //!
 //! The full reviewer surface (Review/Decision/Close authoring) is admin
 //! scope and lives in `realm_admin.rs` once wired. See
@@ -32,10 +32,10 @@ use crate::views::helpers::{short_protocol_id, with_authed_api};
 /// User-facing projection of the four moderation appeal wire states.
 ///
 /// Wire kinds (Round R2/R3):
-/// - `ck.moderation.appeal.submit`   → [`AppealState::Submitted`]
-/// - `ck.moderation.appeal.review`   → [`AppealState::UnderReview`]
-/// - `ck.moderation.appeal.decision` → [`AppealState::Decided { .. }`]
-/// - `ck.moderation.appeal.close`    → [`AppealState::Closed`]
+/// - `ak.moderation.appeal.submit`   → [`AppealState::Submitted`]
+/// - `ak.moderation.appeal.review`   → [`AppealState::UnderReview`]
+/// - `ak.moderation.appeal.decision` → [`AppealState::Decided { .. }`]
+/// - `ak.moderation.appeal.close`    → [`AppealState::Closed`]
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum AppealState {
     None,
@@ -74,9 +74,9 @@ impl AppealState {
     }
 }
 
-/// Construct the canonical `ck.moderation.appeal.submit` event payload as
+/// Construct the canonical `ak.moderation.appeal.submit` event payload as
 /// an [`OperationBuilder`]. The wire shape matches
-/// [`arkret_sdk::AppealSubmitPayload`] / `ck.schema.moderation_appeal.v1`.
+/// [`arkret_sdk::AppealSubmitPayload`] / `ak.schema.moderation_appeal.v1`.
 ///
 /// Inputs:
 /// - `decision_event_id` — the `ak:event:` id of the original moderation decision being appealed
@@ -152,10 +152,11 @@ pub fn AppealEntrypoint(
     appellant: String,
     decision_event_id: String,
     target_ref: String,
-    base_url: String,
     api_token: String,
     current_state: AppealState,
 ) -> Element {
+    // A4 — base_url from session context instead of a prop.
+    let base_url = crate::app::SessionContext::base_url_string();
     let mut reason = use_signal(String::new);
     let mut status = use_signal(String::new);
     let mut submitting = use_signal(|| false);

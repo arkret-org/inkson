@@ -33,7 +33,6 @@ use widgets::*;
 use crate::components::{HelpTip, UiIcon};
 use crate::config::LocalConfigStore;
 use crate::i18n::Locale;
-use crate::local_state::LocalStateStore;
 use crate::models::AccountDataSetResult;
 use crate::notification_rules::WatchLevel;
 use crate::routes::Route;
@@ -103,7 +102,7 @@ pub(crate) fn default_avatar_tone(handles: &[String], account_did: &str) -> usiz
 }
 
 /// A4a — push the current `client.ui` payload (theme + sidebar
-/// collapsed) to soland's `ck.account_data.set` endpoint so other
+/// collapsed) to soland's `ak.account_data.set` endpoint so other
 /// devices pick up the same preference. Same graceful-degradation
 /// contract as [`push_read_receipt_account_data`].
 ///
@@ -120,7 +119,7 @@ pub(crate) fn push_client_ui_account_data(
 
 /// A4b — variant of [`push_client_ui_account_data`] that also carries
 /// the most-recently uploaded `avatar_blob_ref`. The avatar itself is
-/// also published via `ck.self.account.command.update_profile` so other actors see
+/// also published via `ak.self.account.command.update_profile` so other actors see
 /// it through the directory; mirroring the ref into `client.ui` keeps a
 /// second device that signs in primed before the profile lookup
 /// completes.
@@ -344,7 +343,7 @@ pub(crate) fn is_likely_valid_domain(input: &str) -> bool {
 }
 
 /// Spec client-preferences.md §3.7: push (or tombstone) a Realm remark to
-/// soland via `ck.account_data.set`. Same graceful-degradation contract as
+/// soland via `ak.account_data.set`. Same graceful-degradation contract as
 /// [`push_read_receipt_account_data`] — local state is authoritative; the
 /// server PUT is best-effort. `remark.is_empty()` triggers a DELETE so the
 /// row tombstones cleanly across devices.
@@ -472,7 +471,7 @@ pub fn SettingsPanel(
     // Read receipt preferences (spec discovery/client-preferences.md §3.6).
     // Hydrated from persisted local state; mutations write back through
     // `state_store.set_read_receipt_*` so message readers can resolve
-    // (strand → realm → default) before sending `ck.receipt.read`.
+    // (strand → realm → default) before sending `ak.receipt.read`.
     let mut read_receipt_default_send =
         use_signal(|| state_store.read().read_receipt_default_send());
     let mut read_receipt_default_display =
@@ -511,7 +510,7 @@ pub fn SettingsPanel(
     let mut new_contact_remark_name = use_signal(String::new);
     // A4b — profile (display_name / bio / avatar) state.
     // `avatar_blob_ref` mirrors the most-recently uploaded avatar via
-    // `ck.account_data.set("client.ui", { avatar_blob_ref })` and is also
+    // `ak.account_data.set("client.ui", { avatar_blob_ref })` and is also
     // published through the spec profile endpoint so directory projections can index it.
     let initial_avatar_blob_ref = state_store
         .read()
@@ -731,7 +730,7 @@ pub fn SettingsPanel(
                             // helper when a blob_ref is present), an
                             // upload control, and a clear button. The
                             // avatar is also published to soland's
-                            // `ck.self.account.command.update_profile` so the
+                            // `ak.self.account.command.update_profile` so the
                             // directory + member lists pick it up.
                             div { class: "event settings-card-span-2 settings-avatar-card", "data-testid": "settings-avatar-card",
                                 div { class: "event-head",
@@ -1329,7 +1328,7 @@ pub fn SettingsPanel(
                         }
                     }
 
-                    // ── My Agents (CKP-0008 native personal agents) ──────
+                    // ── My Agents (AKP-0008 native personal agents) ──────
                     if active_section == SettingsSection::Agents {
                         crate::views::agents::PersonalAgentAdminPanel {
                             token,
@@ -2455,8 +2454,8 @@ pub fn SettingsPanel(
                 // Actor-private local alias / note / pin for each Realm the
                 // user has joined. Lets users disambiguate duplicate-titled
                 // Realms without leaking the remark beyond this account.
-                // Pushed to soland via `ck.account_data.set` under
-                // `ck.contacts.realm.<realm_id>`; soland echoes the same
+                // Pushed to soland via `ak.account_data.set` under
+                // `ak.contacts.realm.<realm_id>`; soland echoes the same
                 // entries back on the next `/sync` so other devices pick
                 // them up.
                 div { class: "event", "data-testid": "realm-remarks-editor",

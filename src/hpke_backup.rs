@@ -12,7 +12,7 @@
 //! "new device must already have a secret to read its own backups" circularity).
 //!
 //! Suite (NORMATIVE): this surface pins the v1 **default-MUST** application-layer
-//! HPKE suite `ck.hpke_x25519_aead_chacha20poly1305.v1`
+//! HPKE suite `ak.hpke_x25519_aead_chacha20poly1305.v1`
 //! (`hpke-suite-registry.json`): standard RFC 9180 base mode —
 //! KEM `DHKEM(X25519, HKDF-SHA256)`, KDF `HKDF-SHA256`, AEAD ChaCha20-Poly1305
 //! (96-bit nonce). The AEAD nonce is the key-schedule-derived `base_nonce`

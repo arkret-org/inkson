@@ -150,7 +150,7 @@ a fresh identity.
 
 **Cause**: at least one peer has not yet acknowledged your new key.
 
-**Fix**: wait for each peer's `ck.key.verification.done` event, or
+**Fix**: wait for each peer's `ak.key.verification.done` event, or
 manually escalate by sending them a direct message asking them to open
 their **Settings → Verify**.
 

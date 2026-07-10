@@ -8,7 +8,7 @@ pub mod account_recovery;
 pub(crate) mod admission;
 pub mod durability;
 pub mod governance;
-/// MLS group-lifecycle event builders (`ck.mls.genesis` / `ck.mls.commit`)
+/// MLS group-lifecycle event builders (`ak.mls.genesis` / `ak.mls.commit`)
 /// with governance bindings; moved out of `views/kanban` (YGN-ARCH-01).
 pub(crate) mod group_events;
 pub mod persistence;

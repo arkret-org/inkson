@@ -41,7 +41,7 @@ impl LocalStateStore {
         let _ = self.flush();
     }
 
-    /// Resume cursor for this realm's `ck.self.events.stream.subscribe`. Kept
+    /// Resume cursor for this realm's `ak.self.events.stream.subscribe`. Kept
     /// separate from `sync_cursor` (account stream); see
     /// [`crate::local_state::types::ClientLocalState::realm_events_cursors`].
     pub fn realm_events_cursor(&self, realm_id: &str) -> Option<String> {
@@ -155,7 +155,7 @@ impl LocalStateStore {
 
     /// Drop a handled same-principal pairing request from the to-device inbox so
     /// the approval prompt does not nag again after the user approves or rejects
-    /// it. Matches the `ck.key.verification.request` whose
+    /// it. Matches the `ak.key.verification.request` whose
     /// `content.from_device` and `content.pairing_code` identify the request.
     /// Returns the number of messages removed.
     pub fn dismiss_pairing_to_device_message(
@@ -183,7 +183,7 @@ impl LocalStateStore {
         removed
     }
 
-    /// Drop a handled `ck.realm_key.request` from the local to-device inbox.
+    /// Drop a handled `ak.realm_key.request` from the local to-device inbox.
     /// The server-delivered envelope carries `request_id` at top-level, while
     /// older local/test envelopes may nest it under `content`; accept both so a
     /// successfully answered request does not trigger duplicate shares forever.
@@ -207,7 +207,7 @@ impl LocalStateStore {
         removed
     }
 
-    /// Drop a handled `ck.realm_key.share` from the local to-device inbox once
+    /// Drop a handled `ak.realm_key.share` from the local to-device inbox once
     /// its history secrets were installed. soland projects durable shares with
     /// the source Event `operation_id`, while event-shaped envelopes may expose
     /// `event_id`; accept both identifiers.

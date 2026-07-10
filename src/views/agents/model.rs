@@ -19,7 +19,7 @@ use serde::Deserialize;
 use serde_json::{Value, json};
 
 // ─────────────────────────────────────────────────────────────────────
-// CKP-0008 / CKP-0009 — Envelope `actor_kind` reducer-stamped
+// AKP-0008 / AKP-0009 — Envelope `actor_kind` reducer-stamped
 // projection. SDK 4d5a1af exposes `EnvelopeActorKind { Native, Ghost,
 // Service, Agent }`. The UI labels below MUST stay user-facing
 // readable: actor lists, sidecar disclosure cards, and the personal-
@@ -62,9 +62,9 @@ pub fn agents_enabled() -> bool {
 }
 
 // ─────────────────────────────────────────────────────────────────────
-// CKP-0008 §4.7 — additive content grant presets. The five presets are
+// AKP-0008 §4.7 — additive content grant presets. The five presets are
 // UI/SDK affordances only; the canonical content authorization is the
-// expanded `ck.capability.grant` object for each preset (actions +
+// expanded `ak.capability.grant` object for each preset (actions +
 // resource selector + registered constraints + TTL). Runtime endpoint
 // access is selected separately through `AgentServiceScopePreset`; only
 // the runtime service surface is included in `requested_scope`, while
@@ -131,7 +131,7 @@ impl AgentGrantPreset {
         }
     }
 
-    /// Registered capability actions for this preset (CKP-0008 §4.7 /
+    /// Registered capability actions for this preset (AKP-0008 §4.7 /
     /// §4.9). Only actions present in `capability-action-registry.json`
     /// are emitted so soland never fail-closes on an unknown action.
     pub fn actions(self) -> &'static [&'static str] {
@@ -280,9 +280,9 @@ pub fn requested_scope_for_presets(
     })
 }
 
-/// Builds the runtime-agnostic pairing bootstrap (CKP-0008 §4.4): the six
+/// Builds the runtime-agnostic pairing bootstrap (AKP-0008 §4.4): the six
 /// short-lived fields any agent runtime needs to start key pairing. It carries
-/// no scope payload — the authoritative ceiling lives in `ck.agent.key.authorize`
+/// no scope payload — the authoritative ceiling lives in `ak.agent.key.authorize`
 /// and the effective-permission intersection, and the requested scope is shown
 /// separately in the admin card, not baked into the QR.
 pub fn build_agent_pairing_bootstrap_json(
@@ -303,7 +303,7 @@ pub fn build_agent_pairing_bootstrap_json(
 }
 
 /// Wraps the bootstrap into a standard HTTPS Universal/App Link whose host is the
-/// deployment's `arkret_base_url` (CKP-0008 forbids a custom URI scheme).
+/// deployment's `arkret_base_url` (AKP-0008 forbids a custom URI scheme).
 /// The fragment carries only a short handoff token; runtimes resolve it through
 /// `POST /_arkret/open/agent-pairing/resolve` to obtain the six-field bootstrap.
 pub fn build_agent_pairing_deep_link(base_url: &str, pairing_token: &str) -> String {
@@ -516,8 +516,8 @@ pub fn build_agent_key_authorize_event_for_pairing(
     Ok(event)
 }
 
-/// Expand one preset into a canonical `ck.capability.grant` object for
-/// `ck.self.agent.grant.command.attach`. The agent principal id is the
+/// Expand one preset into a canonical `ak.capability.grant` object for
+/// `ak.self.agent.grant.command.attach`. The agent principal id is the
 /// grant `subject`; `realm_id` scopes it; `expires_at` (RFC3339 Z)
 /// bounds the TTL. The grant carries
 /// `effective_after_first_authorized_key=true` (§4.3.2) so it is durable
@@ -628,7 +628,7 @@ pub fn participation_ceiling_reason(
 /// G3.Y4 — handoff lifecycle. Drives
 /// `agent-protocol-handoff-status`'s `data-state`. The transition
 /// machine is purely client-side (the durable counterpart is the
-/// `ck.agent.interop_session.{start,status,result}` family); the
+/// `ak.agent.interop_session.{start,status,result}` family); the
 /// panel uses it to gate which sub-controls are visible.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum HandoffState {
@@ -679,7 +679,7 @@ impl HandoffState {
 
 /// G3.Y4 (Phase B) — interop capability-approval modal state. Drives
 /// `agent-interop-publish-modal`'s `data-state`. The modal authors a
-/// `ck.capability.grant` carrying `actions=[ck.agent.interop_session.start]`
+/// `ak.capability.grant` carrying `actions=[ak.agent.interop_session.start]`
 /// plus the §7 constraint, gated behind an explicit human-approval
 /// acknowledgement (spec §4 / §8 "sensitive Realms default require human
 /// approval").
@@ -756,7 +756,7 @@ impl PublishModalState {
 
 /// G3.Y4 (Phase C) — one row of the live interop-session transcript
 /// rebuilt from the soland events surface. `status` reflects the latest
-/// `ck.agent.interop_session.status` (or `start`/`result`) observed for
+/// `ak.agent.interop_session.status` (or `start`/`result`) observed for
 /// the session.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct LiveSessionRow {
@@ -769,7 +769,7 @@ pub struct LiveSessionRow {
 /// `event_kind` + `payload`) into a per-session live transcript row.
 ///
 /// The displayed `status` reflects the latest streaming
-/// `ck.agent.interop_session.status` (or the seeding `start`), NOT the
+/// `ak.agent.interop_session.status` (or the seeding `start`), NOT the
 /// terminal `result`: the result lands in the dedicated audit-bound
 /// results panel, while this row tracks the §5.3 streaming lifecycle
 /// (negotiating → accepted → working → ...). `start` seeds the row as
@@ -947,7 +947,7 @@ impl AuditVerifyStatus {
     }
 }
 
-/// Verify a soland `ck.agent.interop_session.result` payload's
+/// Verify a soland `ak.agent.interop_session.result` payload's
 /// `audit_binding` block. Inkson delegates the `binding_kind` switch
 /// to the SDK so future schemes land in one place instead of being
 /// re-implemented by every client surface.
@@ -971,9 +971,9 @@ pub(crate) fn verify_agent_audit_binding(payload: &Value) -> AuditVerifyStatus {
 }
 
 /// State machine for the action_approve dialog. The dialog gates the
-/// controller's review of an incoming `ck.agent.action_request`
+/// controller's review of an incoming `ak.agent.action_request`
 /// notification (digest + expiry + single-use nonce status) before a
-/// `ck.agent.action_approve` event is published.
+/// `ak.agent.action_approve` event is published.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ActionApproveDialogState {
     /// No request to review.
@@ -984,7 +984,7 @@ pub enum ActionApproveDialogState {
     Submitting,
     /// Approve event landed; dialog can close.
     Submitted,
-    /// Controller explicitly rejected (or a `ck.agent.action_reject`
+    /// Controller explicitly rejected (or a `ak.agent.action_reject`
     /// is being submitted).
     Rejected,
     /// The single-use nonce was already consumed by another approve
@@ -1007,7 +1007,7 @@ impl ActionApproveDialogState {
 
 /// Returns true when the per-request expiry timestamp has already
 /// passed. The dialog must refuse to submit an approve event once
-/// expiry elapses (CKP-0008 §4 action_request invariants).
+/// expiry elapses (AKP-0008 §4 action_request invariants).
 pub fn is_action_request_expired(expires_at: &str, now: &str) -> bool {
     // Both arguments are RFC3339 timestamps emitted by the SDK
     // event-canonicalizer; do a lexicographic compare on UTC ISO-8601
@@ -1091,7 +1091,7 @@ fn non_empty_field(payload: &Value, field: &str) -> Option<String> {
         .map(ToOwned::to_owned)
 }
 
-/// Build a `ck.agent.action_approve` payload for a controller-owned
+/// Build a `ak.agent.action_approve` payload for a controller-owned
 /// draft or action request using the current schema fields.
 pub fn build_action_approve_payload(
     request: &Value,
@@ -1138,7 +1138,7 @@ pub fn build_action_approve_payload(
     payload
 }
 
-/// Build a `ck.agent.action_reject` payload for a draft or action
+/// Build a `ak.agent.action_reject` payload for a draft or action
 /// request. A human-entered reason is included when present.
 pub fn build_action_reject_payload(
     request: &Value,

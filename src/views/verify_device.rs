@@ -3,7 +3,6 @@ use qrcode::render::svg;
 use qrcode::{EcLevel, QrCode};
 
 use crate::cross_signing::{CrossSigningExecutor, CrossSigningSetupPlan};
-use crate::local_state::LocalStateStore;
 use crate::secure_key_store::default_secure_key_store;
 use crate::ui::button::{Button, ButtonVariant};
 use crate::ui::input::Input;
@@ -35,7 +34,7 @@ enum VerifyMethod {
 
 /// Walk a `DeviceMessagesGetOutcome` JSON representation and
 /// return the first non-empty `content.key` string carried by a
-/// `ck.key.verification.key` typed envelope.
+/// `ak.key.verification.key` typed envelope.
 ///
 /// Per spec the receive endpoint returns `{ "messages": [...] }` where each
 /// `DeviceMessageEnvelope` carries `kind` + `content`; the helper returns
@@ -445,7 +444,7 @@ pub fn VerifyDevicePanel(
                         // X25519 key exchange controls. Generate
                         // this side's ephemeral keypair, ship the
                         // public half via `/_arkret/self/device_messages`
-                        // (type=`ck.key.verification.key`), and
+                        // (type=`ak.key.verification.key`), and
                         // accept the peer's public key (either
                         // pasted manually or auto-filled by the
                         // device_message poll).
@@ -881,7 +880,7 @@ pub fn VerifyDevicePanel(
                                         //    PSK/SSK/USK + sign bindings +
                                         //    validate the publish content.
                                         //
-                                        // Round 4 — `ck.cross_signing.publish`
+                                        // Round 4 — `ak.cross_signing.publish`
                                         // requires `trust_domain` in the
                                         // canonical bind input. We thread the
                                         // active deployment's trust domain from

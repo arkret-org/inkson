@@ -301,7 +301,7 @@ impl CokretApi {
             .map_err(anyhow::Error::from)
     }
 
-    /// CKP B-C / spec head 37ce729 — `LIST?series_id=` query path the
+    /// AKP B-C / spec head 37ce729 — `LIST?series_id=` query path the
     /// recovery strand uses to rebuild a backup series by sequence. When
     /// `series_id` is `None` and `backup_class` is `None`, this lists all
     /// key backups.
@@ -309,7 +309,7 @@ impl CokretApi {
     /// Soland P2 (aa76b91) added the `?series_id=` + `?backup_class=`
     /// query parameters; the chain reconstruction MUST decrypt only
     /// from the tail and surface `backup_frontier_stale` /
-    /// `backup_post_reset_stale` errors per CKP B-C §3.3.
+    /// `backup_post_reset_stale` errors per AKP B-C §3.3.
     ///
     /// TODO(P3-impl): the deep series-chain decryption / frontier
     /// validation lives in `key_backup` / `recovery_crypto` and is out
@@ -386,7 +386,7 @@ impl CokretApi {
     // ── Device & Crypto ─────────────────────────────────────────────
 
     /// User-driven device revoke over the spec-canonical durable Control
-    /// Move `ck.device.revoke`.
+    /// Move `ak.device.revoke`.
     pub async fn revoke_device(
         &self,
         actor_id: &str,

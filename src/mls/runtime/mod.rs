@@ -8,7 +8,7 @@
 //!   - [`errors`]: typed status / error surface;
 //!   - [`secret`]: account- and device-scoped snapshot-secret management;
 //!   - [`backup`]: MLS-history backup encode / decode / restore;
-//!   - [`genesis`]: creator initial-group setup and `ck.mls.genesis` payload;
+//!   - [`genesis`]: creator initial-group setup and `ak.mls.genesis` payload;
 //!   - [`commit`]: §5.6 self-preservation / forced-epoch-advance commits;
 //!   - [`message`]: welcome apply, application-payload encrypt / decrypt, AAD;
 //!   - [`reaction`]: §2.9 E2EE reaction sealing and routing-tag derivation.

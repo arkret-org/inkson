@@ -2,7 +2,7 @@
 //! (`crypto-media/device-lifecycle.md` §2.1 / §7).
 //!
 //! A new device requests authorization from an already-authorized sibling by
-//! sending a `ck.key.verification.request` to-device message whose
+//! sending a `ak.key.verification.request` to-device message whose
 //! `content.purpose == "same_principal_device_authorization"`. The receiving
 //! device MUST surface the `pairing_code` for user comparison and only finalize
 //! through `POST /_arkret/gate/account/device-pair` after explicit approval — it
@@ -37,7 +37,7 @@ pub struct PendingPairingRequest {
 
 /// Parse every pending same-principal pairing request out of a to-device inbox.
 ///
-/// Filters to `ck.key.verification.request` messages carrying
+/// Filters to `ak.key.verification.request` messages carrying
 /// `purpose == "same_principal_device_authorization"` and the full pairing
 /// material (`from_device`, `pairing_code`, `new_device_pubkey`,
 /// `challenge_signature`). Incomplete requests are skipped.

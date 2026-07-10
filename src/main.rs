@@ -11,7 +11,7 @@ fn main() {
     if let Err(err) = inkson::event_signer::bootstrap_default_signer("inkson") {
         eprintln!("inkson signer bootstrap failed: {err}");
     }
-    // CKP-0007 P3B.8.1 — opt-in Sentry init. The guard must outlive
+    // AKP-0007 P3B.8.1 — opt-in Sentry init. The guard must outlive
     // `dioxus::launch` so the Sentry client can drain pending events
     // on shutdown. Without an opt-in or without a build-time
     // SENTRY_DSN, `sentry_init` returns `None` silently — see

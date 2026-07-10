@@ -1,11 +1,11 @@
 //! Moderation decision / appeal FSM builders.
 //!
 //! Daily moderation governance is authored as self-signed protocol
-//! events submitted via `ck.self.events.command.submit`
+//! events submitted via `ak.self.events.command.submit`
 //! (`POST /_arkret/self/events`); the product-admin moderation write path
 //! is retired. The soland P2 reducer (`apply_moderation`) projects
-//! these into `ck.component.moderation_state.v1` /
-//! `ck.component.moderation.appeal.v1` and enforces the §5.5.2
+//! these into `ak.component.moderation_state.v1` /
+//! `ak.component.moderation.appeal.v1` and enforces the §5.5.2
 //! separation-of-duties / atomicity constraints.
 
 use serde_json::{Value, json};
@@ -25,8 +25,8 @@ fn decision_request_digest(target_ref: &str) -> anyhow::Result<arkret_sdk::Hash>
         .map_err(|err| anyhow::anyhow!("moderation decision request digest is not a Hash: {err}"))
 }
 
-/// `ck.moderation.decision` — seal a moderation disposition over
-/// `target_ref` (the canonical `ck.component.moderation_state.v1` cell
+/// `ak.moderation.decision` — seal a moderation disposition over
+/// `target_ref` (the canonical `ak.component.moderation_state.v1` cell
 /// subject). `decision` is the runtime verb from the closed schema enum
 /// (`hard_deny` / `soft_deny` / `quarantine` / `require_review`). The
 /// authoring `actor` is the sealed `issuer`; the decision Event's own id
@@ -64,7 +64,7 @@ pub fn moderation_decision(
     .body(payload_value(&payload, "moderation_decision payload")?))
 }
 
-/// `ck.moderation.decision.lift` — observed-remove / supersede a
+/// `ak.moderation.decision.lift` — observed-remove / supersede a
 /// previously sealed decision. The cell subject is `target_ref` (the same
 /// moderated target as the original decision); `decision_ref` is the
 /// `ak:event:` id of the decision Event whose sealed tag is removed.
@@ -94,7 +94,7 @@ pub fn moderation_decision_lift(
     .body(payload_value(&payload, "moderation_decision_lift payload")?))
 }
 
-/// `ck.moderation.appeal.review` — reviewer takes an appeal under
+/// `ak.moderation.appeal.review` — reviewer takes an appeal under
 /// review (`submitted → under_review`). `reviewer` is the authoring
 /// actor; the reducer rejects with `appeal_self_review_forbidden` when
 /// it equals the appealed decision's issuer.
@@ -123,7 +123,7 @@ pub fn moderation_appeal_review(
     .body(body)
 }
 
-/// `ck.moderation.appeal.decision` — reviewer verdict
+/// `ak.moderation.appeal.decision` — reviewer verdict
 /// (`under_review → decided`). `verdict` ∈ {uphold, overturn, modify}.
 /// `overturn` MUST be paired in the same ordered submit batch with a
 /// [`moderation_decision_lift`] over the appealed `decision_ref`;
@@ -159,7 +159,7 @@ pub fn moderation_appeal_decision(
     .body(body)
 }
 
-/// `ck.moderation.appeal.close` — terminal close of an appeal from
+/// `ak.moderation.appeal.close` — terminal close of an appeal from
 /// submitted / under_review / decided. `closer` is the authoring actor
 /// (reviewer close or appellant withdrawal — the reducer authorizes the
 /// withdrawal path by `closer == appellant`).

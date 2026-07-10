@@ -104,7 +104,7 @@
         - generic [ref=e97]:
           - generic [ref=e98]: Acme Inc. · Organization Principal
           - generic [ref=e99]: Acme Workspace
-          - generic [ref=e100]: Principal Server http://127.0.0.1:8787 · selected Space ck:space:0196419b-0000-7000-8000-000000000000
+          - generic [ref=e100]: Principal Server http://127.0.0.1:8787 · selected Space ak:space:0196419b-0000-7000-8000-000000000000
         - textbox "Search Spaces, Cards, Discussions, Actors" [ref=e102]
         - generic [ref=e103]:
           - link "Inbox" [ref=e104] [cursor=pointer]:
@@ -278,17 +278,17 @@
           - generic: unknown
         - generic:
           - strong: Selected Space
-          - text: ck:space:0196419b-0000-7000-8000-000000000000
-          - generic: ck:space:0196419b-0000-7000-8000-000000000000
+          - text: ak:space:0196419b-0000-7000-8000-000000000000
+          - generic: ak:space:0196419b-0000-7000-8000-000000000000
         - navigation "Space quick links":
           - link "Space Info" [ref=e247] [cursor=pointer]:
-            - /url: /timeline/ck:space:0196419b-0000-7000-8000-000000000000
+            - /url: /timeline/ak:space:0196419b-0000-7000-8000-000000000000
           - link "Members" [ref=e248] [cursor=pointer]:
-            - /url: /space/ck:space:0196419b-0000-7000-8000-000000000000/admin
+            - /url: /space/ak:space:0196419b-0000-7000-8000-000000000000/admin
           - link "Files" [ref=e249] [cursor=pointer]:
-            - /url: /document/ck:space:0196419b-0000-7000-8000-000000000000
+            - /url: /document/ak:space:0196419b-0000-7000-8000-000000000000
           - link "Pinned" [ref=e250] [cursor=pointer]:
-            - /url: /timeline/ck:space:0196419b-0000-7000-8000-000000000000
+            - /url: /timeline/ak:space:0196419b-0000-7000-8000-000000000000
           - link "Notifications" [ref=e251] [cursor=pointer]:
             - /url: /notifications
       - generic:
@@ -315,7 +315,7 @@
         - generic:
           - generic:
             - strong: Root
-            - text: ck:space:0196419b-0000-7000-8000-000000000000
+            - text: ak:space:0196419b-0000-7000-8000-000000000000
           - generic:
             - strong: Children
             - text: "0"

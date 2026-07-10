@@ -4,9 +4,9 @@
 //! The board is a CLIENT-SIDE derived projection over the realm event log, per
 //! `service-surface.md` §("View projection 是派生结果、不是真相源；客户端应基于
 //! 已同步、已授权、已解密的 Event 集合自维护本地投影"). This module folds the
-//! realm's kanban events — `ck.space.create`, `ck.strand.create`,
-//! `ck.strand.update`, `ck.strand.move` / `ck.strand.reorder`,
-//! `ck.strand.archive` / `ck.strand.restore`, `ck.relation.*` — into the same
+//! realm's kanban events — `ak.space.create`, `ak.strand.create`,
+//! `ak.strand.update`, `ak.strand.move` / `ak.strand.reorder`,
+//! `ak.strand.archive` / `ak.strand.restore`, `ck.relation.*` — into the same
 //! [`KanbanColumn`] shape the renderer consumes, WITHOUT depending on the
 //! per-session server projection endpoints (which are visibility-filtered and,
 //! for E2EE realms, cannot carry decrypted content).
@@ -71,7 +71,7 @@ fn op_space_target_id(record: &RawOperationRecord) -> Option<String> {
         .or_else(|| json_path_string(Some(&record.payload), &["target_ref"]))
 }
 
-/// Read a `ck.patch.v1` entry as a string, tolerating both the canonical
+/// Read a `ak.patch.v1` entry as a string, tolerating both the canonical
 /// `{"$op":"set","value":...}` form and a plain scalar shorthand. Returns
 /// `Some(None)` for an explicit `unset`, `Some(Some(v))` for a set, and
 /// `None` when the key is absent.
@@ -91,7 +91,7 @@ fn patch_entry_string(patch: &Value, keys: &[&str]) -> Option<Option<String>> {
     }
 }
 
-/// Fold a `ck.space.update` patch op (structural metadata: `rank`, `title`)
+/// Fold a `ak.space.update` patch op (structural metadata: `rank`, `title`)
 /// into the running container view.
 fn apply_space_update_to_view(
     view: &mut crate::projection_views::SpaceContainerProjectionView,
@@ -108,9 +108,9 @@ fn apply_space_update_to_view(
     }
 }
 
-/// Build the base [`StrandProjectionView`] from a `ck.strand.create` op. Mirrors
+/// Build the base [`StrandProjectionView`] from a `ak.strand.create` op. Mirrors
 /// soland's `apply_strand_create` field extraction (title from
-/// `metadata.title`, position from the `ck.component.strand.position.v1`
+/// `metadata.title`, position from the `ak.component.strand.position.v1`
 /// component / `fields`), tolerating both the canonical envelope
 /// (`object.metadata.*`) and the local optimistic shape (`object.*`).
 fn strand_view_from_create_op(
@@ -196,7 +196,7 @@ fn strand_view_from_create_op(
     })
 }
 
-/// Fold a `ck.strand.move` op (cross-list move; `target_space_id` is the new
+/// Fold a `ak.strand.move` op (cross-list move; `target_space_id` is the new
 /// List Space) into the running view.
 fn apply_move_to_view(
     view: &mut crate::projection_views::StrandProjectionView,
@@ -214,7 +214,7 @@ fn apply_move_to_view(
     }
 }
 
-/// Fold a `ck.strand.reorder` op (same List Space; only `rank` changes) into the
+/// Fold a `ak.strand.reorder` op (same List Space; only `rank` changes) into the
 /// running view.
 fn apply_reorder_to_view(
     view: &mut crate::projection_views::StrandProjectionView,
@@ -429,7 +429,7 @@ mod tests {
         })
     }
 
-    /// Mirrors the real canonical `ck.strand.create` envelope: position lives in
+    /// Mirrors the real canonical `ak.strand.create` envelope: position lives in
     /// `payload.object.metadata.fields.{board_space_id,list_space_id,rank}`.
     fn strand_create_event(
         id: &str,
@@ -761,7 +761,7 @@ mod tests {
         }
     }
 
-    /// The local `ck.strand.create` op (from `submit_kanban_move`) carries the
+    /// The local `ak.strand.create` op (from `submit_kanban_move`) carries the
     /// canonical create body (`body.object.metadata.fields.*`) PLUS a top-level
     /// `effect`; folding it must surface the card immediately (optimistic).
     #[test]
@@ -876,7 +876,7 @@ mod tests {
         );
     }
 
-    /// Column reorder appends a `ck.space.update` patch op carrying the new
+    /// Column reorder appends a `ak.space.update` patch op carrying the new
     /// `rank`; folding it must re-sort the columns (both the canonical
     /// `{$op:set}` patch form and the plain scalar shorthand).
     #[test]
@@ -920,7 +920,7 @@ mod tests {
         }
     }
 
-    /// List archive appends a `ck.space.archive` op; folding it flips the
+    /// List archive appends a `ak.space.archive` op; folding it flips the
     /// column's lifecycle to Archived (kept in the projection for the Archived
     /// section, not dropped).
     #[test]

@@ -12,7 +12,7 @@
 //! notification to the mentioned actor without learning that actor's
 //! DID in plaintext. We compute `SHA256(salt || did)` and surface it
 //! as `content.mention_sidecar_hash` inside the outgoing
-//! `ck.message.create` payload.
+//! `ak.message.create` payload.
 
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -221,7 +221,7 @@ pub fn mention_sidecar_hash(salt: &str, did: &str) -> String {
     crate::canonical::hex_encode(&out)
 }
 
-/// Build the full sidecar hash list for a `ck.message.create` payload.
+/// Build the full sidecar hash list for a `ak.message.create` payload.
 /// The output is `["hash1", "hash2", ...]` matching the wire shape
 /// expected by the notification routing layer.
 pub fn mention_sidecar_hashes(salt: &str, mentioned_dids: &[String]) -> Vec<String> {

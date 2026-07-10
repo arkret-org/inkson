@@ -406,7 +406,7 @@ button[data-style="link"]:disabled:hover {
 
 /* Member visual indicators (A1): agent/bot badge surfaced in member
    lists, @mention picker rows, and chat sender attribution wherever a
-   DID registered via `ck.agent.endpoint` is rendered. */
+   DID registered via `ak.agent.endpoint` is rendered. */
 .member-badge { font-weight: 600; letter-spacing: 0.02em; }
 .member-badge-agent {
   background: var(--accent-2, #6f42c1);

@@ -20,7 +20,7 @@ pub(crate) struct ChannelEntity {
     /// Explicit Strand security state from Strand metadata. `None` inherits
     /// the current Realm / Space security posture.
     pub(crate) security_encrypted: Option<bool>,
-    /// CKP-0007 P3B.2.3 / P3B.2.4 — Circle scope this Strand was
+    /// AKP-0007 P3B.2.3 / P3B.2.4 — Circle scope this Strand was
     /// created under, when the Strand projection carries a
     /// `scope_circle_id`. The composer banner and the per-message
     /// accent rail read from this field; `None` means the Strand
@@ -117,7 +117,7 @@ pub(crate) struct ChatMessage {
     pub(crate) id: String,
     pub(crate) protocol_message_id: Option<String>,
     pub(crate) sender: String,
-    /// CKP-0008 §4.10 — envelope-level `executed_by`. Present only for
+    /// AKP-0008 §4.10 — envelope-level `executed_by`. Present only for
     /// act-on-behalf events: `sender` (actor_id) is the controller and
     /// `executed_by` is the agent that performed the action. Drives the
     /// "X via Y" double-signature attribution. `None` for ordinary and
@@ -263,7 +263,7 @@ pub(crate) struct SpaceParticipant {
     pub(crate) role: SpaceParticipantRole,
     pub(crate) is_self: bool,
     /// `true` when this DID was registered as an agent endpoint
-    /// (`ck.agent.endpoint`). Surfaces a 🤖 badge in member lists,
+    /// (`ak.agent.endpoint`). Surfaces a 🤖 badge in member lists,
     /// @mention picker rows, and chat sender attribution so operators
     /// can immediately distinguish bot/agent principals from real
     /// human members.

@@ -257,7 +257,7 @@ pub(super) struct ConnectContext {
     pub(super) sync_bootstrap_complete: Signal<bool>,
     pub(super) session_boot_state: Signal<SessionBootState>,
     /// Receive-side call-signaling hub. The full boot sync routes inbound
-    /// `ck.call.signal` envelopes into it (dedup → incoming ring / per-call
+    /// `ak.call.signal` envelopes into it (dedup → incoming ring / per-call
     /// inbox); `CallPanel` drains it. See `crate::views::call_signals`.
     pub(super) call_signal_hub: crate::views::call_signals::CallSignalHub,
     /// Session DID-resolution cache handle. The boot sync's Tier-2 device-key
@@ -358,7 +358,7 @@ pub(super) fn adopt_live_token_for_api(
 /// describe, derives this device's `device_public_key` from the persisted
 /// signing seed, reads the next `actor_seq` from the principal control stream,
 /// asks the Account Authority to mint a signed `service_attested`
-/// `ck.device.authorize`, and submits it via `principal_api`
+/// `ak.device.authorize`, and submits it via `principal_api`
 /// (`POST /_arkret/self/events`).
 async fn enroll_current_session_device(
     base: &str,
@@ -1450,7 +1450,7 @@ pub(super) fn connect(base: String, actor: String, device: String, ctx: ConnectC
                                 last_error.set(Some(format!("local state not saved: {message}")));
                             }
                         }
-                        // Receive side of `ck.call.signal`: route every realm
+                        // Receive side of `ak.call.signal`: route every realm
                         // body's inbound call-signal envelopes into the hub
                         // (dedup → incoming ring / per-call inbox). Done after
                         // the `store` write guard above is dropped so the hub

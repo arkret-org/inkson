@@ -219,7 +219,7 @@ pub(crate) fn displayed_card_state(
     }
 }
 
-/// Re-apply locally-queued `ck.strand.update` patches on top of the
+/// Re-apply locally-queued `ak.strand.update` patches on top of the
 /// server projection. Without this overlay, optimistic edits to a
 /// card's title / summary / body / fields would vanish on page reload
 /// because the server projection is refetched but the local mutation

@@ -32,7 +32,7 @@ pub fn ActorKindBadge(actor_kind: Option<String>) -> Element {
 }
 
 /// Sidecar Thread guard: a sidecar thread is a `controller × native
-/// agent` 1:1 channel. CKP-0008 §4.5 and CKP-0009 §3 invariant 10
+/// agent` 1:1 channel. AKP-0008 §4.5 and AKP-0009 §3 invariant 10
 /// require the renderer to refuse to expose it as a group chat. The
 /// component renders the inner children only when the participant
 /// list contains exactly the controller DID and one native agent
@@ -72,7 +72,7 @@ pub fn SidecarThreadGuard(
                     span { class: "badge amber", "1:1 invariant violated" }
                 }
                 div { class: "muted",
-                    "CKP-0008 §4.5 / CKP-0009 §3 invariant 10 — sidecar threads are controller × native-agent 1:1 channels and MUST NOT render as a group chat. Refusing to render this thread until the participant set normalizes."
+                    "AKP-0008 §4.5 / AKP-0009 §3 invariant 10 — sidecar threads are controller × native-agent 1:1 channels and MUST NOT render as a group chat. Refusing to render this thread until the participant set normalizes."
                 }
                 div { class: "muted",
                     "Expected controller: {controller_did}; agent: {agent_id}. Observed {normalized.len()} participant(s)."
@@ -82,14 +82,14 @@ pub fn SidecarThreadGuard(
     }
 }
 
-/// CKP-0009 §3 invariant 10 / CKP-0008 §4.5 — sidecar exposure
+/// AKP-0009 §3 invariant 10 / AKP-0008 §4.5 — sidecar exposure
 /// disclosure panel. Before resume, the controller MUST acknowledge any
 /// sidecar Circles that became newly visible while the agent was paused.
 /// The acknowledged object_refs feed `resume_sidecar_refs`, which the
 /// resume button folds into a real `agent_sidecar_exposure_ack`.
 ///
 /// Data source: soland's sidecar exposure projection
-/// (`ck.agent.sidecar_projection.v1`) is not yet wired, so the disclosed
+/// (`ak.agent.sidecar_projection.v1`) is not yet wired, so the disclosed
 /// refs are entered by the operator here; once the projection ships, the
 /// agent view's exposure field populates this list automatically.
 #[component]
@@ -102,13 +102,13 @@ pub fn SidecarExposureDisclosure(
         div { class: "event", "data-testid": "sidecar-exposure-disclosure",
             div { class: "event-head",
                 span { "Sidecar exposure disclosure" }
-                span { class: "badge", "CKP-0009 §3 inv. 10" }
+                span { class: "badge", "AKP-0009 §3 inv. 10" }
             }
             div { class: "muted",
                 "Controller: {controller_did}. Before resuming a paused agent, acknowledge any sidecar Circles that became newly visible while it was paused. Acknowledged refs are sent as the resume sidecar_exposure_ack."
             }
             div { class: "muted", "data-testid": "sidecar-exposure-data-source",
-                "Data source: soland sidecar exposure projection (ck.agent.sidecar_projection.v1) pending — enter the disclosed sidecar object_refs below until the projection auto-populates this list."
+                "Data source: soland sidecar exposure projection (ak.agent.sidecar_projection.v1) pending — enter the disclosed sidecar object_refs below until the projection auto-populates this list."
             }
             div { class: "workflow-form",
                 Input {
@@ -165,8 +165,8 @@ pub fn SidecarExposureDisclosure(
 
 /// Action-approve dialog component. Renders the payload digest,
 /// expiry, and single-use nonce status of an incoming
-/// `ck.agent.action_request` notification; on confirm it submits a
-/// `ck.agent.action_approve` event.
+/// `ak.agent.action_request` notification; on confirm it submits a
+/// `ak.agent.action_approve` event.
 ///
 /// TODO(P3-impl): the action_request payload pipe goes through
 /// chime's push frame parser (chime P3) → this dialog. Today the
@@ -175,7 +175,6 @@ pub fn SidecarExposureDisclosure(
 /// stream lands in P3-impl.
 #[component]
 pub fn ActionApproveDialog(
-    base_url: String,
     token: Signal<String>,
     actor_id: String,
     space_id: String,
@@ -188,6 +187,8 @@ pub fn ActionApproveDialog(
     nonce_status: String,
     now: String,
 ) -> Element {
+    // A4 — base_url from session context instead of a prop.
+    let base_url = crate::app::SessionContext::base_url_string();
     let mut state = use_signal(|| ActionApproveDialogState::Reviewing);
     let mut status_text = use_signal(String::new);
 
@@ -338,19 +339,17 @@ pub fn ActionApproveDialog(
     }
 }
 
-/// CKP-0008 approval panel for controller-owned drafts and action
-/// requests. Lets the controller approve with `ck.agent.action_approve`
-/// or reject with `ck.agent.action_reject`.
+/// AKP-0008 approval panel for controller-owne`ak.agent.action_approve
+/// requests. Lets `ak.agent.action_rejectwith `ak.agent.action_approve`
+/// or reject with `ak.agent.action_reject`.
 ///
-/// Data source: controller-owned account-data over
-/// `ck.self.account.subscribe`; until the subscribe fold is attached to
+/// `ak.self.accounttroller-owned account-data over
+/// `ak.self.account.subscribe`; until the subscribe fold is attached to
 /// this component, operators can paste a draft or action request payload.
 #[component]
-pub fn DraftApprovalPanel(
-    base_url: String,
-    token: Signal<String>,
-    controller_did: String,
-) -> Element {
+pub fn DraftApprovalPanel(token: Signal<String>, controller_did: String) -> Element {
+    // A4 — base_url from session context instead of a prop.
+    let base_url = crate::app::SessionContext::base_url_string();
     let mut drafts = use_signal(Vec::<Value>::new);
     let mut draft_input = use_signal(String::new);
     let mut panel_status = use_signal(String::new);

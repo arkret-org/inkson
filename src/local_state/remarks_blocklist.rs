@@ -19,7 +19,7 @@ impl LocalStateStore {
     /// [`RealmRemark::is_empty`] returns true tombstones the entry
     /// (equivalent to `remove_realm_remark`). Persists synchronously to
     /// disk; the caller is responsible for pushing the same payload to
-    /// soland via `ck.account_data.set`.
+    /// soland via `ak.account_data.set`.
     pub fn set_realm_remark(
         &mut self,
         realm_id: impl Into<String>,
@@ -106,7 +106,7 @@ impl LocalStateStore {
     ///
     /// Persists synchronously to disk; the caller is responsible for
     /// pushing the new list to soland via
-    /// `ck.account_data.set("ak.account.blocklist", …)`.
+    /// `ak.account_data.set("ak.account.blocklist", …)`.
     pub fn block_user(&mut self, did: impl AsRef<str>, reason: Option<String>) -> bool {
         self.ensure_cached_loaded();
         let now = chrono::Utc::now().to_rfc3339();

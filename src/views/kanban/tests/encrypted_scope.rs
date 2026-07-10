@@ -587,10 +587,10 @@ fn encrypted_scope_allows_content_only_metadata_create_payloads() {
 }
 
 /// X13 regression: in an encrypted scope, container creation/update
-/// (`ck.space.create` for BOTH board and list, plus `ck.space.update` rank
+/// (`ak.space.create` for BOTH board and list, plus `ak.space.update` rank
 /// patches) MUST NOT be blocked — title/kind/parent/rank are non-secret
 /// metadata that has to reach the server so a second device can render the real
-/// Board/List name and order. By contrast a `ck.strand.update` carrying
+/// Board/List name and order. By contrast a `ak.strand.update` carrying
 /// plaintext private body MUST stay blocked (only E2EE may leave the client for
 /// that field).
 #[test]

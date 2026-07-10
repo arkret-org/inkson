@@ -31,8 +31,8 @@ const MLS_KEY_PACKAGE_IDENTITY_STATE_PREFIX: &str = "inkson.mls_key_package.iden
 // publish marker so the corrected KeyPackage is re-published on next boot.
 const MLS_KEY_PACKAGE_PUBLISH_MARKER_PREFIX: &str = "inkson.mls_key_package.publish_marker.v3";
 /// Per-(actor, device) X25519 keypair used to receive HPKE-sealed
-/// `history_secret`s in a `ck.realm_key.share`. This device advertises the
-/// public half as `recipient_hpke_public_key` in a `ck.realm_key.request` and
+/// `history_secret`s in a `ak.realm_key.share`. This device advertises the
+/// public half as `recipient_hpke_public_key` in a `ak.realm_key.request` and
 /// opens the sealed reply with the private half.
 ///
 /// TODO(history-share): ideally the receiver would advertise (and open with)
@@ -513,7 +513,7 @@ fn device_hpke_private_key_key(
 /// Load (or first-create + persist) this device's raw 32-byte X25519 HPKE
 /// private key for history sharing, returning `(private_key, public_key)` as
 /// raw 32-byte vectors. The public half is advertised in a
-/// `ck.realm_key.request`; the private half opens the sealed reply. Stable
+/// `ak.realm_key.request`; the private half opens the sealed reply. Stable
 /// across calls and restarts on the same device.
 pub fn load_or_create_device_hpke_keypair(
     store: &dyn SecureKeyStore,

@@ -1,7 +1,7 @@
 use super::*;
 
 impl LocalStateStore {
-    /// R3.1 MID-2 — record inlined `ck.member.identity.update` event
+    /// R3.1 MID-2 — record inlined `ak.member.identity.update` event
     /// envelopes harvested off a `members[]` roster entry. Idempotent
     /// on event id; events that already exist for this `(realm, actor)`
     /// pair are skipped. The runtime

@@ -1,4 +1,4 @@
-//! Actor-private personal blocklist (`ck.account.blocklist`) entry type,
+//! Actor-private personal blocklist (`ak.account.blocklist`) entry type,
 //! mutators, and account-data wire (de)serialization.
 //!
 //! Spec: `discovery/client-preferences.md` §3.5.
@@ -7,7 +7,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 /// A single local actor-DID entry in the actor-private personal blocklist
-/// (`ck.account.blocklist` per `discovery/client-preferences.md` §3.5).
+/// (`ak.account.blocklist` per `discovery/client-preferences.md` §3.5).
 ///
 /// [`build_blocklist_account_data_body`] expands it to the canonical account
 /// data wire shape: `{ target: { kind, did|domain }, mode, applies_to,
@@ -281,7 +281,7 @@ pub const DEFAULT_BLOCKLIST_APPLIES_TO: &[&str] = &[
     "directory",
 ];
 
-/// Canonical wire body for the `ck.account.blocklist` account-data entry.
+/// Canonical wire body for the `ak.account.blocklist` account-data entry.
 /// The settings UI calls this just before PUTting via
 /// [`crate::api::CokretApi::set_account_data`]; keep the shape aligned with
 /// `discovery/client-preferences.md` §3.5 so other clients agree on layout.
@@ -366,7 +366,7 @@ pub fn build_blocklist_account_data_body(entries: &[BlocklistEntry]) -> Value {
     })
 }
 
-/// Parse the `ck.account.blocklist` account-data content body. Malformed
+/// Parse the `ak.account.blocklist` account-data content body. Malformed
 /// actor entries are skipped instead of partially corrupting the local UI.
 pub fn blocklist_entries_from_account_data(value: &Value) -> Result<Vec<BlocklistEntry>, String> {
     let entries = value

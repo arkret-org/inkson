@@ -3,7 +3,7 @@
 //! An organization is a first-class `did:webvh` DID controller, distinct from a
 //! human login session. The server administrator mints an organization DID
 //! (D2), persists the organization control private key locally (D1), then signs
-//! `ck.realm.organization` relationship statements binding the organization to a
+//! `ak.realm.organization` relationship statements binding the organization to a
 //! Realm (D3). The organization-side statement proof is produced with the
 //! organization control key via [`arkret_sdk::realm_organization_statement_sign`],
 //! NOT with the human login / device signer.
@@ -199,7 +199,7 @@ pub fn prepare_organization_inception(
     Ok((prepared, organization))
 }
 
-/// Inputs for assembling + signing a `ck.realm.organization` statement (D3).
+/// Inputs for assembling + signing a `ak.realm.organization` statement (D3).
 pub struct OrganizationStatementInput {
     pub statement_id: String,
     pub realm_id: String,
@@ -219,7 +219,7 @@ pub struct OrganizationStatementInput {
 ///
 /// The returned payload carries a real detached Ed25519 proof over the canonical
 /// statement signing bytes; the caller then feeds the SAME fields (plus this
-/// signed proof) into the `ck.realm.organization` operation builder, which
+/// signed proof) into the `ak.realm.organization` operation builder, which
 /// reconstructs an identical payload so the canonical bytes — and therefore the
 /// proof — remain valid on the wire.
 ///

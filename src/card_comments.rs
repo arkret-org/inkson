@@ -3,13 +3,13 @@
 //!
 //! Spec sources:
 //! - `strand-and-message.md §4.3` / `§9` — a kanban card's discussion is a `discussion` track on
-//!   the card's Strand; comments are `ck.message.create` events carrying the card's `strand_id` and
+//!   the card's Strand; comments are `ak.message.create` events carrying the card's `strand_id` and
 //!   `track_name = "discussion"`.
 //! - `realm-and-space.md §4` — kanban cards ARE Strand objects, so reusing the message-create
 //!   reducer is the natural binding.
 //!
 //! This module ships the typed representation + the payload builder
-//! that constructs the canonical `ck.message.create` op via the SDK's
+//! that constructs the canonical `ak.message.create` op via the SDK's
 //! typed [`arkret_sdk::MessageCreatePayload`]. The UI drawer +
 //! projection wiring are follow-ups; this revision is the data-layer
 //! half that can be unit-tested in isolation.
@@ -77,11 +77,11 @@ impl CardComment {
     }
 }
 
-/// F-CARD-COMMENT-1: build the `ck.message.create` payload for a card
+/// F-CARD-COMMENT-1: build the `ak.message.create` payload for a card
 /// comment, reusing the SDK's typed [`arkret_sdk::MessageCreatePayload`]
 /// so the field set stays schema-compliant by construction.
 ///
-/// The comment body rides in a `ck.content.text` content block; recognized
+/// The comment body rides in a `ak.content.text` content block; recognized
 /// `@did:...` mentions are attached to the block as structured `Mention`
 /// nodes (the block is `additionalProperties:true`). Threading is expressed
 /// via `reply_to`. The author is omitted on purpose — the reducer derives it

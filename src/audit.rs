@@ -1,9 +1,9 @@
 //! Audited E2EE event builders (`crypto-media/audited-e2ee.md`).
 //!
-//! Two hardening profiles sit on top of `ck.profile.e2ee_client.v1`:
-//! - `ck.profile.attested_audit.e2ee.v1` — attested audit policy with forced `ck.audit.accessed`
+//! Two hardening profiles sit on top of `ak.profile.e2ee_client.v1`:
+//! - `ak.profile.attested_audit.e2ee.v1` — attested audit policy with forced `ak.audit.accessed`
 //!   write on read.
-//! - `ck.profile.disclosed_audit.e2ee.v1` — disclosed audit policy with `ck.audit.ryw_receipt`
+//! - `ak.profile.disclosed_audit.e2ee.v1` — disclosed audit policy with `ak.audit.ryw_receipt`
 //!   (read-your-write) per-actor receipts.
 //!
 //! Both kinds are already in `conformance::known_event_kinds`; this module
@@ -17,10 +17,10 @@ use crate::operation::OperationBuilder;
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum AuditPolicy {
     /// `attested_audit.e2ee.v1` — every successful decrypt writes
-    /// `ck.audit.accessed`. Read clients fail closed if they cannot emit.
+    /// `ak.audit.accessed`. Read clients fail closed if they cannot emit.
     Attested,
     /// `disclosed_audit.e2ee.v1` — every Realm write produces a per-actor
-    /// `ck.audit.ryw_receipt`. Receipt is actor-private; the audit channel is
+    /// `ak.audit.ryw_receipt`. Receipt is actor-private; the audit channel is
     /// the read side.
     Disclosed,
 }
@@ -34,7 +34,7 @@ impl AuditPolicy {
     }
 }
 
-/// Build a `ck.audit.accessed` event. Emitted by the reader after a
+/// Build a `ak.audit.accessed` event. Emitted by the reader after a
 /// successful MLS decrypt under an attested audit policy.
 ///
 /// `target_event_id` identifies the durable Event whose payload was read;
@@ -45,7 +45,7 @@ pub fn build_audit_accessed(
     target_event_id: &str,
     device_id: &str,
 ) -> OperationBuilder {
-    // The registered `audit_payload` schema (ck.schema.event_payload.v1
+    // The registered `audit_payload` schema (ak.schema.event_payload.v1
     // #/$defs/audit_payload) is strict `additionalProperties:false` and only
     // permits `target_ref`, `actor_id`, `purpose`, `accessed_at`. The reader
     // device is carried inside `purpose` (a free-form string) rather than as an
@@ -65,7 +65,7 @@ pub fn build_audit_accessed(
     }))
 }
 
-/// Build a `ck.audit.ryw_receipt` event. Emitted by the writer after a
+/// Build a `ak.audit.ryw_receipt` event. Emitted by the writer after a
 /// disclosed audit policy commit; the receipt is actor-private.
 pub fn build_audit_ryw_receipt(
     realm_id: &str,
@@ -101,7 +101,7 @@ pub fn build_audit_ryw_receipt(
     }))
 }
 
-/// Build a `ck.identity.disclosure_policy` event — declares what a connection
+/// Build a `ak.identity.disclosure_policy` event — declares what a connection
 /// holder may disclose about the principal. Spec: `identity-handles.md` §16.
 ///
 /// `policy` is the structured policy document; the reducer enforces shape.
@@ -116,7 +116,7 @@ pub fn build_disclosure_policy(realm_id: &str, actor: &str, policy: Value) -> Op
     }))
 }
 
-/// Build a `ck.identity.presentation_request` event — request a verifiable
+/// Build a `ak.identity.presentation_request` event — request a verifiable
 /// presentation from a connection holder.
 pub fn build_presentation_request(
     realm_id: &str,
@@ -136,7 +136,7 @@ pub fn build_presentation_request(
     }))
 }
 
-/// Build a `ck.identity.presentation_response` event — reply with a signed
+/// Build a `ak.identity.presentation_response` event — reply with a signed
 /// verifiable presentation.
 pub fn build_presentation_response(
     realm_id: &str,
@@ -156,7 +156,7 @@ pub fn build_presentation_response(
     }))
 }
 
-/// Build a `ck.identity.disclosure_receipt` event — actor-private record of
+/// Build a `ak.identity.disclosure_receipt` event — actor-private record of
 /// what was disclosed and to whom (audit trail for the principal).
 pub fn build_disclosure_receipt(
     realm_id: &str,

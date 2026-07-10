@@ -111,7 +111,7 @@ fn self_preservation_commit_triggers_for_normal_realm_per_spec_5_6() {
         0,
         false,
     ));
-    // §5.6 duplicate commit suppression (MUST): a pending `ck.mls.commit` for the
+    // §5.6 duplicate commit suppression (MUST): a pending `ak.mls.commit` for the
     // scope suppresses a new self-preservation commit on both triggers.
     assert!(!should_force_epoch_advance(
         false,

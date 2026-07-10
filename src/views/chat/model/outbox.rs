@@ -1,6 +1,6 @@
 // Offline send outbox for the discussion composer.
 //
-// When the browser is offline, a `ck.message.create` send is parked here
+// When the browser is offline, a `ak.message.create` send is parked here
 // instead of failing. The queue is persisted to `localStorage` so a
 // reload mid-outage keeps the unsent messages; on reconnect the chat view
 // drains the queue and resubmits each entry through the normal send path.
@@ -8,7 +8,7 @@
 // Spec: sync/client-sync.md offline-conflict handling — the client keeps a
 // durable local intent and replays it once connectivity returns. Entries
 // carry the stable local `ak:message:` id so replay is idempotent against
-// the reducer's `ck.message.create` de-dup.
+// the reducer's `ak.message.create` de-dup.
 
 /// A single parked outgoing message awaiting connectivity.
 #[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]

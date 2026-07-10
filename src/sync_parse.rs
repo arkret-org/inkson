@@ -114,7 +114,7 @@ fn clamp_reconnect_after_ms(raw: Option<u64>) -> u64 {
         .min(MAX_ACCOUNT_SUBSCRIBE_RECONNECT_AFTER_MS)
 }
 
-/// Incremental folder for `ck.self.account.stream.subscribe` NDJSON frames.
+/// Incremental folder for `ak.self.account.stream.subscribe` NDJSON frames.
 ///
 /// YOU-01-010: consumes EVERY frame instead of returning at the first
 /// `delta` — catchup deltas are merged in order, and per client-sync.md

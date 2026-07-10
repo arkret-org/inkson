@@ -11,7 +11,7 @@
 //! TRUST-AUTHORITY: this module is the single authority-grade DID
 //! resolution path. Trust-decision surfaces — wallet disclosure,
 //! accept-invite, join-official-Realm, cross-org federation, audit
-//! trail review — MUST go through here (CKP B-E §1 /
+//! trail review — MUST go through here (AKP B-E §1 /
 //! identity-handles §6.1). They MUST NOT accept the server-attested
 //! `binding_state=verified` projection as authoritative; that field
 //! is a cache hint only. Cache-allowed surfaces (verified badge,
@@ -519,7 +519,7 @@ pub fn resolve_with_cache(
 /// - `get(now)` returns `None` for entries whose `expires_at <= now` and also lazily removes them
 ///   so size bookkeeping stays honest.
 /// - `invalidate(did)` is for revocation pushes — the spec requires clients to drop cached evidence
-///   when a `ck.cross_signing.reset` or `ck.device.revoke` event arrives for the actor.
+///   when a `ak.cross_signing.reset` or `ak.device.revoke` event arrives for the actor.
 ///
 /// Persistence to IndexedDB / local state is a follow-up; this revision
 /// is in-memory only so the cache survives a single login session.
@@ -650,7 +650,7 @@ impl DidResolutionCache {
     }
 
     /// Drop the cached entry (if any) for `did`. Called by
-    /// `ck.cross_signing.reset` / `ck.device.revoke` handlers so a
+    /// `ak.cross_signing.reset` / `ak.device.revoke` handlers so a
     /// rotated key set isn't masked by stale cache.
     pub fn invalidate(&mut self, did: &Did) {
         self.entries.remove(did.as_str());

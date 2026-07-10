@@ -253,7 +253,7 @@ fn resolved_at(resolved: &ResolveHandleView) -> Option<chrono::DateTime<chrono::
 }
 
 impl CokretApi {
-    /// `ck.self.snapshot.query.manifest_head`.
+    /// `ak.self.snapshot.query.manifest_head`.
     ///
     /// Snapshot bootstrap is an acceleration layer. If the server does not
     /// advertise or serve the operation, callers silently fall back to event

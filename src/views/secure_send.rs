@@ -2,7 +2,7 @@
 //!
 //! This module owns the MLS core + operation construction + commit/message
 //! submission orchestration used by the Chat discussion view to send an
-//! encrypted `ck.message.create`. It was extracted from the verified Chat
+//! encrypted `ak.message.create`. It was extracted from the verified Chat
 //! "Send Secure" strand so encryption, commit and persist-on-accept stay in one
 //! path.
 //!
@@ -10,10 +10,10 @@
 //! message-write path —
 //!   1. MLS encrypt of the canonical Content Block bytes (`run_local_mls_encrypt` →
 //!      `mls::runtime::encrypt_message_with_device_snapshot`),
-//!   2. forced `ck.mls.commit` envelope build (governance binding / prev→post epoch / policy_root /
+//!   2. forced `ak.mls.commit` envelope build (governance binding / prev→post epoch / policy_root /
 //!      membership_frontier),
-//!   3. spec-canonical `ck.schema.encrypted_envelope.v1` wrap bound to the group-state ref,
-//!   4. `ck.message.create` payload build (with reply-to + message id),
+//!   3. spec-canonical `ak.schema.encrypted_envelope.v1` wrap bound to the group-state ref,
+//!   4. `ak.message.create` payload build (with reply-to + message id),
 //!   5. submission ordering — commit FIRST (persist-on-accept snapshot + §7.10 history-backup
 //!      schedule + move-submission record), then message.
 //!
@@ -40,9 +40,9 @@ pub(crate) type LocalEncryptedMessage = (
 /// * `member_dids` — every principal DID in the group (B6c audit receipts).
 /// * encrypted content — typed MLS payload + AAD, or `None` on failure.
 /// * commit envelope — the SDK self-update commit, when the encrypt advanced the epoch (a forced
-///   `ck.mls.commit` is then emitted).
+///   `ak.mls.commit` is then emitted).
 /// * snapshot — post-commit snapshot, persisted by the caller ONLY after the server accepts the
-///   `ck.mls.commit` (persist-on-accept).
+///   `ak.mls.commit` (persist-on-accept).
 pub(crate) type LocalMlsEncryptResult = (
     Option<arkret_sdk::Hash>,
     Vec<arkret_sdk::Did>,
@@ -176,13 +176,13 @@ pub(crate) fn mls_policy_root(
 }
 
 /// The built (but not yet submitted) secure-send artifacts: the optional
-/// forced MLS commit event, the encrypted `ck.message.create` event, and
+/// forced MLS commit event, the encrypted `ak.message.create` event, and
 /// the metadata the caller needs to drive UI / persist-on-accept.
 pub(crate) struct SecureSendBuild {
-    /// Forced `ck.mls.commit` to submit BEFORE the message, when the encrypt
+    /// Forced `ak.mls.commit` to submit BEFORE the message, when the encrypt
     /// advanced the epoch. `None` rides the current epoch.
     pub commit_event: Option<arkret_sdk::Event>,
-    /// The encrypted `ck.message.create` event.
+    /// The encrypted `ak.message.create` event.
     pub message_event: arkret_sdk::Event,
     /// Post-commit snapshot — persisted by the caller ONLY after the server
     /// accepts the commit (persist-on-accept).
@@ -194,7 +194,7 @@ pub(crate) struct SecureSendBuild {
 }
 
 /// Build the full encrypted send (MLS encrypt → forced commit event →
-/// `ck.schema.encrypted_envelope.v1` wrap → `ck.message.create` payload) for a
+/// `ak.schema.encrypted_envelope.v1` wrap → `ak.message.create` payload) for a
 /// discussion message.
 ///
 /// Honest fail-closed: returns `Err(msg)` whenever the MLS group cannot be
@@ -300,7 +300,7 @@ pub(crate) fn build_secure_send(
         };
 
     // Wrap the MLS payload in the spec-canonical
-    // `ck.schema.encrypted_envelope.v1` wire shape, binding
+    // `ak.schema.encrypted_envelope.v1` wire shape, binding
     // key_ref.group_state_ref to the current MLS group state.
     let encrypted_envelope = arkret_sdk::EncryptedEnvelopeV1::from_payload(
         &encrypted_payload,
@@ -353,18 +353,18 @@ pub(crate) fn build_secure_send(
 /// message event id (commit, if any, already accepted + snapshot persisted) or
 /// a categorised failure the caller renders into its own UI.
 pub(crate) enum SecureSendOutcome {
-    /// Message accepted; `event_id` is the server's `ck.message.create` id.
+    /// Message accepted; `event_id` is the server's `ak.message.create` id.
     Sent { event_id: String, status: String },
     /// The forced MLS commit was rejected; message NOT submitted. Snapshot was
     /// NOT advanced (the next retry uses the correct `expected_prev_epoch`).
     CommitFailed { message: String },
-    /// The `ck.message.create` submission failed (commit, if any, accepted).
+    /// The `ak.message.create` submission failed (commit, if any, accepted).
     MessageFailed { message: String },
 }
 
-/// Submit a built secure send: forced `ck.mls.commit` first (persist-on-accept
+/// Submit a built secure send: forced `ak.mls.commit` first (persist-on-accept
 /// snapshot + §7.10 history-backup schedule + move-submission record), then the
-/// encrypted `ck.message.create`. The MLS core ordering + persistence here is
+/// encrypted `ak.message.create`. The MLS core ordering + persistence here is
 /// shared verbatim by the chat write path.
 ///
 /// The caller owns all UI reconciliation: it inspects [`SecureSendOutcome`] to

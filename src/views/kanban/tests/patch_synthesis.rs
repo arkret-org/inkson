@@ -216,7 +216,7 @@ fn local_event_sourced_ops_recover_authors_without_per_tab_backfill() {
     // the LOCAL `raw_operations` log. The per-realm events engine folds the
     // full realm history into that log via `kanban_operations_from_events`
     // (the same ingest funnel `realm_events_engine` uses), each
-    // `ck.strand.update` carrying its authoritative per-event `actor_id`. So
+    // `ak.strand.update` carrying its authoritative per-event `actor_id`. So
     // multi-author attribution is recovered from local state with NO per-tab
     // realm backfill.
     let mut card = test_card("ak:strand:edit-me", "U");

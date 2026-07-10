@@ -1,4 +1,4 @@
-//! Creator initial-group setup and the `ck.mls.genesis` event payload.
+//! Creator initial-group setup and the `ak.mls.genesis` event payload.
 
 use serde_json::Value;
 
@@ -11,7 +11,7 @@ pub struct InitialMlsSnapshotSummary {
     pub group_id: String,
     pub epoch: u64,
     /// Base64 TLS-serialized ratchet tree of the freshly created group —
-    /// used to seed the `ck.mls.genesis` event's `ratchet_tree_digest`.
+    /// used to seed the `ak.mls.genesis` event's `ratchet_tree_digest`.
     pub ratchet_tree: String,
     /// `sha256:<hex>` digest over the group's current key schedule (epoch
     /// authenticator). Used as the genesis `group_info_digest`.
@@ -169,7 +169,7 @@ pub fn initial_mls_snapshot_summary_from_existing_for_effective_scope(
     }))
 }
 
-/// Build the canonical `ck.mls.genesis` payload for a freshly-created creator
+/// Build the canonical `ak.mls.genesis` payload for a freshly-created creator
 /// group.
 ///
 /// `governance_binding` MUST be a realm/circle binding at epoch `0 -> 0`

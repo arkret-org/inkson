@@ -161,9 +161,9 @@ pub fn build_realm_bootstrap_events(
     content_scheme: Option<&str>,
 ) -> anyhow::Result<Vec<arkret_sdk::Event>> {
     // Spec realm-and-space.md §2.6: creator membership is auto-derived
-    // by the reducer from `ck.realm.create`'s `created_by == actor_id`
+    // by the reducer from `ak.realm.create`'s `created_by == actor_id`
     // (renamed from `created_by_principal` at spec head 37ce729).
-    // The bootstrap MUST NOT emit an explicit `ck.member.state{join}` for
+    // The bootstrap MUST NOT emit an explicit `ak.member.state{join}` for
     // the creator — the reducer writes that cell atomically with the
     // create event.
     let mut events: Vec<arkret_sdk::Event> = Vec::new();
@@ -553,7 +553,7 @@ fn derived_recovery_member_did(controller_or_actor: &str) -> String {
     format!("{}:recovery:notary", controller_or_actor.trim())
 }
 
-/// Build a `ck.space.create` event per spec realm-and-space.md §3.2.
+/// Build a `ak.space.create` event per spec realm-and-space.md §3.2.
 /// Space is the product-structure container (workspace / project /
 /// folder / board / list); it lives inside a Realm (`realm_id`) and
 /// has no membership / policy / E2EE of its own — all security
@@ -637,10 +637,10 @@ pub fn build_space_create_event(
     Ok(event)
 }
 
-/// Build a Space lifecycle event (`ck.space.archive` /
-/// `ck.space.restore` / `ck.space.tombstone`) per spec
+/// Build a Space lifecycle event (`ak.space.archive` /
+/// `ak.space.restore` / `ak.space.tombstone`) per spec
 /// realm-and-space.md §3.4. All three write the new `state` value
-/// into the `ck.component.space.state.v1` cell on the home Realm via
+/// into the `ak.component.space.state.v1` cell on the home Realm via
 /// an FSM transition.
 pub fn build_space_lifecycle_event(
     space_id: &str,
@@ -709,8 +709,8 @@ pub fn build_space_lifecycle_event(
     Ok(event)
 }
 
-/// Build a Realm facet state event (`ck.realm.join_rule`,
-/// `ck.realm.history_visibility`, `ck.realm.discovery`, ...).
+/// Build a Realm facet state event (`ak.realm.join_rule`,
+/// `ak.realm.history_visibility`, `ak.realm.discovery`, ...).
 pub fn build_realm_state_event(
     realm_id: &str,
     actor_id: &str,
@@ -737,7 +737,7 @@ pub fn build_realm_state_event(
     let cell = space_cell(cell_family, &realm_id_wire);
     let preconditions = vec![head_eq_precondition(&cell, Value::Null)?];
     let effects = vec![set_effect(&cell, value.clone())?];
-    // For `ck.realm.history_visibility` the body is the spec
+    // For `ak.realm.history_visibility` the body is the spec
     // `history_visibility_payload` (`{value, restricted_policy_digest?,
     // reason?}`, additionalProperties:false). Route it through the SDK strong
     // type so the enum value + the `restricted ⇒ restricted_policy_digest`
@@ -765,8 +765,8 @@ pub fn build_realm_state_event(
     Ok(event)
 }
 
-/// Build a `ck.realm.archive` lifecycle facet event. Realm archive is a
-/// reversible boolean register; there is no separate `ck.realm.restore`.
+/// Build a `ak.realm.archive` lifecycle facet event. Realm archive is a
+/// reversible boolean register; there is no separate `ak.realm.restore`.
 pub fn build_realm_archive_event(
     realm_id: &str,
     actor_id: &str,
@@ -795,7 +795,7 @@ pub fn build_realm_archive_event(
     Ok(event)
 }
 
-/// Build a `ck.realm.destroy` terminal lifecycle event.
+/// Build a `ak.realm.destroy` terminal lifecycle event.
 pub fn build_realm_destroy_event(
     realm_id: &str,
     actor_id: &str,
@@ -838,7 +838,7 @@ pub fn build_realm_history_sharing_policy_event(
     )
 }
 
-/// Build a `ck.realm.plaintext_visible_services` event when the caller
+/// Build a `ak.realm.plaintext_visible_services` event when the caller
 /// supplies at least one service DID. Returns `None` when the input
 /// list is empty so the bootstrap chain can skip emission entirely.
 pub fn build_plaintext_visible_services_event(
@@ -920,7 +920,7 @@ fn build_member_state_event(
     )
 }
 
-/// Build a generic `ck.member.state` event on `ck.component.member.state.v1`,
+/// Build a generic `ak.member.state` event on `ak.component.member.state.v1`,
 /// modeling a single FSM transition (e.g. `join → leave` kick, `join → ban`
 /// member ban, `null → join` invite-accept). `reason` shows up in the audit
 /// trail.
@@ -987,7 +987,7 @@ fn build_member_state_transition_event_with_binding(
         membership_payload = membership_payload.with_delivery_binding(delivery_binding);
     }
     let payload = membership_payload.to_value()?;
-    let cell = format!("ak:cell:ck.component.member.state.v1:{member_actor_id}");
+    let cell = format!("ak:cell:ak.component.member.state.v1:{member_actor_id}");
     let preconditions = if let Some(prior) = from_state {
         vec![head_eq_precondition(
             &cell,
@@ -1021,7 +1021,7 @@ fn space_cell(cell_family: &str, space_id: &str) -> String {
     format!("ak:cell:{cell_family}:{space_id}")
 }
 
-/// Build the canonical `ck.schema.device_message.v1` send envelope:
+/// Build the canonical `ak.schema.device_message.v1` send envelope:
 ///
 /// ```json
 /// {

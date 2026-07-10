@@ -481,7 +481,7 @@ pub(super) fn projection_synthesis_revision(
     // This is the PROJECTION FALLBACK: a synthesis entry from the card's current
     // decrypted state that could NOT be tied to a specific authoring operation
     // (typically a co-author's entry synced to this device without its raw
-    // `ck.strand.update` op, or whose decrypted body didn't match the replay).
+    // `ak.strand.update` op, or whose decrypted body didn't match the replay).
     // The card-level `updated_by` is only the LATEST editor, so attributing
     // every such entry to it mis-labels other authors' entries as the last
     // editor: a cross-member misattribution bug. Only attribute when

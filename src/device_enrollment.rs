@@ -1,14 +1,14 @@
 //! Current-session device enrollment (decision 0002, device-lifecycle.md §5.4).
 //!
 //! Under the delegated account-authority model the client cannot author a
-//! `ck.device.authorize` proof itself: the trust root is the enrollment
+//! `ak.device.authorize` proof itself: the trust root is the enrollment
 //! authority (coauth) designated by the principal DID document. Enrollment is a
 //! three-step orchestration:
 //!
 //! 1. derive this device's `device_public_key` from the persisted signing seed;
 //! 2. read the next `actor_seq` from the principal control stream's actor frontier on the Principal
 //!    Server;
-//! 3. ask the enrollment authority to mint a signed `service_attested` `ck.device.authorize` Event,
+//! 3. ask the enrollment authority to mint a signed `service_attested` `ak.device.authorize` Event,
 //!    then submit it verbatim to the Principal Server's `POST /_arkret/self/events`.
 //!
 //! The flow is idempotent at the caller: it is only invoked when the device
@@ -25,7 +25,7 @@ use crate::secure_key_store::SigningSeedMaterial;
 /// testable without a live session.
 pub struct DeviceEnrollmentRequest {
     /// This session's `device_id` (`ak:device:<uuid>`). The enrollment authority
-    /// signs the `ck.device.authorize` for exactly this device so the projected
+    /// signs the `ak.device.authorize` for exactly this device so the projected
     /// `device_public_key` lands under the same id the session (and recovery)
     /// looks up.
     pub device_id: String,
@@ -68,7 +68,7 @@ impl DeviceEnrollmentRequest {
 }
 
 /// Canonical algorithm ids a inkson device advertises in its
-/// `ck.device.authorize` record: the default-MUST HPKE suite (secret / key
+/// `ak.device.authorize` record: the default-MUST HPKE suite (secret / key
 /// envelope sealing) plus the MLS v1 group algorithm. UTF-8 bytewise sorted.
 pub const INKSON_DEVICE_ALGORITHMS: &[&str] =
     &["ak.hpke_x25519_aead_chacha20poly1305.v1", "ak.mls.v1"];
@@ -87,10 +87,10 @@ pub fn device_public_key_multibase(material: &SigningSeedMaterial) -> String {
 }
 
 /// Validate that the enrollment authority returned a usable, self-consistent
-/// `ck.device.authorize` Event for *this* device before it is submitted. Returns
+/// `ak.device.authorize` Event for *this* device before it is submitted. Returns
 /// the parsed envelope on success.
 ///
-/// Checks (fail-closed): the event is a `ck.device.authorize`, it is signed
+/// Checks (fail-closed): the event is a `ak.device.authorize`, it is signed
 /// (carries proofs — inkson never submits an unsigned enrollment event), and its
 /// `payload.device_id` equals `expected_device_id` (this session's device id, so
 /// a server bug cannot enroll a different device under this session).
@@ -130,7 +130,7 @@ fn validate_signed_device_authorize(
 }
 
 /// Enroll the current session device: ask the Account Authority to sign a
-/// `ck.device.authorize` for `request`, then submit it through `principal_api`
+/// `ak.device.authorize` for `request`, then submit it through `principal_api`
 /// (`POST /_arkret/self/events`). `expected_device_id` is this session's
 /// self-certifying id, used to fail closed if the returned event addresses a
 /// different device.

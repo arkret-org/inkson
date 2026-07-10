@@ -66,7 +66,7 @@ pub fn LoginPanel(
 ) -> Element {
     // A4 — base_url / state_store from session context instead of props.
     let mut base_url = crate::app::SessionContext::get().base_url;
-    let mut state_store = crate::app::SessionContext::get().state_store;
+    let state_store = crate::app::SessionContext::get().state_store;
     let mut auth_status = use_signal(|| {
         if auto_capture_callback {
             "Completing sign in...".to_owned()

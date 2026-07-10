@@ -1,4 +1,4 @@
-/* CKP-0007 P3B.2.4 — Circle-scope accent rail on Circle-scoped messages. */
+/* AKP-0007 P3B.2.4 — Circle-scope accent rail on Circle-scoped messages. */
 .discussion-message.has-circle-accent-rail {
   position: relative;
   padding-left: 10px;
@@ -19,7 +19,7 @@
   background: color-mix(in srgb, var(--accent, #1f6b4f) 85%, #18212f);
 }
 
-/* CKP-0007 P3B.2.3 — composer banner colour tokens. */
+/* AKP-0007 P3B.2.3 — composer banner colour tokens. */
 .circle-composer-banner {
   display: flex;
   align-items: center;

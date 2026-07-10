@@ -4,13 +4,13 @@
 //!
 //! Mirror of [`crate::views::applets::AppletsPanel`] but at the agent
 //! layer:
-//!   * `ck.agent.endpoint` registers an agent_id + invocation protocol + capability_proof
+//!   * `ak.agent.endpoint` registers an agent_id + invocation protocol + capability_proof
 //!     requirement.
-//!   * `ck.agent.interop_session.{start,status,result}` track agent invocations. The terminal
+//!   * `ak.agent.interop_session.{start,status,result}` track agent invocations. The terminal
 //!     `result` event carries a typed result payload + the audit_binding proof so the audit chat
 //!     can verify the agent's output corresponds to the signed input.
 //!
-//! Incoming `ck.agent.interop_session.result` events fetched from
+//! Incoming `ak.agent.interop_session.result` events fetched from
 //! soland are decoded + verified via
 //! `arkret_sdk::agent_binding::verify_audit_binding_by_kind`. The
 //! panel renders a per-result badge so operators can tell at a glance
@@ -19,7 +19,7 @@
 //! G3.Y4 additions:
 //!   * `agent-protocol-handoff-button` initiates a handoff to a registered agent endpoint.
 //!   * `agent-protocol-handoff-confirm-button` confirms the handoff intent and emits the
-//!     `ck.agent.interop_session.start` event via soland's `agent_bridge` route.
+//!     `ak.agent.interop_session.start` event via soland's `agent_bridge` route.
 //!   * `agent-protocol-handoff-status` carries the pending → approved → running → completed/failed
 //!     lifecycle via `data-state`.
 //!   * `agent-protocol-transcript-panel` lists each incremental status step as

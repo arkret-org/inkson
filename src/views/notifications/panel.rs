@@ -14,7 +14,6 @@ use super::model::{
     notification_overrides_realm_mute, notification_scope_kind, realm_is_muted,
 };
 use crate::components::{EmptyState, EmptyStateKind, UiIcon};
-use crate::local_state::LocalStateStore;
 use crate::ui::button::{Button, ButtonSize, ButtonVariant};
 use crate::views::helpers::short_protocol_id;
 

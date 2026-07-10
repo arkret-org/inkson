@@ -1,10 +1,10 @@
 //! Client-side account_data layer per `discovery/client-preferences.md`.
 //!
 //! Spec: actor-private preferences (UI state, read-receipt overrides, presence
-//! gating, blocklist, language) are stored as `ck.account_data.set` events with
+//! gating, blocklist, language) are stored as `ak.account_data.set` events with
 //! actor-private wire scope. Inkson previously kept these as ad-hoc fields on
 //! `LocalState`; this module centralizes the storage shape so
-//! `ck.account_data.set` writes have a single canonical entry point.
+//! `ak.account_data.set` writes have a single canonical entry point.
 
 use std::collections::BTreeMap;
 
@@ -34,15 +34,15 @@ pub use remark::*;
 pub enum AccountDataKey {
     /// `client.ui` — sidebar collapsed, theme, default view per Realm.
     ClientUi,
-    /// `ck.read_receipt.preferences` — global + per-Realm + per-strand send override.
+    /// `ak.read_receipt.preferences` — global + per-Realm + per-strand send override.
     ClientReadReceipts,
-    /// `ck.presence.visibility` — principal-private presence fanout policy.
+    /// `ak.presence.visibility` — principal-private presence fanout policy.
     ClientPresence,
-    /// `ck.presence.preference` — principal-private manual presence
+    /// `ak.presence.preference` — principal-private manual presence
     /// preference (pinned state / status message / expiry), enforced on
     /// the send side (profiles-presence.md §3.6).
     ClientPresencePreference,
-    /// `ck.account.blocklist` — actor-private personal blocklist entries.
+    /// `ak.account.blocklist` — actor-private personal blocklist entries.
     ClientBlocklist,
     /// `ck.push_rules` — per-Realm mute, sound, push routing.
     ClientNotifications,
@@ -104,7 +104,7 @@ pub struct AccountDataRecord {
 /// F-ACCT-SNAP-1: tracks the server-declared snapshot head this store was
 /// last reconciled to (per `sync/account-data-sync.md`). A new device can
 /// hydrate from `snapshot_head` instead of replaying every historic
-/// `ck.account_data.set` event; once the snapshot endpoint surfaces a
+/// `ak.account_data.set` event; once the snapshot endpoint surfaces a
 /// fingerprint matching this value, the client knows it's caught up and
 /// can resume incremental sync from the live event stream.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]

@@ -13,7 +13,6 @@
 use dioxus::prelude::*;
 
 use crate::components::{EmptyState, EmptyStateKind, HelpTip};
-use crate::local_state::LocalStateStore;
 use crate::views::helpers::short_protocol_id;
 
 /// Default protocol version advertised by inkson — kept here so the

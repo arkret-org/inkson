@@ -43,7 +43,7 @@ fn is_likely_valid_did_accepts_canonical_shapes_and_rejects_garbage() {
     assert!(is_likely_valid_did("did:webvh:authority.example:zKey"));
 }
 
-/// The canonical `ck.read_receipt.preferences` body shape other devices
+/// The canonical `ak.read_receipt.preferences` body shape other devices
 /// read via `/sync` account_data. Locks the SDK/spec field names so a
 /// future rename can't silently desync devices.
 #[test]

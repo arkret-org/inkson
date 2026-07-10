@@ -9,7 +9,6 @@ use super::section::{
     DEFAULT_COVERED_SEALS_LAG_THRESHOLD, REALM_ADMIN_NAV_GROUPS, RealmAdminSection,
 };
 use crate::components::encryption_floor_prompt::projection_has_recommended_encryption_floor;
-use crate::local_state::LocalStateStore;
 use crate::models::RealmTreeNodeKind;
 use crate::routes::Route;
 use crate::ui::button::{Button, ButtonVariant};
@@ -88,11 +87,11 @@ pub fn RealmAdminPanel(
     // below renders the reason / seal_ref.
     let mut move_detail_open = use_signal(|| Option::<String>::None);
     // YOU-01-011: the former conflict-repair submit dialog was removed —
-    // `ck.conflict.repair` is not in the spec event-kind-registry (186
+    // `ak.conflict.repair` is not in the spec event-kind-registry (186
     // kinds, no conflict/repair entry), so the client must not mint that
     // wire kind. The bottom-cells banner below stays as read-only
     // diagnostics; repair tooling returns once a repair kind is
-    // registered via CKP.
+    // registered via AKP.
     // Read the local seal view for this realm once per render. Surfaces:
     //  - bottom_cells set → "concurrent candidates unresolved" banner (P0 M5)
     //  - frontier head    → debug visibility into what Move builders thread
@@ -439,7 +438,7 @@ pub fn RealmAdminPanel(
                         span { class: "badge red", "bottom/conflict" }
                     }
                     div { class: "muted",
-                        "One or more cells in this Realm's projection have unresolved bottom/conflict diagnostics — soland received concurrent Events it cannot deterministically merge. Repair requires a registered recovery-repair event kind (pending CKP registration); until then this panel is read-only diagnostics for operators."
+                        "One or more cells in this Realm's projection have unresolved bottom/conflict diagnostics — soland received concurrent Events it cannot deterministically merge. Repair requires a registered recovery-repair event kind (pending AKP registration); until then this panel is read-only diagnostics for operators."
                     }
                     for (cell_ref, info) in &bottom_cells {
                         {
@@ -504,11 +503,9 @@ pub fn RealmAdminPanel(
                 // ak.realm.policy_components; prompts the operator that a
                 // following ak.mls.commit activates sealing + re-disclosure.
                 super::durability::DurabilityPolicyEditor {
-                    base_url: base_url.clone(),
                     token,
                     realm_id: selected_realm_id.clone(),
                     actor_id: account_did.clone(),
-                    state_store,
                 }
                 // Realm-level RRK recovery panel — only when durability is active.
                 if durability_rrk_active {
@@ -994,7 +991,7 @@ pub fn RealmAdminPanel(
             // MLS epoch rotation. YOU-01-009: the spec has no
             // `POST /_arkret/self/mls/rotate` shim — epoch rotation is a
             // real local `self_update_commit` published as the canonical
-            // `ck.mls.commit` event (persist-on-accept).
+            // `ak.mls.commit` event (persist-on-accept).
             div { class: "event", "data-testid": "mls-rotation",
                 div { class: "event-head", span { "MLS Epoch" } span { "rotation" } }
                 div { class: "actions",
@@ -1633,11 +1630,9 @@ pub fn RealmAdminPanel(
                 // and declared owning-organization hints. Binding and
                 // organization-side signing live in the admin console (sodmin).
                 super::RealmOrganizationPanel {
-                    base_url: base_url.clone(),
                     token,
                     realm_id: selected_realm_id.clone(),
                     account_did: account_did.clone(),
-                    state_store,
                 }
             }
 

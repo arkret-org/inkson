@@ -1,6 +1,6 @@
 use dioxus::prelude::*;
 
-/// CKP-0007 P3B.4 — multi-account avatar dropdown switcher.
+/// AKP-0007 P3B.4 — multi-account avatar dropdown switcher.
 /// Lists every profile in [`crate::config::MultiProfileConfig`] and
 /// fires typed `on_switch` plus `on_add_account` handlers.
 pub mod account_switcher;
@@ -9,11 +9,11 @@ pub mod avatar_uploader;
 /// D3 — generic single-flight / debounce / backoff / digest-dedupe backup-job
 /// scheduler shared by `mls_history_backup` and `mls_backup_prompt`.
 pub(crate) mod backup_job_scheduler;
-/// CKP-0007 P3B.2 — Circle error queue. Producers push
+/// AKP-0007 P3B.2 — Circle error queue. Producers push
 /// [`crate::circle::CircleErrorKind`]; the unified `feedback::ToastHost`
 /// drains it and renders the localized user-facing string.
 pub mod circle_error_toast;
-/// CKP-0007 P3B.2 — Circle scope picker + composer banner + confidential-
+/// AKP-0007 P3B.2 — Circle scope picker + composer banner + confidential-
 /// discussion-of cross-link banner. Shared between the new-Strand form,
 /// the composer header, and the Strand detail view.
 pub mod circle_scope_picker;
@@ -49,7 +49,7 @@ pub mod feedback;
 pub mod mls_backup_prompt;
 /// key-management.md §7.10 — continuous `mls_history` backup job: re-uploads
 /// the per-Realm group-state envelope (series successor chain) after every
-/// accepted `ck.mls.commit`, once the 24-word Recovery Key is configured.
+/// accepted `ak.mls.commit`, once the 24-word Recovery Key is configured.
 pub mod mls_history_backup;
 /// Account-MLS-secret auto-unlock prompt — the recovery-passphrase banner
 /// that restores encrypted history on a fresh device. Mounted once near the

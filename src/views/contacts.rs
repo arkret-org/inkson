@@ -1,4 +1,4 @@
-// TRUST-CACHE: contact card / contact list per CKP B-E §1 — these
+// TRUST-CACHE: contact card / contact list per AKP B-E §1 — these
 // surfaces MAY consult the locally cached `binding_state` (verified
 // badge, mention autocomplete fields). On cache miss or any
 // identity-handles.md §6.1.2 trigger the UI MUST downgrade to an
@@ -13,7 +13,6 @@ use dioxus_router::hooks::use_navigator;
 
 use crate::components::{DismissiblePopup, TrustCacheBadge};
 use crate::i18n::tr;
-use crate::local_state::LocalStateStore;
 use crate::models::ContactListRow;
 use crate::routes::Route;
 use crate::ui::button::{Button, ButtonVariant};
@@ -49,10 +48,11 @@ fn scope_label(scope: &str) -> String {
 /// modal and reload the list.
 #[component]
 pub fn ContactNewPanel(
-    base_url: String,
     token: Signal<String>,
     #[props(default)] on_submitted: Option<EventHandler<()>>,
 ) -> Element {
+    // A4 — base_url from session context instead of a prop.
+    let base_url = crate::app::SessionContext::base_url_string();
     let mut target = use_signal(String::new);
     // "Ordinary friend" preset: accepted contacts can direct-message by default
     // and can also invite this user into groups by default. Both scopes start
@@ -216,12 +216,13 @@ pub fn ContactNewPanel(
 /// One row in the contacts list, plus the per-state action set (U1/U5).
 #[component]
 fn ContactRow(
-    base_url: String,
     token: Signal<String>,
-    state_store: Signal<LocalStateStore>,
     contact: ContactListRow,
     on_changed: EventHandler<()>,
 ) -> Element {
+    // A4 — base_url / state_store from session context instead of props.
+    let base_url = crate::app::SessionContext::base_url_string();
+    let state_store = crate::app::SessionContext::get().state_store;
     let nav = use_navigator();
     let mut row_status = use_signal(String::new);
     let mut busy = use_signal(|| false);
@@ -593,9 +594,9 @@ fn run_contact_action(
 
 #[component]
 pub fn ContactsPanel(token: Signal<String>) -> Element {
-    // A4 — base_url / state_store from session context instead of props.
+    // A4 — base_url from session context instead of a prop. (state_store is now
+    // read from context directly by ContactRow, so ContactsPanel no longer needs it.)
     let base_url = crate::app::SessionContext::base_url_string();
-    let state_store = crate::app::SessionContext::get().state_store;
     let mut contacts = use_signal(Vec::<ContactListRow>::new);
     let mut status = use_signal(|| "loading".to_owned());
     let mut error = use_signal(|| Option::<String>::None);
@@ -690,9 +691,7 @@ pub fn ContactsPanel(token: Signal<String>) -> Element {
                                 for contact in contact_rows {
                                     ContactRow {
                                         key: "{contact.peer}",
-                                        base_url: base_url.clone(),
                                         token,
-                                        state_store,
                                         contact: contact.clone(),
                                         on_changed: move |_| reload.set(reload() + 1),
                                     }
@@ -724,7 +723,6 @@ pub fn ContactsPanel(token: Signal<String>) -> Element {
                 }
                 div { class: "modal-body",
                     ContactNewPanel {
-                        base_url: base_url.clone(),
                         token,
                         on_submitted: move |_| {
                             add_modal_open.set(false);

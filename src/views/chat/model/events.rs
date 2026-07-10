@@ -90,7 +90,7 @@ pub(crate) fn plaintext_services_for_policy(
 
 /// Detect the per-message redaction tombstone surfaced by soland on the sync
 /// timeline (spec strand-and-message.md §9). The server folds a redacted
-/// `ck.message.create` into a tombstone form carrying `redacted: true` /
+/// `ak.message.create` into a tombstone form carrying `redacted: true` /
 /// `state: "redacted"`, so a receiver rebuilding the timeline renders the
 /// tombstone instead of either dropping the row or leaking the cleartext.
 pub(crate) fn message_is_redaction_tombstone(candidates: &[&Value]) -> bool {
@@ -779,7 +779,7 @@ pub(crate) fn chat_message_from_event(realm_id: &str, event: &Value) -> Option<C
 /// P0 decrypt-on-read: turn a remote member's canonical `encrypted_content`
 /// envelope into a plaintext chat body.
 ///
-/// Parses the canonical `ck.schema.encrypted_envelope.v1` shape, unwraps it
+/// Parses the canonical `ak.schema.encrypted_envelope.v1` shape, unwraps it
 /// to the typed [`arkret_sdk::EncryptedPayload`], and hands it to the shared
 /// MLS decrypt core. The decrypted bytes are the canonical Content Block JSON
 /// (see the secure send path), so we parse them and extract the display text.
@@ -1080,7 +1080,7 @@ pub(crate) fn chat_message_from_event_with_sidecar(
         .filter(|value| value.starts_with("ak:strand:"))
         .unwrap_or("ak:strand:general")
         .to_owned();
-    // CKP-0007 P3B.2.7 — compare the envelope's `effective_scope`
+    // AKP-0007 P3B.2.7 — compare the envelope's `effective_scope`
     // against the payload `scope_circle_id`. When they disagree we
     // route the message into `NeedsVerification` so the UI badge
     // surfaces the mismatch rather than presenting a body decrypted
@@ -1159,7 +1159,7 @@ pub(crate) fn chat_message_from_event_with_sidecar(
         sender: message_actor_from_candidates(&candidates)
             .unwrap_or("did:web:unknown")
             .to_owned(),
-        // CKP-0008 §4.10 — act-on-behalf carries a signed envelope-level
+        // AKP-0008 §4.10 — act-on-behalf carries a signed envelope-level
         // `executed_by`. When present and distinct from the actor, the
         // renderer shows the "controller via agent" double signature.
         executed_by: first_string_in_candidates(&candidates, &["executed_by"])
@@ -1200,7 +1200,7 @@ pub(crate) fn chat_messages_from_events_with_sidecar(
 /// `kanban_operations_from_events` — instead of refetching + redecrypting the
 /// whole realm on every Discussion-tab open.
 ///
-/// Canonical `ck.message.create` events (and their server-folded redaction /
+/// Canonical `ak.message.create` events (and their server-folded redaction /
 /// expiry tombstone forms, which reuse the same kind + `event_id`) are kept.
 /// Shared `ck.pin.*` control events are kept in the same discussion log so the
 /// pinned-message bar and reaction summary project from the same local-first

@@ -208,7 +208,7 @@ fn compose_local_encrypted_message_inner(
     // Arkret canonical content shape (models/content-types.md §2.2 / §4.1):
     // the E2EE plaintext is the same `payload.content` Content Block the
     // active-write path emits, so a decrypting client parses it with the
-    // identical `ck.content.text` schema. (Matrix `msgtype`/`m.text` is
+    // identical `ak.content.text` schema. (Matrix `msgtype`/`m.text` is
     // informative-only, per guides/migrating-from-matrix.md.)
     let plaintext = serde_json::to_vec(&serde_json::json!({
         "content": {
