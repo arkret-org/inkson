@@ -153,6 +153,41 @@ pub(super) fn initial_session_credential_from_state(
 #[cfg(all(target_arch = "wasm32", feature = "wasm-localstorage-secrets-test"))]
 pub(super) const TEST_SESSION_INJECTION_KEY: &str = "inkson.test.session_injection.v1";
 
+#[cfg(all(target_arch = "wasm32", feature = "wasm-localstorage-secrets-test"))]
+pub(super) const TEST_SESSION_CREDENTIAL_INJECTION_KEY: &str =
+    "inkson.test.session_credential_injection.v1";
+
+/// Dev-only bearer injection for cotest scenarios that intentionally exercise
+/// soland's development login rather than a DPoP-bound account grant. This is
+/// compiled only into the explicit localStorage-secrets test build.
+#[cfg(all(target_arch = "wasm32", feature = "wasm-localstorage-secrets-test"))]
+pub(super) fn inject_test_session_credential(
+    config_store: Signal<LocalConfigStore>,
+    server_url: &str,
+    account_did: &str,
+    device_id: &str,
+) -> Option<String> {
+    let credential = web_sys::window()
+        .and_then(|window| window.local_storage().ok().flatten())
+        .and_then(|storage| {
+            storage
+                .get_item(TEST_SESSION_CREDENTIAL_INJECTION_KEY)
+                .ok()
+                .flatten()
+        })?;
+    if credential.trim().is_empty() {
+        return None;
+    }
+    persist_config(
+        config_store,
+        server_url.to_owned(),
+        account_did.to_owned(),
+        device_id.to_owned(),
+        credential.clone(),
+    );
+    Some(credential)
+}
+
 /// Dev-only boot injection of a real grant + DPoP key (cotest joint e2e,
 /// ②(A+②) model). Returns the injected grant JWT so the caller can seed the
 /// in-memory `token` signal before the bootstrap `connect()` reads it.

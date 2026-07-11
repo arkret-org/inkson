@@ -328,6 +328,13 @@ fn AppBootstrap() -> Element {
                 &device_id(),
             ) {
                 token.set(grant_jwt);
+            } else if let Some(credential) = inject_test_session_credential(
+                config_store,
+                &base_url(),
+                &account_did(),
+                &device_id(),
+            ) {
+                token.set(credential);
             }
         });
     }
