@@ -717,7 +717,7 @@ pub fn PersonalAgentAdminPanel(token: Signal<String>) -> Element {
                                                 };
                                                 let body = AgentProvisionRequestBody {
                                                     display_name: None,
-                                                    agent_slug: Some(slug_value.clone()),
+                                                    slug: slug_value.clone(),
                                                     requested_scope: Some(requested_scope.clone()),
                                                     accountability: Value::Null,
                                                     pairing_ttl_ms: None,

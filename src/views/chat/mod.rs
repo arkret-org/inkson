@@ -419,19 +419,10 @@ pub fn ChatPanel(
             &base_url,
         );
     }
-    // Mark agent endpoints registered in this Realm so the @mention
-    // picker, member list, and sender row can render a 🤖 badge.
-    // Source of truth is the local store's `ak.agent.endpoint` raw
-    // operations (same projection the Agents panel reads from).
+    // Mark agents referenced by structured mentions so the @mention picker,
+    // member list, and sender row can render an agent badge.
     {
-        let mut agent_metadata = agent_metadata_from_raw_operations(
-            &state_store.read().load().raw_operations,
-            &selected_realm_id,
-        );
-        merge_agent_metadata_maps(
-            &mut agent_metadata,
-            agent_metadata_from_mentions(&all_messages_snapshot),
-        );
+        let agent_metadata = agent_metadata_from_mentions(&all_messages_snapshot);
         upsert_agent_participants(&mut participants, &agent_metadata, &account_did);
         annotate_agent_participants_with_metadata(&mut participants, &agent_metadata);
     }

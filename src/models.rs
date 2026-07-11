@@ -174,7 +174,7 @@ impl ContactAgentRow {
             agent_id: row.agent_id.to_string(),
             controller_id: row.controller_id.to_string(),
             display_name: row.display_name,
-            slug: row.slug,
+            slug: row.agent_slug.unwrap_or_default(),
             direct_conversation: row
                 .direct_conversation
                 .map(DirectConversationSummary::from_sdk),
