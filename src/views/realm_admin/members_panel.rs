@@ -95,7 +95,7 @@ struct MemberAgentRow {
     agent_principal_id: String,
     controller_did: String,
     display_name: String,
-    agent_slug: String,
+    slug: String,
     status: String,
     mention_policy: AgentMentionPolicy,
     selection: AgentParticipation,
@@ -202,20 +202,11 @@ fn member_agent_row_from_value(
         return None;
     }
     let agent_principal_id = agent_principal_id.to_owned();
-    let display_name = row
-        .display_name
-        .as_deref()
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .map(ToOwned::to_owned)
-        .unwrap_or_else(|| short_protocol_id(&agent_principal_id));
-    let agent_slug = row
-        .agent_slug
-        .as_deref()
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .map(ToOwned::to_owned)
-        .unwrap_or_default();
+    let slug = row.slug.trim().to_owned();
+    if slug.is_empty() {
+        return None;
+    }
+    let display_name = slug.clone();
     // `agent_projection` carries no controller binding; the list endpoint is
     // already scoped to the caller's owned agents, so use the caller DID.
     let controller_did = fallback_controller_did.trim().to_owned();
@@ -223,7 +214,7 @@ fn member_agent_row_from_value(
         agent_principal_id,
         controller_did,
         display_name,
-        agent_slug,
+        slug,
         status: crate::views::agents::model::agent_status_wire(row.status).to_owned(),
         mention_policy: AgentMentionPolicy::Unknown,
         selection: AgentParticipation::NONE,
@@ -1207,7 +1198,7 @@ fn member_group_matches(group: &MemberGroup, query: &str) -> bool {
         || group.agents.iter().any(|agent| {
             agent.agent_principal_id.to_lowercase().contains(&query)
                 || agent.display_name.to_lowercase().contains(&query)
-                || agent.agent_slug.to_lowercase().contains(&query)
+                || agent.slug.to_lowercase().contains(&query)
         })
 }
 
@@ -4222,8 +4213,8 @@ pub fn RealmMembersPanel(
                                                                             div { class: "member-row-title",
                                                                                 span { title: "{agent_id}", "{agent_title}" }
                                                                                 span { class: "{status_class}", "{status_label}" }
-                                                                                if !owned_agent.agent_slug.is_empty() {
-                                                                                    span { class: "badge", "{owned_agent.agent_slug}" }
+                                                                                if !owned_agent.slug.is_empty() {
+                                                                                    span { class: "badge", "{owned_agent.slug}" }
                                                                                 }
                                                                             }
                                                                             div { class: "muted member-row-sub mono", title: "{agent_id}", "{short_protocol_id(&agent_id)}" }
@@ -4483,7 +4474,7 @@ mod tests {
             agent_principal_id: id.to_owned(),
             controller_did: controller.to_owned(),
             display_name: name.to_owned(),
-            agent_slug: "summary".to_owned(),
+            slug: "summary".to_owned(),
             status: "active".to_owned(),
             mention_policy: AgentMentionPolicy::Allowed,
             selection: AgentParticipation {

@@ -1940,7 +1940,7 @@ fn AppBootstrap() -> Element {
                                     &[
                                         agent.agent_principal_id.as_str(),
                                         agent.display_name.as_deref().unwrap_or_default(),
-                                        agent.agent_slug.as_deref().unwrap_or_default(),
+                                        agent.slug.as_str(),
                                     ],
                                 )
                             })
@@ -1984,9 +1984,7 @@ fn AppBootstrap() -> Element {
                                                 for agent in own_agent_rows.read().iter() {
                                                     {
                                                         let agent_id = agent.agent_principal_id.to_string();
-                                                        let agent_label = agent.display_name.clone()
-                                                            .or_else(|| agent.agent_slug.clone())
-                                                            .unwrap_or_else(|| short_protocol_id(&agent_id));
+                                                        let agent_label = agent.slug.clone();
                                                         let agent_status = match agent.status {
                                                             arkret_sdk::AgentStatus::PendingRuntimeKey => "pending",
                                                             arkret_sdk::AgentStatus::Active => "active",

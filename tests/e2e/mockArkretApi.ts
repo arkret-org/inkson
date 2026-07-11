@@ -282,7 +282,7 @@ export async function mockArkretApi(
   personalAgents.set("did:web:agents.example:assistant", {
     agent_principal_id: "did:web:agents.example:assistant",
     display_name: "Alice Assistant",
-    agent_slug: "assistant",
+    slug: "assistant",
     status: "active",
     created_at: "2026-07-06T00:00:00Z",
     updated_at: "2026-07-06T00:05:00Z",
@@ -290,7 +290,7 @@ export async function mockArkretApi(
   personalAgents.set("did:web:agents.example:deactivated", {
     agent_principal_id: "did:web:agents.example:deactivated",
     display_name: "Deactivated Agent",
-    agent_slug: "deactivated",
+    slug: "deactivated",
     status: "deactivated",
     created_at: "2026-07-05T00:00:00Z",
     updated_at: "2026-07-06T00:10:00Z",
@@ -1977,15 +1977,26 @@ export async function mockArkretApi(
       >;
       personalAgentCounter += 1;
       const slug =
-        typeof body.agent_slug === "string" && body.agent_slug.trim()
-          ? body.agent_slug.trim()
-          : `agent-${personalAgentCounter}`;
+        typeof body.slug === "string" && body.slug.trim()
+          ? body.slug.trim()
+          : "";
+      if (!slug) {
+        return json(
+          route,
+          {
+            ok: false,
+            error: { code: "invalid_param", message: "slug is required" },
+          },
+          400,
+        );
+      }
       const agentPrincipalId = `did:web:agents.example:${slug}`;
       const agent = {
         agent_principal_id: agentPrincipalId,
-        display_name:
-          typeof body.display_name === "string" ? body.display_name : slug,
-        agent_slug: slug,
+        ...(typeof body.display_name === "string"
+          ? { display_name: body.display_name }
+          : {}),
+        slug,
         status: "pending_runtime_key",
         created_at: "2026-07-06T00:00:00Z",
         updated_at: "2026-07-06T00:00:00Z",
