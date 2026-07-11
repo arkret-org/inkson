@@ -33,15 +33,9 @@
 use std::cell::Cell;
 use std::time::Duration;
 
-use garth::{
-    ClientEvent, ClientProjector, RealmStreamStopReason, RunOptions, SyncLoopControl,
-    TransportProvider,
-};
+use garth::{ClientEvent, ClientProjector, RunOptions, SyncLoopControl, TransportProvider};
 
-use crate::api_error::{is_auth_expired_error, is_invalid_cursor_error, rate_limited_retry_after};
 use crate::config::MultiProfileConfig;
-use crate::runtime::engine_loop::{EngineLoopDirective, run_engine_loop};
-use crate::state::LocalStateStore;
 
 /// Floor / ceiling for the failure backoff. Mirrors the account engine's
 /// human-scale recovery cadence. The doubling ladder is [`garth::Backoff`];
@@ -73,21 +67,6 @@ pub struct RealmEventsEngineContext {
     pub profiles: crate::runtime::input::ValueReader<MultiProfileConfig>,
     pub client_runtime: crate::client_core::InksonClientRuntime,
     pub effect: crate::runtime::effects::EffectHandle,
-}
-
-/// Outcome of a single subscribe iteration, telling the loop how to pace.
-enum RealmIterationOutcome {
-    /// Iteration completed; pause the short inter-iteration beat then re-poll.
-    Ok,
-    /// Recoverable failure; back off via the shared ladder. `retry_after_ms`
-    /// carries a server-advertised hint (rate-limit / reconnect-after) honored as
-    /// a hard floor for this step; `None` means "no hint, use the ladder base".
-    Backoff { retry_after_ms: Option<u64> },
-    /// Base URL / token not yet populated; exit and let `app` respawn.
-    NotReady,
-    /// Terminal session loss; exit and let the account engine / app drive
-    /// re-auth (a generation bump retires this loop).
-    AuthExpired,
 }
 
 /// [`ClientProjector`] that folds each driver-emitted batch into the shared
@@ -210,129 +189,5 @@ impl TransportProvider for RealmTransportProvider {
             && !self.ctx.effect.is_cancelled()
             && !self.ctx.base_url.get().trim().is_empty()
             && !self.ctx.token.get().trim().is_empty()
-    }
-}
-
-async fn run_realm_iteration(
-    realm_id: &str,
-    ctx: &RealmEventsEngineContext,
-    start_generation: u64,
-    generation: crate::runtime::input::ValueReader<u64>,
-) -> RealmIterationOutcome {
-    let base = ctx.base_url.get();
-    let token = ctx.token.get();
-    if base.trim().is_empty() || token.trim().is_empty() {
-        return RealmIterationOutcome::NotReady;
-    }
-    #[cfg(target_arch = "wasm32")]
-    if crate::secure_key_store::ensure_wasm_secure_key_store_ready("inkson")
-        .await
-        .is_err()
-    {
-        return RealmIterationOutcome::Backoff {
-            retry_after_ms: None,
-        };
-    }
-
-    let sdk_http = match crate::transport::auth::authed_api(&base, token)
-        .and_then(|api| api.sdk_http_client())
-    {
-        Ok(sdk_http) => sdk_http,
-        Err(_) => {
-            return RealmIterationOutcome::Backoff {
-                retry_after_ms: None,
-            };
-        }
-    };
-
-    let realm_id_typed = match arkret_sdk::RealmId::new(realm_id.to_owned()) {
-        Ok(realm_id) => realm_id,
-        Err(error) => {
-            tracing::warn!(error = %error, realm_id, "invalid realm id for events subscribe");
-            return RealmIterationOutcome::Backoff {
-                retry_after_ms: None,
-            };
-        }
-    };
-
-    // A late response from a retired generation must not touch the store.
-    if generation.get() != start_generation {
-        return RealmIterationOutcome::Ok;
-    }
-
-    // The transport passes the request-aware trace context (`catchup` from
-    // cursor presence) into the SDK frame stream, whose StreamTraceValidator
-    // — plus the garth driver's — enforces the §1.1 sequence rules on every
-    // frame. Stream duration is bounded by the server's own subscribe window
-    // (the client-side max_duration knob no longer exists in the SDK options).
-    let transport = crate::client_core::InksonRealmEventsTransport::new(sdk_http);
-
-    // The garth driver loads/checkpoints this realm's cursor and remembers
-    // dedupe ids through the root runtime adapter, which writes the exact
-    // `SyncSignal` store used by this projector. The driver emits/awaits the projector
-    // BEFORE checkpointing the cursor, so ingest gates cursor advance.
-    let projector = RealmIngestProjector {
-        state_store: ctx.state_store.clone(),
-        realm_id: realm_id.to_owned(),
-        changed: Cell::new(0),
-    };
-
-    let reason = match ctx
-        .client_runtime
-        .subscription_engine()
-        .run_realm_stream(&transport, realm_id_typed, &projector)
-        .await
-    {
-        Ok(reason) => reason,
-        Err(error) => {
-            let error: anyhow::Error = error.into();
-            if is_auth_expired_error(&error) {
-                return RealmIterationOutcome::AuthExpired;
-            }
-            if let Some(retry_after_ms) = rate_limited_retry_after(&error) {
-                return RealmIterationOutcome::Backoff {
-                    retry_after_ms: Some(retry_after_ms),
-                };
-            }
-            if is_invalid_cursor_error(&error) {
-                // Broken/expired realm cursor — clear it so the next subscribe
-                // rebuilds from history.
-                ctx.state_store
-                    .write(|store| store.save_realm_events_cursor(realm_id, None));
-            }
-            return RealmIterationOutcome::Backoff {
-                retry_after_ms: None,
-            };
-        }
-    };
-
-    // Bump the live epoch once per window when the projector folded ≥1 op, so
-    // the kanban/chat panels re-project on real content (unchanged cadence).
-    if projector.changed.get() > 0 {
-        ctx.realm_live_epoch
-            .update(|epoch| *epoch = epoch.wrapping_add(1));
-    }
-
-    match reason {
-        RealmStreamStopReason::StreamEnded => RealmIterationOutcome::Ok,
-        RealmStreamStopReason::Dropped {
-            reconnect_after_ms, ..
-        } => {
-            // Server lost our position — clear the realm cursor so the next
-            // subscribe rebuilds from history (inkson rebuilds from history for
-            // realm drops rather than scan-catchup).
-            ctx.state_store
-                .write(|store| store.save_realm_events_cursor(realm_id, None));
-            RealmIterationOutcome::Backoff {
-                retry_after_ms: reconnect_after_ms,
-            }
-        }
-        RealmStreamStopReason::ResyncRequired { reconnect_after_ms } => {
-            // The driver already cleared the cursor on resync (via the adapter).
-            RealmIterationOutcome::Backoff {
-                retry_after_ms: reconnect_after_ms,
-            }
-        }
-        RealmStreamStopReason::Unauthorized { .. } => RealmIterationOutcome::AuthExpired,
     }
 }
