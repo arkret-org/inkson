@@ -838,6 +838,19 @@ async fn run_iteration(
         }
     };
 
+    if !ctx.account_did.trim().is_empty() {
+        let submitter = crate::event_submit::EventSubmitter::new(sdk_http.clone());
+        match submitter.drain_outbound(ctx.account_did.trim()).await {
+            Ok(completed) if completed > 0 => {
+                tracing::debug!(completed, "sync engine drained durable outbound events");
+            }
+            Ok(_) => {}
+            Err(error) => {
+                tracing::debug!(?error, "sync engine deferred durable outbound drain");
+            }
+        }
+    }
+
     match crate::client_core::account_subscribe_snapshot_outcome(&sdk_http, cursor.as_deref()).await
     {
         Ok(AccountSubscribeSnapshotResult::Delta(response)) => {

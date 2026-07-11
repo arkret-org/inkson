@@ -94,6 +94,7 @@ pub(crate) mod payload;
 // carried only a doc comment and no code.
 pub mod operation;
 pub mod organization;
+mod outbound_store;
 pub mod passkey_prf;
 pub mod pending_logout;
 /// Input-path perf helpers — draft-save debounce + typing throttle for the

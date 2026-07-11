@@ -54,7 +54,6 @@ pub(super) fn ChatComposer(controller: ChatController, context: ChatComposerCont
     let mut poll_draft = controller.poll_draft;
     let mut poll_cards = controller.poll_cards;
     let mut messages = controller.messages;
-    let mut chat_outbox = controller.outbox;
     let mut is_online = controller.is_online;
     let mut status_msg = controller.status_msg;
     let typing_throttle = controller.typing_throttle;
@@ -833,9 +832,6 @@ pub(super) fn ChatComposer(controller: ChatController, context: ChatComposerCont
                             let realm = selected_realm_id.clone();
                             let actor = account_did.clone();
                             let own_controller_handle = own_controller_handle.clone();
-                            // Captured for the offline-outbox park branch (keyed
-                            // by account so the persisted queue is per-identity).
-                            let account_did = account_did.clone();
                             move |_| {
                                 let own_controller_handle = own_controller_handle.clone();
                                 let body = chat_draft().trim().to_owned();
@@ -885,38 +881,18 @@ pub(super) fn ChatComposer(controller: ChatController, context: ChatComposerCont
                                     crypto_state: MessageCryptoState::Plaintext,
                                 });
 
-                                // Offline park: when `navigator.onLine` is false
-                                // we keep the optimistic row (still `pending`) and
-                                // persist the send intent to the outbox instead of
-                                // firing the network call. The reconnect effect
-                                // drains it. The row renders a "queued" badge
-                                // because its id is in `chat_outbox`. Read the
-                                // navigator live (not just the polled signal) so a
-                                // send right after going offline never races the
-                                // poll tick into a failed network attempt.
+                                // Continue into the ordinary submit path while
+                                // offline: EventSubmitter persists the stable SDK
+                                // Event in Garth before its first network attempt.
+                                // The old chat-specific localStorage outbox is now
+                                // read-only compatibility for entries created by
+                                // earlier releases.
                                 let offline_now = !is_online() || !navigator_online();
                                 if offline_now {
                                     if *is_online.peek() {
                                         is_online.set(false);
                                     }
-                                    let entry = OutboxMessage {
-                                        realm_id: realm.clone(),
-                                        strand_id: channel.strand_id.clone(),
-                                        channel_kind: channel.kind.clone(),
-                                        message_id: local_id.clone(),
-                                        body: body.clone(),
-                                        reply_to: reply_to_message(),
-                                        mentions: mentions.clone(),
-                                        own_controller_handle: own_controller_handle.clone(),
-                                    };
-                                    chat_outbox.write().push(entry);
-                                    let parked = chat_outbox.read().clone();
-                                    save_outbox(&account_did, &parked);
-                                    mention_picker_state.write().clear();
-                                    chat_draft.set(String::new());
-                                    reply_to_message.set(None);
                                     status_msg.set(crate::i18n::tr("chat.outbox.queued_offline"));
-                                    return;
                                 }
 
                                 let base = base.clone();
@@ -1045,6 +1021,12 @@ pub(super) fn ChatComposer(controller: ChatController, context: ChatComposerCont
                                             status_msg.set("Message sent".to_owned());
                                         }
                                         Err(error) => {
+                                            if crate::event_submit::is_durably_queued_error(&error) {
+                                                status_msg.set(crate::i18n::tr(
+                                                    "chat.outbox.queued_offline",
+                                                ));
+                                                return;
+                                            }
                                             let membership_denied =
                                                 is_space_membership_denied_error(&error);
                                             let message = chat_send_error_message(&error);

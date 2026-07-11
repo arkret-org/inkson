@@ -108,3 +108,48 @@ fn realm_runner_keeps_session_recovery_inside_transport_provider() {
         "the removed host-owned Realm iteration loop must not return"
     );
 }
+
+#[test]
+fn ordinary_event_submit_uses_garth_durable_outbound() {
+    let manifest = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let submit_path = manifest.join("src/event_submit.rs");
+    let submit = fs::read_to_string(&submit_path)
+        .unwrap_or_else(|error| panic!("failed to read {}: {error}", submit_path.display()));
+    assert!(
+        submit.contains("OutboundEngine::new(crate::outbound_store::InksonOutboundStore::open")
+            && submit.contains(".enqueue(")
+            && submit.contains("drain_outbound"),
+        "ordinary Inkson SDK events must enter Garth's durable queue and resume after restart"
+    );
+    assert!(
+        submit.contains("async fn submit_sdk_event_direct")
+            && submit.contains("self.owner.submit_sdk_event_direct(&event)"),
+        "the direct HTTP tail must remain private to the Garth queue submitter"
+    );
+
+    let composer_path = manifest.join("src/views/chat/composer.rs");
+    let composer = fs::read_to_string(&composer_path)
+        .unwrap_or_else(|error| panic!("failed to read {}: {error}", composer_path.display()));
+    assert!(
+        !composer.contains("chat_outbox.write().push(entry)"),
+        "new offline chat sends must not create a second product-specific durable queue"
+    );
+}
+
+#[test]
+fn mls_snapshot_remains_post_accept() {
+    let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("src/views/kanban/mls_encrypt.rs");
+    let source = fs::read_to_string(&path)
+        .unwrap_or_else(|error| panic!("failed to read {}: {error}", path.display()));
+    let submit = source
+        .find("submit_sdk_event(&commit_op).await")
+        .expect("missing durable MLS commit submission");
+    let save = source[submit..]
+        .find("save_mls_snapshot(realm_id.clone(), snapshot)")
+        .map(|offset| submit + offset)
+        .expect("missing post-accept MLS snapshot persistence");
+    assert!(
+        submit < save,
+        "MLS snapshot must only advance after durable submit reports server acceptance"
+    );
+}

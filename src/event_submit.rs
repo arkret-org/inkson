@@ -5,8 +5,16 @@
 //! `describe` at most once per submitter, and non-signing paths
 //! (`submit_signed_*`, ephemeral, frontier, backfill) never fetch it.
 
+use std::collections::BTreeMap;
+use std::sync::Mutex;
+use std::time::Duration;
+
 #[cfg(test)]
 use arkret_sdk::ErrorEnvelope;
+use garth::{
+    OutboundEngine, OutboundEngineOutcome, OutboundSubmitOutcome, OutboundSubmitter,
+    outbound::BoxOutboundFuture,
+};
 #[cfg(test)]
 use reqwest::StatusCode;
 use serde_json::Value;
@@ -35,6 +43,110 @@ pub struct EventSubmitter {
     describe_cache: OnceCell<ServerDescription>,
 }
 
+#[derive(Debug, thiserror::Error)]
+#[error("event {event_id} is durably queued for retry")]
+pub(crate) struct DurablyQueuedError {
+    pub(crate) event_id: String,
+}
+
+pub(crate) fn is_durably_queued_error(error: &anyhow::Error) -> bool {
+    error.downcast_ref::<DurablyQueuedError>().is_some()
+}
+
+#[derive(Default)]
+struct OutboundAttemptResults {
+    accepted: Mutex<BTreeMap<String, SubmitEventResult>>,
+    rejected: Mutex<BTreeMap<String, anyhow::Error>>,
+}
+
+struct EventOutboundSubmitter<'a> {
+    owner: &'a EventSubmitter,
+    results: &'a OutboundAttemptResults,
+}
+
+impl OutboundSubmitter for EventOutboundSubmitter<'_> {
+    fn submit<'a>(
+        &'a self,
+        item: arkret_sdk::sync_client::SendQueueItem,
+    ) -> BoxOutboundFuture<'a, OutboundSubmitOutcome> {
+        Box::pin(async move {
+            let event: arkret_sdk::Event =
+                serde_json::from_value(item.content).map_err(|error| {
+                    arkret_sdk::Error::Protocol(format!("decode queued Inkson SDK event: {error}"))
+                })?;
+            match self.owner.submit_sdk_event_direct(&event).await {
+                Ok(result) => {
+                    let event_id =
+                        arkret_sdk::EventId::new(result.event_id.clone()).map_err(|error| {
+                            arkret_sdk::Error::Protocol(format!(
+                                "server returned invalid accepted event id: {error}"
+                            ))
+                        })?;
+                    let duplicate = result.status == "duplicate";
+                    self.results
+                        .accepted
+                        .lock()
+                        .unwrap_or_else(|poisoned| poisoned.into_inner())
+                        .insert(item.transaction_id, result);
+                    if duplicate {
+                        Ok(OutboundSubmitOutcome::Duplicate { event_id })
+                    } else {
+                        Ok(OutboundSubmitOutcome::Accepted { event_id })
+                    }
+                }
+                Err(error) => {
+                    let reason = format!("{error:#}");
+                    if let Some(delay) = outbound_retry_delay(&error) {
+                        return Ok(OutboundSubmitOutcome::RetryAfter { delay, reason });
+                    }
+                    self.results
+                        .rejected
+                        .lock()
+                        .unwrap_or_else(|poisoned| poisoned.into_inner())
+                        .insert(item.transaction_id, error);
+                    Ok(OutboundSubmitOutcome::Rejected { reason })
+                }
+            }
+        })
+    }
+}
+
+fn outbound_retry_delay(error: &anyhow::Error) -> Option<Duration> {
+    if crate::api_error::is_auth_expired_error(error)
+        || format!("{error:#}").contains("no active signer configured")
+    {
+        return Some(Duration::from_secs(1));
+    }
+    if let Some(retry_after_ms) = crate::api_error::rate_limited_retry_after(error) {
+        return Some(Duration::from_millis(retry_after_ms.max(1_000)));
+    }
+    error.chain().find_map(|cause| {
+        let error = cause.downcast_ref::<arkret_sdk::Error>()?;
+        match error {
+            arkret_sdk::Error::Http(_) => Some(Duration::from_secs(1)),
+            arkret_sdk::Error::Api { status, .. }
+                if *status == 408 || *status == 429 || *status >= 500 =>
+            {
+                Some(Duration::from_secs(1))
+            }
+            _ => None,
+        }
+    })
+}
+
+fn completed_outbound_result(item: &arkret_sdk::sync_client::SendQueueItem) -> SubmitEventResult {
+    SubmitEventResult {
+        event_id: item
+            .remote_event_id
+            .as_ref()
+            .map(ToString::to_string)
+            .unwrap_or_default(),
+        status: "accepted".to_owned(),
+        cursor: String::new(),
+        receipt: Value::Null,
+    }
+}
+
 impl EventSubmitter {
     pub fn new(http: arkret_sdk::http_client::Client) -> Self {
         Self {
@@ -49,6 +161,33 @@ impl EventSubmitter {
     /// it through here instead of holding a second `Client`.
     pub(crate) fn http(&self) -> &arkret_sdk::http_client::Client {
         &self.http
+    }
+
+    /// Resume queued events for this actor without requiring a new user send.
+    /// The account runner calls this after it has rebuilt an authenticated
+    /// client, so process/browser restarts eventually drain pending work.
+    pub(crate) async fn drain_outbound(&self, actor_id: &str) -> anyhow::Result<usize> {
+        let outbound =
+            OutboundEngine::new(crate::outbound_store::InksonOutboundStore::open(actor_id)?);
+        let results = OutboundAttemptResults::default();
+        let submitter = EventOutboundSubmitter {
+            owner: self,
+            results: &results,
+        };
+        let mut completed = 0usize;
+        loop {
+            match outbound.submit_next(&submitter, chrono::Utc::now()).await? {
+                OutboundEngineOutcome::Accepted(_) | OutboundEngineOutcome::Duplicate(_) => {
+                    completed = completed.saturating_add(1);
+                }
+                OutboundEngineOutcome::Rejected(_) | OutboundEngineOutcome::Terminal(_) => {
+                    completed = completed.saturating_add(1);
+                }
+                OutboundEngineOutcome::Idle | OutboundEngineOutcome::RetryAt { .. } => {
+                    return Ok(completed);
+                }
+            }
+        }
     }
 
     async fn describe(&self) -> anyhow::Result<ServerDescription> {
@@ -287,6 +426,90 @@ impl EventSubmitter {
 
     /// Submit a SDK-typed Event, signing it with the active signer when needed.
     pub(crate) async fn submit_sdk_event(
+        &self,
+        event: &arkret_sdk::Event,
+    ) -> anyhow::Result<SubmitEventResult> {
+        let transaction_id = event.event_id.to_string();
+        let outbound = OutboundEngine::new(crate::outbound_store::InksonOutboundStore::open(
+            event.actor_id.as_str(),
+        )?);
+        outbound
+            .enqueue(
+                Some(transaction_id.clone()),
+                event.realm_id.clone(),
+                arkret_sdk::sync_client::SendQueueItemKind::Custom {
+                    kind: event.kind.to_string(),
+                },
+                serde_json::to_value(event)?,
+                Vec::new(),
+            )
+            .await?;
+
+        let results = OutboundAttemptResults::default();
+        let submitter = EventOutboundSubmitter {
+            owner: self,
+            results: &results,
+        };
+        loop {
+            match outbound.submit_next(&submitter, chrono::Utc::now()).await? {
+                OutboundEngineOutcome::Accepted(item) | OutboundEngineOutcome::Duplicate(item)
+                    if item.transaction_id == transaction_id =>
+                {
+                    if let Some(result) = results
+                        .accepted
+                        .lock()
+                        .unwrap_or_else(|poisoned| poisoned.into_inner())
+                        .remove(&transaction_id)
+                    {
+                        return Ok(result);
+                    }
+                    return Ok(completed_outbound_result(&item));
+                }
+                OutboundEngineOutcome::Accepted(_) | OutboundEngineOutcome::Duplicate(_) => {}
+                OutboundEngineOutcome::RetryAt { item, at }
+                    if item.transaction_id == transaction_id =>
+                {
+                    tracing::debug!(event_id = %event.event_id, %at, "event remains in durable outbound queue");
+                    return Err(DurablyQueuedError {
+                        event_id: event.event_id.to_string(),
+                    }
+                    .into());
+                }
+                OutboundEngineOutcome::RetryAt { .. } => {}
+                OutboundEngineOutcome::Rejected(item) | OutboundEngineOutcome::Terminal(item)
+                    if item.transaction_id == transaction_id =>
+                {
+                    if let Some(error) = results
+                        .rejected
+                        .lock()
+                        .unwrap_or_else(|poisoned| poisoned.into_inner())
+                        .remove(&transaction_id)
+                    {
+                        return Err(error);
+                    }
+                    anyhow::bail!("queued event {} reached a terminal state", event.event_id);
+                }
+                OutboundEngineOutcome::Rejected(_) | OutboundEngineOutcome::Terminal(_) => {}
+                OutboundEngineOutcome::Idle => {
+                    let snapshot = outbound.snapshot().await?;
+                    if let Some(item) = snapshot
+                        .items
+                        .iter()
+                        .find(|item| item.transaction_id == transaction_id)
+                        && item.remote_event_id.is_some()
+                    {
+                        return Ok(completed_outbound_result(item));
+                    }
+                    return Err(DurablyQueuedError {
+                        event_id: event.event_id.to_string(),
+                    }
+                    .into());
+                }
+            }
+        }
+    }
+
+    async fn submit_sdk_event_direct(
         &self,
         event: &arkret_sdk::Event,
     ) -> anyhow::Result<SubmitEventResult> {
