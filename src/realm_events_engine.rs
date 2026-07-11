@@ -69,6 +69,7 @@ pub struct RealmEventsEngineContext {
     /// rotates (mirrors the account engine's profile guard).
     pub profiles: Signal<MultiProfileConfig>,
     pub client_runtime: crate::client_core::InksonClientRuntime,
+    pub effect: crate::runtime::effects::EffectHandle,
 }
 
 /// Outcome of a single subscribe iteration, telling the loop how to pace.
@@ -148,6 +149,7 @@ pub async fn run_realm_events_engine(
                 && ctx.profiles.read().active_profile_id == start_profile_id
                 && ctx.selected_realm_id.read().as_str() == realm_id
                 && (ctx.route_enabled)()
+                && !ctx.effect.is_cancelled()
         },
         async || match run_realm_iteration(&realm_id, &ctx, start_generation, generation).await {
             RealmIterationOutcome::Ok => {

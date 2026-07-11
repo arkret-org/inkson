@@ -128,9 +128,12 @@ pub(super) fn load_direct_contacts_for_sidebar(
     }
     direct_contacts_loaded.set(true);
     spawn(async move {
-        match crate::views::helpers::with_authed_sdk_client(&base, api_token, |http| async move {
-            crate::account_api::contacts(&http).await
-        })
+        match crate::authed_api::with_endpoint_clients(
+            &base,
+            api_token,
+            None,
+            |clients| async move { clients.account().contacts().await },
+        )
         .await
         {
             Ok(response) => direct_contact_rows.set(response.contacts),

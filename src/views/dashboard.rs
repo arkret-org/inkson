@@ -133,9 +133,12 @@ pub fn DashboardPanel(
             contacts_status.set("Loading contacts".to_owned());
             let base = base_url.clone();
             spawn(async move {
-                match with_authed_sdk_client(&base, api_token, |http| async move {
-                    crate::account_api::contacts(&http).await
-                })
+                match crate::authed_api::with_endpoint_clients(
+                    &base,
+                    api_token,
+                    None,
+                    |clients| async move { clients.account().contacts().await },
+                )
                 .await
                 {
                     Ok(response) => {

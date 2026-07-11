@@ -227,6 +227,38 @@ where
     .await
 }
 
+/// Authenticated domain endpoint-client exit. New account/directory call
+/// sites use this typed boundary; remaining domains migrate here before the
+/// `ArkretApi` facade is deleted.
+pub async fn with_endpoint_clients<F, Fut, T>(
+    base_url: &str,
+    session_credential: String,
+    cursor: Option<String>,
+    f: F,
+) -> Result<T, ApiCallError>
+where
+    F: FnOnce(crate::transport::EndpointClients) -> Fut,
+    Fut: std::future::Future<Output = anyhow::Result<T>>,
+{
+    let credential_for_context = session_credential.clone();
+    let cursor_for_context = cursor.clone();
+    with_authed_api_with_sync(
+        base_url,
+        session_credential,
+        cursor,
+        move |api| async move {
+            let mut context = crate::transport::RequestContext::new(credential_for_context);
+            if let Some(cursor) = cursor_for_context {
+                context = context.with_cursor(cursor);
+            }
+            let transport =
+                crate::transport::TransportClient::from_http(api.sdk_http_client()?, context);
+            f(crate::transport::EndpointClients::new(transport)).await
+        },
+    )
+    .await
+}
+
 /// Same auth/refresh/classification contract as [`with_authed_api`], but hands
 /// the closure a [`crate::event_submit::EventSubmitter`] built from the shared
 /// SDK http-client. This is the ArkretApi-free durable/ephemeral event

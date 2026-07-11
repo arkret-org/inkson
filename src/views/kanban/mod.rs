@@ -1571,20 +1571,22 @@ pub fn KanbanPanel(
                 let mut fetching = member_handle_fetching;
                 let mut store = state_store;
                 spawn(async move {
-                    let result = with_authed_sdk_client(&base, api_token, {
-                        let subject_id = subject_id.clone();
-                        let realm_id = realm_id.clone();
-                        move |http| async move {
-                            crate::directory_api::list_handles_for_subject(
-                                &http,
-                                &subject_id,
-                                Some(&realm_id),
-                                Some("display"),
-                            )
-                            .await
-                        }
-                    })
-                    .await;
+                    let result =
+                        crate::authed_api::with_endpoint_clients(&base, api_token, None, {
+                            let subject_id = subject_id.clone();
+                            let realm_id = realm_id.clone();
+                            move |clients| async move {
+                                clients
+                                    .directory()
+                                    .list_handles_for_subject(
+                                        &subject_id,
+                                        Some(&realm_id),
+                                        Some("display"),
+                                    )
+                                    .await
+                            }
+                        })
+                        .await;
                     match result {
                         Ok(res) => {
                             let primary = res

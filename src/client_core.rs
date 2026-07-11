@@ -6,94 +6,76 @@
 
 use std::sync::{Arc, Mutex};
 
-use dioxus::prelude::{ReadableExt, SyncSignal, WritableExt};
 use garth::{RealmEventsFrameSource, RealmEventsTransport};
 
 use crate::sync_parse::{AccountSubscribeReconnectAfter, AccountSubscribeSnapshotResult};
 
 #[derive(Clone)]
 pub struct InksonLocalStateStoreAdapter {
-    inner: InksonLocalStateStoreHandle,
+    inner: Arc<dyn LocalStateBackend>,
 }
 
-#[derive(Clone)]
-enum InksonLocalStateStoreHandle {
-    Owned(Arc<Mutex<crate::local_state::LocalStateStore>>),
-    Signal(SyncSignal<crate::local_state::LocalStateStore>),
+pub trait LocalStateBackend: Send + Sync {
+    fn load_cursor(
+        &self,
+        scope: &garth::CursorScope,
+    ) -> arkret_sdk::Result<Option<garth::OpaqueCursor>>;
+    fn save_cursor(
+        &self,
+        scope: &garth::CursorScope,
+        cursor: garth::OpaqueCursor,
+    ) -> arkret_sdk::Result<()>;
+    fn clear_cursor(&self, scope: &garth::CursorScope) -> arkret_sdk::Result<()>;
+    fn event_seen(&self, event_id: &arkret_sdk::EventId) -> arkret_sdk::Result<bool>;
+    fn remember_event(&self, event_id: &arkret_sdk::EventId) -> arkret_sdk::Result<()>;
 }
 
-impl InksonLocalStateStoreAdapter {
-    pub fn new(store: crate::local_state::LocalStateStore) -> Self {
-        Self {
-            inner: InksonLocalStateStoreHandle::Owned(Arc::new(Mutex::new(store))),
-        }
-    }
+struct OwnedLocalStateBackend {
+    store: Mutex<crate::local_state::LocalStateStore>,
+}
 
-    pub fn from_signal(store: SyncSignal<crate::local_state::LocalStateStore>) -> Self {
-        Self {
-            inner: InksonLocalStateStoreHandle::Signal(store),
-        }
-    }
-
+impl OwnedLocalStateBackend {
     fn with_store<R>(
         &self,
         f: impl FnOnce(&crate::local_state::LocalStateStore) -> R,
     ) -> arkret_sdk::Result<R> {
-        match &self.inner {
-            InksonLocalStateStoreHandle::Owned(store) => {
-                let store = store.lock().map_err(|error| {
-                    arkret_sdk::Error::Protocol(format!("local state lock poisoned: {error}"))
-                })?;
-                Ok(f(&store))
-            }
-            InksonLocalStateStoreHandle::Signal(store) => Ok(f(&store.read())),
-        }
+        let store = self.store.lock().map_err(|error| {
+            arkret_sdk::Error::Protocol(format!("local state lock poisoned: {error}"))
+        })?;
+        Ok(f(&store))
     }
 
     fn with_store_mut<R>(
         &self,
         f: impl FnOnce(&mut crate::local_state::LocalStateStore) -> R,
     ) -> arkret_sdk::Result<R> {
-        match &self.inner {
-            InksonLocalStateStoreHandle::Owned(store) => {
-                let mut store = store.lock().map_err(|error| {
-                    arkret_sdk::Error::Protocol(format!("local state lock poisoned: {error}"))
-                })?;
-                Ok(f(&mut store))
-            }
-            InksonLocalStateStoreHandle::Signal(store) => {
-                let mut store = *store;
-                Ok(f(&mut store.write()))
-            }
-        }
-    }
-
-    fn realm_id(scope: &garth::CursorScope) -> Option<String> {
-        match scope {
-            garth::CursorScope::RealmEvents { realm_id, .. } => Some(realm_id.as_str().to_owned()),
-            _ => None,
-        }
+        let mut store = self.store.lock().map_err(|error| {
+            arkret_sdk::Error::Protocol(format!("local state lock poisoned: {error}"))
+        })?;
+        Ok(f(&mut store))
     }
 }
 
-impl garth::CursorStore for InksonLocalStateStoreAdapter {
-    async fn load(
+impl LocalStateBackend for OwnedLocalStateBackend {
+    fn load_cursor(
         &self,
-        scope: garth::CursorScope,
+        scope: &garth::CursorScope,
     ) -> arkret_sdk::Result<Option<garth::OpaqueCursor>> {
-        self.with_store(|store| match scope {
-            garth::CursorScope::Account { .. } => store
-                .sync_cursor()
-                .filter(|cursor| !cursor.trim().is_empty()),
+        match scope {
+            garth::CursorScope::Account { .. } => self.with_store(|store| {
+                store
+                    .sync_cursor()
+                    .filter(|cursor| !cursor.trim().is_empty())
+            }),
             garth::CursorScope::RealmEvents { realm_id, .. } => {
-                store.realm_events_cursor(realm_id.as_str())
+                self.with_store(|store| store.realm_events_cursor(realm_id.as_str()))
             }
-        })
+        }
     }
 
-    async fn save(
+    fn save_cursor(
         &self,
-        scope: garth::CursorScope,
+        scope: &garth::CursorScope,
         cursor: garth::OpaqueCursor,
     ) -> arkret_sdk::Result<()> {
         self.with_store_mut(|store| match scope {
@@ -104,25 +86,66 @@ impl garth::CursorStore for InksonLocalStateStoreAdapter {
         })
     }
 
-    async fn clear(&self, scope: garth::CursorScope) -> arkret_sdk::Result<()> {
+    fn clear_cursor(&self, scope: &garth::CursorScope) -> arkret_sdk::Result<()> {
         self.with_store_mut(|store| match scope {
             garth::CursorScope::Account { .. } => store.clear_sync_cursor(),
-            garth::CursorScope::RealmEvents { .. } => {
-                if let Some(realm_id) = Self::realm_id(&scope) {
-                    store.save_realm_events_cursor(&realm_id, None);
-                }
+            garth::CursorScope::RealmEvents { realm_id, .. } => {
+                store.save_realm_events_cursor(realm_id.as_str(), None);
             }
         })
+    }
+
+    fn event_seen(&self, event_id: &arkret_sdk::EventId) -> arkret_sdk::Result<bool> {
+        self.with_store(|store| store.client_core_event_seen(event_id.as_str()))
+    }
+
+    fn remember_event(&self, event_id: &arkret_sdk::EventId) -> arkret_sdk::Result<()> {
+        self.with_store_mut(|store| store.remember_client_core_event(event_id.as_str()))
+    }
+}
+
+impl InksonLocalStateStoreAdapter {
+    pub fn new(store: crate::local_state::LocalStateStore) -> Self {
+        Self::from_backend(OwnedLocalStateBackend {
+            store: Mutex::new(store),
+        })
+    }
+
+    pub fn from_backend(backend: impl LocalStateBackend + 'static) -> Self {
+        Self {
+            inner: Arc::new(backend),
+        }
+    }
+}
+
+impl garth::CursorStore for InksonLocalStateStoreAdapter {
+    async fn load(
+        &self,
+        scope: garth::CursorScope,
+    ) -> arkret_sdk::Result<Option<garth::OpaqueCursor>> {
+        self.inner.load_cursor(&scope)
+    }
+
+    async fn save(
+        &self,
+        scope: garth::CursorScope,
+        cursor: garth::OpaqueCursor,
+    ) -> arkret_sdk::Result<()> {
+        self.inner.save_cursor(&scope, cursor)
+    }
+
+    async fn clear(&self, scope: garth::CursorScope) -> arkret_sdk::Result<()> {
+        self.inner.clear_cursor(&scope)
     }
 }
 
 impl garth::EventCacheStore for InksonLocalStateStoreAdapter {
     async fn seen(&self, event_id: arkret_sdk::EventId) -> arkret_sdk::Result<bool> {
-        self.with_store(|store| store.client_core_event_seen(event_id.as_str()))
+        self.inner.event_seen(&event_id)
     }
 
     async fn remember(&self, event_id: arkret_sdk::EventId) -> arkret_sdk::Result<()> {
-        self.with_store_mut(|store| store.remember_client_core_event(event_id.as_str()))
+        self.inner.remember_event(&event_id)
     }
 }
 
@@ -182,8 +205,12 @@ pub struct InksonClientRuntime {
 }
 
 impl InksonClientRuntime {
-    pub fn new(state_store: SyncSignal<crate::local_state::LocalStateStore>) -> Self {
-        let adapter = InksonLocalStateStoreAdapter::from_signal(state_store);
+    pub fn new(state_store: crate::local_state::LocalStateStore) -> Self {
+        let adapter = InksonLocalStateStoreAdapter::new(state_store);
+        Self::from_state_adapter(adapter)
+    }
+
+    pub fn from_state_adapter(adapter: InksonLocalStateStoreAdapter) -> Self {
         #[cfg(not(target_arch = "wasm32"))]
         let executor = garth::NativeExecutor;
         #[cfg(target_arch = "wasm32")]

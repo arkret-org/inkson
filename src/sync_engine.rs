@@ -125,7 +125,7 @@ const MAX_TO_DEVICE_BACKFILL_PAGES: usize = 32;
 /// Bundle of signals + state-store the engine needs to apply a response.
 /// `Copy` because Dioxus signals already are; the struct is just a
 /// typed shorthand around them.
-#[derive(Clone, Copy)]
+#[derive(Clone)]
 pub struct SyncEngineContext {
     pub base_url: Signal<String>,
     pub token: Signal<String>,
@@ -167,6 +167,7 @@ pub struct SyncEngineContext {
     /// (dedup → incoming ring / per-call inbox). `Copy`, zero-cost to hold.
     /// See `crate::views::call_signals`.
     pub call_signal_hub: crate::views::call_signals::CallSignalHub,
+    pub effect: crate::runtime::effects::EffectHandle,
 }
 
 /// Outcome of one sync iteration — used by the loop to decide whether to
@@ -366,6 +367,7 @@ pub async fn run_sync_engine(
         || {
             generation() == start_generation
                 && ctx.profiles.read().active_profile_id == start_profile_id
+                && !ctx.effect.is_cancelled()
         },
         async || match run_iteration(
             start_generation,

@@ -9,7 +9,7 @@ use crate::api_error::normalize_wait_for_sync_token;
 // every existing `crate::views::helpers::…` call site keeps resolving.
 pub use crate::authed_api::{
     ApiCallError, attach_device_dpop, authed_api, authed_api_with_sync, with_authed_api,
-    with_authed_api_with_sync, with_authed_sdk_client, with_event_submitter,
+    with_authed_api_with_sync, with_authed_sdk_client, with_endpoint_clients, with_event_submitter,
 };
 use crate::config::{ClientConfig, LocalConfigStore};
 use crate::ui::button::{Button, ButtonVariant};
@@ -563,14 +563,11 @@ pub fn WhyThisHandlePanel(
             let realm_id = realm_id.clone();
             spawn(async move {
                 status.set("Resolving visible handle claims…".to_owned());
-                match with_authed_sdk_client(&base_url, token, move |http| async move {
-                    crate::directory_api::list_handles_for_subject(
-                        &http,
-                        &subject_id,
-                        realm_id.as_deref(),
-                        Some("display"),
-                    )
-                    .await
+                match with_endpoint_clients(&base_url, token, None, move |clients| async move {
+                    clients
+                        .directory()
+                        .list_handles_for_subject(&subject_id, realm_id.as_deref(), Some("display"))
+                        .await
                 })
                 .await
                 {

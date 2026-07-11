@@ -64,14 +64,15 @@ pub(crate) use theme::*;
 // (move only). The glob re-export keeps inline call sites and `app_tests.rs`
 // `use super::*` resolution unchanged.
 mod realm_surface;
+mod runtime_adapter;
 pub(crate) use realm_surface::*;
 
 // Structural split: non-component helpers, data-assembly routines, the
 // session-boot state machine, and the secondary `#[component]` pages
 // (`RealmsManagePage`, `ContactsManagePage`, `RealmContextBar`,
 // `CommandPalette`, ...) moved out of this file into sibling `app/*.rs`
-// modules (move only). The root `RouterView` component is left inline — it is
-// a single Dioxus `#[component]` that cannot be split across files. Each glob
+// modules (move only). `RouterView` now only assembles `AppBootstrap`; further
+// session-shell/effect extraction continues behind that boundary. Each glob
 // re-export keeps the inline call sites and `app_tests.rs` `use super::*`
 // resolution unchanged.
 mod clipboard;
@@ -171,6 +172,13 @@ pub fn App() -> Element {
 
 #[component]
 pub fn RouterView() -> Element {
+    rsx! { AppBootstrap {} }
+}
+
+/// Owns one-time persisted-state hydration and constructs the session-scoped
+/// runtime context. `RouterView` intentionally remains assembly-only.
+#[component]
+fn AppBootstrap() -> Element {
     let initial_config = LocalConfigStore::default().load();
     let initial_state_store = LocalStateStore::default();
     let initial_local_state = initial_state_store.load();
@@ -256,17 +264,10 @@ pub fn RouterView() -> Element {
         state_store,
         base_url,
     });
-    let client_runtime =
-        use_context_provider(|| crate::client_core::InksonClientRuntime::new(state_store));
-
-    // Install the app-wide, single-flight session credential refresher exactly once.
-    // Every auth-expired handler (connect, sync, chat send, Realm create,
-    // the account-menu button, the background poller) routes through
-    // this one closure via `crate::session::refresh_current_session()`, so
-    // refresh policy lives in a single place and concurrent rollovers
-    // coalesce instead of racing.
-    use_hook(move || {
-        crate::session::register_session_refresher(std::rc::Rc::new(move || {
+    // Construct the typed session coordinator once. Runtime and UI effects
+    // share this owner instead of registering unrelated thread-local callbacks.
+    let session_coordinator = use_hook(move || {
+        crate::session::SessionCoordinator::new(move || {
             Box::pin(refresh_session_credential_for_active_context(
                 base_url,
                 account_did,
@@ -276,7 +277,25 @@ pub fn RouterView() -> Element {
                 config_store,
                 session_generation,
             )) as crate::session::LocalRefreshFuture
-        }));
+        })
+    });
+    let runtime_services = use_context_provider(|| {
+        let state_adapter = crate::client_core::InksonLocalStateStoreAdapter::from_backend(
+            runtime_adapter::SignalLocalStateBackend::new(state_store),
+        );
+        crate::runtime::services::RuntimeServices::new(state_adapter, session_coordinator.clone())
+    });
+    let client_runtime = runtime_services.client.clone();
+
+    // Install the app-wide, single-flight session coordinator exactly once.
+    // Every auth-expired handler (connect, sync, chat send, Realm create,
+    // the account-menu button, the background poller) routes through
+    // this one closure via `crate::session::refresh_current_session()`, so
+    // refresh policy lives in a single place and concurrent rollovers
+    // coalesce instead of racing.
+    let installed_session_coordinator = session_coordinator.clone();
+    use_hook(move || {
+        crate::session::install_session_coordinator(installed_session_coordinator);
     });
 
     // Dev-only (wasm + `wasm-localstorage-secrets-test`) real-grant injection
@@ -596,9 +615,12 @@ pub fn RouterView() -> Element {
                 if session.trim().is_empty() {
                     return false;
                 }
-                crate::views::helpers::with_authed_sdk_client(&base, session, |http| async move {
-                    crate::account_api::account_viewer(&http).await
-                })
+                crate::authed_api::with_endpoint_clients(
+                    &base,
+                    session,
+                    None,
+                    |clients| async move { clients.account().viewer().await },
+                )
                 .await
                 .map(|viewer| viewer.is_server_admin)
                 .unwrap_or(false)
@@ -1106,9 +1128,11 @@ pub fn RouterView() -> Element {
         let mut invalidator_account_has_other_devices = account_has_other_devices;
         let mut invalidator_sync_generation = sync_generation;
         let mut invalidator_session_generation = session_generation;
+        let invalidator_effects = runtime_services.effects.clone();
         let invalidator_navigator = navigator;
         use_hook(move || {
-            crate::session::register_session_invalidator(move |reason| {
+            session_coordinator.set_invalidator(move |reason| {
+                invalidator_effects.request_cancel_all();
                 invalidator_session_generation.set(invalidator_session_generation() + 1);
                 invalidator_state_store.write().set_session_grant(None);
                 invalidator_token.set(String::new());
@@ -1297,6 +1321,7 @@ pub fn RouterView() -> Element {
     // `token` changes. Each respawn passes the engine the generation
     // value it started with so a stale iteration can self-check and
     // exit before writing back to signals owned by the new generation.
+    let sync_effects = runtime_services.effects.clone();
     use_effect(move || {
         let current_gen = sync_generation();
         let base = base_url();
@@ -1308,6 +1333,12 @@ pub fn RouterView() -> Element {
             return;
         }
         sync_engine_active_generation.set(Some(current_gen));
+        let effect = sync_effects.register(crate::runtime::effects::EffectKey {
+            owner: crate::runtime::effects::EffectOwner::Account(account_did()),
+            name: "account-sync".to_owned(),
+            generation: current_gen,
+        });
+        let completion_effects = sync_effects.clone();
         let ctx = crate::sync_engine::SyncEngineContext {
             base_url,
             token,
@@ -1332,10 +1363,12 @@ pub fn RouterView() -> Element {
             // call-signal envelopes from every incremental sync body into
             // this hub (the same hub `CallPanel` drains).
             call_signal_hub,
+            effect: effect.clone(),
         };
         let mut active_generation = sync_engine_active_generation;
         spawn(async move {
             crate::sync_engine::run_sync_engine(current_gen, sync_generation, ctx).await;
+            completion_effects.complete(&effect);
             if *active_generation.peek() == Some(current_gen) {
                 active_generation.set(None);
             }
@@ -1348,6 +1381,7 @@ pub fn RouterView() -> Element {
     // the (delivery-routing-gated) account push still reach the board. Respawned
     // when the generation, realm, base_url, or token change; the previous loop
     // self-exits when its realm no longer matches the selection.
+    let realm_effects = runtime_services.effects.clone();
     use_effect(move || {
         let current_gen = sync_generation();
         let base = base_url();
@@ -1367,6 +1401,15 @@ pub fn RouterView() -> Element {
             return;
         }
         realm_events_engine_active_key.set(Some(active_key.clone()));
+        let effect = realm_effects.register(crate::runtime::effects::EffectKey {
+            owner: crate::runtime::effects::EffectOwner::Realm {
+                account: account_did(),
+                realm: realm_id.clone(),
+            },
+            name: "realm-events".to_owned(),
+            generation: current_gen,
+        });
+        let completion_effects = realm_effects.clone();
         let ctx = crate::realm_events_engine::RealmEventsEngineContext {
             base_url,
             token,
@@ -1376,6 +1419,7 @@ pub fn RouterView() -> Element {
             realm_live_epoch,
             profiles: profiles_signal,
             client_runtime: client_runtime.clone(),
+            effect: effect.clone(),
         };
         let mut active_key_signal = realm_events_engine_active_key;
         spawn(async move {
@@ -1386,6 +1430,7 @@ pub fn RouterView() -> Element {
                 ctx,
             )
             .await;
+            completion_effects.complete(&effect);
             if active_key_signal.peek().as_deref() == Some(active_key.as_str()) {
                 active_key_signal.set(None);
             }
@@ -5534,6 +5579,7 @@ pub fn RouterView() -> Element {
                                                 let logout_generation = session_generation() + 1;
                                                 account_session_state.set("Logging out".to_owned());
                                                 session_generation.set(logout_generation);
+                                                runtime_services.effects.request_cancel_all();
                                                 // Clear browser-session credentials up front so a
                                                 // local retry cannot resurrect the session if the
                                                 // server-side logout call later fails or is
@@ -5589,7 +5635,10 @@ pub fn RouterView() -> Element {
                                                 sync_generation.set(sync_generation() + 1);
                                                 account_menu_open.set(false);
                                                 redirect_to_login(navigator);
+                                                let logout_effects =
+                                                    runtime_services.effects.clone();
                                                 spawn(async move {
+                                                    logout_effects.cancel_all().await;
                                                     // Drive the journalled logout: revoke the grant at
                                                     // coauth (terminating the rotation chain) then run
                                                     // the soland courtesy logout. On success the journal
