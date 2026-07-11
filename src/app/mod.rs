@@ -78,37 +78,49 @@ pub(crate) use realm_surface::*;
 mod clipboard;
 mod command_palette;
 mod connect;
+mod connection_effects;
 mod context_bar;
 mod feature_gate;
 mod global_effects;
 mod handles;
 mod manage_pages;
+mod mls_recovery_effects;
+mod mls_runtime_effects;
 mod navigation_state;
 mod notifications_drawer;
 mod projection_adapter;
 mod recovery_effects;
+mod recovery_reminder_effects;
 mod route_surface;
+mod secure_store_effects;
 mod session_boot;
 mod session_context;
 mod session_shell;
+mod shell_effects;
 mod sidebar;
 mod sidebar_width;
 mod sync_effects;
 pub(crate) use clipboard::*;
 pub(crate) use command_palette::*;
 use connect::*;
+use connection_effects::{ConnectionEffectState, ConnectionEffects};
 pub(crate) use context_bar::*;
 pub(crate) use feature_gate::*;
 use global_effects::GlobalEffects;
 pub(crate) use handles::*;
 pub(crate) use manage_pages::*;
+use mls_recovery_effects::{MlsRecoveryEffectState, MlsRecoveryEffects};
+use mls_runtime_effects::{MlsRuntimeEffectState, MlsRuntimeEffects};
 use navigation_state::NavigationState;
 use notifications_drawer::NotificationsDrawer;
 use recovery_effects::AccountRecoveryEffects;
+use recovery_reminder_effects::{RecoveryReminderEffectState, RecoveryReminderEffects};
 use route_surface::{RouteSurface, RouteSurfaceState};
+use secure_store_effects::{SecureStoreEffectState, SecureStoreEffects};
 use session_boot::*;
 pub(crate) use session_context::SessionContext;
 use session_shell::SessionShell;
+use shell_effects::{ShellEffectState, ShellEffects};
 use sidebar::*;
 use sidebar_width::*;
 use sync_effects::SyncEffects;
@@ -364,218 +376,9 @@ fn AppBootstrap() -> Element {
     let server_probe_status = use_signal(|| "server not probed".to_owned());
     let locale = use_signal(move || initial_locale);
     let secure_store_bootstrap_ready = use_signal(move || initial_secure_store_bootstrap_ready);
-    #[cfg(target_arch = "wasm32")]
-    {
-        let config_store_for_secure_upgrade = config_store;
-        let base_url_for_secure_upgrade = base_url;
-        let account_did_for_secure_upgrade = account_did;
-        let mut device_id_for_secure_upgrade = device_id;
-        let mut state_store_for_secure_upgrade = state_store;
-        let mut secure_store_ready_for_upgrade = secure_store_bootstrap_ready;
-        let mut token_for_secure_upgrade = token;
-        use_future(move || async move {
-            crate::runtime_helpers::sleep_for(std::time::Duration::from_millis(1)).await;
-            tracing::debug!(target: "secure_store", "secure store upgrade: invoking upgrade_wasm_secure_key_store_async");
-            match crate::secure_key_store::upgrade_wasm_secure_key_store_async("inkson").await {
-                Ok(Some(secure_store)) => {
-                    tracing::debug!(target: "secure_store", "secure store upgrade: Ok(Some) — IndexedDb tier installed");
-                    let loaded_config = config_store_for_secure_upgrade
-                        .read()
-                        .load_with_secure_store(secure_store.as_ref());
-                    let held_token = token_for_secure_upgrade.peek().trim().to_owned();
-                    {
-                        let grant_present = state_store_for_secure_upgrade
-                            .read()
-                            .session_grant()
-                            .map(|g| !g.grant_jwt.trim().is_empty())
-                            .unwrap_or(false);
-                        tracing::warn!(
-                            target: "secure_store",
-                            held_token_empty = held_token.is_empty(),
-                            config_credential_present = !loaded_config.session_credential.trim().is_empty(),
-                            local_state_session_grant_present = grant_present,
-                            "secure store upgrade: post-upgrade credential sources (held_token from memory, config.session_credential, local_state.session_grant)"
-                        );
-                    }
-                    if held_token.is_empty() {
-                        if let Some(rehydrated) = rehydrated_session_credential_for_active_config(
-                            &loaded_config,
-                            &base_url_for_secure_upgrade(),
-                            &account_did_for_secure_upgrade(),
-                            &device_id_for_secure_upgrade(),
-                        ) {
-                            tracing::debug!(target: "secure_store", "secure store upgrade: rehydrated token from config.session_credential — session should restore");
-                            token_for_secure_upgrade.set(rehydrated);
-                        }
-                    } else {
-                        // A credential is already held in memory: sign-in completed
-                        // BEFORE this IndexedDB secure-store upgrade was ready, so
-                        // `config.rs` could only reach the localStorage tier, which
-                        // refuses session credentials. Now that the upgraded store is
-                        // installed, re-persist it so the session survives a reload /
-                        // re-render instead of bouncing back to /login.
-                        persist_config(
-                            config_store_for_secure_upgrade,
-                            base_url_for_secure_upgrade(),
-                            account_did_for_secure_upgrade(),
-                            device_id_for_secure_upgrade(),
-                            held_token,
-                        );
-                    }
-                    let dpop_record = {
-                        let store = state_store_for_secure_upgrade.read();
-                        store.load_dpop_device_key_with_secure_store(secure_store.as_ref())
-                    };
-                    match dpop_record {
-                        Ok(Some(record)) => {
-                            if let Err(error) = state_store_for_secure_upgrade
-                                .write()
-                                .set_dpop_device_key_with_secure_store(
-                                    Some(record),
-                                    secure_store.as_ref(),
-                                )
-                            {
-                                tracing::warn!(
-                                    ?error,
-                                    "IndexedDB DPoP key metadata refresh failed",
-                                );
-                            }
-                        }
-                        Ok(None) => {}
-                        Err(error) => {
-                            tracing::warn!(?error, "IndexedDB DPoP key load failed");
-                        }
-                    }
-                    // Pin the stable, account-scoped `device_id` from the secure
-                    // store as the authoritative source BEFORE the bootstrap
-                    // `connect()` (gated on `secure_store_bootstrap_ready` below)
-                    // publishes an MLS KeyPackage. The `config.json` blob's
-                    // `device_id` is only a mirror: when the blob is not recovered
-                    // at early boot, `LocalConfigStore::load()` falls back to a
-                    // freshly-minted phantom `device_id`. An MLS KeyPackage
-                    // published under a phantom strands its retained private init
-                    // key (which is device-scoped in the secure store via
-                    // `mls_key_package_identity_state_key`), so the to-device
-                    // Welcome can never be decrypted ("no local KeyPackage identity
-                    // state"). Resolving from the seed-paired secure-store entry
-                    // makes `device_id` exactly as stable as the signing seed
-                    // across reloads and re-logins of the same account.
-                    let stable_device_id_for_signer = {
-                        let store = secure_store.as_ref();
-                        let account_scope = account_did_for_secure_upgrade.peek().trim().to_owned();
-                        if account_scope.is_empty() {
-                            tracing::warn!(
-                                target: "secure_store",
-                                "device identity signer bootstrap skipped: no account scope yet"
-                            );
-                            None
-                        } else {
-                            crate::secure_key_store::set_active_device_seed_scope(Some(
-                                &account_scope,
-                            ));
-                            let current = device_id_for_secure_upgrade.peek().trim().to_owned();
-                            let resolved = match crate::secure_key_store::load_device_id_scoped(
-                                store,
-                                Some(&account_scope),
-                            ) {
-                                Ok(Some(existing)) => Some(existing),
-                                Ok(None) => {
-                                    let chosen = if crate::config::is_valid_device_id(&current) {
-                                        current.clone()
-                                    } else {
-                                        crate::config::new_device_id()
-                                    };
-                                    match crate::secure_key_store::store_device_id_scoped(
-                                        store,
-                                        Some(&account_scope),
-                                        &chosen,
-                                    ) {
-                                        Ok(()) => Some(chosen),
-                                        Err(error) => {
-                                            tracing::warn!(target: "secure_store", ?error, "persist stable device_id failed");
-                                            None
-                                        }
-                                    }
-                                }
-                                Err(error) => {
-                                    tracing::warn!(target: "secure_store", ?error, "load stable device_id failed");
-                                    None
-                                }
-                            };
-                            match resolved {
-                                Some(resolved) => {
-                                    if resolved != current {
-                                        tracing::warn!(
-                                            target: "secure_store",
-                                            stale = %current,
-                                            stable = %resolved,
-                                            "pinning stable device_id from secure store (config blob value was phantom/stale)"
-                                        );
-                                        device_id_for_secure_upgrade.set(resolved.clone());
-                                        persist_config(
-                                            config_store_for_secure_upgrade,
-                                            base_url_for_secure_upgrade(),
-                                            account_did_for_secure_upgrade(),
-                                            resolved.clone(),
-                                            token_for_secure_upgrade.peek().trim().to_owned(),
-                                        );
-                                    }
-                                    Some(resolved)
-                                }
-                                None if crate::config::is_valid_device_id(&current) => {
-                                    Some(current)
-                                }
-                                None => None,
-                            }
-                        }
-                    };
-                    match stable_device_id_for_signer {
-                        Some(stable_device_id) => {
-                            match crate::event_signer::bootstrap_default_signer_for_device(
-                                "inkson",
-                                &stable_device_id,
-                            ) {
-                                Ok(_) => {
-                                    tracing::info!(
-                                        target: "secure_store",
-                                        device_id = %stable_device_id,
-                                        "IndexedDB device identity signer bootstrap succeeded"
-                                    );
-                                }
-                                Err(error) => {
-                                    tracing::warn!(
-                                        target: "secure_store",
-                                        ?error,
-                                        "IndexedDB device identity signer bootstrap failed"
-                                    );
-                                }
-                            }
-                        }
-                        None => {
-                            tracing::warn!(
-                                target: "secure_store",
-                                "IndexedDB device identity signer bootstrap skipped: no stable device_id"
-                            );
-                        }
-                    }
-                }
-                Ok(None) => {
-                    tracing::warn!(
-                        target: "secure_store",
-                        "secure store upgrade: Ok(None) — IndexedDB/SubtleCrypto reported UNAVAILABLE; staying on disabled localStorage tier; ALL account secrets and session credentials WILL fail (this is the Restoring-session hang root)"
-                    );
-                }
-                Err(error) => {
-                    tracing::warn!(target: "secure_store", ?error, "secure store upgrade: Err — IndexedDB secure-key-store upgrade failed");
-                }
-            }
-            tracing::debug!(target: "secure_store", "secure store upgrade: settled, marking secure_store_bootstrap_ready=true");
-            secure_store_ready_for_upgrade.set(true);
-        });
-    }
     // Provide i18n context for views that call `crate::i18n::tr(key)`.
-    // The locale field stays in sync with `locale` via the use_effect
-    // below; the dictionary tables are baked once at boot.
+    // `GlobalEffects` keeps the locale field synchronized; dictionary tables
+    // are baked once at boot.
     let i18n_signal = use_context_provider::<crate::i18n::I18nSignal>(|| {
         crate::i18n::init_i18n_with_locale(initial_locale)
     });
@@ -644,127 +447,15 @@ fn AppBootstrap() -> Element {
     let mut personal_handles = use_signal(Vec::<String>::new);
     let mut personal_handles_status = use_signal(|| "Not published".to_owned());
     let mut personal_handles_lookup_key = use_signal(String::new);
-    // Persist the resolved primary handle per account (every code path that
-    // updates `account_primary_handle` — login completion, account_me refresh,
-    // directory lookup — flows through this one effect). Keyed by the current
-    // account DID so a different account never reads a stale handle. Only
-    // non-empty values are written: the transient empty resets on server /
-    // account switch must not wipe a still-valid persisted handle. `peek`
-    // (not `read`) compares the stored value so this effect does not subscribe
-    // to the whole state store and re-fire on unrelated writes.
-    {
-        let account_did_for_handle = account_did;
-        let mut state_store_for_handle = state_store;
-        use_effect(move || {
-            let handle = account_primary_handle();
-            let account = account_did_for_handle();
-            if handle.trim().is_empty() || account.trim().is_empty() {
-                return;
-            }
-            let storage_key = account_primary_handle_storage_key(&account);
-            let already = state_store_for_handle
-                .peek()
-                .load_private_data(&account, &storage_key);
-            if already.as_deref() == Some(handle.as_str()) {
-                return;
-            }
-            state_store_for_handle
-                .write()
-                .save_private_data(&account, storage_key, handle);
-        });
-    }
     let contact_handles_lookup_key = use_signal(String::new);
     let contact_handles_fetching = use_signal(BTreeSet::<String>::new);
     let mut global_query = use_signal(String::new);
     let mut palette_open = use_signal(|| false);
     let mut topbar_search_expanded = use_signal(|| false);
     let mut notifications_drawer_open = use_signal(|| false);
-    let mut previous_unread_notification_count = use_signal(|| Option::<usize>::None);
-    {
-        let state_store_for_notification_sound = state_store;
-        let account_did_for_notification_sound = account_did;
-        use_effect(move || {
-            let store = state_store_for_notification_sound.read();
-            let unread = unread_notification_count(&store.load());
-            let sound_enabled = crate::notification_sound::notification_sound_enabled(
-                &store,
-                &account_did_for_notification_sound(),
-            );
-            let previous = *previous_unread_notification_count.peek();
-            if crate::notification_sound::should_play_notification_sound(
-                previous,
-                unread,
-                sound_enabled,
-            ) {
-                crate::notification_sound::play_notification_sound();
-            }
-            if previous != Some(unread) {
-                previous_unread_notification_count.set(Some(unread));
-            }
-        });
-    }
     let mut sync_bootstrap_complete = use_signal(|| false);
     // A6.4 — `?` keyboard shortcut help overlay state.
     let mut shortcut_help_open = use_signal(|| false);
-    use_effect(move || {
-        let _ = dioxus::document::eval(
-            r#"
-            (() => {
-              if (window.__inksonShortcutHelpBridgeInstalled) return;
-              window.__inksonShortcutHelpBridgeInstalled = true;
-              window.addEventListener('keydown', (event) => {
-                const target = event.target;
-                const tag = target && target.tagName ? target.tagName.toLowerCase() : '';
-                const editable =
-                  target && (target.isContentEditable || tag === 'input' || tag === 'textarea' || tag === 'select');
-                const chord = event.ctrlKey || event.metaKey;
-                const key = typeof event.key === 'string' ? event.key.toLowerCase() : '';
-                if (chord && key === 'k') {
-                  const button = document.querySelector('[data-testid="topbar-search-button"]');
-                  if (button instanceof HTMLElement) {
-                    event.preventDefault();
-                    event.stopPropagation();
-                    button.click();
-                  }
-                  return;
-                }
-                if (chord && key === 'f') {
-                  const button = document.querySelector('[data-testid="global-search-shortcut-target"]');
-                  if (button instanceof HTMLElement) {
-                    event.preventDefault();
-                    event.stopPropagation();
-                    button.click();
-                  }
-                  return;
-                }
-                if (chord && key === 'enter') {
-                  const composer =
-                    target instanceof HTMLElement ? target.closest('[data-testid="chat-composer"]') : null;
-                  const button = composer && composer.querySelector('[data-testid="send-chat-button"]');
-                  if (button instanceof HTMLElement) {
-                    event.preventDefault();
-                    event.stopPropagation();
-                    button.click();
-                  }
-                  return;
-                }
-                if (editable) return;
-                const wantsHelp =
-                  event.key === '?' ||
-                  (event.shiftKey && (event.key === '/' || event.code === 'Slash'));
-                if (!wantsHelp) return;
-                const button = document.querySelector(
-                  '[data-testid="topbar-shortcuts-button"], [data-testid="mobile-shortcuts-button"]'
-                );
-                if (!(button instanceof HTMLElement)) return;
-                event.preventDefault();
-                event.stopPropagation();
-                button.click();
-              }, true);
-            })();
-            "#,
-        );
-    });
     let mut realm_sidebar_tab = use_signal(|| "collaboration".to_owned());
     let mut collaboration_sidebar_query = use_signal(String::new);
     let mut direct_sidebar_query = use_signal(String::new);
@@ -853,36 +544,6 @@ fn AppBootstrap() -> Element {
     // it and `CallPanel` drains it to drive the transport / call FSM. See
     // `crate::views::call_signals`.
     let call_signal_hub = use_context_provider(crate::views::call_signals::CallSignalHub::new);
-    // When an inbound `invite` lands on the hub (set by the sync apply path),
-    // navigate to the incoming-ring surface so the user can accept/decline.
-    // Tracks the last call_id navigated for so a re-render with the same
-    // pending invite does not re-push the route.
-    {
-        let call_navigator = navigator;
-        let mut last_incoming_nav = use_signal(|| Option::<String>::None);
-        use_effect(move || {
-            let pending = call_signal_hub.incoming_call.read().clone();
-            match pending {
-                Some(info) => {
-                    if last_incoming_nav.read().as_deref() != Some(info.call_id.as_str()) {
-                        last_incoming_nav.set(Some(info.call_id.clone()));
-                        call_navigator.push(Route::Call {
-                            call_id: info.call_id.clone(),
-                            peer: info.peer_actor.clone(),
-                            realm_id: info.realm_id.clone(),
-                            video: if info.video { "1" } else { "0" }.to_owned(),
-                            incoming: "1".to_owned(),
-                        });
-                    }
-                }
-                None => {
-                    if last_incoming_nav.read().is_some() {
-                        last_incoming_nav.set(None);
-                    }
-                }
-            }
-        });
-    }
     let mls_restore_payload_cache = use_signal(|| Option::<Value>::None);
     let mls_unlock_detection_key_seen = use_signal(|| Option::<String>::None);
 
@@ -905,6 +566,7 @@ fn AppBootstrap() -> Element {
     // Dedup key (`<generation>|<realm_id>`) for the per-realm events engine, so
     // a base_url/token re-render doesn't stack a second loop on the same realm.
     let realm_events_engine_active_key = use_signal(|| Option::<String>::None);
+    let bootstrap_pending = use_signal(|| true);
 
     // AKP-0007 P3B.4.3 — active multi-profile snapshot, threaded into
     // the sync engine context so the loop can detect a profile rotation
@@ -912,472 +574,6 @@ fn AppBootstrap() -> Element {
     // signal stays default-empty until the account switcher writes to
     // it on the first user-driven add-account / switch action.
     let profiles_signal = use_signal(crate::config::MultiProfileConfig::default);
-
-    // Lower-level API helpers cannot directly mutate app signals, but they
-    // can receive terminal auth errors (notably `session grant is not
-    // active: revoked`) from background pollers. Register one soft-logout
-    // hook so those paths can clear the live credential and stop retry loops.
-    {
-        let mut invalidator_token = token;
-        let mut invalidator_sync_cursor = sync_cursor;
-        let mut invalidator_selected_realm_id = selected_realm_id;
-        let mut invalidator_realm_tree_nodes = realm_tree_nodes;
-        let mut invalidator_projection_events = projection_events;
-        let mut invalidator_device_queue = device_queue;
-        let mut invalidator_crypto_state = crypto_state;
-        let mut invalidator_status = connection_status;
-        let mut invalidator_network_state = network_state;
-        let mut invalidator_last_error = last_error;
-        let mut invalidator_session_boot_state = session_boot_state;
-        let mut invalidator_state_store = state_store;
-        let invalidator_config_store = config_store;
-        let invalidator_base_url = base_url;
-        let invalidator_account_did = account_did;
-        let invalidator_device_id = device_id;
-        let mut invalidator_needs_device_authorization = needs_device_authorization;
-        let mut invalidator_device_authorization_check_complete =
-            device_authorization_check_complete;
-        let mut invalidator_account_has_other_devices = account_has_other_devices;
-        let mut invalidator_sync_generation = sync_generation;
-        let mut invalidator_session_generation = session_generation;
-        let invalidator_effects = runtime_services.effects.clone();
-        let invalidator_navigator = navigator;
-        use_hook(move || {
-            session_coordinator.set_invalidator(move |reason| {
-                invalidator_effects.request_cancel_all();
-                invalidator_session_generation.set(invalidator_session_generation() + 1);
-                invalidator_state_store.write().set_session_grant(None);
-                invalidator_token.set(String::new());
-                crate::config::clear_session_credential_secret(&invalidator_account_did());
-                persist_config(
-                    invalidator_config_store,
-                    invalidator_base_url(),
-                    invalidator_account_did(),
-                    invalidator_device_id(),
-                    String::new(),
-                );
-                invalidator_sync_cursor.set(String::new());
-                invalidator_selected_realm_id.set(String::new());
-                invalidator_realm_tree_nodes.set(Vec::new());
-                invalidator_projection_events.set(Vec::new());
-                invalidator_device_queue.set(0);
-                invalidator_crypto_state.set("Session expired".to_owned());
-                invalidator_status.set("Session expired; sign in again".to_owned());
-                invalidator_network_state.set("online".to_owned());
-                invalidator_last_error.set(Some(reason));
-                invalidator_needs_device_authorization.set(false);
-                invalidator_device_authorization_check_complete.set(false);
-                invalidator_account_has_other_devices.set(false);
-                invalidator_sync_generation.set(invalidator_sync_generation() + 1);
-                invalidator_session_boot_state.set(SessionBootState::Unauthenticated);
-                let _ = invalidator_navigator.push(Route::Login);
-            });
-        });
-    }
-
-    // Single-source-of-truth for the sidebar. Anything that wants to
-    // change the visible Space list writes to
-    // `state_store.realm_tree_projections` (sync engine, connect()'s initial
-    // bootstrap, setup's optimistic post-create insert, future
-    // push-notification ingestion). This effect derives the `realm_tree_nodes`
-    // Signal from those projections so consumers can keep reading
-    // `realm_tree_nodes()` as before — but the only path into the data is
-    // through the store. Avoids the "stale ghost space" class of bugs
-    // where signal writers forgot to also update the projection (or
-    // vice versa) and the two slid out of sync.
-    use_effect(move || {
-        let projections = state_store.read().load().realm_tree_projections;
-        let next = realm_tree_nodes_from_sync_realms(&projections);
-        // Perf (P1): this effect re-runs on *any* `state_store` write (drafts,
-        // theme, notifications, read receipts, …), not just projection changes.
-        // Skip the `set` when the derived list is unchanged so unrelated writes
-        // don't cascade a re-render through every `realm_tree_nodes()` consumer (sidebar,
-        // command palette, root shell).
-        if *realm_tree_nodes.peek() != next {
-            realm_tree_nodes.set(next);
-        }
-    });
-
-    // Bootstrap handshake: on first render with a valid session, run
-    // `connect()` exactly once to do the `/server/describe` +
-    // account viewer probes and the initial server-authoritative full
-    // sync. After that, `SyncEffects` owns continuous sync.
-    let mut bootstrap_pending = use_signal(|| true);
-    let secure_store_ready = secure_store_bootstrap_ready();
-    if bootstrap_pending() {
-        let base = base_url();
-        let mut session = token();
-        if session.trim().is_empty() && secure_store_ready {
-            let rehydrated = {
-                let loaded = config_store.read().load();
-                rehydrated_session_credential_for_active_config(
-                    &loaded,
-                    &base,
-                    &account_did(),
-                    &device_id(),
-                )
-            };
-            if let Some(rehydrated) = rehydrated {
-                token.set(rehydrated.clone());
-                session = rehydrated;
-            }
-        }
-        if !session.trim().is_empty() {
-            let stale_for_selected_server = {
-                let store = state_store.read();
-                store
-                    .session_grant()
-                    .as_ref()
-                    .map(|grant| {
-                        !crate::identity::session_refresh::grant_matches_principal_server(
-                            grant, &base,
-                        )
-                    })
-                    .unwrap_or(false)
-            };
-            if stale_for_selected_server {
-                token.set(String::new());
-                session_boot_state.set(SessionBootState::Unauthenticated);
-                persist_config(
-                    config_store,
-                    base.clone(),
-                    account_did(),
-                    device_id(),
-                    String::new(),
-                );
-                session.clear();
-            }
-        }
-        let can_restore_session = {
-            let store = state_store.read();
-            has_bootstrap_refresh_material(&store, &base, &account_did())
-        };
-        if !base.trim().is_empty()
-            && secure_store_ready
-            && (!session.trim().is_empty() || can_restore_session)
-        {
-            bootstrap_pending.set(false);
-            sync_bootstrap_complete.set(false);
-            let bootstrap_state = session_boot_state_from_bootstrap_material(
-                &session,
-                can_restore_session,
-                &account_did(),
-                secure_store_ready,
-            );
-            tracing::debug!(target: "session_boot", ?bootstrap_state, secure_store_ready, "bootstrap: branch A (will call connect) — setting boot_state from material");
-            session_boot_state.set(bootstrap_state);
-            connect(
-                base,
-                account_did(),
-                device_id(),
-                ConnectContext {
-                    session: runtime_services.session.clone(),
-                    connection_status,
-                    sync_cursor,
-                    token,
-                    account_did,
-                    device_id,
-                    selected_realm_id,
-                    realm_tree_nodes,
-                    projection_events,
-                    device_queue,
-                    frontier_state,
-                    crypto_state,
-                    config_store,
-                    state_store,
-                    network_state,
-                    last_error,
-                    server_description,
-                    server_probe_status,
-                    account_primary_handle,
-                    personal_handles,
-                    personal_handles_status,
-                    theme,
-                    sync_generation,
-                    needs_device_authorization,
-                    device_authorization_check_complete,
-                    account_has_other_devices,
-                    sync_bootstrap_complete,
-                    session_boot_state,
-                    call_signal_hub,
-                    did_cache,
-                    did_resolution_health,
-                },
-            );
-        } else if !base.trim().is_empty() {
-            let bootstrap_state = session_boot_state_from_bootstrap_material(
-                &session,
-                can_restore_session,
-                &account_did(),
-                secure_store_ready,
-            );
-            // Idempotent: branch B runs on EVERY render (it never clears
-            // `bootstrap_pending`, since it is waiting for the async secure-store
-            // upgrade to flip `secure_store_ready`). Re-`set`ting the signal to
-            // the value it already holds still notifies subscribers, which
-            // re-renders RouterView, which re-enters this block — a synchronous
-            // render loop that starves the very upgrade future we are waiting on
-            // (it never gets an event-loop turn to drive its IndexedDB awaits).
-            // Only `set` on an actual change so the loop quiesces and the future
-            // can run.
-            if *session_boot_state.peek() != bootstrap_state {
-                tracing::debug!(target: "session_boot", ?bootstrap_state, secure_store_ready, "bootstrap: branch B (waiting on secure store) — boot_state changed, setting");
-                session_boot_state.set(bootstrap_state);
-            }
-        }
-    }
-
-    // D1: detect the account-MLS unlock requirement as soon as a logged-in
-    // session finishes bootstrap, without waiting for the user to enter a
-    // Space/Board/Document route that runs the per-Realm Welcome bootstrap.
-    {
-        let mut seen_detection_key = mls_unlock_detection_key_seen;
-        let mut needs_mls_unlock = needs_mls_unlock;
-        let mut needs_mls_backup = needs_mls_backup;
-        let mut needs_mls_recovery_setup = needs_mls_recovery_setup;
-        let mut restore_payload_cache = mls_restore_payload_cache;
-        let mut state_store_for_detection = state_store;
-        let secure_store_ready_for_detection = secure_store_bootstrap_ready;
-        let account_recovery_configured_for_detection = account_recovery_configured;
-        use_effect(move || {
-            if !secure_store_ready_for_detection() {
-                return;
-            }
-            let base = base_url();
-            let session = token();
-            let actor = account_did();
-            let device = device_id();
-            let generation = sync_generation();
-            let account_recovery_configured_value = account_recovery_configured_for_detection();
-            if !matches!(session_boot_state(), SessionBootState::Authenticated) {
-                needs_mls_unlock.set(false);
-                needs_mls_backup.set(false);
-                needs_mls_recovery_setup.set(false);
-                restore_payload_cache.set(None);
-                seen_detection_key.set(None);
-                return;
-            }
-            if session.trim().is_empty() {
-                needs_mls_unlock.set(false);
-                needs_mls_backup.set(false);
-                needs_mls_recovery_setup.set(false);
-                restore_payload_cache.set(None);
-                seen_detection_key.set(None);
-                return;
-            }
-            // X10.1: do NOT gate on `sync_bootstrap_complete()` here. A fresh
-            // browser sits on Dashboard with sync still pending; the MLS
-            // unlock/backup detection only needs a live session + a server
-            // `list_key_backups` call, NOT a completed sync. Gating on sync
-            // meant the unlock prompt never surfaced on a new device until the
-            // user manually entered a Space — i.e. "switched browser, never
-            // asked for my passphrase". Run as soon as session/actor/device
-            // are present; the `seen_detection_key` guard still prevents
-            // repeat runs, and re-running after sync (snap= flips) is handled
-            // by the detection key below.
-            if base.trim().is_empty() || actor.trim().is_empty() || device.trim().is_empty() {
-                return;
-            }
-            // BUG X4: the account MLS secret is created lazily on the
-            // first encrypted write — at register / first space entry it
-            // does not exist yet, so `mls_backup_prompt_required` returns
-            // false and this effect would never re-fire to surface the
-            // backup prompt once the secret appears. Two changes fix that:
-            //   1. Read a `state_store` signal in the *synchronous* effect body
-            //      (`has_local_mls_snapshot`) so Dioxus re-runs this effect when the first
-            //      encrypted write saves a snapshot.
-            //   2. Fold the local account-secret presence into the detection key (`sec=`) so the
-            //      `seen` guard no longer matches once the secret flips false→true, letting the
-            //      detection re-run and re-evaluate the backup prompt.
-            let state_for_detection_key = state_store_for_detection.read();
-            let has_local_mls_snapshot = !state_for_detection_key.mls_snapshots().is_empty();
-            let has_encrypted_realm_projection =
-                local_state_has_encrypted_realm(&state_for_detection_key);
-            let local_mls_epoch_floor = local_mls_epoch_floor_all(&state_for_detection_key);
-            let recovery_key_fingerprint = crate::views::recovery::local_recovery_key_fingerprint(
-                &state_for_detection_key,
-                &actor,
-            )
-            .unwrap_or_default();
-            drop(state_for_detection_key);
-            let has_local_account_secret = crate::mls::runtime::load_account_mls_secret(
-                crate::secure_key_store::default_secure_key_store("inkson").as_ref(),
-                &actor,
-            )
-            .map(|secret| secret.is_some())
-            .unwrap_or(false);
-            let detection_key = format!(
-                "{generation}|{base}|{actor}|{device}|sec={has_local_account_secret}|snap={has_local_mls_snapshot}|enc={has_encrypted_realm_projection}|epoch={local_mls_epoch_floor}|rk={recovery_key_fingerprint}|recovery={account_recovery_configured_value:?}"
-            );
-            if seen_detection_key().as_deref() == Some(detection_key.as_str()) {
-                return;
-            }
-            seen_detection_key.set(Some(detection_key.clone()));
-            // DIAG (describe-storm): this effect re-fetches backups (+ sidecar)
-            // whenever `detection_key` changes. On a wedged-recovery account it
-            // storms; log the full key so consecutive values reveal which
-            // component (sec/snap/enc/epoch/rk/recovery/generation) keeps
-            // flipping. Remove once the driver is fixed.
-            tracing::debug!(target: "recovery_diag", key = %detection_key, "mls_unlock detection re-fetch (backups)");
-            let seen_detection_key_for_result = seen_detection_key;
-
-            spawn(async move {
-                let actor_for_sidecar_restore = actor.clone();
-                let device_for_sidecar_restore = device.clone();
-                match crate::transport::auth::with_authed_api(
-                    &base,
-                    session.clone(),
-                    |api| async move {
-                        let payload =
-                            crate::mls::account_recovery::fetch_mls_restore_payload(&api).await?;
-                        let sidecar_body_for_local_restore = if has_local_account_secret {
-                            crate::mls::account_recovery::fetch_mls_private_plaintext_backup_body(
-                                &api,
-                                &actor_for_sidecar_restore,
-                                &device_for_sidecar_restore,
-                            )
-                            .await
-                            .ok()
-                            .flatten()
-                        } else {
-                            None
-                        };
-                        Ok((payload, sidecar_body_for_local_restore))
-                    },
-                )
-                .await
-                {
-                    Ok((payload, sidecar_body_for_local_restore)) => {
-                        if seen_detection_key_for_result().as_deref()
-                            != Some(detection_key.as_str())
-                        {
-                            return;
-                        }
-                        let secure_store =
-                            crate::secure_key_store::default_secure_key_store("inkson");
-                        let configured_backup_id =
-                            crate::mls::account_recovery::select_preferred_mls_account_secret_backup(
-                                &payload,
-                            )
-                            .and_then(|backup| {
-                                backup
-                                    .get("backup_id")
-                                    .and_then(serde_json::Value::as_str)
-                                    .map(str::to_owned)
-                            });
-                        {
-                            let mut store = state_store_for_detection.write();
-                            if let Some(backup_id) = configured_backup_id.as_deref() {
-                                crate::components::mark_mls_recovery_backup_configured(
-                                    &mut store, &actor, backup_id,
-                                );
-                            }
-                            let report = crate::mls::account_recovery::restore_mls_history_with_local_secret_from_payload(
-                                &payload,
-                                &mut store,
-                                secure_store.as_ref(),
-                                &actor,
-                                &device,
-                            );
-                            if report.failed > 0 {
-                                tracing::warn!(
-                                    failed = report.failed,
-                                    restored = report.restored,
-                                    first_error = ?report.first_error,
-                                    "mls history restore from local secret failed"
-                                );
-                            }
-                            if let Some(sidecar_body) = sidecar_body_for_local_restore.as_ref() {
-                                let sidecar_payload =
-                                    serde_json::json!({ "backups": [sidecar_body.clone()] });
-                                let report = crate::mls::account_recovery::restore_mls_history_with_local_secret_from_payload(
-                                    &sidecar_payload,
-                                    &mut store,
-                                    secure_store.as_ref(),
-                                    &actor,
-                                    &device,
-                                );
-                                if report.failed > 0 {
-                                    tracing::warn!(
-                                        failed = report.failed,
-                                        restored = report.restored,
-                                        first_error = ?report.first_error,
-                                        "mls sidecar restore from local secret failed"
-                                    );
-                                }
-                            }
-                        }
-                        let should_unlock = {
-                            let store = state_store_for_detection.read();
-                            crate::mls::account_recovery::mls_restore_prompt_required(
-                                &payload,
-                                &store,
-                                secure_store.as_ref(),
-                                &actor,
-                                &device,
-                            )
-                        };
-                        // Mutual exclusion (task X3): restore (unlock) always
-                        // wins. Only evaluate the backup prompt when restore is
-                        // not required.
-                        if should_unlock {
-                            restore_payload_cache.set(Some(payload.clone()));
-                            needs_mls_unlock.set(true);
-                            needs_mls_backup.set(false);
-                            needs_mls_recovery_setup.set(false);
-                        } else if needs_mls_unlock() {
-                            // Multiple detection effects can race with different
-                            // restore-payload snapshots. Once one detects a real
-                            // unlock requirement, keep the modal open until the
-                            // user restores successfully or the session resets.
-                            needs_mls_backup.set(false);
-                            needs_mls_recovery_setup.set(false);
-                        } else {
-                            restore_payload_cache.set(None);
-                            needs_mls_unlock.set(false);
-                            let should_backup =
-                                crate::mls::account_recovery::mls_backup_prompt_required(
-                                    &payload,
-                                    secure_store.as_ref(),
-                                    &actor,
-                                    &device,
-                                );
-                            if should_backup {
-                                crate::components::maybe_auto_backup_mls_after_encrypted_write(
-                                    base.clone(),
-                                    session.clone(),
-                                    actor.clone(),
-                                    device.clone(),
-                                    state_store_for_detection,
-                                    needs_mls_backup,
-                                )
-                                .await;
-                            } else {
-                                needs_mls_backup.set(false);
-                            }
-                            let should_recovery_setup = {
-                                let store = state_store_for_detection.read();
-                                mls_recovery_setup_missing(
-                                    &payload,
-                                    &store,
-                                    secure_store.as_ref(),
-                                    &actor,
-                                    account_recovery_configured_value,
-                                )
-                            };
-                            needs_mls_recovery_setup.set(!should_backup && should_recovery_setup);
-                        }
-                    }
-                    Err(error) => {
-                        tracing::warn!(
-                            error = %error.display(),
-                            "MLS account-secret login unlock detection failed"
-                        );
-                    }
-                }
-            });
-        });
-    }
 
     let routed_realm_id = route.realm_id().map(str::to_owned);
     let remembered_realm_id = selected_realm_id();
@@ -1406,316 +602,6 @@ fn AppBootstrap() -> Element {
     let has_session = !token().trim().is_empty();
     let boot_state = session_boot_state();
     let auth_surface = auth_surface_for_route(&route, has_session, boot_state);
-    {
-        let redirect_route = route.clone();
-        let redirect_navigator = navigator;
-        use_effect(move || {
-            if matches!(redirect_route, Route::Login) && !token().trim().is_empty() {
-                let _ = redirect_navigator.push(Route::Dashboard);
-            } else if matches!(redirect_route, Route::Recovery) {
-                let _ = redirect_navigator.replace(Route::SettingsRecovery);
-            }
-        });
-    }
-    {
-        // Proactive one-time 24-word Recovery Key setup nudge for new users.
-        // When the account is otherwise healthy but no recovery path is
-        // configured (the RecoverySetupReminder state), open the setup modal
-        // once and persist a flag so it never auto-pops again — the passive
-        // dashboard banner remains as the steady-state reminder. The
-        // in-memory `recovery_auto_prompt_fired` guard makes "once" robust within
-        // a session. See account_health::should_auto_prompt_recovery_setup and
-        // docs/user-strands-key-lifecycle.md §3/S1.
-        let mut recovery_key_setup_prompt = recovery_key_setup_prompt;
-        let mut recovery_auto_prompt_fired = recovery_auto_prompt_fired;
-        let mut state_store = state_store;
-        use_effect(move || {
-            if recovery_auto_prompt_fired() || recovery_key_setup_prompt() {
-                return;
-            }
-            let session = token();
-            let actor = account_did();
-            if session.trim().is_empty() || actor.trim().is_empty() {
-                return;
-            }
-            // Recovery setup requires an enrollment-capable session. Establishing
-            // the account recovery policy needs this device authorized as a
-            // key-management device, which goes through the account authority
-            // (coauth) and therefore requires an active `ak.session.grant`. A
-            // grant-less compatibility session can never pass that
-            // gate, so auto-prompting it only loops on `recovery_policy_device_
-            // not_authorized` and blocks the UI behind the modal. Don't prompt.
-            if state_store.read().session_grant().is_none() {
-                return;
-            }
-            let (inputs, already_prompted, local_only_fingerprint) = {
-                let store = state_store.read();
-                let account_recovery_configured = account_recovery_configured();
-                let local_recovery_configured =
-                    crate::views::recovery::recovery_options_configured(&store, &actor);
-                let local_only_fingerprint = recovery_auto_prompt_pending_local_only_fingerprint(
-                    &store,
-                    &actor,
-                    account_recovery_configured,
-                );
-                let inputs = crate::account_health::AccountHealthInputs {
-                    has_session: true,
-                    sync_bootstrap_complete: sync_bootstrap_complete(),
-                    device_check_complete: device_authorization_check_complete(),
-                    // Route doesn't gate this one-time nudge; the guards do.
-                    on_recovery_route: false,
-                    recovery_check_complete: account_recovery_configured.is_some(),
-                    needs_device_authorization: needs_device_authorization(),
-                    needs_mls_unlock: needs_mls_unlock(),
-                    needs_mls_backup: needs_mls_backup(),
-                    needs_mls_recovery_setup: needs_mls_recovery_setup(),
-                    floor_low:
-                        crate::components::encryption_floor_prompt::account_needs_recommended_encryption_prompt(
-                            &store, &actor,
-                        ),
-                    recovery_unconfigured: recovery_setup_prompt_required_for_account_state(
-                        account_recovery_configured,
-                        local_recovery_configured,
-                        account_has_other_devices(),
-                    ),
-                };
-                let already = recovery_auto_prompt_already_prompted(
-                    &store,
-                    &actor,
-                    account_recovery_configured,
-                );
-                (inputs, already, local_only_fingerprint)
-            };
-            if crate::account_health::should_auto_prompt_recovery_setup(inputs, already_prompted) {
-                recovery_auto_prompt_fired.set(true);
-                let mut store = state_store.write();
-                store.save_private_data(&actor, RECOVERY_AUTO_PROMPT_SHOWN_KEY, "1".to_owned());
-                if let Some(fingerprint) = local_only_fingerprint {
-                    store.save_private_data(
-                        &actor,
-                        RECOVERY_AUTO_PROMPT_LOCAL_ONLY_SHOWN_KEY,
-                        fingerprint,
-                    );
-                }
-                recovery_key_setup_prompt.set(true);
-            }
-        });
-    }
-    {
-        use_effect(move || {
-            let lookup_base_url = base_url();
-            let lookup_actor = account_did();
-            let lookup_token = token();
-            let lookup_supported = server_description().as_ref().is_some_and(|description| {
-                description.supports_operation(OP_LIST_HANDLES_FOR_SUBJECT)
-            });
-            let key = format!(
-                "{}|{}|{}|{}",
-                lookup_base_url,
-                lookup_actor,
-                !lookup_token.trim().is_empty(),
-                lookup_supported,
-            );
-            if personal_handles_lookup_key() == key {
-                return;
-            }
-            personal_handles_lookup_key.set(key);
-            if lookup_token.trim().is_empty() || lookup_actor.trim().is_empty() {
-                account_primary_handle.set(String::new());
-                personal_handles.set(Vec::new());
-                personal_handles_status.set("No authenticated session".to_owned());
-                return;
-            }
-            if !lookup_supported {
-                if personal_handles().is_empty() {
-                    personal_handles_status.set("Not published".to_owned());
-                }
-                return;
-            }
-            personal_handles_status.set("Loading handles".to_owned());
-            let base = lookup_base_url.clone();
-            let actor = lookup_actor.clone();
-            let api_token = lookup_token.clone();
-            let existing_personal_handles = personal_handles();
-            spawn(async move {
-                match TransportClient::unauthenticated(&base)
-                    .and_then(|api| api.with_bearer(api_token).sdk_http_client())
-                {
-                    Ok(http) => match crate::transport::directory::list_handles_for_subject(
-                        &http,
-                        &actor,
-                        None,
-                        Some("display"),
-                    )
-                    .await
-                    {
-                        Ok(res) => {
-                            let directory_primary_handle = res
-                                .primary_handle
-                                .as_ref()
-                                .map(|handle| handle.canonical().to_owned());
-                            let directory_handles = display_handles_from_directory_response(&res);
-                            if directory_handles.is_empty() {
-                                // Mirror the error branches below: keep any
-                                // account viewer primary handle claim already
-                                // loaded instead of clobbering it with an empty
-                                // directory page.
-                                if existing_personal_handles.is_empty() {
-                                    try_set_signal(
-                                        personal_handles_status,
-                                        "No handles published".to_owned(),
-                                    );
-                                }
-                            } else {
-                                if let Some(primary_handle) = directory_primary_handle {
-                                    try_set_signal(account_primary_handle, primary_handle);
-                                }
-                                let handles = merge_personal_handles(
-                                    &existing_personal_handles,
-                                    directory_handles,
-                                );
-                                try_set_signal(
-                                    personal_handles_status,
-                                    personal_handles_status_for(&handles),
-                                );
-                                try_set_signal(personal_handles, handles);
-                            }
-                        }
-                        Err(err) => {
-                            tracing::warn!(
-                                ?err,
-                                "directory list_handles_for_subject failed; keeping account primary handle claim"
-                            );
-                            if existing_personal_handles.is_empty() {
-                                try_set_signal(personal_handles_status, "Not published".to_owned());
-                            }
-                        }
-                    },
-                    Err(err) => {
-                        tracing::warn!(
-                            ?err,
-                            "directory list_handles_for_subject skipped for invalid server URL"
-                        );
-                        if existing_personal_handles.is_empty() {
-                            try_set_signal(personal_handles_status, "Not published".to_owned());
-                        }
-                    }
-                }
-            });
-        });
-    }
-    {
-        let mut contact_handles_lookup_key = contact_handles_lookup_key;
-        let mut contact_handles_fetching = contact_handles_fetching;
-        let mut state_store_for_contact_handles = state_store;
-        use_effect(move || {
-            let lookup_base_url = base_url();
-            let lookup_token = token();
-            let lookup_supported = server_description().as_ref().is_some_and(|description| {
-                description.supports_operation(OP_LIST_HANDLES_FOR_SUBJECT)
-            });
-            let mut peers = direct_contact_rows
-                .read()
-                .iter()
-                .map(|contact| contact.peer.trim().to_owned())
-                .filter(|peer| peer.starts_with("did:"))
-                .collect::<BTreeSet<_>>();
-            if !lookup_supported || lookup_token.trim().is_empty() || peers.is_empty() {
-                if !contact_handles_lookup_key().is_empty() {
-                    contact_handles_lookup_key.set(String::new());
-                }
-                return;
-            }
-            peers.retain(|peer| {
-                state_store_for_contact_handles
-                    .read()
-                    .cached_member_handle_lookup(peer, None, None)
-                    .is_none()
-                    && !contact_handles_fetching.read().contains(peer)
-            });
-            if peers.is_empty() {
-                if !contact_handles_lookup_key().is_empty() {
-                    contact_handles_lookup_key.set(String::new());
-                }
-                return;
-            }
-            let peer_key = peers.iter().cloned().collect::<Vec<_>>().join(",");
-            let key = format!(
-                "{}|{}|{}|{}",
-                lookup_base_url,
-                !lookup_token.trim().is_empty(),
-                lookup_supported,
-                peer_key,
-            );
-            if contact_handles_lookup_key() == key {
-                return;
-            }
-            contact_handles_lookup_key.set(key);
-            for peer in &peers {
-                contact_handles_fetching.write().insert(peer.clone());
-            }
-            let base = lookup_base_url.clone();
-            let api_token = lookup_token.clone();
-            spawn(async move {
-                for subject_id in peers {
-                    let result =
-                        crate::transport::auth::with_authed_sdk_client(&base, api_token.clone(), {
-                            let subject_id = subject_id.clone();
-                            move |http| async move {
-                                crate::transport::directory::list_handles_for_subject(
-                                    &http,
-                                    &subject_id,
-                                    None,
-                                    Some("display"),
-                                )
-                                .await
-                            }
-                        })
-                        .await;
-                    match result {
-                        Ok(res) => {
-                            let primary = res
-                                .primary_handle
-                                .as_ref()
-                                .map(|handle| handle.canonical().to_owned());
-                            let claims_count = res.claims.len();
-                            let earliest_expiry = res
-                                .claims
-                                .iter()
-                                .filter_map(|claim| claim.expires_at.as_ref().cloned())
-                                .min();
-                            state_store_for_contact_handles
-                                .write()
-                                .save_member_handle_lookup(
-                                    res.subject.as_str().to_owned(),
-                                    None,
-                                    None,
-                                    primary,
-                                    claims_count,
-                                    Some(res.as_of),
-                                    earliest_expiry,
-                                );
-                        }
-                        Err(err) if !err.is_auth_expired() => {
-                            state_store_for_contact_handles
-                                .write()
-                                .save_member_handle_lookup(
-                                    subject_id.clone(),
-                                    None,
-                                    None,
-                                    None,
-                                    0,
-                                    None,
-                                    None,
-                                );
-                        }
-                        Err(_) => {}
-                    }
-                    contact_handles_fetching.write().remove(&subject_id);
-                }
-            });
-        });
-    }
     let active_server_label = normalize_server_url(&base_url());
     let account_did_value = account_did();
     let device_id_value = device_id();
@@ -1782,851 +668,6 @@ fn AppBootstrap() -> Element {
     } else {
         None
     };
-    {
-        let mut seen_publish_key = mls_key_package_publish_key_seen;
-        let secure_store_ready_for_publish = secure_store_bootstrap_ready;
-        use_effect(move || {
-            if !secure_store_ready_for_publish() {
-                return;
-            }
-            if crate::event_signer::active_signer().is_none() {
-                return;
-            }
-            // Gate on device authorization. Publishing a KeyPackage requires an
-            // ACCEPTED `ak.device.authorize` — soland rejects the upload with
-            // `claim_generation_mismatch` ("accepted device authorization is
-            // required") otherwise. The device-authorization check + auto-enroll
-            // (app/connect.rs) runs CONCURRENTLY with this publish effect; without
-            // this gate the upload can lose the race, fail, and — because the
-            // publish is deduped on `seen_publish_key` (set before the spawn) — it
-            // is NEVER retried, so the device stays KeyPackage-less and every
-            // invite of it dies at admission with `mls_keypackage_not_found`.
-            // Reading both signals subscribes this effect, so it re-fires and
-            // publishes once the device becomes authorized.
-            if !device_authorization_check_complete() || needs_device_authorization() {
-                return;
-            }
-            let base = base_url();
-            let session = token();
-            let actor = account_did();
-            let device = device_id();
-            let description = server_description();
-            let Some(publish_key) = mls_key_package_publish_key(
-                &base,
-                &session,
-                &actor,
-                &device,
-                profile_ready(description.as_ref(), PROFILE_E2EE_CLIENT),
-                sync_bootstrap_complete(),
-            ) else {
-                return;
-            };
-            let publish_hint = local_mls_key_package_publish_hint(&base, &actor, &device);
-            let publish_key = format!("{publish_key}|kp={publish_hint}");
-            if seen_publish_key().as_deref() == Some(publish_key.as_str()) {
-                return;
-            }
-            seen_publish_key.set(Some(publish_key));
-            spawn(async move {
-                match ensure_local_mls_key_package_published(base, session, actor, device).await {
-                    Ok(Some(key_package_id)) => {
-                        tracing::debug!(
-                            key_package_id = %short_protocol_id(&key_package_id),
-                            "local MLS KeyPackage is published"
-                        );
-                    }
-                    Ok(None) => {}
-                    Err(error) => {
-                        tracing::warn!(%error, "MLS KeyPackage publish bootstrap failed");
-                    }
-                }
-            });
-        });
-    }
-    {
-        // Admin-side MLS admission reconciliation — the producer counterpart of
-        // the invitee Welcome bootstrap below. When a member actually joins an
-        // encrypted Realm this device administers, (re)admit anyone not yet in
-        // the MLS group so their `ak.mls.welcome` is finally produced. Closes
-        // the invite-time race where admission ran before the invitee had
-        // published a KeyPackage: re-runs each sync round (via `sync_cursor`)
-        // so a member who publishes their KeyPackage after joining is picked up.
-        // Also observes `realm_live_epoch`, because join/accept events may
-        // arrive through the per-Realm stream without advancing account sync.
-        let admit_state_store = state_store;
-        let admit_sync_cursor = sync_cursor;
-        let admit_realm_live_epoch = realm_live_epoch;
-        let mut admit_in_flight = mls_admission_reconcile_in_flight;
-        let mut admit_pending = mls_admission_reconcile_pending;
-        let mut admit_last_error = last_error;
-        let mut admit_diag_last = mls_admission_diag_last;
-        let secure_store_ready_for_admit = secure_store_bootstrap_ready;
-        let admit_route_enabled = realm_events_route_enabled;
-        use_effect(move || {
-            if !secure_store_ready_for_admit() {
-                return;
-            }
-            if !admit_route_enabled() {
-                return;
-            }
-            let description = server_description();
-            if !profile_ready(description.as_ref(), PROFILE_E2EE_CLIENT)
-                || !sync_bootstrap_complete()
-            {
-                return;
-            }
-            let base = base_url();
-            let session = token();
-            let actor = account_did();
-            let device = device_id();
-            if base.trim().is_empty() || session.trim().is_empty() || actor.trim().is_empty() {
-                return;
-            }
-            // Re-fire on every sync round so a late-published KeyPackage is
-            // retried; cheap pre-filter avoids work when there is nothing to do.
-            let _ = admit_sync_cursor();
-            let _ = admit_realm_live_epoch();
-            let _ = admit_pending();
-            let candidate_realms = {
-                let store = admit_state_store.read();
-                crate::views::realm_admin::mls_admission_candidate_realms_for_actor(&store, &actor)
-            };
-            if candidate_realms.is_empty() {
-                // Make a stuck admin observable: an encrypted Realm with an
-                // invitee waiting for a Welcome but the admin never admitting is
-                // exactly this branch. wasm tracing is capped at WARN, so INFO/
-                // DEBUG here would be invisible — emit a throttled WARN naming
-                // the blocking cause. (mls-admission-debug)
-                let Some(diag) = ({
-                    let store = admit_state_store.read();
-                    let encrypted_local_realms = store
-                        .load()
-                        .realm_tree_projections
-                        .keys()
-                        .filter(|realm_id| {
-                            realm_id.starts_with("ak:realm:")
-                                && store.realm_projection_is_mls_encrypted(realm_id)
-                        })
-                        .count();
-                    if encrypted_local_realms == 0 {
-                        None
-                    } else {
-                        let encrypted_snapshot_realms = store
-                            .mls_snapshots()
-                            .keys()
-                            .filter(|realm_id| {
-                                realm_id.starts_with("ak:realm:")
-                                    && store.realm_projection_is_mls_encrypted(realm_id)
-                            })
-                            .count();
-                        Some(format!(
-                            "candidate_realms=0 encrypted_local_realms={encrypted_local_realms} encrypted_snapshot_realms={encrypted_snapshot_realms}"
-                        ))
-                    }
-                }) else {
-                    return;
-                };
-                if admit_diag_last() != diag {
-                    admit_diag_last.set(diag.clone());
-                    tracing::warn!(
-                        target: "mls_admission",
-                        %diag,
-                        "admission pre-filter blocked: no joined non-self member is visible in any local encrypted Realm"
-                    );
-                }
-                return;
-            }
-            let candidate_diag = candidate_realms
-                .iter()
-                .map(|(realm_id, joined_sig)| format!("{realm_id}:joined=[{joined_sig}]"))
-                .collect::<Vec<_>>()
-                .join("|");
-            if admit_diag_last() != candidate_diag {
-                admit_diag_last.set(candidate_diag.clone());
-                tracing::warn!(
-                    target: "mls_admission",
-                    candidate_count = candidate_realms.len(),
-                    diag = %candidate_diag,
-                    "admission pre-filter passed: reconciling local encrypted Realm candidates"
-                );
-            }
-            // Read in-flight with `peek()` (NOT `()`) so this effect does not
-            // subscribe to the guard and self-spin on set(true)/set(false).
-            // If a real sync/realm-stream edge arrives while a reconcile is
-            // running, remember one pending rerun; completion flips that bit
-            // back to false and lets the subscribed effect run once more.
-            if *admit_in_flight.peek() {
-                // Write ONLY on a real false→true transition. This effect
-                // subscribes to `admit_pending` (see the `admit_pending()`
-                // read above), and a plain `set()` marks the signal dirty even
-                // when the value is unchanged — so an unconditional set() here
-                // would re-fire this very effect and spin the main thread
-                // (same class as the in_flight self-spin fixed earlier).
-                if !*admit_pending.peek() {
-                    admit_pending.set(true);
-                }
-                return;
-            }
-            // Same guard on the reset path: an unconditional `set(false)` runs
-            // on every non-in-flight pass and is the loop seed — it retriggers
-            // the subscribed effect with no external change. Only clear a flag
-            // that is actually set.
-            if *admit_pending.peek() {
-                admit_pending.set(false);
-            }
-            admit_in_flight.set(true);
-            spawn(async move {
-                let outcome =
-                    crate::transport::auth::with_authed_api(&base, session, |api| async move {
-                        let mut admitted_total = 0_usize;
-                        let mut failures = Vec::<String>::new();
-                        for (realm_id, _) in candidate_realms {
-                            match crate::views::realm_admin::reconcile_mls_admissions_for_realm(
-                                &api,
-                                admit_state_store,
-                                realm_id.clone(),
-                                actor.clone(),
-                                device.clone(),
-                            )
-                            .await
-                            {
-                                Ok(admitted) => admitted_total += admitted,
-                                Err(error) => failures
-                                    .push(format!("{}: {error:?}", short_protocol_id(&realm_id))),
-                            }
-                        }
-                        Ok::<_, anyhow::Error>((admitted_total, failures))
-                    })
-                    .await;
-                admit_in_flight.set(false);
-                if *admit_pending.peek() {
-                    admit_pending.set(false);
-                }
-                match outcome {
-                    Ok((admitted, failures)) if admitted > 0 => {
-                        tracing::warn!(
-                            target: "mls_admission",
-                            admitted,
-                            "admitted joined members into MLS group"
-                        );
-                        if !failures.is_empty() {
-                            tracing::warn!(
-                                target: "mls_admission",
-                                failures = %failures.join("; "),
-                                "MLS admission reconcile had per-Realm failures after admitting some members"
-                            );
-                            admit_last_error.set(Some(format!(
-                                "MLS admission reconcile: {}",
-                                failures.join("; ")
-                            )));
-                        }
-                    }
-                    Ok((_, failures)) if !failures.is_empty() => {
-                        tracing::warn!(
-                            target: "mls_admission",
-                            failures = %failures.join("; "),
-                            "MLS admission reconcile failed for all attempted Realm candidates"
-                        );
-                        admit_last_error.set(Some(format!(
-                            "MLS admission reconcile: {}",
-                            failures.join("; ")
-                        )));
-                    }
-                    Ok(_) => {}
-                    Err(error) => {
-                        tracing::warn!(
-                            target: "mls_admission",
-                            ?error,
-                            "MLS admission reconcile failed"
-                        );
-                        admit_last_error.set(Some(format!("MLS admission reconcile: {error:?}")));
-                    }
-                }
-            });
-        });
-    }
-    {
-        // History sharing (encryption-and-audit.md): drain the to-device inbox
-        // for this Realm, (a) installing every inbound `ak.realm_key.share`'s
-        // sealed `history_secret`s so pre-join content becomes decryptable
-        // (tier-3), and (b) — as a provider — answering every inbound
-        // `ak.realm_key.request` by sealing the retained history range back to
-        // the requester. Re-runs each sync round so a late share/request is
-        // picked up; a single-flight guard prevents overlap.
-        let share_route_uses_realm_context = route_uses_realm_context;
-        let share_context_realm_id = context_realm_id.clone();
-        let mut share_state_store = state_store;
-        let share_sync_cursor = sync_cursor;
-        let mut share_in_flight = realm_key_sharing_in_flight;
-        let mut share_request_dedup = realm_key_request_dedup;
-        let mut share_answer_backoff = realm_key_answer_backoff_until;
-        let secure_store_ready_for_share = secure_store_bootstrap_ready;
-        let share_did_cache = did_cache;
-        use_effect(move || {
-            if !secure_store_ready_for_share() {
-                return;
-            }
-            let active_realm_id = share_route_uses_realm_context
-                .then(|| {
-                    share_context_realm_id
-                        .clone()
-                        .unwrap_or_else(|| selected_realm_id())
-                })
-                .filter(|realm_id| !realm_id.trim().is_empty());
-            let description = server_description();
-            if !profile_ready(description.as_ref(), PROFILE_E2EE_CLIENT)
-                || !sync_bootstrap_complete()
-            {
-                return;
-            }
-            let base = base_url();
-            let session = token();
-            let actor = account_did();
-            let device = device_id();
-            if base.trim().is_empty()
-                || session.trim().is_empty()
-                || actor.trim().is_empty()
-                || device.trim().is_empty()
-            {
-                return;
-            }
-            // Re-fire on every sync round so a freshly delivered share/request is
-            // consumed.
-            let _ = share_sync_cursor();
-            // Cheap pre-filter: drain inbound realm-key envelopes globally by
-            // their own Realm binding. Provider response is a to-device duty,
-            // not a page-local action; the active Realm only matters for this
-            // device's receiver-initiated pull.
-            let (shares_by_realm, requests, pull_request_key) = {
-                let store = share_state_store.read();
-                let inbox = store.to_device_inbox();
-                let answer_backoff = share_answer_backoff.peek().clone();
-                let now_ms = crate::clock::now_unix_ms();
-                let mut shares_by_realm = BTreeMap::<String, Vec<serde_json::Value>>::new();
-                for message in &inbox {
-                    let kind = message
-                        .get("kind")
-                        .or_else(|| message.get("type"))
-                        .and_then(serde_json::Value::as_str)
-                        .unwrap_or_default();
-                    if kind != arkret_sdk::events::kinds::REALM_KEY_SHARE {
-                        continue;
-                    }
-                    if let Some(share_realm_id) =
-                        crate::mls::runtime::realm_key_share_message_realm_id(message)
-                    {
-                        shares_by_realm
-                            .entry(share_realm_id)
-                            .or_default()
-                            .push(message.clone());
-                    }
-                }
-                let requests: Vec<_> = inbox
-                    .iter()
-                    .filter_map(crate::views::realm_admin::parse_realm_key_request_envelope)
-                    .filter(|request| {
-                        request.payload.target_principal_id.as_str().trim() == actor.trim()
-                            && request.payload.target_source_ref.trim() == device.trim()
-                            && !answer_backoff.is_cooling(
-                                &crate::views::realm_admin::realm_key_request_answer_dedup_key(
-                                    request,
-                                ),
-                                now_ms,
-                            )
-                    })
-                    .collect();
-                let pull_request_key = active_realm_id.as_ref().and_then(|realm_id| {
-                    crate::views::realm_admin::pending_history_request_dedup_key(
-                        &store, realm_id, &actor,
-                    )
-                });
-                (shares_by_realm, requests, pull_request_key)
-            };
-            let needs_pull = pull_request_key
-                .as_deref()
-                .is_some_and(|key| share_request_dedup().as_deref() != Some(key));
-            if shares_by_realm.is_empty() && requests.is_empty() && !needs_pull {
-                return;
-            }
-            if share_in_flight() {
-                return;
-            }
-            share_in_flight.set(true);
-            // (b) Answer inbound requests (network).
-            spawn(async move {
-                // (a) Install inbound shares locally. SEC-02: before verifying
-                // each share's `sender_device_signature` we MUST resolve the
-                // sender device's authoritative directory key, so the
-                // synchronous verifier can fail-closed on a Miss (an
-                // unauthenticated empty signature is no longer tolerated). The
-                // resolution is a `keys/query` per missing sender device, primed
-                // here into the shared device-directory cache the verifier reads.
-                if !shares_by_realm.is_empty() {
-                    let sender_pairs: Vec<(String, String)> = shares_by_realm
-                        .values()
-                        .flat_map(|shares| shares.iter())
-                        .filter_map(crate::mls::runtime::realm_key_share_sender_device_pair)
-                        .collect();
-                    if !sender_pairs.is_empty() {
-                        let _ = crate::transport::auth::with_authed_api(
-                            &base,
-                            session.clone(),
-                            |api| async move {
-                                crate::sync_engine::prefetch_device_key_pairs(
-                                    &api,
-                                    sender_pairs,
-                                    runtime_adapter::value_cell(share_did_cache),
-                                )
-                                .await;
-                                Ok::<(), anyhow::Error>(())
-                            },
-                        )
-                        .await;
-                    }
-                    let secure_store = crate::secure_key_store::default_secure_key_store("inkson");
-                    let mut store = share_state_store.write();
-                    let mut installed_by_realm = BTreeMap::<String, usize>::new();
-                    let mut installed_share_ids = Vec::<String>::new();
-                    for (share_realm_id, shares) in &shares_by_realm {
-                        for share in shares {
-                            let count = crate::mls::runtime::ingest_realm_key_share(
-                                &mut store,
-                                secure_store.as_ref(),
-                                share_realm_id,
-                                &actor,
-                                &device,
-                                share,
-                            );
-                            if count > 0 {
-                                *installed_by_realm
-                                    .entry(share_realm_id.to_string())
-                                    .or_default() += count;
-                                if let Some(operation_id) =
-                                    crate::mls::runtime::realm_key_share_message_operation_id(share)
-                                {
-                                    installed_share_ids.push(operation_id);
-                                }
-                            }
-                        }
-                    }
-                    for operation_id in installed_share_ids {
-                        let _ = store.dismiss_realm_key_share_to_device_message(&operation_id);
-                    }
-                    for (share_realm_id, count) in installed_by_realm {
-                        tracing::info!(
-                            installed = count,
-                            realm = %short_protocol_id(&share_realm_id),
-                            "installed history_secret(s) from ak.realm_key.share"
-                        );
-                    }
-                }
-                for request_envelope in requests {
-                    let realm = request_envelope.realm_id.clone();
-                    let realm_for_log = realm.clone();
-                    let request_id = request_envelope.request_id.clone();
-                    let request_key = crate::views::realm_admin::realm_key_request_answer_dedup_key(
-                        &request_envelope,
-                    );
-                    let request = request_envelope.payload;
-                    let actor_c = actor.clone();
-                    let device_c = device.clone();
-                    let outcome = crate::transport::auth::with_authed_api(
-                        &base,
-                        session.clone(),
-                        |api| async move {
-                            crate::views::realm_admin::share_history_to_requester(
-                                &api,
-                                share_state_store,
-                                realm,
-                                actor_c,
-                                device_c,
-                                &request,
-                            )
-                            .await
-                        },
-                    )
-                    .await;
-                    match outcome {
-                        Ok(true) => {
-                            share_answer_backoff.write().clear_key(&request_key);
-                            if let Some(request_id) = request_id {
-                                let removed = share_state_store
-                                    .write()
-                                    .dismiss_realm_key_request_to_device_message(&request_id);
-                                if removed > 0 {
-                                    tracing::debug!(
-                                        request_id = %short_protocol_id(&request_id),
-                                        "dismissed answered ak.realm_key.request from local inbox"
-                                    );
-                                }
-                            }
-                        }
-                        Ok(false) => {
-                            let until_ms = crate::clock::now_unix_ms()
-                                .saturating_add(REALM_KEY_SHARE_ANSWER_RETRY_BACKOFF_MS);
-                            share_answer_backoff
-                                .write()
-                                .note_until(request_key, until_ms);
-                        }
-                        Err(error) => {
-                            let until_ms = crate::clock::now_unix_ms()
-                                .saturating_add(REALM_KEY_SHARE_ANSWER_RETRY_BACKOFF_MS);
-                            share_answer_backoff
-                                .write()
-                                .note_until(request_key, until_ms);
-                            tracing::warn!(
-                                realm = %short_protocol_id(&realm_for_log),
-                                ?error,
-                                "ak.realm_key.share answer failed; backing off request retry"
-                            );
-                        }
-                    }
-                }
-                // (c) Receiver-initiated pull: ask a joined provider device to
-                // seal the missing pre-join history range to this device. Guarded
-                // by `needs_pull` (dedup against the installed-secret signature) so
-                // we emit at most one request per distinct gap state.
-                if needs_pull && let Some(realm) = active_realm_id {
-                    let realm_for_log = realm.clone();
-                    let actor_c = actor.clone();
-                    let device_c = device.clone();
-                    let outcome = crate::transport::auth::with_authed_api(
-                        &base,
-                        session.clone(),
-                        |api| async move {
-                            crate::views::realm_admin::request_history_keys_for_realm(
-                                &api,
-                                share_state_store,
-                                realm,
-                                actor_c,
-                                device_c,
-                            )
-                            .await
-                        },
-                    )
-                    .await;
-                    match outcome {
-                        // Record the dedup key only after a request was actually
-                        // emitted. `pending_history_request_dedup_key` and the
-                        // async requester read state at different times; if the
-                        // second read observes a transiently incomplete inbox /
-                        // projection and returns `None`, deduping would suppress
-                        // the only retry path for late-join history.
-                        Ok(Some(_)) => {
-                            if let Some(key) = pull_request_key.clone() {
-                                share_request_dedup.set(Some(key));
-                            }
-                        }
-                        Ok(None) => {}
-                        Err(error) => {
-                            tracing::debug!(
-                                realm = %short_protocol_id(&realm_for_log),
-                                ?error,
-                                "history key request deferred (will retry on next sync)"
-                            );
-                        }
-                    }
-                }
-                share_in_flight.set(false);
-            });
-        });
-    }
-    {
-        let bootstrap_route_uses_realm_context = route_uses_realm_context;
-        let bootstrap_context_realm_id = context_realm_id.clone();
-        let mut seen_bootstrap_key = mls_welcome_bootstrap_key_seen;
-        let state_store_for_bootstrap = state_store;
-        let crypto_state_for_bootstrap = crypto_state;
-        let last_error_for_bootstrap = last_error;
-        let mut needs_mls_unlock_for_bootstrap = needs_mls_unlock;
-        let mut needs_mls_backup_for_bootstrap = needs_mls_backup;
-        let mut needs_mls_recovery_setup_for_bootstrap = needs_mls_recovery_setup;
-        let mut restore_payload_cache_for_bootstrap = mls_restore_payload_cache;
-        let secure_store_ready_for_bootstrap = secure_store_bootstrap_ready;
-        let account_recovery_configured_for_bootstrap = account_recovery_configured;
-        use_effect(move || {
-            if !secure_store_ready_for_bootstrap() {
-                return;
-            }
-            let selected = selected_realm_id();
-            if !bootstrap_route_uses_realm_context {
-                return;
-            }
-            let bootstrap_realm_id = bootstrap_context_realm_id
-                .clone()
-                .filter(|space| !space.trim().is_empty())
-                .unwrap_or(selected);
-            let base = base_url();
-            let session = token();
-            let actor = account_did();
-            let device = device_id();
-            let description = server_description();
-            let account_recovery_configured_value = account_recovery_configured_for_bootstrap();
-            let Some(bootstrap_key) = mls_welcome_bootstrap_key(
-                &base,
-                &session,
-                &actor,
-                &device,
-                &bootstrap_realm_id,
-                profile_ready(description.as_ref(), PROFILE_E2EE_CLIENT),
-                sync_bootstrap_complete(),
-            ) else {
-                return;
-            };
-            // BUG X4: the per-Realm bootstrap caches its `seen` key, so after
-            // the user's first encrypted write *creates* the account MLS
-            // secret (and this Realm's MLS snapshot) the detection would
-            // never re-run and the backup prompt would never appear. Read a
-            // `state_store` signal in the synchronous body (`has_local_mls_snapshot`)
-            // so Dioxus re-fires this effect when the write saves the snapshot,
-            // and fold both the local account-secret presence (`sec=`) and the
-            // snapshot presence (`snap=`) into the key so the `seen` guard no
-            // longer matches once they flip false→true. The matching local
-            // Welcome hint is also folded in so a sync-delivered pending
-            // Welcome retriggers the drain after an earlier empty probe.
-            let state_for_bootstrap_key = state_store_for_bootstrap.read();
-            let has_local_mls_snapshot = state_for_bootstrap_key
-                .mls_snapshot_for(&bootstrap_realm_id)
-                .is_some();
-            let has_encrypted_realm_projection =
-                state_for_bootstrap_key.realm_projection_is_mls_encrypted(&bootstrap_realm_id);
-            let local_mls_epoch_floor = crate::mls::runtime::mls_restore_epoch_floor(
-                &state_for_bootstrap_key,
-                &bootstrap_realm_id,
-            );
-            let recovery_key_fingerprint = crate::views::recovery::local_recovery_key_fingerprint(
-                &state_for_bootstrap_key,
-                &actor,
-            )
-            .unwrap_or_default();
-            let local_pending_welcome_hint = crate::mls::runtime::local_mls_welcome_hint_for_realm(
-                &state_for_bootstrap_key.to_device_inbox(),
-                &bootstrap_realm_id,
-            );
-            drop(state_for_bootstrap_key);
-            let has_local_account_secret = crate::mls::runtime::load_account_mls_secret(
-                crate::secure_key_store::default_secure_key_store("inkson").as_ref(),
-                &actor,
-            )
-            .map(|secret| secret.is_some())
-            .unwrap_or(false);
-            let bootstrap_key = format!(
-                "{bootstrap_key}|sec={has_local_account_secret}|snap={has_local_mls_snapshot}|enc={has_encrypted_realm_projection}|epoch={local_mls_epoch_floor}|rk={recovery_key_fingerprint}|welcome={local_pending_welcome_hint}|recovery={account_recovery_configured_value:?}"
-            );
-            if seen_bootstrap_key().as_deref() == Some(bootstrap_key.as_str()) {
-                return;
-            }
-            seen_bootstrap_key.set(Some(bootstrap_key.clone()));
-            let seen_bootstrap_key_for_probe = seen_bootstrap_key;
-
-            let state_store_task = state_store_for_bootstrap;
-            let mut crypto_state_task = crypto_state_for_bootstrap;
-            let mut last_error_task = last_error_for_bootstrap;
-            let realm_label = short_protocol_id(&bootstrap_realm_id);
-            // Detection-step clones: the originals are moved into the Welcome
-            // bootstrap call below; we reuse these for the account-secret
-            // unlock probe afterwards.
-            let detect_base = base.clone();
-            let detect_session = session.clone();
-            let detect_actor = actor.clone();
-            let detect_device = device.clone();
-            let mut state_store_for_probe = state_store_for_bootstrap;
-            spawn(async move {
-                match bootstrap_mls_welcome_for_realm(
-                    base,
-                    session,
-                    actor,
-                    device,
-                    bootstrap_realm_id,
-                    state_store_task,
-                    needs_mls_backup_for_bootstrap,
-                )
-                .await
-                {
-                    Ok(outcome) if outcome.applied > 0 => {
-                        let backup_label = outcome
-                            .backup_id
-                            .as_deref()
-                            .map(short_protocol_id)
-                            .unwrap_or_else(|| "not uploaded".to_owned());
-                        crypto_state_task.set(format!(
-                            "MLS Welcome applied for {realm_label}: {} group(s); history backup {backup_label}",
-                            outcome.applied
-                        ));
-                    }
-                    Ok(_) => {}
-                    Err(error) => {
-                        last_error_task.set(Some(format!("MLS Welcome bootstrap: {error}")));
-                    }
-                }
-
-                // Step-3 detection: if this device has no local account MLS
-                // secret yet OR local MLS history is missing/stale, and the
-                // server holds recovery material, flag the unlock prompt.
-                // Detection errors must NOT block or fail boot — log and
-                // leave the flag false.
-                let has_local_account_secret = crate::mls::runtime::load_account_mls_secret(
-                    crate::secure_key_store::default_secure_key_store("inkson").as_ref(),
-                    &detect_actor,
-                )
-                .map(|secret| secret.is_some())
-                .unwrap_or(false);
-                let actor_for_sidecar_restore = detect_actor.clone();
-                let device_for_sidecar_restore = detect_device.clone();
-                match crate::transport::auth::with_authed_api(
-                    &detect_base,
-                    detect_session.clone(),
-                    |api| async move {
-                        let payload =
-                            crate::mls::account_recovery::fetch_mls_restore_payload(&api).await?;
-                        let sidecar_body_for_local_restore = if has_local_account_secret {
-                            crate::mls::account_recovery::fetch_mls_private_plaintext_backup_body(
-                                &api,
-                                &actor_for_sidecar_restore,
-                                &device_for_sidecar_restore,
-                            )
-                            .await
-                            .ok()
-                            .flatten()
-                        } else {
-                            None
-                        };
-                        Ok((payload, sidecar_body_for_local_restore))
-                    },
-                )
-                .await
-                {
-                    Ok((payload, sidecar_body_for_local_restore)) => {
-                        if seen_bootstrap_key_for_probe().as_deref() != Some(bootstrap_key.as_str())
-                        {
-                            return;
-                        }
-                        let secure_store =
-                            crate::secure_key_store::default_secure_key_store("inkson");
-                        let configured_backup_id =
-                            crate::mls::account_recovery::select_preferred_mls_account_secret_backup(
-                                &payload,
-                            )
-                            .and_then(|backup| {
-                                backup
-                                    .get("backup_id")
-                                    .and_then(serde_json::Value::as_str)
-                                    .map(str::to_owned)
-                            });
-                        {
-                            let mut store = state_store_for_probe.write();
-                            if let Some(backup_id) = configured_backup_id.as_deref() {
-                                crate::components::mark_mls_recovery_backup_configured(
-                                    &mut store,
-                                    &detect_actor,
-                                    backup_id,
-                                );
-                            }
-                            let report = crate::mls::account_recovery::restore_mls_history_with_local_secret_from_payload(
-                                &payload,
-                                &mut store,
-                                secure_store.as_ref(),
-                                &detect_actor,
-                                &detect_device,
-                            );
-                            if report.failed > 0 {
-                                tracing::warn!(
-                                    failed = report.failed,
-                                    restored = report.restored,
-                                    first_error = ?report.first_error,
-                                    "mls history restore from local secret failed"
-                                );
-                            }
-                            if let Some(sidecar_body) = sidecar_body_for_local_restore.as_ref() {
-                                let sidecar_payload =
-                                    serde_json::json!({ "backups": [sidecar_body.clone()] });
-                                let report = crate::mls::account_recovery::restore_mls_history_with_local_secret_from_payload(
-                                    &sidecar_payload,
-                                    &mut store,
-                                    secure_store.as_ref(),
-                                    &detect_actor,
-                                    &detect_device,
-                                );
-                                if report.failed > 0 {
-                                    tracing::warn!(
-                                        failed = report.failed,
-                                        restored = report.restored,
-                                        first_error = ?report.first_error,
-                                        "mls sidecar restore from local secret failed"
-                                    );
-                                }
-                            }
-                        }
-                        let should_unlock = {
-                            let store = state_store_for_probe.read();
-                            crate::mls::account_recovery::mls_restore_prompt_required(
-                                &payload,
-                                &store,
-                                secure_store.as_ref(),
-                                &detect_actor,
-                                &detect_device,
-                            )
-                        };
-                        // Mutual exclusion (task X3): restore (unlock) wins.
-                        // Otherwise, if the user just created an encrypted
-                        // realm (local secret now exists) but has no server
-                        // backup, flag the one-time backup prompt instead.
-                        if should_unlock {
-                            restore_payload_cache_for_bootstrap.set(Some(payload.clone()));
-                            needs_mls_unlock_for_bootstrap.set(true);
-                            needs_mls_backup_for_bootstrap.set(false);
-                            needs_mls_recovery_setup_for_bootstrap.set(false);
-                        } else if needs_mls_unlock_for_bootstrap() {
-                            // Keep an already-rendered unlock modal stable when
-                            // the boot-time and per-Realm probes resolve out of
-                            // order with different payload freshness.
-                            needs_mls_backup_for_bootstrap.set(false);
-                            needs_mls_recovery_setup_for_bootstrap.set(false);
-                        } else {
-                            let should_backup =
-                                crate::mls::account_recovery::mls_backup_prompt_required(
-                                    &payload,
-                                    secure_store.as_ref(),
-                                    &detect_actor,
-                                    &detect_device,
-                                );
-                            if should_backup {
-                                crate::components::maybe_auto_backup_mls_after_encrypted_write(
-                                    detect_base.clone(),
-                                    detect_session.clone(),
-                                    detect_actor.clone(),
-                                    detect_device.clone(),
-                                    state_store_for_probe,
-                                    needs_mls_backup_for_bootstrap,
-                                )
-                                .await;
-                            } else {
-                                needs_mls_backup_for_bootstrap.set(false);
-                            }
-                            let should_recovery_setup = {
-                                let store = state_store_for_probe.read();
-                                mls_recovery_setup_missing(
-                                    &payload,
-                                    &store,
-                                    secure_store.as_ref(),
-                                    &detect_actor,
-                                    account_recovery_configured_value,
-                                )
-                            };
-                            needs_mls_recovery_setup_for_bootstrap
-                                .set(!should_backup && should_recovery_setup);
-                        }
-                    }
-                    Err(error) => {
-                        tracing::warn!(
-                            error = %error.display(),
-                            "MLS account-secret unlock detection failed"
-                        );
-                    }
-                }
-            });
-        });
-    }
     let resolved_realm_surface = resolve_realm_surface(
         &route,
         &state_store.read(),
@@ -3027,6 +1068,40 @@ fn AppBootstrap() -> Element {
             is_server_admin,
             theme,
             system_theme_is_night,
+            ConnectionEffects {
+                state: ConnectionEffectState {
+                    connection_status,
+                    sync_cursor,
+                    token,
+                    account_did,
+                    device_id,
+                    selected_realm_id,
+                    realm_tree_nodes,
+                    projection_events,
+                    device_queue,
+                    frontier_state,
+                    crypto_state,
+                    config_store,
+                    network_state,
+                    last_error,
+                    server_description,
+                    server_probe_status,
+                    account_primary_handle,
+                    personal_handles,
+                    personal_handles_status,
+                    theme,
+                    sync_generation,
+                    needs_device_authorization,
+                    device_authorization_check_complete,
+                    account_has_other_devices,
+                    sync_bootstrap_complete,
+                    session_boot_state,
+                    secure_store_bootstrap_ready,
+                    session_generation,
+                    did_resolution_health,
+                    bootstrap_pending,
+                }
+            }
             AccountRecoveryEffects {
                 account_recovery_configured,
                 account_recovery_detection_key_seen,
@@ -3035,6 +1110,94 @@ fn AppBootstrap() -> Element {
                 account_did,
                 sync_generation,
                 session_boot_state,
+            }
+            MlsRecoveryEffects {
+                state: MlsRecoveryEffectState {
+                    mls_unlock_detection_key_seen,
+                    needs_mls_unlock,
+                    needs_mls_backup,
+                    needs_mls_recovery_setup,
+                    mls_restore_payload_cache,
+                    secure_store_bootstrap_ready,
+                    account_recovery_configured,
+                    token,
+                    account_did,
+                    device_id,
+                    sync_generation,
+                    session_boot_state,
+                }
+            }
+            RecoveryReminderEffects {
+                state: RecoveryReminderEffectState {
+                    recovery_key_setup_prompt,
+                    recovery_auto_prompt_fired,
+                    token,
+                    account_did,
+                    sync_bootstrap_complete,
+                    device_authorization_check_complete,
+                    account_recovery_configured,
+                    needs_device_authorization,
+                    needs_mls_unlock,
+                    needs_mls_backup,
+                    needs_mls_recovery_setup,
+                    account_has_other_devices,
+                }
+            }
+            MlsRuntimeEffects {
+                state: MlsRuntimeEffectState {
+                    route_uses_realm_context,
+                    context_realm_id: context_realm_id.clone(),
+                    mls_key_package_publish_key_seen,
+                    secure_store_bootstrap_ready,
+                    device_authorization_check_complete,
+                    needs_device_authorization,
+                    token,
+                    account_did,
+                    device_id,
+                    server_description,
+                    sync_bootstrap_complete,
+                    sync_cursor,
+                    realm_live_epoch,
+                    mls_admission_reconcile_in_flight,
+                    mls_admission_reconcile_pending,
+                    last_error,
+                    mls_admission_diag_last,
+                    realm_events_route_enabled,
+                    selected_realm_id,
+                    realm_key_sharing_in_flight,
+                    realm_key_request_dedup,
+                    realm_key_answer_backoff_until,
+                    mls_welcome_bootstrap_key_seen,
+                    crypto_state,
+                    needs_mls_unlock,
+                    needs_mls_backup,
+                    needs_mls_recovery_setup,
+                    mls_restore_payload_cache,
+                    account_recovery_configured,
+                }
+            }
+            ShellEffects {
+                state: ShellEffectState {
+                    account_primary_handle,
+                    account_did,
+                    token,
+                    server_description,
+                    personal_handles,
+                    personal_handles_status,
+                    personal_handles_lookup_key,
+                    contact_handles_lookup_key,
+                    contact_handles_fetching,
+                    direct_contact_rows,
+                }
+            }
+            SecureStoreEffects {
+                state: SecureStoreEffectState {
+                    config_store,
+                    account_did,
+                    device_id,
+                    secure_store_bootstrap_ready,
+                    token,
+                }
             }
             SyncEffects {
                 sync_generation,

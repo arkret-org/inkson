@@ -1,0 +1,921 @@
+use super::*;
+
+#[derive(Clone, PartialEq)]
+pub(super) struct MlsRuntimeEffectState {
+    pub route_uses_realm_context: bool,
+    pub context_realm_id: Option<String>,
+    pub mls_key_package_publish_key_seen: Signal<Option<String>>,
+    pub secure_store_bootstrap_ready: Signal<bool>,
+    pub device_authorization_check_complete: Signal<bool>,
+    pub needs_device_authorization: Signal<bool>,
+    pub token: Signal<String>,
+    pub account_did: Signal<String>,
+    pub device_id: Signal<String>,
+    pub server_description: Signal<Option<ServerDescription>>,
+    pub sync_bootstrap_complete: Signal<bool>,
+    pub sync_cursor: Signal<String>,
+    pub realm_live_epoch: Signal<u64>,
+    pub mls_admission_reconcile_in_flight: Signal<bool>,
+    pub mls_admission_reconcile_pending: Signal<bool>,
+    pub last_error: Signal<Option<String>>,
+    pub mls_admission_diag_last: Signal<String>,
+    pub realm_events_route_enabled: Signal<bool>,
+    pub selected_realm_id: Signal<String>,
+    pub realm_key_sharing_in_flight: Signal<bool>,
+    pub realm_key_request_dedup: Signal<Option<String>>,
+    pub realm_key_answer_backoff_until: Signal<crate::keyed_cooldown::KeyedCooldown>,
+    pub mls_welcome_bootstrap_key_seen: Signal<Option<String>>,
+    pub crypto_state: Signal<String>,
+    pub needs_mls_unlock: Signal<bool>,
+    pub needs_mls_backup: Signal<bool>,
+    pub needs_mls_recovery_setup: Signal<bool>,
+    pub mls_restore_payload_cache: Signal<Option<Value>>,
+    pub account_recovery_configured: Signal<Option<bool>>,
+}
+
+#[component]
+pub(super) fn MlsRuntimeEffects(state: MlsRuntimeEffectState) -> Element {
+    let MlsRuntimeEffectState {
+        route_uses_realm_context,
+        context_realm_id,
+        mls_key_package_publish_key_seen,
+        secure_store_bootstrap_ready,
+        device_authorization_check_complete,
+        needs_device_authorization,
+        token,
+        account_did,
+        device_id,
+        server_description,
+        sync_bootstrap_complete,
+        sync_cursor,
+        realm_live_epoch,
+        mls_admission_reconcile_in_flight,
+        mls_admission_reconcile_pending,
+        last_error,
+        mls_admission_diag_last,
+        realm_events_route_enabled,
+        selected_realm_id,
+        realm_key_sharing_in_flight,
+        realm_key_request_dedup,
+        realm_key_answer_backoff_until,
+        mls_welcome_bootstrap_key_seen,
+        crypto_state,
+        needs_mls_unlock,
+        needs_mls_backup,
+        needs_mls_recovery_setup,
+        mls_restore_payload_cache,
+        account_recovery_configured,
+    } = state;
+    let SessionContext {
+        state_store,
+        base_url,
+    } = SessionContext::get();
+    let did_cache = use_context::<Signal<crate::identity::did_resolver::DidResolutionCache>>();
+
+    {
+        let mut seen_publish_key = mls_key_package_publish_key_seen;
+        let secure_store_ready_for_publish = secure_store_bootstrap_ready;
+        use_effect(move || {
+            if !secure_store_ready_for_publish() {
+                return;
+            }
+            if crate::event_signer::active_signer().is_none() {
+                return;
+            }
+            // Gate on device authorization. Publishing a KeyPackage requires an
+            // ACCEPTED `ak.device.authorize` — soland rejects the upload with
+            // `claim_generation_mismatch` ("accepted device authorization is
+            // required") otherwise. The device-authorization check + auto-enroll
+            // (app/connect.rs) runs CONCURRENTLY with this publish effect; without
+            // this gate the upload can lose the race, fail, and — because the
+            // publish is deduped on `seen_publish_key` (set before the spawn) — it
+            // is NEVER retried, so the device stays KeyPackage-less and every
+            // invite of it dies at admission with `mls_keypackage_not_found`.
+            // Reading both signals subscribes this effect, so it re-fires and
+            // publishes once the device becomes authorized.
+            if !device_authorization_check_complete() || needs_device_authorization() {
+                return;
+            }
+            let base = base_url();
+            let session = token();
+            let actor = account_did();
+            let device = device_id();
+            let description = server_description();
+            let Some(publish_key) = mls_key_package_publish_key(
+                &base,
+                &session,
+                &actor,
+                &device,
+                profile_ready(description.as_ref(), PROFILE_E2EE_CLIENT),
+                sync_bootstrap_complete(),
+            ) else {
+                return;
+            };
+            let publish_hint = local_mls_key_package_publish_hint(&base, &actor, &device);
+            let publish_key = format!("{publish_key}|kp={publish_hint}");
+            if seen_publish_key().as_deref() == Some(publish_key.as_str()) {
+                return;
+            }
+            seen_publish_key.set(Some(publish_key));
+            spawn(async move {
+                match ensure_local_mls_key_package_published(base, session, actor, device).await {
+                    Ok(Some(key_package_id)) => {
+                        tracing::debug!(
+                            key_package_id = %short_protocol_id(&key_package_id),
+                            "local MLS KeyPackage is published"
+                        );
+                    }
+                    Ok(None) => {}
+                    Err(error) => {
+                        tracing::warn!(%error, "MLS KeyPackage publish bootstrap failed");
+                    }
+                }
+            });
+        });
+    }
+    {
+        // Admin-side MLS admission reconciliation — the producer counterpart of
+        // the invitee Welcome bootstrap below. When a member actually joins an
+        // encrypted Realm this device administers, (re)admit anyone not yet in
+        // the MLS group so their `ak.mls.welcome` is finally produced. Closes
+        // the invite-time race where admission ran before the invitee had
+        // published a KeyPackage: re-runs each sync round (via `sync_cursor`)
+        // so a member who publishes their KeyPackage after joining is picked up.
+        // Also observes `realm_live_epoch`, because join/accept events may
+        // arrive through the per-Realm stream without advancing account sync.
+        let admit_state_store = state_store;
+        let admit_sync_cursor = sync_cursor;
+        let admit_realm_live_epoch = realm_live_epoch;
+        let mut admit_in_flight = mls_admission_reconcile_in_flight;
+        let mut admit_pending = mls_admission_reconcile_pending;
+        let mut admit_last_error = last_error;
+        let mut admit_diag_last = mls_admission_diag_last;
+        let secure_store_ready_for_admit = secure_store_bootstrap_ready;
+        let admit_route_enabled = realm_events_route_enabled;
+        use_effect(move || {
+            if !secure_store_ready_for_admit() {
+                return;
+            }
+            if !admit_route_enabled() {
+                return;
+            }
+            let description = server_description();
+            if !profile_ready(description.as_ref(), PROFILE_E2EE_CLIENT)
+                || !sync_bootstrap_complete()
+            {
+                return;
+            }
+            let base = base_url();
+            let session = token();
+            let actor = account_did();
+            let device = device_id();
+            if base.trim().is_empty() || session.trim().is_empty() || actor.trim().is_empty() {
+                return;
+            }
+            // Re-fire on every sync round so a late-published KeyPackage is
+            // retried; cheap pre-filter avoids work when there is nothing to do.
+            let _ = admit_sync_cursor();
+            let _ = admit_realm_live_epoch();
+            let _ = admit_pending();
+            let candidate_realms = {
+                let store = admit_state_store.read();
+                crate::views::realm_admin::mls_admission_candidate_realms_for_actor(&store, &actor)
+            };
+            if candidate_realms.is_empty() {
+                // Make a stuck admin observable: an encrypted Realm with an
+                // invitee waiting for a Welcome but the admin never admitting is
+                // exactly this branch. wasm tracing is capped at WARN, so INFO/
+                // DEBUG here would be invisible — emit a throttled WARN naming
+                // the blocking cause. (mls-admission-debug)
+                let Some(diag) = ({
+                    let store = admit_state_store.read();
+                    let encrypted_local_realms = store
+                        .load()
+                        .realm_tree_projections
+                        .keys()
+                        .filter(|realm_id| {
+                            realm_id.starts_with("ak:realm:")
+                                && store.realm_projection_is_mls_encrypted(realm_id)
+                        })
+                        .count();
+                    if encrypted_local_realms == 0 {
+                        None
+                    } else {
+                        let encrypted_snapshot_realms = store
+                            .mls_snapshots()
+                            .keys()
+                            .filter(|realm_id| {
+                                realm_id.starts_with("ak:realm:")
+                                    && store.realm_projection_is_mls_encrypted(realm_id)
+                            })
+                            .count();
+                        Some(format!(
+                            "candidate_realms=0 encrypted_local_realms={encrypted_local_realms} encrypted_snapshot_realms={encrypted_snapshot_realms}"
+                        ))
+                    }
+                }) else {
+                    return;
+                };
+                if admit_diag_last() != diag {
+                    admit_diag_last.set(diag.clone());
+                    tracing::warn!(
+                        target: "mls_admission",
+                        %diag,
+                        "admission pre-filter blocked: no joined non-self member is visible in any local encrypted Realm"
+                    );
+                }
+                return;
+            }
+            let candidate_diag = candidate_realms
+                .iter()
+                .map(|(realm_id, joined_sig)| format!("{realm_id}:joined=[{joined_sig}]"))
+                .collect::<Vec<_>>()
+                .join("|");
+            if admit_diag_last() != candidate_diag {
+                admit_diag_last.set(candidate_diag.clone());
+                tracing::warn!(
+                    target: "mls_admission",
+                    candidate_count = candidate_realms.len(),
+                    diag = %candidate_diag,
+                    "admission pre-filter passed: reconciling local encrypted Realm candidates"
+                );
+            }
+            // Read in-flight with `peek()` (NOT `()`) so this effect does not
+            // subscribe to the guard and self-spin on set(true)/set(false).
+            // If a real sync/realm-stream edge arrives while a reconcile is
+            // running, remember one pending rerun; completion flips that bit
+            // back to false and lets the subscribed effect run once more.
+            if *admit_in_flight.peek() {
+                // Write ONLY on a real false→true transition. This effect
+                // subscribes to `admit_pending` (see the `admit_pending()`
+                // read above), and a plain `set()` marks the signal dirty even
+                // when the value is unchanged — so an unconditional set() here
+                // would re-fire this very effect and spin the main thread
+                // (same class as the in_flight self-spin fixed earlier).
+                if !*admit_pending.peek() {
+                    admit_pending.set(true);
+                }
+                return;
+            }
+            // Same guard on the reset path: an unconditional `set(false)` runs
+            // on every non-in-flight pass and is the loop seed — it retriggers
+            // the subscribed effect with no external change. Only clear a flag
+            // that is actually set.
+            if *admit_pending.peek() {
+                admit_pending.set(false);
+            }
+            admit_in_flight.set(true);
+            spawn(async move {
+                let outcome =
+                    crate::transport::auth::with_authed_api(&base, session, |api| async move {
+                        let mut admitted_total = 0_usize;
+                        let mut failures = Vec::<String>::new();
+                        for (realm_id, _) in candidate_realms {
+                            match crate::views::realm_admin::reconcile_mls_admissions_for_realm(
+                                &api,
+                                admit_state_store,
+                                realm_id.clone(),
+                                actor.clone(),
+                                device.clone(),
+                            )
+                            .await
+                            {
+                                Ok(admitted) => admitted_total += admitted,
+                                Err(error) => failures
+                                    .push(format!("{}: {error:?}", short_protocol_id(&realm_id))),
+                            }
+                        }
+                        Ok::<_, anyhow::Error>((admitted_total, failures))
+                    })
+                    .await;
+                admit_in_flight.set(false);
+                if *admit_pending.peek() {
+                    admit_pending.set(false);
+                }
+                match outcome {
+                    Ok((admitted, failures)) if admitted > 0 => {
+                        tracing::warn!(
+                            target: "mls_admission",
+                            admitted,
+                            "admitted joined members into MLS group"
+                        );
+                        if !failures.is_empty() {
+                            tracing::warn!(
+                                target: "mls_admission",
+                                failures = %failures.join("; "),
+                                "MLS admission reconcile had per-Realm failures after admitting some members"
+                            );
+                            admit_last_error.set(Some(format!(
+                                "MLS admission reconcile: {}",
+                                failures.join("; ")
+                            )));
+                        }
+                    }
+                    Ok((_, failures)) if !failures.is_empty() => {
+                        tracing::warn!(
+                            target: "mls_admission",
+                            failures = %failures.join("; "),
+                            "MLS admission reconcile failed for all attempted Realm candidates"
+                        );
+                        admit_last_error.set(Some(format!(
+                            "MLS admission reconcile: {}",
+                            failures.join("; ")
+                        )));
+                    }
+                    Ok(_) => {}
+                    Err(error) => {
+                        tracing::warn!(
+                            target: "mls_admission",
+                            ?error,
+                            "MLS admission reconcile failed"
+                        );
+                        admit_last_error.set(Some(format!("MLS admission reconcile: {error:?}")));
+                    }
+                }
+            });
+        });
+    }
+    {
+        // History sharing (encryption-and-audit.md): drain the to-device inbox
+        // for this Realm, (a) installing every inbound `ak.realm_key.share`'s
+        // sealed `history_secret`s so pre-join content becomes decryptable
+        // (tier-3), and (b) — as a provider — answering every inbound
+        // `ak.realm_key.request` by sealing the retained history range back to
+        // the requester. Re-runs each sync round so a late share/request is
+        // picked up; a single-flight guard prevents overlap.
+        let share_route_uses_realm_context = route_uses_realm_context;
+        let share_context_realm_id = context_realm_id.clone();
+        let mut share_state_store = state_store;
+        let share_sync_cursor = sync_cursor;
+        let mut share_in_flight = realm_key_sharing_in_flight;
+        let mut share_request_dedup = realm_key_request_dedup;
+        let mut share_answer_backoff = realm_key_answer_backoff_until;
+        let secure_store_ready_for_share = secure_store_bootstrap_ready;
+        let share_did_cache = did_cache;
+        use_effect(move || {
+            if !secure_store_ready_for_share() {
+                return;
+            }
+            let active_realm_id = share_route_uses_realm_context
+                .then(|| {
+                    share_context_realm_id
+                        .clone()
+                        .unwrap_or_else(|| selected_realm_id())
+                })
+                .filter(|realm_id| !realm_id.trim().is_empty());
+            let description = server_description();
+            if !profile_ready(description.as_ref(), PROFILE_E2EE_CLIENT)
+                || !sync_bootstrap_complete()
+            {
+                return;
+            }
+            let base = base_url();
+            let session = token();
+            let actor = account_did();
+            let device = device_id();
+            if base.trim().is_empty()
+                || session.trim().is_empty()
+                || actor.trim().is_empty()
+                || device.trim().is_empty()
+            {
+                return;
+            }
+            // Re-fire on every sync round so a freshly delivered share/request is
+            // consumed.
+            let _ = share_sync_cursor();
+            // Cheap pre-filter: drain inbound realm-key envelopes globally by
+            // their own Realm binding. Provider response is a to-device duty,
+            // not a page-local action; the active Realm only matters for this
+            // device's receiver-initiated pull.
+            let (shares_by_realm, requests, pull_request_key) = {
+                let store = share_state_store.read();
+                let inbox = store.to_device_inbox();
+                let answer_backoff = share_answer_backoff.peek().clone();
+                let now_ms = crate::clock::now_unix_ms();
+                let mut shares_by_realm = BTreeMap::<String, Vec<serde_json::Value>>::new();
+                for message in &inbox {
+                    let kind = message
+                        .get("kind")
+                        .or_else(|| message.get("type"))
+                        .and_then(serde_json::Value::as_str)
+                        .unwrap_or_default();
+                    if kind != arkret_sdk::events::kinds::REALM_KEY_SHARE {
+                        continue;
+                    }
+                    if let Some(share_realm_id) =
+                        crate::mls::runtime::realm_key_share_message_realm_id(message)
+                    {
+                        shares_by_realm
+                            .entry(share_realm_id)
+                            .or_default()
+                            .push(message.clone());
+                    }
+                }
+                let requests: Vec<_> = inbox
+                    .iter()
+                    .filter_map(crate::views::realm_admin::parse_realm_key_request_envelope)
+                    .filter(|request| {
+                        request.payload.target_principal_id.as_str().trim() == actor.trim()
+                            && request.payload.target_source_ref.trim() == device.trim()
+                            && !answer_backoff.is_cooling(
+                                &crate::views::realm_admin::realm_key_request_answer_dedup_key(
+                                    request,
+                                ),
+                                now_ms,
+                            )
+                    })
+                    .collect();
+                let pull_request_key = active_realm_id.as_ref().and_then(|realm_id| {
+                    crate::views::realm_admin::pending_history_request_dedup_key(
+                        &store, realm_id, &actor,
+                    )
+                });
+                (shares_by_realm, requests, pull_request_key)
+            };
+            let needs_pull = pull_request_key
+                .as_deref()
+                .is_some_and(|key| share_request_dedup().as_deref() != Some(key));
+            if shares_by_realm.is_empty() && requests.is_empty() && !needs_pull {
+                return;
+            }
+            if share_in_flight() {
+                return;
+            }
+            share_in_flight.set(true);
+            // (b) Answer inbound requests (network).
+            spawn(async move {
+                // (a) Install inbound shares locally. SEC-02: before verifying
+                // each share's `sender_device_signature` we MUST resolve the
+                // sender device's authoritative directory key, so the
+                // synchronous verifier can fail-closed on a Miss (an
+                // unauthenticated empty signature is no longer tolerated). The
+                // resolution is a `keys/query` per missing sender device, primed
+                // here into the shared device-directory cache the verifier reads.
+                if !shares_by_realm.is_empty() {
+                    let sender_pairs: Vec<(String, String)> = shares_by_realm
+                        .values()
+                        .flat_map(|shares| shares.iter())
+                        .filter_map(crate::mls::runtime::realm_key_share_sender_device_pair)
+                        .collect();
+                    if !sender_pairs.is_empty() {
+                        let _ = crate::transport::auth::with_authed_api(
+                            &base,
+                            session.clone(),
+                            |api| async move {
+                                crate::sync_engine::prefetch_device_key_pairs(
+                                    &api,
+                                    sender_pairs,
+                                    runtime_adapter::value_cell(share_did_cache),
+                                )
+                                .await;
+                                Ok::<(), anyhow::Error>(())
+                            },
+                        )
+                        .await;
+                    }
+                    let secure_store = crate::secure_key_store::default_secure_key_store("inkson");
+                    let mut store = share_state_store.write();
+                    let mut installed_by_realm = BTreeMap::<String, usize>::new();
+                    let mut installed_share_ids = Vec::<String>::new();
+                    for (share_realm_id, shares) in &shares_by_realm {
+                        for share in shares {
+                            let count = crate::mls::runtime::ingest_realm_key_share(
+                                &mut store,
+                                secure_store.as_ref(),
+                                share_realm_id,
+                                &actor,
+                                &device,
+                                share,
+                            );
+                            if count > 0 {
+                                *installed_by_realm
+                                    .entry(share_realm_id.to_string())
+                                    .or_default() += count;
+                                if let Some(operation_id) =
+                                    crate::mls::runtime::realm_key_share_message_operation_id(share)
+                                {
+                                    installed_share_ids.push(operation_id);
+                                }
+                            }
+                        }
+                    }
+                    for operation_id in installed_share_ids {
+                        let _ = store.dismiss_realm_key_share_to_device_message(&operation_id);
+                    }
+                    for (share_realm_id, count) in installed_by_realm {
+                        tracing::info!(
+                            installed = count,
+                            realm = %short_protocol_id(&share_realm_id),
+                            "installed history_secret(s) from ak.realm_key.share"
+                        );
+                    }
+                }
+                for request_envelope in requests {
+                    let realm = request_envelope.realm_id.clone();
+                    let realm_for_log = realm.clone();
+                    let request_id = request_envelope.request_id.clone();
+                    let request_key = crate::views::realm_admin::realm_key_request_answer_dedup_key(
+                        &request_envelope,
+                    );
+                    let request = request_envelope.payload;
+                    let actor_c = actor.clone();
+                    let device_c = device.clone();
+                    let outcome = crate::transport::auth::with_authed_api(
+                        &base,
+                        session.clone(),
+                        |api| async move {
+                            crate::views::realm_admin::share_history_to_requester(
+                                &api,
+                                share_state_store,
+                                realm,
+                                actor_c,
+                                device_c,
+                                &request,
+                            )
+                            .await
+                        },
+                    )
+                    .await;
+                    match outcome {
+                        Ok(true) => {
+                            share_answer_backoff.write().clear_key(&request_key);
+                            if let Some(request_id) = request_id {
+                                let removed = share_state_store
+                                    .write()
+                                    .dismiss_realm_key_request_to_device_message(&request_id);
+                                if removed > 0 {
+                                    tracing::debug!(
+                                        request_id = %short_protocol_id(&request_id),
+                                        "dismissed answered ak.realm_key.request from local inbox"
+                                    );
+                                }
+                            }
+                        }
+                        Ok(false) => {
+                            let until_ms = crate::clock::now_unix_ms()
+                                .saturating_add(REALM_KEY_SHARE_ANSWER_RETRY_BACKOFF_MS);
+                            share_answer_backoff
+                                .write()
+                                .note_until(request_key, until_ms);
+                        }
+                        Err(error) => {
+                            let until_ms = crate::clock::now_unix_ms()
+                                .saturating_add(REALM_KEY_SHARE_ANSWER_RETRY_BACKOFF_MS);
+                            share_answer_backoff
+                                .write()
+                                .note_until(request_key, until_ms);
+                            tracing::warn!(
+                                realm = %short_protocol_id(&realm_for_log),
+                                ?error,
+                                "ak.realm_key.share answer failed; backing off request retry"
+                            );
+                        }
+                    }
+                }
+                // (c) Receiver-initiated pull: ask a joined provider device to
+                // seal the missing pre-join history range to this device. Guarded
+                // by `needs_pull` (dedup against the installed-secret signature) so
+                // we emit at most one request per distinct gap state.
+                if needs_pull && let Some(realm) = active_realm_id {
+                    let realm_for_log = realm.clone();
+                    let actor_c = actor.clone();
+                    let device_c = device.clone();
+                    let outcome = crate::transport::auth::with_authed_api(
+                        &base,
+                        session.clone(),
+                        |api| async move {
+                            crate::views::realm_admin::request_history_keys_for_realm(
+                                &api,
+                                share_state_store,
+                                realm,
+                                actor_c,
+                                device_c,
+                            )
+                            .await
+                        },
+                    )
+                    .await;
+                    match outcome {
+                        // Record the dedup key only after a request was actually
+                        // emitted. `pending_history_request_dedup_key` and the
+                        // async requester read state at different times; if the
+                        // second read observes a transiently incomplete inbox /
+                        // projection and returns `None`, deduping would suppress
+                        // the only retry path for late-join history.
+                        Ok(Some(_)) => {
+                            if let Some(key) = pull_request_key.clone() {
+                                share_request_dedup.set(Some(key));
+                            }
+                        }
+                        Ok(None) => {}
+                        Err(error) => {
+                            tracing::debug!(
+                                realm = %short_protocol_id(&realm_for_log),
+                                ?error,
+                                "history key request deferred (will retry on next sync)"
+                            );
+                        }
+                    }
+                }
+                share_in_flight.set(false);
+            });
+        });
+    }
+    {
+        let bootstrap_route_uses_realm_context = route_uses_realm_context;
+        let bootstrap_context_realm_id = context_realm_id.clone();
+        let mut seen_bootstrap_key = mls_welcome_bootstrap_key_seen;
+        let state_store_for_bootstrap = state_store;
+        let crypto_state_for_bootstrap = crypto_state;
+        let last_error_for_bootstrap = last_error;
+        let mut needs_mls_unlock_for_bootstrap = needs_mls_unlock;
+        let mut needs_mls_backup_for_bootstrap = needs_mls_backup;
+        let mut needs_mls_recovery_setup_for_bootstrap = needs_mls_recovery_setup;
+        let mut restore_payload_cache_for_bootstrap = mls_restore_payload_cache;
+        let secure_store_ready_for_bootstrap = secure_store_bootstrap_ready;
+        let account_recovery_configured_for_bootstrap = account_recovery_configured;
+        use_effect(move || {
+            if !secure_store_ready_for_bootstrap() {
+                return;
+            }
+            let selected = selected_realm_id();
+            if !bootstrap_route_uses_realm_context {
+                return;
+            }
+            let bootstrap_realm_id = bootstrap_context_realm_id
+                .clone()
+                .filter(|space| !space.trim().is_empty())
+                .unwrap_or(selected);
+            let base = base_url();
+            let session = token();
+            let actor = account_did();
+            let device = device_id();
+            let description = server_description();
+            let account_recovery_configured_value = account_recovery_configured_for_bootstrap();
+            let Some(bootstrap_key) = mls_welcome_bootstrap_key(
+                &base,
+                &session,
+                &actor,
+                &device,
+                &bootstrap_realm_id,
+                profile_ready(description.as_ref(), PROFILE_E2EE_CLIENT),
+                sync_bootstrap_complete(),
+            ) else {
+                return;
+            };
+            // BUG X4: the per-Realm bootstrap caches its `seen` key, so after
+            // the user's first encrypted write *creates* the account MLS
+            // secret (and this Realm's MLS snapshot) the detection would
+            // never re-run and the backup prompt would never appear. Read a
+            // `state_store` signal in the synchronous body (`has_local_mls_snapshot`)
+            // so Dioxus re-fires this effect when the write saves the snapshot,
+            // and fold both the local account-secret presence (`sec=`) and the
+            // snapshot presence (`snap=`) into the key so the `seen` guard no
+            // longer matches once they flip false→true. The matching local
+            // Welcome hint is also folded in so a sync-delivered pending
+            // Welcome retriggers the drain after an earlier empty probe.
+            let state_for_bootstrap_key = state_store_for_bootstrap.read();
+            let has_local_mls_snapshot = state_for_bootstrap_key
+                .mls_snapshot_for(&bootstrap_realm_id)
+                .is_some();
+            let has_encrypted_realm_projection =
+                state_for_bootstrap_key.realm_projection_is_mls_encrypted(&bootstrap_realm_id);
+            let local_mls_epoch_floor = crate::mls::runtime::mls_restore_epoch_floor(
+                &state_for_bootstrap_key,
+                &bootstrap_realm_id,
+            );
+            let recovery_key_fingerprint = crate::views::recovery::local_recovery_key_fingerprint(
+                &state_for_bootstrap_key,
+                &actor,
+            )
+            .unwrap_or_default();
+            let local_pending_welcome_hint = crate::mls::runtime::local_mls_welcome_hint_for_realm(
+                &state_for_bootstrap_key.to_device_inbox(),
+                &bootstrap_realm_id,
+            );
+            drop(state_for_bootstrap_key);
+            let has_local_account_secret = crate::mls::runtime::load_account_mls_secret(
+                crate::secure_key_store::default_secure_key_store("inkson").as_ref(),
+                &actor,
+            )
+            .map(|secret| secret.is_some())
+            .unwrap_or(false);
+            let bootstrap_key = format!(
+                "{bootstrap_key}|sec={has_local_account_secret}|snap={has_local_mls_snapshot}|enc={has_encrypted_realm_projection}|epoch={local_mls_epoch_floor}|rk={recovery_key_fingerprint}|welcome={local_pending_welcome_hint}|recovery={account_recovery_configured_value:?}"
+            );
+            if seen_bootstrap_key().as_deref() == Some(bootstrap_key.as_str()) {
+                return;
+            }
+            seen_bootstrap_key.set(Some(bootstrap_key.clone()));
+            let seen_bootstrap_key_for_probe = seen_bootstrap_key;
+
+            let state_store_task = state_store_for_bootstrap;
+            let mut crypto_state_task = crypto_state_for_bootstrap;
+            let mut last_error_task = last_error_for_bootstrap;
+            let realm_label = short_protocol_id(&bootstrap_realm_id);
+            // Detection-step clones: the originals are moved into the Welcome
+            // bootstrap call below; we reuse these for the account-secret
+            // unlock probe afterwards.
+            let detect_base = base.clone();
+            let detect_session = session.clone();
+            let detect_actor = actor.clone();
+            let detect_device = device.clone();
+            let mut state_store_for_probe = state_store_for_bootstrap;
+            spawn(async move {
+                match bootstrap_mls_welcome_for_realm(
+                    base,
+                    session,
+                    actor,
+                    device,
+                    bootstrap_realm_id,
+                    state_store_task,
+                    needs_mls_backup_for_bootstrap,
+                )
+                .await
+                {
+                    Ok(outcome) if outcome.applied > 0 => {
+                        let backup_label = outcome
+                            .backup_id
+                            .as_deref()
+                            .map(short_protocol_id)
+                            .unwrap_or_else(|| "not uploaded".to_owned());
+                        crypto_state_task.set(format!(
+                            "MLS Welcome applied for {realm_label}: {} group(s); history backup {backup_label}",
+                            outcome.applied
+                        ));
+                    }
+                    Ok(_) => {}
+                    Err(error) => {
+                        last_error_task.set(Some(format!("MLS Welcome bootstrap: {error}")));
+                    }
+                }
+
+                // Step-3 detection: if this device has no local account MLS
+                // secret yet OR local MLS history is missing/stale, and the
+                // server holds recovery material, flag the unlock prompt.
+                // Detection errors must NOT block or fail boot — log and
+                // leave the flag false.
+                let has_local_account_secret = crate::mls::runtime::load_account_mls_secret(
+                    crate::secure_key_store::default_secure_key_store("inkson").as_ref(),
+                    &detect_actor,
+                )
+                .map(|secret| secret.is_some())
+                .unwrap_or(false);
+                let actor_for_sidecar_restore = detect_actor.clone();
+                let device_for_sidecar_restore = detect_device.clone();
+                match crate::transport::auth::with_authed_api(
+                    &detect_base,
+                    detect_session.clone(),
+                    |api| async move {
+                        let payload =
+                            crate::mls::account_recovery::fetch_mls_restore_payload(&api).await?;
+                        let sidecar_body_for_local_restore = if has_local_account_secret {
+                            crate::mls::account_recovery::fetch_mls_private_plaintext_backup_body(
+                                &api,
+                                &actor_for_sidecar_restore,
+                                &device_for_sidecar_restore,
+                            )
+                            .await
+                            .ok()
+                            .flatten()
+                        } else {
+                            None
+                        };
+                        Ok((payload, sidecar_body_for_local_restore))
+                    },
+                )
+                .await
+                {
+                    Ok((payload, sidecar_body_for_local_restore)) => {
+                        if seen_bootstrap_key_for_probe().as_deref() != Some(bootstrap_key.as_str())
+                        {
+                            return;
+                        }
+                        let secure_store =
+                            crate::secure_key_store::default_secure_key_store("inkson");
+                        let configured_backup_id =
+                            crate::mls::account_recovery::select_preferred_mls_account_secret_backup(
+                                &payload,
+                            )
+                            .and_then(|backup| {
+                                backup
+                                    .get("backup_id")
+                                    .and_then(serde_json::Value::as_str)
+                                    .map(str::to_owned)
+                            });
+                        {
+                            let mut store = state_store_for_probe.write();
+                            if let Some(backup_id) = configured_backup_id.as_deref() {
+                                crate::components::mark_mls_recovery_backup_configured(
+                                    &mut store,
+                                    &detect_actor,
+                                    backup_id,
+                                );
+                            }
+                            let report = crate::mls::account_recovery::restore_mls_history_with_local_secret_from_payload(
+                                &payload,
+                                &mut store,
+                                secure_store.as_ref(),
+                                &detect_actor,
+                                &detect_device,
+                            );
+                            if report.failed > 0 {
+                                tracing::warn!(
+                                    failed = report.failed,
+                                    restored = report.restored,
+                                    first_error = ?report.first_error,
+                                    "mls history restore from local secret failed"
+                                );
+                            }
+                            if let Some(sidecar_body) = sidecar_body_for_local_restore.as_ref() {
+                                let sidecar_payload =
+                                    serde_json::json!({ "backups": [sidecar_body.clone()] });
+                                let report = crate::mls::account_recovery::restore_mls_history_with_local_secret_from_payload(
+                                    &sidecar_payload,
+                                    &mut store,
+                                    secure_store.as_ref(),
+                                    &detect_actor,
+                                    &detect_device,
+                                );
+                                if report.failed > 0 {
+                                    tracing::warn!(
+                                        failed = report.failed,
+                                        restored = report.restored,
+                                        first_error = ?report.first_error,
+                                        "mls sidecar restore from local secret failed"
+                                    );
+                                }
+                            }
+                        }
+                        let should_unlock = {
+                            let store = state_store_for_probe.read();
+                            crate::mls::account_recovery::mls_restore_prompt_required(
+                                &payload,
+                                &store,
+                                secure_store.as_ref(),
+                                &detect_actor,
+                                &detect_device,
+                            )
+                        };
+                        // Mutual exclusion (task X3): restore (unlock) wins.
+                        // Otherwise, if the user just created an encrypted
+                        // realm (local secret now exists) but has no server
+                        // backup, flag the one-time backup prompt instead.
+                        if should_unlock {
+                            restore_payload_cache_for_bootstrap.set(Some(payload.clone()));
+                            needs_mls_unlock_for_bootstrap.set(true);
+                            needs_mls_backup_for_bootstrap.set(false);
+                            needs_mls_recovery_setup_for_bootstrap.set(false);
+                        } else if needs_mls_unlock_for_bootstrap() {
+                            // Keep an already-rendered unlock modal stable when
+                            // the boot-time and per-Realm probes resolve out of
+                            // order with different payload freshness.
+                            needs_mls_backup_for_bootstrap.set(false);
+                            needs_mls_recovery_setup_for_bootstrap.set(false);
+                        } else {
+                            let should_backup =
+                                crate::mls::account_recovery::mls_backup_prompt_required(
+                                    &payload,
+                                    secure_store.as_ref(),
+                                    &detect_actor,
+                                    &detect_device,
+                                );
+                            if should_backup {
+                                crate::components::maybe_auto_backup_mls_after_encrypted_write(
+                                    detect_base.clone(),
+                                    detect_session.clone(),
+                                    detect_actor.clone(),
+                                    detect_device.clone(),
+                                    state_store_for_probe,
+                                    needs_mls_backup_for_bootstrap,
+                                )
+                                .await;
+                            } else {
+                                needs_mls_backup_for_bootstrap.set(false);
+                            }
+                            let should_recovery_setup = {
+                                let store = state_store_for_probe.read();
+                                mls_recovery_setup_missing(
+                                    &payload,
+                                    &store,
+                                    secure_store.as_ref(),
+                                    &detect_actor,
+                                    account_recovery_configured_value,
+                                )
+                            };
+                            needs_mls_recovery_setup_for_bootstrap
+                                .set(!should_backup && should_recovery_setup);
+                        }
+                    }
+                    Err(error) => {
+                        tracing::warn!(
+                            error = %error.display(),
+                            "MLS account-secret unlock detection failed"
+                        );
+                    }
+                }
+            });
+        });
+    }
+    rsx! {}
+}

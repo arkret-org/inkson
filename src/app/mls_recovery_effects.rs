@@ -1,0 +1,293 @@
+use super::*;
+
+#[derive(Clone, Copy, PartialEq)]
+pub(super) struct MlsRecoveryEffectState {
+    pub mls_unlock_detection_key_seen: Signal<Option<String>>,
+    pub needs_mls_unlock: Signal<bool>,
+    pub needs_mls_backup: Signal<bool>,
+    pub needs_mls_recovery_setup: Signal<bool>,
+    pub mls_restore_payload_cache: Signal<Option<Value>>,
+    pub secure_store_bootstrap_ready: Signal<bool>,
+    pub account_recovery_configured: Signal<Option<bool>>,
+    pub token: Signal<String>,
+    pub account_did: Signal<String>,
+    pub device_id: Signal<String>,
+    pub sync_generation: Signal<u64>,
+    pub session_boot_state: Signal<SessionBootState>,
+}
+
+#[component]
+pub(super) fn MlsRecoveryEffects(state: MlsRecoveryEffectState) -> Element {
+    let MlsRecoveryEffectState {
+        mls_unlock_detection_key_seen,
+        needs_mls_unlock,
+        needs_mls_backup,
+        needs_mls_recovery_setup,
+        mls_restore_payload_cache,
+        secure_store_bootstrap_ready,
+        account_recovery_configured,
+        token,
+        account_did,
+        device_id,
+        sync_generation,
+        session_boot_state,
+    } = state;
+    let SessionContext {
+        state_store,
+        base_url,
+    } = SessionContext::get();
+
+    // D1: detect the account-MLS unlock requirement as soon as a logged-in
+    // session finishes bootstrap, without waiting for the user to enter a
+    // Space/Board/Document route that runs the per-Realm Welcome bootstrap.
+    {
+        let mut seen_detection_key = mls_unlock_detection_key_seen;
+        let mut needs_mls_unlock = needs_mls_unlock;
+        let mut needs_mls_backup = needs_mls_backup;
+        let mut needs_mls_recovery_setup = needs_mls_recovery_setup;
+        let mut restore_payload_cache = mls_restore_payload_cache;
+        let mut state_store_for_detection = state_store;
+        let secure_store_ready_for_detection = secure_store_bootstrap_ready;
+        let account_recovery_configured_for_detection = account_recovery_configured;
+        use_effect(move || {
+            if !secure_store_ready_for_detection() {
+                return;
+            }
+            let base = base_url();
+            let session = token();
+            let actor = account_did();
+            let device = device_id();
+            let generation = sync_generation();
+            let account_recovery_configured_value = account_recovery_configured_for_detection();
+            if !matches!(session_boot_state(), SessionBootState::Authenticated) {
+                needs_mls_unlock.set(false);
+                needs_mls_backup.set(false);
+                needs_mls_recovery_setup.set(false);
+                restore_payload_cache.set(None);
+                seen_detection_key.set(None);
+                return;
+            }
+            if session.trim().is_empty() {
+                needs_mls_unlock.set(false);
+                needs_mls_backup.set(false);
+                needs_mls_recovery_setup.set(false);
+                restore_payload_cache.set(None);
+                seen_detection_key.set(None);
+                return;
+            }
+            // X10.1: do NOT gate on `sync_bootstrap_complete()` here. A fresh
+            // browser sits on Dashboard with sync still pending; the MLS
+            // unlock/backup detection only needs a live session + a server
+            // `list_key_backups` call, NOT a completed sync. Gating on sync
+            // meant the unlock prompt never surfaced on a new device until the
+            // user manually entered a Space — i.e. "switched browser, never
+            // asked for my passphrase". Run as soon as session/actor/device
+            // are present; the `seen_detection_key` guard still prevents
+            // repeat runs, and re-running after sync (snap= flips) is handled
+            // by the detection key below.
+            if base.trim().is_empty() || actor.trim().is_empty() || device.trim().is_empty() {
+                return;
+            }
+            // BUG X4: the account MLS secret is created lazily on the
+            // first encrypted write — at register / first space entry it
+            // does not exist yet, so `mls_backup_prompt_required` returns
+            // false and this effect would never re-fire to surface the
+            // backup prompt once the secret appears. Two changes fix that:
+            //   1. Read a `state_store` signal in the *synchronous* effect body
+            //      (`has_local_mls_snapshot`) so Dioxus re-runs this effect when the first
+            //      encrypted write saves a snapshot.
+            //   2. Fold the local account-secret presence into the detection key (`sec=`) so the
+            //      `seen` guard no longer matches once the secret flips false→true, letting the
+            //      detection re-run and re-evaluate the backup prompt.
+            let state_for_detection_key = state_store_for_detection.read();
+            let has_local_mls_snapshot = !state_for_detection_key.mls_snapshots().is_empty();
+            let has_encrypted_realm_projection =
+                local_state_has_encrypted_realm(&state_for_detection_key);
+            let local_mls_epoch_floor = local_mls_epoch_floor_all(&state_for_detection_key);
+            let recovery_key_fingerprint = crate::views::recovery::local_recovery_key_fingerprint(
+                &state_for_detection_key,
+                &actor,
+            )
+            .unwrap_or_default();
+            drop(state_for_detection_key);
+            let has_local_account_secret = crate::mls::runtime::load_account_mls_secret(
+                crate::secure_key_store::default_secure_key_store("inkson").as_ref(),
+                &actor,
+            )
+            .map(|secret| secret.is_some())
+            .unwrap_or(false);
+            let detection_key = format!(
+                "{generation}|{base}|{actor}|{device}|sec={has_local_account_secret}|snap={has_local_mls_snapshot}|enc={has_encrypted_realm_projection}|epoch={local_mls_epoch_floor}|rk={recovery_key_fingerprint}|recovery={account_recovery_configured_value:?}"
+            );
+            if seen_detection_key().as_deref() == Some(detection_key.as_str()) {
+                return;
+            }
+            seen_detection_key.set(Some(detection_key.clone()));
+            // DIAG (describe-storm): this effect re-fetches backups (+ sidecar)
+            // whenever `detection_key` changes. On a wedged-recovery account it
+            // storms; log the full key so consecutive values reveal which
+            // component (sec/snap/enc/epoch/rk/recovery/generation) keeps
+            // flipping. Remove once the driver is fixed.
+            tracing::debug!(target: "recovery_diag", key = %detection_key, "mls_unlock detection re-fetch (backups)");
+            let seen_detection_key_for_result = seen_detection_key;
+
+            spawn(async move {
+                let actor_for_sidecar_restore = actor.clone();
+                let device_for_sidecar_restore = device.clone();
+                match crate::transport::auth::with_authed_api(
+                    &base,
+                    session.clone(),
+                    |api| async move {
+                        let payload =
+                            crate::mls::account_recovery::fetch_mls_restore_payload(&api).await?;
+                        let sidecar_body_for_local_restore = if has_local_account_secret {
+                            crate::mls::account_recovery::fetch_mls_private_plaintext_backup_body(
+                                &api,
+                                &actor_for_sidecar_restore,
+                                &device_for_sidecar_restore,
+                            )
+                            .await
+                            .ok()
+                            .flatten()
+                        } else {
+                            None
+                        };
+                        Ok((payload, sidecar_body_for_local_restore))
+                    },
+                )
+                .await
+                {
+                    Ok((payload, sidecar_body_for_local_restore)) => {
+                        if seen_detection_key_for_result().as_deref()
+                            != Some(detection_key.as_str())
+                        {
+                            return;
+                        }
+                        let secure_store =
+                            crate::secure_key_store::default_secure_key_store("inkson");
+                        let configured_backup_id =
+                            crate::mls::account_recovery::select_preferred_mls_account_secret_backup(
+                                &payload,
+                            )
+                            .and_then(|backup| {
+                                backup
+                                    .get("backup_id")
+                                    .and_then(serde_json::Value::as_str)
+                                    .map(str::to_owned)
+                            });
+                        {
+                            let mut store = state_store_for_detection.write();
+                            if let Some(backup_id) = configured_backup_id.as_deref() {
+                                crate::components::mark_mls_recovery_backup_configured(
+                                    &mut store, &actor, backup_id,
+                                );
+                            }
+                            let report = crate::mls::account_recovery::restore_mls_history_with_local_secret_from_payload(
+                                &payload,
+                                &mut store,
+                                secure_store.as_ref(),
+                                &actor,
+                                &device,
+                            );
+                            if report.failed > 0 {
+                                tracing::warn!(
+                                    failed = report.failed,
+                                    restored = report.restored,
+                                    first_error = ?report.first_error,
+                                    "mls history restore from local secret failed"
+                                );
+                            }
+                            if let Some(sidecar_body) = sidecar_body_for_local_restore.as_ref() {
+                                let sidecar_payload =
+                                    serde_json::json!({ "backups": [sidecar_body.clone()] });
+                                let report = crate::mls::account_recovery::restore_mls_history_with_local_secret_from_payload(
+                                    &sidecar_payload,
+                                    &mut store,
+                                    secure_store.as_ref(),
+                                    &actor,
+                                    &device,
+                                );
+                                if report.failed > 0 {
+                                    tracing::warn!(
+                                        failed = report.failed,
+                                        restored = report.restored,
+                                        first_error = ?report.first_error,
+                                        "mls sidecar restore from local secret failed"
+                                    );
+                                }
+                            }
+                        }
+                        let should_unlock = {
+                            let store = state_store_for_detection.read();
+                            crate::mls::account_recovery::mls_restore_prompt_required(
+                                &payload,
+                                &store,
+                                secure_store.as_ref(),
+                                &actor,
+                                &device,
+                            )
+                        };
+                        // Mutual exclusion (task X3): restore (unlock) always
+                        // wins. Only evaluate the backup prompt when restore is
+                        // not required.
+                        if should_unlock {
+                            restore_payload_cache.set(Some(payload.clone()));
+                            needs_mls_unlock.set(true);
+                            needs_mls_backup.set(false);
+                            needs_mls_recovery_setup.set(false);
+                        } else if needs_mls_unlock() {
+                            // Multiple detection effects can race with different
+                            // restore-payload snapshots. Once one detects a real
+                            // unlock requirement, keep the modal open until the
+                            // user restores successfully or the session resets.
+                            needs_mls_backup.set(false);
+                            needs_mls_recovery_setup.set(false);
+                        } else {
+                            restore_payload_cache.set(None);
+                            needs_mls_unlock.set(false);
+                            let should_backup =
+                                crate::mls::account_recovery::mls_backup_prompt_required(
+                                    &payload,
+                                    secure_store.as_ref(),
+                                    &actor,
+                                    &device,
+                                );
+                            if should_backup {
+                                crate::components::maybe_auto_backup_mls_after_encrypted_write(
+                                    base.clone(),
+                                    session.clone(),
+                                    actor.clone(),
+                                    device.clone(),
+                                    state_store_for_detection,
+                                    needs_mls_backup,
+                                )
+                                .await;
+                            } else {
+                                needs_mls_backup.set(false);
+                            }
+                            let should_recovery_setup = {
+                                let store = state_store_for_detection.read();
+                                mls_recovery_setup_missing(
+                                    &payload,
+                                    &store,
+                                    secure_store.as_ref(),
+                                    &actor,
+                                    account_recovery_configured_value,
+                                )
+                            };
+                            needs_mls_recovery_setup.set(!should_backup && should_recovery_setup);
+                        }
+                    }
+                    Err(error) => {
+                        tracing::warn!(
+                            error = %error.display(),
+                            "MLS account-secret login unlock detection failed"
+                        );
+                    }
+                }
+            });
+        });
+    }
+
+    rsx! {}
+}
