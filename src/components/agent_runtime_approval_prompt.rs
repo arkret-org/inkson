@@ -322,7 +322,7 @@ fn pending_runtime_approval_from_view(
         request_key,
         agent_principal_id,
         display_name: agent_field(view, "display_name").unwrap_or_default(),
-        agent_slug: agent_field(view, "agent_slug").unwrap_or_default(),
+        agent_slug: agent_field(view, "slug").unwrap_or_default(),
         pairing_code,
         approval_requested_at: key_state_str(&view.key_state, "approval_requested_at")
             .unwrap_or_default(),

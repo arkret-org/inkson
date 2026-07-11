@@ -47,12 +47,8 @@ fn agent_principal_id(agent: &AgentView) -> String {
     agent_field(agent, "agent_principal_id")
 }
 
-fn agent_display_name(agent: &AgentView) -> String {
-    let display_name = agent_field(agent, "display_name");
-    if !display_name.is_empty() {
-        return display_name;
-    }
-    let slug = agent_field(agent, "agent_slug");
+fn agent_slug_label(agent: &AgentView) -> String {
+    let slug = agent_field(agent, "slug");
     if !slug.is_empty() {
         return slug;
     }
@@ -320,8 +316,7 @@ pub fn PersonalAgentAdminPanel(token: Signal<String>) -> Element {
     let list_status = use_signal(String::new);
     let mut selected_agent_id = use_signal(String::new);
     let mut create_mode = use_signal(|| false);
-    let mut new_display_name = use_signal(|| "my-personal-agent".to_owned());
-    let mut new_agent_slug = use_signal(|| "summary".to_owned());
+    let mut new_agent_slug = use_signal(String::new);
     let mut provision_presets =
         use_signal(|| vec![AgentGrantPreset::Read, AgentGrantPreset::ReplyAsAgent]);
     let mut provision_service_scopes = use_signal(|| AgentServiceScopePreset::DEFAULTS.to_vec());
@@ -415,11 +410,11 @@ pub fn PersonalAgentAdminPanel(token: Signal<String>) -> Element {
     let list_status_message = list_status();
     let selected_title = selected_agent
         .as_ref()
-        .map(agent_display_name)
+        .map(agent_slug_label)
         .unwrap_or_else(|| "No agent selected".to_owned());
     let selected_slug = selected_agent
         .as_ref()
-        .map(|agent| agent_field(agent, "agent_slug"))
+        .map(|agent| agent_field(agent, "slug"))
         .unwrap_or_default();
     let selected_status = selected_agent
         .as_ref()
@@ -574,8 +569,7 @@ pub fn PersonalAgentAdminPanel(token: Signal<String>) -> Element {
                         for agent in visible_agents.iter() {
                             {
                                 let id = agent_principal_id(agent);
-                                let display_name = agent_display_name(agent);
-                                let agent_slug = agent_field(agent, "agent_slug");
+                                let slug_label = agent_slug_label(agent);
                                 let status = agent.status.clone();
                                 let id_label = short_protocol_id(&id);
                                 let is_selected = !is_create_mode && selected_id_now == id;
@@ -598,11 +592,8 @@ pub fn PersonalAgentAdminPanel(token: Signal<String>) -> Element {
                                             }
                                         },
                                         span { class: "agent-admin-list-row-main",
-                                            strong { "{display_name}" }
+                                            strong { "{slug_label}" }
                                             span { class: "{agent_state_badge_class(&status)}", "{agent_state_label(&status)}" }
-                                        }
-                                        if !agent_slug.is_empty() {
-                                            span { class: "muted", "{agent_slug}" }
                                         }
                                         span { class: "mono muted", title: "{id}", "{id_label}" }
                                     }
@@ -624,14 +615,8 @@ pub fn PersonalAgentAdminPanel(token: Signal<String>) -> Element {
                             }
                             div { class: "workflow-form",
                                 Input {
-                                    "data-testid": "agent-admin-provision-display-name",
-                                    placeholder: "Display name",
-                                    value: "{new_display_name}",
-                                    oninput: move |event: FormEvent| new_display_name.set(event.value()),
-                                }
-                                Input {
                                     "data-testid": "agent-admin-provision-agent-slug",
-                                    placeholder: "Slug",
+                                    placeholder: "Slug (required)",
                                     value: "{new_agent_slug}",
                                     oninput: move |event: FormEvent| new_agent_slug.set(event.value()),
                                 }
@@ -712,20 +697,15 @@ pub fn PersonalAgentAdminPanel(token: Signal<String>) -> Element {
                                     Button {
                                         variant: ButtonVariant::Primary,
                                         "data-testid": "agent-admin-provision-button",
+                                        disabled: new_agent_slug().trim().is_empty(),
                                         onclick: {
                                             let base = base_url.clone();
                                             move |_| {
-                                                let display = new_display_name().trim().to_owned();
-                                                if display.is_empty() {
-                                                    last_op_status.set("Display name is required.".to_owned());
+                                                let slug_value = new_agent_slug().trim().to_owned();
+                                                if slug_value.is_empty() {
+                                                    last_op_status.set("Slug is required.".to_owned());
                                                     return;
                                                 }
-                                                let slug_value = new_agent_slug().trim().to_owned();
-                                                let agent_slug = if slug_value.is_empty() {
-                                                    None
-                                                } else {
-                                                    Some(slug_value.clone())
-                                                };
                                                 let service_scopes = provision_service_scopes.read().clone();
                                                 let requested_scope = match requested_scope_for_presets(
                                                     &service_scopes,
@@ -737,8 +717,8 @@ pub fn PersonalAgentAdminPanel(token: Signal<String>) -> Element {
                                                     }
                                                 };
                                                 let body = AgentProvisionRequestBody {
-                                                    display_name: Some(display.clone()),
-                                                    agent_slug,
+                                                    display_name: None,
+                                                    slug: slug_value.clone(),
                                                     requested_scope: Some(requested_scope.clone()),
                                                     accountability: Value::Null,
                                                     pairing_ttl_ms: None,
@@ -772,8 +752,7 @@ pub fn PersonalAgentAdminPanel(token: Signal<String>) -> Element {
                                                         .to_rfc3339_opts(chrono::SecondsFormat::Millis, true);
                                                     let agent_object = json!({
                                                         "agent_principal_id": created_agent_id,
-                                                        "display_name": display,
-                                                        "agent_slug": slug_value,
+                                                        "slug": slug_value,
                                                         "status": "pending_runtime_key",
                                                     });
                                                     let key_state = json!({
@@ -827,7 +806,7 @@ pub fn PersonalAgentAdminPanel(token: Signal<String>) -> Element {
                             div {
                                 div {
                                     class: "entity-title",
-                                    "data-testid": "agent-admin-display-name",
+                                    "data-testid": "agent-admin-slug-title",
                                     "{selected_title}"
                                 }
                                 div { class: "mono muted", title: "{selected_id_now}", "{selected_id_now}" }
@@ -835,14 +814,6 @@ pub fn PersonalAgentAdminPanel(token: Signal<String>) -> Element {
                         }
 
                         div { class: "agent-admin-detail-meta", "data-testid": "agent-admin-detail-meta",
-                            div { class: "agent-admin-detail-meta-item",
-                                span { class: "muted", "Slug" }
-                                if selected_slug.is_empty() {
-                                    span { "-" }
-                                } else {
-                                    span { class: "mono", "{selected_slug}" }
-                                }
-                            }
                             div { class: "agent-admin-detail-meta-item",
                                 span { class: "muted", "Created" }
                                 if selected_created_at.is_empty() {
@@ -879,7 +850,6 @@ pub fn PersonalAgentAdminPanel(token: Signal<String>) -> Element {
                                 let pairing_qr_svg = render_agent_pairing_qr_svg(&deep_link);
                                 let pairing_badge = if selected_pairing_is_expired { "badge red" } else { "badge green" };
                                 let pairing_label = if selected_pairing_is_expired { "Expired" } else { "Ready" };
-                                let replacement_display_name = selected_title.clone();
                                 let replacement_agent_slug = selected_slug.clone();
                                 rsx! {
                                     div {
@@ -972,15 +942,9 @@ pub fn PersonalAgentAdminPanel(token: Signal<String>) -> Element {
                                                     variant: ButtonVariant::Primary,
                                                     "data-testid": "agent-admin-create-replacement-button",
                                                     onclick: {
-                                                        let replacement_display_name = replacement_display_name.clone();
                                                         let replacement_agent_slug = replacement_agent_slug.clone();
                                                         move |_| {
-                                                            new_display_name.set(replacement_display_name.clone());
-                                                            new_agent_slug.set(if replacement_agent_slug.trim().is_empty() {
-                                                                "summary".to_owned()
-                                                            } else {
-                                                                replacement_agent_slug.clone()
-                                                            });
+                                                            new_agent_slug.set(replacement_agent_slug.clone());
                                                             create_mode.set(true);
                                                         }
                                                     },
