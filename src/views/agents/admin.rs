@@ -8,11 +8,12 @@
 use std::time::Duration;
 
 use arkret_sdk::models::{
-    AgentDeactivateRequestBody, AgentGrantAttachRequestBody, AgentPauseRequestBody,
-    AgentProvisionRequestBody, AgentResumeRequestBody, AgentView,
+    AgentDeactivateRequestBody, AgentPauseRequestBody, AgentProvisionRequestBody,
+    AgentResumeRequestBody, AgentView,
 };
 use dioxus::prelude::*;
 use dioxus_primitives::checkbox::CheckboxState;
+use dioxus_router::hooks::{use_navigator, use_route};
 use serde_json::{Value, json};
 use yoface::utils::dom::copy_text_to_clipboard;
 
@@ -23,11 +24,13 @@ use super::model::{
     requested_scope_for_presets,
 };
 use crate::components::UiIcon;
+use crate::routes::Route;
 use crate::transport::auth::with_authed_sdk_client;
 use crate::ui::button::{Button, ButtonSize, ButtonVariant};
 use crate::ui::checkbox::Checkbox;
 use crate::ui::dialog::Dialog;
 use crate::ui::input::Input;
+use crate::ui::switch::Switch;
 use crate::ui::textarea::Textarea;
 use crate::views::helpers::short_protocol_id;
 
@@ -61,13 +64,59 @@ fn agent_display_name(agent: &AgentView) -> String {
     }
 }
 
-fn grant_identifier(grant: &Value) -> String {
+fn value_actions(value: &Value) -> Vec<&str> {
+    value
+        .get("actions")
+        .or_else(|| value.get("grant").and_then(|grant| grant.get("actions")))
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(Value::as_str)
+        .collect()
+}
+
+fn grant_matches_content_preset(grant: &Value, preset: AgentGrantPreset) -> bool {
+    let actions = value_actions(grant);
+    if !preset
+        .actions()
+        .iter()
+        .all(|action| actions.contains(action))
+    {
+        return false;
+    }
+    if preset != AgentGrantPreset::ActOnBehalf {
+        return true;
+    }
     grant
-        .get("grant_id")
-        .or_else(|| grant.get("id"))
-        .and_then(Value::as_str)
-        .unwrap_or_default()
-        .to_owned()
+        .get("constraints")
+        .or_else(|| {
+            grant
+                .get("grant")
+                .and_then(|value| value.get("constraints"))
+        })
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .any(|constraint| {
+            constraint
+                .get("controller_approval_required")
+                .and_then(Value::as_bool)
+                .unwrap_or(false)
+        })
+}
+
+fn requested_scope_matches_service_preset(
+    key_state: &Value,
+    preset: AgentServiceScopePreset,
+) -> bool {
+    let actions = key_state
+        .get("requested_scope")
+        .map(value_actions)
+        .unwrap_or_default();
+    preset
+        .actions()
+        .iter()
+        .all(|action| actions.contains(action))
 }
 
 fn upsert_agent_view(rows: &mut Vec<AgentView>, view: AgentView) {
@@ -93,31 +142,24 @@ fn update_agent_status(rows: &mut [AgentView], id: &str, status: &str) {
     }
 }
 
-fn agent_status_hidden_by_default(status: &str) -> bool {
-    matches!(status, "pairing_expired" | "deactivated")
-}
+const AGENT_LIST_FILTERS: [(&str, &str); 3] =
+    [("all", "All"), ("active", "Active"), ("paused", "Paused")];
 
-const AGENT_LIST_FILTERS: [(&str, &str); 4] = [
-    ("all", "All"),
-    ("active", "Active"),
-    ("pending", "Pending"),
-    ("inactive", "Inactive"),
-];
-
-fn agent_status_is_pending(status: &str) -> bool {
-    matches!(status, "pending" | "pending_runtime_key")
-}
-
-fn agent_status_is_inactive(status: &str) -> bool {
-    matches!(status, "paused" | "pairing_expired" | "deactivated")
+fn normalize_agent_filter(filter: &str) -> &'static str {
+    match filter.trim().to_ascii_lowercase().as_str() {
+        "active" => "active",
+        "paused" => "paused",
+        "deactivated" => "deactivated",
+        _ => "all",
+    }
 }
 
 fn agent_matches_filter(status: &str, filter: &str) -> bool {
     match filter {
         "active" => status == "active",
-        "pending" => agent_status_is_pending(status),
-        "inactive" => agent_status_is_inactive(status),
-        _ => true,
+        "paused" => status == "paused",
+        "deactivated" => status == "deactivated",
+        _ => status != "deactivated",
     }
 }
 
@@ -125,7 +167,6 @@ fn spawn_refresh_agents(
     base: String,
     api_token: String,
     mut agents: Signal<Vec<AgentView>>,
-    mut selected_agent_id: Signal<String>,
     mut list_status: Signal<String>,
     mut refresh_epoch: Signal<u64>,
 ) {
@@ -156,25 +197,10 @@ fn spawn_refresh_agents(
                     .filter_map(agent_view_from_directory_row)
                     .collect();
                 let skipped = total.saturating_sub(rows.len());
-                let current = selected_agent_id.peek().clone();
-                if current.is_empty() || !rows.iter().any(|row| agent_principal_id(row) == current)
-                {
-                    selected_agent_id.set(
-                        rows.iter()
-                            .find(|row| !agent_status_hidden_by_default(&row.status))
-                            .or_else(|| rows.first())
-                            .map(agent_principal_id)
-                            .unwrap_or_default(),
-                    );
-                }
                 if skipped > 0 {
-                    list_status.set(format!(
-                        "Loaded {} agent(s); skipped {} invalid row(s).",
-                        rows.len(),
-                        skipped
-                    ));
+                    list_status.set(format!("Skipped {} invalid agent row(s).", skipped,));
                 } else {
-                    list_status.set(format!("Loaded {} agent(s).", rows.len()));
+                    list_status.set(String::new());
                 }
                 agents.set(rows);
             }
@@ -208,14 +234,7 @@ fn spawn_load_agent_details(
         {
             Ok(view) => {
                 selected_grants.set(view.grants.clone());
-                let loaded_id = agent_principal_id(&view);
-                let grant_count = view.grants.len();
                 agents.with_mut(|rows| upsert_agent_view(rows, view));
-                last_op_status.set(format!(
-                    "Loaded {} with {} grant(s).",
-                    short_protocol_id(&loaded_id),
-                    grant_count
-                ));
             }
             Err(err) => {
                 last_op_status.set(format!("Failed to load agent details: {}", err.display()))
@@ -224,10 +243,79 @@ fn spawn_load_agent_details(
     });
 }
 
+fn spawn_set_agent_enabled(
+    base: String,
+    api_token: String,
+    id: String,
+    enabled: bool,
+    mut agents: Signal<Vec<AgentView>>,
+    mut last_op_status: Signal<String>,
+) {
+    spawn(async move {
+        if id.is_empty() {
+            return;
+        }
+        let id_for_status = id.clone();
+        let result = if enabled {
+            let body = AgentResumeRequestBody {
+                sidecar_exposure_ack: None,
+            };
+            with_authed_sdk_client(&base, api_token, move |http| {
+                let id = id.clone();
+                let body = body.clone();
+                async move {
+                    http.agent_resume(&id, &body)
+                        .await
+                        .map_err(anyhow::Error::from)
+                }
+            })
+            .await
+        } else {
+            let body = AgentPauseRequestBody {
+                reason: Some("controller_paused".to_owned()),
+            };
+            with_authed_sdk_client(&base, api_token, move |http| {
+                let id = id.clone();
+                let body = body.clone();
+                async move {
+                    http.agent_pause(&id, &body)
+                        .await
+                        .map_err(anyhow::Error::from)
+                }
+            })
+            .await
+        };
+        match result {
+            Ok(outcome) => {
+                let status = outcome.status.as_wire_str().to_owned();
+                agents.with_mut(|rows| update_agent_status(rows, &id_for_status, &status));
+                last_op_status.set(if enabled {
+                    format!("Resumed. Status: {status}.")
+                } else {
+                    format!("Paused. Status: {status}.")
+                });
+            }
+            Err(err) => last_op_status.set(format!(
+                "{} failed: {}",
+                if enabled { "Resume" } else { "Pause" },
+                err.display()
+            )),
+        }
+    });
+}
+
 #[component]
-pub fn PersonalAgentAdminPanel(token: Signal<String>, controller_did: String) -> Element {
+pub fn PersonalAgentAdminPanel(token: Signal<String>) -> Element {
     // A4 — base_url from session context instead of a prop.
     let base_url = crate::app::SessionContext::base_url_string();
+    let navigator = use_navigator();
+    let route = use_route::<Route>();
+    let active_agent_filter = match &route {
+        Route::SettingsSection {
+            section, filter, ..
+        } if section == "agents" => normalize_agent_filter(filter).to_owned(),
+        _ => "all".to_owned(),
+    };
     let mut agents = use_signal(Vec::<AgentView>::new);
     let list_status = use_signal(String::new);
     let mut selected_agent_id = use_signal(String::new);
@@ -238,9 +326,7 @@ pub fn PersonalAgentAdminPanel(token: Signal<String>, controller_did: String) ->
         use_signal(|| vec![AgentGrantPreset::Read, AgentGrantPreset::ReplyAsAgent]);
     let mut provision_service_scopes = use_signal(|| AgentServiceScopePreset::DEFAULTS.to_vec());
     let mut selected_grants = use_signal(Vec::<Value>::new);
-    let mut agent_list_filter = use_signal(|| "all".to_owned());
     let mut agent_list_refresh_epoch = use_signal(|| 0_u64);
-    let mut grant_json = use_signal(|| "{}".to_owned());
     let mut deactivate_confirm = use_signal(String::new);
     let mut deactivate_dialog_open = use_signal(|| false);
     let mut last_op_status = use_signal(String::new);
@@ -254,28 +340,76 @@ pub fn PersonalAgentAdminPanel(token: Signal<String>, controller_did: String) ->
                 base.clone(),
                 api_token,
                 agents,
-                selected_agent_id,
                 list_status,
                 agent_list_refresh_epoch,
             );
         });
     }
 
+    {
+        let filter = active_agent_filter.clone();
+        use_effect(move || {
+            let current = selected_agent_id();
+            let next = {
+                let rows = agents.read();
+                if rows.iter().any(|agent| {
+                    agent_principal_id(agent) == current
+                        && agent_matches_filter(&agent.status, &filter)
+                }) {
+                    current.clone()
+                } else {
+                    rows.iter()
+                        .find(|agent| agent_matches_filter(&agent.status, &filter))
+                        .map(agent_principal_id)
+                        .unwrap_or_default()
+                }
+            };
+            if next != current {
+                selected_agent_id.set(next);
+                selected_grants.set(Vec::new());
+            }
+        });
+    }
+
+    {
+        let base = base_url.clone();
+        use_effect(move || {
+            let id = selected_agent_id();
+            if id.is_empty() {
+                selected_grants.set(Vec::new());
+                return;
+            }
+            spawn_load_agent_details(
+                base.clone(),
+                token(),
+                id,
+                agents,
+                selected_grants,
+                last_op_status,
+            );
+        });
+    }
+
     let selected_id_now = selected_agent_id();
     let is_create_mode = create_mode();
-    let active_agent_filter = agent_list_filter();
     let (selected_agent, visible_agents, has_any_agents) = {
         let rows = agents.read();
         let selected_agent = rows
             .iter()
-            .find(|agent| agent_principal_id(agent) == selected_id_now)
+            .find(|agent| {
+                agent_principal_id(agent) == selected_id_now
+                    && agent_matches_filter(&agent.status, &active_agent_filter)
+            })
             .cloned();
         let visible_agents = rows
             .iter()
             .filter(|agent| agent_matches_filter(&agent.status, &active_agent_filter))
             .cloned()
             .collect::<Vec<_>>();
-        (selected_agent, visible_agents, !rows.is_empty())
+        let has_any_agents = rows
+            .iter()
+            .any(|agent| agent_matches_filter(&agent.status, "all"));
+        (selected_agent, visible_agents, has_any_agents)
     };
     let last_op_status_message = last_op_status();
     let list_status_message = list_status();
@@ -328,8 +462,21 @@ pub fn PersonalAgentAdminPanel(token: Signal<String>, controller_did: String) ->
         .as_ref()
         .map(|agent| agent_field(agent, "updated_at"))
         .unwrap_or_default();
-    let owner_label = short_protocol_id(&controller_did);
     let selected_grants_snapshot = selected_grants();
+    let selected_content_capabilities = AgentGrantPreset::ALL.map(|preset| {
+        (
+            preset,
+            selected_grants_snapshot
+                .iter()
+                .any(|grant| grant_matches_content_preset(grant, preset)),
+        )
+    });
+    let selected_service_capabilities = AgentServiceScopePreset::ALL.map(|preset| {
+        (
+            preset,
+            requested_scope_matches_service_preset(&selected_key_state_value, preset),
+        )
+    });
 
     rsx! {
         div { class: "agent-admin-page", "data-testid": "personal-agent-admin",
@@ -356,7 +503,6 @@ pub fn PersonalAgentAdminPanel(token: Signal<String>, controller_did: String) ->
                                             base.clone(),
                                             token(),
                                             agents,
-                                            selected_agent_id,
                                             list_status,
                                             agent_list_refresh_epoch,
                                         );
@@ -385,6 +531,7 @@ pub fn PersonalAgentAdminPanel(token: Signal<String>, controller_did: String) ->
                             {
                                 let filter_value = filter.to_owned();
                                 let is_active_filter = active_agent_filter == filter;
+                                let navigator = navigator.clone();
                                 let filter_class = if is_active_filter {
                                     "agent-admin-filter-button active"
                                 } else {
@@ -397,7 +544,12 @@ pub fn PersonalAgentAdminPanel(token: Signal<String>, controller_did: String) ->
                                         "data-testid": "agent-admin-filter-{filter}",
                                         role: "tab",
                                         "aria-selected": if is_active_filter { "true" } else { "false" },
-                                        onclick: move |_| agent_list_filter.set(filter_value.clone()),
+                                        onclick: move |_| {
+                                            navigator.push(Route::SettingsSection {
+                                                section: "agents".to_owned(),
+                                                filter: filter_value.clone(),
+                                            });
+                                        },
                                         "{label}"
                                     }
                                 }
@@ -439,19 +591,10 @@ pub fn PersonalAgentAdminPanel(token: Signal<String>, controller_did: String) ->
                                         "data-agent-principal-id": "{id}",
                                         "aria-pressed": if is_selected { "true" } else { "false" },
                                         onclick: {
-                                            let base = base_url.clone();
                                             let id = id.clone();
                                             move |_| {
                                                 create_mode.set(false);
                                                 selected_agent_id.set(id.clone());
-                                                spawn_load_agent_details(
-                                                    base.clone(),
-                                                    token(),
-                                                    id.clone(),
-                                                    agents,
-                                                    selected_grants,
-                                                    last_op_status,
-                                                );
                                             }
                                         },
                                         span { class: "agent-admin-list-row-main",
@@ -459,7 +602,7 @@ pub fn PersonalAgentAdminPanel(token: Signal<String>, controller_did: String) ->
                                             span { class: "{agent_state_badge_class(&status)}", "{agent_state_label(&status)}" }
                                         }
                                         if !agent_slug.is_empty() {
-                                            span { class: "muted", "/{agent_slug}" }
+                                            span { class: "muted", "{agent_slug}" }
                                         }
                                         span { class: "mono muted", title: "{id}", "{id_label}" }
                                     }
@@ -682,71 +825,39 @@ pub fn PersonalAgentAdminPanel(token: Signal<String>, controller_did: String) ->
                     } else {
                         div { class: "agent-admin-detail-head",
                             div {
-                                div { class: "entity-title", "{selected_title}" }
-                                div { class: "mono muted", title: "{selected_id_now}", "{selected_id_now}" }
-                            }
-                            if !selected_status.is_empty() {
-                                div { class: "agent-admin-current-status",
-                                    span { class: "muted", "Status" }
-                                    span {
-                                        class: "{agent_state_badge_class(&selected_status)}",
-                                        "data-testid": "agent-state-badge",
-                                        "data-state": "{selected_status}",
-                                        "{agent_state_label(&selected_status)}"
-                                    }
+                                div {
+                                    class: "entity-title",
+                                    "data-testid": "agent-admin-display-name",
+                                    "{selected_title}"
                                 }
+                                div { class: "mono muted", title: "{selected_id_now}", "{selected_id_now}" }
                             }
                         }
 
-                        div { class: "metric-grid agent-admin-detail-grid",
-                            div { class: "metric",
-                                strong { "Owner" }
-                                span { class: "mono", title: "{controller_did}", "{owner_label}" }
-                            }
-                            div { class: "metric",
-                                strong { "Slug" }
+                        div { class: "agent-admin-detail-meta", "data-testid": "agent-admin-detail-meta",
+                            div { class: "agent-admin-detail-meta-item",
+                                span { class: "muted", "Slug" }
                                 if selected_slug.is_empty() {
                                     span { "-" }
                                 } else {
-                                    span { "/{selected_slug}" }
+                                    span { class: "mono", "{selected_slug}" }
                                 }
                             }
-                            div { class: "metric",
-                                strong { "Created" }
+                            div { class: "agent-admin-detail-meta-item",
+                                span { class: "muted", "Created" }
                                 if selected_created_at.is_empty() {
                                     span { "-" }
                                 } else {
                                     span { "{selected_created_at}" }
                                 }
                             }
-                            div { class: "metric",
-                                strong { "Updated" }
+                            div { class: "agent-admin-detail-meta-item",
+                                span { class: "muted", "Updated" }
                                 if selected_updated_at.is_empty() {
                                     span { "-" }
                                 } else {
                                     span { "{selected_updated_at}" }
                                 }
-                            }
-                        }
-
-                        div { class: "agent-admin-detail-actions actions",
-                            Button {
-                                variant: ButtonVariant::Secondary,
-                                "data-testid": "agent-admin-get-button",
-                                onclick: {
-                                    let base = base_url.clone();
-                                    move |_| {
-                                        spawn_load_agent_details(
-                                            base.clone(),
-                                            token(),
-                                            selected_agent_id(),
-                                            agents,
-                                            selected_grants,
-                                            last_op_status,
-                                        );
-                                    }
-                                },
-                                "Load details"
                             }
                         }
 
@@ -882,146 +993,56 @@ pub fn PersonalAgentAdminPanel(token: Signal<String>, controller_did: String) ->
                             }
                         }
 
-                        div { class: "agent-admin-section", "data-testid": "agent-admin-grants",
+                        div { class: "agent-admin-section", "data-testid": "agent-admin-capabilities",
                             div { class: "agent-admin-section-head",
-                                strong { "Capability grants" }
-                                span { class: "muted", "Loaded from selected agent" }
+                                strong { "Content capabilities" }
+                                span { class: "muted", "Current effective grants" }
                             }
-                            if selected_grants_snapshot.is_empty() {
-                                div { class: "muted", "data-testid": "agent-admin-grant-empty",
-                                    "No grants returned for this agent."
-                                }
-                            } else {
-                                div { class: "agent-admin-grant-list", "data-testid": "agent-admin-grant-list",
-                                    for grant in selected_grants_snapshot.iter() {
-                                        {
-                                            let grant_id = grant_identifier(grant);
-                                            let grant_status = grant
-                                                .get("status")
-                                                .and_then(Value::as_str)
-                                                .unwrap_or("active")
-                                                .to_owned();
-                                            let expires_at = grant
-                                                .get("expires_at")
-                                                .and_then(Value::as_str)
-                                                .unwrap_or("-")
-                                                .to_owned();
-                                            let grant_id_label = short_protocol_id(&grant_id);
-                                            rsx! {
-                                                div {
-                                                    class: "agent-admin-grant-row",
-                                                    "data-testid": "agent-admin-grant-row",
-                                                    "data-grant-id": "{grant_id}",
-                                                    div {
-                                                        strong { class: "mono", title: "{grant_id}", "{grant_id_label}" }
-                                                        div { class: "muted", "Expires: {expires_at}" }
-                                                    }
-                                                    span { class: "badge", "{grant_status}" }
-                                                    Button {
-                                                        variant: ButtonVariant::Secondary,
-                                                        "data-testid": "agent-admin-grant-detach-button",
-                                                        disabled: grant_id.is_empty(),
-                                                        onclick: {
-                                                            let base = base_url.clone();
-                                                            let grant_id = grant_id.clone();
-                                                            move |_| {
-                                                                let id = selected_agent_id();
-                                                                if id.is_empty() || grant_id.is_empty() { return; }
-                                                                let base = base.clone();
-                                                                let api_token = token();
-                                                                let grant_id = grant_id.clone();
-                                                                let grant_id_for_retain = grant_id.clone();
-                                                                spawn(async move {
-                                                                    match with_authed_sdk_client(&base, api_token, move |http| {
-                                                                        let id = id.clone();
-                                                                        let grant_id = grant_id.clone();
-                                                                        async move {
-                                                                            let grant_id = arkret_sdk::GrantId::new(grant_id)
-                                                                                .map_err(|err| anyhow::anyhow!("invalid agent grant id: {err}"))?;
-                                                                            http.agent_grant_detach(&id, &grant_id).await.map_err(anyhow::Error::from)
-                                                                        }
-                                                                    })
-                                                                    .await
-                                                                    {
-                                                                        Ok(r) => {
-                                                                            selected_grants.write().retain(|g| {
-                                                                                grant_identifier(g) != grant_id_for_retain
-                                                                            });
-                                                                            last_op_status.set(format!(
-                                                                                "Grant revoked at {}.",
-                                                                                r.revoked_at
-                                                                            ));
-                                                                        }
-                                                                        Err(err) => last_op_status.set(format!(
-                                                                            "Grant revoke failed: {}",
-                                                                            err.display()
-                                                                        )),
-                                                                    }
-                                                                });
-                                                            }
-                                                        },
-                                                        "Revoke"
-                                                    }
-                                                }
-                                            }
+                            div { class: "agent-admin-preset-list", "data-testid": "agent-admin-content-capability-list",
+                                for (preset, is_on) in selected_content_capabilities {
+                                    label {
+                                        class: "agent-admin-preset-row readonly",
+                                        "data-testid": "agent-admin-content-capability-row",
+                                        "data-preset": preset.preset_name(),
+                                        Checkbox {
+                                            "data-testid": "agent-admin-content-capability-checkbox",
+                                            checked: if is_on { CheckboxState::Checked } else { CheckboxState::Unchecked },
+                                            disabled: true,
+                                        }
+                                        span {
+                                            strong { "{preset.label()}" }
+                                            span { class: "muted", "{preset.help()}" }
                                         }
                                     }
                                 }
                             }
-                            details { class: "agent-admin-advanced",
-                                summary { "Attach grant JSON" }
-                                div { class: "workflow-form",
-                                    Input {
-                                        "data-testid": "agent-admin-grant-kind-input",
-                                        placeholder: "Grant object JSON",
-                                        value: "{grant_json}",
-                                        oninput: move |event: FormEvent| grant_json.set(event.value()),
+                            div { class: "agent-admin-section-head",
+                                strong { "Runtime service surface" }
+                                span { class: "muted", "Selected when this agent was created" }
+                            }
+                            div { class: "agent-admin-preset-list", "data-testid": "agent-admin-service-capability-list",
+                                for (preset, is_on) in selected_service_capabilities {
+                                    label {
+                                        class: "agent-admin-preset-row readonly",
+                                        "data-testid": "agent-admin-service-capability-row",
+                                        "data-service-preset": preset.preset_name(),
+                                        Checkbox {
+                                            "data-testid": "agent-admin-service-capability-checkbox",
+                                            checked: if is_on { CheckboxState::Checked } else { CheckboxState::Unchecked },
+                                            disabled: true,
+                                        }
+                                        span {
+                                            strong { "{preset.label()}" }
+                                            span { class: "muted", "{preset.help()}" }
+                                        }
                                     }
-                                    Button {
-                                        variant: ButtonVariant::Primary,
-                                        "data-testid": "agent-admin-grant-attach-button",
-                                        disabled: grant_json().trim().is_empty(),
-                                        onclick: {
-                                            let base = base_url.clone();
-                                            move |_| {
-                                                let id = selected_agent_id();
-                                                if id.is_empty() { return; }
-                                                let grant: Value = match serde_json::from_str(grant_json().as_str()) {
-                                                    Ok(grant) => grant,
-                                                    Err(err) => {
-                                                        last_op_status.set(format!(
-                                                            "Grant JSON is invalid: {err}"
-                                                        ));
-                                                        return;
-                                                    }
-                                                };
-                                                let body = AgentGrantAttachRequestBody { grant };
-                                                let base = base.clone();
-                                                let api_token = token();
-                                                spawn(async move {
-                                                    match with_authed_sdk_client(&base, api_token, move |http| {
-                                                        let id = id.clone();
-                                                        let body = body.clone();
-                                                        async move {
-                                                            http.agent_grant_attach(&id, &body).await.map_err(anyhow::Error::from)
-                                                        }
-                                                    })
-                                                    .await
-                                                    {
-                                                        Ok(r) => last_op_status.set(format!(
-                                                            "Grant attached: {}.",
-                                                            short_protocol_id(r.grant_id.as_str())
-                                                        )),
-                                                        Err(err) => last_op_status.set(format!(
-                                                            "Grant attach failed: {}",
-                                                            err.display()
-                                                        )),
-                                                    }
-                                                });
-                                            }
-                                        },
-                                        "Attach"
-                                    }
+                                }
+                            }
+                            if selected_status == "deactivated" {
+                                div {
+                                    class: "agent-admin-terminal-note",
+                                    "data-testid": "agent-admin-deactivated-capabilities-note",
+                                    "Historical grants have been revoked and are no longer usable."
                                 }
                             }
                         }
@@ -1031,85 +1052,51 @@ pub fn PersonalAgentAdminPanel(token: Signal<String>, controller_did: String) ->
                                 strong { "Lifecycle" }
                                 span { class: "muted", "Loaded from selected agent" }
                             }
+                            if selected_status == "deactivated" {
+                                div {
+                                    class: "agent-admin-terminal-note",
+                                    "data-testid": "agent-admin-deactivated-terminal-note",
+                                    strong { "Permanently deactivated" }
+                                    span { "This agent cannot be enabled again. Create a new agent if you need a replacement." }
+                                }
+                            }
+                            if matches!(selected_status.as_str(), "active" | "paused") {
+                                label { class: "agent-admin-lifecycle-toggle-row",
+                                    div {
+                                        strong { "Agent enabled" }
+                                        div { class: "muted",
+                                            if selected_status == "active" {
+                                                "Active — turn off to pause"
+                                            } else {
+                                                "Paused — turn on to resume"
+                                            }
+                                        }
+                                    }
+                                    div { class: "agent-admin-lifecycle-toggle-control",
+                                        span { class: if selected_status == "active" { "badge green" } else { "badge amber" },
+                                            if selected_status == "active" { "Active" } else { "Paused" }
+                                        }
+                                        Switch {
+                                            "data-testid": "agent-admin-enabled-switch",
+                                            checked: selected_status == "active",
+                                            on_checked_change: {
+                                                let base = base_url.clone();
+                                                move |enabled: bool| {
+                                                    spawn_set_agent_enabled(
+                                                        base.clone(),
+                                                        token(),
+                                                        selected_agent_id(),
+                                                        enabled,
+                                                        agents,
+                                                        last_op_status,
+                                                    );
+                                                }
+                                            },
+                                        }
+                                    }
+                                }
+                            }
                             div { class: "actions",
-                                    if selected_status == "active" {
-                                        Button {
-                                            variant: ButtonVariant::Secondary,
-                                            "data-testid": "agent-admin-pause-button",
-                                            onclick: {
-                                                let base = base_url.clone();
-                                                move |_| {
-                                                    let id = selected_agent_id();
-                                                    if id.is_empty() { return; }
-                                                    let id_for_status = id.clone();
-                                                    let base = base.clone();
-                                                    let api_token = token();
-                                                    let body = AgentPauseRequestBody { reason: Some("controller_paused".to_owned()) };
-                                                    spawn(async move {
-                                                        match with_authed_sdk_client(&base, api_token, move |http| {
-                                                            let id = id.clone();
-                                                            let body = body.clone();
-                                                            async move { http.agent_pause(&id, &body).await.map_err(anyhow::Error::from) }
-                                                        })
-                                                        .await
-                                                        {
-                                                            Ok(r) => {
-                                                                let status = r.status.as_wire_str().to_owned();
-                                                                agents.with_mut(|rows| {
-                                                                    update_agent_status(rows, &id_for_status, &status)
-                                                                });
-                                                                last_op_status.set(format!("Paused. Status: {status}."));
-                                                            }
-                                                            Err(err) => last_op_status.set(format!(
-                                                                "Pause failed: {}",
-                                                                err.display()
-                                                            )),
-                                                        }
-                                                    });
-                                                }
-                                            },
-                                            "Pause"
-                                        }
-                                    }
-                                    if selected_status == "paused" {
-                                        Button {
-                                            variant: ButtonVariant::Secondary,
-                                            "data-testid": "agent-admin-resume-button",
-                                            onclick: {
-                                                let base = base_url.clone();
-                                                move |_| {
-                                                    let id = selected_agent_id();
-                                                    if id.is_empty() { return; }
-                                                    let id_for_status = id.clone();
-                                                    let base = base.clone();
-                                                    let api_token = token();
-                                                    let body = AgentResumeRequestBody { sidecar_exposure_ack: None };
-                                                    spawn(async move {
-                                                        match with_authed_sdk_client(&base, api_token, move |http| {
-                                                            let id = id.clone();
-                                                            let body = body.clone();
-                                                            async move { http.agent_resume(&id, &body).await.map_err(anyhow::Error::from) }
-                                                        })
-                                                        .await
-                                                        {
-                                                            Ok(r) => {
-                                                                let status = r.status.as_wire_str().to_owned();
-                                                                agents.with_mut(|rows| {
-                                                                    update_agent_status(rows, &id_for_status, &status)
-                                                                });
-                                                                last_op_status.set(format!("Resumed. Status: {status}."));
-                                                            }
-                                                            Err(err) => last_op_status.set(format!(
-                                                                "Resume failed: {}",
-                                                                err.display()
-                                                            )),
-                                                        }
-                                                    });
-                                                }
-                                            },
-                                            "Resume"
-                                        }
-                                    }
                                     if selected_status != "deactivated" {
                                         Button {
                                             variant: ButtonVariant::Destructive,
@@ -1190,9 +1177,7 @@ pub fn PersonalAgentAdminPanel(token: Signal<String>, controller_did: String) ->
                                                                 agents.with_mut(|rows| {
                                                                     update_agent_status(rows, &id_for_status, &status)
                                                                 });
-                                                                last_op_status.set(format!(
-                                                                    "Deactivated. Status: {status}."
-                                                                ));
+                                                                last_op_status.set("Agent deactivated permanently.".to_owned());
                                                                 deactivate_dialog_open.set(false);
                                                                 deactivate_confirm.set(String::new());
                                                             }

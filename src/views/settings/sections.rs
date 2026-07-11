@@ -127,6 +127,7 @@ impl SettingsSection {
             Self::Developer => Route::Developer,
             _ => Route::SettingsSection {
                 section: self.slug().to_owned(),
+                filter: String::new(),
             },
         }
     }

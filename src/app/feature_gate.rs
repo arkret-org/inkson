@@ -90,7 +90,7 @@ pub(super) fn route_label(route: &Route) -> &'static str {
             _ => "Setup",
         },
         Route::Settings => "Settings",
-        Route::SettingsSection { section } => settings_route_label(section),
+        Route::SettingsSection { section, .. } => settings_route_label(section),
         Route::NotificationsSettings => "Notifications",
         Route::VerifyDevice => "Verify Device",
         Route::RealmMembers { .. } => "Members",

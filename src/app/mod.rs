@@ -3405,7 +3405,10 @@ fn AppBootstrap() -> Element {
                         Link {
                             class: "secondary",
                             "data-testid": "recovery-setup-open-encryption",
-                            to: Route::SettingsSection { section: "encryption".to_owned() },
+                            to: Route::SettingsSection {
+                                section: "encryption".to_owned(),
+                                filter: String::new(),
+                            },
                             UiIcon { name: "lock" }
                             "Encrypted history status"
                         }

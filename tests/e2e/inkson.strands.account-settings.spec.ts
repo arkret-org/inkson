@@ -257,8 +257,13 @@ test("account settings split account/server info and surface personal agents", a
     "true",
   );
   await expect(page.getByTestId("agent-admin-filter-active")).toBeVisible();
-  await expect(page.getByTestId("agent-admin-filter-pending")).toBeVisible();
-  await expect(page.getByTestId("agent-admin-filter-inactive")).toBeVisible();
+  await expect(page.getByTestId("agent-admin-filter-paused")).toBeVisible();
+  await expect(page.getByTestId("agent-admin-filter-deactivated")).toHaveCount(0);
+  await expect(page.getByText("Deactivated Agent")).toHaveCount(0);
+  await page.getByTestId("agent-admin-filter-paused").click();
+  await expect(page).toHaveURL(/\/settings\/agents\?filter=paused$/);
+  await page.getByTestId("agent-admin-filter-all").click();
+  await expect(page).toHaveURL(/\/settings\/agents\?filter=all$/);
   await expect.poll(() => agentListRequests, { timeout: 5_000 }).toBe(1);
   await page.waitForTimeout(750);
   expect(agentListRequests).toBe(1);
@@ -345,13 +350,32 @@ test("account settings split account/server info and surface personal agents", a
     0,
   );
   await expect(page.getByText("Copy bootstrap")).toHaveCount(0);
-  await expect(page.getByTestId("agent-state-badge")).toHaveAttribute(
+  await expect(page.getByTestId("agent-state-badge")).toHaveCount(0);
+  await expect(page.getByTestId("agent-admin-display-name")).toHaveText("my-personal-agent");
+  await expect(page.getByTestId("agent-admin-detail-meta")).toContainText("summary");
+  await expect(page.getByTestId("agent-admin-detail-meta")).not.toContainText("@me/");
+  await expect(page.getByTestId("agent-admin-get-button")).toHaveCount(0);
+  await expect(page.getByTestId("agent-admin-row").filter({ hasText: "my-personal-agent" })).toContainText(
+    "Pending",
+  );
+  await expect(page.getByTestId("agent-admin-capabilities")).toBeVisible();
+  await expect(page.getByTestId("agent-admin-content-capability-row")).toHaveCount(5);
+  await expect(page.getByTestId("agent-admin-service-capability-row")).toHaveCount(4);
+  await expect(page.getByTestId("agent-admin-service-capability-checkbox").nth(0)).toHaveAttribute(
     "data-state",
-    "pending_runtime_key",
+    "checked",
   );
-  await expect(page.getByTestId("agent-state-badge").locator("..")).toContainText(
-    /Status\s*Pending/,
+  await expect(page.getByTestId("agent-admin-service-capability-checkbox").nth(1)).toHaveAttribute(
+    "data-state",
+    "checked",
   );
+  await expect(page.getByTestId("agent-admin-service-capability-checkbox").nth(2)).toHaveAttribute(
+    "data-state",
+    "checked",
+  );
+  await expect(page.getByTestId("agent-admin-grant-kind-input")).toHaveCount(0);
+  await expect(page.getByTestId("agent-admin-grant-attach-button")).toHaveCount(0);
+  await expect(page.getByTestId("agent-admin-grant-detach-button")).toHaveCount(0);
   await expect(page.getByTestId("agent-admin-lifecycle")).toHaveCount(0);
   await expect(page.getByTestId("agent-admin-participation-load-button")).toHaveCount(0);
   await expect(page.getByTestId("agent-admin-pause-button")).toHaveCount(0);
@@ -366,6 +390,20 @@ test("account settings split account/server info and surface personal agents", a
   await expect(page.getByTestId("agent-admin-deactivate-confirm-button")).toBeEnabled();
   await page.getByTestId("agent-admin-deactivate-cancel-button").click();
   await expect(page.getByTestId("agent-admin-deactivate-modal")).toHaveCount(0);
+});
+
+test("deactivated personal agents are available only through the audit deep link", async ({
+  page,
+}) => {
+  await gotoAndDismissRecovery(page, "/settings/agents?filter=deactivated");
+  await expect(page).toHaveURL(/\/settings\/agents\?filter=deactivated$/);
+  await expect(page.getByTestId("personal-agent-admin")).toBeVisible();
+  await expect(page.getByTestId("agent-admin-filter-deactivated")).toHaveCount(0);
+  await expect(page.getByTestId("agent-admin-row")).toHaveCount(1);
+  await expect(page.getByTestId("agent-admin-row")).toContainText("Deactivated Agent");
+  await expect(page.getByTestId("agent-admin-row")).toContainText("Deactivated");
+  await expect(page.getByTestId("agent-state-badge")).toHaveCount(0);
+  await expect(page.getByTestId("agent-admin-deactivated-terminal-note")).toBeVisible();
 });
 
 test("expired personal agent pairing shows pair-again guidance", async ({ page }) => {

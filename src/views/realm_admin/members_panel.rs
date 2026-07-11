@@ -241,6 +241,9 @@ async fn fetch_owned_agent_rows(
         let Some(mut row) = member_agent_row_from_value(value, fallback_controller_did) else {
             continue;
         };
+        if row.status == "deactivated" {
+            continue;
+        }
         match http.agent_participation_get(&row.agent_principal_id).await {
             Ok(outcome) => {
                 let (policy, selection) = mention_state_from_entries(&outcome.entries, realm);
@@ -4189,7 +4192,10 @@ pub fn RealmMembersPanel(
                                                     Link {
                                                         class: "secondary",
                                                         "data-testid": "member-agent-empty-open-settings",
-                                                        to: Route::SettingsSection { section: "agents".to_owned() },
+                                                        to: Route::SettingsSection {
+                                                            section: "agents".to_owned(),
+                                                            filter: String::new(),
+                                                        },
                                                         "Open Settings"
                                                     }
                                                 }
@@ -4217,7 +4223,7 @@ pub fn RealmMembersPanel(
                                                                                 span { title: "{agent_id}", "{agent_title}" }
                                                                                 span { class: "{status_class}", "{status_label}" }
                                                                                 if !owned_agent.agent_slug.is_empty() {
-                                                                                    span { class: "badge", "/{owned_agent.agent_slug}" }
+                                                                                    span { class: "badge", "{owned_agent.agent_slug}" }
                                                                                 }
                                                                             }
                                                                             div { class: "muted member-row-sub mono", title: "{agent_id}", "{short_protocol_id(&agent_id)}" }

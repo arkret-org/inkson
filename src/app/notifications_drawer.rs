@@ -36,7 +36,10 @@ pub(crate) fn NotificationsDrawer(
                             "data-testid": "notifications-drawer-settings",
                             title: crate::i18n::tr("notifications.tooltip.settings"),
                             "aria-label": crate::i18n::tr("notifications.tooltip.settings"),
-                            to: Route::SettingsSection { section: "notifications".to_owned() },
+                            to: Route::SettingsSection {
+                                section: "notifications".to_owned(),
+                                filter: String::new(),
+                            },
                             onclick: move |_| open.set(false),
                             UiIcon { name: "settings" }
                         }

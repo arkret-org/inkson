@@ -542,7 +542,10 @@ pub fn DashboardPanel(
                         div { class: "actions", style: "padding: 12px 16px 0;",
                             Link {
                                 class: "secondary",
-                                to: Route::SettingsSection { section: "release".to_owned() },
+                                to: Route::SettingsSection {
+                                    section: "release".to_owned(),
+                                    filter: String::new(),
+                                },
                                 onclick: move |_| view.set(super::AppView::Settings),
                                 UiIcon { name: "settings" }
                                 "Advanced Diagnostics"
