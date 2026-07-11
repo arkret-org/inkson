@@ -514,6 +514,44 @@
   display: flex; justify-content: flex-end; gap: 8px;
 }
 
+/* Device / agent pairing approval prompts. Long identifiers (DIDs, key
+   fingerprints) must stack and wrap instead of running together inline,
+   and the comparison code must be readable across the room. */
+.device-pair-approval-device {
+  display: grid;
+  gap: 4px;
+  margin: 12px 0;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface-2);
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+.device-pair-approval-device strong {
+  font-size: 13px;
+  font-weight: 700;
+}
+.device-pair-approval-device span {
+  font-size: 12px;
+  line-height: 1.45;
+}
+.device-pair-approval-code-block {
+  display: grid;
+  gap: 6px;
+  justify-items: center;
+  margin: 12px 0;
+  padding: 12px;
+  border: 1px dashed var(--border);
+  border-radius: var(--radius-sm);
+  text-align: center;
+}
+.device-pair-approval-code {
+  font-size: 24px;
+  font-weight: 700;
+  letter-spacing: 0.18em;
+}
+
 .mls-recovery-modal {
   width: min(640px, calc(100vw - 32px));
   background: var(--surface-solid, var(--surface));

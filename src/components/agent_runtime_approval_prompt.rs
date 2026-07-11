@@ -130,7 +130,9 @@ pub fn AgentRuntimeApprovalPrompt(token: Signal<String>, account_did: Signal<Str
                         "data-testid": "agent-runtime-approval-agent",
                         "data-agent-id": "{request.agent_id}",
                         strong { "{agent_label}" }
-                        span { class: "muted mono", "{agent_id_label}" }
+                        if agent_label != agent_id_label {
+                            span { class: "muted mono", "{agent_id_label}" }
+                        }
                         if !request.agent_slug.trim().is_empty() {
                             span { class: "muted", "Slug: {request.agent_slug}" }
                         }

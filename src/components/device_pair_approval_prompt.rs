@@ -112,7 +112,9 @@ pub fn DevicePairApprovalPrompt(token: Signal<String>, device_id: Signal<String>
                         "data-testid": "device-pair-approval-device",
                         "data-device-id": "{requesting_device_id}",
                         strong { "{device_label}" }
-                        span { class: "muted mono", "{device_id_label}" }
+                        if device_label != device_id_label {
+                            span { class: "muted mono", "{device_id_label}" }
+                        }
                         if !platform.trim().is_empty() {
                             span { class: "muted", "Platform: {platform}" }
                         }
