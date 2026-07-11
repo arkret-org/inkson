@@ -282,7 +282,7 @@
 .member-self-agent-settings {
   display: grid;
   gap: 10px;
-  margin-left: 44px;
+  margin-left: 0;
   padding: 12px;
   border: 1px solid color-mix(in srgb, var(--accent) 26%, var(--border));
   border-radius: 8px;
@@ -297,6 +297,26 @@
   align-items: center;
   gap: 10px;
   min-width: 0;
+}
+
+.member-agent-realm-behavior {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: 8px 12px;
+  width: 100%;
+  padding-top: 8px;
+  border-top: 1px solid color-mix(in srgb, var(--border) 72%, transparent);
+}
+
+.member-agent-behavior-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--text-2);
+  font-size: 12px;
+  font-weight: 650;
 }
 
 .member-self-agent-settings-head {
@@ -516,8 +536,7 @@
 }
 
 .agent-admin-preset-list,
-.agent-admin-grant-list,
-.agent-admin-participation-entries {
+.agent-admin-grant-list {
   display: grid;
   gap: 8px;
 }

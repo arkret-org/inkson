@@ -62,6 +62,7 @@ enum MemberRosterSection {
     Members,
     Owners,
     Admins,
+    MyAgents,
     PendingInvites,
 }
 
@@ -71,6 +72,7 @@ impl MemberRosterSection {
             Self::Members => "Members",
             Self::Owners => "Owners",
             Self::Admins => "Admins",
+            Self::MyAgents => "My agents",
             Self::PendingInvites => "Pending invites",
         }
     }
@@ -80,6 +82,7 @@ impl MemberRosterSection {
             Self::Members => "Active Realm members without owner or admin authority.",
             Self::Owners => "Realm owners with top-level governance authority.",
             Self::Admins => "Realm admins with management authority.",
+            Self::MyAgents => "Manage your agents and their behavior in this Realm.",
             Self::PendingInvites => {
                 "Invitations sent for this Realm that have not been accepted yet."
             }
@@ -256,6 +259,60 @@ async fn fetch_owned_agent_rows(
             .then_with(|| left.agent_principal_id.cmp(&right.agent_principal_id))
     });
     Ok(rows)
+}
+
+fn spawn_set_agent_realm_behavior(
+    base: String,
+    api_token: String,
+    realm: String,
+    agent_id: String,
+    selection: AgentParticipation,
+    mut owned_agents: Signal<Vec<MemberAgentRow>>,
+    mut status_msg: Signal<String>,
+) {
+    spawn(async move {
+        let realm_id = match arkret_sdk::RealmId::new(realm.clone()) {
+            Ok(realm_id) => realm_id,
+            Err(err) => {
+                status_msg.set(format!("invalid realm id: {err:?}"));
+                return;
+            }
+        };
+        let body = arkret_sdk::models::AgentParticipationSetRequestBody {
+            scope: AgentParticipationScope::Realm { realm_id },
+            selection,
+        };
+        match crate::transport::auth::with_authed_sdk_client(&base, api_token, |http| {
+            let body = body.clone();
+            let agent_id = agent_id.clone();
+            async move {
+                http.agent_participation_replace(&agent_id, &body)
+                    .await
+                    .map_err(anyhow::Error::from)
+            }
+        })
+        .await
+        {
+            Ok(outcome) => {
+                let (mention_policy, selection) =
+                    mention_state_from_entries(&outcome.entries, &realm);
+                owned_agents.with_mut(|rows| {
+                    if let Some(row) = rows
+                        .iter_mut()
+                        .find(|row| row.agent_principal_id == outcome.agent_principal_id)
+                    {
+                        row.mention_policy = mention_policy;
+                        row.selection = selection;
+                    }
+                });
+                status_msg.set(format!(
+                    "Realm behavior updated for {}",
+                    short_protocol_id(&outcome.agent_principal_id)
+                ));
+            }
+            Err(err) => status_msg.set(format!("Realm behavior update failed: {}", err.display())),
+        }
+    });
 }
 
 fn mention_state_from_entries(
@@ -1151,11 +1208,16 @@ fn member_group_matches(group: &MemberGroup, query: &str) -> bool {
         })
 }
 
-fn member_group_in_section(group: &MemberGroup, section: MemberRosterSection) -> bool {
+fn member_group_in_section(
+    group: &MemberGroup,
+    section: MemberRosterSection,
+    account_did: &str,
+) -> bool {
     match section {
         MemberRosterSection::Members => !group.controller.is_governance_principal(),
         MemberRosterSection::Owners => group.controller.is_owner,
         MemberRosterSection::Admins => group.controller.is_admin && !group.controller.is_owner,
+        MemberRosterSection::MyAgents => group.controller.actor_id.trim() == account_did.trim(),
         MemberRosterSection::PendingInvites => false,
     }
 }
@@ -3293,7 +3355,7 @@ pub fn RealmMembersPanel(
     let filter_query = member_filter().trim().to_lowercase();
     let section_groups: Vec<MemberGroup> = member_groups
         .into_iter()
-        .filter(|group| member_group_in_section(group, selected_section))
+        .filter(|group| member_group_in_section(group, selected_section, &account_did))
         .collect();
     let filtered_groups: Vec<MemberGroup> = if filter_query.is_empty() {
         section_groups
@@ -3308,7 +3370,8 @@ pub fn RealmMembersPanel(
     let visible_groups: Vec<MemberGroup> = filtered_groups[..visible].to_vec();
     let has_more =
         selected_section != MemberRosterSection::PendingInvites && visible < filtered_count;
-    let show_search = total_groups + total_pending_invites > MEMBER_SEARCH_THRESHOLD;
+    let show_search = selected_section != MemberRosterSection::MyAgents
+        && total_groups + total_pending_invites > MEMBER_SEARCH_THRESHOLD;
     let visible_pending_invites: Vec<MemberProfile> = if filter_query.is_empty() {
         pending_invite_rows.clone()
     } else {
@@ -3319,17 +3382,29 @@ pub fn RealmMembersPanel(
             .collect()
     };
     let pending_invite_match_count = visible_pending_invites.len();
+    let member_set: BTreeSet<String> = active_members
+        .iter()
+        .map(|member| member.actor_id.clone())
+        .collect();
+    let self_owned_agent_rows: Vec<MemberAgentRow> = owned_agent_rows
+        .iter()
+        .filter(|agent| {
+            let controller = agent.controller_did.trim();
+            controller.is_empty() || controller == account_did.trim()
+        })
+        .cloned()
+        .collect();
     let selected_section_total = match selected_section {
         MemberRosterSection::Members => total_regular_members,
         MemberRosterSection::Owners => total_owner_members,
         MemberRosterSection::Admins => total_admin_members,
+        MemberRosterSection::MyAgents => self_owned_agent_rows.len(),
         MemberRosterSection::PendingInvites => total_pending_invites,
     };
-    let selected_section_visible_count = if selected_section == MemberRosterSection::PendingInvites
-    {
-        pending_invite_match_count
-    } else {
-        filtered_count
+    let selected_section_visible_count = match selected_section {
+        MemberRosterSection::PendingInvites => pending_invite_match_count,
+        MemberRosterSection::MyAgents => self_owned_agent_rows.len(),
+        _ => filtered_count,
     };
     let selected_section_empty = selected_section_visible_count == 0;
     let selected_section_title = selected_section.title();
@@ -3349,23 +3424,16 @@ pub fn RealmMembersPanel(
     } else {
         "members-admin-menu-item"
     };
+    let my_agents_section_class = if selected_section == MemberRosterSection::MyAgents {
+        "members-admin-menu-item active"
+    } else {
+        "members-admin-menu-item"
+    };
     let pending_section_class = if selected_section == MemberRosterSection::PendingInvites {
         "members-admin-menu-item active"
     } else {
         "members-admin-menu-item"
     };
-    let member_set: BTreeSet<String> = active_members
-        .iter()
-        .map(|member| member.actor_id.clone())
-        .collect();
-    let self_owned_agent_rows: Vec<MemberAgentRow> = owned_agent_rows
-        .iter()
-        .filter(|agent| {
-            let controller = agent.controller_did.trim();
-            controller.is_empty() || controller == account_did.trim()
-        })
-        .cloned()
-        .collect();
     // Icon buttons carry their label via title/aria-label instead of text.
     let refresh_label = crate::i18n::tr("realm_admin.refresh_members");
 
@@ -3876,6 +3944,17 @@ pub fn RealmMembersPanel(
                                 span { class: "badge", "{total_admin_members}" }
                             }
                             button {
+                                class: "{my_agents_section_class}",
+                                "data-testid": "members-section-my-agents",
+                                onclick: move |_| {
+                                    member_roster_section.set(MemberRosterSection::MyAgents);
+                                    member_filter.set(String::new());
+                                    member_visible.set(MEMBER_PAGE_SIZE);
+                                },
+                                span { "My agents" }
+                                span { class: "badge", "{self_owned_agent_rows.len()}" }
+                            }
+                            button {
                                 class: "{pending_section_class}",
                                 "data-testid": "members-section-pending-invites",
                                 onclick: move |_| {
@@ -3964,6 +4043,7 @@ pub fn RealmMembersPanel(
                                     class: "{group_class}",
                                     "data-testid": "member-group",
                                     "data-controller-did": "{member}",
+                                    if selected_section != MemberRosterSection::MyAgents {
                                     div { class: "event member-row member-controller-row", "data-testid": "member-row", "data-member-did": "{member}",
                                         div { class: "event-head member-row-main",
                                             if is_self {
@@ -4091,7 +4171,8 @@ pub fn RealmMembersPanel(
                                             block_confirm_did,
                                         }
                                     }
-                                    if is_self {
+                                    }
+                                    if is_self && selected_section == MemberRosterSection::MyAgents {
                                         div { class: "member-self-agent-settings", "data-testid": "member-self-agent-settings",
                                             div { class: "member-self-agent-settings-head",
                                                 div {
@@ -4222,74 +4303,69 @@ pub fn RealmMembersPanel(
                                                                                     "Remove"
                                                                                 }
                                                                             }
-                                                                            Button {
-                                                                                variant: ButtonVariant::Secondary,
-                                                                                size: ButtonSize::Sm,
-                                                                                "data-testid": "member-agent-mention-toggle",
-                                                                                disabled: !can_enable,
-                                                                                onclick: {
-                                                                                    let base = base_url.clone();
-                                                                                    let realm = selected_realm_id.clone();
-                                                                                    let agent_id = agent_id.clone();
-                                                                                    let previous = owned_agent.selection;
-                                                                                    move |_| {
-                                                                                        let base = base.clone();
-                                                                                        let realm = realm.clone();
-                                                                                        let agent_id = agent_id.clone();
-                                                                                        let api_token = token();
-                                                                                        let next_mention = !matches!(policy, AgentMentionPolicy::Allowed);
-                                                                                        spawn(async move {
-                                                                                            let body = arkret_sdk::models::AgentParticipationSetRequestBody {
-                                                                                                scope: AgentParticipationScope::Realm {
-                                                                                                    realm_id: match arkret_sdk::RealmId::new(realm.clone()) {
-                                                                                                        Ok(realm_id) => realm_id,
-                                                                                                        Err(err) => {
-                                                                                                            status_msg.set(format!("invalid realm id: {err:?}"));
-                                                                                                            return;
-                                                                                                        }
-                                                                                                    },
-                                                                                                },
-                                                                                                selection: AgentParticipation {
-                                                                                                    reply: previous.reply,
-                                                                                                    accept_third_party_mention: next_mention,
-                                                                                                    act_on_behalf: previous.act_on_behalf,
-                                                                                                },
-                                                                                            };
-                                                                                            match crate::transport::auth::with_authed_sdk_client(&base, api_token, |http| {
-                                                                                                let body = body.clone();
-                                                                                                let agent_id = agent_id.clone();
-                                                                                                async move { http.agent_participation_replace(&agent_id, &body).await.map_err(anyhow::Error::from) }
-                                                                                            })
-                                                                                            .await
-                                                                                            {
-                                                                                                Ok(outcome) => {
-                                                                                                    let (mention_policy, selection) =
-                                                                                                        mention_state_from_entries(&outcome.entries, &realm);
-                                                                                                    let mut next_agents = owned_agents.read().clone();
-                                                                                                    for row in &mut next_agents {
-                                                                                                        if row.agent_principal_id == outcome.agent_principal_id {
-                                                                                                            row.mention_policy = mention_policy;
-                                                                                                            row.selection = selection;
-                                                                                                        }
-                                                                                                    }
-                                                                                                    owned_agents.set(next_agents);
-                                                                                                    status_msg.set(format!(
-                                                                                                        "agent @ policy updated for {}",
-                                                                                                        short_protocol_id(&outcome.agent_principal_id)
-                                                                                                    ));
-                                                                                                }
-                                                                                                Err(err) => status_msg.set(format!(
-                                                                                                    "agent @ policy update failed: {}",
-                                                                                                    err.display()
-                                                                                                )),
+                                                                            div { class: "member-agent-realm-behavior", "data-testid": "member-agent-realm-behavior",
+                                                                                label { class: "member-agent-behavior-toggle",
+                                                                                    Checkbox {
+                                                                                        "data-testid": "member-agent-reply-toggle",
+                                                                                        checked: if owned_agent.selection.reply { CheckboxState::Checked } else { CheckboxState::Unchecked },
+                                                                                        disabled: !can_enable,
+                                                                                        on_checked_change: {
+                                                                                            let base = base_url.clone();
+                                                                                            let realm = selected_realm_id.clone();
+                                                                                            let agent_id = agent_id.clone();
+                                                                                            let previous = owned_agent.selection;
+                                                                                            move |state: CheckboxState| {
+                                                                                                spawn_set_agent_realm_behavior(
+                                                                                                    base.clone(), token(), realm.clone(), agent_id.clone(),
+                                                                                                    AgentParticipation { reply: bool::from(state), ..previous },
+                                                                                                    owned_agents, status_msg,
+                                                                                                );
                                                                                             }
-                                                                                        });
+                                                                                        },
                                                                                     }
-                                                                                },
-                                                                                if matches!(policy, AgentMentionPolicy::Allowed) {
-                                                                                    "Disable @"
-                                                                                } else {
-                                                                                    "Allow @"
+                                                                                    span { "Reply as agent" }
+                                                                                }
+                                                                                label { class: "member-agent-behavior-toggle",
+                                                                                    Checkbox {
+                                                                                        "data-testid": "member-agent-mention-toggle",
+                                                                                        checked: if owned_agent.selection.accept_third_party_mention { CheckboxState::Checked } else { CheckboxState::Unchecked },
+                                                                                        disabled: !can_enable,
+                                                                                        on_checked_change: {
+                                                                                            let base = base_url.clone();
+                                                                                            let realm = selected_realm_id.clone();
+                                                                                            let agent_id = agent_id.clone();
+                                                                                            let previous = owned_agent.selection;
+                                                                                            move |state: CheckboxState| {
+                                                                                                spawn_set_agent_realm_behavior(
+                                                                                                    base.clone(), token(), realm.clone(), agent_id.clone(),
+                                                                                                    AgentParticipation { accept_third_party_mention: bool::from(state), ..previous },
+                                                                                                    owned_agents, status_msg,
+                                                                                                );
+                                                                                            }
+                                                                                        },
+                                                                                    }
+                                                                                    span { "Accept @mentions" }
+                                                                                }
+                                                                                label { class: "member-agent-behavior-toggle",
+                                                                                    Checkbox {
+                                                                                        "data-testid": "member-agent-act-on-behalf-toggle",
+                                                                                        checked: if owned_agent.selection.act_on_behalf { CheckboxState::Checked } else { CheckboxState::Unchecked },
+                                                                                        disabled: !can_enable,
+                                                                                        on_checked_change: {
+                                                                                            let base = base_url.clone();
+                                                                                            let realm = selected_realm_id.clone();
+                                                                                            let agent_id = agent_id.clone();
+                                                                                            let previous = owned_agent.selection;
+                                                                                            move |state: CheckboxState| {
+                                                                                                spawn_set_agent_realm_behavior(
+                                                                                                    base.clone(), token(), realm.clone(), agent_id.clone(),
+                                                                                                    AgentParticipation { act_on_behalf: bool::from(state), ..previous },
+                                                                                                    owned_agents, status_msg,
+                                                                                                );
+                                                                                            }
+                                                                                        },
+                                                                                    }
+                                                                                    span { "Act on my behalf" }
                                                                                 }
                                                                             }
                                                                         } else if can_invite {
@@ -4346,7 +4422,10 @@ pub fn RealmMembersPanel(
                             }
                         }
                     }
-                    if selected_section_empty && selected_section != MemberRosterSection::PendingInvites {
+                    if selected_section_empty
+                        && selected_section != MemberRosterSection::PendingInvites
+                        && selected_section != MemberRosterSection::MyAgents
+                    {
                         div { class: "members-empty", "data-testid": "members-empty-state",
                             if selected_section_total == 0 && filter_query.is_empty() {
                                 div { class: "members-empty-icon", crate::components::UiIcon { name: "users" } }
@@ -4407,6 +4486,29 @@ mod tests {
                 act_on_behalf: false,
             },
         }
+    }
+
+    #[test]
+    fn my_agents_section_only_matches_the_current_account() {
+        let own_group = MemberGroup {
+            controller: member("did:web:alice.example"),
+            agents: Vec::new(),
+        };
+        let other_group = MemberGroup {
+            controller: member("did:web:bob.example"),
+            agents: Vec::new(),
+        };
+
+        assert!(member_group_in_section(
+            &own_group,
+            MemberRosterSection::MyAgents,
+            "did:web:alice.example"
+        ));
+        assert!(!member_group_in_section(
+            &other_group,
+            MemberRosterSection::MyAgents,
+            "did:web:alice.example"
+        ));
     }
 
     fn temp_store(name: &str) -> LocalStateStore {
