@@ -1,4 +1,4 @@
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::{BTreeMap, BTreeSet, VecDeque};
 
 use arkret_sdk::EncryptedPayload;
 use chime::PushRegistrationState;
@@ -579,7 +579,9 @@ pub struct ClientLocalState {
     #[serde(default)]
     pub realm_events_cursors: BTreeMap<String, String>,
     #[serde(default)]
-    pub client_core_seen_event_ids: BTreeSet<String>,
+    pub device_message_cursors: BTreeMap<String, String>,
+    #[serde(default)]
+    pub client_core_seen_event_ids: VecDeque<String>,
     pub raw_operations: Vec<RawOperationRecord>,
     #[serde(default)]
     pub realm_lifecycle_state: BTreeMap<String, RealmLifecycleState>,
@@ -1060,7 +1062,8 @@ impl Default for ClientLocalState {
         Self {
             sync_cursor: None,
             realm_events_cursors: BTreeMap::new(),
-            client_core_seen_event_ids: BTreeSet::new(),
+            device_message_cursors: BTreeMap::new(),
+            client_core_seen_event_ids: VecDeque::new(),
             raw_operations: Vec::new(),
             realm_lifecycle_state: BTreeMap::new(),
             realm_tree_projections: BTreeMap::new(),

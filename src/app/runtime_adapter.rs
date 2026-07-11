@@ -60,6 +60,18 @@ impl LocalStateBackend for SignalLocalStateBackend {
             garth::CursorScope::RealmEvents { realm_id, .. } => {
                 store.realm_events_cursor(realm_id.as_str())
             }
+            garth::CursorScope::DeviceMessages {
+                service_id,
+                actor_id,
+                device_id,
+            } => {
+                let key = crate::client_core::device_message_cursor_key(
+                    service_id.as_ref(),
+                    actor_id,
+                    device_id,
+                )?;
+                store.device_message_cursor(&key)
+            }
         })
     }
 
@@ -75,6 +87,18 @@ impl LocalStateBackend for SignalLocalStateBackend {
             garth::CursorScope::RealmEvents { realm_id, .. } => {
                 store.save_realm_events_cursor(realm_id.as_str(), Some(cursor));
             }
+            garth::CursorScope::DeviceMessages {
+                service_id,
+                actor_id,
+                device_id,
+            } => {
+                let key = crate::client_core::device_message_cursor_key(
+                    service_id.as_ref(),
+                    actor_id,
+                    device_id,
+                )?;
+                store.save_device_message_cursor(key, Some(cursor));
+            }
         }
         Ok(())
     }
@@ -86,6 +110,18 @@ impl LocalStateBackend for SignalLocalStateBackend {
             garth::CursorScope::Account { .. } => store.clear_sync_cursor(),
             garth::CursorScope::RealmEvents { realm_id, .. } => {
                 store.save_realm_events_cursor(realm_id.as_str(), None);
+            }
+            garth::CursorScope::DeviceMessages {
+                service_id,
+                actor_id,
+                device_id,
+            } => {
+                let key = crate::client_core::device_message_cursor_key(
+                    service_id.as_ref(),
+                    actor_id,
+                    device_id,
+                )?;
+                store.save_device_message_cursor(key, None);
             }
         }
         Ok(())

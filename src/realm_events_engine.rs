@@ -33,7 +33,10 @@
 use std::cell::Cell;
 use std::time::Duration;
 
-use garth::{ClientEvent, ClientProjector, RealmStreamStopReason};
+use garth::{
+    ClientEvent, ClientProjector, RealmStreamStopReason, RunOptions, SyncLoopControl,
+    TransportProvider,
+};
 
 use crate::api_error::{is_auth_expired_error, is_invalid_cursor_error, rate_limited_retry_after};
 use crate::config::MultiProfileConfig;
@@ -135,31 +138,79 @@ pub async fn run_realm_events_engine(
         return;
     }
     let start_profile_id = ctx.profiles.get().active_profile_id;
-    run_engine_loop(
-        BACKOFF_FLOOR,
-        BACKOFF_CEILING,
-        || {
-            generation.get() == start_generation
-                && ctx.profiles.get().active_profile_id == start_profile_id
-                && ctx.selected_realm_id.get() == realm_id
-                && ctx.route_enabled.get()
-                && !ctx.effect.is_cancelled()
-        },
-        async || match run_realm_iteration(&realm_id, &ctx, start_generation, generation.clone())
-            .await
-        {
-            RealmIterationOutcome::Ok => {
-                EngineLoopDirective::ContinueAfter(Duration::from_millis(250))
-            }
-            RealmIterationOutcome::Backoff { retry_after_ms } => EngineLoopDirective::Retry {
-                minimum_delay: retry_after_ms.map(Duration::from_millis),
+    let realm_id_typed = match arkret_sdk::RealmId::new(realm_id.clone()) {
+        Ok(realm_id) => realm_id,
+        Err(error) => {
+            tracing::warn!(error = %error, realm_id, "invalid realm id for events subscribe");
+            return;
+        }
+    };
+    let provider = RealmTransportProvider {
+        ctx: ctx.clone(),
+        generation,
+        start_generation,
+        start_profile_id,
+        realm_id: realm_id.clone(),
+    };
+    let projector = RealmIngestProjector {
+        state_store: ctx.state_store.clone(),
+        realm_id,
+        changed: Cell::new(0),
+    };
+    let result = ctx
+        .client_runtime
+        .client()
+        .run_realm(
+            &provider,
+            realm_id_typed,
+            &projector,
+            &SyncLoopControl::new(),
+            RunOptions {
+                beat: Duration::from_millis(250),
+                min_backoff: BACKOFF_FLOOR,
+                max_backoff: BACKOFF_CEILING,
+                jitter_ratio: 0.2,
             },
-            RealmIterationOutcome::NotReady | RealmIterationOutcome::AuthExpired => {
-                EngineLoopDirective::Stop
-            }
-        },
-    )
-    .await;
+        )
+        .await;
+    if let Err(error) = result {
+        tracing::warn!(error = %error, "realm events runner stopped with error");
+    }
+    if projector.changed.get() > 0 {
+        ctx.realm_live_epoch
+            .update(|epoch| *epoch = epoch.wrapping_add(1));
+    }
+}
+
+struct RealmTransportProvider {
+    ctx: RealmEventsEngineContext,
+    generation: crate::runtime::input::ValueReader<u64>,
+    start_generation: u64,
+    start_profile_id: Option<String>,
+    realm_id: String,
+}
+
+impl TransportProvider for RealmTransportProvider {
+    type Transport = crate::client_core::InksonRealmEventsTransport;
+
+    async fn provide(&self) -> arkret_sdk::Result<Self::Transport> {
+        let base = self.ctx.base_url.get();
+        let token = self.ctx.token.get();
+        let http = crate::transport::auth::authed_api(&base, token)
+            .and_then(|api| api.sdk_http_client())
+            .map_err(|error| arkret_sdk::Error::Protocol(error.to_string()))?;
+        Ok(crate::client_core::InksonRealmEventsTransport::new(http))
+    }
+
+    fn is_active(&self) -> bool {
+        self.generation.get() == self.start_generation
+            && self.ctx.profiles.get().active_profile_id == self.start_profile_id
+            && self.ctx.selected_realm_id.get() == self.realm_id
+            && self.ctx.route_enabled.get()
+            && !self.ctx.effect.is_cancelled()
+            && !self.ctx.base_url.get().trim().is_empty()
+            && !self.ctx.token.get().trim().is_empty()
+    }
 }
 
 async fn run_realm_iteration(

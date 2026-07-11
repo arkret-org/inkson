@@ -29,6 +29,19 @@ pub trait LocalStateBackend: Send + Sync {
     fn remember_event(&self, event_id: &arkret_sdk::EventId) -> arkret_sdk::Result<()>;
 }
 
+pub(crate) fn device_message_cursor_key(
+    service_id: Option<&arkret_sdk::Did>,
+    actor_id: &arkret_sdk::Did,
+    device_id: &arkret_sdk::DeviceId,
+) -> arkret_sdk::Result<String> {
+    serde_json::to_string(&serde_json::json!({
+        "service_id": service_id.map(arkret_sdk::Did::as_str),
+        "actor_id": actor_id.as_str(),
+        "device_id": device_id.as_str(),
+    }))
+    .map_err(Into::into)
+}
+
 struct OwnedLocalStateBackend {
     store: Mutex<crate::state::LocalStateStore>,
 }
@@ -69,6 +82,14 @@ impl LocalStateBackend for OwnedLocalStateBackend {
             garth::CursorScope::RealmEvents { realm_id, .. } => {
                 self.with_store(|store| store.realm_events_cursor(realm_id.as_str()))
             }
+            garth::CursorScope::DeviceMessages {
+                service_id,
+                actor_id,
+                device_id,
+            } => {
+                let key = device_message_cursor_key(service_id.as_ref(), actor_id, device_id)?;
+                self.with_store(|store| store.device_message_cursor(&key))
+            }
         }
     }
 
@@ -77,21 +98,41 @@ impl LocalStateBackend for OwnedLocalStateBackend {
         scope: &garth::CursorScope,
         cursor: garth::OpaqueCursor,
     ) -> arkret_sdk::Result<()> {
-        self.with_store_mut(|store| match scope {
-            garth::CursorScope::Account { .. } => store.save_sync_cursor(cursor),
-            garth::CursorScope::RealmEvents { realm_id, .. } => {
-                store.save_realm_events_cursor(realm_id.as_str(), Some(cursor));
+        match scope {
+            garth::CursorScope::Account { .. } => {
+                self.with_store_mut(|store| store.save_sync_cursor(cursor))
             }
-        })
+            garth::CursorScope::RealmEvents { realm_id, .. } => self.with_store_mut(|store| {
+                store.save_realm_events_cursor(realm_id.as_str(), Some(cursor));
+            }),
+            garth::CursorScope::DeviceMessages {
+                service_id,
+                actor_id,
+                device_id,
+            } => {
+                let key = device_message_cursor_key(service_id.as_ref(), actor_id, device_id)?;
+                self.with_store_mut(|store| store.save_device_message_cursor(key, Some(cursor)))
+            }
+        }
     }
 
     fn clear_cursor(&self, scope: &garth::CursorScope) -> arkret_sdk::Result<()> {
-        self.with_store_mut(|store| match scope {
-            garth::CursorScope::Account { .. } => store.clear_sync_cursor(),
-            garth::CursorScope::RealmEvents { realm_id, .. } => {
-                store.save_realm_events_cursor(realm_id.as_str(), None);
+        match scope {
+            garth::CursorScope::Account { .. } => {
+                self.with_store_mut(crate::state::LocalStateStore::clear_sync_cursor)
             }
-        })
+            garth::CursorScope::RealmEvents { realm_id, .. } => self.with_store_mut(|store| {
+                store.save_realm_events_cursor(realm_id.as_str(), None);
+            }),
+            garth::CursorScope::DeviceMessages {
+                service_id,
+                actor_id,
+                device_id,
+            } => {
+                let key = device_message_cursor_key(service_id.as_ref(), actor_id, device_id)?;
+                self.with_store_mut(|store| store.save_device_message_cursor(key, None))
+            }
+        }
     }
 
     fn event_seen(&self, event_id: &arkret_sdk::EventId) -> arkret_sdk::Result<bool> {
@@ -191,6 +232,20 @@ type InksonSubscriptionEngine = garth::SubscriptionEngine<
     InksonLocalStateStoreAdapter,
 >;
 
+#[cfg(not(target_arch = "wasm32"))]
+type InksonArkretClient = garth::ArkretClient<
+    garth::NativeExecutor,
+    InksonLocalStateStoreAdapter,
+    InksonLocalStateStoreAdapter,
+>;
+
+#[cfg(target_arch = "wasm32")]
+type InksonArkretClient = garth::ArkretClient<
+    garth::WasmExecutor,
+    InksonLocalStateStoreAdapter,
+    InksonLocalStateStoreAdapter,
+>;
+
 #[cfg(target_arch = "wasm32")]
 type InksonSubscriptionEngine = garth::SubscriptionEngine<
     garth::WasmExecutor,
@@ -200,7 +255,7 @@ type InksonSubscriptionEngine = garth::SubscriptionEngine<
 
 #[derive(Clone)]
 pub struct InksonClientRuntime {
-    subscriptions: InksonSubscriptionEngine,
+    client: InksonArkretClient,
 }
 
 impl InksonClientRuntime {
@@ -210,12 +265,16 @@ impl InksonClientRuntime {
         #[cfg(target_arch = "wasm32")]
         let executor = garth::WasmExecutor;
         Self {
-            subscriptions: garth::SubscriptionEngine::new(executor, adapter.clone(), adapter),
+            client: garth::ArkretClient::new(executor, adapter.clone(), adapter),
         }
     }
 
     pub fn subscription_engine(&self) -> InksonSubscriptionEngine {
-        self.subscriptions.clone()
+        self.client.subscription_engine()
+    }
+
+    pub(crate) fn client(&self) -> InksonArkretClient {
+        self.client.clone()
     }
 }
 
