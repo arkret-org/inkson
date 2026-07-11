@@ -240,8 +240,10 @@ pub fn CallPanel(
             spawn(async move {
                 // 1) Invite signal opens the call (ephemeral `ak.call.signal`).
                 if matches!(mode, CallMode::P2p) {
-                    let invite_data =
-                        json!({ "participants": invite_peers.clone(), "video": want_video });
+                    let invite_data = json!({
+                        "participants": invite_peers.clone(),
+                        "media": { "audio": true, "video": want_video, "screen": false }
+                    });
                     if let Err(err) = emit_signal(
                         &base,
                         &api_token,
@@ -314,7 +316,10 @@ pub fn CallPanel(
                                     stage.set(CallStage::Ended);
                                     return;
                                 }
-                                let invite_data = json!({ "participants": invite_peers.clone(), "video": want_video });
+                                let invite_data = json!({
+                                    "participants": invite_peers.clone(),
+                                    "media": { "audio": true, "video": want_video, "screen": false }
+                                });
                                 if let Err(err) = emit_signal(
                                     &base,
                                     &api_token,

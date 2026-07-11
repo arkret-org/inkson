@@ -102,15 +102,13 @@ pub(crate) fn collect_content_text(value: &Value, lines: &mut Vec<String>) {
                 "markdown",
                 "plain_text",
                 "content",
+                "parts",
                 "caption",
                 "alt",
             ] {
                 if let Some(child) = object.get(key) {
                     collect_content_text(child, lines);
                 }
-            }
-            if let Some(blocks) = object.get("blocks") {
-                collect_content_text(blocks, lines);
             }
         }
         _ => {}

@@ -114,9 +114,7 @@ pub struct AccountDataStore {
     /// `sha256:<hex>` per the spec's account-data snapshot fingerprint).
     /// `None` until the first snapshot catch-up completes; subsequent
     /// snapshot fetches refresh the value. Persisted alongside `entries`
-    /// so a restart can resume incremental sync from this point. Kept
-    /// `#[serde(default)]` for backward compatibility with pre-snapshot
-    /// on-disk state.
+    /// so a restart can resume incremental sync from this point.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     snapshot_head: Option<String>,
 }

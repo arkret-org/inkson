@@ -1,5 +1,81 @@
 use super::*;
 
+const CHAT_FIXTURE_DEVICE: &str = "ak:device:01964137-0000-7000-8000-00000000cafe";
+const CHAT_FIXTURE_SEED: [u8; 32] = [91; 32];
+
+fn sign_chat_fixture(value: &mut Value) {
+    match value {
+        Value::Array(values) => {
+            for value in values {
+                sign_chat_fixture(value);
+            }
+        }
+        Value::Object(object) => {
+            for child in object.values_mut() {
+                sign_chat_fixture(child);
+            }
+            let Some(actor_id) = object
+                .get("actor_id")
+                .and_then(Value::as_str)
+                .map(ToOwned::to_owned)
+            else {
+                return;
+            };
+            if !actor_id.starts_with("did:") {
+                return;
+            }
+            object.insert("device_id".to_owned(), json!(CHAT_FIXTURE_DEVICE));
+            object.remove("proofs");
+            object.remove("unsigned");
+            let signer = crate::event_signer::build_ed25519_signer_with_verification_method(
+                CHAT_FIXTURE_SEED,
+                &actor_id,
+                format!("{actor_id}#{CHAT_FIXTURE_DEVICE}"),
+            );
+            let canonical_bytes = crate::canonical::canonical_json_bytes(value).unwrap();
+            let event_digest = crate::canonical::sha256_digest(&canonical_bytes);
+            let mut proof = arkret_sdk::Proof {
+                kind: "detached_jws".to_owned(),
+                alg: signer.algorithm().to_owned(),
+                verification_method: signer.verification_method().to_owned(),
+                event_digest: arkret_sdk::Hash::new(event_digest).unwrap(),
+                created_at: chrono::DateTime::parse_from_rfc3339("2026-07-10T00:00:00Z")
+                    .unwrap()
+                    .with_timezone(&chrono::Utc),
+                domain: None,
+                audience: None,
+                jws: String::new(),
+            };
+            let actor = arkret_sdk::Did::new(actor_id.clone()).unwrap();
+            let binding = proof.canonical_binding_bytes(&actor).unwrap();
+            proof.jws = signer.detached_jws_over(&binding).unwrap();
+            value
+                .as_object_mut()
+                .unwrap()
+                .insert("proofs".to_owned(), json!([proof]));
+
+            let signing_key = ed25519_dalek::SigningKey::from_bytes(&CHAT_FIXTURE_SEED);
+            let did_key =
+                crate::identity::did_key::did_key_from_verifying_key(&signing_key.verifying_key());
+            let public_key =
+                crate::identity::device_directory::public_key_from_directory_value(&did_key)
+                    .unwrap();
+            crate::identity::device_directory::seed_positive_for_test(
+                &actor_id,
+                CHAT_FIXTURE_DEVICE,
+                public_key,
+            );
+        }
+        _ => {}
+    }
+}
+
+fn sign_chat_fixtures(values: &mut [Value]) {
+    for value in values {
+        sign_chat_fixture(value);
+    }
+}
+
 /// The Welcome-receive shuttle iterates `events[]` from
 /// `DeviceMessagesGetOutcome` and surfaces only
 /// `ak.mls.welcome` payloads.
@@ -69,7 +145,7 @@ fn parses_message_event_with_operation_body_shape() {
 
 #[test]
 fn parses_message_event_with_nested_envelope_payload_shape() {
-    let event = json!({
+    let mut event = json!({
         "event": {
             "event_id": "ak:event:nested",
             "kind": "ak.message.create",
@@ -85,6 +161,7 @@ fn parses_message_event_with_nested_envelope_payload_shape() {
             }
         }
     });
+    sign_chat_fixture(&mut event);
 
     let message = chat_message_from_event("ak:realm:demo", &event).unwrap();
 
@@ -99,7 +176,7 @@ fn folds_received_redaction_tombstone_onto_message() {
     // event_id preserved, body stripped, redacted/state markers added. The
     // receive path MUST render the tombstone (redacted=true, empty body) even
     // though this is the only copy of the message the reader ever sees.
-    let event = json!({
+    let mut event = json!({
         "kind": "ak.message.create",
         "event_id": "ak:event:tombstone",
         "message_id": "ak:message:tombstone",
@@ -114,6 +191,7 @@ fn folds_received_redaction_tombstone_onto_message() {
         "redaction_ref": "ak:event:redact-1",
         "content": {"kind": "ak.content.text", "body": "[redacted]"}
     });
+    sign_chat_fixture(&mut event);
 
     let message = chat_message_from_event("ak:realm:demo", &event).unwrap();
 
@@ -779,7 +857,7 @@ fn restores_messages_from_local_raw_operations() {
 
 #[test]
 fn restores_canonical_actor_id_from_local_raw_operations() {
-    let state = ClientLocalState {
+    let mut state = ClientLocalState {
         raw_operations: vec![crate::state::RawOperationRecord {
             operation_id: "ak:operation:local".to_owned(),
             realm_id: Some("ak:realm:local".to_owned()),
@@ -788,6 +866,7 @@ fn restores_canonical_actor_id_from_local_raw_operations() {
                 "event_id": "ak:event:local",
                 "kind": "ak.message.create",
                 "actor_id": "did:web:local.host:users:alice",
+                "realm_id": "ak:realm:local",
                 "body": "canonical local message",
                 "strand_id": "ak:strand:announce",
                 "message_id": "chat-msg-local"
@@ -795,6 +874,7 @@ fn restores_canonical_actor_id_from_local_raw_operations() {
         }],
         ..ClientLocalState::default()
     };
+    sign_chat_fixture(&mut state.raw_operations[0].payload);
 
     let messages = chat_messages_from_local_state_with_sidecar(&state, None, None);
 
@@ -810,7 +890,7 @@ fn message_operations_from_events_folds_create_and_renders_local_first() {
     // dedup id = event_id) that `chat_messages_from_local_state_with_sidecar`
     // renders WITHOUT any backfill — the event-sourced replacement for the
     // per-open realm refetch.
-    let create = json!({
+    let mut create = json!({
         "event_id": "ak:event:msg-1",
         "kind": "ak.message.create",
         "actor_id": "did:web:bob.example",
@@ -820,6 +900,7 @@ fn message_operations_from_events_folds_create_and_renders_local_first() {
         "message_id": "ak:message:m1",
         "body": "hello from bob"
     });
+    sign_chat_fixture(&mut create);
     // A non-message timeline event (e.g. a poll close) MUST be ignored.
     let poll = json!({
         "event_id": "ak:event:poll-1",
@@ -850,7 +931,7 @@ fn message_operations_from_events_folds_create_and_renders_local_first() {
 
 #[test]
 fn chat_messages_read_projected_reaction_summary() {
-    let events = vec![json!({
+    let mut events = vec![json!({
         "event_id": "ak:event:msg-1",
         "kind": "ak.message.create",
         "actor_id": "did:web:alice.example",
@@ -863,6 +944,7 @@ fn chat_messages_read_projected_reaction_summary() {
             "+1": ["did:web:bob.example", "did:web:carol.example"]
         }
     })];
+    sign_chat_fixtures(&mut events);
 
     let messages = chat_messages_from_events_with_sidecar("ak:realm:r1", &events, None, None);
 
@@ -881,7 +963,7 @@ fn chat_messages_read_projected_reaction_summary() {
 
 #[test]
 fn chat_messages_fold_reaction_events_by_target_ref() {
-    let events = vec![
+    let mut events = vec![
         json!({
             "event_id": "ak:event:msg-1",
             "kind": "ak.message.create",
@@ -917,6 +999,7 @@ fn chat_messages_fold_reaction_events_by_target_ref() {
             "key": "+1"
         }),
     ];
+    sign_chat_fixtures(&mut events);
 
     let messages = chat_messages_from_events_with_sidecar("ak:realm:r1", &events, None, None);
 
@@ -946,7 +1029,7 @@ fn chat_messages_fold_reaction_events_by_target_ref() {
 
 #[test]
 fn chat_messages_fold_projection_reaction_target_ref_over_envelope_message_id() {
-    let events = vec![
+    let mut events = vec![
         json!({
             "event_id": "ak:event:create-projection",
             "event_kind": "ak.message.create",
@@ -985,6 +1068,7 @@ fn chat_messages_fold_projection_reaction_target_ref_over_envelope_message_id() 
             }
         }),
     ];
+    sign_chat_fixtures(&mut events);
 
     let messages = chat_messages_from_events_with_sidecar("ak:realm:r1", &events, None, None);
 
@@ -1022,7 +1106,7 @@ fn chat_messages_fold_projection_reaction_target_ref_over_envelope_message_id() 
 
 #[test]
 fn chat_messages_fold_revision_chain_into_latest_message() {
-    let events = vec![
+    let mut events = vec![
         json!({
             "event_id": "ak:event:msg-3",
             "kind": "ak.message.create",
@@ -1054,6 +1138,7 @@ fn chat_messages_fold_revision_chain_into_latest_message() {
             "content": {"kind": "ak.content.text", "body": "v3"}
         }),
     ];
+    sign_chat_fixtures(&mut events);
 
     let messages = chat_messages_from_events_with_sidecar("ak:realm:r1", &events, None, None);
 
@@ -1086,7 +1171,7 @@ fn chat_messages_fold_revision_chain_into_latest_message() {
 fn chat_messages_keep_folded_timeline_revision_over_older_backfill_create() {
     let message_id = "ak:message:019f3b27-f521-70f0-84f3-e06f95177dbf";
     let reply_to = "ak:message:019f3b27-e366-7d70-9fe4-fb3e8442b449";
-    let events = vec![
+    let mut events = vec![
         json!({
             "event_id": "ak:event:019f3b27-fb61-7ed3-af84-04cc68eac2f6",
             "kind": "ak.message.create",
@@ -1123,6 +1208,7 @@ fn chat_messages_keep_folded_timeline_revision_over_older_backfill_create() {
             }
         }),
     ];
+    sign_chat_fixtures(&mut events);
 
     let messages = chat_messages_from_events_with_sidecar("ak:realm:r1", &events, None, None);
 
@@ -1136,7 +1222,7 @@ fn chat_messages_keep_folded_timeline_revision_over_older_backfill_create() {
 
 #[test]
 fn chat_messages_fold_redacted_revision_tombstone_into_root_tombstone() {
-    let events = vec![
+    let mut events = vec![
         json!({
             "event_id": "ak:event:msg-4-rev-1",
             "kind": "ak.message.revise",
@@ -1162,6 +1248,7 @@ fn chat_messages_fold_redacted_revision_tombstone_into_root_tombstone() {
             "content": {"kind": "ak.content.text", "body": "[redacted]"}
         }),
     ];
+    sign_chat_fixtures(&mut events);
 
     let messages = chat_messages_from_events_with_sidecar("ak:realm:r1", &events, None, None);
 
@@ -1171,7 +1258,7 @@ fn chat_messages_fold_redacted_revision_tombstone_into_root_tombstone() {
 
 #[test]
 fn chat_messages_fold_nested_server_redacted_revision_tombstone_into_root_tombstone() {
-    let events = vec![
+    let mut events = vec![
         json!({
             "event_id": "ak:event:msg-5",
             "kind": "ak.message.create",
@@ -1210,6 +1297,7 @@ fn chat_messages_fold_nested_server_redacted_revision_tombstone_into_root_tombst
             "proofs": []
         }),
     ];
+    sign_chat_fixtures(&mut events);
 
     let messages = chat_messages_from_events_with_sidecar("ak:realm:r1", &events, None, None);
 
@@ -1390,7 +1478,7 @@ fn message_operations_redaction_tombstone_dedupes_over_create_by_event_id() {
 
 #[test]
 fn message_operations_fold_independent_redaction_event_by_message_id() {
-    let create = json!({
+    let mut create = json!({
         "event_id": "ak:event:msg-3",
         "kind": "ak.message.create",
         "actor_id": "did:web:bob.example",
@@ -1400,7 +1488,8 @@ fn message_operations_fold_independent_redaction_event_by_message_id() {
         "message_id": "ak:message:m3",
         "body": "secret"
     });
-    let redaction = json!({
+    sign_chat_fixture(&mut create);
+    let mut redaction = json!({
         "event_id": "ak:event:redact-3",
         "event_kind": "ak.message.redact",
         "actor_id": "did:web:bob.example",
@@ -1412,6 +1501,7 @@ fn message_operations_fold_independent_redaction_event_by_message_id() {
             "reason": "user requested tombstone"
         }
     });
+    sign_chat_fixture(&mut redaction);
 
     for events in [
         vec![create.clone(), redaction.clone()],
@@ -1504,7 +1594,7 @@ fn local_redaction_tombstone_replaces_raw_message_without_plaintext() {
     );
     assert!(tombstone.get("body").is_none());
 
-    let state = ClientLocalState {
+    let mut state = ClientLocalState {
         raw_operations: vec![crate::state::RawOperationRecord {
             operation_id: message.id.clone(),
             realm_id: Some(message.realm_id.clone()),
@@ -1513,6 +1603,7 @@ fn local_redaction_tombstone_replaces_raw_message_without_plaintext() {
         }],
         ..ClientLocalState::default()
     };
+    sign_chat_fixture(&mut state.raw_operations[0].payload);
     let restored = chat_messages_from_local_state_with_sidecar(&state, None, None);
     assert_eq!(restored.len(), 1);
     assert_eq!(restored[0].id, message.id);
@@ -1598,7 +1689,7 @@ fn rebuild_restores_authors_own_encrypted_message_from_sidecar() {
         "secret discussion body",
     );
 
-    let state = ClientLocalState {
+    let mut state = ClientLocalState {
         raw_operations: vec![crate::state::RawOperationRecord {
             operation_id: "ak:operation:enc".to_owned(),
             realm_id: Some("ak:realm:local".to_owned()),
@@ -1608,6 +1699,7 @@ fn rebuild_restores_authors_own_encrypted_message_from_sidecar() {
                 "event_id": "ak:event:enc",
                 "kind": "ak.message.create",
                 "actor_id": "did:web:alice.example",
+                "realm_id": "ak:realm:local",
                 "strand_id": "ak:strand:announce",
                 "message_id": "chat-msg-enc",
                 "encrypted_content": true,
@@ -1616,6 +1708,7 @@ fn rebuild_restores_authors_own_encrypted_message_from_sidecar() {
         }],
         ..ClientLocalState::default()
     };
+    sign_chat_fixture(&mut state.raw_operations[0].payload);
 
     // Without the sidecar (e.g. another device) the stub has no readable
     // body, but it must still surface as an encrypted/locked row so the
@@ -1627,7 +1720,7 @@ fn rebuild_restores_authors_own_encrypted_message_from_sidecar() {
     assert_eq!(without_sidecar[0].body, "");
     assert!(matches!(
         without_sidecar[0].crypto_state,
-        MessageCryptoState::NeedsVerification
+        MessageCryptoState::Decrypting
     ));
 
     // With the sidecar (same device, tab switch / reload) the body is
@@ -1639,7 +1732,7 @@ fn rebuild_restores_authors_own_encrypted_message_from_sidecar() {
     assert_eq!(restored[0].body, "secret discussion body");
     assert!(matches!(
         restored[0].crypto_state,
-        MessageCryptoState::NeedsVerification
+        MessageCryptoState::Plaintext
     ));
 }
 
@@ -1718,7 +1811,7 @@ fn expiry_stub_does_not_restore_authors_plaintext_sidecar() {
         &format!("message:{message_id}"),
         "secret discussion body",
     );
-    let event = json!({
+    let mut event = json!({
         "event_id": "ak:event:expired",
         "kind": "ak.message.create",
         "actor_id": "did:web:alice.example",
@@ -1732,6 +1825,7 @@ fn expiry_stub_does_not_restore_authors_plaintext_sidecar() {
             "body": "[expired]"
         }
     });
+    sign_chat_fixture(&mut event);
 
     let message =
         chat_message_from_event_with_sidecar(realm, &event, Some(&store), None).expect("message");
@@ -1753,7 +1847,7 @@ fn late_recovery_guards_block_sidecar_plaintext_before_timeline_entry() {
         &format!("message:{message_id}"),
         "late plaintext",
     );
-    let rejected = json!({
+    let mut rejected = json!({
         "event_id": "ak:event:late",
         "kind": "ak.message.create",
         "actor_id": "did:web:alice.example",
@@ -1770,6 +1864,7 @@ fn late_recovery_guards_block_sidecar_plaintext_before_timeline_entry() {
             "encrypted_content": true
         }
     });
+    sign_chat_fixture(&mut rejected);
 
     let message = chat_message_from_event_with_sidecar(realm, &rejected, Some(&store), None)
         .expect("message");
@@ -1798,7 +1893,7 @@ fn late_recovery_guards_allow_sidecar_plaintext_when_all_pass() {
         &format!("message:{message_id}"),
         "late plaintext",
     );
-    let accepted = json!({
+    let mut accepted = json!({
         "event_id": "ak:event:late-ok",
         "kind": "ak.message.create",
         "actor_id": "did:web:alice.example",
@@ -1816,12 +1911,13 @@ fn late_recovery_guards_allow_sidecar_plaintext_when_all_pass() {
             "encrypted_content": true
         }
     });
+    sign_chat_fixture(&mut accepted);
 
     let message = chat_message_from_event_with_sidecar(realm, &accepted, Some(&store), None)
         .expect("message");
 
     assert_eq!(message.body, "late plaintext");
-    assert_eq!(message.crypto_state, MessageCryptoState::NeedsVerification);
+    assert_eq!(message.crypto_state, MessageCryptoState::Plaintext);
     assert_eq!(message.error, None);
 }
 
@@ -3299,7 +3395,7 @@ mod merge_duplicate_create_message_alignment_tests {
     // did NOT apply. Exercised through the real construction path.
     #[test]
     fn reactions_from_summary_trim_whitespace_in_key_and_actor() {
-        let events = vec![json!({
+        let mut events = vec![json!({
             "event_id": "ak:event:msg-r",
             "kind": "ak.message.create",
             "actor_id": "did:web:bob.example",
@@ -3311,6 +3407,7 @@ mod merge_duplicate_create_message_alignment_tests {
             "reaction_summary": { " +1 ": { "members": [" did:web:carol.example "] } },
             "proofs": []
         })];
+        sign_chat_fixtures(&mut events);
         let messages = chat_messages_from_events_with_sidecar("ak:realm:r1", &events, None, None);
         assert_eq!(messages.len(), 1);
         assert_eq!(

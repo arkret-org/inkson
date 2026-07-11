@@ -692,18 +692,17 @@ fn chat_messages_from_event_list_with_sidecar(
     messages
 }
 
-pub(crate) fn text_from_blocks(value: &Value) -> Option<&str> {
+pub(crate) fn text_from_parts(value: &Value) -> Option<&str> {
     value
-        .get("blocks")
+        .get("parts")
         .and_then(Value::as_array)
-        .and_then(|blocks| blocks.first())
-        .and_then(|block| block.get("text"))
-        .and_then(Value::as_str)
+        .and_then(|parts| parts.first())
+        .and_then(text_body_from_value)
 }
 
 pub(crate) fn text_body_from_value(value: &Value) -> Option<&str> {
     value_string_at(value, &["body", "text", "message", "plain_text"])
-        .or_else(|| text_from_blocks(value))
+        .or_else(|| text_from_parts(value))
         .or_else(|| {
             value
                 .get("content")

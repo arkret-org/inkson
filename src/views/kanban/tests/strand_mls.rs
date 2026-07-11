@@ -14,9 +14,10 @@ fn strand_body_display_text_reads_content_block_body() {
 }
 
 #[test]
-fn strand_body_display_text_reads_nested_blocks() {
+fn strand_body_display_text_reads_composite_parts() {
     let body = json!({
-        "blocks": [
+        "kind": "ak.content.composite",
+        "parts": [
             { "kind": "ak.content.text", "body": "First block" },
             { "kind": "ak.content.text", "text": "Second block" }
         ]

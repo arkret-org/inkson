@@ -34,7 +34,7 @@ pub struct IncomingCallInfo {
     pub peer_actor: String,
     /// The caller's sending device id (`envelope.device_id`).
     pub sender_device: String,
-    /// Invite requested video (`payload.data.video`, or `data.media.video`).
+    /// Invite requested video (`payload.data.media.video`).
     pub video: bool,
 }
 
@@ -242,13 +242,7 @@ fn decode_call_signal_envelope(realm_id: &str, envelope: &Value) -> Option<Decod
     })
 }
 
-/// Read whether an `invite` requested video. The sender side
-/// (`start_call`) writes `data.video`; tolerate the `data.media.video`
-/// nesting too for forward compatibility.
 fn invite_wants_video(data: &Value) -> bool {
-    if let Some(v) = data.get("video").and_then(Value::as_bool) {
-        return v;
-    }
     data.get("media")
         .and_then(|m| m.get("video"))
         .and_then(Value::as_bool)
@@ -715,7 +709,10 @@ mod tests {
             "ak:call:1",
             "invite",
             1,
-            json!({ "video": true, "participants": ["did:web:alice"] }),
+            json!({
+                "media": { "audio": true, "video": true, "screen": false },
+                "participants": ["did:web:alice"]
+            }),
         )]);
         let decoded = decode_realm_call_signals("ak:realm:r", &body);
         assert_eq!(decoded.len(), 1);
@@ -750,7 +747,7 @@ mod tests {
             seq,
             sender_actor: "did:web:bob".into(),
             sender_device: "dev-b".into(),
-            video: data.get("video").and_then(Value::as_bool).unwrap_or(false),
+            video: invite_wants_video(&data),
             data,
             envelope: Value::Null,
         }
@@ -758,7 +755,7 @@ mod tests {
 
     #[test]
     fn invite_decides_ring_then_dedup_drops() {
-        let d = decoded("invite", 1, json!({ "video": true }));
+        let d = decoded("invite", 1, json!({ "media": { "video": true } }));
         let fresh = RouteState::default();
         match decide_route(&d, "did:web:alice", false, &fresh) {
             RouteDecision::Ring(info) => {
@@ -920,7 +917,7 @@ mod tests {
                 "call_id": "ak:call:verify-1",
                 "signal_type": "invite",
                 "seq": 1,
-                "data": { "video": true }
+                "data": { "media": { "audio": true, "video": true, "screen": false } }
             }
         });
         let canonical_bytes = crate::canonical::canonical_json_bytes(&envelope).unwrap();

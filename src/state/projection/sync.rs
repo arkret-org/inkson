@@ -17,17 +17,15 @@ fn projection_actor_id(event: &Value) -> Option<&str> {
 /// Extract the display text from a decrypted canonical Content Block JSON.
 ///
 /// The secure send path encodes the body via `ContentBlock::text(..).to_value()`,
-/// whose canonical shape is `{ "text": .. }`; older / multi-block shapes carry it
-/// at `blocks[0].text`. Mirrors chat's `text_body_from_value` for the subset
-/// projection consumers need.
+/// whose canonical shape is `{ "text": .. }`; composite content carries
+/// ordered blocks under `parts[]`.
 fn projection_text_from_content_value(value: &Value) -> Option<&str> {
     value.get("text").and_then(Value::as_str).or_else(|| {
         value
-            .get("blocks")
+            .get("parts")
             .and_then(Value::as_array)
-            .and_then(|blocks| blocks.first())
-            .and_then(|block| block.get("text"))
-            .and_then(Value::as_str)
+            .and_then(|parts| parts.first())
+            .and_then(projection_text_from_content_value)
     })
 }
 
@@ -123,14 +121,7 @@ pub fn projection_events_from_sync_realms(
                 .get("body")
                 .and_then(Value::as_str)
                 .or_else(|| event.get("body").and_then(Value::as_str))
-                .or_else(|| {
-                    content
-                        .get("blocks")
-                        .and_then(Value::as_array)
-                        .and_then(|blocks| blocks.first())
-                        .and_then(|block| block.get("text"))
-                        .and_then(Value::as_str)
-                })
+                .or_else(|| projection_text_from_content_value(content))
                 .unwrap_or("[message]")
                 .to_owned();
             let is_expiry_stub = crate::disappearing::message_event_is_expiry_stub(event);
@@ -216,8 +207,8 @@ pub fn projection_events_from_sync_realms(
                 message_id,
                 // The canonical envelope subject is `actor_id`; sender display
                 // fields use the role-explicit `sender_actor_*` schema names.
-                // Prefer actor_id / sender_actor_id; `sender` is deprecated and
-                // kept only for backward compatibility.
+                // Envelope attribution uses `actor_id`; derived notification
+                // projections use the role-explicit `sender_actor_id`.
                 sender: projection_actor_id(event)
                     .unwrap_or("did:web:unknown")
                     .to_owned(),
