@@ -232,7 +232,11 @@ async fn fetch_owned_agent_rows(
         let Some(mut row) = member_agent_row_from_value(value, fallback_controller_id) else {
             continue;
         };
-        if row.status == "deactivated" {
+        // Deactivated agents are terminal; pairing_expired agents never bound
+        // a runtime key and can never join a Realm. Pending agents stay: Realm
+        // grants may be attached before pairing completes
+        // (effective_after_first_authorized_key).
+        if matches!(row.status.as_str(), "deactivated" | "pairing_expired") {
             continue;
         }
         match http.agent_participation_get(&row.agent_id).await {

@@ -414,7 +414,7 @@ test("deactivated personal agents are available only through the audit deep link
   await expect(page.getByTestId("agent-admin-deactivated-terminal-note")).toBeVisible();
 });
 
-test("expired personal agent pairing shows pair-again guidance", async ({ page }) => {
+test("expired personal agent pairing renews in place with a fresh handle", async ({ page }) => {
   await writeSessionGrantInjection(page);
   await page.reload({ waitUntil: "domcontentloaded" });
   await dismissBlockingRecoveryModal(page);
@@ -431,10 +431,20 @@ test("expired personal agent pairing shows pair-again guidance", async ({ page }
   await expect(page.getByTestId("agent-admin-pairing-expired-message")).toContainText(
     "pair again",
   );
-  await page.getByTestId("agent-admin-create-replacement-button").click();
-  await expect(page.getByTestId("agent-admin-provision")).toBeVisible();
-  await expect(page.getByTestId("agent-admin-provision-display-name")).toHaveCount(0);
-  await expect(page.getByTestId("agent-admin-provision-agent-slug")).toHaveValue("summary");
+
+  // Pair again renews pairing on the SAME agent: no create form, no
+  // replacement principal, and the card flips back to Ready with a fresh
+  // QR + deep link carrying the renewed handle.
+  await page.getByTestId("agent-admin-renew-pairing-button").click();
+  await expect(page.getByTestId("agent-admin-provision")).toHaveCount(0);
+  await expect(page.getByTestId("agent-admin-pairing-card")).toContainText("Ready");
+  await expect(page.getByTestId("agent-admin-pairing-expired-message")).toHaveCount(0);
+  await expect(page.getByTestId("agent-admin-pairing-qr")).toBeVisible();
+  await expect(page.getByTestId("agent-admin-pairing-url")).not.toHaveValue("");
+  await expect(
+    page.getByTestId("agent-admin-row").filter({ hasText: "summary" }),
+  ).toHaveCount(1);
+  await expect(page.getByTestId("agent-admin-last-op")).toContainText("Pairing renewed");
 });
 
 test("diagnostic and preview surfaces stay behind clear user-facing states", async ({ page }) => {
