@@ -80,12 +80,16 @@ mod command_palette;
 mod connect;
 mod context_bar;
 mod feature_gate;
+mod global_effects;
 mod handles;
 mod manage_pages;
+mod navigation_state;
 mod notifications_drawer;
 mod projection_adapter;
+mod route_surface;
 mod session_boot;
 mod session_context;
+mod session_shell;
 mod sidebar;
 mod sidebar_width;
 pub(crate) use clipboard::*;
@@ -93,11 +97,15 @@ pub(crate) use command_palette::*;
 use connect::*;
 pub(crate) use context_bar::*;
 pub(crate) use feature_gate::*;
+use global_effects::GlobalEffects;
 pub(crate) use handles::*;
 pub(crate) use manage_pages::*;
+use navigation_state::NavigationState;
 use notifications_drawer::NotificationsDrawer;
+use route_surface::{RouteSurface, RouteSurfaceState};
 use session_boot::*;
 pub(crate) use session_context::SessionContext;
+use session_shell::SessionShell;
 use sidebar::*;
 use sidebar_width::*;
 
@@ -568,12 +576,6 @@ fn AppBootstrap() -> Element {
     let i18n_signal = use_context_provider::<crate::i18n::I18nSignal>(|| {
         crate::i18n::init_i18n_with_locale(initial_locale)
     });
-    {
-        let mut sig = i18n_signal;
-        use_effect(move || {
-            crate::i18n::set_locale(&mut sig, locale());
-        });
-    }
     // Cap-Gate-1: shared `Signal<CapabilityEngine>` for UI-side pre-gates.
     // Starts empty; views call `engine.ui_gate(...)` which returns an open
     // gate when no grants for the subject are loaded yet, so the existing
@@ -590,39 +592,8 @@ fn AppBootstrap() -> Element {
     // set), provided via context so operator-only surfaces (organization
     // create / bind) can gate their UI without prop drilling. This is the real
     // operator signal — distinct from any Realm-role `is_admin` placeholder.
-    let mut is_server_admin =
+    let is_server_admin =
         use_context_provider(|| crate::views::realm_admin::ServerAdminSignal(Signal::new(false))).0;
-    {
-        // Refresh the admin signal whenever the session credential or server
-        // changes. Failures (offline, transient) leave it `false` (fail closed),
-        // so the write UI never appears for a viewer we can't confirm.
-        let base_url = base_url;
-        let token = token;
-        let viewer_admin = use_resource(move || {
-            let base = base_url();
-            let session = token();
-            async move {
-                if session.trim().is_empty() {
-                    return false;
-                }
-                crate::transport::auth::with_endpoint_clients(
-                    &base,
-                    session,
-                    None,
-                    |clients| async move { clients.account().viewer().await },
-                )
-                .await
-                .map(|viewer| viewer.is_server_admin)
-                .unwrap_or(false)
-            }
-        });
-        use_effect(move || {
-            let resolved = viewer_admin().unwrap_or(false);
-            if *is_server_admin.peek() != resolved {
-                is_server_admin.set(resolved);
-            }
-        });
-    }
     // Y1 - session-scoped DID resolution cache handle.
     //
     // Mount point note: inkson app state is a set of scattered `use_signal`
@@ -658,23 +629,6 @@ fn AppBootstrap() -> Element {
         });
     }
     let system_theme_is_night = use_signal(browser_prefers_dark_theme);
-    {
-        let mut system_theme_is_night = system_theme_is_night;
-        use_effect(move || {
-            if theme() == "system"
-                && let Some(is_night) = browser_shell_color_scheme_is_dark()
-            {
-                system_theme_is_night.set(is_night);
-            }
-        });
-    }
-    // Mirror the effective theme onto `<html>` so the vendored dxc palette
-    // switch (declared on `:root`) and teleported dialogs resolve correctly.
-    // Re-runs whenever the chosen theme or the OS preference changes.
-    use_effect(move || {
-        let resolved_night = theme_renders_as_night(&theme(), system_theme_is_night());
-        apply_document_root_theme(resolved_night);
-    });
     let mut mobile_nav_open = use_signal(|| false);
     let mut mobile_space_query = use_signal(String::new);
     let mut sidebar_collapsed = use_signal(|| false);
@@ -941,102 +895,6 @@ fn AppBootstrap() -> Element {
     // then signs in (on the same mount) would never auto-connect, since
     // the one-shot would have already been spent during the empty-session
     // first render.
-    // Background session-refresh poller. Proactively rotates the grant
-    // a little before it expires so requests rarely hit a cold 401. The
-    // refresh itself goes through the shared single-flight refresher
-    // (`crate::runtime::session`), so this poller and any reactive 401-retry can
-    // never fire two competing refreshes for the same rollover.
-    use_future({
-        let mut status = connection_status;
-        let mut last_error = last_error;
-        let state_store = state_store;
-        let token = token;
-        let mut session_boot_state = session_boot_state;
-        let session = runtime_services.session.clone();
-        move || {
-            let session = session.clone();
-            async move {
-                crate::runtime_helpers::sleep_for(std::time::Duration::from_millis(1)).await;
-                loop {
-                    // Freshness gate — only refresh when the persisted grant is
-                    // near its own expiry. The read borrow is dropped before any
-                    // await, so concurrent `state_store.write()` callers never hit
-                    // `AlreadyBorrowedMut`.
-                    let due = {
-                        let store = state_store.read();
-                        matches!(
-                            crate::identity::session_refresh::refresh_decision(&store),
-                            crate::identity::session_refresh::RefreshDecision::Due
-                        )
-                    };
-                    if due {
-                        if token().trim().is_empty() {
-                            status.set("Restoring session...".to_owned());
-                            session_boot_state.set(SessionBootState::Restoring);
-                        }
-                        match session.refresh().await {
-                            crate::runtime::session::CurrentSessionRefresh::Credential(_) => {
-                                status.set("Online".to_owned());
-                                session_boot_state.set(SessionBootState::Authenticated);
-                                last_error.set(None);
-                            }
-                            crate::runtime::session::CurrentSessionRefresh::SignInRequired {
-                                reason,
-                            } => {
-                                last_error.set(Some(reason));
-                                if token().trim().is_empty() {
-                                    status.set(
-                                        "Session could not be restored; sign in again".to_owned(),
-                                    );
-                                    session_boot_state.set(SessionBootState::Unauthenticated);
-                                }
-                            }
-                            crate::runtime::session::CurrentSessionRefresh::LoginRequired {
-                                reason,
-                            } => {
-                                last_error.set(Some(reason));
-                                if token().trim().is_empty() {
-                                    status.set("Session expired; sign in again".to_owned());
-                                    session_boot_state.set(SessionBootState::Unauthenticated);
-                                }
-                            }
-                            crate::runtime::session::CurrentSessionRefresh::RetryLater {
-                                reason,
-                            } => {
-                                // Keep the current credential alive; a reactive 401
-                                // handles a genuinely dead session. Surface the
-                                // transient issue for dev tools.
-                                last_error.set(Some(format!(
-                                    "background session refresh pending: {reason}"
-                                )));
-                                if token().trim().is_empty() {
-                                    status.set(
-                                        "Session restore is unavailable; sign in again".to_owned(),
-                                    );
-                                    session_boot_state.set(SessionBootState::Unauthenticated);
-                                }
-                            }
-                        }
-                    }
-                    crate::runtime_helpers::sleep_for(std::time::Duration::from_secs(
-                        crate::identity::session_refresh::POLL_INTERVAL_SECS,
-                    ))
-                    .await;
-                }
-            }
-        }
-    });
-
-    // F7 — durable hard-logout retry. A logout journals its server-side
-    // termination intent to localStorage before wiping local creds; if the
-    // tab closed before the revoke completed (or coauth was unreachable),
-    // finish it on the next boot so the rotation chain can never outlive a
-    // "Log out" click. One-shot: reads no signals, so it runs once on mount.
-    use_future(move || async move {
-        crate::runtime_helpers::sleep_for(std::time::Duration::from_millis(1)).await;
-        crate::pending_logout::run_pending_logout_if_any(chrono::Utc::now()).await;
-    });
-
     // SyncEngine generation counter. Declared up front so the
     // bootstrap connect() can pass it via `ConnectContext`. The engine
     // itself is spawned by the `use_effect` further down.
@@ -3348,13 +3206,25 @@ fn AppBootstrap() -> Element {
     let manual_refresh_session = runtime_services.session.clone();
 
     rsx! {
-        style { "{DXC_THEME}" }
-        style { "{DXC_BUTTON_STYLE}" }
-        style { "{STYLE}" }
-        style { "{DESIGN_STYLE}" }
-        style { "{APP_OVERRIDES}" }
-        document::Title { "{document_title}" }
-        if matches!(auth_surface, AuthSurface::AppShell) {
+        SessionShell {
+            locale,
+            i18n_signal,
+            base_url,
+            token,
+            state_store,
+            connection_status,
+            last_error,
+            session_boot_state,
+            is_server_admin,
+            theme,
+            system_theme_is_night,
+            style { "{DXC_THEME}" }
+            style { "{DXC_BUTTON_STYLE}" }
+            style { "{STYLE}" }
+            style { "{DESIGN_STYLE}" }
+            style { "{APP_OVERRIDES}" }
+            document::Title { "{document_title}" }
+            if matches!(auth_surface, AuthSurface::AppShell) {
         style { "html, body, #main {{ height: 100%; overflow: hidden; }}" }
         div {
             class: shell_class,
@@ -5732,382 +5602,54 @@ fn AppBootstrap() -> Element {
                         }
                     }
                 }
-                div { class: "workspace-body",
-                match content_route {
-                    Route::Login => rsx! {
-                        crate::views::login::LoginPanel {
-                            account_did,
-                            device_id,
-                            token,
-                            connection_status,
-                            config_store,
-                            account_primary_handle,
-                            personal_handles,
-                            personal_handles_status,
-                            auto_capture_callback: false,
-                            on_login: move |_| { let _ = navigator.push(Route::Dashboard); },
-                        }
-                    },
-                    Route::AuthCallback => rsx! {
-                        crate::views::login::LoginPanel {
-                            account_did,
-                            device_id,
-                            token,
-                            connection_status,
-                            config_store,
-                            account_primary_handle,
-                            personal_handles,
-                            personal_handles_status,
-                            auto_capture_callback: true,
-                            on_login: move |_| { let _ = navigator.push(Route::Dashboard); },
-                        }
-                    },
-                    Route::Dashboard => rsx! {
-                        crate::views::dashboard::DashboardPanel {
-                            token,
-                            realm_tree_nodes,
-                            selected_realm_id,
+                RouteSurface {
+                    state: RouteSurfaceState {
+                        content_route: content_route.clone(),
+                        navigation: NavigationState::new(
+                            route.clone(),
                             view,
-                            device_queue: device_queue(),
-                            frontier_state: frontier_state(),
-                            sync_cursor: sync_cursor(),
-                        }
-                    },
-                    Route::FileTransfer => rsx! {
-                        crate::views::file_transfer::FileTransferPanel {
-                            token,
-                            account_did: account_did(),
-                            device_id: device_id(),
-                        }
-                    },
-                    Route::Realm { .. } => {
-                        match resolved_realm_surface.unwrap_or(RealmSurface::Board) {
-                            RealmSurface::Board => {
-                                if kanban_ready {
-                                    rsx! {
-                                        crate::views::kanban::KanbanPanel {
-                                            plaintext_service_did: active_service_did.clone(),
-                                            token,
-                                            account_did: account_did(),
-                                            device_id: device_id(),
-                                            selected_realm_id: active_realm_id.clone(),
-                                            projection_realm_id: active_projection_realm_id.clone(),
-                                            sync_cursor,
-                                            realm_live_epoch,
-                                            frontier_state,
-                                            event_write_ready,
-                                        }
-                                    }
-                                } else {
-                                    rsx! { ProfileGateNotice { profile: "kanban_mvp" } }
-                                }
-                            }
-                        }
-                    },
-                    Route::DirectConversation { realm_id, strand_id } => {
-                        if selected_realm_id() != *realm_id {
-                            selected_realm_id.set(realm_id.clone());
-                        }
-                        if minimal_ready {
-                            rsx! {
-                                crate::views::chat::ChatPanel {
-                                    plaintext_service_did: active_service_did.clone(),
-                                    account_did: account_did(),
-                                    device_id: device_id(),
-                                    token,
-                                    selected_realm_id: realm_id.clone(),
-                                    sync_cursor,
-                                    realm_live_epoch,
-                                    frontier_state,
-                                    initial_strand_id: strand_id.clone(),
-                                    embedded: false,
-                                    direct_mode: true,
-                                }
-                            }
-                        } else {
-                            rsx! { ProfileGateNotice { profile: "minimal_client" } }
-                        }
-                    },
-                    Route::Chat { message, .. } => {
-                        if let Some(sid) = route.realm_id()
-                            && selected_realm_id() != sid
-                        {
-                            selected_realm_id.set(sid.to_owned());
-                        }
-                        if minimal_ready {
-                            rsx! {
-                                crate::views::chat::ChatPanel {
-                                    plaintext_service_did: active_service_did.clone(),
-                                    account_did: account_did(),
-                                    device_id: device_id(),
-                                    token,
-                                    selected_realm_id: active_realm_id.clone(),
-                                    sync_cursor,
-                                    realm_live_epoch,
-                                    frontier_state,
-                                    initial_strand_id: default_strand_id_for_realm(&active_realm_id),
-                                    embedded: false,
-                                    direct_mode: false,
-                                    focus_message_id: message.clone(),
-                                }
-                            }
-                        } else {
-                            rsx! { ProfileGateNotice { profile: "minimal_client" } }
-                        }
-                    },
-                    Route::Directory => rsx! {
-                        crate::views::directory::DirectoryPanel {
                             selected_realm_id,
-                            token,
-                            view,
-                        }
-                    },
-                    Route::RealmsManage => rsx! {
-                        RealmsManagePage {
-                            account_did: account_did(),
-                            token,
-                            has_session,
-                            realm_rows: manage_realm_rows.clone(),
-                            realm_tree_nodes,
-                            selected_realm_id,
-                            sync_cursor,
-                            query: realm_manage_query,
-                            selection: manage_realm_selection,
-                            busy: manage_bulk_busy,
-                        }
-                    },
-                    Route::ContactsManage => rsx! {
-                        ContactsManagePage {
-                            token,
-                            has_session,
-                            contact_rows: direct_contact_rows,
-                            contacts_loaded: direct_contacts_loaded,
-                            query: contact_manage_query,
-                            selection: manage_contact_selection,
-                            busy: manage_bulk_busy,
-                        }
-                    },
-                    Route::Contacts => rsx! {
-                        crate::views::contacts::ContactsPanel {
-                            token,
-                        }
-                    },
-                    Route::Setup | Route::SetupSection { .. } => {
-                        if full_ready {
-                            rsx! {
-                                crate::views::setup::SetupPanel {
-                                    plaintext_service_did: active_service_did.clone(),
-                                    secure_store_ready: secure_store_bootstrap_ready(),
-                                    token,
-                                    account_did,
-                                    device_id,
-                                    config_store,
-                                    realm_tree_nodes,
-                                    selected_realm_id,
-                                    new_space_context_node,
-                                    section: route.setup_section().map(str::to_owned),
-                                }
-                            }
-                        } else {
-                            rsx! { ProfileGateNotice { profile: "full_client" } }
-                        }
-                    },
-                    Route::Settings
-                    | Route::SettingsSection { .. }
-                    | Route::NotificationsSettings
-                    | Route::SettingsDevices
-                    | Route::SettingsDevicesPair
-                    | Route::SettingsRecovery
-                    | Route::Recovery
-                    | Route::Audit
-                    | Route::Developer => rsx! {
-                        crate::views::settings::SettingsPanel {
-                            account_did,
-                            device_id,
-                            token,
-                            account_primary_handle: account_primary_handle(),
-                            personal_handles: personal_handles(),
-                            personal_handles_status: personal_handles_status(),
-                            can_list_handles_for_subject,
-                            config_store,
-                            push_state,
-                            locale,
-                            theme,
-                        }
-                    },
-                    Route::VerifyDevice => {
-                        if e2ee_ready {
-                            rsx! {
-                                crate::views::verify_device::VerifyDevicePanel {
-                                    token,
-                                    device_id: device_id(),
-                                    account_did: account_did(),
-                                    selected_realm_id: selected_realm_id(),
-                                }
-                            }
-                        } else {
-                            rsx! { ProfileGateNotice { profile: "e2ee_client" } }
-                        }
-                    },
-                    Route::RealmMembers { .. } => {
-                        if let Some(sid) = route.realm_id()
-                            && selected_realm_id() != sid
-                        {
-                            selected_realm_id.set(sid.to_owned());
-                        }
-                        if full_ready {
-                            rsx! {
-                                crate::views::realm_admin::RealmMembersPanel {
-                                    active_service_did: active_service_did.clone(),
-                                    account_did: account_did(),
-                                    device_id: device_id(),
-                                    token,
-                                    selected_realm_id: active_realm_id.clone(),
-                                    sync_cursor,
-                                    frontier_state,
-                                }
-                            }
-                        } else {
-                            rsx! { ProfileGateNotice { profile: "full_client" } }
-                        }
-                    },
-                    Route::RealmAdmin { .. } | Route::RealmAdminSection { .. } => {
-                        if let Some(sid) = route.realm_id()
-                            && selected_realm_id() != sid
-                        {
-                            selected_realm_id.set(sid.to_owned());
-                        }
-                        if full_ready {
-                            rsx! {
-                                crate::views::realm_admin::RealmAdminPanel {
-                                    account_did: account_did(),
-                                    device_id: device_id(),
-                                    token,
-                                    selected_realm_id: active_realm_id.clone(),
-                                    sync_cursor,
-                                    frontier_state,
-                                    active_section: route.realm_admin_section().map(str::to_owned),
-                                }
-                            }
-                        } else {
-                            rsx! { ProfileGateNotice { profile: "full_client" } }
-                        }
-                    },
-                    Route::Kanban
-                    | Route::KanbanRealm { .. }
-                    | Route::KanbanBoard { .. }
-                    | Route::KanbanBoardTask { .. }
-                    | Route::KanbanTask { .. } => {
-                        if let Some(sid) = route.realm_id()
-                            && selected_realm_id() != sid
-                        {
-                            selected_realm_id.set(sid.to_owned());
-                        }
-                        if kanban_ready {
-                            rsx! {
-                                crate::views::kanban::KanbanPanel {
-                                    plaintext_service_did: active_service_did.clone(),
-                                    token,
-                                    account_did: account_did(),
-                                    device_id: device_id(),
-                                    selected_realm_id: active_realm_id.clone(),
-                                    projection_realm_id: active_projection_realm_id.clone(),
-                                    sync_cursor,
-                                    realm_live_epoch,
-                                    frontier_state,
-                                    event_write_ready,
-                                }
-                            }
-                        } else {
-                            rsx! { ProfileGateNotice { profile: "kanban_mvp" } }
-                        }
-                    },
-                    Route::Notifications => rsx! {
-                        crate::views::notifications::NotificationsPanel {
-                            account_did: account_did(),
-                            device_id: device_id(),
-                            token,
-                        }
-                    },
-                    Route::Call {
-                        call_id,
-                        peer,
-                        realm_id,
-                        video,
-                        incoming,
-                    } => {
-                        let call_realm_id = if realm_id.trim().is_empty() {
-                            active_realm_id.clone()
-                        } else {
-                            realm_id.clone()
-                        };
-                        rsx! {
-                            crate::views::call::CallPanel {
-                                token,
-                                selected_realm_id: call_realm_id,
-                                account_did: account_did(),
-                                device_id: device_id(),
-                                call_id: call_id.clone(),
-                                peer: peer.clone(),
-                                want_video: video == "1",
-                                incoming: incoming == "1",
-                            }
-                        }
-                    },
-                    Route::Onboarding => rsx! {
-                        crate::views::onboarding::OnboardingPanel {
-                            token,
-                            account_did,
-                            device_id,
-                        }
-                    },
-                    Route::Quarantine => rsx! {
-                        crate::views::quarantine::QuarantinePanel {
-                            // Coauth and soland may share a host in
-                            // single-server dev deployments - fall back to
-                            // `base_url` until the topology probe surfaces a
-                            // separate coauth URL.
-                            coauth_url: base_url(),
-                            // Admin scope is currently inferred from the
-                            // login profile; until profile claims surface
-                            // here we treat any signed-in user as admin so
-                            // they can exercise the approve / reject path
-                            // in dev. Production will gate this on the
-                            // `coauth.admin` scope from the session grant.
-                            is_admin: true,
-                        }
-                    },
-                    Route::Applets => rsx! {
-                        if crate::views::applets::applets_enabled() {
-                            crate::views::applets::AppletsPanel {
-                                token,
-                                selected_realm_id: selected_realm_id(),
-                            }
-                        } else {
-                            DeferredFeatureGate { feature: "experimental-applets" }
-                        }
-                    },
-                    Route::Agents => rsx! {
-                        if crate::views::agents::agents_enabled() {
-                            crate::views::agents::AgentsPanel {
-                                account_did,
-                                token,
-                                selected_realm_id: selected_realm_id(),
-                            }
-                        } else {
-                            DeferredFeatureGate { feature: "experimental-agents" }
-                        }
-                    },
-                    // A6.1 — global cross-Space message search panel.
-                    Route::Search => rsx! {
-                        crate::views::global_search::GlobalSearchPanel {
-                            account_did,
-                            device_id,
-                            initial_query: String::new(),
-                        }
-                    },
+                            new_space_context_node,
+                        ),
+                        account_did,
+                        device_id,
+                        token,
+                        connection_status,
+                        config_store,
+                        account_primary_handle,
+                        personal_handles,
+                        personal_handles_status,
+                        realm_tree_nodes,
+                        device_queue,
+                        frontier_state,
+                        sync_cursor,
+                        resolved_realm_surface,
+                        minimal_ready,
+                        kanban_ready,
+                        full_ready,
+                        e2ee_ready,
+                        event_write_ready,
+                        active_service_did: active_service_did.clone(),
+                        active_realm_id: active_realm_id.clone(),
+                        active_projection_realm_id: active_projection_realm_id.clone(),
+                        realm_live_epoch,
+                        has_session,
+                        manage_realm_rows: manage_realm_rows.clone(),
+                        realm_manage_query,
+                        manage_realm_selection,
+                        manage_bulk_busy,
+                        direct_contact_rows,
+                        direct_contacts_loaded,
+                        contact_manage_query,
+                        manage_contact_selection,
+                        secure_store_bootstrap_ready,
+                        can_list_handles_for_subject,
+                        push_state,
+                        locale,
+                        theme,
+                        base_url,
+                    }
                 }
-            }
             }
             NotificationsDrawer {
                 open: notifications_drawer_open,
@@ -6123,6 +5665,7 @@ fn AppBootstrap() -> Element {
         }
         } else {
             {auth_shell_node}
+        }
         }
     }
 }
