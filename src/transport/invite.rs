@@ -592,6 +592,8 @@ impl crate::transport::TransportClient {
 
 #[cfg(test)]
 mod invite_addressing_tests {
+    use serde_json::json;
+
     use super::*;
 
     #[test]
