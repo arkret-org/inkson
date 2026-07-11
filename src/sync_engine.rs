@@ -134,6 +134,10 @@ pub struct SyncEngineContext {
     /// (same value the chat / realm-admin send paths use).
     pub device_id: String,
     pub selected_realm_id: crate::runtime::input::ValueReader<String>,
+    /// Monotonic UI projection revision for Realm-backed views. Account-sync
+    /// ingestion bumps this even when cursor checkpointing is deliberately
+    /// deferred by unacknowledged to-device key material.
+    pub realm_live_epoch: crate::runtime::input::ValueCell<u64>,
     /// Y1/Y2 - session-scoped DID resolution cache handle, provided by
     /// `app.rs` via `use_context_provider` as documented there. While ingesting
     /// projections, the Y2 invalidation hook uses it to call `invalidate` for
@@ -1397,6 +1401,7 @@ pub fn apply_response(
     let did_cache = ctx.did_cache.clone();
     let account_did = ctx.account_did.clone();
     let mut synced_theme = None;
+    let mut realm_projection_changed = false;
 
     // Y2 invalidation hook: scan identity events in this response before writing
     // projections. On `ak.cross_signing.reset` / `ak.device.revoke`, invalidate
@@ -1447,13 +1452,17 @@ pub fn apply_response(
                 let view = LocalSealView::from_sync_body(body);
                 store.set_realm_seal_view(id.clone(), view);
                 store.ingest_move_event_states(id, body);
-                ingest_kanban_state_events_from_projection(store, id, body);
-                ingest_discussion_state_events_from_projection(store, id, body);
+                let projection_changes =
+                    ingest_kanban_state_events_from_projection(store, id, body)
+                        + ingest_discussion_state_events_from_projection(store, id, body)
+                        + ingest_message_events_from_projection(store, id, body);
+                if projection_changes > 0 {
+                    realm_projection_changed = true;
+                }
                 ingest_membership_events_from_projection(store, id, body);
                 // Fold the discussion timeline into `raw_operations` too so the
                 // card-detail Discussion tab renders local-first instead of
                 // refetching + redecrypting the realm on every open.
-                ingest_message_events_from_projection(store, id, body);
                 // R3.1 MID-2 — harvest inlined `ak.member.identity.update`
                 // event envelopes off the `members[]` roster entries. The
                 // SDK's effective-set filter is applied lazily when a UI
@@ -1474,6 +1483,10 @@ pub fn apply_response(
             }
         }); // store.batch — single coalesced flush happens here
     });
+    if realm_projection_changed {
+        ctx.realm_live_epoch
+            .update(|epoch| *epoch = epoch.wrapping_add(1));
+    }
     if let Some(value) = synced_theme {
         ctx.projection_sink
             .projection(ClientProjectionEvent::Theme { value });
@@ -1752,10 +1765,19 @@ fn discussion_state_control_event_kind(event: &Value) -> Option<&str> {
         .and_then(Value::as_str)
 }
 
-fn discussion_state_control_event_is_ingestable(event: &Value) -> bool {
+fn discussion_state_event_is_ingestable(event: &Value) -> bool {
     matches!(
         discussion_state_control_event_kind(event),
-        Some("ak.pin.add" | "ak.pin.remove" | "ak.pin.reorder")
+        Some(
+            "ak.message.create"
+                | "ak.message.revise"
+                | "ak.message.redact"
+                | "ak.reaction.add"
+                | "ak.reaction.remove"
+                | "ak.pin.add"
+                | "ak.pin.remove"
+                | "ak.pin.reorder"
+        )
     )
 }
 
@@ -1766,7 +1788,7 @@ fn ingest_discussion_state_events_from_projection(
 ) -> usize {
     let events = sync_realm_state_events(body)
         .into_iter()
-        .filter(discussion_state_control_event_is_ingestable)
+        .filter(discussion_state_event_is_ingestable)
         .collect::<Vec<_>>();
     ingest_message_projection_events(store, realm_id, &events)
 }
@@ -2736,7 +2758,7 @@ mod tests {
     }
 
     #[test]
-    fn sync_state_events_skip_message_lifecycle_rows_for_discussion_raw_operations() {
+    fn sync_state_events_ingest_message_lifecycle_rows_for_discussion_raw_operations() {
         let realm_id = "ak:realm:01904100-0000-7000-8000-000000000001";
         let strand_id = "ak:strand:01904100-0000-7000-8000-000000000002";
         let mut store = temp_store("discussion-message-state-events");
@@ -2769,16 +2791,37 @@ mod tests {
                             "message_id": "ak:message:01904100-0000-7000-8000-000000000101",
                             "reason": "user requested tombstone"
                         }
+                    },
+                    {
+                        "event_id": "ak:event:01904100-0000-7000-8000-0000000000c3",
+                        "event_kind": "ak.reaction.add",
+                        "actor_id": "did:web:carol.example",
+                        "created_at": "2026-06-24T10:02:00Z",
+                        "realm_id": realm_id,
+                        "payload": {
+                            "target_ref": "ak:message:01904100-0000-7000-8000-000000000101",
+                            "key": "👍"
+                        }
                     }
                 ] }
         });
 
         let changed = ingest_discussion_state_events_from_projection(&mut store, realm_id, &body);
 
-        assert_eq!(changed, 0);
-        assert!(
-            store.load().raw_operations.is_empty(),
-            "message lifecycle rows belong to timeline.events/backfill, not state.events"
+        assert_eq!(changed, 3);
+        let state = store.load();
+        assert_eq!(state.raw_operations.len(), 3);
+        assert_eq!(
+            state.raw_operations[0].payload["event_kind"],
+            "ak.message.revise"
+        );
+        assert_eq!(
+            state.raw_operations[1].payload["event_kind"],
+            "ak.message.redact"
+        );
+        assert_eq!(
+            state.raw_operations[2].payload["event_kind"],
+            "ak.reaction.add"
         );
     }
 

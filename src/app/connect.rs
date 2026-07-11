@@ -1357,6 +1357,12 @@ pub(super) fn connect(base: String, actor: String, device: String, ctx: ConnectC
                             }
                             store.save_presence_projection(sync.presence.clone());
                             store.ingest_to_device_messages(&sync.to_device);
+                            // `/account/subscribe` carries the actor's complete
+                            // account_data projection on every successful frame.
+                            // Track blocklist presence so a server-side tombstone
+                            // (represented by absence from that full projection)
+                            // clears the durable local cache as well.
+                            let mut blocklist_snapshot_seen = false;
                             for entry in &sync.account_data {
                                 let Some(data_type) =
                                     entry.get("data_type").and_then(serde_json::Value::as_str)
@@ -1456,6 +1462,7 @@ pub(super) fn connect(base: String, actor: String, device: String, ctx: ConnectC
                                     continue;
                                 }
                                 if data_type == "ak.account.blocklist" {
+                                    blocklist_snapshot_seen = true;
                                     match crate::account_data::decrypt_account_data_entry(
                                         &account_did(),
                                         data_type,
@@ -1534,6 +1541,9 @@ pub(super) fn connect(base: String, actor: String, device: String, ctx: ConnectC
                                         );
                                     }
                                 }
+                            }
+                            if !blocklist_snapshot_seen {
+                                store.set_client_blocklist(Vec::new());
                             }
                             // Force a synchronous flush so that if the user
                             // refreshes the tab immediately after a successful

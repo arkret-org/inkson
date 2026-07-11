@@ -2038,17 +2038,63 @@ pub(crate) fn realm_key_request_answer_dedup_key(
 /// (`ak.realm_key.share.source_authorization_ref`,
 /// encryption-and-audit.md §2.3.5(c)).
 ///
-/// The local realm projection does not yet retain the durability/history
-/// policy Control Move's event id, so this currently resolves to `None` and
-/// every share path fails closed (request left in the inbox / RRK epoch not
-/// treated as sealed, both eligible for retry). Wiring the projection to
-/// carry that event ref lights both paths back up through this single
-/// resolution point.
+fn history_share_policy_allows_verified_member_device(event: &Value) -> bool {
+    let payload = event.get("payload").unwrap_or(event);
+    let direct = payload.get("allowed_key_sources").and_then(Value::as_array);
+    let from_effect = payload
+        .get("effects")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .find_map(|effect| {
+            effect
+                .get("op")
+                .and_then(|op| op.get("value"))
+                .and_then(|value| value.get("allowed_key_sources"))
+                .and_then(Value::as_array)
+        });
+    direct.or(from_effect).is_some_and(|sources| {
+        sources.iter().any(|source| {
+            source
+                .as_str()
+                .is_some_and(|source| source.trim() == "verified_member_device")
+        })
+    })
+}
+
+/// Resolve the latest projected `ak.realm.history_sharing_policy` Control Move
+/// that explicitly authorizes `verified_member_device` as a key source. The
+/// provider and recipient membership/device gates are evaluated separately by
+/// soland; this reference binds the share to the durable policy basis that
+/// permits that source class. Missing/malformed policy still fails closed.
 pub(crate) fn realm_history_share_source_authorization_ref(
-    _store: &LocalStateStore,
-    _realm_id: &str,
+    store: &LocalStateStore,
+    realm_id: &str,
 ) -> Option<String> {
-    None
+    let state = store.load();
+    let events = state
+        .realm_tree_projections
+        .get(realm_id.trim())?
+        .get("state")?
+        .get("events")?
+        .as_array()?;
+    events.iter().rev().find_map(|event| {
+        let kind = event
+            .get("kind")
+            .or_else(|| event.get("event_kind"))
+            .and_then(Value::as_str)?;
+        if kind != "ak.realm.history_sharing_policy"
+            || !history_share_policy_allows_verified_member_device(event)
+        {
+            return None;
+        }
+        event
+            .get("event_id")
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|event_id| event_id.starts_with("ak:event:"))
+            .map(ToOwned::to_owned)
+    })
 }
 
 /// Provider-side: answer one `ak.realm_key.request` from a late joiner by
@@ -4632,6 +4678,49 @@ mod tests {
             crate::operation::uuid_v7()
         ));
         LocalStateStore::with_path(path)
+    }
+
+    #[test]
+    fn history_share_authorization_ref_uses_projected_verified_member_policy_move() {
+        let realm = "ak:realm:01904100-0000-7000-8000-000000000001";
+        let event_id = "ak:event:01904100-0000-7000-8000-000000000101";
+        let mut store = temp_store("history-share-policy-ref");
+        store.save_realm_tree_projection(
+            realm,
+            json!({
+                "state": {"events": [{
+                    "event_id": event_id,
+                    "event_kind": "ak.realm.history_sharing_policy",
+                    "payload": {"effects": [{"op": {"kind": "set", "value": {
+                        "allowed_key_sources": ["verified_member_device"],
+                        "allowed_receiver_states": ["active_member"]
+                    }}}]}
+                }]}
+            }),
+        );
+
+        assert_eq!(
+            realm_history_share_source_authorization_ref(&store, realm).as_deref(),
+            Some(event_id)
+        );
+    }
+
+    #[test]
+    fn history_share_authorization_ref_rejects_policy_without_member_device_source() {
+        let realm = "ak:realm:01904100-0000-7000-8000-000000000001";
+        let mut store = temp_store("history-share-policy-ref-denied");
+        store.save_realm_tree_projection(
+            realm,
+            json!({
+                "state": {"events": [{
+                    "event_id": "ak:event:01904100-0000-7000-8000-000000000102",
+                    "event_kind": "ak.realm.history_sharing_policy",
+                    "payload": {"allowed_key_sources": ["realm_recovery_key"]}
+                }]}
+            }),
+        );
+
+        assert!(realm_history_share_source_authorization_ref(&store, realm).is_none());
     }
 
     fn dummy_mls_snapshot(realm_id: &str) -> crate::mls::persistence::MlsSnapshotEnvelope {

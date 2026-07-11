@@ -146,26 +146,31 @@ pub async fn run_realm_events_engine(
     // `events/subscribe` without `after` is a live tail, not a history
     // endpoint. Bootstrap durable history through events.query.scan and let
     // the shared client core checkpoint only after the projector commits it.
-    let bootstrap_transport = match provider.provide().await {
-        Ok(transport) => transport,
-        Err(error) => {
-            tracing::warn!(error = %error, "realm history transport is not ready");
+    let has_stream_cursor = ctx
+        .state_store
+        .read(|store| store.realm_events_cursor(realm_id_typed.as_str()).is_some());
+    if !has_stream_cursor {
+        let bootstrap_transport = match provider.provide().await {
+            Ok(transport) => transport,
+            Err(error) => {
+                tracing::warn!(error = %error, "realm history transport is not ready");
+                return;
+            }
+        };
+        if let Err(error) = ctx
+            .client_runtime
+            .subscription_engine()
+            .bootstrap_realm_history(
+                &bootstrap_transport,
+                realm_id_typed.clone(),
+                &projector,
+                ScanCatchupOptions::default(),
+            )
+            .await
+        {
+            tracing::warn!(error = %error, "realm history bootstrap failed");
             return;
         }
-    };
-    if let Err(error) = ctx
-        .client_runtime
-        .subscription_engine()
-        .bootstrap_realm_history(
-            &bootstrap_transport,
-            realm_id_typed.clone(),
-            &projector,
-            ScanCatchupOptions::default(),
-        )
-        .await
-    {
-        tracing::warn!(error = %error, "realm history bootstrap failed");
-        return;
     }
     let result = ctx
         .client_runtime
