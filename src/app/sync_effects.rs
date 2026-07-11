@@ -105,7 +105,7 @@ pub(super) fn SyncEffects(
         let completion_effects = realm_effects.clone();
         let ctx = crate::realm_events_engine::RealmEventsEngineContext {
             base_url: runtime_adapter::value_reader(base_url),
-            token: runtime_adapter::value_reader(token),
+            token: runtime_adapter::value_cell(token),
             state_store: runtime_adapter::state_store_handle(state_store),
             selected_realm_id: runtime_adapter::value_reader(selected_realm_id),
             route_enabled: runtime_adapter::value_reader(realm_events_route_enabled),
