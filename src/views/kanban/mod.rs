@@ -21,7 +21,9 @@ use crate::ui::select::{Select, SelectOption};
 use crate::ui::textarea::Textarea;
 use crate::views::helpers::short_protocol_id;
 
+mod controller;
 mod drag_drop_controller;
+mod effects;
 // YOU-07-001: card due-calendar pure calculation helpers moved to `due_calendar`
 // (move-only).
 mod due_calendar;
@@ -30,8 +32,10 @@ mod due_calendar;
 /// hard-coded cards.
 mod model;
 
+use controller::{KanbanCommand, KanbanController, use_kanban_controller};
 use drag_drop_controller::*;
 use due_calendar::*;
+use effects::KanbanEffects;
 pub(crate) use model::strand_update_operations_from_events;
 use model::*;
 
@@ -666,14 +670,77 @@ pub fn KanbanPanel(
             .map(|option| option.id.clone())
             .unwrap_or_default()
     });
-    let mut board_space_options = use_signal(move || initial_board_options.clone());
-    let mut selected_board_space_id = use_signal(move || initial_board_space_id.clone());
+    let controller = use_kanban_controller(
+        initial_board_options.clone(),
+        initial_board_space_id.clone(),
+        initial_source,
+        event_write_ready,
+    );
+    let KanbanController {
+        board_space_options,
+        mut selected_board_space_id,
+        mut collection_view_columns,
+        mut board_view_id,
+        lifecycle_container_projection,
+        lifecycle_strand_projection,
+        mut projection_source,
+        mut new_board_title,
+        mut new_column_title,
+        mut new_card_title,
+        mut adding_card_to,
+        mut selected_card,
+        mut mls_sidecar_restore_key_seen,
+        mut board_popover,
+        mut archive_board_confirm_open,
+        mut list_archive_confirm,
+        mut editing_card_detail,
+        mut card_edit_scope,
+        mut card_detail_sidebar_visible,
+        mut card_detail_actions_open,
+        mut card_detail_tab,
+        mut card_detail_discussion_mounted_for,
+        mut card_detail_sidebar_tab,
+        mut card_detail_docked,
+        mut card_detail_dock_width,
+        mut card_detail_resizing,
+        mut card_detail_resize_start_x,
+        mut card_detail_resize_start_width,
+        mut member_handle_fetching,
+        mut card_edit_title,
+        mut card_edit_description,
+        mut card_edit_body,
+        mut card_edit_synthesis,
+        mut card_edit_synthesis_target_id,
+        mut card_detail_edit_status,
+        mut assignee_picker_open,
+        mut assignee_filter,
+        mut assignee_selected_actor_ids,
+        mut assignee_edit_status,
+        mut due_picker_open,
+        mut due_edit_value,
+        mut due_calendar_month,
+        mut due_edit_status,
+        mut card_edit_calendar,
+        mut calendar_rsvp_occurrence,
+        mut card_synthesis_history_open_id,
+        mut card_synthesis_selected_revision_id,
+        mut card_edit_labels,
+        mut card_edit_assignee,
+        mut card_edit_due,
+        mut dragging_card,
+        mut dragging_column,
+        mut drop_target_column,
+        mut editing_column_id,
+        mut editing_column_title,
+        write_records,
+        mut board_status,
+        command_queue: _,
+    } = controller;
     let selected_board_space_id_selected = use_memo(move || Some(selected_board_space_id()));
     // Opt-in trusted server materialization (`collection_projection` View path,
     // `board_view_id` set manually via the Projection popover). When present it
     // takes precedence over the event-sourced projection; `None` (the default)
     // means the board derives purely from the local op log.
-    let mut collection_view_columns = use_signal(|| Option::<Vec<KanbanColumn>>::None);
     // `columns` is a PURE derivation of the realm op log: it folds
     // `raw_operations` (remote backfill / subscribe events + local optimistic
     // ops) for the selected board via the single event-sourced `project_board`,
@@ -723,87 +790,12 @@ pub fn KanbanPanel(
             cols
         }
     });
-    let mut board_view_id = use_signal(String::new);
-    let mut lifecycle_container_projection =
-        use_signal(Vec::<crate::state::projection_views::SpaceContainerProjectionView>::new);
-    let mut lifecycle_strand_projection =
-        use_signal(Vec::<crate::state::projection_views::StrandProjectionView>::new);
     // Cap-Gate-2: consume the app-level CapabilityEngine context so the
     // Archive / Restore buttons can pre-gate themselves. When the engine
     // carries no grants for the actor the gate stays open (inkson still
     // trusts the server). Cap-Gate-3 (below) computes the per-button
     // gate inside the render path.
     let capability_engine = use_context::<Signal<crate::capability::CapabilityEngine>>();
-    let mut projection_source = use_signal(|| initial_source);
-    let mut new_board_title = use_signal(|| "Board".to_owned());
-    let mut new_column_title = use_signal(String::new);
-    let mut new_card_title = use_signal(String::new);
-    let mut adding_card_to = use_signal(|| Option::<String>::None);
-    let mut selected_card = use_signal(|| Option::<KanbanCard>::None);
-    let mut mls_sidecar_restore_key_seen = use_signal(String::new);
-    let mut board_popover = use_signal(BoardToolbarPopover::default);
-    // Destructive-action confirmation state (same modal pattern as the
-    // realm-admin danger zone). Board archive is a client-driven cascade
-    // over every active card + list, so it must never fire on a bare click.
-    let mut archive_board_confirm_open = use_signal(|| false);
-    // Column pending list-archive confirmation:
-    // `(space_container_id, list_title, active_card_count)`.
-    let mut list_archive_confirm = use_signal(|| Option::<(String, String, usize)>::None);
-    let mut editing_card_detail = use_signal(|| false);
-    let mut card_edit_scope = use_signal(CardEditScope::default);
-    let mut card_detail_sidebar_visible = use_signal(|| true);
-    let mut card_detail_actions_open = use_signal(|| false);
-    let mut card_detail_tab = use_signal(card_detail_tab_from_current_url);
-    let mut card_detail_discussion_mounted_for = use_signal(|| Option::<String>::None);
-    let mut card_detail_sidebar_tab = use_signal(CardDetailSidebarTab::default);
-    let mut card_detail_docked = use_signal(read_card_detail_docked);
-    let mut card_detail_dock_width = use_signal(read_card_detail_dock_width);
-    let mut card_detail_resizing = use_signal(|| false);
-    let mut card_detail_resize_start_x = use_signal(|| 0.0_f64);
-    let mut card_detail_resize_start_width = use_signal(|| 0.0_f64);
-    let mut member_handle_fetching = use_signal(BTreeSet::<String>::new);
-    let mut card_edit_title = use_signal(String::new);
-    let mut card_edit_description = use_signal(String::new);
-    let mut card_edit_body = use_signal(String::new);
-    let mut card_edit_synthesis = use_signal(String::new);
-    let mut card_edit_synthesis_target_id = use_signal(|| Option::<String>::None);
-    let mut card_detail_edit_status = use_signal(String::new);
-    let mut assignee_picker_open = use_signal(|| false);
-    let mut assignee_filter = use_signal(String::new);
-    let mut assignee_selected_actor_ids = use_signal(BTreeSet::<String>::new);
-    let mut assignee_edit_status = use_signal(String::new);
-    let mut due_picker_open = use_signal(|| false);
-    let mut due_edit_value = use_signal(String::new);
-    let mut due_calendar_month = use_signal(default_due_calendar_month);
-    let mut due_edit_status = use_signal(String::new);
-    let mut card_edit_calendar = use_signal(CalendarCardFields::default);
-    let mut calendar_rsvp_occurrence = use_signal(String::new);
-    let mut card_synthesis_history_open_id = use_signal(|| Option::<String>::None);
-    let mut card_synthesis_selected_revision_id = use_signal(|| Option::<String>::None);
-    let mut card_edit_labels = use_signal(String::new);
-    let mut card_edit_assignee = use_signal(String::new);
-    let mut card_edit_due = use_signal(String::new);
-    let mut dragging_card = use_signal(|| Option::<DraggedCard>::None);
-    let mut dragging_column = use_signal(|| Option::<DraggedColumn>::None);
-    // Column id currently under the drag pointer, used to paint the
-    // `.is-drop-target` accent border while a card is being dragged over it
-    // (design/kanban-baseline.md M1). Cleared on dragleave / drop / dragend.
-    let mut drop_target_column = use_signal(|| Option::<String>::None);
-    // Inline list-rename state (design/kanban-baseline.md M1): the id of the
-    // column being renamed and its draft`ak.space.updatelicking the title
-    // opens the editor; Enter commits a `ak.space.update`, Esc cancels.
-    let mut editing_column_id = use_signal(|| Option::<String>::None);
-    let mut editing_column_title = use_signal(String::new);
-    let write_records = use_signal(Vec::<BoardWriteRecord>::new);
-    let mut board_status = use_signal(|| {
-        if initial_source == BoardProjectionSource::Unavailable {
-            "Board data unavailable; sample fallback disabled for this server".to_owned()
-        } else if event_write_ready {
-            "Event write plane ready".to_owned()
-        } else {
-            "Event write plane unavailable; board writes queue locally".to_owned()
-        }
-    });
     let selected_board_space_id_value = selected_board_space_id();
     let selected_board_space_id_label = short_protocol_id(&selected_board_space_id_value);
     let board_view_id_value = board_view_id();
@@ -819,98 +811,6 @@ pub fn KanbanPanel(
             .map(|option| option.title.clone())
             .unwrap_or_else(|| short_protocol_id(&selected_board_space_id_value))
     };
-
-    // Single event-sourced derivation of the board's container-level state:
-    // the list/board lifecycle projections (consumed by child components +
-    // `projected_strand_ids`), the board-switcher options, and the resolved
-    // board selection — all folded from the same `raw_operations` log the
-    // `columns` memo reads. This REPLACES the scattered `lifecycle_*.set` /
-    // `board_space_options.set` / `selected_board_space_id.set` that the
-    // bootstrap / live / route reconcilers used to each perform; they now only
-    // fetch + ingest events into the op log. Comparisons use `peek()` so the
-    // effect subscribes ONLY to `raw_operations`, never to the signals it writes.
-    {
-        let realm = local_realm_id.clone();
-        use_effect(move || {
-            let raw_operations = state_store.read().load().raw_operations;
-            let containers = space_container_views_from_ops(&raw_operations, &realm);
-            let strands = strand_views_from_ops(&raw_operations);
-            let options = board_space_options_from_projection(&containers);
-            if *lifecycle_container_projection.peek() != containers {
-                lifecycle_container_projection.set(containers);
-            }
-            if *lifecycle_strand_projection.peek() != strands {
-                lifecycle_strand_projection.set(strands);
-            }
-            if !options.is_empty() && *board_space_options.peek() != options {
-                board_space_options.set(options.clone());
-            }
-            // Auto-select the first board only when nothing is selected yet
-            // (the route → selection effects below own explicit selection).
-            if selected_board_space_id.peek().trim().is_empty()
-                && let Some(first) = options.first()
-            {
-                selected_board_space_id.set(first.id.clone());
-            }
-        });
-    }
-
-    // Keep the open card-detail panel in sync with the derived board: when the
-    // `columns` memo re-projects (optimistic edit, cross-member event, restored
-    // secret), refresh `selected_card` from the matching card.
-    use_effect(move || {
-        let cols = columns();
-        sync_selected_card_from_columns(selected_card, &cols);
-    });
-
-    {
-        let routed_strand_id = route_card_strand_id(&route);
-        use_effect(move || {
-            let Some(strand_id) = routed_strand_id.clone() else {
-                return;
-            };
-            if selected_card()
-                .as_ref()
-                .is_some_and(|card| card_matches_strand_id(card, &strand_id))
-            {
-                return;
-            }
-            if let Some(card) = find_card_by_strand_id(&columns.read(), &strand_id) {
-                let draft = card_detail_draft_from_card(&card);
-                card_edit_title.set(draft.title);
-                card_edit_description.set(draft.description);
-                card_edit_body.set(draft.body);
-                card_edit_synthesis.set(draft.synthesis);
-                card_edit_synthesis_target_id.set(None);
-                card_edit_labels.set(draft.labels.join(", "));
-                card_edit_assignee.set(draft.assignee);
-                card_edit_due.set(draft.due);
-                let calendar = draft.calendar.clone();
-                card_edit_calendar.set(calendar.clone());
-                calendar_rsvp_occurrence.set(calendar_occurrence_hint(&calendar));
-                editing_card_detail.set(false);
-                card_detail_edit_status.set(String::new());
-                assignee_picker_open.set(false);
-                assignee_filter.set(String::new());
-                assignee_selected_actor_ids
-                    .set(card_assigned_actor_ids(&card).into_iter().collect());
-                assignee_edit_status.set(String::new());
-                due_picker_open.set(false);
-                due_edit_value.set(editor_value_for_optional_card_field(&card.due));
-                due_calendar_month.set(due_calendar_month_for_value(&card.due));
-                due_edit_status.set(String::new());
-                card_detail_actions_open.set(false);
-                let routed_tab = card_detail_tab_from_current_url();
-                if routed_tab == CardDetailContentTab::Discussion {
-                    card_detail_discussion_mounted_for.set(Some(card.primary_strand_id.clone()));
-                }
-                card_detail_tab.set(routed_tab);
-                card_synthesis_history_open_id.set(None);
-                card_synthesis_selected_revision_id.set(None);
-                selected_card.set(Some(card));
-            }
-        });
-    }
 
     // Synthesis track projection (option`ak.strand.update). The track is built
     // by decrypting and replaying every `ak.strand.update` op for this strand
@@ -967,50 +867,6 @@ pub fn KanbanPanel(
             )
         })
     };
-
-    // Route board → selection sync. The board id is authoritative when it is
-    // present in the URL (`/kanban/<realm>/board/<board>` and the
-    // `/task/<strand>` extension). This effect only keeps
-    // `selected_board_space_id` aligned with the route across in-app
-    // navigations (back/forward, arriving from another KanbanPanel); the
-    // `columns` memo re-projects the matching board automatically once the
-    // selection changes — no refetch, no `columns.set`.
-    {
-        let routed_board_id = route_board_id(&route);
-        use_effect(move || {
-            let Some(board_id) = routed_board_id.clone() else {
-                return;
-            };
-            if selected_board_space_id() != board_id {
-                selected_board_space_id.set(board_id);
-            }
-        });
-    }
-
-    // Route → board reconciler. When the URL points at a card-detail page
-    // (`/kanban/<realm>/task/<strand>`) and the card's home board is NOT the
-    // currently-selected board, switch the selection to the card's home board
-    // (resolved from the event-folded strands). The `columns` memo then
-    // re-projects that board; this only owns the selection, not the columns.
-    {
-        let routed_strand_id = route_card_strand_id(&route);
-        use_effect(move || {
-            let Some(strand_id) = routed_strand_id.clone() else {
-                return;
-            };
-            let raw_operations = state_store.read().load().raw_operations;
-            let Some(strand_board) = strand_views_from_ops(&raw_operations)
-                .into_iter()
-                .find(|view| view.strand_id == strand_id)
-                .and_then(|view| view.board_space_id)
-            else {
-                return;
-            };
-            if selected_board_space_id() != strand_board {
-                selected_board_space_id.set(strand_board);
-            }
-        });
-    }
 
     // T20 — auto-refresh-on-mount. The component renders empty or explicit
     // SeedFallback synchronously, then fires an async fetch against soland's
@@ -1685,6 +1541,12 @@ pub fn KanbanPanel(
         .collect::<BTreeSet<_>>();
     rsx! {
         div { class: "timeline kanban-panel", "data-testid": "kanban-panel",
+            KanbanEffects {
+                controller,
+                columns,
+                route: route.clone(),
+                local_realm_id: local_realm_id.clone(),
+            }
             div { class: "event board-header board-toolbar",
                 div { class: "board-toolbar-main",
                     div { class: "actions board-toolbar-controls", "data-testid": "board-space-selector",
@@ -1887,14 +1749,12 @@ pub fn KanbanPanel(
                                             }
                                             // The new list`ak.space.createtely: `submit_kanban_operation_event`
                                             // appends the `ak.space.create` op, which the `columns` memo folds.
-                                            submit_kanban_operation_event(
+                                            controller.enqueue_operation(
                                                 base.clone(),
                                                 token,
                                                 realm.clone(),
                                                 op,
                                                 selected_scope_security_encrypted,
-                                                state_store,
-                                                board_status,
                                             );
                                             new_column_title.set(String::new());
                                         }
@@ -1999,14 +1859,12 @@ pub fn KanbanPanel(
                                                 // options-sync effect and the `columns` memo.
                                                 selected_board_space_id.set(board_space_id.clone());
                                                 adding_card_to.set(None);
-                                                submit_kanban_operation_event(
+                                                controller.enqueue_operation(
                                                     base.clone(),
                                                     token,
                                                     realm.clone(),
                                                     op,
                                                     selected_scope_security_encrypted,
-                                                    state_store,
-                                                    board_status,
                                                 );
                                                 board_status.set("Creating Board; waiting for server confirmation.".to_owned());
                                                 let _ = navigator

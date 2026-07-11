@@ -60,7 +60,7 @@ impl Debouncer {
 /// typing" emit. `emit(true)` fires immediately on the first keystroke of a
 /// burst and at most once per `active` window; `emit(false)` fires once the
 /// user has been quiet for `stop`.
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, PartialEq)]
 pub struct TypingThrottle {
     cooldown: Signal<bool>,
     stop_generation: Signal<u64>,
