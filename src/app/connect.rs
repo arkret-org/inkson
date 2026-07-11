@@ -498,7 +498,8 @@ async fn probe_device_authorization_with_auto_enroll(
     )?;
     let mut has_other = account_has_other_active_devices_from_account_viewer(&viewer, device);
     let mut needs_authorization =
-        device_authorization_required_from_account_viewer(&viewer, device);
+        device_authorization_required_from_account_viewer(&viewer, device)
+            || !current_event_signer_matches_directory(principal_api, actor, device).await?;
 
     if needs_authorization {
         match enroll_current_session_device(
@@ -519,7 +520,13 @@ async fn probe_device_authorization_with_auto_enroll(
                         has_other =
                             account_has_other_active_devices_from_account_viewer(&viewer, device);
                         needs_authorization =
-                            device_authorization_required_from_account_viewer(&viewer, device);
+                            device_authorization_required_from_account_viewer(&viewer, device)
+                                || !current_event_signer_matches_directory(
+                                    principal_api,
+                                    actor,
+                                    device,
+                                )
+                                .await?;
                     }
                     Err(error) => {
                         tracing::warn!(
@@ -537,6 +544,42 @@ async fn probe_device_authorization_with_auto_enroll(
     }
 
     Ok((needs_authorization, has_other))
+}
+
+/// An `active` account-viewer row is not sufficient authorization for
+/// persistent Event proofs: the authoritative keys directory must carry the
+/// exact Ed25519 key used by this browser's active signer. Seeded/test accounts
+/// may already have an active device inventory row without that key; treating
+/// status alone as complete suppresses self-enrollment and makes every remote
+/// receiver correctly reject the device's messages.
+async fn current_event_signer_matches_directory(
+    principal_api: &TransportClient,
+    actor: &str,
+    device: &str,
+) -> anyhow::Result<bool> {
+    let signer = match crate::event_signer::active_signer() {
+        Some(signer) => signer,
+        None => crate::event_signer::bootstrap_default_signer("inkson")
+            .map_err(|error| anyhow::anyhow!("bootstrap device signer: {error}"))?,
+    };
+    let signer = crate::event_signer::bind_active_signer_device_id(device)
+        .map_err(|error| anyhow::anyhow!("bind event signer to device: {error}"))?
+        .unwrap_or(signer);
+    let Some(public_key) = signer.public_key_multibase() else {
+        return Ok(false);
+    };
+    let outcome =
+        crate::transport::keys::query_keys(&principal_api.sdk_http_client()?, actor, device)
+            .await?;
+    let actor = arkret_sdk::Did::new(actor.to_owned())?;
+    let device = arkret_sdk::DeviceId::new(device.to_owned())?;
+    let expected_key = format!("did:key:{public_key}");
+    Ok(outcome
+        .device_keys
+        .get(&actor)
+        .and_then(|devices| devices.get(&device))
+        .and_then(|record| record.device_signing_key.as_deref())
+        == Some(expected_key.as_str()))
 }
 
 pub(super) fn connect(base: String, actor: String, device: String, ctx: ConnectContext) {
