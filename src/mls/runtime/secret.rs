@@ -14,6 +14,7 @@ use super::MlsRuntimeError;
 use crate::secure_key_store::{SecureKeyStore, SecureKeyStoreError};
 
 const ACCOUNT_MLS_SECRET_PREFIX: &str = "inkson.mls_snapshot.account_secret";
+const ACCOUNT_MLS_SECRET_VERIFIED_MARKER: &str = "verified";
 pub const ACCOUNT_MLS_SECRET_CURRENT_VERSION: u32 = 1;
 const ACCOUNT_MLS_SECRET_MAX_SCAN_VERSION: u32 = 32;
 const MLS_KEY_PACKAGE_IDENTITY_STATE_PREFIX: &str = "inkson.mls_key_package.identity_state.v1";
@@ -177,6 +178,44 @@ pub fn load_account_mls_secret(
         }
     }
     Ok(None)
+}
+
+fn account_mls_secret_verified_key(actor_id: &str) -> String {
+    format!(
+        "{ACCOUNT_MLS_SECRET_PREFIX}.{ACCOUNT_MLS_SECRET_VERIFIED_MARKER}.v1.{}",
+        actor_id.trim()
+    )
+}
+
+/// Mark the active account secret as proven to belong to the server recovery
+/// chain. Only a successful backup upload or recovery import may set this.
+pub fn mark_account_mls_secret_verified(
+    store: &dyn SecureKeyStore,
+    actor_id: &str,
+) -> Result<(), SecureKeyStoreError> {
+    let actor_id = actor_id.trim();
+    if actor_id.is_empty() {
+        return Err(SecureKeyStoreError::Backend(
+            "actor_id is required for account-secret verification".to_owned(),
+        ));
+    }
+    store.store_secret(&account_mls_secret_verified_key(actor_id), "verified")
+}
+
+/// Whether this device has proved that its local account secret belongs to
+/// the server recovery chain. A freshly generated bootstrap secret is false.
+pub fn account_mls_secret_verified(
+    store: &dyn SecureKeyStore,
+    actor_id: &str,
+) -> Result<bool, SecureKeyStoreError> {
+    let actor_id = actor_id.trim();
+    if actor_id.is_empty() {
+        return Ok(false);
+    }
+    Ok(store
+        .get_secret(&account_mls_secret_verified_key(actor_id))?
+        .as_deref()
+        == Some("verified"))
 }
 
 fn generate_account_mls_secret() -> Result<String, SecureKeyStoreError> {

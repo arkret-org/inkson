@@ -2234,25 +2234,36 @@ fn apply_account_data(
             continue;
         }
         // ak.presence.preference — manual presence preference
-        // (profiles-presence.md §3.6). Normally pushed encrypted, so a
-        // plaintext-readable body only appears from same-account devices
-        // in dev / test deployments; opaque ciphertext entries are
-        // silently skipped (local state stays authoritative).
+        // (profiles-presence.md §3.6). The server stores only the standard
+        // account-data AEAD envelope; decrypt before applying it locally.
         if data_type == "ak.presence.preference" {
-            if let Some(content) = entry.get("content")
-                && content.get("ciphertext").is_none()
-                && let Ok(preference) =
-                    serde_json::from_value::<crate::state::PresencePreferenceState>(content.clone())
+            match crate::account_data::decrypt_account_data_entry(account_did, data_type, entry)
+                .and_then(|content| serde_json::from_value(content).map_err(Into::into))
             {
-                store.set_presence_preference(preference);
+                Ok(preference) => store.set_presence_preference(preference),
+                Err(error) => tracing::warn!(
+                    "sync engine: ignoring undecryptable ak.presence.preference: {error}"
+                ),
+            }
+            continue;
+        }
+        if data_type == "ak.dnd_schedule" {
+            match crate::account_data::decrypt_account_data_entry(account_did, data_type, entry) {
+                Ok(content) => store.set_notification_dnd_settings(
+                    crate::notification_rules::parse_dnd_settings(&content),
+                ),
+                Err(error) => {
+                    tracing::warn!("sync engine: ignoring undecryptable ak.dnd_schedule: {error}")
+                }
             }
             continue;
         }
         if data_type == "ak.account.blocklist" {
-            let Some(content) = entry.get("content") else {
-                continue;
-            };
-            match crate::account_data::blocklist_entries_from_account_data(content) {
+            match crate::account_data::decrypt_account_data_entry(account_did, data_type, entry)
+                .and_then(|content| {
+                    crate::account_data::blocklist_entries_from_account_data(&content)
+                        .map_err(anyhow::Error::msg)
+                }) {
                 Ok(entries) => store.set_client_blocklist(entries),
                 Err(error) => {
                     tracing::warn!(
@@ -2264,10 +2275,9 @@ fn apply_account_data(
         }
         // ak.contacts.actor.<did> — actor-private contact remarks.
         if let Some(actor_id) = crate::account_data::actor_id_from_contact_remark_key(data_type) {
-            let Some(content) = entry.get("content") else {
-                continue;
-            };
-            match serde_json::from_value::<crate::account_data::ContactRemark>(content.clone()) {
+            match crate::account_data::decrypt_account_data_entry(account_did, data_type, entry)
+                .and_then(|content| serde_json::from_value(content).map_err(Into::into))
+            {
                 Ok(remark) => store.set_contact_remark(actor_id.to_owned(), remark),
                 Err(error) => {
                     tracing::warn!(
@@ -2281,10 +2291,9 @@ fn apply_account_data(
         let Some(realm_id) = crate::account_data::realm_id_from_realm_remark_key(data_type) else {
             continue;
         };
-        let Some(content) = entry.get("content") else {
-            continue;
-        };
-        match serde_json::from_value::<crate::account_data::RealmRemark>(content.clone()) {
+        match crate::account_data::decrypt_account_data_entry(account_did, data_type, entry)
+            .and_then(|content| serde_json::from_value(content).map_err(Into::into))
+        {
             Ok(remark) => store.set_realm_remark(realm_id.to_owned(), remark),
             Err(error) => {
                 tracing::warn!(

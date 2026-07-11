@@ -243,7 +243,7 @@ pub(crate) fn push_blocklist_account_data(
     }
     let plaintext_body = crate::account_data::build_blocklist_account_data_body(&entries);
     let body =
-        match encrypted_account_data_marker(CLIENT_BLOCKLIST_ACCOUNT_DATA_KEY, &plaintext_body) {
+        match encrypted_account_data_value(CLIENT_BLOCKLIST_ACCOUNT_DATA_KEY, &plaintext_body) {
             Ok(body) => body,
             Err(err) => {
                 tracing::warn!(
@@ -397,10 +397,24 @@ pub(crate) fn push_contact_remark_account_data(
             }
             return;
         }
-        tracing::warn!(
-            key = %key,
-            "skipping plaintext contact remark account_data upload; encrypted envelope is unavailable"
-        );
+        let body = match encrypted_account_data_value(
+            &key,
+            &serde_json::to_value(&remark).unwrap_or_default(),
+        ) {
+            Ok(body) => body,
+            Err(error) => {
+                tracing::warn!(key = %key, %error, "contact remark encryption failed");
+                return;
+            }
+        };
+        let key_for_request = key.clone();
+        if let Err(error) = with_event_submitter(&base_url, api_token, |sub| async move {
+            crate::transport::account::set_account_data(&sub, &key_for_request, body).await
+        })
+        .await
+        {
+            tracing::warn!(key = %key, error = %error.display(), "contact remark account_data upload failed");
+        }
     });
 }
 

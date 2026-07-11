@@ -334,6 +334,7 @@ fn prompt_required_when_local_secret_exists_but_history_is_missing() {
 fn prompt_not_required_when_local_history_is_current_and_decryptable() {
     let store = MemorySecureKeyStore::new();
     crate::mls::runtime::store_account_mls_secret(&store, ACTOR, ACCOUNT_SECRET).unwrap();
+    crate::mls::runtime::mark_account_mls_secret_verified(&store, ACTOR).unwrap();
     let mut state = temp_state_store("prompt-current-history");
     let envelope = history_envelope("ak:realm:prompt", "group-a", 7, ACCOUNT_SECRET);
     state.save_mls_snapshot(envelope.realm_id.clone(), envelope.clone());

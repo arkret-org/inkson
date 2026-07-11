@@ -138,8 +138,7 @@ pub(super) fn MlsRecoveryEffects(state: MlsRecoveryEffectState) -> Element {
                     &base,
                     session.clone(),
                     |api| async move {
-                        let payload =
-                            crate::mls::account_recovery::fetch_mls_restore_payload(&api).await?;
+                        let payload = crate::mls::account_recovery::fetch_mls_restore_payload_after_projection(&api).await?;
                         let sidecar_body_for_local_restore = if has_local_account_secret {
                             crate::mls::account_recovery::fetch_mls_private_plaintext_backup_body(
                                 &api,

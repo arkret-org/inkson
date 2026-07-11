@@ -250,6 +250,8 @@ pub async fn upload_mls_account_secret_backup_with_passphrase(
     api.put_key_backup(&account_backup_id, account_body)
         .await
         .map_err(|err| anyhow!("upload account MLS secret backup: {err}"))?;
+    crate::mls::runtime::mark_account_mls_secret_verified(secure_store, actor_id)
+        .map_err(|err| anyhow!("mark uploaded account MLS secret verified: {err}"))?;
 
     Ok(account_backup_id)
 }
@@ -334,6 +336,8 @@ pub async fn upload_mls_account_secret_backup_with_recovery_public_key(
     api.put_key_backup(&account_backup_id, account_body)
         .await
         .map_err(|err| anyhow!("upload recovery-key account MLS secret backup: {err}"))?;
+    crate::mls::runtime::mark_account_mls_secret_verified(secure_store, actor_id)
+        .map_err(|err| anyhow!("mark uploaded account MLS secret verified: {err}"))?;
 
     Ok(account_backup_id)
 }

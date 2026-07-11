@@ -15,12 +15,14 @@ use crate::canonical::canonical_sha256;
 
 mod blocklist;
 mod client_ui;
+mod crypto;
 mod keys;
 mod productivity;
 mod remark;
 
 pub use blocklist::*;
 pub use client_ui::*;
+pub use crypto::*;
 pub use keys::*;
 pub use productivity::*;
 pub use remark::*;

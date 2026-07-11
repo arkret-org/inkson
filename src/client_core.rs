@@ -293,7 +293,11 @@ impl RealmEventsTraceContext {
     fn from_after(after: Option<&str>) -> Self {
         Self {
             after: after.map(str::to_owned),
-            catchup: after.is_none(),
+            // Every bounded long-poll reconnect asks the server to replay the
+            // gap after our durable cursor before switching back to live
+            // delivery. `catchup=false` with an `after` cursor can lose an
+            // event that lands between response close and the next receiver.
+            catchup: true,
         }
     }
 }
@@ -318,8 +322,9 @@ impl InksonRealmEventsTransport {
     }
 
     /// Build the subscribe options with the request-aware trace context: a
-    /// subscribe without a resume cursor is a catch-up request. The `catchup`
-    /// flag seeds the SDK frame stream's internal `StreamTraceValidator`, so
+    /// initial and resumed subscribes are catch-up requests: the latter closes
+    /// the response-boundary gap after the durable cursor. The `catchup` flag
+    /// seeds the SDK frame stream's internal `StreamTraceValidator`, so
     /// every frame this adapter yields has already passed the full §1.1 trace
     /// state machine — there is no shape-only parsing bypass.
     fn subscribe_request(
@@ -533,12 +538,12 @@ mod tests {
         let (resumed, resumed_context) =
             transport.subscribe_request(&realm_id, Some("ak:cursor:resume"));
         assert_eq!(resumed.after.as_deref(), Some("ak:cursor:resume"));
-        assert_eq!(resumed.catchup, Some(false));
+        assert_eq!(resumed.catchup, Some(true));
         assert_eq!(
             resumed_context,
             super::RealmEventsTraceContext {
                 after: Some("ak:cursor:resume".to_owned()),
-                catchup: false,
+                catchup: true,
             }
         );
     }

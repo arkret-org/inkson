@@ -1379,30 +1379,51 @@ pub(super) fn connect(base: String, actor: String, device: String, ctx: ConnectC
                                 }
                                 // ak.presence.preference — manual presence
                                 // preference (profiles-presence.md §3.6).
-                                // Plaintext-readable bodies only appear from
-                                // same-account devices in dev / test
-                                // deployments; opaque ciphertext entries are
-                                // skipped (local state authoritative).
+                                // Decrypt the standard holder-private envelope
+                                // before applying it to local state.
                                 if data_type == "ak.presence.preference" {
-                                    if let Some(content) = entry.get("content")
-                                        && content.get("ciphertext").is_none()
-                                        && let Ok(preference) = serde_json::from_value::<
-                                            crate::state::PresencePreferenceState,
-                                        >(
-                                            content.clone()
-                                        )
-                                    {
-                                        store.set_presence_preference(preference);
+                                    match crate::account_data::decrypt_account_data_entry(
+                                        &account_did(),
+                                        data_type,
+                                        entry,
+                                    )
+                                    .and_then(|content| {
+                                        serde_json::from_value(content).map_err(Into::into)
+                                    }) {
+                                        Ok(preference) => store.set_presence_preference(preference),
+                                        Err(error) => tracing::warn!(
+                                            "ignoring undecryptable ak.presence.preference: {error}"
+                                        ),
+                                    }
+                                    continue;
+                                }
+                                if data_type == "ak.dnd_schedule" {
+                                    match crate::account_data::decrypt_account_data_entry(
+                                        &account_did(),
+                                        data_type,
+                                        entry,
+                                    ) {
+                                        Ok(content) => store.set_notification_dnd_settings(
+                                            crate::notification_rules::parse_dnd_settings(&content),
+                                        ),
+                                        Err(error) => tracing::warn!(
+                                            "ignoring undecryptable ak.dnd_schedule: {error}"
+                                        ),
                                     }
                                     continue;
                                 }
                                 if data_type == "ak.account.blocklist" {
-                                    let Some(content) = entry.get("content") else {
-                                        continue;
-                                    };
-                                    match crate::account_data::blocklist_entries_from_account_data(
-                                        content,
-                                    ) {
+                                    match crate::account_data::decrypt_account_data_entry(
+                                        &account_did(),
+                                        data_type,
+                                        entry,
+                                    )
+                                    .and_then(|content| {
+                                        crate::account_data::blocklist_entries_from_account_data(
+                                            &content,
+                                        )
+                                        .map_err(anyhow::Error::msg)
+                                    }) {
                                         Ok(entries) => {
                                             store.set_client_blocklist(entries);
                                         }
@@ -1429,12 +1450,14 @@ pub(super) fn connect(base: String, actor: String, device: String, ctx: ConnectC
                                 if let Some(actor_id) =
                                     crate::account_data::actor_id_from_contact_remark_key(data_type)
                                 {
-                                    let Some(content) = entry.get("content") else {
-                                        continue;
-                                    };
-                                    match serde_json::from_value::<crate::account_data::ContactRemark>(
-                                        content.clone(),
-                                    ) {
+                                    match crate::account_data::decrypt_account_data_entry(
+                                        &account_did(),
+                                        data_type,
+                                        entry,
+                                    )
+                                    .and_then(|content| {
+                                        serde_json::from_value(content).map_err(Into::into)
+                                    }) {
                                         Ok(remark) => {
                                             store.set_contact_remark(actor_id.to_owned(), remark);
                                         }
@@ -1451,12 +1474,14 @@ pub(super) fn connect(base: String, actor: String, device: String, ctx: ConnectC
                                 else {
                                     continue;
                                 };
-                                let Some(content) = entry.get("content") else {
-                                    continue;
-                                };
-                                match serde_json::from_value::<crate::account_data::RealmRemark>(
-                                    content.clone(),
-                                ) {
+                                match crate::account_data::decrypt_account_data_entry(
+                                    &account_did(),
+                                    data_type,
+                                    entry,
+                                )
+                                .and_then(|content| {
+                                    serde_json::from_value(content).map_err(Into::into)
+                                }) {
                                     Ok(remark) => {
                                         store.set_realm_remark(realm_id.to_owned(), remark);
                                     }

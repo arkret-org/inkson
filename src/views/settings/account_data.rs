@@ -3,6 +3,8 @@
 //! tasks (local state stays authoritative) plus a couple of label / option
 //! derivations used by the notification override picker.
 
+use base64::Engine as _;
+use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use dioxus::prelude::*;
 use serde_json::json;
 
@@ -29,26 +31,27 @@ pub(super) fn format_settings_handle_list(handles: &[String], fallback: &str) ->
     }
 }
 
-pub(super) fn encrypted_account_data_marker(
+pub(super) fn encrypted_account_data_value(
     data_type: &str,
     plaintext: &serde_json::Value,
 ) -> anyhow::Result<serde_json::Value> {
-    let payload_digest = crate::canonical::canonical_sha256(&json!({
-        "data_type": data_type,
-        "content": plaintext,
-    }))?;
-    let digest_tail = payload_digest
-        .strip_prefix("sha256:")
-        .unwrap_or(payload_digest.as_str());
-    Ok(json!({
-        "client_side_conformance": {
-            "encrypted_account_data": true,
-            "profile_id": "ak.profile.e2ee_client.v1",
-            "payload_digest": payload_digest
-        },
-        "content_type": "application/vnd.arkret.account-data+json",
-        "ciphertext": format!("opaque-client-account-data:{digest_tail}")
-    }))
+    let actor = crate::secure_key_store::active_device_seed_scope()
+        .filter(|actor| !actor.trim().is_empty())
+        .ok_or_else(|| anyhow::anyhow!("active account scope is unavailable"))?;
+    let secure_store = crate::secure_key_store::default_secure_key_store("inkson");
+    let account_secret =
+        crate::mls::runtime::load_or_create_account_mls_secret(secure_store.as_ref(), &actor, "")?;
+    let secret = URL_SAFE_NO_PAD
+        .decode(account_secret)
+        .map_err(|error| anyhow::anyhow!("account secret base64url: {error}"))?;
+    let secret: [u8; 32] = secret
+        .try_into()
+        .map_err(|_| anyhow::anyhow!("account secret must be 32 bytes"))?;
+    let envelope = arkret_sdk::account_data_crypto::seal_account_data_value(
+        &secret, &actor, data_type, plaintext,
+    )?;
+    serde_json::to_value(envelope)
+        .map_err(|error| anyhow::anyhow!("account-data encrypted value: {error}"))
 }
 
 /// Spawn a fire-and-forget task that pushes the current read-receipt
@@ -143,7 +146,7 @@ pub(super) fn push_presence_preference_account_data(
         return;
     }
     let plaintext = build_presence_preference_body(&preference);
-    let body = match encrypted_account_data_marker(PRESENCE_PREFERENCE_ACCOUNT_DATA_KEY, &plaintext)
+    let body = match encrypted_account_data_value(PRESENCE_PREFERENCE_ACCOUNT_DATA_KEY, &plaintext)
     {
         Ok(body) => body,
         Err(err) => {
@@ -320,7 +323,7 @@ pub(super) fn push_notification_rules_account_data(
         "actions": ["notify"]
     }));
     let body = json!({ "rules": rules });
-    let body = match encrypted_account_data_marker(PUSH_RULES_ACCOUNT_DATA_KEY, &body) {
+    let body = match encrypted_account_data_value(PUSH_RULES_ACCOUNT_DATA_KEY, &body) {
         Ok(body) => body,
         Err(err) => {
             tracing::warn!("ak.account_data.set for ak.push_rules skipped: {}", err);
@@ -384,7 +387,7 @@ pub(super) fn push_dnd_account_data(
         notification_settings_status.set("DND settings saved locally; sign in to sync.".to_owned());
         return;
     }
-    let body = match encrypted_account_data_marker(DND_ACCOUNT_DATA_KEY, &plaintext_body) {
+    let body = match encrypted_account_data_value(DND_ACCOUNT_DATA_KEY, &plaintext_body) {
         Ok(body) => body,
         Err(err) => {
             notification_settings_status.set(format!("DND save failed: {err}"));
@@ -443,16 +446,37 @@ pub(super) fn push_realm_remark_account_data_impl(
             }
             return;
         }
-        tracing::warn!(
-            key = %key,
-            "skipping plaintext Realm remark account_data upload; encrypted envelope is unavailable"
-        );
-        if notify_failure {
-            crate::components::feedback::toast_error(
-                "realm.pin_failed",
-                vec![],
-                Some("encrypted account-data sync unavailable".to_owned()),
-            );
+        let body = match encrypted_account_data_value(
+            &key,
+            &serde_json::to_value(&remark).unwrap_or_default(),
+        ) {
+            Ok(body) => body,
+            Err(error) => {
+                tracing::warn!(key = %key, %error, "Realm remark encryption failed");
+                if notify_failure {
+                    crate::components::feedback::toast_error(
+                        "realm.pin_failed",
+                        vec![],
+                        Some(error.to_string()),
+                    );
+                }
+                return;
+            }
+        };
+        let key_for_request = key.clone();
+        if let Err(error) = with_event_submitter(&base_url, api_token, |sub| async move {
+            crate::transport::account::set_account_data(&sub, &key_for_request, body).await
+        })
+        .await
+        {
+            tracing::warn!(key = %key, error = %error.display(), "Realm remark account_data upload failed");
+            if notify_failure {
+                crate::components::feedback::toast_error(
+                    "realm.pin_failed",
+                    vec![],
+                    Some(error.display()),
+                );
+            }
         }
     });
 }

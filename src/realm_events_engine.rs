@@ -30,10 +30,12 @@
 //! Native can later switch this adapter to the SDK streaming frame source
 //! without changing the ingest / cursor contract here.
 
-use std::cell::Cell;
 use std::time::Duration;
 
-use garth::{ClientEvent, ClientProjector, RunOptions, SyncLoopControl, TransportProvider};
+use garth::{
+    ClientEvent, ClientProjector, RunOptions, ScanCatchupOptions, SyncLoopControl,
+    TransportProvider,
+};
 
 use crate::config::MultiProfileConfig;
 
@@ -70,16 +72,18 @@ pub struct RealmEventsEngineContext {
 }
 
 /// [`ClientProjector`] that folds each driver-emitted batch into the shared
-/// local store (kanban / message / membership), tracking whether anything
-/// changed so the caller bumps `realm_live_epoch` once per subscribe window
-/// (preserving the batch re-projection cadence). The ingest is durable BEFORE
+/// local store (kanban / message / membership), bumping `realm_live_epoch`
+/// immediately after each batch that changes the projection. The runner owns a
+/// long-lived reconnect loop, so deferring the signal until that loop returns
+/// would leave the UI stale even though the event was already durable locally.
+/// The ingest is durable BEFORE
 /// the driver checkpoints the cursor (the projector gates cursor advance), and
 /// the cursor stays coherent because the garth adapter writes the same root
 /// state backend used by the projector.
 struct RealmIngestProjector {
     state_store: crate::runtime::input::StateStoreHandle,
     realm_id: String,
-    changed: Cell<usize>,
+    realm_live_epoch: crate::runtime::input::ValueCell<u64>,
 }
 
 impl ClientProjector for RealmIngestProjector {
@@ -98,7 +102,10 @@ impl ClientProjector for RealmIngestProjector {
                             &batch,
                         )
                 });
-                self.changed.set(self.changed.get() + changed);
+                if changed > 0 {
+                    self.realm_live_epoch
+                        .update(|epoch| *epoch = epoch.wrapping_add(1));
+                }
             }
             Ok(())
         }
@@ -134,8 +141,32 @@ pub async fn run_realm_events_engine(
     let projector = RealmIngestProjector {
         state_store: ctx.state_store.clone(),
         realm_id,
-        changed: Cell::new(0),
+        realm_live_epoch: ctx.realm_live_epoch.clone(),
     };
+    // `events/subscribe` without `after` is a live tail, not a history
+    // endpoint. Bootstrap durable history through events.query.scan and let
+    // the shared client core checkpoint only after the projector commits it.
+    let bootstrap_transport = match provider.provide().await {
+        Ok(transport) => transport,
+        Err(error) => {
+            tracing::warn!(error = %error, "realm history transport is not ready");
+            return;
+        }
+    };
+    if let Err(error) = ctx
+        .client_runtime
+        .subscription_engine()
+        .bootstrap_realm_history(
+            &bootstrap_transport,
+            realm_id_typed.clone(),
+            &projector,
+            ScanCatchupOptions::default(),
+        )
+        .await
+    {
+        tracing::warn!(error = %error, "realm history bootstrap failed");
+        return;
+    }
     let result = ctx
         .client_runtime
         .client()
@@ -154,10 +185,6 @@ pub async fn run_realm_events_engine(
         .await;
     if let Err(error) = result {
         tracing::warn!(error = %error, "realm events runner stopped with error");
-    }
-    if projector.changed.get() > 0 {
-        ctx.realm_live_epoch
-            .update(|epoch| *epoch = epoch.wrapping_add(1));
     }
 }
 

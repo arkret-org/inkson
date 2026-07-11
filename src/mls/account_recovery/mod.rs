@@ -41,9 +41,9 @@ pub use backup_body::{
 };
 pub use restore::{
     RestoreReport, auto_restore_mls_history_with_passphrase, fetch_mls_account_secret_backup,
-    fetch_mls_restore_payload, fetch_mls_restore_payload_with_unlock_proof,
-    mls_backup_prompt_required, mls_restore_prompt_required,
-    restore_mls_history_with_local_secret_from_payload,
+    fetch_mls_restore_payload, fetch_mls_restore_payload_after_projection,
+    fetch_mls_restore_payload_with_unlock_proof, mls_backup_prompt_required,
+    mls_restore_prompt_required, restore_mls_history_with_local_secret_from_payload,
     restore_mls_history_with_passphrase_from_payload,
     restore_mls_history_with_recovery_key_from_payload,
 };

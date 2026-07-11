@@ -6,7 +6,8 @@ use serde_json::{Value, json};
 
 use super::backup_body::{
     decrypt_mls_account_secret_backup, decrypt_mls_private_plaintext_backup,
-    is_mls_private_plaintext_backup, open_mls_account_secret_recovery_public_key_backup,
+    is_mls_account_secret_backup, is_mls_private_plaintext_backup,
+    open_mls_account_secret_recovery_public_key_backup,
 };
 use super::selection::{
     all_mls_account_secret_backups, is_mls_history_backup, mls_account_secret_backup_version,
@@ -67,6 +68,13 @@ pub fn mls_restore_prompt_required(
     if select_preferred_mls_account_secret_backup(list_payload).is_none() {
         return false;
     }
+    // A local secret may have been generated speculatively by fresh-device
+    // bootstrap before backup discovery. Presence alone does not prove that it
+    // belongs to the server recovery chain. Only a successful upload/import
+    // sets the verified marker; until then the server backup must win.
+    if !crate::mls::runtime::account_mls_secret_verified(secure_store, actor_id).unwrap_or(false) {
+        return true;
+    }
     let local_secret =
         crate::mls::runtime::load_device_snapshot_secret(secure_store, actor_id, device_id).ok();
     let Some(local_secret) = local_secret.filter(|secret| !secret.trim().is_empty()) else {
@@ -123,7 +131,77 @@ pub async fn fetch_mls_restore_payload(api: &crate::transport::TransportClient) 
         .list_key_backups()
         .await
         .map_err(|err| anyhow!("list key backups: {err}"))?;
-    Ok(serde_json::to_value(&backups)?)
+    let mut payload = serde_json::to_value(&backups)?;
+    attach_bootstrap_active_series(&mut payload);
+    Ok(payload)
+}
+
+/// Fresh-device discovery can race the projection of backups uploaded moments
+/// earlier by another device. Retry the real LIST read briefly instead of
+/// caching the first empty projection for the lifetime of the app session.
+pub async fn fetch_mls_restore_payload_after_projection(
+    api: &crate::transport::TransportClient,
+) -> Result<Value> {
+    let mut payload = fetch_mls_restore_payload(api).await?;
+    for _ in 0..5 {
+        if select_preferred_mls_account_secret_backup(&payload).is_some() {
+            break;
+        }
+        crate::runtime_helpers::sleep_for(std::time::Duration::from_secs(1)).await;
+        payload = fetch_mls_restore_payload(api).await?;
+    }
+    Ok(payload)
+}
+
+/// The public LIST carrier intentionally contains metadata only and currently
+/// has no field for the verified control-stream active-series records.  Keep
+/// the strict selectors fail-closed for arbitrary callers, but bridge the live
+/// bootstrap response by selecting the newest actor-authenticated series per
+/// class until the transport exposes those records directly.  Rotation safety
+/// still comes from `secret_version` first; `series_seq`/`created_at` only
+/// order backups with the same secret generation.
+fn attach_bootstrap_active_series(payload: &mut Value) {
+    if payload
+        .get("active_series")
+        .and_then(Value::as_array)
+        .is_some()
+    {
+        return;
+    }
+    let Some(backups) = payload.get("backups").and_then(Value::as_array) else {
+        return;
+    };
+    let mut records = Vec::new();
+    for class in ["secret_storage", "mls_history", "did_recovery"] {
+        let selected = backups
+            .iter()
+            .filter(|body| body.get("backup_class").and_then(Value::as_str) == Some(class))
+            .filter(|body| class != "secret_storage" || is_mls_account_secret_backup(body))
+            .max_by(|a, b| {
+                (
+                    mls_account_secret_backup_version(a),
+                    super::selection::backup_series_seq(a),
+                    super::selection::backup_created_at(a),
+                )
+                    .cmp(&(
+                        mls_account_secret_backup_version(b),
+                        super::selection::backup_series_seq(b),
+                        super::selection::backup_created_at(b),
+                    ))
+            });
+        if let Some(series_id) = selected
+            .and_then(|body| body.get("series_id"))
+            .and_then(Value::as_str)
+            .filter(|series_id| !series_id.is_empty())
+        {
+            records.push(json!({
+                "schema": crate::key_backup::KEY_BACKUP_ACTIVE_SERIES_SCHEMA,
+                "backup_class": class,
+                "active_series_id": series_id,
+            }));
+        }
+    }
+    payload["active_series"] = Value::Array(records);
 }
 
 pub async fn fetch_mls_restore_payload_with_unlock_proof(
@@ -193,11 +271,14 @@ pub async fn fetch_mls_restore_payload_with_unlock_proof(
         .map_err(|err| anyhow!("fetch key backup {backup_id} with unlock proof: {err}"))?;
         full_backups.push(full);
     }
-    Ok(json!({
+    let mut full_payload = json!({
         "backups": full_backups,
+        "active_series": payload.get("active_series").cloned().unwrap_or_else(|| json!([])),
         "next_cursor": payload.get("next_cursor").cloned().unwrap_or(Value::Null),
         "state": payload.get("state").cloned().unwrap_or_else(|| json!("active")),
-    }))
+    });
+    attach_bootstrap_active_series(&mut full_payload);
+    Ok(full_payload)
 }
 
 /// Restore MLS account secret + history from an already-fetched
@@ -238,6 +319,8 @@ pub fn restore_mls_history_with_passphrase_from_payload(
             &secret,
         )
         .map_err(|err| anyhow!("replace account MLS secret: {err}"))?;
+        crate::mls::runtime::mark_account_mls_secret_verified(secure_store, actor_id)
+            .map_err(|err| anyhow!("mark restored account MLS secret verified: {err}"))?;
         report.account_secret_imported = true;
     } else if !has_local_secret {
         return Err(anyhow!(
@@ -289,6 +372,8 @@ pub fn restore_mls_history_with_recovery_key_from_payload(
         &secret,
     )
     .map_err(|err| anyhow!("replace account MLS secret: {err}"))?;
+    crate::mls::runtime::mark_account_mls_secret_verified(secure_store, actor_id)
+        .map_err(|err| anyhow!("mark restored account MLS secret verified: {err}"))?;
     report.account_secret_imported = true;
 
     restore_history_and_sidecar(
