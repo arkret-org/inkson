@@ -23,11 +23,12 @@ use crate::views::recovery::RecoveryKeyBackupOutcome;
 /// brand-new account Recovery Key root if the SERVER first confirms this device
 /// is an authorized, verified key-management device for the account. So we:
 ///
-/// 1. generate the 24 words **in memory only** — nothing persisted, nothing shown;
+/// 1. generate the 24 words without exposing them to the UI;
 /// 2. attempt the server backup (`upload_recovery_key_account_backup`);
-/// 3. reveal the words **only** on `Established`; local recovery metadata stays pending until the
-///    user passes the transcription check ("Confirm saved key"), which finalizes it via
-///    `save_generated_recovery_key_metadata`;
+/// 3. after `Established`, durably stage the words only in the hardened secure store and reveal
+///    them; local recovery metadata stays pending until the user passes the transcription check
+///    ("Confirm saved key"), which finalizes it via `save_generated_recovery_key_metadata` and
+///    deletes the staged secret;
 /// 4. on `DeviceNotAuthorized` discard the key and route the user to authorize this device /
 ///    restore with their existing Recovery Key — never leave a divergent root behind.
 fn begin_recovery_key_setup(
@@ -126,6 +127,13 @@ pub fn RecoveryKeySetupPrompt(
             return;
         }
         auto_generate_started.set(true);
+        if let Some(pending_key) = crate::views::recovery::load_pending_recovery_key(&account_did())
+        {
+            generated_recovery_key.set(pending_key);
+            status
+                .set("Recovery Key setup is still awaiting your 24-word confirmation.".to_owned());
+            return;
+        }
         status.set("Generating Recovery Key...".to_owned());
         begin_recovery_key_setup(
             base_url,
@@ -411,6 +419,7 @@ pub fn RecoveryKeySetupPrompt(
                                             crate::app::RECOVERY_AUTO_PROMPT_LOCAL_ONLY_SHOWN_KEY,
                                             fingerprint,
                                         );
+                                        crate::views::recovery::clear_pending_recovery_key(&actor);
                                     }
                                     generated_recovery_key.set(String::new());
                                     confirmation_input.set(String::new());

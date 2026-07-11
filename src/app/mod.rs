@@ -537,7 +537,7 @@ fn AppBootstrap() -> Element {
     // X11.2 — expose `needs_mls_backup` via context so deep encrypted-write
     // success paths (kanban card detail update, chat secure send) can flip the
     // backup prompt on directly, WITHOUT relying on the fragile boot-time
-    // detection effect (X11). See `maybe_flag_mls_backup_after_encrypted_write`.
+    // detection effect (X11). See `maybe_auto_backup_mls_after_encrypted_write`.
     use_context_provider(|| crate::components::MlsBackupSignal(needs_mls_backup));
     // Call-signaling hub — the receive side of `ak.call.signal`. Provided
     // once at the app root; the sync apply paths route inbound envelopes into
@@ -1134,6 +1134,7 @@ fn AppBootstrap() -> Element {
                     token,
                     account_did,
                     sync_bootstrap_complete,
+                    secure_store_bootstrap_ready,
                     device_authorization_check_complete,
                     account_recovery_configured,
                     needs_device_authorization,
@@ -1415,7 +1416,9 @@ fn AppBootstrap() -> Element {
             // Fresh-device diagnostic: encrypted history exists, but no
             // passphrase-backed account-secret backup is available to unlock
             // on this browser.
-            if active_prompt == AccountHealthPrompt::RecoverySetupMissing {
+            if active_prompt == AccountHealthPrompt::RecoverySetupMissing
+                && !recovery_key_setup_prompt()
+            {
                 crate::components::MlsRecoverySetupMissingBanner {
                     needs_mls_recovery_setup,
                     actor_id: account_did,
@@ -1425,7 +1428,9 @@ fn AppBootstrap() -> Element {
             // recovery-passphrase banner that restores encrypted history on
             // a fresh device. Renders nothing unless boot detection flagged
             // `needs_mls_unlock`.
-            if active_prompt == AccountHealthPrompt::MlsUnlock {
+            if active_prompt == AccountHealthPrompt::MlsUnlock
+                && !recovery_key_setup_prompt()
+            {
                 crate::components::MlsUnlockPrompt {
                     token,
                     actor_id: account_did,
@@ -1437,7 +1442,9 @@ fn AppBootstrap() -> Element {
             // Task X3 — one-time account-secret BACKUP prompt (mirror of the
             // unlock banner). Renders nothing unless detection flagged
             // `needs_mls_backup` (local secret exists, no server backup yet).
-            if active_prompt == AccountHealthPrompt::MlsBackup {
+            if active_prompt == AccountHealthPrompt::MlsBackup
+                && !recovery_key_setup_prompt()
+            {
                 crate::components::MlsBackupPrompt {
                     token,
                     actor_id: account_did,

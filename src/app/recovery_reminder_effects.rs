@@ -7,6 +7,7 @@ pub(super) struct RecoveryReminderEffectState {
     pub token: Signal<String>,
     pub account_did: Signal<String>,
     pub sync_bootstrap_complete: Signal<bool>,
+    pub secure_store_bootstrap_ready: Signal<bool>,
     pub device_authorization_check_complete: Signal<bool>,
     pub account_recovery_configured: Signal<Option<bool>>,
     pub needs_device_authorization: Signal<bool>,
@@ -24,6 +25,7 @@ pub(super) fn RecoveryReminderEffects(state: RecoveryReminderEffectState) -> Ele
         token,
         account_did,
         sync_bootstrap_complete,
+        secure_store_bootstrap_ready,
         device_authorization_check_complete,
         account_recovery_configured,
         needs_device_authorization,
@@ -45,9 +47,12 @@ pub(super) fn RecoveryReminderEffects(state: RecoveryReminderEffectState) -> Ele
         // docs/user-strands-key-lifecycle.md §3/S1.
         let mut recovery_key_setup_prompt = recovery_key_setup_prompt;
         let mut recovery_auto_prompt_fired = recovery_auto_prompt_fired;
-        let mut state_store = state_store;
+        let state_store = state_store;
         use_effect(move || {
             if recovery_auto_prompt_fired() || recovery_key_setup_prompt() {
+                return;
+            }
+            if !secure_store_bootstrap_ready() {
                 return;
             }
             let session = token();
@@ -55,16 +60,20 @@ pub(super) fn RecoveryReminderEffects(state: RecoveryReminderEffectState) -> Ele
             if session.trim().is_empty() || actor.trim().is_empty() {
                 return;
             }
-            let (inputs, already_prompted, local_only_fingerprint) = {
+            // Recovery setup publishes account-authority policy and therefore
+            // requires an enrollment-capable session grant. Keep this guard in
+            // the extracted effect; without it a compatibility session opens a
+            // modal that can only fail with device_not_authorized.
+            if state_store.read().session_grant().is_none() {
+                return;
+            }
+            let (inputs, already_prompted, pending_confirmation) = {
                 let store = state_store.read();
                 let account_recovery_configured = account_recovery_configured();
                 let local_recovery_configured =
                     crate::views::recovery::recovery_options_configured(&store, &actor);
-                let local_only_fingerprint = recovery_auto_prompt_pending_local_only_fingerprint(
-                    &store,
-                    &actor,
-                    account_recovery_configured,
-                );
+                let pending_confirmation = !local_recovery_configured
+                    && crate::views::recovery::load_pending_recovery_key(&actor).is_some();
                 let inputs = crate::account_health::AccountHealthInputs {
                     has_session: true,
                     sync_bootstrap_complete: sync_bootstrap_complete(),
@@ -91,19 +100,15 @@ pub(super) fn RecoveryReminderEffects(state: RecoveryReminderEffectState) -> Ele
                     &actor,
                     account_recovery_configured,
                 );
-                (inputs, already, local_only_fingerprint)
+                (inputs, already, pending_confirmation)
             };
-            if crate::account_health::should_auto_prompt_recovery_setup(inputs, already_prompted) {
+            if pending_confirmation
+                || crate::account_health::should_auto_prompt_recovery_setup(
+                    inputs,
+                    already_prompted,
+                )
+            {
                 recovery_auto_prompt_fired.set(true);
-                let mut store = state_store.write();
-                store.save_private_data(&actor, RECOVERY_AUTO_PROMPT_SHOWN_KEY, "1".to_owned());
-                if let Some(fingerprint) = local_only_fingerprint {
-                    store.save_private_data(
-                        &actor,
-                        RECOVERY_AUTO_PROMPT_LOCAL_ONLY_SHOWN_KEY,
-                        fingerprint,
-                    );
-                }
                 recovery_key_setup_prompt.set(true);
             }
         });

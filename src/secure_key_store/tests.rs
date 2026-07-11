@@ -227,6 +227,9 @@ fn wasm_indexeddb_required_key_classifier_covers_high_value_secrets() {
     assert!(is_wasm_indexeddb_required_secret_key(
         PENDING_LOGOUT_SECRET_KEY
     ));
+    assert!(is_wasm_indexeddb_required_secret_key(
+        "inkson.recovery.pending_key.v1.account-digest"
+    ));
 
     assert!(!is_wasm_indexeddb_required_secret_key(
         "push.fcm.registration_token.device-a"

@@ -366,35 +366,13 @@ pub fn try_needs_mls_backup_signal() -> Option<Signal<bool>> {
     try_consume_context::<MlsBackupSignal>().map(|wrap| wrap.0)
 }
 
-/// X11.2 — shared first-write trigger. After a successful ENCRYPTED write,
-/// the caller spawns this: if the server holds NO `mls_account_secret`
-/// backup yet AND a local account secret exists, flip `needs_mls_backup` on
-/// so [`MlsBackupPrompt`] surfaces promptly. Call
-/// [`maybe_auto_backup_mls_after_encrypted_write`] when a `LocalStateStore` is
-/// available so the public-key auto-backup path can run first. Best-effort and
-/// self-contained: swallows every error and never blocks the write path. The
-/// server probe is intentionally session-deduped per `(base_url, actor_id)`:
-/// the prompt only needs a first-write kick, not a backup-list request after
-/// every message.
-pub async fn maybe_flag_mls_backup_after_encrypted_write(
-    base_url: String,
-    token: String,
-    actor_id: String,
-    needs_mls_backup: Signal<bool>,
-) {
-    maybe_backup_or_flag_mls_backup_after_encrypted_write(
-        base_url,
-        token,
-        actor_id,
-        None,
-        needs_mls_backup,
-    )
-    .await;
-}
-
-/// First-write trigger with the no-prompt path enabled. Once the user has
-/// confirmed a Recovery Key, the cached recovery public key can seal future
-/// account-secret backups without asking for the 24 words again.
+/// X11.2 — shared first-write trigger with the no-prompt path enabled. After a
+/// successful encrypted write, detect a missing `mls_account_secret` backup;
+/// once the user has confirmed a Recovery Key, its cached public key can seal
+/// the backup without asking for the 24 words again. The local backup marker
+/// also acts as the completion fence for concurrent probes: a stale probe that
+/// started before Recovery Key setup completed must not turn the prompt back
+/// on after setup uploaded the account-secret backup.
 pub async fn maybe_auto_backup_mls_after_encrypted_write(
     base_url: String,
     token: String,
@@ -426,6 +404,11 @@ async fn maybe_backup_or_flag_mls_backup_after_encrypted_write(
     if needs_mls_backup() {
         return;
     }
+    let state_store_for_completion_fence = auto_backup.as_ref().map(|(_, store)| *store);
+    let backup_completed_while_probe_was_running = || {
+        state_store_for_completion_fence
+            .is_some_and(|store| mls_recovery_backup_configured(&store.read(), &actor_id))
+    };
     // Local account secret must exist (encryption has been used) — otherwise
     // there's nothing to back up yet.
     let has_local_secret = {
@@ -474,7 +457,11 @@ async fn maybe_backup_or_flag_mls_backup_after_encrypted_write(
                 error = %err.display(),
                 "MLS backup detection could not list key backups after encrypted write"
             );
-            try_set_signal(needs_mls_backup, true);
+            if backup_completed_while_probe_was_running() {
+                try_set_signal(needs_mls_backup, false);
+            } else {
+                try_set_signal(needs_mls_backup, true);
+            }
             return;
         }
     };
@@ -545,7 +532,11 @@ async fn maybe_backup_or_flag_mls_backup_after_encrypted_write(
         }
     }
 
-    try_set_signal(needs_mls_backup, true);
+    if backup_completed_while_probe_was_running() {
+        try_set_signal(needs_mls_backup, false);
+    } else {
+        try_set_signal(needs_mls_backup, true);
+    }
 }
 
 /// One-time account-MLS-secret BACKUP prompt — the mirror of

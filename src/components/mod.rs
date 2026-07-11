@@ -98,7 +98,7 @@ pub use feedback::{
 };
 pub use mls_backup_prompt::{
     MlsBackupPrompt, MlsBackupSignal, maybe_auto_backup_mls_after_encrypted_write,
-    maybe_flag_mls_backup_after_encrypted_write, try_needs_mls_backup_signal,
+    try_needs_mls_backup_signal,
 };
 pub(crate) use mls_backup_prompt::{
     mark_mls_recovery_backup_configured, mls_recovery_backup_configured,

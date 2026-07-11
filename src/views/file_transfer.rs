@@ -12,8 +12,10 @@ use crate::transport::TransportClient;
 
 #[component]
 pub fn FileTransferPanel(token: Signal<String>, account_did: String, device_id: String) -> Element {
-    // A4 — base_url from session context instead of a prop.
-    let base_url = crate::app::SessionContext::base_url_string();
+    // A4 — base_url / state_store from session context instead of props.
+    let session = crate::app::SessionContext::get();
+    let base_url = session.base_url.read().clone();
+    let state_store = session.state_store;
     let mut items = use_signal(Vec::<FileTransferItem>::new);
     let mut status = use_signal(|| "Ready".to_owned());
     let refreshing = use_signal(|| false);
@@ -143,10 +145,12 @@ pub fn FileTransferPanel(token: Signal<String>, account_did: String, device_id: 
                                         });
                                         items.set(next);
                                         if let Some(signal) = backup_trigger_signal {
-                                            crate::components::maybe_flag_mls_backup_after_encrypted_write(
+                                            crate::components::maybe_auto_backup_mls_after_encrypted_write(
                                                 base_url.clone(),
                                                 api_token.clone(),
                                                 actor.clone(),
+                                                device.clone(),
+                                                state_store,
                                                 signal,
                                             )
                                             .await;

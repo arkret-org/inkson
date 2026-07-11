@@ -10,7 +10,8 @@
 //!   after the server accepts — so a rejected registration never invalidates a copy the user
 //!   already wrote down. Local metadata (SHA-256 fingerprint + rotation timestamp, via
 //!   `LocalStateStore::save_private_data`) stays pending until the user passes the transcription
-//!   check; the words themselves are never uploaded.
+//!   check; until then, the words are staged only in the hardened secure store so an accidental
+//!   refresh can resume the same confirmation. The words are never uploaded.
 //! - **Backup history**: summarizes the server-side `ak.schema.key_backup.v1` ciphertext envelopes
 //!   by creation time, emphasizing the latest encrypted backup without exposing per-backup
 //!   controls.
@@ -21,7 +22,8 @@
 //! (NOT encrypted) at rest under the public account DID via
 //! `obfuscate_nonsensitive` (and on wasm32 mirrored to localStorage) — it holds
 //! only non-sensitive markers such as a last-rehearsal timestamp. The Recovery
-//! view never persists the Recovery Key itself in plaintext or via this path.
+//! view never persists the Recovery Key itself in plaintext or via this path; pending words use
+//! the platform SecureKeyStore and are deleted after confirmation.
 //!
 //! Split by responsibility into:
 //!   - [`types`]: serialized state + backup-summary data types;
@@ -48,4 +50,7 @@ pub(crate) use state::{
     local_recovery_key_fingerprint, local_recovery_public_key, recovery_options_configured,
     save_generated_recovery_key_metadata,
 };
-pub(crate) use upload::{RecoveryKeyBackupOutcome, upload_recovery_key_account_backup};
+pub(crate) use upload::{
+    RecoveryKeyBackupOutcome, clear_pending_recovery_key, load_pending_recovery_key,
+    upload_recovery_key_account_backup,
+};

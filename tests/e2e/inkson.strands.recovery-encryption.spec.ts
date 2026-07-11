@@ -85,11 +85,15 @@ test("first registered device opens 24-word recovery setup instead of existing-d
   await page.addInitScript(() => {
     const win = window as typeof window & {
       __sawDeviceAuthorizationModal?: boolean;
+      __sawMlsBackupModal?: boolean;
       __deviceAuthorizationObserver?: MutationObserver;
     };
     const scan = () => {
       if (document.querySelector('[data-testid="device-authorization-modal"]')) {
         win.__sawDeviceAuthorizationModal = true;
+      }
+      if (document.querySelector('[data-testid="mls-backup-modal"]')) {
+        win.__sawMlsBackupModal = true;
       }
     };
     const start = () => {
@@ -101,6 +105,7 @@ test("first registered device opens 24-word recovery setup instead of existing-d
       observer.observe(document.documentElement, { childList: true, subtree: true });
       win.__deviceAuthorizationObserver = observer;
       win.__sawDeviceAuthorizationModal = false;
+      win.__sawMlsBackupModal = false;
       scan();
     };
     if (document.documentElement) {
@@ -149,10 +154,30 @@ test("first registered device opens 24-word recovery setup instead of existing-d
   await expect(page.getByTestId("recommended-encryption-floor-modal")).toHaveCount(0);
   const generatedRecoveryKey = await generatedKeyField.inputValue();
   expect(generatedRecoveryKey.trim().split(/\s+/)).toHaveLength(24);
+  await expect(page.getByTestId("mls-backup-modal")).toHaveCount(0);
   await expect(page.getByTestId("device-authorization-modal")).toHaveCount(0);
   await expect
     .poll(() => page.evaluate(() => Boolean((window as any).__sawDeviceAuthorizationModal)))
     .toBe(false);
+  await expect
+    .poll(() => page.evaluate(() => Boolean((window as any).__sawMlsBackupModal)))
+    .toBe(false);
+
+  // Server acceptance is not user confirmation. Refreshing before the
+  // transcription check must resume the exact same pending 24 words and must
+  // not fall through to the existing-key MLS backup dialog.
+  await page.reload({ waitUntil: "domcontentloaded" });
+  await expect(latestTestId(page, "client-shell")).toBeVisible({ timeout: 120_000 });
+  await expect(setupModal).toBeVisible({ timeout: 30_000 });
+  await expect(generatedKeyField).toHaveValue(generatedRecoveryKey);
+  await expect(page.getByTestId("mls-backup-modal")).toHaveCount(0);
+
+  await latestTestId(page, "recovery-key-setup-confirm-key").fill(generatedRecoveryKey);
+  await latestTestId(page, "recovery-key-setup-saved").click();
+  await expect(setupModal).toBeHidden();
+  await page.reload({ waitUntil: "domcontentloaded" });
+  await expect(latestTestId(page, "client-shell")).toBeVisible({ timeout: 120_000 });
+  await expect(page.getByTestId("recovery-key-setup-modal")).toHaveCount(0);
 });
 
 test("recovery key setup download filename includes account localpart", async ({ page }) => {

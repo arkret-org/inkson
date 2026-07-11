@@ -5,6 +5,33 @@ use dioxus::prelude::*;
 use crate::state::LocalStateStore;
 use crate::transport::auth::with_authed_api;
 
+fn pending_recovery_key_store_key(actor_id: &str) -> String {
+    format!(
+        "{}{}",
+        crate::secure_key_store::PENDING_RECOVERY_KEY_PREFIX,
+        crate::canonical::sha256_digest(actor_id.trim().as_bytes())
+    )
+}
+
+pub(crate) fn load_pending_recovery_key(actor_id: &str) -> Option<String> {
+    if actor_id.trim().is_empty() {
+        return None;
+    }
+    crate::secure_key_store::default_secure_key_store("inkson")
+        .get_secret(&pending_recovery_key_store_key(actor_id))
+        .ok()
+        .flatten()
+        .filter(|key| !key.trim().is_empty())
+}
+
+pub(crate) fn clear_pending_recovery_key(actor_id: &str) {
+    if actor_id.trim().is_empty() {
+        return;
+    }
+    let _ = crate::secure_key_store::default_secure_key_store("inkson")
+        .delete_secret(&pending_recovery_key_store_key(actor_id));
+}
+
 /// RK-as-authority backup: publish the active recovery policy and a
 /// `did_recovery` backup immediately, then create or load the account MLS
 /// secret and wrap it behind the just generated 24-word Recovery Key. This
@@ -103,6 +130,29 @@ pub(crate) fn upload_recovery_key_account_backup(
         .await;
         match result {
             Ok((did_backup_id, account_backup_id)) => {
+                // Keep the not-yet-confirmed words in the hardened secure
+                // store before revealing them. A page refresh can then resume
+                // the exact same setup instead of silently treating the
+                // server-side backup as user-confirmed or generating a
+                // mismatched replacement key.
+                let secure = crate::secure_key_store::default_secure_key_store("inkson");
+                if let Err(error) = secure
+                    .store_secret_durable(
+                        &pending_recovery_key_store_key(&actor_for_sidecar),
+                        &recovery_key,
+                    )
+                    .await
+                {
+                    if let Ok(mut slot) = status.try_write() {
+                        *slot = format!(
+                            "Recovery backup was accepted, but the pending Recovery Key could not be stored safely: {error}"
+                        );
+                    }
+                    if let Some(handler) = on_outcome {
+                        handler.call(RecoveryKeyBackupOutcome::Transient);
+                    }
+                    return;
+                }
                 // Fail-closed ordering: the server accepted the backup, so this
                 // device is an authorized key-management device and the caller
                 // may now reveal the 24 words. Local recovery metadata is NOT
@@ -164,8 +214,9 @@ pub(crate) fn upload_recovery_key_account_backup(
                 }
             }
             Err(err) => {
-                // Fail-closed: nothing was persisted before this point, so a
-                // rejection leaves no divergent Recovery Key behind. Classify
+                // Fail-closed: no pending Recovery Key was persisted before
+                // server acceptance, so a rejection leaves no divergent key
+                // behind. Classify
                 // the failure so the prompt can route an unauthorized device to
                 // device-authorization / restore instead of pretending a fresh
                 // account recovery root was created.
