@@ -1345,6 +1345,8 @@ fn AppBootstrap() -> Element {
     // value it started with so a stale iteration can self-check and
     // exit before writing back to signals owned by the new generation.
     let sync_effects = runtime_services.effects.clone();
+    let sync_session = runtime_services.session.clone();
+    let sync_projection_sink = runtime_services.projection_sink.clone();
     use_effect(move || {
         let current_gen = sync_generation();
         let base = base_url();
@@ -1377,9 +1379,9 @@ fn AppBootstrap() -> Element {
             // call-signal envelopes from every incremental sync body into
             // this hub (the same hub `CallPanel` drains).
             call_signal_hub,
-            session: runtime_services.session.clone(),
+            session: sync_session.clone(),
             effect: effect.clone(),
-            projection_sink: runtime_services.projection_sink.clone(),
+            projection_sink: sync_projection_sink.clone(),
         };
         let mut active_generation = sync_engine_active_generation;
         spawn(async move {
@@ -3831,6 +3833,8 @@ fn AppBootstrap() -> Element {
                                         "aria-label": "Switch to {option_url}",
                                         onclick: {
                                             let option_url = option_url.clone();
+                                            let server_connect_session =
+                                                server_connect_session.clone();
                                             move |_| {
                                                 let next_url = normalize_server_url(&option_url);
                                                 select_server(next_url.clone(), ServerSelectionContext {
