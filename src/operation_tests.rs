@@ -232,6 +232,10 @@ fn kanban_card_strand_create_carries_position_in_metadata_fields() {
         "kanban_card"
     );
     assert_eq!(
+        op.payload["object"]["tracks"]["discussion"]["profile"],
+        "discussion"
+    );
+    assert_eq!(
         op.payload["object"]["metadata"]["fields"]["board_space_id"],
         "ak:space:0196419b-0000-7000-8000-000000000002"
     );

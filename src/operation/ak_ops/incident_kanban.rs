@@ -93,7 +93,8 @@ pub fn kanban_card_strand_create(
         arkret_sdk::StrandTrackConfig::new()
             .primary()
             .with_profile("kanban_card"),
-    );
+    )
+    .with_track("discussion", arkret_sdk::StrandTrackConfig::discussion());
     Ok(OperationBuilder::new(
         &realm_id,
         actor,
