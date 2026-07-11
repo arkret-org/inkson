@@ -26,7 +26,7 @@ impl crate::transport::TransportClient {
         target: &str,
         scopes: &[String],
         message: Option<&str>,
-        recipient_service_did: Option<&str>,
+        recipient_service_id: Option<&str>,
     ) -> anyhow::Result<arkret_sdk::ContactRequestOutcome> {
         let requested_scopes: Vec<String> = scopes
             .iter()
@@ -35,7 +35,7 @@ impl crate::transport::TransportClient {
             .map(ToOwned::to_owned)
             .collect();
         let addressing = self
-            .contact_request_addressing(target, recipient_service_did)
+            .contact_request_addressing(target, recipient_service_id)
             .await?;
         let body = arkret_sdk::ContactRequestRequestBody {
             target: addressing.target,
@@ -45,7 +45,7 @@ impl crate::transport::TransportClient {
                 .filter(|message| !message.is_empty())
                 .map(ToOwned::to_owned),
             idempotency_key: None,
-            recipient_service_did: addressing.recipient_service_did,
+            recipient_service_id: addressing.recipient_service_id,
             introduction_evidence: Some(addressing.introduction_evidence),
         };
         self.sdk_http_client()?

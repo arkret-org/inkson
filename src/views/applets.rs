@@ -248,21 +248,21 @@ pub fn AppletsPanel(token: Signal<String>, selected_realm_id: String) -> Element
     let applet_rows: Vec<_> = registrations
         .iter()
         .map(|r| {
-            let service_did = r
+            let service_id = r
                 .payload
                 .get("body")
-                .and_then(|b| b.get("service_did"))
+                .and_then(|b| b.get("service_id"))
                 .and_then(Value::as_str)
                 .unwrap_or("did:web:?")
                 .to_owned();
             let namespace = registration_namespace_label(r.payload.get("body"));
-            let applet_id = format!("{service_did}@{namespace}");
-            let manifest_repr = format!("{}:{}", service_did, namespace);
+            let applet_id = format!("{service_id}@{namespace}");
+            let manifest_repr = format!("{}:{}", service_id, namespace);
             let manifest_hash = manifest_hash_for(&manifest_repr);
             let installed_at = r.operation_id.clone();
             (
                 applet_id,
-                service_did,
+                service_id,
                 namespace,
                 manifest_hash,
                 installed_at,
@@ -271,14 +271,14 @@ pub fn AppletsPanel(token: Signal<String>, selected_realm_id: String) -> Element
         .collect();
 
     // Audit trace for an applet: every raw op whose body
-    // service_did matches the row's service_did. We materialize
+    // service_id matches the row's service_id. We materialize
     // once so the modal rendering doesn't re-filter on every paint.
     let trace_open_applet_id = trace_open_for();
-    let trace_target_service_did = applet_rows
+    let trace_target_service_id = applet_rows
         .iter()
         .find(|(id, ..)| Some(id) == trace_open_applet_id.as_ref())
         .map(|(_, did, ..)| did.clone());
-    let trace_events: Vec<_> = match &trace_target_service_did {
+    let trace_events: Vec<_> = match &trace_target_service_id {
         Some(target) => raw_ops
             .iter()
             .filter(|r| {
@@ -291,7 +291,7 @@ pub fn AppletsPanel(token: Signal<String>, selected_realm_id: String) -> Element
                 let matches_did = r
                     .payload
                     .get("body")
-                    .and_then(|b| b.get("service_did"))
+                    .and_then(|b| b.get("service_id"))
                     .and_then(Value::as_str)
                     .map(|d| d == target.as_str())
                     .unwrap_or(false);
@@ -319,19 +319,19 @@ pub fn AppletsPanel(token: Signal<String>, selected_realm_id: String) -> Element
                 } else {
                     for r in registrations {
                         {
-                            let service_did = r.payload.get("body")
-                                .and_then(|b| b.get("service_did"))
+                            let service_id = r.payload.get("body")
+                                .and_then(|b| b.get("service_id"))
                                 .and_then(Value::as_str)
                                 .unwrap_or("did:web:?")
                                 .to_owned();
                             let namespace = registration_namespace_label(r.payload.get("body"));
                             let op_id = r.operation_id.clone();
-                            let service_did_label = short_protocol_id(&service_did);
+                            let service_id_label = short_protocol_id(&service_id);
                             let op_id_label = short_protocol_id(&op_id);
                             rsx! {
                                 div { class: "event", "data-testid": "applet-registration-row",
                                     div { class: "event-head",
-                                        span { class: "mono", title: "{service_did}", "{service_did_label}" }
+                                        span { class: "mono", title: "{service_id}", "{service_id_label}" }
                                         span { class: "badge", "{namespace}" }
                                     }
                                     div { class: "muted", title: "{op_id}", "operation_id {op_id_label}" }
@@ -708,9 +708,9 @@ pub fn AppletsPanel(token: Signal<String>, selected_realm_id: String) -> Element
                         "No applets installed."
                     }
                 } else {
-                    for (applet_id, service_did, namespace, manifest_hash, installed_at) in applet_rows.iter().cloned() {
+                    for (applet_id, service_id, namespace, manifest_hash, installed_at) in applet_rows.iter().cloned() {
                         {
-                            let service_did_label = short_protocol_id(&service_did);
+                            let service_id_label = short_protocol_id(&service_id);
                             let manifest_hash_label = short_protocol_id(&manifest_hash);
                             rsx! {
                                 div {
@@ -720,7 +720,7 @@ pub fn AppletsPanel(token: Signal<String>, selected_realm_id: String) -> Element
                                     "data-applet-manifest-hash": "{manifest_hash}",
                                     "data-installed-at": "{installed_at}",
                                     div { class: "event-head",
-                                        span { class: "mono", title: "{service_did}", "{service_did_label}" }
+                                        span { class: "mono", title: "{service_id}", "{service_id_label}" }
                                         span { class: "badge", "{namespace}" }
                                         span { class: "mono muted", title: "{manifest_hash}", "{manifest_hash_label}" }
                                     }

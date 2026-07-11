@@ -1,9 +1,7 @@
-//! Agents - pure data types, presets, state machines, and verification
-//! helpers shared by the agent panels.
+//! Personal-agent data types, presets, and lifecycle helpers.
 //!
 //! These items carry no RSX; they are the unit-testable core behind the
-//! endpoint registry, the personal-agent admin, and the handoff
-//! surfaces.
+//! personal-agent administration surfaces.
 
 use arkret_sdk::models::{
     AgentKeyScope, AgentKeyScopeResource, AgentKeyScopeResourceKind, AgentParticipation,
@@ -54,11 +52,6 @@ pub fn actor_kind_badge_class(actor_kind: Option<&str>) -> &'static str {
         Some("agent") => "badge green",
         _ => "badge",
     }
-}
-
-/// Whether the local UI should expose the agent endpoint / handoff panel.
-pub fn agents_enabled() -> bool {
-    cfg!(feature = "experimental-agents")
 }
 
 // ─────────────────────────────────────────────────────────────────────
@@ -270,7 +263,7 @@ pub fn requested_scope_for_presets(
             realm_id: None,
             r#ref: None,
             operation: Some(action.clone()),
-            service_did: None,
+            service_id: None,
         })
         .collect();
     Some(AgentKeyScope {
@@ -287,14 +280,14 @@ pub fn requested_scope_for_presets(
 /// separately in the admin card, not baked into the QR.
 pub fn build_agent_pairing_bootstrap_json(
     base_url: &str,
-    service_did: &str,
+    service_id: &str,
     outcome: &arkret_sdk::AgentProvisionOutcome,
 ) -> serde_json::Result<String> {
     let base_url = base_url.trim_end_matches('/');
     let bootstrap = AgentPairingBootstrap {
         arkret_base_url: base_url.to_owned(),
-        service_did: Did::new(service_did.trim().to_owned()).map_err(json_invalid_input)?,
-        agent_principal_id: outcome.agent_principal_id.clone(),
+        service_id: Did::new(service_id.trim().to_owned()).map_err(json_invalid_input)?,
+        agent_id: outcome.agent_id.clone(),
         pairing_request_id: outcome.pairing_request_id.clone(),
         pairing_code: outcome.pairing_code.clone().unwrap_or_default(),
         pairing_expires_at: outcome.expires_at,
@@ -345,7 +338,7 @@ fn json_invalid_input(error: impl std::fmt::Display) -> serde_json::Error {
 #[derive(Clone, Debug, Deserialize)]
 pub struct RuntimeKeyApprovalRequest {
     pub pairing_request_id: String,
-    pub agent_principal_id: Did,
+    pub agent_id: Did,
     pub verification_method: String,
     pub public_key: Value,
     pub proof_of_possession: Value,
@@ -357,7 +350,7 @@ impl RuntimeKeyApprovalRequest {
     pub fn into_pair_request(self) -> AgentKeyPairRequestBody {
         AgentKeyPairRequestBody {
             pairing_request_id: self.pairing_request_id,
-            agent_principal_id: self.agent_principal_id,
+            agent_id: self.agent_id,
             verification_method: self.verification_method,
             public_key: self.public_key,
             proof_of_possession: self.proof_of_possession,
@@ -375,7 +368,7 @@ pub fn parse_runtime_key_approval_request(raw: &str) -> anyhow::Result<AgentKeyP
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct RuntimeKeyApprovalSummary {
     pub pairing_request_id: String,
-    pub agent_principal_id: String,
+    pub agent_id: String,
     pub verification_method: String,
     pub public_key_fingerprint: String,
     pub proof_expires_at: String,
@@ -396,7 +389,7 @@ pub fn summarize_runtime_key_approval_request(
         .to_owned();
     Ok(RuntimeKeyApprovalSummary {
         pairing_request_id: request.pairing_request_id,
-        agent_principal_id: request.agent_principal_id.to_string(),
+        agent_id: request.agent_id.to_string(),
         verification_method: request.verification_method,
         public_key_fingerprint,
         proof_expires_at,
@@ -439,12 +432,12 @@ fn key_state_str<'a>(key_state: &'a Value, key: &str) -> anyhow::Result<&'a str>
 }
 
 pub fn build_agent_key_authorize_event_for_pairing(
-    controller_did: &str,
-    service_did: &str,
+    controller_id: &str,
+    service_id: &str,
     key_state: &Value,
     request: &AgentKeyPairRequestBody,
 ) -> anyhow::Result<arkret_sdk::Event> {
-    let controller = Did::new(controller_did.trim().to_owned())?;
+    let controller = Did::new(controller_id.trim().to_owned())?;
     if request.pairing_request_id != key_state_str(key_state, "pairing_request_id")? {
         anyhow::bail!("runtime request pairing_request_id does not match this agent");
     }
@@ -464,13 +457,13 @@ pub fn build_agent_key_authorize_event_for_pairing(
     }
     let pairing_digest = arkret_sdk::agent_key_pairing_request_binding_digest(
         &controller,
-        &request.agent_principal_id,
+        &request.agent_id,
         &request.verification_method,
         &runtime_public_key_digest,
         &request.pairing_request_id,
         pairing_code,
         pairing_expires_at,
-        service_did,
+        service_id,
     )?;
     let issued_at = Utc::now();
     let expires_at = issued_at + Duration::days(30);
@@ -486,13 +479,13 @@ pub fn build_agent_key_authorize_event_for_pairing(
         })
     });
     let payload = AgentKeyAuthorizePayload {
-        agent_principal_id: request.agent_principal_id.clone(),
+        agent_id: request.agent_id.clone(),
         key_id: request.verification_method.clone(),
         verification_method: request.verification_method.clone(),
         public_key_digest: Some(Hash::new(runtime_public_key_digest.as_str().to_owned())?),
         accountable_principal_id: controller.clone(),
         agent_key_scope: requested_scope,
-        audience: vec![service_did.to_owned()],
+        audience: vec![service_id.to_owned()],
         issued_at,
         expires_at,
         approval_evidence: AgentKeyApprovalEvidence {
@@ -528,7 +521,7 @@ pub fn build_agent_key_authorize_event_for_pairing(
 /// approval.
 pub fn expand_preset_grant(
     preset: AgentGrantPreset,
-    agent_principal_id: &str,
+    agent_id: &str,
     realm_id: Option<&str>,
     expires_at: &str,
 ) -> Value {
@@ -547,7 +540,7 @@ pub fn expand_preset_grant(
     let mut grant = json!({
         "actions": actions,
         "resources": resources,
-        "subject": agent_principal_id,
+        "subject": agent_id,
         "expires_at": expires_at,
         "effective_after_first_authorized_key": true,
     });
@@ -619,351 +612,6 @@ pub fn participation_ceiling_reason(
         "ceiling reason: no selected participation bit is capped".to_owned()
     } else {
         format!("ceiling reason: {}", blocked.join("; "))
-    }
-}
-
-/// G3.Y4 — handoff lifecycle. Drives
-/// `agent-protocol-handoff-status`'s `data-state`. The transition
-/// machine is purely client-side (the durable counterpart is the
-/// `ak.agent.interop_session.{start,status,result}` family); the
-/// panel uses it to gate which sub-controls are visible.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum HandoffState {
-    /// No handoff initiated.
-    Idle,
-    /// User clicked the initiate button but has not confirmed.
-    Pending,
-    /// User confirmed; the start event is being submitted.
-    Approved,
-    /// The agent acknowledged via status(running).
-    Running,
-    /// Terminal: agent emitted a result(completed).
-    Completed,
-    /// Terminal: agent failed or the start was rejected.
-    Failed,
-}
-
-impl HandoffState {
-    pub fn as_data_state(self) -> &'static str {
-        match self {
-            HandoffState::Idle => "idle",
-            HandoffState::Pending => "pending",
-            HandoffState::Approved => "approved",
-            HandoffState::Running => "running",
-            HandoffState::Completed => "completed",
-            HandoffState::Failed => "failed",
-        }
-    }
-
-    /// Returns true iff the panel should render the confirm button
-    /// (we are between the initiate click and the start submission).
-    pub fn awaits_confirmation(self) -> bool {
-        matches!(self, HandoffState::Pending)
-    }
-
-    /// Returns true iff the panel should show the status transcript
-    /// surface (we have entered the durable lifecycle).
-    pub fn has_transcript(self) -> bool {
-        matches!(
-            self,
-            HandoffState::Approved
-                | HandoffState::Running
-                | HandoffState::Completed
-                | HandoffState::Failed
-        )
-    }
-}
-
-/// G3.Y4 (Phase B) — interop capability-approval modal state. Drives
-/// `agent-interop-publish-modal`'s `data-state`. The modal authors a
-/// `ak.capability.grant` carrying `actions=[ak.agent.interop_session.start]`
-/// plus the §7 constraint, gated behind an explicit human-approval
-/// acknowledgement (spec §4 / §8 "sensitive Realms default require human
-/// approval").
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum InteropApprovalState {
-    /// Modal closed.
-    Closed,
-    /// Modal open; controller is filling in the endpoint / constraints
-    /// but has not acknowledged the human-approval gate yet.
-    Drafting,
-    /// Human-approval gate acknowledged; confirm is now enabled.
-    Acknowledged,
-    /// The capability grant is being submitted.
-    Submitting,
-    /// Terminal: grant accepted.
-    Granted,
-    /// Terminal: grant submission failed.
-    Failed,
-}
-
-impl InteropApprovalState {
-    pub fn as_data_state(self) -> &'static str {
-        match self {
-            Self::Closed => "closed",
-            Self::Drafting => "drafting",
-            Self::Acknowledged => "acknowledged",
-            Self::Submitting => "submitting",
-            Self::Granted => "granted",
-            Self::Failed => "failed",
-        }
-    }
-
-    /// Confirm is allowed only once the human-approval gate is
-    /// acknowledged (spec §4 explicit + authorizable handoff).
-    pub fn can_confirm(self) -> bool {
-        matches!(self, Self::Acknowledged)
-    }
-
-    /// Whether the modal surface should render at all.
-    pub fn is_open(self) -> bool {
-        !matches!(self, Self::Closed)
-    }
-}
-
-/// G3.Y4 (Phase D) — publish-to-source modal state. Drives the
-/// `publish-modal-*` surface that lands a Strand carrying the executing
-/// agent's attribution (spec §5.4 / §6 step 8-9).
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum PublishModalState {
-    Closed,
-    /// Modal open; controller reviews the result artifact + chooses the
-    /// signer (self-with-attribution).
-    Reviewing,
-    Submitting,
-    Published,
-    Failed,
-}
-
-impl PublishModalState {
-    pub fn as_data_state(self) -> &'static str {
-        match self {
-            Self::Closed => "closed",
-            Self::Reviewing => "reviewing",
-            Self::Submitting => "submitting",
-            Self::Published => "published",
-            Self::Failed => "failed",
-        }
-    }
-
-    pub fn is_open(self) -> bool {
-        !matches!(self, Self::Closed)
-    }
-}
-
-/// G3.Y4 (Phase C) — one row of the live interop-session transcript
-/// rebuilt from the soland events surface. `status` reflects the latest
-/// `ak.agent.interop_session.status` (or `start`/`result`) observed for
-/// the session.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct LiveSessionRow {
-    pub session_id: String,
-    pub status: String,
-    pub status_count: usize,
-}
-
-/// Reduce a set of fetched soland events (each a JSON object with
-/// `event_kind` + `payload`) into a per-session live transcript row.
-///
-/// The displayed `status` reflects the latest streaming
-/// `ak.agent.interop_session.status` (or the seeding `start`), NOT the
-/// terminal `result`: the result lands in the dedicated audit-bound
-/// results panel, while this row tracks the §5.3 streaming lifecycle
-/// (negotiating → accepted → working → ...). `start` seeds the row as
-/// `negotiating` (the first standard §5.3 state). Events are assumed to
-/// be in causal order (the events API returns them ordered). This is the
-/// pure core behind the `agent-session-row` live render so it is
-/// unit-testable without a `use_future`.
-pub fn live_session_rows(events: &[Value]) -> Vec<LiveSessionRow> {
-    use std::collections::BTreeMap;
-    // Preserve first-seen order while folding the latest status.
-    let mut order: Vec<String> = Vec::new();
-    let mut rows: BTreeMap<String, LiveSessionRow> = BTreeMap::new();
-    for event in events {
-        let kind = event
-            .get("event_kind")
-            .and_then(Value::as_str)
-            .unwrap_or("");
-        if !kind.starts_with("ak.agent.interop_session.") {
-            continue;
-        }
-        let payload = event.get("payload").cloned().unwrap_or(Value::Null);
-        let Some(session_id) = payload.get("session_id").and_then(Value::as_str) else {
-            continue;
-        };
-        let session_id = session_id.to_owned();
-        // Seed the row from `start`; a terminal `result` does not overwrite
-        // the streaming status (that lives in the results panel).
-        let entry = rows.entry(session_id.clone()).or_insert_with(|| {
-            order.push(session_id.clone());
-            LiveSessionRow {
-                session_id: session_id.clone(),
-                status: "negotiating".to_owned(),
-                status_count: 0,
-            }
-        });
-        match kind {
-            "ak.agent.interop_session.start" => {
-                // Seed only; keep `negotiating` as the initial state.
-            }
-            "ak.agent.interop_session.status" => {
-                if let Some(status) = payload.get("status").and_then(Value::as_str) {
-                    entry.status = status.to_owned();
-                }
-                entry.status_count += 1;
-            }
-            _ => {
-                // `result` and other kinds do not move the streaming status.
-            }
-        }
-    }
-    order
-        .into_iter()
-        .filter_map(|session_id| rows.remove(&session_id))
-        .collect()
-}
-
-/// Audit verification outcome for the full
-/// start → status* → result chain. Carries the value the panel
-/// stamps onto `agent-protocol-audit-verify-result`'s `data-state`.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum AuditChainVerifyOutcome {
-    Valid,
-    ChainBreak,
-    SignatureInvalid,
-}
-
-impl AuditChainVerifyOutcome {
-    pub fn as_data_state(self) -> &'static str {
-        match self {
-            Self::Valid => "valid",
-            Self::ChainBreak => "chain_break",
-            Self::SignatureInvalid => "signature_invalid",
-        }
-    }
-}
-
-/// Verify a chain of session events: must start with `*.start`,
-/// contain zero or more `*.status`, end with `*.result`, and the
-/// terminal result must carry a verifiable `audit_binding`.
-pub fn verify_audit_chain(events: &[serde_json::Value]) -> AuditChainVerifyOutcome {
-    if events.is_empty() {
-        return AuditChainVerifyOutcome::ChainBreak;
-    }
-    let kind_of = |e: &serde_json::Value| -> Option<String> {
-        e.get("kind")
-            .or_else(|| e.get("event_kind"))
-            .and_then(|v| v.as_str())
-            .map(ToOwned::to_owned)
-    };
-    let first_kind = match kind_of(&events[0]) {
-        Some(k) => k,
-        None => return AuditChainVerifyOutcome::ChainBreak,
-    };
-    if first_kind != "ak.agent.interop_session.start" {
-        return AuditChainVerifyOutcome::ChainBreak;
-    }
-    let Some(last_event) = events.last() else {
-        return AuditChainVerifyOutcome::ChainBreak;
-    };
-    let last_kind = match kind_of(last_event) {
-        Some(k) => k,
-        None => return AuditChainVerifyOutcome::ChainBreak,
-    };
-    if last_kind != "ak.agent.interop_session.result" {
-        return AuditChainVerifyOutcome::ChainBreak;
-    }
-    // Middle events MUST be status events.
-    for e in &events[1..events.len() - 1] {
-        let k = match kind_of(e) {
-            Some(k) => k,
-            None => return AuditChainVerifyOutcome::ChainBreak,
-        };
-        if k != "ak.agent.interop_session.status" {
-            return AuditChainVerifyOutcome::ChainBreak;
-        }
-    }
-    // Result event audit_binding must verify.
-    let result_payload = last_event
-        .get("payload")
-        .cloned()
-        .unwrap_or_else(|| last_event.clone());
-    match arkret_sdk::agent_binding::verify_audit_binding_by_kind(&result_payload) {
-        arkret_sdk::agent_binding::AuditBindingVerifyOutcome::Valid => {
-            AuditChainVerifyOutcome::Valid
-        }
-        arkret_sdk::agent_binding::AuditBindingVerifyOutcome::Absent => {
-            AuditChainVerifyOutcome::ChainBreak
-        }
-        _ => AuditChainVerifyOutcome::SignatureInvalid,
-    }
-}
-
-/// V3: parsed verify outcome for a result event's `audit_binding`
-/// block. Renders as a colored badge. Pure function so it's
-/// unit-testable without spawning a use_future.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum AuditVerifyStatus {
-    /// Signature recomputes against the carried Ed25519 key.
-    Valid,
-    /// `canonical_subject` field disagrees with the per-field
-    /// (session_id, agent_id, echo, actor) tuple.
-    SubjectMismatch,
-    /// Signature decoded but did not verify.
-    SignatureMismatch,
-    /// `signature` or `public_key_b64` was not a valid encoding.
-    Malformed,
-    /// `binding_kind` is not one of the supported values, or the
-    /// envelope is missing required fields.
-    Unsupported,
-    /// No `audit_binding` block at all (e.g. the soland fail-closed
-    /// result for unknown_agent).
-    Absent,
-}
-
-impl AuditVerifyStatus {
-    pub(crate) fn badge_label(&self) -> &'static str {
-        match self {
-            Self::Valid => "audit valid",
-            Self::SubjectMismatch => "subject mismatch",
-            Self::SignatureMismatch => "signature mismatch",
-            Self::Malformed => "malformed binding",
-            Self::Unsupported => "unsupported binding",
-            Self::Absent => "no binding",
-        }
-    }
-    pub(crate) fn badge_class(&self) -> &'static str {
-        match self {
-            Self::Valid => "badge green",
-            Self::Absent => "badge",
-            // Any non-Valid, non-Absent outcome is a hard failure —
-            // either tampering, configuration mismatch, or a
-            // future binding_kind we don't speak yet.
-            _ => "badge red",
-        }
-    }
-}
-
-/// Verify a soland `ak.agent.interop_session.result` payload's
-/// `audit_binding` block. Inkson delegates the `binding_kind` switch
-/// to the SDK so future schemes land in one place instead of being
-/// re-implemented by every client surface.
-pub(crate) fn verify_agent_audit_binding(payload: &Value) -> AuditVerifyStatus {
-    match arkret_sdk::agent_binding::verify_audit_binding_by_kind(payload) {
-        arkret_sdk::agent_binding::AuditBindingVerifyOutcome::Valid => AuditVerifyStatus::Valid,
-        arkret_sdk::agent_binding::AuditBindingVerifyOutcome::SubjectMismatch => {
-            AuditVerifyStatus::SubjectMismatch
-        }
-        arkret_sdk::agent_binding::AuditBindingVerifyOutcome::SignatureMismatch => {
-            AuditVerifyStatus::SignatureMismatch
-        }
-        arkret_sdk::agent_binding::AuditBindingVerifyOutcome::Malformed => {
-            AuditVerifyStatus::Malformed
-        }
-        arkret_sdk::agent_binding::AuditBindingVerifyOutcome::Unsupported => {
-            AuditVerifyStatus::Unsupported
-        }
-        arkret_sdk::agent_binding::AuditBindingVerifyOutcome::Absent => AuditVerifyStatus::Absent,
     }
 }
 
@@ -1047,7 +695,7 @@ impl ActionRequestNonceStatus {
 }
 
 pub(crate) fn agent_view_from_directory_row(row: AgentProjection) -> Option<AgentView> {
-    if row.agent_principal_id.as_str().trim().is_empty() {
+    if row.agent_id.as_str().trim().is_empty() {
         return None;
     }
     let status = agent_status_wire(row.status).to_owned();
@@ -1092,7 +740,7 @@ fn non_empty_field(payload: &Value, field: &str) -> Option<String> {
 /// draft or action request using the current schema fields.
 pub fn build_action_approve_payload(
     request: &Value,
-    controller_principal_id: &str,
+    controller_id: &str,
     approved_at: &str,
     expires_at: &str,
 ) -> Value {
@@ -1101,8 +749,8 @@ pub fn build_action_approve_payload(
         .or_else(|| non_empty_field(request, "request_canonical_digest"))
         .or_else(|| draft_content_digest.clone())
         .unwrap_or_default();
-    let agent_principal_id = request
-        .get("agent_principal_id")
+    let agent_id = request
+        .get("agent_id")
         .and_then(Value::as_str)
         .unwrap_or("");
     let proposed_action = request
@@ -1112,8 +760,8 @@ pub fn build_action_approve_payload(
     let target = request.get("target").cloned().unwrap_or(Value::Null);
     let mut payload = json!({
         "approval_id": format!("ak:agent_approval:{}", crate::operation::uuid_v7()),
-        "agent_principal_id": agent_principal_id,
-        "controller_principal_id": controller_principal_id,
+        "agent_id": agent_id,
+        "controller_id": controller_id,
         "proposed_action": proposed_action,
         "target": target,
         "approved_payload_digest": approved_payload_digest,
@@ -1139,17 +787,17 @@ pub fn build_action_approve_payload(
 /// request. A human-entered reason is included when present.
 pub fn build_action_reject_payload(
     request: &Value,
-    controller_principal_id: &str,
+    controller_id: &str,
     rejected_at: &str,
     reason: Option<&str>,
 ) -> Value {
     let mut payload = json!({
         "rejection_id": format!("ak:agent_rejection:{}", crate::operation::uuid_v7()),
-        "agent_principal_id": request
-            .get("agent_principal_id")
+        "agent_id": request
+            .get("agent_id")
             .and_then(Value::as_str)
             .unwrap_or(""),
-        "controller_principal_id": controller_principal_id,
+        "controller_id": controller_id,
         "rejected_at": rejected_at,
     });
     if let Some(object) = payload.as_object_mut() {
@@ -1169,8 +817,8 @@ pub fn build_action_reject_payload(
 #[allow(clippy::too_many_arguments)]
 pub fn build_act_on_behalf_message_operation(
     realm_id: &str,
-    controller_principal_id: &str,
-    agent_principal_id: &str,
+    controller_id: &str,
+    agent_id: &str,
     authorization_ref: &str,
     approval_request_id: &str,
     approval_nonce: &str,
@@ -1192,11 +840,11 @@ pub fn build_act_on_behalf_message_operation(
     }
     crate::operation::OperationBuilder::new(
         realm_id,
-        controller_principal_id,
+        controller_id,
         arkret_sdk::events::kinds::EventKind::MessageCreate,
     )
     .target_ref(strand_id)
-    .executed_by(agent_principal_id)
+    .executed_by(agent_id)
     .authorization_ref(authorization_ref)
     .body(payload)
     .build_sdk_event("inkson")

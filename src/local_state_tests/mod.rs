@@ -56,7 +56,7 @@ pub(super) fn snapshot_manifest_for_items(
         arkret_sdk::SnapshotId::new("ak:snapshot:01904100-0000-7000-8000-0000000000aa").unwrap();
     let realm_id =
         arkret_sdk::RealmId::new("ak:realm:01904100-0000-7000-8000-0000000000aa").unwrap();
-    let service_did = arkret_sdk::Did::new("did:web:server.example").unwrap();
+    let service_id = arkret_sdk::Did::new("did:web:server.example").unwrap();
     let state_digest = arkret_sdk::state_digest_from_items(&items).unwrap();
     let built = arkret_sdk::build_snapshot_chunks(
         &snapshot_id,
@@ -94,10 +94,10 @@ pub(super) fn snapshot_manifest_for_items(
         chunks,
         security_class: arkret_sdk::SnapshotSecurityClass::Standard,
         verification_hints: None,
-        created_by: service_did.clone(),
+        created_by: service_id.clone(),
         created_at,
         authority_binding: arkret_sdk::AuthorityBinding {
-            issuer: service_did,
+            issuer: service_id,
             authority_kind: arkret_sdk::SnapshotAuthorityKind::RealmPolicySnapshotIssuer,
             auth_state_digest: snapshot_hash(1),
             auth_frontier: vec![snapshot_event_id("0000000000a2")],

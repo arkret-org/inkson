@@ -742,7 +742,7 @@ fn require_proof_fails_when_unsigned() {
 fn invite_helpers_emit_canonical_kinds() {
     let invite_id = "ak:invite:01904100-0000-7000-8000-000000000001";
     let invite_delivery_target = arkret_sdk::InviteDeliveryTarget {
-        recipient_service_did: arkret_sdk::Did::new("did:web:server.example").unwrap(),
+        recipient_service_id: arkret_sdk::Did::new("did:web:server.example").unwrap(),
         recipient_service_type: Some("principal_server".to_owned()),
     };
     let introduction_evidence_digest =
@@ -877,17 +877,17 @@ fn strand_lifecycle_helpers_emit_canonical_kinds() {
 /// requirements) keep accepting them.
 #[test]
 fn applet_helpers_emit_canonical_kinds_and_target_refs() {
-    let service_did = "did:web:applet.example";
+    let service_id = "did:web:applet.example";
     let session_id = "ak:session:01904100-0000-7000-8000-aa55aa55aa55";
     let applet_id = "did:web:applet.example";
     let realm = "ak:realm:0196419b-0000-7000-8000-0000000000aa";
     let actor = "did:web:alice.example";
 
     let disc =
-        ak_ops::applet_discovery(realm, actor, service_did, json!({"version": 1})).build("node");
+        ak_ops::applet_discovery(realm, actor, service_id, json!({"version": 1})).build("node");
     assert_eq!(disc.kind.as_str(), "ak.applet.discovery");
     assert_eq!(disc.payload["manifest"]["version"], 1);
-    assert_eq!(disc.local_target_ref(), Some(service_did));
+    assert_eq!(disc.local_target_ref(), Some(service_id));
 
     let start = ak_ops::applet_interop_session_start(
         realm,
@@ -943,68 +943,6 @@ fn applet_helpers_emit_canonical_kinds_and_target_refs() {
     assert_eq!(err.payload["error_code"], "applet_unavailable");
     assert!(err.payload.get("session_id").is_none());
     assert_registered_payload_valid(&err);
-}
-
-/// Same pinning at the agent layer.
-#[test]
-fn agent_helpers_emit_canonical_kinds_and_target_refs() {
-    let agent = "did:web:researcher.agent.example";
-    let session_id = "ak:agent_interop_session:01904100-0000-7000-8000-bb66bb66bb66";
-    let realm = "ak:realm:0196419b-0000-7000-8000-0000000000aa";
-    let actor = "did:web:alice.example";
-
-    let endpoint = ak_ops::agent_endpoint(realm, actor, agent, "ak.agent.v1", &["strand.read"])
-        .expect("builds")
-        .build("node");
-    assert_eq!(endpoint.kind.as_str(), "ak.agent.endpoint");
-    assert_eq!(endpoint.payload["endpoints"][0]["protocol"], "ak.agent.v1");
-    assert_eq!(endpoint.local_target_ref(), Some(agent));
-
-    let start = ak_ops::agent_interop_session_start(
-        realm,
-        actor,
-        agent,
-        session_id,
-        "http_custom",
-        json!({"query": "summarize"}),
-        "ak:grant:01904100-0000-7000-8000-000000000099",
-    )
-    .expect("builds")
-    .build("node");
-    assert_eq!(start.kind.as_str(), "ak.agent.interop_session.start");
-    assert_eq!(start.payload["counterparty_agent"], agent);
-    assert_eq!(
-        start.payload["capability_grant"],
-        "ak:grant:01904100-0000-7000-8000-000000000099"
-    );
-    assert!(start.payload.get("params").is_none());
-    assert_registered_payload_valid(&start);
-
-    let status =
-        ak_ops::agent_interop_session_status(realm, actor, session_id, "working", json!({}))
-            .expect("builds")
-            .build("node");
-    assert_eq!(status.kind.as_str(), "ak.agent.interop_session.status");
-    assert_eq!(status.payload["status"], "working");
-    assert!(status.payload.get("detail").is_none());
-    assert_registered_payload_valid(&status);
-
-    let result = ak_ops::agent_interop_session_result(
-        realm,
-        actor,
-        session_id,
-        json!({"summary": "TL;DR"}),
-        json!({"merkle_root": "sha256:abc"}),
-    )
-    .expect("builds")
-    .build("node");
-    assert_eq!(result.kind.as_str(), "ak.agent.interop_session.result");
-    assert_eq!(result.payload["status"], "completed");
-    assert_eq!(result.payload["result_objects"][0]["summary"], "TL;DR");
-    assert_eq!(result.payload["artifacts"][0]["merkle_root"], "sha256:abc");
-    assert!(result.payload.get("result").is_none());
-    assert!(result.payload.get("audit_binding").is_none());
-    assert_registered_payload_valid(&result);
 }
 
 #[test]

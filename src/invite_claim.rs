@@ -125,7 +125,7 @@ pub fn build_invite_claim_body(
     token_commitment: &str,
     claim_nonce: &str,
     binding_proof: &Value,
-    verification_service_did: &str,
+    verification_service_id: &str,
     subject_signing_key: &SigningKey,
     subject_verification_method: &str,
 ) -> anyhow::Result<Value> {
@@ -136,7 +136,7 @@ pub fn build_invite_claim_body(
         realm_id,
         token_commitment,
         claim_nonce,
-        verification_service_did,
+        verification_service_id,
         binding_proof_digest,
     )?;
     let proof_bytes = proof_body.canonical_bytes()?;
@@ -207,7 +207,7 @@ mod tests {
     fn build_invite_claim_body_round_trips_proof() {
         let signing_key = deterministic_signing_key(7);
         let binding_proof = json!({
-            "verification_service_did": "did:web:verify.example",
+            "verification_service_id": "did:web:verify.example",
             "verification_method": "did:web:verify.example#invite-key",
             "subject_id": "did:web:alice.example",
             "realm_id": "ak:realm:0196419b-0000-7000-8000-000000000010",

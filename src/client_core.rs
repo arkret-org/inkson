@@ -576,13 +576,13 @@ mod tests {
             crate::state::LocalStateStore::with_path(path),
         );
         let account_scope = garth::CursorScope::Account {
-            service_did: None,
+            service_id: None,
             actor_id: arkret_sdk::Did::new("did:webvh:z6mkfixture:alice.example").unwrap(),
             device_id: arkret_sdk::DeviceId::new("ak:device:01904100-0000-7000-8000-000000000001")
                 .unwrap(),
         };
         let realm_scope = garth::CursorScope::RealmEvents {
-            service_did: None,
+            service_id: None,
             realm_id: arkret_sdk::RealmId::new("ak:realm:01904100-0000-7000-8000-000000000001")
                 .unwrap(),
         };
@@ -618,7 +618,7 @@ mod tests {
         assert!(
             adapter
                 .load(garth::CursorScope::Account {
-                    service_did: None,
+                    service_id: None,
                     actor_id: arkret_sdk::Did::new("did:webvh:z6mkfixture:alice.example").unwrap(),
                     device_id: arkret_sdk::DeviceId::new(
                         "ak:device:01904100-0000-7000-8000-000000000001",

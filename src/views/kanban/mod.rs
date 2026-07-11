@@ -616,7 +616,7 @@ fn WriteStateBadge(state: CardState, icon_only: Option<bool>) -> Element {
 
 #[component]
 pub fn KanbanPanel(
-    plaintext_service_did: String,
+    plaintext_service_id: String,
     token: Signal<String>,
     account_did: String,
     device_id: String,
@@ -2510,7 +2510,7 @@ pub fn KanbanPanel(
                 controller,
                 context: CardDetailContext {
                     base_url: base_url.clone(),
-                    plaintext_service_did: plaintext_service_did.clone(),
+                    plaintext_service_id: plaintext_service_id.clone(),
                     account_did: account_did.clone(),
                     device_id: device_id.clone(),
                     selected_realm_id: selected_realm_id.clone(),

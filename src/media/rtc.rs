@@ -246,7 +246,7 @@ pub struct MediaJoinRequest {
     /// Media-service DIDs anchored by the realm's current
     /// `ak.realm.media_service.service_id`. Token + ICE issuers MUST
     /// resolve to one of these; an empty set fails closed.
-    pub media_service_dids: Vec<String>,
+    pub media_service_ids: Vec<String>,
     /// Local evidence that the selected `ak.realm.media_service` event is
     /// covered by the current MLS governance binding. Token/ICE issuer anchors
     /// are not trusted until this verifies.
@@ -273,7 +273,7 @@ impl MediaJoinRequest {
 
     fn anchor_dids(&self) -> Result<Vec<Did>, RtcClientError> {
         let dids = self
-            .media_service_dids
+            .media_service_ids
             .iter()
             .map(|did| Did::new(did.clone()))
             .collect::<Result<Vec<_>, _>>()
@@ -289,8 +289,8 @@ impl MediaJoinRequest {
     async fn anchors(&self, api: &TransportClient) -> Result<MediaServiceAnchors, RtcClientError> {
         let dids = self.anchor_dids()?;
         let mut anchors = MediaServiceAnchors::new(dids);
-        for service_did in &self.media_service_dids {
-            register_media_service_keys(api, &mut anchors, service_did).await?;
+        for service_id in &self.media_service_ids {
+            register_media_service_keys(api, &mut anchors, service_id).await?;
         }
         Ok(anchors)
     }
@@ -325,7 +325,7 @@ impl MediaGovernanceEvidence {
         let service_id = media_service_payload_service_id(&self.media_service_payload)
             .ok_or(RtcClientError::MediaServiceBindingUncovered)?;
         if !request
-            .media_service_dids
+            .media_service_ids
             .iter()
             .any(|did| did == service_id)
         {
@@ -359,10 +359,10 @@ impl MediaGovernanceEvidence {
             .plaintext_visible_services_payload
             .as_ref()
             .ok_or(RtcClientError::MediaPlaintextServiceNotAuthorised)?;
-        let service_did = Did::new(service_id.to_owned())
+        let service_id = Did::new(service_id.to_owned())
             .map_err(|_| RtcClientError::MediaPlaintextServiceNotAuthorised)?;
         let authorized = plaintext_payload.services.iter().any(|service| {
-            service.service_did == service_did
+            service.service_id == service_id
                 && service
                     .purposes
                     .iter()
@@ -396,7 +396,7 @@ impl MediaGovernanceEvidence {
                             .any(|class| matches!(class, PlaintextDataClassKind::MediaPlaintext))
                 })
                 .map(|service| MediaPlaintextService {
-                    service_did: service.service_did.clone(),
+                    service_id: service.service_id.clone(),
                 })
                 .collect(),
         })
@@ -473,20 +473,20 @@ fn policy_media_service_decrypts(payload: Option<&Value>) -> bool {
 async fn register_media_service_keys(
     api: &TransportClient,
     anchors: &mut MediaServiceAnchors,
-    service_did: &str,
+    service_id: &str,
 ) -> Result<(), RtcClientError> {
     let outcome = async {
-        crate::transport::account::identity_resolve(&api.sdk_http_client()?, service_did).await
+        crate::transport::account::identity_resolve(&api.sdk_http_client()?, service_id).await
     }
     .await
     .map_err(|_| RtcClientError::TokenIssuerUnauthorised)?;
-    if outcome.did_document.did.as_str() != service_did {
+    if outcome.did_document.did.as_str() != service_id {
         return Err(RtcClientError::TokenIssuerUnauthorised);
     }
 
     let document: DidDocument = serde_json::from_value(outcome.did_document.document)
         .map_err(|_| RtcClientError::TokenIssuerUnauthorised)?;
-    if document.id.as_str() != service_did {
+    if document.id.as_str() != service_id {
         return Err(RtcClientError::TokenIssuerUnauthorised);
     }
 
@@ -494,7 +494,7 @@ async fn register_media_service_keys(
     for method in document.verification_methods.keys() {
         let resolved = resolve_verification_method_key_from_document(&document, method)
             .map_err(|_| RtcClientError::TokenIssuerUnauthorised)?;
-        if resolved.did.as_str() != service_did {
+        if resolved.did.as_str() != service_id {
             return Err(RtcClientError::TokenIssuerUnauthorised);
         }
         let key_bytes = resolved
@@ -503,7 +503,7 @@ async fn register_media_service_keys(
             .map_err(|_| RtcClientError::TokenIssuerUnauthorised)?;
         let verifying_key = VerifyingKey::from_bytes(&key_bytes)
             .map_err(|_| RtcClientError::TokenIssuerUnauthorised)?;
-        let kid = normalize_verification_method_kid(service_did, &resolved.verification_method);
+        let kid = normalize_verification_method_kid(service_id, &resolved.verification_method);
         anchors.insert_key(kid, verifying_key);
         registered += 1;
     }
@@ -514,13 +514,13 @@ async fn register_media_service_keys(
     Ok(())
 }
 
-fn normalize_verification_method_kid(service_did: &str, method: &str) -> String {
+fn normalize_verification_method_kid(service_id: &str, method: &str) -> String {
     if method.starts_with("did:") {
         method.to_owned()
     } else if method.starts_with('#') {
-        format!("{service_did}{method}")
+        format!("{service_id}{method}")
     } else {
-        format!("{service_did}#{method}")
+        format!("{service_id}#{method}")
     }
 }
 
@@ -940,7 +940,7 @@ mod tests {
             focus_id: "fra-1".to_owned(),
             epoch_id: 7,
             desired_media: DesiredMedia::audio_video(),
-            media_service_dids: Vec::new(),
+            media_service_ids: Vec::new(),
             governance_evidence: None,
         };
         assert_eq!(
@@ -990,7 +990,7 @@ mod tests {
             focus_id: "fra-1".to_owned(),
             epoch_id: 7,
             desired_media: DesiredMedia::audio_video(),
-            media_service_dids: vec!["did:web:media.example".to_owned()],
+            media_service_ids: vec!["did:web:media.example".to_owned()],
             governance_evidence,
         }
     }
@@ -1056,7 +1056,7 @@ mod tests {
                     .services
                     .iter()
                     .map(|service| MediaPlaintextService {
-                        service_did: service.service_did.clone(),
+                        service_id: service.service_id.clone(),
                     })
                     .collect(),
             })

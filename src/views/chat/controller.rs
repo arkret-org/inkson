@@ -7,7 +7,7 @@ pub(super) struct ChatCommandContext {
     pub device_id: String,
     pub selected_realm_id: String,
     pub selected_channel_id: String,
-    pub plaintext_service_did: String,
+    pub plaintext_service_id: String,
     pub selected_channel_security_encrypted: bool,
     pub token: Signal<String>,
     pub sync_cursor: Signal<String>,
@@ -682,7 +682,7 @@ impl ChatController {
             .get(&message.realm_id)
             .cloned();
         let plaintext_services =
-            plaintext_services_for_policy(projection.as_ref(), &context.plaintext_service_did);
+            plaintext_services_for_policy(projection.as_ref(), &context.plaintext_service_id);
         let operation = match chat_message_create_operation(
             &message.realm_id,
             &context.account_did,

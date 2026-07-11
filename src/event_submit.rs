@@ -733,11 +733,11 @@ fn data_event_key_id_for(event: &arkret_sdk::Event) -> String {
 fn event_proof_context_from_description(
     describe: &ServerDescription,
 ) -> crate::event_signer::EventProofContext {
-    let service_did = describe.service_did.to_string();
+    let service_id = describe.service_id.to_string();
     crate::event_signer::EventProofContext::new()
-        .with_domain(service_did.clone())
+        .with_domain(service_id.clone())
         .with_audience(crate::operation::EventProofAudience::Single(
-            service_did.to_owned(),
+            service_id.to_owned(),
         ))
 }
 
@@ -890,9 +890,9 @@ mod tests {
     }
 
     #[test]
-    fn event_proof_context_binds_domain_and_audience_to_service_did() {
+    fn event_proof_context_binds_domain_and_audience_to_service_id() {
         let describe = parse_server_description(json!({
-            "service_did": "did:web:local.host",
+            "service_id": "did:web:local.host",
             "trust_domain": "ak:trust_domain:local.host",
             "service_type": "principal_server",
             "protocol_version": "1.0",

@@ -56,7 +56,7 @@ fn handle_resolution_exposes_delivery_binding_without_requiring_it_for_invites()
             "subject": "did:web:bob.example",
             "audience": realm_id,
             "member_delivery_binding": {
-                "recipient_service_did": "did:web:local.host",
+                "recipient_service_id": "did:web:local.host",
                 "recipient_service_type": "principal_server",
                 "binding_source": "explicit",
                 "delivery_modes": ["events"]
@@ -70,7 +70,7 @@ fn handle_resolution_exposes_delivery_binding_without_requiring_it_for_invites()
         resolved
             .member_delivery_binding_ref()
             .unwrap()
-            .recipient_service_did
+            .recipient_service_id
             .as_str(),
         "did:web:local.host"
     );

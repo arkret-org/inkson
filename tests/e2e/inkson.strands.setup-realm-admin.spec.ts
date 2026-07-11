@@ -243,7 +243,7 @@ test("realm admin page handles metadata, modal member invite, epoch rotation and
   expect(inviteBody.payload.invite_id).toMatch(/^ak:invite:/);
   expect(inviteBody.payload.invitee).toBe("did:web:carol.example");
   expect(inviteBody.payload.invite_delivery_target).toEqual({
-    recipient_service_did: "did:web:server.local",
+    recipient_service_id: "did:web:server.local",
   });
   expect(inviteBody.payload.introduction_evidence_digest).toMatch(/^sha256:/);
   expect(inviteBody.payload.x_member_delivery_binding).toBeUndefined();

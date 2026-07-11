@@ -28,7 +28,7 @@ use realms::RealmsSection;
 
 #[component]
 pub fn SetupPanel(
-    plaintext_service_did: String,
+    plaintext_service_id: String,
     secure_store_ready: bool,
     token: Signal<String>,
     account_did: Signal<String>,
@@ -92,7 +92,7 @@ pub fn SetupPanel(
 
             if active_section == SetupSection::Realms {
                 RealmsSection {
-                    plaintext_service_did,
+                    plaintext_service_id,
                     secure_store_ready,
                     token,
                     account_did,

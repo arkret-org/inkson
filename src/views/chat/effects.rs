@@ -7,7 +7,7 @@ pub(super) fn ChatEffects(
     device_id: String,
     selected_realm_id: String,
     initial_strand_id: String,
-    plaintext_service_did: String,
+    plaintext_service_id: String,
     sync_cursor: Signal<String>,
     realm_live_epoch: Signal<u64>,
     frontier_state: Signal<String>,
@@ -268,7 +268,7 @@ pub(super) fn ChatEffects(
     // id so the reducer collapses the replay with the optimistic row.
     {
         let base_for_flush = base_url.clone();
-        let service_for_flush = plaintext_service_did.clone();
+        let service_for_flush = plaintext_service_id.clone();
         let account_for_flush = account_did.clone();
         use_effect(move || {
             let online = is_online();
@@ -278,7 +278,7 @@ pub(super) fn ChatEffects(
             }
             outbox_flushing.set(true);
             let base = base_for_flush.clone();
-            let service_did = service_for_flush.clone();
+            let service_id = service_for_flush.clone();
             let account_did = account_for_flush.clone();
             let api_token = token();
             let wait_for = active_sync_token(sync_cursor());
@@ -291,7 +291,7 @@ pub(super) fn ChatEffects(
                         .get(&entry.realm_id)
                         .cloned();
                     let plaintext_services =
-                        plaintext_services_for_policy(projection.as_ref(), &service_did);
+                        plaintext_services_for_policy(projection.as_ref(), &service_id);
                     let mut mentions = entry.mentions.clone();
                     for mention in resolve_agent_selector_mentions(
                         &base,

@@ -366,7 +366,7 @@ fn space_bootstrap_events_use_canonical_create_and_facet_kinds() {
     );
     assert_eq!(events[5].payload["value"], "listed");
     assert_eq!(
-        events[6].payload["services"][0]["service_did"],
+        events[6].payload["services"][0]["service_id"],
         "did:web:server.example"
     );
     assert_eq!(

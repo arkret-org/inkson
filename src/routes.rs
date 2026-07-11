@@ -158,9 +158,6 @@ pub enum Route {
     #[route("/applets", RoutePage)]
     Applets,
 
-    #[route("/agents", RoutePage)]
-    Agents,
-
     /// A6.1 — global cross-Space message search. Triggered by Cmd+F
     /// (Ctrl+F on non-Mac), the topbar `topbar-search-button`, or by
     /// directly navigating to `/search`. The current Arkret catalog has no
@@ -303,7 +300,6 @@ impl Route {
             Route::Notifications => AppView::Notifications,
             Route::Onboarding => AppView::Onboarding,
             Route::Quarantine => AppView::Quarantine,
-            Route::Agents => AppView::Agents,
             Route::Search => AppView::Search,
         }
     }
@@ -390,7 +386,6 @@ impl From<AppView> for Route {
             AppView::Recovery => Route::Recovery,
             AppView::Onboarding => Route::Onboarding,
             AppView::Quarantine => Route::Quarantine,
-            AppView::Agents => Route::Agents,
             AppView::Search => Route::Search,
         }
     }

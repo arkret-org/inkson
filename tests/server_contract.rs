@@ -26,7 +26,7 @@ fn snapshot_contract_manifest_payload() -> serde_json::Value {
         arkret_sdk::SnapshotId::new("ak:snapshot:01904100-0000-7000-8000-0000000000cc").unwrap();
     let realm_id =
         arkret_sdk::RealmId::new("ak:realm:01904100-0000-7000-8000-0000000000cc").unwrap();
-    let service_did = arkret_sdk::Did::new("did:web:server.local").unwrap();
+    let service_id = arkret_sdk::Did::new("did:web:server.local").unwrap();
     let items = vec![arkret_sdk::SnapshotMaterializedItem {
         kind: "realm".to_owned(),
         id: realm_id.to_string(),
@@ -65,10 +65,10 @@ fn snapshot_contract_manifest_payload() -> serde_json::Value {
         chunks: built.into_iter().map(|chunk| chunk.descriptor).collect(),
         security_class: arkret_sdk::SnapshotSecurityClass::Standard,
         verification_hints: None,
-        created_by: service_did.clone(),
+        created_by: service_id.clone(),
         created_at,
         authority_binding: arkret_sdk::AuthorityBinding {
-            issuer: service_did,
+            issuer: service_id,
             authority_kind: arkret_sdk::SnapshotAuthorityKind::RealmPolicySnapshotIssuer,
             auth_state_digest: snapshot_contract_hash(1),
             auth_frontier: vec![snapshot_contract_event_id("0000000000c1")],
@@ -89,7 +89,7 @@ fn snapshot_contract_manifest_payload() -> serde_json::Value {
 #[test]
 fn inkson_accepts_server_contract_payloads() {
     let describe = parse_server_description(json!({
-        "service_did": "did:web:server.local",
+        "service_id": "did:web:server.local",
         "trust_domain": "ak:trust_domain:server.local",
         "service_type": "principal_server",
         "protocol_version": "1.0",
@@ -148,7 +148,7 @@ fn inkson_accepts_server_contract_payloads() {
     );
 
     let identity: inkson::models::IdentityDescribeOutcome = serde_json::from_value(json!({
-        "service_did": "did:web:server.local",
+        "service_id": "did:web:server.local",
         "registry_mode": "development_local",
         "supported_receipts": ["local"],
         "protocol_version": "1.0",
@@ -174,7 +174,7 @@ fn inkson_accepts_server_contract_payloads() {
     );
 
     let sync_describe: arkret_sdk::models::SyncDescription = serde_json::from_value(json!({
-        "service_did": "did:web:server.local",
+        "service_id": "did:web:server.local",
         "supported_sync_profiles": ["initial", "incremental"],
         "limits": {"max_realms": 50, "max_timeline_events": 100},
         "frontier": {"storage": "memory"}
@@ -214,7 +214,7 @@ fn inkson_accepts_server_contract_payloads() {
     );
 
     let directory: inkson::models::DirectoryDescription = serde_json::from_value(json!({
-        "service_did": "did:web:server.local",
+        "service_id": "did:web:server.local",
         "trust_domain": "ak:trust_domain:server.local",
         "service_type": "directory_service",
         "protocol_version": "1.0",
@@ -266,7 +266,7 @@ fn inkson_accepts_server_contract_payloads() {
         "join_rule": "public",
         "join_candidates": [{
             "realm_id": "ak:realm:0196419b-0000-7000-8000-000000000000",
-            "service_did": "did:web:server.local",
+            "service_id": "did:web:server.local",
             "service_type": "principal_server",
             "role": "primary",
             "endpoint": "http://server",
@@ -286,7 +286,7 @@ fn inkson_accepts_server_contract_payloads() {
     .unwrap();
     assert_eq!(resolved.join_rule, Some(arkret_sdk::JoinRule::Public));
     assert_eq!(
-        resolved.join_candidates[0].service_did.as_str(),
+        resolved.join_candidates[0].service_id.as_str(),
         "did:web:server.local"
     );
 
@@ -426,7 +426,7 @@ fn inkson_accepts_server_contract_payloads() {
             "content_digest": blob_digest,
             "size_bytes": 23,
             "received_at": "2026-04-28T12:00:00Z",
-            "issuer_service_did": "did:web:server.local",
+            "issuer_service_id": "did:web:server.local",
             "signature": {
                 "kid": "did:web:server.local",
                 "alg": "EdDSA",
@@ -464,7 +464,7 @@ fn inkson_accepts_server_contract_payloads() {
 #[test]
 fn server_description_gates_event_envelope_write_plane() {
     let events_ready = parse_server_description(json!({
-        "service_did": "did:web:soland.local",
+        "service_id": "did:web:soland.local",
         "trust_domain": "ak:trust_domain:soland.local",
         "service_type": "principal_server",
         "protocol_version": "1.0",
@@ -506,7 +506,7 @@ fn server_description_gates_event_envelope_write_plane() {
     )
     .unwrap();
     let described_with_external_compat_surface = parse_server_description(json!({
-        "service_did": "did:web:local.host",
+        "service_id": "did:web:local.host",
         "trust_domain": "ak:trust_domain:local.host",
         "service_type": "principal_server",
         "protocol_version": "1.0",
@@ -547,7 +547,7 @@ fn server_description_gates_event_envelope_write_plane() {
     // This is the spec-correct fail-closed behaviour for v2.
     assert!(
         parse_server_description(json!({
-            "service_did": "did:web:minimal.local",
+            "service_id": "did:web:minimal.local",
             "service_type": "principal_server",
             "protocol_version": "1.0",
             "supported_profiles": [],
@@ -560,7 +560,7 @@ fn server_description_gates_event_envelope_write_plane() {
     // A v2-shaped payload that still omits the event write requirements is
     // accepted by the SDK parser but flagged by the inkson helpers.
     let events_missing = parse_server_description(json!({
-        "service_did": "did:web:minimal.local",
+        "service_id": "did:web:minimal.local",
         "trust_domain": "ak:trust_domain:minimal.local",
         "service_type": "principal_server",
         "protocol_version": "1.0",

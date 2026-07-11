@@ -502,7 +502,7 @@ fn OrganizationCreatePanel(token: Signal<String>, account_did: String) -> Elemen
                                 )
                                 .await
                                 {
-                                    Ok(describe) => describe.service_did.as_str().to_owned(),
+                                    Ok(describe) => describe.service_id.as_str().to_owned(),
                                     Err(err) => {
                                         busy.set(false);
                                         status_msg.set(format!(

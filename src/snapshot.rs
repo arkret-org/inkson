@@ -46,7 +46,7 @@ pub async fn download_verify_and_apply_snapshot<R>(
     api: &TransportClient,
     store: &mut LocalStateStore,
     realm_id: &str,
-    service_did: &arkret_sdk::Did,
+    service_id: &arkret_sdk::Did,
     resolver: &R,
     now: DateTime<Utc>,
 ) -> Result<SnapshotBootstrapResult, SnapshotFallbackReason>
@@ -86,7 +86,7 @@ where
         chunks.push(chunk);
     }
 
-    let result = verify_snapshot_package(&manifest, &chunks, service_did, resolver, now)?;
+    let result = verify_snapshot_package(&manifest, &chunks, service_id, resolver, now)?;
     store
         .apply_snapshot_chunks(&manifest, &chunks, result.trust_state.clone())
         .map_err(|error| {
@@ -101,14 +101,14 @@ where
 pub fn verify_snapshot_package<R>(
     manifest: &arkret_sdk::SnapshotManifest,
     chunks: &[arkret_sdk::SnapshotChunkPayload],
-    service_did: &arkret_sdk::Did,
+    service_id: &arkret_sdk::Did,
     resolver: &R,
     now: DateTime<Utc>,
 ) -> Result<SnapshotBootstrapResult, SnapshotFallbackReason>
 where
     R: arkret_sdk::DidResolver + ?Sized,
 {
-    verify_snapshot_signature_and_authority(manifest, service_did, resolver, now)?;
+    verify_snapshot_signature_and_authority(manifest, service_id, resolver, now)?;
     let report = arkret_sdk::verify_snapshot_manifest(
         manifest,
         chunks,
@@ -134,17 +134,17 @@ where
 
 pub fn verify_snapshot_signature_and_authority<R>(
     manifest: &arkret_sdk::SnapshotManifest,
-    service_did: &arkret_sdk::Did,
+    service_id: &arkret_sdk::Did,
     resolver: &R,
     now: DateTime<Utc>,
 ) -> Result<(), SnapshotFallbackReason>
 where
     R: arkret_sdk::DidResolver + ?Sized,
 {
-    if &manifest.created_by != service_did {
+    if &manifest.created_by != service_id {
         return Err(SnapshotFallbackReason::new(
             arkret_sdk::SnapshotValidationCode::SnapshotAuthorityUnverified.as_str(),
-            "snapshot created_by does not match the principal server service_did",
+            "snapshot created_by does not match the principal server service_id",
         ));
     }
     if manifest.authority_binding.issuer != manifest.created_by {

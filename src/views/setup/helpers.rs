@@ -1,11 +1,11 @@
 //! Pure helpers shared by the setup section components.
 
-pub(super) fn plaintext_services_for_policy(service_did: &str) -> Vec<String> {
-    let service_did = service_did.trim();
-    if service_did.is_empty() {
+pub(super) fn plaintext_services_for_policy(service_id: &str) -> Vec<String> {
+    let service_id = service_id.trim();
+    if service_id.is_empty() {
         Vec::new()
     } else {
-        vec![service_did.to_owned()]
+        vec![service_id.to_owned()]
     }
 }
 

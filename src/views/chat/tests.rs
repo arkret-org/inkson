@@ -2141,141 +2141,6 @@ fn mention_inline_parts_marks_external_handles_remote() {
 }
 
 #[test]
-fn participant_with_agent_id_renders_with_agent_badge() {
-    // Three participants in the realm: Alice (the local account),
-    // Bob (a real human member), and a Researcher Agent registered
-    // via `ak.agent.endpoint`. After `annotate_agent_participants`
-    // the agent DID must carry `is_agent = true` while the human
-    // members stay `false`.
-    let mut participants = vec![
-        SpaceParticipant {
-            did: "did:web:alice.example".to_owned(),
-            display_name: Some("Alice".to_owned()),
-            handle_label: None,
-            display_name_rank: 0,
-            role: SpaceParticipantRole::Owner,
-            is_self: true,
-            is_agent: false,
-            agent_metadata: None,
-        },
-        SpaceParticipant {
-            did: "did:web:bob.example".to_owned(),
-            display_name: Some("Bob".to_owned()),
-            handle_label: None,
-            display_name_rank: 1,
-            role: SpaceParticipantRole::Member,
-            is_self: false,
-            is_agent: false,
-            agent_metadata: None,
-        },
-        SpaceParticipant {
-            did: "did:web:researcher-agent.example".to_owned(),
-            display_name: None,
-            handle_label: None,
-            display_name_rank: u8::MAX,
-            role: SpaceParticipantRole::Member,
-            is_self: false,
-            is_agent: false,
-            agent_metadata: None,
-        },
-    ];
-
-    annotate_agent_participants(
-        &mut participants,
-        &["did:web:researcher-agent.example".to_owned()],
-    );
-
-    let alice = &participants[0];
-    let bob = &participants[1];
-    let agent = &participants[2];
-    assert!(!alice.is_agent, "human owner must not be flagged as agent");
-    assert!(!bob.is_agent, "human member must not be flagged as agent");
-    assert!(
-        agent.is_agent,
-        "DID registered via ak.agent.endpoint must be flagged as agent"
-    );
-}
-
-#[test]
-fn agent_ids_from_raw_operations_filters_by_realm_and_kind() {
-    use chrono::Utc;
-
-    use crate::state::RawOperationRecord;
-
-    // Mixed bag of raw ops: an agent endpoint for the right realm,
-    // an agent endpoint for a different realm (should be filtered
-    // out by space_id), and a non-agent kind (should be filtered
-    // out by kind).
-    let records = vec![
-        RawOperationRecord {
-            operation_id: "op-1".to_owned(),
-            realm_id: Some("ak:realm:demo".to_owned()),
-            received_at: Utc::now(),
-            payload: json!({
-                "kind": "ak.agent.endpoint",
-                "body": { "agent_id": "did:web:researcher-agent.example" }
-            }),
-        },
-        RawOperationRecord {
-            operation_id: "op-2".to_owned(),
-            realm_id: Some("ak:realm:other".to_owned()),
-            received_at: Utc::now(),
-            payload: json!({
-                "kind": "ak.agent.endpoint",
-                "body": { "agent_id": "did:web:other-agent.example" }
-            }),
-        },
-        RawOperationRecord {
-            operation_id: "op-3".to_owned(),
-            realm_id: Some("ak:realm:demo".to_owned()),
-            received_at: Utc::now(),
-            payload: json!({
-                "kind": "ak.message.create",
-                "body": { "body": "hello" }
-            }),
-        },
-    ];
-
-    let agent_ids = agent_ids_from_raw_operations(&records, "ak:realm:demo");
-    assert_eq!(
-        agent_ids,
-        vec!["did:web:researcher-agent.example".to_owned()]
-    );
-}
-
-#[test]
-fn agent_metadata_from_raw_operations_reads_controller_scoped_selector_fields() {
-    use chrono::Utc;
-
-    use crate::state::RawOperationRecord;
-
-    let records = vec![RawOperationRecord {
-        operation_id: "op-1".to_owned(),
-        realm_id: Some("ak:realm:demo".to_owned()),
-        received_at: Utc::now(),
-        payload: json!({
-            "kind": "ak.agent.endpoint",
-            "actor_id": "did:web:example.com:users:alice",
-            "payload": {
-                "agent_id": "did:web:agents.example:summary",
-                "display_name": "Summary Assistant",
-                "agent_slug": "summary",
-                "controller_handle": "alice:example.com"
-            }
-        }),
-    }];
-
-    let metadata = agent_metadata_from_raw_operations(&records, "ak:realm:demo");
-    let summary = metadata
-        .get("did:web:agents.example:summary")
-        .expect("agent metadata");
-    assert_eq!(summary.controller_did, "did:web:example.com:users:alice");
-    assert_eq!(summary.controller_handle, "alice:example.com");
-    assert_eq!(summary.agent_slug, "summary");
-    assert_eq!(summary.display_name, "Summary Assistant");
-}
-
-#[test]
 fn agent_metadata_from_mentions_recovers_selector_audit_metadata() {
     let messages = vec![ChatMessage {
         realm_id: "ak:realm:demo".to_owned(),
@@ -2319,7 +2184,7 @@ fn agent_metadata_from_mentions_recovers_selector_audit_metadata() {
     let summary = metadata
         .get("did:web:agents.example:summary")
         .expect("agent metadata");
-    assert_eq!(summary.controller_did, "did:web:example.com:users:alice");
+    assert_eq!(summary.controller_id, "did:web:example.com:users:alice");
     assert_eq!(summary.controller_handle, "alice:example.com");
     assert_eq!(summary.agent_slug, "summary");
     assert_eq!(summary.display_name, "Summary Assistant");
@@ -2441,7 +2306,7 @@ fn participant_roster_rows_groups_agents_under_visible_controller() {
         is_self: false,
         is_agent: true,
         agent_metadata: Some(AgentParticipantMetadata {
-            controller_did: controller.did.clone(),
+            controller_id: controller.did.clone(),
             controller_handle: "alice:example.com".to_owned(),
             agent_slug: "summary".to_owned(),
             display_name: "Summary Assistant".to_owned(),
@@ -2490,7 +2355,7 @@ fn mention_candidate_for_own_agent_uses_me_alias() {
         is_self: false,
         is_agent: true,
         agent_metadata: Some(AgentParticipantMetadata {
-            controller_did: controller.did.clone(),
+            controller_id: controller.did.clone(),
             controller_handle: "alice:example.com".to_owned(),
             agent_slug: "summary".to_owned(),
             display_name: "Summary Assistant".to_owned(),
@@ -2530,7 +2395,7 @@ fn mention_candidate_for_other_agent_keeps_canonical_controller_handle() {
         is_self: false,
         is_agent: true,
         agent_metadata: Some(AgentParticipantMetadata {
-            controller_did: controller.did.clone(),
+            controller_id: controller.did.clone(),
             controller_handle: "bob:example.com".to_owned(),
             agent_slug: "summary".to_owned(),
             display_name: "Summary Assistant".to_owned(),
@@ -2566,7 +2431,7 @@ fn agent_candidate_visibility_keeps_owned_agents_and_hides_private_remote_agents
         is_self: false,
         is_agent: true,
         agent_metadata: Some(AgentParticipantMetadata {
-            controller_did: own_controller.did.clone(),
+            controller_id: own_controller.did.clone(),
             controller_handle: "alice:example.com".to_owned(),
             agent_slug: "summary".to_owned(),
             display_name: "Alice Summary".to_owned(),
@@ -2581,7 +2446,7 @@ fn agent_candidate_visibility_keeps_owned_agents_and_hides_private_remote_agents
         is_self: false,
         is_agent: true,
         agent_metadata: Some(AgentParticipantMetadata {
-            controller_did: "did:web:example.com:users:bob".to_owned(),
+            controller_id: "did:web:example.com:users:bob".to_owned(),
             controller_handle: "bob:example.com".to_owned(),
             agent_slug: "summary".to_owned(),
             display_name: "Bob Summary".to_owned(),

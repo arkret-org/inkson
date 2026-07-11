@@ -1146,7 +1146,7 @@ async fn prefetch_member_identity_proof_keys(
 }
 
 /// Recursively scan a projection `Value` for `ak.member.identity.update`
-/// proofs, extracting `(controller_did, device_id)` from each
+/// proofs, extracting `(controller_id, device_id)` from each
 /// `member_identity.proof.verification_method`. Depth-bounded to mirror the
 /// persistent-event scanner.
 fn collect_member_identity_proof_devices_from_value(

@@ -92,8 +92,8 @@ impl MemberRosterSection {
 
 #[derive(Clone, Debug, PartialEq)]
 struct MemberAgentRow {
-    agent_principal_id: String,
-    controller_did: String,
+    agent_id: String,
+    controller_id: String,
     display_name: String,
     slug: String,
     status: String,
@@ -195,24 +195,24 @@ struct MemberGroup {
 
 fn member_agent_row_from_value(
     row: arkret_sdk::models::AgentProjection,
-    fallback_controller_did: &str,
+    fallback_controller_id: &str,
 ) -> Option<MemberAgentRow> {
-    let agent_principal_id = row.agent_principal_id.as_str().trim();
-    if agent_principal_id.is_empty() {
+    let agent_id = row.agent_id.as_str().trim();
+    if agent_id.is_empty() {
         return None;
     }
-    let agent_principal_id = agent_principal_id.to_owned();
-    let slug = row.agent_slug?.trim().to_owned();
+    let agent_id = agent_id.to_owned();
+    let slug = row.slug.trim().to_owned();
     if slug.is_empty() {
         return None;
     }
     let display_name = slug.clone();
     // `agent_projection` carries no controller binding; the list endpoint is
     // already scoped to the caller's owned agents, so use the caller DID.
-    let controller_did = fallback_controller_did.trim().to_owned();
+    let controller_id = fallback_controller_id.trim().to_owned();
     Some(MemberAgentRow {
-        agent_principal_id,
-        controller_did,
+        agent_id,
+        controller_id,
         display_name,
         slug,
         status: crate::views::agents::model::agent_status_wire(row.status).to_owned(),
@@ -224,18 +224,18 @@ fn member_agent_row_from_value(
 async fn fetch_owned_agent_rows(
     http: &arkret_sdk::http_client::Client,
     realm: &str,
-    fallback_controller_did: &str,
+    fallback_controller_id: &str,
 ) -> anyhow::Result<Vec<MemberAgentRow>> {
     let list = http.agent_list().await?;
     let mut rows = Vec::<MemberAgentRow>::new();
     for value in list.agents {
-        let Some(mut row) = member_agent_row_from_value(value, fallback_controller_did) else {
+        let Some(mut row) = member_agent_row_from_value(value, fallback_controller_id) else {
             continue;
         };
         if row.status == "deactivated" {
             continue;
         }
-        match http.agent_participation_get(&row.agent_principal_id).await {
+        match http.agent_participation_get(&row.agent_id).await {
             Ok(outcome) => {
                 let (policy, selection) = mention_state_from_entries(&outcome.entries, realm);
                 row.mention_policy = policy;
@@ -250,7 +250,7 @@ async fn fetch_owned_agent_rows(
     rows.sort_by(|left, right| {
         left.display_name
             .cmp(&right.display_name)
-            .then_with(|| left.agent_principal_id.cmp(&right.agent_principal_id))
+            .then_with(|| left.agent_id.cmp(&right.agent_id))
     });
     Ok(rows)
 }
@@ -291,9 +291,7 @@ fn spawn_set_agent_realm_behavior(
                 let (mention_policy, selection) =
                     mention_state_from_entries(&outcome.entries, &realm);
                 owned_agents.with_mut(|rows| {
-                    if let Some(row) = rows
-                        .iter_mut()
-                        .find(|row| row.agent_principal_id == outcome.agent_principal_id)
+                    if let Some(row) = rows.iter_mut().find(|row| row.agent_id == outcome.agent_id)
                     {
                         row.mention_policy = mention_policy;
                         row.selection = selection;
@@ -301,7 +299,7 @@ fn spawn_set_agent_realm_behavior(
                 });
                 status_msg.set(format!(
                     "Realm behavior updated for {}",
-                    short_protocol_id(&outcome.agent_principal_id)
+                    short_protocol_id(&outcome.agent_id)
                 ));
             }
             Err(err) => status_msg.set(format!("Realm behavior update failed: {}", err.display())),
@@ -845,7 +843,7 @@ fn local_terminal_invite_ids_for_realm(
 fn group_members_with_owned_agents(
     members: &[MemberProfile],
     owned_agents: &[MemberAgentRow],
-    fallback_controller_did: &str,
+    fallback_controller_id: &str,
 ) -> Vec<MemberGroup> {
     let member_set: BTreeSet<&str> = members
         .iter()
@@ -853,7 +851,7 @@ fn group_members_with_owned_agents(
         .collect();
     let owned_agent_ids: BTreeSet<&str> = owned_agents
         .iter()
-        .map(|agent| agent.agent_principal_id.as_str())
+        .map(|agent| agent.agent_id.as_str())
         .collect();
     let mut groups = BTreeMap::<String, MemberGroup>::new();
 
@@ -875,18 +873,18 @@ fn group_members_with_owned_agents(
 
     let mut in_realm_agents: Vec<MemberAgentRow> = owned_agents
         .iter()
-        .filter(|agent| member_set.contains(agent.agent_principal_id.as_str()))
+        .filter(|agent| member_set.contains(agent.agent_id.as_str()))
         .cloned()
         .collect();
     in_realm_agents.sort_by(|a, b| {
         a.display_name
             .cmp(&b.display_name)
-            .then_with(|| a.agent_principal_id.cmp(&b.agent_principal_id))
+            .then_with(|| a.agent_id.cmp(&b.agent_id))
     });
     for agent in in_realm_agents {
-        let controller = agent.controller_did.trim();
+        let controller = agent.controller_id.trim();
         let controller = if controller.is_empty() {
-            fallback_controller_did.trim()
+            fallback_controller_id.trim()
         } else {
             controller
         };
@@ -908,8 +906,8 @@ fn group_members_with_owned_agents(
 
     let mut groups = groups.into_values().collect::<Vec<_>>();
     groups.sort_by(|left, right| {
-        let left_is_self = left.controller.actor_id.trim() == fallback_controller_did.trim();
-        let right_is_self = right.controller.actor_id.trim() == fallback_controller_did.trim();
+        let left_is_self = left.controller.actor_id.trim() == fallback_controller_id.trim();
+        let right_is_self = right.controller.actor_id.trim() == fallback_controller_id.trim();
         right_is_self
             .cmp(&left_is_self)
             .then_with(|| {
@@ -1196,7 +1194,7 @@ fn member_group_matches(group: &MemberGroup, query: &str) -> bool {
     }
     member_profile_matches(&group.controller, &query)
         || group.agents.iter().any(|agent| {
-            agent.agent_principal_id.to_lowercase().contains(&query)
+            agent.agent_id.to_lowercase().contains(&query)
                 || agent.display_name.to_lowercase().contains(&query)
                 || agent.slug.to_lowercase().contains(&query)
         })
@@ -1216,11 +1214,11 @@ fn member_group_in_section(
     }
 }
 
-fn agent_invite_target(agent_principal_id: &str, service_did: &str) -> String {
+fn agent_invite_target(agent_id: &str, service_id: &str) -> String {
     format!(
-        "subject_id={} recipient_service_did={}",
-        agent_principal_id.trim(),
-        service_did.trim()
+        "subject_id={} recipient_service_id={}",
+        agent_id.trim(),
+        service_id.trim()
     )
 }
 
@@ -3099,7 +3097,7 @@ async fn ensure_mls_genesis_frontier_for_invite(
 
 #[component]
 pub fn RealmMembersPanel(
-    active_service_did: String,
+    active_service_id: String,
     account_did: String,
     device_id: String,
     token: Signal<String>,
@@ -3190,7 +3188,7 @@ pub fn RealmMembersPanel(
     {
         let base = base_url.clone();
         let realm = selected_realm_id.clone();
-        let fallback_controller_did = account_did.clone();
+        let fallback_controller_id = account_did.clone();
         use_effect(move || {
             let api_token = token();
             if api_token.trim().is_empty() {
@@ -3199,13 +3197,13 @@ pub fn RealmMembersPanel(
             }
             let base = base.clone();
             let realm = realm.clone();
-            let fallback_controller_did = fallback_controller_did.clone();
+            let fallback_controller_id = fallback_controller_id.clone();
             spawn(async move {
                 let result = crate::transport::auth::with_authed_sdk_client(
                     &base,
                     api_token,
                     |http| async move {
-                        fetch_owned_agent_rows(&http, &realm, &fallback_controller_did).await
+                        fetch_owned_agent_rows(&http, &realm, &fallback_controller_id).await
                     },
                 )
                 .await;
@@ -3383,7 +3381,7 @@ pub fn RealmMembersPanel(
     let self_owned_agent_rows: Vec<MemberAgentRow> = owned_agent_rows
         .iter()
         .filter(|agent| {
-            let controller = agent.controller_did.trim();
+            let controller = agent.controller_id.trim();
             controller.is_empty() || controller == account_did.trim()
         })
         .cloned()
@@ -4036,7 +4034,7 @@ pub fn RealmMembersPanel(
                                 div {
                                     class: "{group_class}",
                                     "data-testid": "member-group",
-                                    "data-controller-did": "{member}",
+                                    "data-controller-id": "{member}",
                                     if selected_section != MemberRosterSection::MyAgents {
                                     div { class: "event member-row member-controller-row", "data-testid": "member-row", "data-member-did": "{member}",
                                         div { class: "event-head member-row-main",
@@ -4194,11 +4192,11 @@ pub fn RealmMembersPanel(
                                                 div { class: "member-self-agent-list",
                                                     for owned_agent in self_owned_agent_rows.clone() {
                                                         {
-                                                            let agent_in_realm = member_set.contains(&owned_agent.agent_principal_id);
+                                                            let agent_in_realm = member_set.contains(&owned_agent.agent_id);
                                                             let policy = owned_agent.mention_policy;
                                                             let policy_class = policy.badge_class();
                                                             let policy_label = policy.label();
-                                                            let agent_id = owned_agent.agent_principal_id.clone();
+                                                            let agent_id = owned_agent.agent_id.clone();
                                                             let agent_title = owned_agent.display_name.clone();
                                                             let status_class = crate::views::agents::agent_state_badge_class(&owned_agent.status);
                                                             let status_label = crate::views::agents::agent_state_label(&owned_agent.status).to_owned();
@@ -4370,16 +4368,16 @@ pub fn RealmMembersPanel(
                                                                                 variant: ButtonVariant::Secondary,
                                                                                 size: ButtonSize::Sm,
                                                                                 "data-testid": "member-agent-add-to-realm",
-                                                                                disabled: active_service_did.trim().is_empty(),
+                                                                                disabled: active_service_id.trim().is_empty(),
                                                                                 onclick: {
                                                                                     let agent_id = agent_id.clone();
-                                                                                    let service_did = active_service_did.clone();
+                                                                                    let service_id = active_service_id.clone();
                                                                                     move |_| {
-                                                                                        if service_did.trim().is_empty() {
+                                                                                        if service_id.trim().is_empty() {
                                                                                             status_msg.set("current service DID is unavailable; cannot prepare agent invite".to_owned());
                                                                                             return;
                                                                                         }
-                                                                                        invite_target.set(agent_invite_target(&agent_id, &service_did));
+                                                                                        invite_target.set(agent_invite_target(&agent_id, &service_id));
                                                                                         invite_modal_open.set(true);
                                                                                     }
                                                                                 },
@@ -4401,7 +4399,7 @@ pub fn RealmMembersPanel(
                                             span { class: "member-profile-label", "AI agents:" }
                                             for agent in group.agents {
                                                 {
-                                                    let agent_id = agent.agent_principal_id.clone();
+                                                    let agent_id = agent.agent_id.clone();
                                                     let agent_label = agent.display_name.clone();
                                                     rsx! {
                                                         span {
@@ -4471,8 +4469,8 @@ mod tests {
 
     fn agent(id: &str, controller: &str, name: &str) -> MemberAgentRow {
         MemberAgentRow {
-            agent_principal_id: id.to_owned(),
-            controller_did: controller.to_owned(),
+            agent_id: id.to_owned(),
+            controller_id: controller.to_owned(),
             display_name: name.to_owned(),
             slug: "summary".to_owned(),
             status: "active".to_owned(),
@@ -4658,7 +4656,7 @@ mod tests {
             .find(|group| group.controller.actor_id == "did:web:alice.example")
             .expect("alice group exists");
         assert_eq!(alice.agents.len(), 1);
-        assert_eq!(alice.agents[0].agent_principal_id, "did:web:agent.example");
+        assert_eq!(alice.agents[0].agent_id, "did:web:agent.example");
         assert_eq!(groups[0].controller.actor_id, "did:web:alice.example");
         assert!(
             groups
@@ -4689,10 +4687,7 @@ mod tests {
             .find(|group| group.controller.actor_id == "did:web:bob.example")
             .expect("bob group exists");
         assert_eq!(bob.agents.len(), 1);
-        assert_eq!(
-            bob.agents[0].agent_principal_id,
-            "did:web:bob-agent.example"
-        );
+        assert_eq!(bob.agents[0].agent_id, "did:web:bob-agent.example");
         assert!(
             groups
                 .iter()

@@ -157,7 +157,7 @@ pub fn ContactNewPanel(
                             if scope_invite() {
                                 scopes.push("invite".to_owned());
                             }
-                            let service_did = recipient_service().trim().to_owned();
+                            let service_id = recipient_service().trim().to_owned();
                             let greeting = message().trim().to_owned();
                             sending.set(true);
                             status.set(tr("contacts.new.sending"));
@@ -167,10 +167,10 @@ pub fn ContactNewPanel(
                                 } else {
                                     Some(greeting.as_str())
                                 };
-                                let service_opt = if service_did.is_empty() {
+                                let service_opt = if service_id.is_empty() {
                                     None
                                 } else {
-                                    Some(service_did.as_str())
+                                    Some(service_id.as_str())
                                 };
                                 match with_authed_api(&base, api_token, |api| async move {
                                     api.request_contact_with_message(
@@ -230,10 +230,10 @@ fn ContactRow(
     let peer = contact.peer.clone();
     let state = contact.state.clone();
     // Cross-PS source: if the backend exposed the requester's PS in the list
-    // row, pass `requester_service_did` through on respond for reverse
+    // row, pass `requester_service_id` through on respond for reverse
     // delivery. Otherwise use None and follow same-PS behavior.
-    let peer_service_did = contact
-        .peer_service_did
+    let peer_service_id = contact
+        .peer_service_id
         .clone()
         .filter(|s| !s.trim().is_empty());
     let peer_label = display_name_for_did(&state_store.read(), &peer);
@@ -296,12 +296,12 @@ fn ContactRow(
                             let base = base_url.clone();
                             let peer = peer.clone();
                             let request_event_ref = contact.request_event_ref.clone();
-                            let service = peer_service_did.clone();
+                            let service = peer_service_id.clone();
                             move |_| {
                                 run_contact_action(
                                     base.clone(),
                                     token(),
-                                    ContactRowAction::Respond { requester: peer.clone(), request_event_ref: request_event_ref.clone(), verb: "accept".to_owned(), requester_service_did: service.clone() },
+                                    ContactRowAction::Respond { requester: peer.clone(), request_event_ref: request_event_ref.clone(), verb: "accept".to_owned(), requester_service_id: service.clone() },
                                     tr("contacts.action.accepting"),
                                     busy,
                                     row_status,
@@ -319,12 +319,12 @@ fn ContactRow(
                             let base = base_url.clone();
                             let peer = peer.clone();
                             let request_event_ref = contact.request_event_ref.clone();
-                            let service = peer_service_did.clone();
+                            let service = peer_service_id.clone();
                             move |_| {
                                 run_contact_action(
                                     base.clone(),
                                     token(),
-                                    ContactRowAction::Respond { requester: peer.clone(), request_event_ref: request_event_ref.clone(), verb: "reject".to_owned(), requester_service_did: service.clone() },
+                                    ContactRowAction::Respond { requester: peer.clone(), request_event_ref: request_event_ref.clone(), verb: "reject".to_owned(), requester_service_id: service.clone() },
                                     tr("contacts.action.rejecting"),
                                     busy,
                                     row_status,
@@ -516,7 +516,7 @@ enum ContactRowAction {
         request_event_ref: Option<String>,
         verb: String,
         /// Cross-PS reverse-delivery target; `None` for same-PS contacts.
-        requester_service_did: Option<String>,
+        requester_service_id: Option<String>,
     },
     Tombstone {
         peer: String,
@@ -544,7 +544,7 @@ fn run_contact_action(
                 requester,
                 request_event_ref,
                 verb,
-                requester_service_did,
+                requester_service_id,
             } => with_authed_sdk_client(&base, api_token, |http| async move {
                 match request_event_ref {
                     Some(request_event_ref) => {
@@ -553,7 +553,7 @@ fn run_contact_action(
                             &requester,
                             &request_event_ref,
                             &verb,
-                            requester_service_did.as_deref(),
+                            requester_service_id.as_deref(),
                         )
                         .await
                     }
@@ -562,7 +562,7 @@ fn run_contact_action(
                             &http,
                             &requester,
                             &verb,
-                            requester_service_did.as_deref(),
+                            requester_service_id.as_deref(),
                         )
                         .await
                     }

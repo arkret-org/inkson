@@ -72,7 +72,7 @@ pub(crate) fn collect_plaintext_services(value: &Value, services: &mut Vec<Strin
 
 pub(crate) fn plaintext_services_for_policy(
     projection: Option<&Value>,
-    service_did: &str,
+    service_id: &str,
 ) -> Vec<String> {
     let mut services = Vec::new();
     if let Some(projection) = projection {
@@ -81,9 +81,9 @@ pub(crate) fn plaintext_services_for_policy(
             collect_plaintext_services(summary, &mut services);
         }
     }
-    let service_did = service_did.trim();
-    if !service_did.is_empty() && !services.iter().any(|existing| existing == service_did) {
-        services.push(service_did.to_owned());
+    let service_id = service_id.trim();
+    if !service_id.is_empty() && !services.iter().any(|existing| existing == service_id) {
+        services.push(service_id.to_owned());
     }
     services
 }

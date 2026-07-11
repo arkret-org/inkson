@@ -43,8 +43,8 @@ fn agent_field(agent: &AgentView, key: &str) -> String {
         .to_owned()
 }
 
-fn agent_principal_id(agent: &AgentView) -> String {
-    agent_field(agent, "agent_principal_id")
+fn agent_id(agent: &AgentView) -> String {
+    agent_field(agent, "agent_id")
 }
 
 fn agent_slug_label(agent: &AgentView) -> String {
@@ -52,7 +52,7 @@ fn agent_slug_label(agent: &AgentView) -> String {
     if !slug.is_empty() {
         return slug;
     }
-    let id = agent_principal_id(agent);
+    let id = agent_id(agent);
     if id.is_empty() {
         "(unnamed agent)".to_owned()
     } else {
@@ -116,11 +116,11 @@ fn requested_scope_matches_service_preset(
 }
 
 fn upsert_agent_view(rows: &mut Vec<AgentView>, view: AgentView) {
-    let id = agent_principal_id(&view);
+    let id = agent_id(&view);
     if id.is_empty() {
         return;
     }
-    if let Some(existing) = rows.iter_mut().find(|row| agent_principal_id(row) == id) {
+    if let Some(existing) = rows.iter_mut().find(|row| agent_id(row) == id) {
         *existing = view;
     } else {
         rows.push(view);
@@ -129,7 +129,7 @@ fn upsert_agent_view(rows: &mut Vec<AgentView>, view: AgentView) {
 
 fn update_agent_status(rows: &mut [AgentView], id: &str, status: &str) {
     for row in rows.iter_mut() {
-        if agent_principal_id(row) == id {
+        if agent_id(row) == id {
             row.status = status.to_owned();
             if let Some(object) = row.agent.as_object_mut() {
                 object.insert("status".to_owned(), json!(status));
@@ -348,14 +348,13 @@ pub fn PersonalAgentAdminPanel(token: Signal<String>) -> Element {
             let next = {
                 let rows = agents.read();
                 if rows.iter().any(|agent| {
-                    agent_principal_id(agent) == current
-                        && agent_matches_filter(&agent.status, &filter)
+                    agent_id(agent) == current && agent_matches_filter(&agent.status, &filter)
                 }) {
                     current.clone()
                 } else {
                     rows.iter()
                         .find(|agent| agent_matches_filter(&agent.status, &filter))
-                        .map(agent_principal_id)
+                        .map(agent_id)
                         .unwrap_or_default()
                 }
             };
@@ -392,7 +391,7 @@ pub fn PersonalAgentAdminPanel(token: Signal<String>) -> Element {
         let selected_agent = rows
             .iter()
             .find(|agent| {
-                agent_principal_id(agent) == selected_id_now
+                agent_id(agent) == selected_id_now
                     && agent_matches_filter(&agent.status, &active_agent_filter)
             })
             .cloned();
@@ -568,7 +567,7 @@ pub fn PersonalAgentAdminPanel(token: Signal<String>) -> Element {
                         }
                         for agent in visible_agents.iter() {
                             {
-                                let id = agent_principal_id(agent);
+                                let id = agent_id(agent);
                                 let slug_label = agent_slug_label(agent);
                                 let status = agent.status.clone();
                                 let id_label = short_protocol_id(&id);
@@ -582,7 +581,7 @@ pub fn PersonalAgentAdminPanel(token: Signal<String>) -> Element {
                                     button {
                                         class: "{row_class}",
                                         "data-testid": "agent-admin-row",
-                                        "data-agent-principal-id": "{id}",
+                                        "data-agent-id": "{id}",
                                         "aria-pressed": if is_selected { "true" } else { "false" },
                                         onclick: {
                                             let id = id.clone();
@@ -746,12 +745,12 @@ pub fn PersonalAgentAdminPanel(token: Signal<String>) -> Element {
                                                         }
                                                     };
                                                     let created_agent_id =
-                                                        outcome.agent_principal_id.to_string();
+                                                        outcome.agent_id.to_string();
                                                     let expires_at = outcome
                                                         .expires_at
                                                         .to_rfc3339_opts(chrono::SecondsFormat::Millis, true);
                                                     let agent_object = json!({
-                                                        "agent_principal_id": created_agent_id,
+                                                        "agent_id": created_agent_id,
                                                         "slug": slug_value,
                                                         "status": "pending_runtime_key",
                                                     });
@@ -768,7 +767,7 @@ pub fn PersonalAgentAdminPanel(token: Signal<String>) -> Element {
                                                         grants: Vec::new(),
                                                         key_state,
                                                     };
-                                                    let created_id = agent_principal_id(&agent_view);
+                                                    let created_id = agent_id(&agent_view);
                                                     agent_list_refresh_epoch.set(
                                                         agent_list_refresh_epoch()
                                                             .saturating_add(1),

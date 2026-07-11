@@ -195,7 +195,7 @@ mod tests {
 
     fn identity_description(protocol_version: &str) -> IdentityDescribeOutcome {
         IdentityDescribeOutcome {
-            service_did: Did::new("did:web:identity.example".to_owned()).expect("valid did"),
+            service_id: Did::new("did:web:identity.example".to_owned()).expect("valid did"),
             registry_mode: "local".to_owned(),
             supported_receipts: Vec::new(),
             protocol_version: protocol_version.to_owned(),

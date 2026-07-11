@@ -6,8 +6,7 @@
 Agents are first-class principals. They get their own DID + signing key
 and act under explicit capability proofs — never your personal device key.
 
-The agent surface lives in `/agents` and is gated by the
-`experimental-agents` feature flag during the local 1.0 milestone.
+The agent surface lives under **Settings → Agents**.
 
 ---
 
@@ -26,25 +25,7 @@ The agent surface lives in `/agents` and is gated by the
 
 ---
 
-## 2. Register an automated member
-
-1. Open `/agents` from the sidebar.
-2. Scroll to **Register an automated member**.
-3. Fill in:
-   - **agent_id** — e.g. `assistant:example.com`.
-   - **protocol** — e.g. `ak.agent.v1`.
-   - **capabilities** — comma-separated. Use the autocomplete to pick
-     from the 14 canonical capabilities.
-4. Click **Register**. inkson submits a `ak.agent.endpoint` envelope.
-
-<!-- TODO(screenshot): agent-register-form.png -->
-
-The newly registered agent appears under **Agent endpoints** with a
-shortened DID + protocol badge.
-
----
-
-## 3. Provision a personal agent
+## 2. Provision a personal agent
 
 The richer path. Use `PersonalAgentAdminPanel` for a real personal agent
 with sidecar threading.
@@ -63,11 +44,11 @@ with sidecar threading.
 
 ---
 
-## 4. Day-to-day operations
+## 3. Day-to-day operations
 
 Each agent row exposes:
 
-- **Pause / Resume** — temporarily revoke without losing the endpoint.
+- **Pause / Resume** — temporarily revoke without deleting the agent.
 - **Rotate key** — issue a fresh signing key while preserving the DID.
 - **Attach / Detach grant** — bind / unbind individual capability proofs.
 - **Sidecar ensure** — re-provision the 1:1 channel if it drifts.
@@ -77,7 +58,7 @@ Each agent row exposes:
 
 ---
 
-## 5. Action approval
+## 4. Action approval
 
 When an agent requests a capability action you'll see an
 `ActionApproveDialog` with:
@@ -88,49 +69,39 @@ When an agent requests a capability action you'll see an
 
 <!-- TODO(screenshot): action-approve-dialog.png -->
 
-Approving emits a `ak.agent.protocol_session.start` envelope. The
-lifecycle goes `start → status* → result`. The result event carries the
-`audit_binding` proof so the audit timeline can verify the agent's output
-matches the signed input.
+Approving emits the canonical agent action-approval event bound to the
+request digest and single-use nonce. Accountability remains anchored by
+the agent signature, `agent_context`, and the referenced grant.
 
 ---
 
-## 6. Audit trail
+## 5. Audit trail
 
-Visit `/audit` and filter by `kind=ak.agent.protocol_session.*`. Each
-result row shows a verification badge:
-
-- **Green tick** — `verify_audit_binding_by_kind` succeeded.
-- **Red cross** — signature mismatch. Investigate before trusting the
-  output.
-
-You can also click **Verify chain** on the agent panel itself to walk the
-full chain (start → status* → result) and surface the outcome via the
-`agent-protocol-audit-verify-result` element.
+Visit `/audit` and filter by the agent's DID. Agent-authored events retain
+their signer, `agent_context`, and authorization reference so operators can
+trace execution back to its controller grant.
 
 <!-- TODO(screenshot): agent-audit-verify-result.png -->
 
 ---
 
-## 7. Revoke / decommission
+## 6. Revoke / decommission
 
 1. Click **Deactivate** on the agent row.
 2. Type `DEACTIVATE` in the confirmation field.
 3. Click **Confirm — destructive**.
-4. inkson publishes a `ak.agent.lifecycle.deactivate` envelope. The agent
+4. inkson publishes the canonical personal-agent deactivate operation. The agent
    can no longer be summoned by any controller.
 
 <!-- TODO(screenshot): agent-deactivate-confirm.png -->
 
 After deactivation:
 
-- The endpoint stays visible in the audit timeline for forensic purposes.
 - The sidecar thread is closed and rejected by `SidecarThreadGuard`.
-- Any in-flight `protocol_session` is moved to `terminated`.
 
 ---
 
-## 8. Safety checklist
+## 7. Safety checklist
 
 Before granting a capability:
 

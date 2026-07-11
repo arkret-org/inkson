@@ -109,10 +109,10 @@ pub(super) fn DiscussionParticipantRow(
         .map(|rest| rest.split(':').next().unwrap_or(rest).to_owned());
     let owner_label = agent_controller_label(&participant, &participants);
     let selector_label = agent_selector_label(&participant);
-    let controller_did_attr = participant
+    let controller_id_attr = participant
         .agent_metadata
         .as_ref()
-        .map(|metadata| metadata.controller_did.clone())
+        .map(|metadata| metadata.controller_id.clone())
         .unwrap_or_default();
     let row_class = if participant.is_self {
         "contact-row participant-row self"
@@ -129,7 +129,7 @@ pub(super) fn DiscussionParticipantRow(
         div {
             class: "{row_class}",
             "data-testid": if nested_agent { "discussion-agent-row" } else { "discussion-user-row" },
-            "data-agent-controller-did": "{controller_did_attr}",
+            "data-agent-controller-id": "{controller_id_attr}",
             span { class: "participant-avatar", UiIcon { name: avatar_icon.to_owned() } }
             div { class: "participant-main",
                 strong {

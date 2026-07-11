@@ -844,7 +844,7 @@ pub fn build_realm_history_sharing_policy_event(
 pub fn build_plaintext_visible_services_event(
     realm_id: &str,
     actor_id: &str,
-    service_dids: &[String],
+    service_ids: &[String],
 ) -> anyhow::Result<Option<arkret_sdk::Event>> {
     // Strong type: plaintext_visible_services_payload (top-level
     // additionalProperties:false; item required fields strongly typed via the
@@ -854,16 +854,16 @@ pub fn build_plaintext_visible_services_event(
     // renamed `strand_body / message_body / body_only` → `strand_content /
     // message_content / content_only`. No serde alias — aggressive migration.
     use arkret_sdk::{PlaintextDataClassKind, PlaintextServiceVisibility, PlaintextVisibleService};
-    let services = service_dids
+    let services = service_ids
         .iter()
         .map(|service| service.trim())
         .filter(|service| !service.is_empty())
         .map(|service| -> anyhow::Result<PlaintextVisibleService> {
-            let service_did = arkret_sdk::Did::new(service.to_owned()).map_err(|err| {
+            let service_id = arkret_sdk::Did::new(service.to_owned()).map_err(|err| {
                 anyhow::anyhow!("invalid plaintext service DID {service:?}: {err}")
             })?;
             Ok(PlaintextVisibleService::new(
-                service_did,
+                service_id,
                 "principal_server",
                 vec![
                     PlaintextDataClassKind::MessageContent,

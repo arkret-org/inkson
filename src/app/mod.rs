@@ -592,9 +592,9 @@ fn AppBootstrap() -> Element {
     }
 
     let active_server_description = server_description();
-    let active_service_did = active_server_description
+    let active_service_id = active_server_description
         .as_ref()
-        .map(|description| description.service_did.as_str().to_owned())
+        .map(|description| description.service_id.as_str().to_owned())
         .unwrap_or_default();
     let can_list_handles_for_subject = active_server_description
         .as_ref()
@@ -795,9 +795,9 @@ fn AppBootstrap() -> Element {
                 sidebar_text_matches_query(
                     &direct_sidebar_query_value,
                     &[
-                        &agent.agent_principal_id,
+                        &agent.agent_id,
                         agent.display_name.as_deref().unwrap_or_default(),
-                        agent.agent_slug.as_deref().unwrap_or_default(),
+                        &agent.slug,
                     ],
                 )
             });
@@ -1938,9 +1938,9 @@ fn AppBootstrap() -> Element {
                                 sidebar_text_matches_query(
                                     &direct_sidebar_query_value,
                                     &[
-                                        agent.agent_principal_id.as_str(),
+                                        agent.agent_id.as_str(),
                                         agent.display_name.as_deref().unwrap_or_default(),
-                                                agent.agent_slug.as_deref().unwrap_or_default(),
+                                                &agent.slug,
                                     ],
                                 )
                             })
@@ -1983,12 +1983,8 @@ fn AppBootstrap() -> Element {
                                             div { class: "contact-agent-list", "data-testid": "contact-sidebar-self-agents",
                                                 for agent in own_agent_rows.read().iter() {
                                                     {
-                                                        let agent_id = agent.agent_principal_id.to_string();
-                                                        let agent_label = agent
-                                                            .agent_slug
-                                                            .clone()
-                                                            .or_else(|| agent.display_name.clone())
-                                                            .unwrap_or_else(|| short_protocol_id(&agent_id));
+                                                        let agent_id = agent.agent_id.to_string();
+                                                        let agent_label = agent.slug.clone();
                                                         let agent_status = match agent.status {
                                                             arkret_sdk::AgentStatus::PendingRuntimeKey => "pending",
                                                             arkret_sdk::AgentStatus::Active => "active",
@@ -1996,7 +1992,7 @@ fn AppBootstrap() -> Element {
                                                             arkret_sdk::AgentStatus::Paused => "paused",
                                                             arkret_sdk::AgentStatus::Deactivated => "deactivated",
                                                         };
-                                                        let controller_did = self_did.clone();
+                                                        let controller_id = self_did.clone();
                                                         rsx! {
                                                             button {
                                                                 key: "{agent_id}",
@@ -2004,29 +2000,29 @@ fn AppBootstrap() -> Element {
                                                                 r#type: "button",
                                                                 "data-testid": "contact-sidebar-agent-row",
                                                                 "data-agent": "{agent_id}",
-                                                                "data-controller": "{controller_did}",
+                                                                "data-controller": "{controller_id}",
                                                                 title: "Chat with {agent_label}",
                                                                 onclick: {
                                                                     let base = base_url();
                                                                     let agent_id = agent_id.clone();
-                                                                    let controller_did = controller_did.clone();
+                                                                    let controller_id = controller_id.clone();
                                                                     move |event: dioxus::events::MouseEvent| {
                                                                         event.prevent_default();
                                                                         event.stop_propagation();
                                                                         let api_token = token();
                                                                         let base = base.clone();
                                                                         let agent_id = agent_id.clone();
-                                                                        let controller_did = controller_did.clone();
+                                                                        let controller_id = controller_id.clone();
                                                                         spawn(async move {
                                                                             let request = (|| -> anyhow::Result<arkret_sdk::AgentSidecarThreadEnsureRequestBody> {
-                                                                                let controller = arkret_sdk::Did::new(controller_did.clone())?;
+                                                                                let controller = arkret_sdk::Did::new(controller_id.clone())?;
                                                                                 let agent = arkret_sdk::Did::new(agent_id)?;
                                                                                 let self_realm = arkret_sdk::principal_control_realm_id(&controller);
                                                                                 let realm_id = arkret_sdk::RealmId::new(self_realm.clone())?;
                                                                                 let strand_id = arkret_sdk::StrandId::new(default_strand_id_for_realm(&self_realm))?;
                                                                                 Ok(arkret_sdk::AgentSidecarThreadEnsureRequestBody {
-                                                                                    controller_principal_id: controller,
-                                                                                    addressed_agent_principal_ids: vec![agent],
+                                                                                    controller_id: controller,
+                                                                                    addressed_agent_ids: vec![agent],
                                                                                     context_ref: arkret_sdk::AgentSidecarContextRef::strand(realm_id, strand_id),
                                                                                 })
                                                                             })();
@@ -2046,7 +2042,7 @@ fn AppBootstrap() -> Element {
                                                                                 },
                                                                             ).await {
                                                                                 Ok(response) => {
-                                                                                    let controller = arkret_sdk::Did::new(controller_did)
+                                                                                    let controller = arkret_sdk::Did::new(controller_id)
                                                                                         .expect("controller DID validated before request");
                                                                                     let _ = navigator.push(Route::DirectConversation {
                                                                                         realm_id: arkret_sdk::principal_control_realm_id(&controller),
@@ -2138,9 +2134,9 @@ fn AppBootstrap() -> Element {
                                                 sidebar_text_matches_query(
                                                     &direct_sidebar_query_value,
                                                     &[
-                                                        &agent.agent_principal_id,
+                                                        &agent.agent_id,
                                                         agent.display_name.as_deref().unwrap_or_default(),
-                                                        agent.agent_slug.as_deref().unwrap_or_default(),
+                                                        &agent.slug,
                                                     ],
                                                 )
                                             }));
@@ -2357,9 +2353,9 @@ fn AppBootstrap() -> Element {
                                             div { class: "contact-agent-list", "data-testid": "contact-sidebar-contact-agents",
                                               for agent in contact.agents.iter() {
                                                 {
-                                                    let agent_id = agent.agent_principal_id.clone();
+                                                    let agent_id = agent.agent_id.clone();
                                                     let agent_label = agent.display_name.clone()
-                                                        .or_else(|| agent.agent_slug.clone())
+                                                        .or_else(|| Some(agent.slug.clone()))
                                                         .unwrap_or_else(|| short_protocol_id(&agent_id));
                                                     let agent_direct = agent.direct_conversation.clone();
                                                     let controller = peer.clone();
@@ -3628,7 +3624,7 @@ fn AppBootstrap() -> Element {
                         full_ready,
                         e2ee_ready,
                         event_write_ready,
-                        active_service_did: active_service_did.clone(),
+                        active_service_id: active_service_id.clone(),
                         active_realm_id: active_realm_id.clone(),
                         active_projection_realm_id: active_projection_realm_id.clone(),
                         realm_live_epoch,
