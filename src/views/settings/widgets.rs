@@ -5,8 +5,8 @@ use dioxus::prelude::*;
 use dioxus_primitives::checkbox::CheckboxState;
 
 use super::account_data::{push_notification_rules_account_data, watch_level_label};
-use crate::local_state::LocalStateStore;
 use crate::notification_rules::WatchLevel;
+use crate::state::LocalStateStore;
 use crate::ui::button::{Button, ButtonVariant};
 use crate::ui::checkbox::Checkbox;
 use crate::ui::select::{Select, SelectOption};

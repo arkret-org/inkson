@@ -25,9 +25,10 @@ use dioxus::prelude::*;
 use serde_json::Value;
 
 use crate::operation::{OperationBuilder, trim_realm_id};
+use crate::transport::auth::with_authed_api;
 use crate::ui::button::{Button, ButtonVariant};
 use crate::ui::textarea::Textarea;
-use crate::views::helpers::{short_protocol_id, with_authed_api};
+use crate::views::helpers::short_protocol_id;
 
 /// User-facing projection of the four moderation appeal wire states.
 ///

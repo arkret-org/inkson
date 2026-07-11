@@ -298,7 +298,7 @@ pub struct SpaceCreateResult {
 // (Move/Seal pipeline DTOs deleted; all writes now go through
 // ak.self.events.command.submit via SubmitEventResult.)
 
-/// Result of [`crate::api::ArkretApi::set_account_data`]. Captures the
+/// Result of [`crate::transport::TransportClient::set_account_data`]. Captures the
 /// graceful-degradation contract: 404/501/405 are not treated as errors —
 /// soland's principal-control lookup / event ingest may be absent on older
 /// deployments and the client must keep working when that path is not wired.
@@ -858,7 +858,7 @@ impl From<arkret_sdk::EventsQueryOutcome> for BackfillView {
 }
 
 // `ak.self.snapshot.query.manifest_head` returns the full signed
-// `ak.schema.snapshot.v1` manifest. See `api::ArkretApi::snapshot_head`.
+// `ak.schema.snapshot.v1` manifest. See `api::TransportClient::snapshot_head`.
 
 pub use arkret_sdk::models::AuthzCheckOutcome;
 /// `ak.self.authz.invites` decodes into the SDK's authoritative

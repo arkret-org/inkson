@@ -279,14 +279,14 @@ pub fn land_opened_secret(
 /// Send `ak.secret.request` from the requesting (new) device to a sibling
 /// (existing) device. TTL 30m (well under the §7 24h cap).
 pub async fn send_request(
-    api: &crate::api::ArkretApi,
+    api: &crate::transport::TransportClient,
     requester: &SecretShareRequester,
     account_did: &str,
     target_existing_device_id: &str,
     requesting_device_id: &str,
 ) -> Result<()> {
     let content = build_request_content(requester, requesting_device_id)?;
-    crate::keys_api::send_device_message_envelope(
+    crate::transport::keys::send_device_message_envelope(
         &api.sdk_http_client()?,
         &format!("ak.secret.request:{}", requester.request_id),
         account_did,
@@ -310,7 +310,7 @@ pub async fn send_request(
 /// completed SAS transcript (device-lifecycle.md §10.7 anti-abuse) before
 /// invoking it.
 pub async fn respond_to_request(
-    api: &crate::api::ArkretApi,
+    api: &crate::transport::TransportClient,
     request: &ParsedSecretRequest,
     account_secret: &StoredAccountMlsSecret,
     account_did: &str,
@@ -324,7 +324,7 @@ pub async fn respond_to_request(
         self_device_id,
         &expires_at,
     )?;
-    crate::keys_api::send_device_message_envelope(
+    crate::transport::keys::send_device_message_envelope(
         &api.sdk_http_client()?,
         &format!("ak.secret.send:{}", request.request_id),
         account_did,

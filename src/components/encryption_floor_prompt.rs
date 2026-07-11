@@ -3,8 +3,8 @@ use std::collections::BTreeMap;
 use dioxus::prelude::*;
 use serde_json::Value;
 
-use crate::local_state::LocalStateStore;
 use crate::realm_tree::string_field;
+use crate::state::LocalStateStore;
 
 #[component]
 pub fn EncryptionFloorPrompt(

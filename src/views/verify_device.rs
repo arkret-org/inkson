@@ -4,10 +4,11 @@ use qrcode::{EcLevel, QrCode};
 
 use crate::cross_signing::{CrossSigningExecutor, CrossSigningSetupPlan};
 use crate::secure_key_store::default_secure_key_store;
+use crate::transport::auth::with_authed_api;
 use crate::ui::button::{Button, ButtonVariant};
 use crate::ui::input::Input;
 use crate::ui::label::Label;
-use crate::views::helpers::{short_protocol_id, with_authed_api};
+use crate::views::helpers::short_protocol_id;
 
 /// Render `payload` as an inline SVG QR code. Falls back to an empty
 /// string if encoding fails (oversize / invalid input); callers should
@@ -269,10 +270,11 @@ pub fn VerifyDevicePanel(
                     if api_token.trim().is_empty() {
                         continue;
                     }
-                    let messages = match crate::views::helpers::with_authed_api(
+                    let messages = match crate::transport::auth::with_endpoint_clients(
                         &base,
                         api_token.clone(),
-                        |api| async move { api.receive_device_messages().await },
+                        None,
+                        |clients| async move { clients.keys().receive_device_messages().await },
                     )
                     .await
                     {
@@ -304,10 +306,13 @@ pub fn VerifyDevicePanel(
                                 .to_owned(),
                         );
                         if can_ack_batch && let Some(ack_token) = ack_token {
-                            let _ = crate::views::helpers::with_authed_api(
+                            let _ = crate::transport::auth::with_endpoint_clients(
                                 &base,
                                 api_token,
-                                |api| async move { api.ack_device_messages(&ack_token).await },
+                                None,
+                                |clients| async move {
+                                    clients.keys().ack_device_messages(&ack_token).await
+                                },
                             )
                             .await;
                         }
@@ -529,11 +534,11 @@ pub fn VerifyDevicePanel(
                                                         return;
                                                     }
                                                 };
-                                                match crate::views::helpers::with_authed_sdk_client(
+                                                match crate::transport::auth::with_authed_sdk_client(
                                                     &base,
                                                     api_token,
                                                     |http| async move {
-                                                        crate::keys_api::send_device_message_envelope(
+                                                        crate::transport::keys::send_device_message_envelope(
                                                             &http,
                                                             "inkson-sas-key",
                                                             &account,

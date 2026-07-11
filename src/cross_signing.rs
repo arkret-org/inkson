@@ -31,7 +31,7 @@ use ed25519_dalek::{SECRET_KEY_LENGTH, Signer, SigningKey};
 use serde::{Deserialize, Serialize};
 use zeroize::Zeroizing;
 
-use crate::did_key::encode_ed25519_did_key_multibase;
+use crate::identity::did_key::encode_ed25519_did_key_multibase;
 use crate::operation::OperationBuilder;
 use crate::secure_key_store::{SecureKeyStore, SecureKeyStoreError};
 

@@ -318,7 +318,7 @@ pub fn DirectoryPanel(
                                 let requester = contact_requester_did();
                                 spawn(async move {
                                     match with_authed_sdk_client(&base, api_token, |http| async move {
-                                        crate::account_api::respond_contact(&http, &requester, "accept").await
+                                        crate::transport::account::respond_contact(&http, &requester, "accept").await
                                     })
                                     .await
                                     {
@@ -345,7 +345,7 @@ pub fn DirectoryPanel(
                                 let requester = contact_requester_did();
                                 spawn(async move {
                                     match with_authed_sdk_client(&base, api_token, |http| async move {
-                                        crate::account_api::respond_contact(&http, &requester, "reject").await
+                                        crate::transport::account::respond_contact(&http, &requester, "reject").await
                                     })
                                     .await
                                     {
@@ -371,7 +371,7 @@ pub fn DirectoryPanel(
                                 let base = base.clone();
                                 spawn(async move {
                                     match with_authed_sdk_client(&base, api_token, |http| async move {
-                                        crate::account_api::contacts(&http).await
+                                        crate::transport::account::contacts(&http).await
                                     })
                                     .await
                                     {
@@ -440,7 +440,7 @@ pub fn DirectoryPanel(
                                                 object_results.set(protocol_object_results(&q));
                                             }
                                                     DirectoryTab::Realms => {
-                                                        match crate::directory_api::search_realms(&http, &q, None).await {
+                                                        match crate::transport::directory::search_realms(&http, &q, None).await {
                                                     Ok(search) => {
                                                         pagination.write().realms_cursor = search.next_cursor.clone();
                                                         let results = search
@@ -458,7 +458,7 @@ pub fn DirectoryPanel(
                                                 }
                                             }
                                             DirectoryTab::Organizations => {
-                                                match crate::directory_api::search_organizations(&http, &q, None).await {
+                                                match crate::transport::directory::search_organizations(&http, &q, None).await {
                                                     Ok(search) => {
                                                         pagination.write().orgs_cursor = search.next_cursor.clone();
                                                         org_results.set(
@@ -477,7 +477,7 @@ pub fn DirectoryPanel(
                                                 }
                                             }
                                             DirectoryTab::Actors => {
-                                                match crate::directory_api::search_actors(&http, &q, None).await {
+                                                match crate::transport::directory::search_actors(&http, &q, None).await {
                                                     Ok(search) => {
                                                         pagination.write().actors_cursor = search.next_cursor.clone();
                                                         actor_results.set(
@@ -496,7 +496,7 @@ pub fn DirectoryPanel(
                                                 }
                                             }
                                             DirectoryTab::Handles => {
-                                                match crate::directory_api::resolve_handle(&http, &q).await {
+                                                match crate::transport::directory::resolve_handle(&http, &q).await {
                                                     Ok(resolved) => handle_result.set(Some(resolved)),
                                                     Err(error) => crate::components::feedback::toast_error(
                                                         "feedback.directory_resolve_failed",
@@ -534,7 +534,7 @@ pub fn DirectoryPanel(
                                                     object_results.set(protocol_object_results(&q));
                                                 }
                                                 DirectoryTab::Realms => {
-                                                    match crate::directory_api::search_realms(&http, &q, None).await {
+                                                    match crate::transport::directory::search_realms(&http, &q, None).await {
                                                         Ok(search) => {
                                                             pagination.write().realms_cursor = search.next_cursor.clone();
                                                             let results = search
@@ -552,7 +552,7 @@ pub fn DirectoryPanel(
                                                     }
                                                 }
                                                 DirectoryTab::Organizations => {
-                                                    match crate::directory_api::search_organizations(&http, &q, None).await {
+                                                    match crate::transport::directory::search_organizations(&http, &q, None).await {
                                                         Ok(search) => {
                                                             pagination.write().orgs_cursor = search.next_cursor.clone();
                                                             org_results.set(
@@ -571,7 +571,7 @@ pub fn DirectoryPanel(
                                                     }
                                                 }
                                                 DirectoryTab::Actors => {
-                                                    match crate::directory_api::search_actors(&http, &q, None).await {
+                                                    match crate::transport::directory::search_actors(&http, &q, None).await {
                                                         Ok(search) => {
                                                             pagination.write().actors_cursor = search.next_cursor.clone();
                                                             actor_results.set(
@@ -590,7 +590,7 @@ pub fn DirectoryPanel(
                                                     }
                                                 }
                                                 DirectoryTab::Handles => {
-                                                    match crate::directory_api::resolve_handle(&http, &q).await {
+                                                    match crate::transport::directory::resolve_handle(&http, &q).await {
                                                         Ok(resolved) => handle_result.set(Some(resolved)),
                                                         Err(error) => crate::components::feedback::toast_error(
                                                             "feedback.directory_resolve_failed",
@@ -620,7 +620,7 @@ pub fn DirectoryPanel(
                                         let api_token = token();
                                         spawn(async move {
                                             match with_authed_sdk_client(&base, api_token, |http| async move {
-                                                crate::directory_api::resolve_realm(&http, &id).await
+                                                crate::transport::directory::resolve_realm(&http, &id).await
                                             })
                                             .await
                                             {
@@ -704,7 +704,7 @@ pub fn DirectoryPanel(
                                     let address = opened.resolve_address();
                                     let token_arg = opened.token.clone();
                                     let resolved = with_authed_sdk_client(&base, api_token, |http| async move {
-                                        crate::directory_api::directory_resolve_target(&http, &address, token_arg.as_deref())
+                                        crate::transport::directory::directory_resolve_target(&http, &address, token_arg.as_deref())
                                             .await
                                     })
                                     .await;
@@ -824,7 +824,7 @@ pub fn DirectoryPanel(
                                             pagination.write().loading_more = true;
                                             spawn(async move {
                                                 match with_authed_sdk_client(&base, api_token, |http| async move {
-                                                    crate::directory_api::search_realms(&http, &q, cursor.as_deref()).await
+                                                    crate::transport::directory::search_realms(&http, &q, cursor.as_deref()).await
                                                 })
                                                 .await
                                                 {
@@ -1003,7 +1003,7 @@ pub fn DirectoryPanel(
                                         pagination.write().loading_more = true;
                                         spawn(async move {
                                             match with_authed_sdk_client(&base, api_token, |http| async move {
-                                                crate::directory_api::search_organizations(&http, &q, cursor.as_deref()).await
+                                                crate::transport::directory::search_organizations(&http, &q, cursor.as_deref()).await
                                             })
                                             .await
                                             {
@@ -1188,7 +1188,7 @@ pub fn DirectoryPanel(
                                         pagination.write().loading_more = true;
                                         spawn(async move {
                                             match with_authed_sdk_client(&base, api_token, |http| async move {
-                                                crate::directory_api::search_actors(&http, &q, cursor.as_deref()).await
+                                                crate::transport::directory::search_actors(&http, &q, cursor.as_deref()).await
                                             })
                                             .await
                                             {

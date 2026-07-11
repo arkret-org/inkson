@@ -10,11 +10,11 @@ mod tests {
         raw_notifications_from_sources, read_cursor_targets, realm_is_muted,
         realm_title_hints_from_values,
     };
-    use crate::local_state::{
+    use crate::notification_rules::WatchLevel;
+    use crate::state::{
         ClientLocalState, NotificationClientState, ReadCursorPosition, ReadMarkerBody,
         ReadMarkerRecord, read_scope_for_cursor,
     };
-    use crate::notification_rules::WatchLevel;
 
     #[test]
     fn hydrate_notifications_applies_push_rules_and_dnd() {

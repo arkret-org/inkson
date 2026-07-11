@@ -114,7 +114,7 @@ pub struct ReadMarker {
 }
 
 /// Isomorphic and pending merge (05-5): fields match
-/// `local_state::ReadScope`; this should later converge to a single
+/// `state::ReadScope`; this should later converge to a single
 /// read_scope type.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]

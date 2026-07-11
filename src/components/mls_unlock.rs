@@ -7,10 +7,10 @@ use dioxus_router::Link;
 use super::UiIcon;
 use crate::recovery_crypto::normalize_recovery_key_input;
 use crate::routes::Route;
+use crate::transport::auth::{ApiCallError, with_authed_api};
 use crate::ui::button::{Button, ButtonSize, ButtonVariant};
 use crate::ui::dialog::Dialog;
 use crate::ui::input::Input;
-use crate::views::helpers::{ApiCallError, with_authed_api};
 
 const MLS_UNLOCK_FETCH_TIMEOUT: Duration = Duration::from_secs(20);
 

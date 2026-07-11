@@ -4,7 +4,7 @@
 //! `crypto-media/encryption-and-audit.md` §2.10.8.
 //!
 //! Writes the policy through `ak.realm.policy_components`
-//! ([`crate::api::ArkretApi::set_realm_durability_policy`]) — there is no
+//! ([`crate::transport::TransportClient::set_realm_durability_policy`]) — there is no
 //! dedicated event kind. Changing the policy is a control-plane Move; the new
 //! sealing obligation only takes effect once a following `ak.mls.commit` covers
 //! the membership frontier, which also triggers re-disclosure. The editor
@@ -18,8 +18,8 @@ use dioxus::prelude::*;
 use serde_json::Value;
 
 use crate::i18n::tr;
-use crate::local_state::LocalStateStore;
-use crate::views::helpers::with_event_submitter;
+use crate::state::LocalStateStore;
+use crate::transport::auth::with_event_submitter;
 
 /// Structured validation error from the form helpers. Carries the i18n key
 /// plus placeholder substitutions; translation happens at the render site so
@@ -362,7 +362,7 @@ pub fn DurabilityPolicyEditor(
                         };
                         status.set(tr("realm_admin.durability_submitting"));
                         let result = with_event_submitter(&base, session, |sub| async move {
-                            crate::realm_write_api::set_realm_durability_policy(&sub, &realm_id, &actor_id, &policy, revision)
+                            crate::transport::realm_write::set_realm_durability_policy(&sub, &realm_id, &actor_id, &policy, revision)
                                 .await
                         })
                         .await;

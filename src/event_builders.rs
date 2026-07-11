@@ -1044,7 +1044,7 @@ fn space_cell(cell_family: &str, space_id: &str) -> String {
 /// as `type`, so soland had to fall back to defaults.
 ///
 /// Pure function so the wire shape is testable without a live HTTP
-/// client; used by [`ArkretApi::send_device_message_envelope`] (R3).
+/// client; used by [`TransportClient::send_device_message_envelope`] (R3).
 pub fn build_device_message_envelope(
     target_actor: &str,
     target_device_id: &str,

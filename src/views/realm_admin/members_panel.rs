@@ -8,9 +8,9 @@ use serde_json::{Value, json};
 
 use super::capabilities::{RealmMemberCapabilities, authz_json_allowed};
 use crate::components::SelfAttributionBadge;
-use crate::local_state::{LocalStateStore, MoveSubmissionState, RawOperationRecord};
 use crate::operation::ak_ops;
 use crate::routes::Route;
+use crate::state::{LocalStateStore, MoveSubmissionState, RawOperationRecord};
 use crate::ui::button::{Button, ButtonSize, ButtonVariant};
 use crate::ui::checkbox::Checkbox;
 use crate::ui::input::Input;
@@ -354,7 +354,7 @@ fn normalize_handle_label(raw: &str) -> Option<String> {
     if raw.is_empty() {
         return None;
     }
-    crate::identity_handle::parse_user_handle(raw)
+    crate::identity::handle::parse_user_handle(raw)
         .map(|handle| handle.display)
         .or_else(|| Some(raw.to_owned()))
 }
@@ -1266,11 +1266,11 @@ fn MemberRowActions(
                             }
                             spawn(async move {
                                 let realm_for_msg = realm.clone();
-                                match crate::views::helpers::with_event_submitter(
+                                match crate::transport::auth::with_event_submitter(
                                     &base,
                                     api_token,
                                     |sub| async move {
-                                        crate::realm_write_api::leave_realm(&sub, &realm, &actor_id).await
+                                        crate::transport::realm_write::leave_realm(&sub, &realm, &actor_id).await
                                     },
                                 )
                                 .await
@@ -1310,11 +1310,11 @@ fn MemberRowActions(
                             let actor_id = actor_account_did.clone();
                             spawn(async move {
                                 let realm_for_api = realm.clone();
-                                match crate::views::helpers::with_event_submitter(
+                                match crate::transport::auth::with_event_submitter(
                                     &base,
                                     api_token,
                                     |sub| async move {
-                                        crate::realm_write_api::transition_member_state(
+                                        crate::transport::realm_write::transition_member_state(
                                             &sub,
                                             &realm_for_api,
                                             &actor_id,
@@ -1381,11 +1381,11 @@ fn MemberRowActions(
                             let actor_id = actor_account_did.clone();
                             spawn(async move {
                                 let realm_for_api = realm.clone();
-                                match crate::views::helpers::with_event_submitter(
+                                match crate::transport::auth::with_event_submitter(
                                     &base,
                                     api_token,
                                     |sub| async move {
-                                        crate::realm_write_api::ban_member(&sub, &realm_for_api, &actor_id, &target).await
+                                        crate::transport::realm_write::ban_member(&sub, &realm_for_api, &actor_id, &target).await
                                     },
                                 )
                                 .await
@@ -1630,11 +1630,11 @@ fn PendingInviteRow(
                                 spawn(async move {
                                     let request_realm = realm.clone();
                                     let request_invite_id = invite_id.clone();
-                                    match crate::views::helpers::with_event_submitter(
+                                    match crate::transport::auth::with_event_submitter(
                                         &base,
                                         api_token,
                                         |sub| async move {
-                                            crate::realm_write_api::reject_realm_invite(
+                                            crate::transport::realm_write::reject_realm_invite(
                                                 &sub,
                                                 &request_realm,
                                                 &actor,
@@ -1684,7 +1684,7 @@ fn PendingInviteRow(
 }
 
 pub(crate) async fn submit_mls_admission_for_invitee(
-    api: &crate::api::ArkretApi,
+    api: &crate::transport::TransportClient,
     mut state_store: SyncSignal<LocalStateStore>,
     realm_id: String,
     actor_id: String,
@@ -1721,8 +1721,10 @@ pub(crate) async fn submit_mls_admission_for_invitee(
     )
     .await?;
     let claim_nonce = crate::mls_api_helpers::generate_mls_claim_nonce()?;
-    let claim_outcome = api
-        .claim_mls_key_package(
+    let mls_clients = crate::transport::EndpointClients::from_http(api.sdk_http_client()?);
+    let claim_outcome = mls_clients
+        .mls()
+        .claim_key_package(
             &invitee_did,
             &realm_id,
             &actor_id,
@@ -2021,7 +2023,7 @@ pub(crate) fn realm_history_share_source_authorization_ref(
 /// `ak.realm_key.request` to-device envelope; `realm_id`/`actor_id`/`device_id`
 /// are the provider's.
 pub(crate) async fn share_history_to_requester(
-    api: &crate::api::ArkretApi,
+    api: &crate::transport::TransportClient,
     mut state_store: SyncSignal<LocalStateStore>,
     realm_id: String,
     actor_id: String,
@@ -2152,7 +2154,7 @@ pub(crate) async fn share_history_to_requester(
 /// non-fatal failure is logged, never surfaced as a hard error (the commit
 /// itself already landed).
 pub(crate) async fn seal_history_to_recovery_recipients(
-    api: &crate::api::ArkretApi,
+    api: &crate::transport::TransportClient,
     mut state_store: SyncSignal<LocalStateStore>,
     realm_id: String,
     actor_id: String,
@@ -2202,9 +2204,11 @@ pub(crate) async fn seal_history_to_recovery_recipients(
     // keyAgreement) so the SDK authority can verify the active RRK service entry.
     let mut did_documents: BTreeMap<String, Value> = BTreeMap::new();
     for recipient in &policy.recovery_recipients {
-        if let Some(document) =
-            crate::did_resolver::fetch_raw_did_document_json(&api.http, &recipient.principal_id)
-                .await
+        if let Some(document) = crate::identity::did_resolver::fetch_raw_did_document_json(
+            &api.http,
+            &recipient.principal_id,
+        )
+        .await
         {
             did_documents.insert(recipient.recipient_id.clone(), document);
         }
@@ -2513,7 +2517,7 @@ pub(crate) fn history_key_request_diagnostics(
 /// caller can record it for dedup), or `None` when nothing was requested (not
 /// encrypted / no snapshot / visibility forbids / no gap / no provider).
 pub(crate) async fn request_history_keys_for_realm(
-    api: &crate::api::ArkretApi,
+    api: &crate::transport::TransportClient,
     state_store: SyncSignal<LocalStateStore>,
     realm_id: String,
     actor_id: String,
@@ -2572,7 +2576,7 @@ pub(crate) async fn request_history_keys_for_realm(
     )
     .map_err(|err| anyhow::anyhow!("load device HPKE keypair for history request: {err}"))?;
     let recipient_hpke_public_key = arkret_sdk::base64url_encode(&pubkey);
-    crate::keys_api::submit_realm_key_request(
+    crate::transport::keys::submit_realm_key_request(
         &api.sdk_http_client()?,
         &realm_id,
         &actor_id,
@@ -2709,7 +2713,7 @@ pub(crate) fn mls_admission_candidate_realms_for_actor(
 ///
 /// Returns the number of members newly admitted on this pass.
 pub(crate) async fn reconcile_mls_admissions_for_realm(
-    api: &crate::api::ArkretApi,
+    api: &crate::transport::TransportClient,
     state_store: SyncSignal<LocalStateStore>,
     realm_id: String,
     actor_id: String,
@@ -2823,7 +2827,7 @@ pub(crate) async fn reconcile_mls_admissions_for_realm(
 }
 
 pub(crate) async fn submit_mls_admission_for_invitees(
-    api: &crate::api::ArkretApi,
+    api: &crate::transport::TransportClient,
     mut state_store: SyncSignal<LocalStateStore>,
     realm_id: String,
     actor_id: String,
@@ -2864,10 +2868,12 @@ pub(crate) async fn submit_mls_admission_for_invitees(
     .await?;
 
     let mut claims = Vec::<(arkret_sdk::KeyPackageClaimRecord, String)>::new();
+    let mls_clients = crate::transport::EndpointClients::from_http(api.sdk_http_client()?);
     for invitee_did in invitees {
         let claim_nonce = crate::mls_api_helpers::generate_mls_claim_nonce()?;
-        let claim_outcome = api
-            .claim_mls_key_package(
+        let claim_outcome = mls_clients
+            .mls()
+            .claim_key_package(
                 &invitee_did,
                 &realm_id,
                 &actor_id,
@@ -2938,7 +2944,7 @@ fn mls_group_state_event_ref_ready(store: &LocalStateStore, realm_id: &str) -> b
 }
 
 async fn ensure_mls_genesis_frontier_for_invite(
-    api: &crate::api::ArkretApi,
+    api: &crate::transport::TransportClient,
     mut state_store: SyncSignal<LocalStateStore>,
     secure_store: &dyn crate::secure_key_store::SecureKeyStore,
     realm_id: &str,
@@ -3081,10 +3087,10 @@ pub fn RealmMembersPanel(
             let base = base.clone();
             invite_contacts_status.set(crate::i18n::tr("realm_admin.invite_loading_contacts"));
             spawn(async move {
-                match crate::views::helpers::with_authed_sdk_client(
+                match crate::transport::auth::with_authed_sdk_client(
                     &base,
                     api_token,
-                    |http| async move { crate::account_api::contacts(&http).await },
+                    |http| async move { crate::transport::account::contacts(&http).await },
                 )
                 .await
                 {
@@ -3138,7 +3144,7 @@ pub fn RealmMembersPanel(
             let realm = realm.clone();
             let fallback_controller_did = fallback_controller_did.clone();
             spawn(async move {
-                let result = crate::views::helpers::with_authed_sdk_client(
+                let result = crate::transport::auth::with_authed_sdk_client(
                     &base,
                     api_token,
                     |http| async move {
@@ -3174,7 +3180,7 @@ pub fn RealmMembersPanel(
                 match authed_api_with_sync(&base, api_token, None) {
                     Ok(api) => {
                         let invite = async {
-                            crate::realm_read_api::authz_check_raw(
+                            crate::transport::realm_read::authz_check_raw(
                                 &api.sdk_http_client()?,
                                 &actor,
                                 "ak.invite.create",
@@ -3184,7 +3190,7 @@ pub fn RealmMembersPanel(
                         }
                         .await;
                         let cancel_invite = async {
-                            crate::realm_read_api::authz_check_raw(
+                            crate::transport::realm_read::authz_check_raw(
                                 &api.sdk_http_client()?,
                                 &actor,
                                 "ak.invite.cancel",
@@ -3202,7 +3208,7 @@ pub fn RealmMembersPanel(
                         // an unknown high-risk action (fail-closed) by a
                         // spec-conformant server.
                         let remove = async {
-                            crate::realm_read_api::authz_check_raw(
+                            crate::transport::realm_read::authz_check_raw(
                                 &api.sdk_http_client()?,
                                 &actor,
                                 "ak.realm.admin",
@@ -3477,7 +3483,7 @@ pub fn RealmMembersPanel(
                                                                 .replace("{total}", &total.to_string()),
                                                         );
                                                         spawn(async move {
-                                                            let api = match crate::views::helpers::authed_api(&base, api_token) {
+                                                            let api = match crate::transport::auth::authed_api(&base, api_token) {
                                                                 Ok(api) => api,
                                                                 Err(err) => {
                                                                     status_msg.set(
@@ -4159,11 +4165,11 @@ pub fn RealmMembersPanel(
                                                                                             let api_token = token();
                                                                                             spawn(async move {
                                                                                                 let realm_for_api = realm.clone();
-                                                                                                match crate::views::helpers::with_event_submitter(
+                                                                                                match crate::transport::auth::with_event_submitter(
                                                                                                     &base,
                                                                                                     api_token,
                                                                                                     |sub| async move {
-                                                                                                        crate::realm_write_api::transition_member_state(
+                                                                                                        crate::transport::realm_write::transition_member_state(
                                                                                                             &sub,
                                                                                                             &realm_for_api,
                                                                                                             &actor_id,
@@ -4248,7 +4254,7 @@ pub fn RealmMembersPanel(
                                                                                                     act_on_behalf: previous.act_on_behalf,
                                                                                                 },
                                                                                             };
-                                                                                            match crate::views::helpers::with_authed_sdk_client(&base, api_token, |http| {
+                                                                                            match crate::transport::auth::with_authed_sdk_client(&base, api_token, |http| {
                                                                                                 let body = body.clone();
                                                                                                 let agent_id = agent_id.clone();
                                                                                                 async move { http.agent_participation_replace(&agent_id, &body).await.map_err(anyhow::Error::from) }

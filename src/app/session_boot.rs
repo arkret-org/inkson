@@ -6,7 +6,10 @@ pub(super) fn session_grant_boot_usable(
     now_unix: i64,
 ) -> bool {
     if grant.grant_jwt.trim().is_empty()
-        || !crate::session_refresh::grant_matches_principal_server(grant, principal_server_url)
+        || !crate::identity::session_refresh::grant_matches_principal_server(
+            grant,
+            principal_server_url,
+        )
     {
         return false;
     }
@@ -208,7 +211,7 @@ pub(super) fn inject_test_session_grant(
         .unwrap_or_default()
         .to_owned();
 
-    let record = match crate::account_auth::grant_dpop::dpop_device_key_record_from_seed(
+    let record = match crate::identity::account_auth::grant_dpop::dpop_device_key_record_from_seed(
         &dpop_seed_b64url,
     ) {
         Ok(record) => record,

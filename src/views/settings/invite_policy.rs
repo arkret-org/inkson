@@ -36,12 +36,13 @@ use crate::models::{
     DisclosureLevel, INVITE_RECEIVE_POLICY_SCHEMA, InviteDisclosurePolicy, InviteReceiveAction,
     InviteReceivePolicy, default_invite_receive_policy,
 };
+use crate::transport::auth::{with_authed_api, with_authed_sdk_client};
 use crate::ui::button::{Button, ButtonVariant};
 use crate::ui::checkbox::Checkbox;
 use crate::ui::label::Label;
 use crate::ui::select::{Select, SelectOption};
 use crate::ui::switch::Switch;
-use crate::views::helpers::{short_protocol_id, with_authed_api, with_authed_sdk_client};
+use crate::views::helpers::short_protocol_id;
 
 /// Introduction-evidence kinds offered in the UI, paired with the i18n key for
 /// their natural-language label (looked up via the active locale).
@@ -180,9 +181,10 @@ pub fn InvitePolicySettingsCard(token: Signal<String>, account_did: Signal<Strin
                         .await
                         .ok()
                         .and_then(|description| description.receive_policy_constraints);
-                    let policy =
-                        crate::account_api::get_invite_receive_policy(&api.sdk_http_client()?)
-                            .await?;
+                    let policy = crate::transport::account::get_invite_receive_policy(
+                        &api.sdk_http_client()?,
+                    )
+                    .await?;
                     Ok((policy, constraints))
                 })
                 .await
@@ -462,7 +464,7 @@ pub fn InvitePolicySettingsCard(token: Signal<String>, account_did: Signal<Strin
                         status.set(tr("invite_policy.saving"));
                         spawn(async move {
                             match with_authed_sdk_client(&base, api_token, |http| async move {
-                                crate::account_api::set_invite_receive_policy(&http, &to_save).await
+                                crate::transport::account::set_invite_receive_policy(&http, &to_save).await
                             })
                             .await
                             {

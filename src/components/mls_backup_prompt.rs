@@ -8,15 +8,15 @@ pub(crate) use yoface::utils::dom::copy_text_to_clipboard;
 use crate::components::backup_job_scheduler::{
     BackupJob, BackupJobScheduler, BackupSchedulerConfig,
 };
-use crate::local_state::LocalStateStore;
 use crate::recovery_crypto::{
     generate_recovery_key, normalize_recovery_key_input, recovery_key_confirmation_matches,
 };
+use crate::state::LocalStateStore;
+use crate::transport::auth::with_authed_api;
 use crate::ui::button::{Button, ButtonVariant};
 use crate::ui::dialog::Dialog;
 use crate::ui::label::Label;
 use crate::ui::textarea::Textarea;
-use crate::views::helpers::with_authed_api;
 
 const MLS_RECOVERY_BACKUP_STATE_KEY: &str = "mls.recovery_backup.v1";
 const MLS_PRIVATE_PLAINTEXT_BACKUP_DEBOUNCE: Duration = Duration::from_millis(1500);
@@ -98,7 +98,7 @@ pub(crate) fn recovery_localpart_from_handles(handles: &[String]) -> String {
     handles
         .iter()
         .find_map(|handle| {
-            crate::identity_handle::parse_user_handle(handle).map(|parsed| parsed.localpart)
+            crate::identity::handle::parse_user_handle(handle).map(|parsed| parsed.localpart)
         })
         .unwrap_or_default()
 }

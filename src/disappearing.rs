@@ -43,7 +43,7 @@ fn encrypted_payload_digest(event: &Value) -> Option<String> {
 }
 
 pub fn shred_expired_message_plaintext_from_sync_realms(
-    store: &mut crate::local_state::LocalStateStore,
+    store: &mut crate::state::LocalStateStore,
     realms: &BTreeMap<String, Value>,
 ) -> usize {
     let mut dropped = 0usize;
@@ -117,7 +117,7 @@ mod tests {
         let realm = "ak:realm:019e4fd4-4e26-7cc9-af7e-d7102d6f4a22";
         let strand = "ak:strand:019e4fd4-4e26-7cc9-af7e-d7102d6f4a22";
         let message = "ak:message:019e4fd4-4e26-7cc9-af7e-d7102d6f4a24";
-        let mut store = crate::local_state::LocalStateStore::with_path(path);
+        let mut store = crate::state::LocalStateStore::with_path(path);
         store.save_private_plaintext(realm, strand, &format!("message:{message}"), "secret body");
         let realms = BTreeMap::from([(
             realm.to_owned(),

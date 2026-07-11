@@ -7,15 +7,15 @@
 //! … lives in realm_admin once wired"). It is mounted as the RealmAdmin
 //! `Moderation` section and drives the already-ready P3 API:
 //!
-//!   * [`crate::api::ArkretApi::moderation_decide`] — seal a new decision.
-//!   * [`crate::api::ArkretApi::moderation_lift`] — lift a standing decision.
-//!   * [`crate::api::ArkretApi::appeal_review`] — take an appeal under review.
-//!   * [`crate::api::ArkretApi::appeal_decide`] — `uphold` (no side events).
-//!   * [`crate::api::ArkretApi::appeal_overturn_atomic`] — `overturn` + matching lift in one batch
-//!     (§5.5.1.1 atomicity MUST).
-//!   * [`crate::api::ArkretApi::appeal_modify_atomic`] — `modify` + replacement decision in one
-//!     batch (§5.5.1.1 atomicity MUST).
-//!   * [`crate::api::ArkretApi::appeal_close`] — terminal close.
+//!   * [`crate::transport::TransportClient::moderation_decide`] — seal a new decision.
+//!   * [`crate::transport::TransportClient::moderation_lift`] — lift a standing decision.
+//!   * [`crate::transport::TransportClient::appeal_review`] — take an appeal under review.
+//!   * [`crate::transport::TransportClient::appeal_decide`] — `uphold` (no side events).
+//!   * [`crate::transport::TransportClient::appeal_overturn_atomic`] — `overturn` + matching lift
+//!     in one batch (§5.5.1.1 atomicity MUST).
+//!   * [`crate::transport::TransportClient::appeal_modify_atomic`] — `modify` + replacement
+//!     decision in one batch (§5.5.1.1 atomicity MUST).
+//!   * [`crate::transport::TransportClient::appeal_close`] — terminal close.
 //!
 //! The work queues (standing decisions + open appeals) are projected from the
 //! local raw-operation log, exactly like [`crate::views::applets`] does for the
@@ -24,10 +24,11 @@
 use dioxus::prelude::*;
 use serde_json::Value;
 
+use crate::transport::auth::with_event_submitter;
 use crate::ui::button::{Button, ButtonVariant};
 use crate::ui::input::Input;
 use crate::ui::textarea::Textarea;
-use crate::views::helpers::{short_protocol_id, with_event_submitter};
+use crate::views::helpers::short_protocol_id;
 
 /// `governance/content-moderation.md` §5.5.1.1 — the closed `verdict` enum for
 /// `ak.moderation.appeal.decision`. Authoritative set, drives both the UI
@@ -245,7 +246,7 @@ pub fn ModerationWorkbench(
                                     let api_token = token();
                                     spawn(async move {
                                         match with_event_submitter(&base, api_token, |sub| async move {
-                                            crate::realm_write_api::moderation_decide(
+                                            crate::transport::realm_write::moderation_decide(
                                                 &sub, &realm, &actor, &target, &verdict, &reason,
                                             )
                                             .await
@@ -317,7 +318,7 @@ pub fn ModerationWorkbench(
                                                 let api_token = token();
                                                 spawn(async move {
                                                     match with_event_submitter(&base, api_token, |sub| async move {
-                                                        crate::realm_write_api::moderation_lift(
+                                                        crate::transport::realm_write::moderation_lift(
                                                             &sub, &realm, &actor, &target_ref, &decision_ref, "reviewer_lift",
                                                         )
                                                         .await
@@ -425,7 +426,7 @@ fn AppealReviewRow(
                                 let api_token = token();
                                 spawn(async move {
                                     match with_event_submitter(&base, api_token, |sub| async move {
-                                        crate::realm_write_api::appeal_review(&sub, &realm, &actor, &appeal_id, None).await
+                                        crate::transport::realm_write::appeal_review(&sub, &realm, &actor, &appeal_id, None).await
                                     })
                                     .await
                                     {
@@ -486,7 +487,7 @@ fn AppealReviewRow(
                                         // §5.5.1.1 overturn — appeal-decision +
                                         // matching lift MUST ride one batch.
                                         "overturn" => with_event_submitter(&base, api_token, |sub| async move {
-                                            crate::realm_write_api::appeal_overturn_atomic(
+                                            crate::transport::realm_write::appeal_overturn_atomic(
                                                 &sub, &realm, &actor, &appeal_id, &target_ref, &decision_ref,
                                                 &reason_text, "appeal_overturn",
                                             )
@@ -497,7 +498,7 @@ fn AppealReviewRow(
                                         // §5.5.1.1 modify — appeal-decision +
                                         // replacement decision MUST ride one batch.
                                         "modify" => with_event_submitter(&base, api_token, |sub| async move {
-                                            crate::realm_write_api::appeal_modify_atomic(
+                                            crate::transport::realm_write::appeal_modify_atomic(
                                                 &sub, &realm, &actor, &appeal_id, &target_ref,
                                                 "require_review", "appeal_modify", &reason_text,
                                             )
@@ -509,7 +510,7 @@ fn AppealReviewRow(
                                         .await,
                                         // uphold — no side events.
                                         _ => with_event_submitter(&base, api_token, |sub| async move {
-                                            crate::realm_write_api::appeal_decide(
+                                            crate::transport::realm_write::appeal_decide(
                                                 &sub, &realm, &actor, &appeal_id, "uphold", &reason_text, None,
                                             )
                                             .await
@@ -544,7 +545,7 @@ fn AppealReviewRow(
                                 let api_token = token();
                                 spawn(async move {
                                     match with_event_submitter(&base, api_token, |sub| async move {
-                                        crate::realm_write_api::appeal_close(
+                                        crate::transport::realm_write::appeal_close(
                                             &sub, &realm, &actor, &appeal_id, Some("reviewer_close"),
                                         )
                                         .await

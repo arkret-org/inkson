@@ -27,7 +27,7 @@ pub fn build_mls_history_backup_body(
 }
 
 pub async fn upload_mls_snapshot_backup(
-    api: &crate::api::ArkretApi,
+    api: &crate::transport::TransportClient,
     snapshot: &crate::mls::persistence::MlsSnapshotEnvelope,
     actor_id: &str,
     device_id: &str,
@@ -76,10 +76,7 @@ pub fn decode_mls_history_backup_envelope(
     Ok(envelope)
 }
 
-pub fn mls_restore_epoch_floor(
-    state_store: &crate::local_state::LocalStateStore,
-    realm_id: &str,
-) -> u64 {
+pub fn mls_restore_epoch_floor(state_store: &crate::state::LocalStateStore, realm_id: &str) -> u64 {
     let seal_epoch = seal_view_epoch_floor(state_store, realm_id);
     let local_epoch = state_store
         .mls_snapshot_for(realm_id)
@@ -101,10 +98,7 @@ pub fn mls_restore_epoch_floor(
 /// behind the Seal lattice (`persistence.rs` anti-stale-fork design, §2.9).
 /// When no Seal view is known yet (`None`) the floor is `0` (no check), matching
 /// the first-boot rehydrate semantics.
-pub fn seal_view_epoch_floor(
-    state_store: &crate::local_state::LocalStateStore,
-    realm_id: &str,
-) -> u64 {
+pub fn seal_view_epoch_floor(state_store: &crate::state::LocalStateStore, realm_id: &str) -> u64 {
     state_store
         .seal_view_for_realm(realm_id)
         .mls_epoch
@@ -112,7 +106,7 @@ pub fn seal_view_epoch_floor(
 }
 
 pub fn restore_mls_history_backup_with_device_snapshot(
-    state_store: &mut crate::local_state::LocalStateStore,
+    state_store: &mut crate::state::LocalStateStore,
     secure_store: &dyn SecureKeyStore,
     actor_id: &str,
     device_id: &str,

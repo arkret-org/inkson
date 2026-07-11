@@ -163,11 +163,11 @@ pub(super) fn RealmsManagePage(
                                             for realm_id in selected {
                                                 let realm_for_api = realm_id.clone();
                                                 let actor_for_api = actor_id.clone();
-                                                match crate::views::helpers::with_event_submitter(
+                                                match crate::transport::auth::with_event_submitter(
                                                     &base,
                                                     api_token.clone(),
                                                     |sub| async move {
-                                                        crate::realm_write_api::leave_realm(&sub, &realm_for_api, &actor_for_api).await
+                                                        crate::transport::realm_write::leave_realm(&sub, &realm_for_api, &actor_for_api).await
                                                     },
                                                 )
                                                 .await
@@ -431,11 +431,11 @@ pub(super) fn ContactsManagePage(
                                             let mut failed = Vec::<String>::new();
                                             for peer in selected {
                                                 let peer_for_api = peer.clone();
-                                                match crate::views::helpers::with_authed_sdk_client(
+                                                match crate::transport::auth::with_authed_sdk_client(
                                                     &base,
                                                     api_token.clone(),
                                                     |http| async move {
-                                                        crate::account_api::tombstone_contact(&http, &peer_for_api, false).await
+                                                        crate::transport::account::tombstone_contact(&http, &peer_for_api, false).await
                                                     },
                                                 )
                                                 .await
@@ -460,11 +460,11 @@ pub(super) fn ContactsManagePage(
                                                     next_selection.remove(peer);
                                                 }
                                                 selection.set(next_selection);
-                                                match crate::views::helpers::with_authed_sdk_client(
+                                                match crate::transport::auth::with_authed_sdk_client(
                                                     &base,
                                                     api_token.clone(),
                                                     |http| async move {
-                                                        crate::account_api::contacts(&http).await
+                                                        crate::transport::account::contacts(&http).await
                                                     },
                                                 )
                                                 .await

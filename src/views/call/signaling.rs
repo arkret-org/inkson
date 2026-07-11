@@ -4,8 +4,8 @@ use serde_json::json;
 use super::media::media_error_label;
 use super::types::{CallParticipant, CallStage, SharedTransport};
 use crate::rtc_transport::LocalSignal;
+use crate::transport::auth::with_event_submitter;
 use crate::views::call_signals::CallSignalInboxItem;
-use crate::views::helpers::with_event_submitter;
 
 /// Drain and relay any local SDP/ICE signaling produced by the transport.
 pub(super) async fn relay_local_signals(
@@ -404,7 +404,7 @@ pub(super) async fn emit_signal(
         signal_type.to_owned(),
     );
     with_event_submitter(base, api_token.to_owned(), |sub| async move {
-        crate::media_api::submit_call_signal_v1(
+        crate::transport::media::submit_call_signal_v1(
             &sub,
             &realm_id,
             &actor,

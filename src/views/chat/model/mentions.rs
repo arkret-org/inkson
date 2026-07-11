@@ -54,7 +54,7 @@ pub(crate) fn local_server_domain(base_url: &str) -> Option<String> {
 }
 
 pub(crate) fn handle_domain(label: &str) -> Option<String> {
-    crate::identity_handle::parse_user_handle(label).map(|handle| handle.domain)
+    crate::identity::handle::parse_user_handle(label).map(|handle| handle.domain)
 }
 
 pub(crate) fn is_local_handle_label(label: &str, base_url: &str) -> bool {

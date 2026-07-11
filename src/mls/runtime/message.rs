@@ -61,7 +61,7 @@ pub fn history_content_aad_bytes(realm_id: &str, epoch: u64) -> Vec<u8> {
 /// so both the canonical kebab token and a `mls_exporter_aead_v1` spelling
 /// match. See [[content-scheme-capability-vs-toggle]].
 fn realm_content_scheme_is_exporter_aead(
-    state_store: &crate::local_state::LocalStateStore,
+    state_store: &crate::state::LocalStateStore,
     realm_id: &str,
 ) -> bool {
     state_store
@@ -71,7 +71,7 @@ fn realm_content_scheme_is_exporter_aead(
 }
 
 pub fn decrypt_application_payload(
-    state_store: &crate::local_state::LocalStateStore,
+    state_store: &crate::state::LocalStateStore,
     secure_store: &dyn SecureKeyStore,
     realm_id: &str,
     actor_id: &str,
@@ -173,7 +173,7 @@ pub fn decrypt_application_payload(
 /// (event log) duty.
 #[allow(clippy::too_many_arguments)]
 pub fn minimal_metadata_author_view(
-    state_store: &crate::local_state::LocalStateStore,
+    state_store: &crate::state::LocalStateStore,
     secure_store: &dyn SecureKeyStore,
     realm_id: &str,
     actor_id: &str,
@@ -210,7 +210,7 @@ pub fn minimal_metadata_author_view(
 /// for the Realm (e.g. a member granted history before processing its own
 /// Welcome) can still read pre-join content.
 fn try_history_decrypt_standalone(
-    state_store: &crate::local_state::LocalStateStore,
+    state_store: &crate::state::LocalStateStore,
     realm_id: &str,
     payload: &arkret_sdk::EncryptedPayload,
 ) -> Option<Vec<u8>> {
@@ -252,7 +252,7 @@ fn try_history_decrypt_standalone(
 /// survive an app restart (OpenMLS could not re-derive it once the group has
 /// advanced past that epoch).
 pub fn derive_and_retain_realm_history_secret(
-    state_store: &mut crate::local_state::LocalStateStore,
+    state_store: &mut crate::state::LocalStateStore,
     secure_store: &dyn SecureKeyStore,
     realm_id: &str,
     actor_id: &str,
@@ -412,7 +412,7 @@ pub fn collect_realm_key_share_messages_for_realm(
 /// `base64url(eph_pub || ct)` blob produced by
 /// [`crate::mls::secret_share::seal_history_secret_to_device_pubkey`].
 pub fn ingest_realm_key_share(
-    state_store: &mut crate::local_state::LocalStateStore,
+    state_store: &mut crate::state::LocalStateStore,
     secure_store: &dyn SecureKeyStore,
     realm_id: &str,
     actor_id: &str,
@@ -565,19 +565,20 @@ pub(crate) fn verify_realm_key_share_sender_signature(
     // The caller (`app::history-share` install loop) primes this cache with a
     // `keys/query` for the sender device BEFORE this verifier runs, so a Miss
     // here means directory resolution genuinely failed for a claimed sender.
-    let directory_key =
-        sender_principal_id.map(
-            |principal| match crate::device_directory::cached_device_signing_key(
-                principal,
-                payload.sender_device_id.trim(),
-            ) {
-                crate::device_directory::CacheLookup::Hit(material) => {
-                    DirectoryVerdict::Key(material)
-                }
-                crate::device_directory::CacheLookup::NegativeHit => DirectoryVerdict::Revoked,
-                crate::device_directory::CacheLookup::Miss => DirectoryVerdict::Unresolved,
-            },
-        );
+    let directory_key = sender_principal_id.map(|principal| {
+        match crate::identity::device_directory::cached_device_signing_key(
+            principal,
+            payload.sender_device_id.trim(),
+        ) {
+            crate::identity::device_directory::CacheLookup::Hit(material) => {
+                DirectoryVerdict::Key(material)
+            }
+            crate::identity::device_directory::CacheLookup::NegativeHit => {
+                DirectoryVerdict::Revoked
+            }
+            crate::identity::device_directory::CacheLookup::Miss => DirectoryVerdict::Unresolved,
+        }
+    });
 
     // Fail closed on a revoked / absent sender device.
     if matches!(directory_key, Some(DirectoryVerdict::Revoked)) {
@@ -650,7 +651,7 @@ enum DirectoryVerdict {
 /// admission reconciler to find joined members not yet represented in the
 /// group. Does NOT advance or persist any chain.
 pub fn mls_group_member_principal_ids_for_realm(
-    state_store: &crate::local_state::LocalStateStore,
+    state_store: &crate::state::LocalStateStore,
     secure_store: &dyn SecureKeyStore,
     realm_id: &str,
     actor_id: &str,
@@ -886,11 +887,11 @@ fn verify_welcome_claim_envelope_signer(welcome_value: &serde_json::Value) -> Re
         );
     };
     let requester_did = envelope.requester_did.as_str();
-    let verifying_key = match crate::device_directory::cached_device_signing_key(
+    let verifying_key = match crate::identity::device_directory::cached_device_signing_key(
         requester_did,
         requester_device_id,
     ) {
-        crate::device_directory::CacheLookup::Hit(material) => {
+        crate::identity::device_directory::CacheLookup::Hit(material) => {
             let bytes = material.ed25519_bytes().map_err(|err| {
                 format!("claim_envelope signer key decode ({requester_did}/{requester_device_id}): {err}")
             })?;
@@ -898,13 +899,13 @@ fn verify_welcome_claim_envelope_signer(welcome_value: &serde_json::Value) -> Re
                 format!("claim_envelope signer key invalid ({requester_did}/{requester_device_id}): {err}")
             })?
         }
-        crate::device_directory::CacheLookup::NegativeHit => {
+        crate::identity::device_directory::CacheLookup::NegativeHit => {
             return Err(format!(
                 "claim_envelope signer {requester_did}/{requester_device_id} is revoked / \
                  absent in directory (negative verdict); Welcome rejected (YGN-SEC-01)"
             ));
         }
-        crate::device_directory::CacheLookup::Miss => {
+        crate::identity::device_directory::CacheLookup::Miss => {
             return Err(format!(
                 "claim_envelope signer key for {requester_did}/{requester_device_id} not in \
                  device-directory cache; fail-closed (YGN-SEC-01)"
@@ -1018,7 +1019,7 @@ fn verify_welcome_governance_binding(
 }
 
 pub fn apply_welcome_messages_with_device_snapshot(
-    state_store: &mut crate::local_state::LocalStateStore,
+    state_store: &mut crate::state::LocalStateStore,
     secure_store: &dyn SecureKeyStore,
     realm_id: &str,
     actor_id: &str,
@@ -1216,7 +1217,7 @@ pub fn apply_welcome_messages_with_device_snapshot(
 
 #[allow(clippy::type_complexity)]
 pub fn encrypt_values_with_device_snapshot(
-    state_store: &mut crate::local_state::LocalStateStore,
+    state_store: &mut crate::state::LocalStateStore,
     secure_store: &dyn SecureKeyStore,
     realm_id: &str,
     actor_id: &str,
@@ -1362,7 +1363,7 @@ type DeviceSnapshotEncryption = (
 );
 
 pub fn encrypt_message_with_device_snapshot(
-    state_store: &mut crate::local_state::LocalStateStore,
+    state_store: &mut crate::state::LocalStateStore,
     secure_store: &dyn SecureKeyStore,
     realm_id: &str,
     actor_id: &str,

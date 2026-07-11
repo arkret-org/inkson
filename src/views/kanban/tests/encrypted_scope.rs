@@ -394,9 +394,9 @@ fn encrypted_private_patch_with_ready_snapshot_replaces_plaintext() {
     let base_group_state_ref = "ak:event:0196419b-0000-7000-8000-000000000010";
     state.set_realm_seal_view(
         realm,
-        crate::local_state::LocalSealView {
+        crate::state::LocalSealView {
             frontier: vec![base_group_state_ref.to_owned()],
-            ..crate::local_state::LocalSealView::default()
+            ..crate::state::LocalSealView::default()
         },
     );
     envelope.epoch_started_at = chrono::Utc::now() - chrono::Duration::hours(2);
@@ -468,9 +468,9 @@ fn mls_remove_commit_uses_explicit_revocation_membership_frontier() {
     let mut state = temp_state_store("remove-frontier");
     state.set_realm_seal_view(
         TEST_REALM_ID,
-        crate::local_state::LocalSealView {
+        crate::state::LocalSealView {
             frontier: vec!["ak:event:0196419b-0000-7000-8000-000000000099".to_owned()],
-            ..crate::local_state::LocalSealView::default()
+            ..crate::state::LocalSealView::default()
         },
     );
     let revoke_frontier =

@@ -33,7 +33,7 @@ pub fn select_mls_private_plaintext_backup(list_payload: &Value) -> Option<Value
 }
 
 /// Iterate the `{"backups": [...]}` payload returned by
-/// [`crate::api::ArkretApi::list_key_backups`].
+/// [`crate::transport::TransportClient::list_key_backups`].
 ///
 /// The selection helpers below are consumed by the async auto-restore helpers
 /// (now available on all targets) and their tests.

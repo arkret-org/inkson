@@ -3,19 +3,19 @@
 // each `tests/<sub>.rs` doing `use super::*;` (whose `super` is THIS
 // module) transitively sees the kanban symbols.
 pub(super) use super::*;
+#[cfg(not(target_arch = "wasm32"))]
+pub(super) use crate::move_builder::StrandPositionExpectation;
 // Types the test bodies construct directly. The component-only `kanban/mod.rs`
 // no longer brings them into scope after the structural split, so re-import
 // them here for the `tests/<sub>.rs` files that reach them via `use super::*;`.
 #[cfg(not(target_arch = "wasm32"))]
-pub(super) use crate::local_state::RawOperationRecord;
-#[cfg(not(target_arch = "wasm32"))]
-pub(super) use crate::move_builder::StrandPositionExpectation;
+pub(super) use crate::state::RawOperationRecord;
 
 pub(super) const TEST_REALM_ID: &str = "ak:realm:0196419b-0000-7000-8000-000000000010";
 
 // YOU-05-010: shared hermetic state-store fixture from `local_state`.
 #[cfg(not(target_arch = "wasm32"))]
-pub(super) use crate::local_state::isolated_store_for_tests as temp_state_store;
+pub(super) use crate::state::isolated_store_for_tests as temp_state_store;
 
 mod activity_assignment;
 mod calendar_event;

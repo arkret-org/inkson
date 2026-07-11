@@ -25,7 +25,7 @@
 
 use std::sync::{Arc, Mutex};
 
-use crate::local_state::{LocalIdentity, LocalIdentityRecord, LocalStateStore};
+use crate::state::{LocalIdentity, LocalIdentityRecord, LocalStateStore};
 
 /// Errors a [`KeyStore`] can surface to callers. The split between
 /// `Unsupported` (platform store not wired yet) and `Backend` (the

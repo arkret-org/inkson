@@ -4,8 +4,8 @@ use serde_json::Value;
 
 use super::json_path_string;
 use super::model::*;
-use crate::local_state::{LocalStateStore, RawOperationRecord};
 use crate::operation::trim_realm_id;
+use crate::state::{LocalStateStore, RawOperationRecord};
 use crate::views::helpers::{display_name_for_did, handle_display_from_did, short_protocol_id};
 
 /// Per-member entry harvested from a cached Realm projection.
@@ -61,7 +61,7 @@ pub(super) fn member_display_label(
     if let Some(handle) = member_inline_handle_label(row) {
         return handle;
     }
-    if let Some(handle) = cached_primary_handle.and_then(crate::identity_handle::parse_user_handle)
+    if let Some(handle) = cached_primary_handle.and_then(crate::identity::handle::parse_user_handle)
     {
         return handle.display;
     }
@@ -96,7 +96,7 @@ pub(super) fn member_inline_handle_label(row: &RealmMemberRow) -> Option<String>
             return None;
         }
         json_path_string(Some(claim), &["handle"])
-            .and_then(|raw| crate::identity_handle::parse_user_handle(&raw).map(|h| h.display))
+            .and_then(|raw| crate::identity::handle::parse_user_handle(&raw).map(|h| h.display))
     })
 }
 

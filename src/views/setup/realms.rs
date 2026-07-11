@@ -16,12 +16,13 @@ use super::model::{NEW_REALM_STEPS, NewRealmStep};
 use crate::api_error::is_auth_expired_error;
 use crate::config::LocalConfigStore;
 use crate::routes::Route;
+use crate::transport::auth::authed_api;
 use crate::ui::button::{Button, ButtonVariant};
 use crate::ui::input::Input;
 use crate::ui::label::Label;
 use crate::ui::select::{Select, SelectOption};
 use crate::ui::textarea::Textarea;
-use crate::views::helpers::{authed_api, display_name_for_did, short_protocol_id};
+use crate::views::helpers::{display_name_for_did, short_protocol_id};
 
 #[component]
 pub(super) fn RealmsSection(
@@ -810,7 +811,7 @@ pub(super) fn RealmsSection(
                                                             return;
                                                         }
                                                     };
-                                                    match crate::realm_write_api::create_realm(
+                                                    match crate::transport::realm_write::create_realm(
                                                         &submitter,
                                                         &actor,
                                                         &title,
@@ -1097,29 +1098,7 @@ pub(super) fn RealmsSection(
                                                     }
                                                     Err(error) => {
                                                         let message = if is_auth_expired_error(&error) {
-                                                            // The session credential may have rotated
-                                                            // between background-poller ticks. Try the same
-                                                            // silent refresh every other path uses; only
-                                                            // terminal refresh-endpoint errors clear the
-                                                            // active session.
-                                                            match crate::session::refresh_current_session().await {
-                                                                crate::session::CurrentSessionRefresh::Credential(_) => {
-                                                                    "Session refreshed — retry creating the Realm.".to_owned()
-                                                                }
-                                                                crate::session::CurrentSessionRefresh::SignInRequired { reason } => {
-                                                                    format!(
-                                                                        "Sign in again before creating a Realm: {reason}"
-                                                                    )
-                                                                }
-                                                                crate::session::CurrentSessionRefresh::LoginRequired { .. } => {
-                                                                    "Session expired. Sign in again before creating a Realm.".to_owned()
-                                                                }
-                                                                crate::session::CurrentSessionRefresh::RetryLater { reason } => {
-                                                                    format!(
-                                                                        "Session refresh pending: {reason}. Retry creating the Realm."
-                                                                    )
-                                                                }
-                                                            }
+                                                            "Session expired. Refresh or sign in again before creating a Realm.".to_owned()
                                                         } else {
                                                             format!("create failed: {error}")
                                                         };

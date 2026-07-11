@@ -47,7 +47,7 @@ pub(crate) fn load_outbox(account_did: &str) -> Vec<OutboxMessage> {
     let _ = account_did;
     #[cfg(target_arch = "wasm32")]
     {
-        if let Some(storage) = crate::local_state::browser_storage()
+        if let Some(storage) = crate::state::browser_storage()
             && let Ok(Some(raw)) = storage.get_item(&storage_key(account_did))
             && let Ok(parsed) = serde_json::from_str::<Vec<OutboxMessage>>(&raw)
         {
@@ -64,7 +64,7 @@ pub(crate) fn save_outbox(account_did: &str, entries: &[OutboxMessage]) {
     let _ = (account_did, entries);
     #[cfg(target_arch = "wasm32")]
     {
-        if let Some(storage) = crate::local_state::browser_storage()
+        if let Some(storage) = crate::state::browser_storage()
             && let Ok(raw) = serde_json::to_string(entries)
         {
             let _ = storage.set_item(&storage_key(account_did), &raw);

@@ -64,7 +64,7 @@ pub fn reaction_routing_tag_from_exporter(exporter_secret: &[u8], canonical_emoj
 /// snapshot state. Returns the `sha256:<hex>` wire form for
 /// `reaction_payload.key`.
 pub fn reaction_routing_tag_v1(
-    state_store: &mut crate::local_state::LocalStateStore,
+    state_store: &mut crate::state::LocalStateStore,
     secure_store: &dyn SecureKeyStore,
     realm_id: &str,
     actor_id: &str,
@@ -104,7 +104,7 @@ pub fn reaction_routing_tag_v1(
 /// is unchanged there is no epoch-skew risk that would require
 /// persist-on-accept.
 pub fn encrypt_reaction_with_device_snapshot(
-    state_store: &mut crate::local_state::LocalStateStore,
+    state_store: &mut crate::state::LocalStateStore,
     secure_store: &dyn SecureKeyStore,
     realm_id: &str,
     actor_id: &str,

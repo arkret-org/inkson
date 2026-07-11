@@ -1,7 +1,6 @@
 use super::*;
 use crate::api_error::{
     is_auth_expired_error, is_plaintext_visibility_policy_error, is_space_membership_denied_error,
-    is_terminal_session_grant_error,
 };
 use crate::payload::{sdk_payload_value, strand_id_value};
 
@@ -457,7 +456,7 @@ pub(crate) fn chat_send_error_message(error: &anyhow::Error) -> String {
 }
 
 pub(crate) async fn submit_chat_operation_with_plaintext_retry(
-    api: &ArkretApi,
+    api: &TransportClient,
     realm_id: &str,
     actor_id: &str,
     plaintext_visible_services: &[String],
@@ -478,7 +477,7 @@ pub(crate) async fn submit_chat_operation_with_plaintext_retry(
             if services.is_empty() {
                 return Err(error);
             }
-            crate::realm_write_api::update_realm_plaintext_visible_services(
+            crate::transport::realm_write::update_realm_plaintext_visible_services(
                 &api.event_submitter()?,
                 realm_id,
                 actor_id,
@@ -496,16 +495,9 @@ pub(crate) async fn submit_chat_operation_with_plaintext_retry(
     }
 }
 
-/// Submit a chat operation and, if the first attempt fails with a
-/// definitive `auth_expired`, silently refresh the session credential through
-/// the shared refresher and retry once before surfacing the error.
-///
-/// The send paths used to bounce straight to `/login` on the first
-/// `auth_expired` — the "it randomly asks me to sign in mid-conversation"
-/// report. Routing through [`crate::session::refresh_current_session`]
-/// keeps the user signed in across a routine token rollover. Only a terminal
-/// refresh-endpoint grant error clears the active session; other refresh
-/// failures are surfaced without dropping the current token.
+/// Submit a chat operation using the current typed transport. Session refresh
+/// is owned by `RuntimeServices`; this lower layer returns auth failures to the
+/// caller instead of reaching through a global callback.
 pub(crate) async fn submit_chat_operation_with_auth_refresh(
     base_url: &str,
     actor_id: &str,
@@ -516,47 +508,12 @@ pub(crate) async fn submit_chat_operation_with_auth_refresh(
     operation: &arkret_sdk::Event,
 ) -> anyhow::Result<SubmitEventResult> {
     let api = authed_api_with_sync(base_url, session_credential, wait_for_sync_token.clone())?;
-    let first = submit_chat_operation_with_plaintext_retry(
+    submit_chat_operation_with_plaintext_retry(
         &api,
         realm_id,
         actor_id,
         plaintext_visible_services,
         operation,
     )
-    .await;
-    match first {
-        Ok(response) => Ok(response),
-        Err(error) if is_auth_expired_error(&error) => {
-            if is_terminal_session_grant_error(&error) {
-                crate::session::invalidate_current_session("session grant is no longer active");
-                return Err(error);
-            }
-            match crate::session::refresh_current_session().await {
-                crate::session::CurrentSessionRefresh::Credential(fresh_token) => {
-                    let retry_api =
-                        authed_api_with_sync(base_url, fresh_token, wait_for_sync_token)?;
-                    submit_chat_operation_with_plaintext_retry(
-                        &retry_api,
-                        realm_id,
-                        actor_id,
-                        plaintext_visible_services,
-                        operation,
-                    )
-                    .await
-                }
-                crate::session::CurrentSessionRefresh::SignInRequired { reason } => {
-                    Err(anyhow::anyhow!(
-                        "session refresh cannot continue locally: {reason}; send: {error}"
-                    ))
-                }
-                crate::session::CurrentSessionRefresh::LoginRequired { reason } => Err(
-                    anyhow::anyhow!("session refresh requires login: {reason}; send: {error}"),
-                ),
-                crate::session::CurrentSessionRefresh::RetryLater { reason } => Err(
-                    anyhow::anyhow!("session refresh pending: {reason}; send: {error}"),
-                ),
-            }
-        }
-        Err(error) => Err(error),
-    }
+    .await
 }

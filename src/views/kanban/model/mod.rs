@@ -1,6 +1,6 @@
 // Pull in (and re-export to children) the symbols that `kanban/mod.rs`
 // brought into scope via its own glob imports (`Value`, `json!`, `BTreeSet`,
-// `dioxus`, `arkret_sdk`, `crate::api::*`, `crate::local_state::*`,
+// `dioxus`, `arkret_sdk`, `crate::transport::*`, `crate::state::*`,
 // `crate::operation::*`, etc.). Re-exporting the glob makes those names
 // reachable as `crate::views::kanban::model::<name>`, so every child
 // sub-module's `use super::*;` resolves them transitively.
@@ -11,8 +11,8 @@ use std::borrow::Cow;
 
 pub(crate) use super::*;
 use crate::components::WriteState;
-use crate::local_state::RawOperationRecord;
 use crate::operation::trim_realm_id;
+use crate::state::RawOperationRecord;
 
 mod board_projection;
 mod calendar;

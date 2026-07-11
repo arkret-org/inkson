@@ -32,7 +32,7 @@ pub const PROFILE_PUSH_GATEWAY: &str = "ak.profile.push_gateway.v1";
 /// [`arkret_sdk::MlsGovernanceBindingPayload`] / [`arkret_sdk::MlsCommitPayload`],
 /// and the `covered_seals_cell` add-effect through [`arkret_sdk::mls_move`].
 /// The commit submit path remains gated on server features advertised via
-/// [`crate::api::Api::events_describe`] before the profile reports `ready`.
+/// [`crate::transport::Api::events_describe`] before the profile reports `ready`.
 pub const PROFILE_MLS_GOVERNANCE_BINDING_FULL: &str = "ak.profile.mls_governance_binding.full.v1";
 
 /// Conformance profile declarations per arkret-spec section 13.1.

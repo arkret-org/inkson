@@ -41,14 +41,14 @@ use chime::{
     PushPreferences, PushRegistrationState, build_register_device_request,
 };
 
-use crate::account_auth::{
+use crate::identity::account_auth::{
     build_session_grant_introspection_proof_bundle, session_grant_signing_key_from_pem,
 };
-use crate::local_state::PersistedSessionGrant;
+use crate::identity::session_refresh::grant_matches_principal_server;
 use crate::push::{
     ensure_production_register_request, floria_gateway_url, registration_state_from_response,
 };
-use crate::session_refresh::grant_matches_principal_server;
+use crate::state::PersistedSessionGrant;
 
 /// Errors the orchestrator surfaces back to the UI / login strand.
 #[derive(Debug, thiserror::Error)]
@@ -429,10 +429,10 @@ mod tests {
     use ed25519_dalek::pkcs8::EncodePrivateKey as _;
 
     use super::*;
-    use crate::local_state::PersistedSessionGrant;
-    // YOU-05-010: shared hermetic state-store fixture from `local_state`.
-    use crate::local_state::isolated_store_for_tests as isolated_store;
     use crate::push::{FcmPushTokenProvider, PushTokenProvider};
+    use crate::state::PersistedSessionGrant;
+    // YOU-05-010: shared hermetic state-store fixture from `local_state`.
+    use crate::state::isolated_store_for_tests as isolated_store;
 
     /// Test-only token source that hands back a fixed real-looking
     /// token. Lets us exercise the full orchestrator without wiring a

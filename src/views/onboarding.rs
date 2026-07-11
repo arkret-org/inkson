@@ -22,12 +22,12 @@
 use dioxus::prelude::*;
 use dioxus_router::Link;
 
-use crate::api::ArkretApi;
-use crate::identity_handle::{detect_handle_homograph_risk, handle_will_be_nfc_normalised};
+use crate::identity::handle::{detect_handle_homograph_risk, handle_will_be_nfc_normalised};
 use crate::recovery_strand::{
     FirstBackupGateBlockReason, FirstBackupGateStatus, first_backup_gate_status_from_payloads,
 };
 use crate::routes::Route;
+use crate::transport::TransportClient;
 use crate::ui::button::{Button, ButtonVariant};
 use crate::ui::input::Input;
 use crate::ui::label::Label;
@@ -239,9 +239,9 @@ pub fn OnboardingPanel(
                                 let display = register_display_name();
                                 let device = register_device_id();
                                 spawn(async move {
-                                    match ArkretApi::new(&base) {
+                                    match TransportClient::unauthenticated(&base) {
                                         Ok(api) => match async {
-                                            crate::account_api::register_account(
+                                            crate::transport::account::register_account(
                                                 &api.sdk_http_client()?,
                                                 &actor,
                                                 &handle,
@@ -275,7 +275,7 @@ pub fn OnboardingPanel(
                                 let base = base.clone();
                                 spawn(async move {
                                     match with_authed_sdk_client(&base, api_token, |http| async move {
-                                        crate::account_api::account_me(&http).await
+                                        crate::transport::account::account_me(&http).await
                                     })
                                     .await
                                     {

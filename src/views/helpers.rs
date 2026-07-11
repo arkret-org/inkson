@@ -2,15 +2,6 @@ pub use arkret_sdk::MentionNode;
 use dioxus::prelude::*;
 
 use crate::api_error::normalize_wait_for_sync_token;
-// YGN-ARCH-01 step 1: the authenticated-client builders (`authed_api*`,
-// `with_authed_api*`, `ApiCallError`, DPoP attach) moved to
-// `crate::api::authed` so the core layers (sync_engine / bootstrap / mls)
-// no longer import a views module for their HTTP exit. Re-exported here so
-// every existing `crate::views::helpers::…` call site keeps resolving.
-pub use crate::authed_api::{
-    ApiCallError, attach_device_dpop, authed_api, authed_api_with_sync, with_authed_api,
-    with_authed_api_with_sync, with_authed_sdk_client, with_endpoint_clients, with_event_submitter,
-};
 use crate::config::{ClientConfig, LocalConfigStore};
 use crate::ui::button::{Button, ButtonVariant};
 
@@ -63,7 +54,7 @@ fn generic_avatar_seed(seed: &str) -> bool {
 }
 
 fn handle_avatar_seed(value: &str) -> Option<String> {
-    if let Some(handle) = crate::identity_handle::parse_user_handle(value) {
+    if let Some(handle) = crate::identity::handle::parse_user_handle(value) {
         return Some(handle.localpart);
     }
     let trimmed = value.trim().trim_start_matches('@').trim();
@@ -93,13 +84,13 @@ fn handle_avatar_seed(value: &str) -> Option<String> {
 /// not embed the handle shape simply don't match and fall through to the other
 /// avatar-seed heuristics.
 fn handle_matches_identity(handle: &str, identity: &str) -> bool {
-    let Some(parsed) = crate::identity_handle::parse_user_handle(handle) else {
+    let Some(parsed) = crate::identity::handle::parse_user_handle(handle) else {
         return false;
     };
     let Some(display) = handle_display_from_did(identity) else {
         return false;
     };
-    crate::identity_handle::parse_user_handle(&display)
+    crate::identity::handle::parse_user_handle(&display)
         .is_some_and(|materialised| materialised.handle == parsed.handle)
 }
 
@@ -216,7 +207,7 @@ pub fn active_sync_token(sync_cursor: impl AsRef<str>) -> Option<String> {
 }
 
 /// Derive the canonical display handle from a DID produced by
-/// [`crate::identity_handle::parse_user_handle`].
+/// [`crate::identity::handle::parse_user_handle`].
 ///
 /// This is a display-only fallback for common materialized subject shapes:
 /// `did:web:<domain>:users:<localpart>` and
@@ -250,7 +241,7 @@ pub fn handle_display_from_did(did: &str) -> Option<String> {
     let authority = segments[authority_start..marker_index].join(":");
     let authority = authority.replace("%3A", ":").replace("%3a", ":");
     let candidate = format!("{localpart}:{authority}");
-    crate::identity_handle::parse_user_handle(&candidate).map(|handle| handle.display)
+    crate::identity::handle::parse_user_handle(&candidate).map(|handle| handle.display)
 }
 
 /// F-REMARK-FANOUT-1: actor-private `local_name` lookup for a DID,
@@ -267,14 +258,11 @@ pub fn handle_display_from_did(did: &str) -> Option<String> {
 /// the DID is the materialized form of a Arkret user handle, then to a
 /// compact display-only protocol id. Use the original DID for inputs,
 /// copies, routes, and protocol payloads.
-pub fn display_name_for_did(
-    state_store: &crate::local_state::LocalStateStore,
-    did: &str,
-) -> String {
+pub fn display_name_for_did(state_store: &crate::state::LocalStateStore, did: &str) -> String {
     if let Some(handle) = state_store
         .cached_member_handle_lookup(did, None, None)
         .and_then(|entry| entry.primary_handle)
-        .and_then(|handle| crate::identity_handle::parse_user_handle(&handle).map(|h| h.display))
+        .and_then(|handle| crate::identity::handle::parse_user_handle(&handle).map(|h| h.display))
     {
         return handle;
     }
@@ -321,7 +309,7 @@ pub fn parse_agent_selector_mention_tokens(input: &str) -> Vec<AgentSelectorMent
         let controller_handle = if controller_handle.eq_ignore_ascii_case("me") {
             "me".to_owned()
         } else {
-            let Some(parsed) = crate::identity_handle::parse_user_handle(controller_handle) else {
+            let Some(parsed) = crate::identity::handle::parse_user_handle(controller_handle) else {
                 continue;
             };
             parsed.handle

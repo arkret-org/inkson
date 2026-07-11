@@ -578,7 +578,7 @@ fn x25519_public_from_private(private_key: &[u8]) -> Result<Vec<u8>, SecureKeySt
 
 /// Commit a prepared rotation to local state and the secure store.
 pub fn commit_account_mls_secret_rotation(
-    state_store: &mut crate::local_state::LocalStateStore,
+    state_store: &mut crate::state::LocalStateStore,
     secure_store: &dyn SecureKeyStore,
     actor_id: &str,
     rotation: &AccountMlsSecretRotation,

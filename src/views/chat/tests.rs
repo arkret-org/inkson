@@ -155,7 +155,7 @@ fn chat_visible_read_receipt_send_respects_preferences() {
 
     store.set_read_receipt_policy_snapshot(
         "ak:realm:demo",
-        Some(crate::local_state::ReadReceiptPolicySnapshot {
+        Some(crate::state::ReadReceiptPolicySnapshot {
             disclosure: "required".to_owned(),
             visibility: Some("public".to_owned()),
         }),
@@ -168,7 +168,7 @@ fn chat_visible_read_receipt_send_respects_preferences() {
 
     store.set_read_receipt_policy_snapshot(
         "ak:realm:demo",
-        Some(crate::local_state::ReadReceiptPolicySnapshot {
+        Some(crate::state::ReadReceiptPolicySnapshot {
             disclosure: "disabled".to_owned(),
             visibility: Some("private".to_owned()),
         }),
@@ -213,7 +213,7 @@ fn chat_visible_read_receipt_display_respects_local_preferences() {
 
     store.set_read_receipt_policy_snapshot(
         "ak:realm:demo",
-        Some(crate::local_state::ReadReceiptPolicySnapshot {
+        Some(crate::state::ReadReceiptPolicySnapshot {
             disclosure: "required".to_owned(),
             visibility: Some("public".to_owned()),
         }),
@@ -669,7 +669,7 @@ fn shared_pin_projection_ignores_private_saved_account_data() {
     let target_ref = "ak:message:01904100-0000-7000-8000-000000000002";
     let other_target = "ak:message:01904100-0000-7000-8000-000000000003";
     let records = vec![
-        crate::local_state::RawOperationRecord {
+        crate::state::RawOperationRecord {
             operation_id: "ak:operation:pin-add".to_owned(),
             realm_id: Some("ak:realm:demo".to_owned()),
             received_at: Utc::now(),
@@ -682,7 +682,7 @@ fn shared_pin_projection_ignores_private_saved_account_data() {
                 }
             }),
         },
-        crate::local_state::RawOperationRecord {
+        crate::state::RawOperationRecord {
             operation_id: "ak:operation:saved-private".to_owned(),
             realm_id: Some("ak:realm:demo".to_owned()),
             received_at: Utc::now(),
@@ -699,7 +699,7 @@ fn shared_pin_projection_ignores_private_saved_account_data() {
                 }
             }),
         },
-        crate::local_state::RawOperationRecord {
+        crate::state::RawOperationRecord {
             operation_id: "ak:operation:other-pin".to_owned(),
             realm_id: Some("ak:realm:demo".to_owned()),
             received_at: Utc::now(),
@@ -712,7 +712,7 @@ fn shared_pin_projection_ignores_private_saved_account_data() {
                 }
             }),
         },
-        crate::local_state::RawOperationRecord {
+        crate::state::RawOperationRecord {
             operation_id: "ak:operation:pin-reorder".to_owned(),
             realm_id: Some("ak:realm:demo".to_owned()),
             received_at: Utc::now(),
@@ -752,7 +752,7 @@ fn chat_message_ids_use_schema_prefix() {
 #[test]
 fn restores_messages_from_local_raw_operations() {
     let state = ClientLocalState {
-        raw_operations: vec![crate::local_state::RawOperationRecord {
+        raw_operations: vec![crate::state::RawOperationRecord {
             operation_id: "ak:operation:local".to_owned(),
             realm_id: Some("ak:realm:local".to_owned()),
             received_at: chrono::Utc::now(),
@@ -780,7 +780,7 @@ fn restores_messages_from_local_raw_operations() {
 #[test]
 fn restores_canonical_actor_id_from_local_raw_operations() {
     let state = ClientLocalState {
-        raw_operations: vec![crate::local_state::RawOperationRecord {
+        raw_operations: vec![crate::state::RawOperationRecord {
             operation_id: "ak:operation:local".to_owned(),
             realm_id: Some("ak:realm:local".to_owned()),
             received_at: chrono::Utc::now(),
@@ -1505,7 +1505,7 @@ fn local_redaction_tombstone_replaces_raw_message_without_plaintext() {
     assert!(tombstone.get("body").is_none());
 
     let state = ClientLocalState {
-        raw_operations: vec![crate::local_state::RawOperationRecord {
+        raw_operations: vec![crate::state::RawOperationRecord {
             operation_id: message.id.clone(),
             realm_id: Some(message.realm_id.clone()),
             received_at: redacted_at,
@@ -1599,7 +1599,7 @@ fn rebuild_restores_authors_own_encrypted_message_from_sidecar() {
     );
 
     let state = ClientLocalState {
-        raw_operations: vec![crate::local_state::RawOperationRecord {
+        raw_operations: vec![crate::state::RawOperationRecord {
             operation_id: "ak:operation:enc".to_owned(),
             realm_id: Some("ak:realm:local".to_owned()),
             received_at: chrono::Utc::now(),
@@ -2200,7 +2200,7 @@ fn participant_with_agent_id_renders_with_agent_badge() {
 fn agent_ids_from_raw_operations_filters_by_realm_and_kind() {
     use chrono::Utc;
 
-    use crate::local_state::RawOperationRecord;
+    use crate::state::RawOperationRecord;
 
     // Mixed bag of raw ops: an agent endpoint for the right realm,
     // an agent endpoint for a different realm (should be filtered
@@ -2247,7 +2247,7 @@ fn agent_ids_from_raw_operations_filters_by_realm_and_kind() {
 fn agent_metadata_from_raw_operations_reads_controller_scoped_selector_fields() {
     use chrono::Utc;
 
-    use crate::local_state::RawOperationRecord;
+    use crate::state::RawOperationRecord;
 
     let records = vec![RawOperationRecord {
         operation_id: "op-1".to_owned(),

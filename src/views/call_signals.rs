@@ -22,7 +22,7 @@ use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use dioxus::prelude::*;
 use serde_json::Value;
 
-use crate::api::ArkretApi;
+use crate::transport::TransportClient;
 
 /// Inbound invite presented to the user as a ring. Set on the hub when an
 /// `invite` arrives for a call the local client has no active session for.
@@ -265,9 +265,9 @@ fn invite_wants_video(data: &Value) -> bool {
 /// **Receiver proof verification (`webrtc-signaling.md` §5.1, fail-closed).**
 /// Before any signal reaches [`route_decoded_signal`] it MUST pass detached-JWS
 /// proof verification against the sender's authoritative directory verify key
-/// (resolved via [`crate::device_directory`]). The sync-apply path is
+/// (resolved via [`crate::identity::device_directory`]). The sync-apply path is
 /// synchronous but the directory query is async, so this fn is `async` and
-/// takes an optional authenticated [`ArkretApi`]:
+/// takes an optional authenticated [`TransportClient`]:
 ///
 /// - cache **Hit** → verify inline; pass routes, fail drops;
 /// - cache **NegativeHit** (revoked / absent / no key) → fail-closed drop;
@@ -282,8 +282,8 @@ pub async fn route_realm_call_signals(
     realm_id: &str,
     body: &Value,
     local_actor: &str,
-    api: Option<&ArkretApi>,
-    did_anchor: &dyn crate::device_directory::DidAnchor,
+    api: Option<&TransportClient>,
+    did_anchor: &dyn crate::identity::device_directory::DidAnchor,
 ) {
     for decoded in decode_realm_call_signals(realm_id, body) {
         // Self-echo: skip verification + routing entirely (we trust our own
@@ -291,11 +291,11 @@ pub async fn route_realm_call_signals(
         if !local_actor.is_empty() && decoded.sender_actor == local_actor {
             continue;
         }
-        match crate::device_directory::cached_device_signing_key(
+        match crate::identity::device_directory::cached_device_signing_key(
             &decoded.sender_actor,
             &decoded.sender_device,
         ) {
-            crate::device_directory::CacheLookup::Hit(key) => {
+            crate::identity::device_directory::CacheLookup::Hit(key) => {
                 if verify_decoded_proof(&decoded, &key)
                     && moderator_signal_authorized(&decoded, api).await
                 {
@@ -303,21 +303,22 @@ pub async fn route_realm_call_signals(
                 }
                 // verify failed → fail-closed drop.
             }
-            crate::device_directory::CacheLookup::NegativeHit => {
+            crate::identity::device_directory::CacheLookup::NegativeHit => {
                 // Revoked / absent / no key → fail-closed drop.
             }
-            crate::device_directory::CacheLookup::Miss => {
+            crate::identity::device_directory::CacheLookup::Miss => {
                 let Some(api) = api else {
                     // No client to resolve with → fail-closed drop.
                     continue;
                 };
-                if let Ok(Some(key)) = crate::device_directory::resolve_device_signing_key(
-                    api,
-                    did_anchor,
-                    &decoded.sender_actor,
-                    &decoded.sender_device,
-                )
-                .await
+                if let Ok(Some(key)) =
+                    crate::identity::device_directory::resolve_device_signing_key(
+                        api,
+                        did_anchor,
+                        &decoded.sender_actor,
+                        &decoded.sender_device,
+                    )
+                    .await
                     && verify_decoded_proof(&decoded, &key)
                     && moderator_signal_authorized(&decoded, Some(api)).await
                 {
@@ -335,10 +336,13 @@ fn verify_decoded_proof(
     decoded: &DecodedCallSignal,
     key: &arkret_sdk::signatures::PublicKeyMaterial,
 ) -> bool {
-    crate::device_directory::verify_ephemeral_envelope_proof(&decoded.envelope, key)
+    crate::identity::device_directory::verify_ephemeral_envelope_proof(&decoded.envelope, key)
 }
 
-async fn moderator_signal_authorized(decoded: &DecodedCallSignal, api: Option<&ArkretApi>) -> bool {
+async fn moderator_signal_authorized(
+    decoded: &DecodedCallSignal,
+    api: Option<&TransportClient>,
+) -> bool {
     if !requires_call_moderate(decoded) {
         return true;
     }
@@ -363,7 +367,7 @@ async fn moderator_signal_authorized(decoded: &DecodedCallSignal, api: Option<&A
         return false;
     };
     match async {
-        crate::realm_read_api::authz_check_resource_raw(
+        crate::transport::realm_read::authz_check_resource_raw(
             &api.sdk_http_client()?,
             &decoded.sender_actor,
             "ak.call.moderate",
@@ -949,8 +953,8 @@ mod tests {
 
     fn pubkey_material(seed: u8) -> arkret_sdk::signatures::PublicKeyMaterial {
         let sk = ed25519_dalek::SigningKey::from_bytes(&[seed; 32]);
-        let did = crate::did_key::did_key_from_verifying_key(&sk.verifying_key());
-        crate::device_directory::public_key_from_directory_value(&did).unwrap()
+        let did = crate::identity::did_key::did_key_from_verifying_key(&sk.verifying_key());
+        crate::identity::device_directory::public_key_from_directory_value(&did).unwrap()
     }
 
     #[test]
@@ -963,9 +967,9 @@ mod tests {
         let key = pubkey_material(seed);
 
         // Verifies under the correct key.
-        assert!(crate::device_directory::verify_ephemeral_envelope_proof(
-            &envelope, &key
-        ));
+        assert!(
+            crate::identity::device_directory::verify_ephemeral_envelope_proof(&envelope, &key)
+        );
 
         // And a verified invite produces a Ring decision.
         let decoded = decode_call_signal_envelope("ak:realm:r", &envelope).expect("decodes");
@@ -984,9 +988,11 @@ mod tests {
         let envelope = signed_call_signal_envelope(&signer, actor, device);
         // A different device's key MUST NOT verify the proof.
         let wrong_key = pubkey_material(99);
-        assert!(!crate::device_directory::verify_ephemeral_envelope_proof(
-            &envelope, &wrong_key
-        ));
+        assert!(
+            !crate::identity::device_directory::verify_ephemeral_envelope_proof(
+                &envelope, &wrong_key
+            )
+        );
     }
 
     #[test]
@@ -1006,9 +1012,9 @@ mod tests {
         let tampered = format!("{}{}", &jws[..jws.len() - 1], replacement);
         envelope["proof"]["jws"] = json!(tampered);
         let key = pubkey_material(seed);
-        assert!(!crate::device_directory::verify_ephemeral_envelope_proof(
-            &envelope, &key
-        ));
+        assert!(
+            !crate::identity::device_directory::verify_ephemeral_envelope_proof(&envelope, &key)
+        );
     }
 
     #[test]
@@ -1023,13 +1029,15 @@ mod tests {
         let envelope = signed_call_signal_envelope(&signer, actor, device);
         let key = pubkey_material(seed);
         // Fresh at signing time.
-        assert!(crate::device_directory::verify_ephemeral_envelope_proof(
-            &envelope, &key
-        ));
+        assert!(
+            crate::identity::device_directory::verify_ephemeral_envelope_proof(&envelope, &key)
+        );
         // Replayed two hours later → rejected by the freshness gate.
         let later = chrono::Utc::now() + chrono::Duration::hours(2);
         assert!(
-            !crate::device_directory::verify_ephemeral_envelope_proof_at(&envelope, &key, later)
+            !crate::identity::device_directory::verify_ephemeral_envelope_proof_at(
+                &envelope, &key, later
+            )
         );
     }
 
@@ -1044,9 +1052,9 @@ mod tests {
         let mut envelope = signed_call_signal_envelope(&signer, actor, device);
         envelope["proof"]["verification_method"] = json!("did:web:someone-else.example#device");
         let key = pubkey_material(seed);
-        assert!(!crate::device_directory::verify_ephemeral_envelope_proof(
-            &envelope, &key
-        ));
+        assert!(
+            !crate::identity::device_directory::verify_ephemeral_envelope_proof(&envelope, &key)
+        );
     }
 
     #[test]

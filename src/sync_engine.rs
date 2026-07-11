@@ -38,24 +38,21 @@ use std::time::Duration;
 
 #[cfg(test)]
 use arkret_sdk::{DecodedInbound, InboundDecoder};
-use dioxus::prelude::*;
 #[cfg(test)]
 use garth::{ClientEvent, ClientProjector};
 use serde_json::{Value, json};
 
-use crate::api::ArkretApi;
 use crate::api_error::{
     is_auth_expired_error, is_invalid_cursor_error, is_stale_frontier_error,
     is_terminal_session_grant_error, rate_limited_retry_after,
 };
-use crate::config::MultiProfileConfig;
-use crate::local_state::{LocalSealView, LocalStateStore, RawOperationRecord};
-use crate::models::{
-    ClientSyncOutcome, DeviceMessagesGetOutcome, RealmTreeNode, RealmTreeNodeKind,
-};
+use crate::models::{ClientSyncOutcome, DeviceMessagesGetOutcome, RealmTreeNodeKind};
 use crate::runtime::engine_loop::{EngineLoopDirective, run_engine_loop};
+use crate::runtime::projection::{ClientProjectionEvent, ProjectionSink, SyncStatusEvent};
 use crate::runtime_helpers::MAX_RETRY_DELAY;
+use crate::state::{LocalSealView, LocalStateStore, RawOperationRecord};
 use crate::sync_parse::AccountSubscribeSnapshotResult;
+use crate::transport::TransportClient;
 
 /// Connection-status label surfaced to the app shell's status signal.
 /// A pure sync-layer concept (no Dioxus state, no rendering); the app views
@@ -122,52 +119,36 @@ const INVITES_REFRESH_EVERY_N_DELTAS: u32 = 6;
 const TO_DEVICE_PAGE_LIMIT: u32 = 1000;
 const MAX_TO_DEVICE_BACKFILL_PAGES: usize = 32;
 
-/// Bundle of signals + state-store the engine needs to apply a response.
-/// `Copy` because Dioxus signals already are; the struct is just a
-/// typed shorthand around them.
+/// Session snapshot plus the remaining app adapters needed while response
+/// application migrates fully behind runtime traits. UI outputs are emitted
+/// exclusively through `projection_sink`.
 #[derive(Clone)]
 pub struct SyncEngineContext {
-    pub base_url: Signal<String>,
-    pub token: Signal<String>,
-    pub state_store: SyncSignal<LocalStateStore>,
-    pub realm_tree_nodes: Signal<Vec<RealmTreeNode>>,
-    pub projection_events: Signal<Vec<crate::projection::ProjectionEvent>>,
-    pub sync_cursor: Signal<String>,
-    /// Connection-lifecycle label; never used for operation feedback.
-    pub connection_status: Signal<String>,
-    pub network_state: Signal<String>,
-    pub last_error: Signal<Option<String>>,
-    pub device_queue: Signal<usize>,
-    pub theme: Signal<String>,
-    pub account_did: Signal<String>,
+    pub base_url: String,
+    pub token: crate::runtime::input::ValueReader<String>,
+    pub state_store: crate::runtime::input::StateStoreHandle,
+    pub account_did: String,
     /// YOU-02-004R (§5.6) — the local device id, needed by the idle
     /// self-update driver to load the device snapshot secret and build the
     /// background `self_update_commit`. Sourced from the active profile config
     /// (same value the chat / realm-admin send paths use).
-    pub device_id: Signal<String>,
-    pub selected_realm_id: Signal<String>,
-    /// AKP-0007 P3B.4.3 — the active multi-profile configuration. The
-    /// engine reads `active_profile_id` at the top of every iteration
-    /// and exits early when it differs from the profile id captured
-    /// at spawn time; the lifecycle bumps `generation` so the next
-    /// engine spawn picks up the new profile's cursor / token /
-    /// account_did atomically. This avoids the previous race where
-    /// the engine kept syncing under the prior profile while the UI
-    /// already rendered the new one.
-    pub profiles: Signal<MultiProfileConfig>,
+    pub device_id: String,
+    pub selected_realm_id: crate::runtime::input::ValueReader<String>,
     /// Y1/Y2 - session-scoped DID resolution cache handle, provided by
     /// `app.rs` via `use_context_provider` as documented there. While ingesting
     /// projections, the Y2 invalidation hook uses it to call `invalidate` for
     /// related actor DIDs when `ak.cross_signing.reset` / `ak.device.revoke`
-    /// arrive, and `clear` on logout / trust-bundle reset. `Signal<T>` is
-    /// `Copy`, so storing it here is zero-cost.
-    pub did_cache: Signal<crate::did_resolver::DidResolutionCache>,
+    /// arrive, and `clear` on logout / trust-bundle reset.
+    pub did_cache:
+        crate::runtime::input::ValueCell<crate::identity::did_resolver::DidResolutionCache>,
     /// Receive side of `ak.call.signal`. The engine routes inbound
     /// call-signal envelopes from each incremental sync body into this hub
     /// (dedup → incoming ring / per-call inbox). `Copy`, zero-cost to hold.
     /// See `crate::views::call_signals`.
     pub call_signal_hub: crate::views::call_signals::CallSignalHub,
+    pub session: crate::runtime::session::SessionCoordinator,
     pub effect: crate::runtime::effects::EffectHandle,
+    pub projection_sink: crate::runtime::projection::ProjectionRouter,
 }
 
 /// Outcome of one sync iteration — used by the loop to decide whether to
@@ -350,25 +331,21 @@ where
 /// when an unrecoverable error fires (auth-expired, missing config).
 pub async fn run_sync_engine(
     start_generation: u64,
-    generation: Signal<u64>,
+    generation: crate::runtime::input::ValueReader<u64>,
     ctx: SyncEngineContext,
 ) {
     // Snapshot the active profile id at spawn time. If the UI rotates
     // profiles mid-loop, the engine exits cleanly and a fresh spawn
     // picks up the new profile's cursor / token / account_did.
-    let start_profile_id = ctx.profiles.read().active_profile_id.clone();
     // Counts delta syncs since the last invite refetch; see
     // `INVITES_REFRESH_EVERY_N_DELTAS`. Seeded at the threshold so the first
     // delta after spawn refreshes immediately even if it isn't a full sync.
     let mut deltas_since_invites = INVITES_REFRESH_EVERY_N_DELTAS;
+    ctx.projection_sink.sync_status(SyncStatusEvent::Connecting);
     run_engine_loop(
         BACKOFF_FLOOR,
         BACKOFF_CEILING,
-        || {
-            generation() == start_generation
-                && ctx.profiles.read().active_profile_id == start_profile_id
-                && !ctx.effect.is_cancelled()
-        },
+        || generation.get() == start_generation && !ctx.effect.is_cancelled(),
         async || match run_iteration(
             start_generation,
             generation,
@@ -378,11 +355,7 @@ pub async fn run_sync_engine(
         .await
         {
             IterationOutcome::Ok { realm_ids } => {
-                // Recovery: clear any stale error the user has been
-                // staring at. Without this, a single Transient or
-                // RateLimited blip sticks in the status bar forever
-                // because apply_response doesn't touch last_error.
-                ctx.last_error.clone().set(None);
+                ctx.projection_sink.sync_status(SyncStatusEvent::Online);
                 run_circle_scope_rotate_pass(start_generation, generation, &ctx, &realm_ids).await;
                 // YOU-02-004R (`encryption-and-audit.md` §5.6) — non-send
                 // self-preservation trigger. A long-lived read-only member's
@@ -402,45 +375,44 @@ pub async fn run_sync_engine(
             IterationOutcome::InvalidCursor => {
                 // Demote to full sync next iteration. The persisted
                 // cursor was already cleared inside the iteration.
-                // Also clear the visible error so the UI doesn't
-                // show the cursor-rejection that just got handled.
-                ctx.last_error.clone().set(None);
                 EngineLoopDirective::ContinueAfter(Duration::from_millis(MIN_INTER_ITERATION_MS))
             }
             IterationOutcome::StaleFrontier => {
+                ctx.projection_sink.sync_status(SyncStatusEvent::Retryable {
+                    reason: "service frontier is stale".to_owned(),
+                });
                 // Keep the cursor (spec MUST NOT clear it) and retry
                 // after a beat — the iteration already consulted
                 // `account/describe` for the current frontier.
                 EngineLoopDirective::ContinueAfter(Duration::from_millis(MIN_INTER_ITERATION_MS))
             }
-            IterationOutcome::AuthExpired => {
-                match crate::session::refresh_current_session().await {
-                    crate::session::CurrentSessionRefresh::Credential(_) => {
-                        ctx.last_error.clone().set(None);
-                        EngineLoopDirective::ContinueAfter(Duration::from_millis(
-                            MIN_INTER_ITERATION_MS,
-                        ))
-                    }
-                    crate::session::CurrentSessionRefresh::SignInRequired { reason }
-                    | crate::session::CurrentSessionRefresh::RetryLater { reason } => {
-                        {
-                            let mut last_error = ctx.last_error;
-                            last_error.set(Some(format!("sync_engine session refresh: {reason}")));
-                        }
-                        EngineLoopDirective::Retry {
-                            minimum_delay: None,
-                        }
-                    }
-                    crate::session::CurrentSessionRefresh::LoginRequired { reason } => {
-                        {
-                            let mut last_error = ctx.last_error;
-                            last_error.set(Some(format!("sync_engine session expired: {reason}")));
-                        }
-                        EngineLoopDirective::Stop
+            IterationOutcome::AuthExpired => match ctx.session.refresh().await {
+                crate::runtime::session::CurrentSessionRefresh::Credential(_) => {
+                    EngineLoopDirective::ContinueAfter(Duration::from_millis(
+                        MIN_INTER_ITERATION_MS,
+                    ))
+                }
+                crate::runtime::session::CurrentSessionRefresh::SignInRequired { reason } => {
+                    ctx.projection_sink
+                        .sync_status(SyncStatusEvent::NeedsSignIn { reason });
+                    EngineLoopDirective::Stop
+                }
+                crate::runtime::session::CurrentSessionRefresh::RetryLater { reason } => {
+                    ctx.projection_sink
+                        .sync_status(SyncStatusEvent::Retryable { reason });
+                    EngineLoopDirective::Retry {
+                        minimum_delay: None,
                     }
                 }
-            }
+                crate::runtime::session::CurrentSessionRefresh::LoginRequired { reason } => {
+                    ctx.projection_sink.sync_status(SyncStatusEvent::Terminal {
+                        reason: reason.clone(),
+                    });
+                    EngineLoopDirective::Stop
+                }
+            },
             IterationOutcome::NotReady => {
+                ctx.projection_sink.sync_status(SyncStatusEvent::Offline);
                 // Nothing to do until base_url / token are populated.
                 // Caller's `use_effect` will respawn when they are.
                 EngineLoopDirective::Stop
@@ -449,10 +421,9 @@ pub async fn run_sync_engine(
                 retry_after_ms,
                 reason,
             } => {
-                {
-                    let mut last_error = ctx.last_error;
-                    last_error.set(Some(reason));
-                }
+                ctx.projection_sink.sync_status(SyncStatusEvent::Retryable {
+                    reason: reason.clone(),
+                });
                 // Honour the server's hint with a floor of `BACKOFF_FLOOR` so a
                 // buggy server that returns `retry_after_ms = 0` still gives us a
                 // beat.
@@ -465,20 +436,20 @@ pub async fn run_sync_engine(
                 reconnect_after_ms,
                 reason,
             } => {
-                {
-                    let mut last_error = ctx.last_error;
-                    last_error.set(reason.map(|reason| format!("sync_engine: {reason}")));
-                }
+                ctx.projection_sink.sync_status(SyncStatusEvent::Retryable {
+                    reason: reason
+                        .clone()
+                        .unwrap_or_else(|| "sync stream requested reconnect".to_owned()),
+                });
                 let wait_ms = reconnect_after_ms
                     .max(u64::try_from(BACKOFF_FLOOR.as_millis()).unwrap_or(1_000))
                     .min(u64::try_from(MAX_RETRY_DELAY.as_millis()).unwrap_or(u64::MAX));
                 EngineLoopDirective::Pause(Duration::from_millis(wait_ms))
             }
             IterationOutcome::Transient(reason) => {
-                {
-                    let mut last_error = ctx.last_error;
-                    last_error.set(Some(reason));
-                }
+                ctx.projection_sink.sync_status(SyncStatusEvent::Retryable {
+                    reason: reason.clone(),
+                });
                 EngineLoopDirective::Retry {
                     minimum_delay: None,
                 }
@@ -498,17 +469,17 @@ pub async fn run_sync_engine(
 /// accounts do not burst writes after a sync wakeup.
 async fn run_circle_scope_rotate_pass(
     start_generation: u64,
-    generation: Signal<u64>,
+    generation: crate::runtime::input::ValueReader<u64>,
     ctx: &SyncEngineContext,
     realm_ids: &[String],
 ) {
-    if generation() != start_generation {
+    if generation.get() != start_generation {
         return;
     }
-    let base = ctx.base_url.read().clone();
-    let token = ctx.token.read().clone();
-    let actor_id = ctx.account_did.read().trim().to_owned();
-    let device_id = ctx.device_id.read().trim().to_owned();
+    let base = ctx.base_url.clone();
+    let token = ctx.token.get();
+    let actor_id = ctx.account_did.trim().to_owned();
+    let device_id = ctx.device_id.trim().to_owned();
     if base.trim().is_empty()
         || token.trim().is_empty()
         || actor_id.is_empty()
@@ -527,12 +498,12 @@ async fn run_circle_scope_rotate_pass(
     }
     let secure_store = crate::secure_key_store::default_secure_key_store("inkson");
     for realm_id in realm_ids {
-        if generation() != start_generation {
+        if generation.get() != start_generation {
             return;
         }
-        let circles = match crate::authed_api::with_authed_sdk_client(&base, token.clone(), {
+        let circles = match crate::transport::auth::with_authed_sdk_client(&base, token.clone(), {
             let realm_id = realm_id.clone();
-            move |http| async move { crate::circle_api::list_circles(&http, &realm_id).await }
+            move |http| async move { crate::transport::circle::list_circles(&http, &realm_id).await }
         })
         .await
         {
@@ -550,7 +521,7 @@ async fn run_circle_scope_rotate_pass(
             }
         };
         for circle in circles.circles {
-            if generation() != start_generation {
+            if generation.get() != start_generation {
                 return;
             }
             let circle_id = circle.circle_id.to_string();
@@ -586,7 +557,7 @@ async fn run_circle_scope_rotate_pass(
                 continue;
             }
             for target in circle.pending_mls_removals {
-                if generation() != start_generation {
+                if generation.get() != start_generation {
                     return;
                 }
                 let target_principal_id = target.principal_id().to_string();
@@ -600,10 +571,9 @@ async fn run_circle_scope_rotate_pass(
                     );
                     continue;
                 }
-                let draft = {
-                    let store = ctx.state_store.read();
+                let draft = ctx.state_store.read(|store| {
                     crate::circle_mls::build_circle_remove_scope_rotate_draft(
-                        &store,
+                        store,
                         secure_store.as_ref(),
                         &realm_id,
                         &circle_id,
@@ -612,7 +582,7 @@ async fn run_circle_scope_rotate_pass(
                         &target_principal_id,
                         &revocation_membership_frontier,
                     )
-                };
+                });
                 let draft = match draft {
                     Ok(draft) => draft,
                     Err(err) => {
@@ -630,44 +600,44 @@ async fn run_circle_scope_rotate_pass(
                 let post_commit_snapshot = draft.post_commit_snapshot;
                 let removed_leaves = draft.removed_leaves;
                 let removed_principals = draft.removed_principals;
-                let outcome = match crate::authed_api::with_event_submitter(&base, token.clone(), {
-                    let circle_id = circle_id.clone();
-                    move |sub| async move {
-                        crate::circle_api::submit_circle_scope_rotate_events(
-                            &sub, &circle_id, &events, None,
-                        )
-                        .await
-                    }
-                })
-                .await
-                {
-                    Ok(outcome) => outcome,
-                    Err(err) => {
-                        if err.is_auth_expired() {
-                            return;
+                let outcome =
+                    match crate::transport::auth::with_event_submitter(&base, token.clone(), {
+                        let circle_id = circle_id.clone();
+                        move |sub| async move {
+                            crate::transport::circle::submit_circle_scope_rotate_events(
+                                &sub, &circle_id, &events, None,
+                            )
+                            .await
                         }
-                        tracing::debug!(
-                            %realm_id,
-                            %circle_id,
-                            %target_principal_id,
-                            error = %err.display(),
-                            "sync_engine: Circle scope-rotate submit failed",
-                        );
-                        continue;
-                    }
-                };
+                    })
+                    .await
+                    {
+                        Ok(outcome) => outcome,
+                        Err(err) => {
+                            if err.is_auth_expired() {
+                                return;
+                            }
+                            tracing::debug!(
+                                %realm_id,
+                                %circle_id,
+                                %target_principal_id,
+                                error = %err.display(),
+                                "sync_engine: Circle scope-rotate submit failed",
+                            );
+                            continue;
+                        }
+                    };
                 if !outcome.accepted.is_empty() || !outcome.duplicate.is_empty() {
-                    if generation() != start_generation {
+                    if generation.get() != start_generation {
                         return;
                     }
-                    ctx.state_store
-                        .clone()
-                        .write()
-                        .save_mls_snapshot_for_effective_scope(
+                    ctx.state_store.write(|store| {
+                        store.save_mls_snapshot_for_effective_scope(
                             realm_id.clone(),
                             Some(&circle_id),
                             post_commit_snapshot,
-                        );
+                        )
+                    });
                     tracing::info!(
                         %realm_id,
                         %circle_id,
@@ -701,16 +671,16 @@ async fn run_circle_scope_rotate_pass(
 /// server acceptance, matching the send path and epoch-rotation button.
 async fn run_idle_self_update_pass(
     start_generation: u64,
-    generation: Signal<u64>,
+    generation: crate::runtime::input::ValueReader<u64>,
     ctx: &SyncEngineContext,
 ) {
-    if generation() != start_generation {
+    if generation.get() != start_generation {
         return;
     }
-    let base = ctx.base_url.read().clone();
-    let token = ctx.token.read().clone();
-    let actor_id = ctx.account_did.read().trim().to_owned();
-    let device_id = ctx.device_id.read().trim().to_owned();
+    let base = ctx.base_url.clone();
+    let token = ctx.token.get();
+    let actor_id = ctx.account_did.trim().to_owned();
+    let device_id = ctx.device_id.trim().to_owned();
     if base.trim().is_empty()
         || token.trim().is_empty()
         || actor_id.is_empty()
@@ -719,21 +689,22 @@ async fn run_idle_self_update_pass(
         return;
     }
     let now = crate::clock::now_utc();
-    let realm_ids: Vec<String> = ctx.state_store.read().mls_snapshots().into_keys().collect();
+    let realm_ids: Vec<String> = ctx
+        .state_store
+        .read(|store| store.mls_snapshots().into_keys().collect());
     let secure_store = crate::secure_key_store::default_secure_key_store("inkson");
     for realm_id in realm_ids {
         // Re-check cancellation between Realms: a logout / profile rotation
         // mid-pass must not keep minting commits under the dead generation.
-        if generation() != start_generation {
+        if generation.get() != start_generation {
             return;
         }
         // Build the gated idle commit under a read borrow. `Ok(None)` is the
         // overwhelmingly common case (Realm not yet due / before this member's
         // jitter slot / a pending commit already suppresses it).
-        let built = {
-            let store = ctx.state_store.read();
+        let built = ctx.state_store.read(|store| {
             crate::mls::runtime::build_idle_self_update_commit(
-                &store,
+                store,
                 secure_store.as_ref(),
                 &realm_id,
                 &actor_id,
@@ -746,7 +717,7 @@ async fn run_idle_self_update_pass(
                 Some((commit_envelope, snapshot)) => {
                     let schedule_hash = commit_envelope.commit_digest.clone();
                     crate::mls::group_events::mls_commit_event_from_store(
-                        &store,
+                        store,
                         &realm_id,
                         &actor_id,
                         &schedule_hash,
@@ -755,7 +726,7 @@ async fn run_idle_self_update_pass(
                     .map(|event| Some((event, commit_envelope.epoch, snapshot)))
                 }
             })
-        };
+        });
         let (commit_event, next_epoch, snapshot) = match built {
             Ok(Some(parts)) => parts,
             Ok(None) => continue,
@@ -775,21 +746,19 @@ async fn run_idle_self_update_pass(
         // way the epoch advances, so a rejection is fine — we simply do NOT
         // persist the local snapshot (persist-on-accept).
         let submit_token = token.clone();
-        match crate::authed_api::with_authed_api(&base, submit_token, |api| async move {
+        match crate::transport::auth::with_authed_api(&base, submit_token, |api| async move {
             api.event_submitter()?.submit_sdk_event(&commit_event).await
         })
         .await
         {
             Ok(_) => {
-                if generation() != start_generation {
+                if generation.get() != start_generation {
                     // A late accept under a stale generation must not write the
                     // snapshot into the new generation's store.
                     return;
                 }
                 ctx.state_store
-                    .clone()
-                    .write()
-                    .save_mls_snapshot(realm_id.clone(), snapshot);
+                    .write(|store| store.save_mls_snapshot(realm_id.clone(), snapshot));
                 tracing::info!(
                     %realm_id,
                     epoch = next_epoch,
@@ -815,12 +784,12 @@ async fn run_idle_self_update_pass(
 
 async fn run_iteration(
     start_generation: u64,
-    generation: Signal<u64>,
+    generation: crate::runtime::input::ValueReader<u64>,
     ctx: &SyncEngineContext,
     deltas_since_invites: &mut u32,
 ) -> IterationOutcome {
-    let base = ctx.base_url.read().clone();
-    let token = ctx.token.read().clone();
+    let base = ctx.base_url.clone();
+    let token = ctx.token.get();
     if base.trim().is_empty() || token.trim().is_empty() {
         return IterationOutcome::NotReady;
     }
@@ -835,7 +804,7 @@ async fn run_iteration(
     // ②(A+②): `token` is the `ak.session.grant`; every self-path sync request
     // must include the grant-binding (DPoP) key instead of falling back to a bare
     // bearer request that the server will reject.
-    let api = match crate::authed_api::authed_api(&base, token.clone()) {
+    let api = match crate::transport::auth::authed_api(&base, token.clone()) {
         Ok(api) => api,
         Err(error) => {
             return IterationOutcome::Transient(format!(
@@ -871,7 +840,7 @@ async fn run_iteration(
             // overwrite signals owned by the new generation. The
             // state_store write below is still safe because it's keyed
             // by content, but the UI signals are not.
-            if generation() != start_generation {
+            if generation.get() != start_generation {
                 return IterationOutcome::Ok {
                     realm_ids: Vec::new(),
                 };
@@ -883,14 +852,16 @@ async fn run_iteration(
             let refresh_invites =
                 is_full_sync || *deltas_since_invites >= INVITES_REFRESH_EVERY_N_DELTAS;
             let invite_notifications = if refresh_invites {
-                let latest_token = ctx.token.read().clone();
+                let latest_token = ctx.token.get();
                 let invite_api = if !latest_token.trim().is_empty() && latest_token != token {
                     api.clone().with_bearer(latest_token)
                 } else {
                     api.clone()
                 };
-                match async { crate::account_api::invites(&invite_api.sdk_http_client()?).await }
-                    .await
+                match async {
+                    crate::transport::account::invites(&invite_api.sdk_http_client()?).await
+                }
+                .await
                 {
                     Ok(response) => {
                         *deltas_since_invites = 0;
@@ -928,7 +899,7 @@ async fn run_iteration(
             // stale-generation `response` (old account's realms / cursor /
             // event projections) can't be written into the new generation's store and UI
             // signals. The generation bump covers the profile/server switch case.
-            if generation() != start_generation {
+            if generation.get() != start_generation {
                 return IterationOutcome::Ok {
                     realm_ids: Vec::new(),
                 };
@@ -940,12 +911,16 @@ async fn run_iteration(
             // (fail-closed). Done here, not inside the synchronous
             // `apply_response`, because the directory query is async.
             route_inbound_call_signals(&api, &response, ctx).await;
-            let state_store_for_profiles = ctx.state_store;
-            if prefetch_persistent_event_sender_keys(&api, &response, ctx.did_cache, |realm_id| {
-                state_store_for_profiles
-                    .read()
-                    .realm_projection_is_minimal_metadata(realm_id)
-            })
+            let state_store_for_profiles = ctx.state_store.clone();
+            if prefetch_persistent_event_sender_keys(
+                &api,
+                &response,
+                ctx.did_cache.clone(),
+                |realm_id| {
+                    state_store_for_profiles
+                        .read(|store| store.realm_projection_is_minimal_metadata(realm_id))
+                },
+            )
             .await
             {
                 refresh_projection_events_from_sync_response(&response, is_full_sync, ctx);
@@ -955,21 +930,17 @@ async fn run_iteration(
             // synchronous `MemberIdentityStore::current_identity` proof verifier
             // can resolve them (a Miss is fail-closed → the identity would be
             // dropped). Keyed by the proof `verification_method` (`actor#device`).
-            prefetch_member_identity_proof_keys(&api, &response, ctx.did_cache).await;
+            prefetch_member_identity_proof_keys(&api, &response, ctx.did_cache.clone()).await;
             if let Err(error) = process_to_device_delivery(&api, &response, ctx).await {
                 if is_auth_expired_error(&error) {
                     return IterationOutcome::AuthExpired;
                 }
-                let mut last_error = ctx.last_error;
-                last_error.set(Some(format!("sync_engine to-device: {error}")));
                 return IterationOutcome::Transient(format!("sync_engine to-device: {error}"));
             }
             if let Err(error) = poll_device_message_queue(&api, ctx).await {
                 if is_auth_expired_error(&error) {
                     return IterationOutcome::AuthExpired;
                 }
-                let mut last_error = ctx.last_error;
-                last_error.set(Some(format!("sync_engine to-device poll: {error}")));
                 return IterationOutcome::Transient(format!("sync_engine to-device poll: {error}"));
             }
             IterationOutcome::Ok {
@@ -983,18 +954,22 @@ async fn run_iteration(
             reset_cursor,
         }) => {
             if reset_cursor {
-                let mut state_store = ctx.state_store;
-                let mut sync_cursor = ctx.sync_cursor;
-                state_store.write().clear_sync_cursor();
-                sync_cursor.set(String::new());
+                ctx.state_store.write(LocalStateStore::clear_sync_cursor);
+                ctx.projection_sink
+                    .projection(ClientProjectionEvent::CursorReset {
+                        scope: "account".to_owned(),
+                    });
             } else if let Some(cursor) = reconnect_cursor {
                 // §1.1 rule 4 — a validated `dropped` cursor IS the reconnect
                 // position: persist it so the next subscribe resumes there
                 // instead of replaying from the stale pre-drop cursor.
-                let mut state_store = ctx.state_store;
-                let mut sync_cursor = ctx.sync_cursor;
-                state_store.write().save_sync_cursor(cursor.clone());
-                sync_cursor.set(cursor);
+                ctx.state_store
+                    .write(|store| store.save_sync_cursor(cursor.clone()));
+                ctx.projection_sink
+                    .projection(ClientProjectionEvent::CursorCheckpoint {
+                        scope: "account".to_owned(),
+                        cursor,
+                    });
             }
             IterationOutcome::ReconnectAfter {
                 reconnect_after_ms,
@@ -1002,7 +977,7 @@ async fn run_iteration(
             }
         }
         Err(error) if is_terminal_session_grant_error(&error) => {
-            crate::session::invalidate_current_session("session grant is no longer active");
+            ctx.session.invalidate("session grant is no longer active");
             IterationOutcome::AuthExpired
         }
         Err(error) if is_auth_expired_error(&error) => IterationOutcome::AuthExpired,
@@ -1014,12 +989,11 @@ async fn run_iteration(
         }
         Err(error) if is_invalid_cursor_error(&error) => {
             let _ = error;
-            // Signals are Copy — take local mutable handles so the
-            // outer `&SyncEngineContext` doesn't need to be &mut.
-            let mut state_store = ctx.state_store;
-            let mut sync_cursor = ctx.sync_cursor;
-            state_store.write().clear_sync_cursor();
-            sync_cursor.set(String::new());
+            ctx.state_store.write(LocalStateStore::clear_sync_cursor);
+            ctx.projection_sink
+                .projection(ClientProjectionEvent::CursorReset {
+                    scope: "account".to_owned(),
+                });
             IterationOutcome::InvalidCursor
         }
         Err(error) if is_stale_frontier_error(&error) => {
@@ -1029,45 +1003,54 @@ async fn run_iteration(
             // SAME cursor; failures here are best-effort — the retry
             // itself is the recovery.
             if let Err(describe_error) =
-                async { crate::account_api::sync_describe(&api.sdk_http_client()?).await }.await
+                async { crate::transport::account::sync_describe(&api.sdk_http_client()?).await }
+                    .await
             {
                 tracing::debug!(
                     ?describe_error,
                     "stale_frontier recovery: account/describe failed"
                 );
             }
-            let selected_realm_id = ctx.selected_realm_id.read().clone();
+            let selected_realm_id = ctx.selected_realm_id.get();
             if !selected_realm_id.is_empty() {
-                let mut state_store = ctx.state_store;
-                match api.snapshot_head(&selected_realm_id).await {
-                    Ok(Some(manifest)) => {
-                        tracing::debug!(
-                            realm_id = %selected_realm_id,
-                            snapshot_id = %manifest.id,
-                            "stale_frontier recovery: snapshot head available for replay fallback"
-                        );
-                    }
-                    Ok(None) => {
-                        state_store.write().mark_snapshot_degraded(
-                            selected_realm_id.clone(),
-                            "snapshot head unavailable after stale_frontier",
-                        );
-                    }
-                    Err(snapshot_error) => {
-                        tracing::debug!(
-                            ?snapshot_error,
-                            realm_id = %selected_realm_id,
-                            "stale_frontier recovery: snapshot head probe failed"
-                        );
-                        state_store.write().mark_snapshot_degraded(
-                            selected_realm_id.clone(),
-                            format!("snapshot head probe failed: {snapshot_error}"),
-                        );
+                if let Ok(http) = api.sdk_http_client() {
+                    let snapshot_clients = crate::transport::EndpointClients::from_http(http);
+                    match snapshot_clients
+                        .directory()
+                        .snapshot_head(&selected_realm_id)
+                        .await
+                    {
+                        Ok(Some(manifest)) => {
+                            tracing::debug!(
+                                realm_id = %selected_realm_id,
+                                snapshot_id = %manifest.id,
+                                "stale_frontier recovery: snapshot head available for replay fallback"
+                            );
+                        }
+                        Ok(None) => {
+                            ctx.state_store.write(|store| {
+                                store.mark_snapshot_degraded(
+                                    selected_realm_id.clone(),
+                                    "snapshot head unavailable after stale_frontier",
+                                )
+                            });
+                        }
+                        Err(snapshot_error) => {
+                            tracing::debug!(
+                                ?snapshot_error,
+                                realm_id = %selected_realm_id,
+                                "stale_frontier recovery: snapshot head probe failed"
+                            );
+                            ctx.state_store.write(|store| {
+                                store.mark_snapshot_degraded(
+                                    selected_realm_id.clone(),
+                                    format!("snapshot head probe failed: {snapshot_error}"),
+                                )
+                            });
+                        }
                     }
                 }
             }
-            let mut last_error = ctx.last_error;
-            last_error.set(Some(format!("sync_engine: {error}")));
             IterationOutcome::StaleFrontier
         }
         Err(error) => IterationOutcome::Transient(format!("sync_engine: {error}")),
@@ -1080,13 +1063,13 @@ async fn run_iteration(
 /// verified signals into the call-signal hub (fail-closed). Runs after the
 /// synchronous `apply_response` because directory resolution needs `keys/query`.
 async fn route_inbound_call_signals(
-    api: &ArkretApi,
+    api: &TransportClient,
     response: &ClientSyncOutcome,
     ctx: &SyncEngineContext,
 ) {
-    let account_did = ctx.account_did.read().clone();
+    let account_did = ctx.account_did.clone();
     let mut hub = ctx.call_signal_hub;
-    let mut did_cache = ctx.did_cache;
+    let did_cache = ctx.did_cache.clone();
 
     // Tier-2 (device-lifecycle.md §8.3): the call-signal receiver verifies the
     // sender device key's full cross-signing chain, which needs the sender's
@@ -1095,9 +1078,9 @@ async fn route_inbound_call_signals(
     // and trust UI use also governs device-key trust. The anchor back-fills
     // resolved documents into its private cache copy; write it back afterwards
     // so subsequent iterations reuse it.
-    let anchor = crate::did_resolver::ResolverDidAnchor::from_profile(
-        crate::did_resolver::DeploymentProfile::PersonalNode,
-        did_cache.read().clone(),
+    let anchor = crate::identity::did_resolver::ResolverDidAnchor::from_profile(
+        crate::identity::did_resolver::DeploymentProfile::PersonalNode,
+        did_cache.get(),
     );
 
     for (id, body) in &response.realms {
@@ -1116,7 +1099,7 @@ async fn route_inbound_call_signals(
         .await;
     }
 
-    *did_cache.write() = anchor.into_cache();
+    did_cache.set(anchor.into_cache());
 }
 
 /// Prime the same device-directory cache used by the synchronous chat proof
@@ -1130,9 +1113,9 @@ async fn route_inbound_call_signals(
 /// authorship there is anchored to the active MLS LeafNode and MUST NOT form
 /// a principal-scoped `(actor, device)` `keys/query` pair.
 pub(crate) async fn prefetch_persistent_event_sender_keys(
-    api: &ArkretApi,
+    api: &TransportClient,
     response: &ClientSyncOutcome,
-    did_cache: Signal<crate::did_resolver::DidResolutionCache>,
+    did_cache: crate::runtime::input::ValueCell<crate::identity::did_resolver::DidResolutionCache>,
     is_minimal_metadata_realm: impl Fn(&str) -> bool,
 ) -> bool {
     let pairs = collect_persistent_proof_sender_devices(response, &is_minimal_metadata_realm);
@@ -1141,14 +1124,14 @@ pub(crate) async fn prefetch_persistent_event_sender_keys(
 
 /// MID-5: resolve the authoritative device signing key for every
 /// `ak.member.identity.update` asserter referenced by this sync response, so the
-/// synchronous [`crate::member_identity_store::MemberIdentityStore`] proof
+/// synchronous [`crate::identity::member_identity_store::MemberIdentityStore`] proof
 /// verifier (which is cache-only and fail-closed) can validate the proofs. The
 /// `(actor, device)` pair is derived from each proof's `verification_method`
 /// (`did:method:identifier#device`); the controller MUST be the asserting actor.
 async fn prefetch_member_identity_proof_keys(
-    api: &ArkretApi,
+    api: &TransportClient,
     response: &ClientSyncOutcome,
-    did_cache: Signal<crate::did_resolver::DidResolutionCache>,
+    did_cache: crate::runtime::input::ValueCell<crate::identity::did_resolver::DidResolutionCache>,
 ) -> bool {
     let mut pairs = BTreeSet::<(String, String)>::new();
     for (_realm_id, body) in &response.realms {
@@ -1213,9 +1196,9 @@ fn split_verification_method(verification_method: &str) -> Option<(String, Strin
 }
 
 pub(crate) async fn prefetch_persistent_event_sender_keys_from_values(
-    api: &ArkretApi,
+    api: &TransportClient,
     values: &[Value],
-    did_cache: Signal<crate::did_resolver::DidResolutionCache>,
+    did_cache: crate::runtime::input::ValueCell<crate::identity::did_resolver::DidResolutionCache>,
 ) -> bool {
     let mut pairs = BTreeSet::<(String, String)>::new();
     for value in values {
@@ -1229,17 +1212,17 @@ pub(crate) async fn prefetch_persistent_event_sender_keys_from_values(
 /// loop priming `ak.realm_key.share` sender device keys before SEC-02
 /// fail-closed verification).
 pub(crate) async fn prefetch_device_key_pairs(
-    api: &ArkretApi,
+    api: &TransportClient,
     pairs: Vec<(String, String)>,
-    did_cache: Signal<crate::did_resolver::DidResolutionCache>,
+    did_cache: crate::runtime::input::ValueCell<crate::identity::did_resolver::DidResolutionCache>,
 ) -> bool {
     prefetch_persistent_event_sender_key_pairs(api, pairs, did_cache).await
 }
 
 async fn prefetch_persistent_event_sender_key_pairs(
-    api: &ArkretApi,
+    api: &TransportClient,
     pairs: Vec<(String, String)>,
-    did_cache: Signal<crate::did_resolver::DidResolutionCache>,
+    did_cache: crate::runtime::input::ValueCell<crate::identity::did_resolver::DidResolutionCache>,
 ) -> bool {
     if pairs.is_empty() {
         return false;
@@ -1248,8 +1231,8 @@ async fn prefetch_persistent_event_sender_key_pairs(
         .into_iter()
         .filter(|(actor, device)| {
             matches!(
-                crate::device_directory::cached_device_signing_key(actor, device),
-                crate::device_directory::CacheLookup::Miss
+                crate::identity::device_directory::cached_device_signing_key(actor, device),
+                crate::identity::device_directory::CacheLookup::Miss
             )
         })
         .collect();
@@ -1258,12 +1241,12 @@ async fn prefetch_persistent_event_sender_key_pairs(
     }
 
     let mut did_cache = did_cache;
-    let anchor = crate::did_resolver::ResolverDidAnchor::from_profile(
-        crate::did_resolver::DeploymentProfile::PersonalNode,
-        did_cache.read().clone(),
+    let anchor = crate::identity::did_resolver::ResolverDidAnchor::from_profile(
+        crate::identity::did_resolver::DeploymentProfile::PersonalNode,
+        did_cache.get(),
     );
-    crate::device_directory::prefetch_device_keys(api, &anchor, &missing).await;
-    *did_cache.write() = anchor.into_cache();
+    crate::identity::device_directory::prefetch_device_keys(api, &anchor, &missing).await;
+    did_cache.set(anchor.into_cache());
     true
 }
 
@@ -1272,24 +1255,23 @@ fn refresh_projection_events_from_sync_response(
     is_full_sync: bool,
     ctx: &SyncEngineContext,
 ) {
-    let state_store = ctx.state_store;
-    let mut projection_events = ctx.projection_events;
-    let account_did = ctx.account_did.read().clone();
-    let device_id = ctx.device_id.read().clone();
-    let synced_projection_events = {
-        let store_guard = state_store.read();
-        crate::projection::projection_events_from_sync_realms(
+    let state_store = ctx.state_store.clone();
+    let account_did = ctx.account_did.clone();
+    let device_id = ctx.device_id.clone();
+    let synced_projection_events = state_store.read(|store| {
+        crate::state::projection::projection_events_from_sync_realms(
             &response.realms,
-            Some(&store_guard),
+            Some(store),
             Some((&account_did, &device_id)),
         )
-    };
-    let next_projection_events = if is_full_sync {
-        synced_projection_events
-    } else {
-        crate::app::merge_projection_events(&projection_events.read(), synced_projection_events)
-    };
-    projection_events.set(next_projection_events);
+    });
+    if is_full_sync {
+        ctx.projection_sink.projection(ClientProjectionEvent::Reset);
+    }
+    for event in synced_projection_events {
+        ctx.projection_sink
+            .projection(ClientProjectionEvent::Account(event));
+    }
 }
 
 fn collect_persistent_proof_sender_devices(
@@ -1392,36 +1374,24 @@ pub fn apply_response(
     ctx: &SyncEngineContext,
     invite_notifications: Option<Vec<Value>>,
 ) {
-    // Local mutable handles for the signals we touch — Signal<T> is
-    // Copy so this is cheap.
-    let mut state_store = ctx.state_store;
-    let realm_tree_nodes = ctx.realm_tree_nodes;
-    let mut projection_events = ctx.projection_events;
-    let mut sync_cursor = ctx.sync_cursor;
-    let mut status = ctx.connection_status;
-    let mut network_state = ctx.network_state;
-    let mut last_error = ctx.last_error;
-    let mut device_queue = ctx.device_queue;
-    let mut theme = ctx.theme;
-    let mut selected_realm_id = ctx.selected_realm_id;
-    let mut did_cache = ctx.did_cache;
-    let account_did = ctx.account_did.read().clone();
+    // Clone runtime adapter handles before applying this response.
+    let state_store = ctx.state_store.clone();
+    let did_cache = ctx.did_cache.clone();
+    let account_did = ctx.account_did.clone();
+    let mut synced_theme = None;
 
     // Y2 invalidation hook: scan identity events in this response before writing
     // projections. On `ak.cross_signing.reset` / `ak.device.revoke`, invalidate
     // the related actor DID so the next authority resolution (`resolve_with_cache`)
     // walks the resolver chain instead of trusting a stale cache entry (old key
-    // set). Keep this separate from the `state_store.write()` borrow so the two
-    // Signal borrows do not overlap.
-    {
-        let mut cache = did_cache.write();
+    // set). Keep this separate from the state-store write callback.
+    did_cache.update(|cache| {
         for body in response.realms.values() {
-            invalidate_cache_for_revocation_events(&mut cache, body);
+            invalidate_cache_for_revocation_events(cache, body);
         }
-    }
+    });
 
-    {
-        let mut store = state_store.write();
+    state_store.write(|store| {
         // Perf (P0): a single sync response can touch the cursor, dozens of
         // realm-tree projections, seal views, member identity events and account
         // data — each setter used to flush the *entire* `ClientLocalState` to
@@ -1477,7 +1447,7 @@ pub fn apply_response(
                 &response.realms,
             );
 
-            apply_account_data(store, response, &account_did, &mut theme, &mut last_error);
+            synced_theme = apply_account_data(store, response, &account_did);
             apply_notification_projection(store, response, invite_notifications);
             store.save_presence_projection(response.presence.clone());
             store.ingest_to_device_messages(&response.to_device);
@@ -1485,6 +1455,10 @@ pub fn apply_response(
                 store.save_sync_cursor(response.cursor.clone());
             }
         }); // store.batch — single coalesced flush happens here
+    });
+    if let Some(value) = synced_theme {
+        ctx.projection_sink
+            .projection(ClientProjectionEvent::Theme { value });
     }
 
     // Receive side of `ak.call.signal`: route inbound call-signal envelopes
@@ -1498,58 +1472,57 @@ pub fn apply_response(
     // client. The async routing pass lives in `run_iteration`
     // (`route_inbound_call_signals`) right after this call returns.
 
-    // The `realm_tree_nodes` Signal is derived from `state_store.realm_tree_projections`
-    // via a use_effect in `RouterView` — we don't `set` it here. We do
-    // still need a reconciled snapshot for status text + selected_realm_id
-    // bookkeeping.
-    let _ = realm_tree_nodes; // suppress unused capture; consumed by the derive effect
-    let reconciled = crate::app::realm_tree_nodes_from_sync_realms(
-        &state_store.read().load().realm_tree_projections,
-    );
-    if reconciled.is_empty() {
-        status.set(ConnectionState::Empty.label().to_owned());
-    } else {
-        status.set(format!(
-            "{}: synced {} realm-tree node(s)",
-            ConnectionState::Online.label(),
-            reconciled.len()
-        ));
-    }
-    network_state.set("online".to_owned());
+    // Realm tree nodes are derived in the app projection adapter from the
+    // canonical local-state projection; the engine only computes a snapshot
+    // for status and selected-Realm bookkeeping.
+    let reconciled = state_store.read(|store| {
+        crate::app::realm_tree_nodes_from_sync_realms(&store.load().realm_tree_projections)
+    });
+    ctx.projection_sink.sync_status(SyncStatusEvent::Online);
     let first_realm = reconciled
         .iter()
         .find(|node| node.kind == RealmTreeNodeKind::Realm)
         .map(|node| node.id.clone());
     {
-        let current = selected_realm_id.read().clone();
+        let current = selected_realm_id.get();
         let trimmed = current.trim();
         let needs_reset = trimmed.is_empty() || !reconciled.iter().any(|node| node.id == trimmed);
         if needs_reset {
-            selected_realm_id.set(first_realm.unwrap_or_default());
+            ctx.projection_sink
+                .projection(ClientProjectionEvent::SelectedRealm {
+                    realm_id: first_realm.unwrap_or_default(),
+                });
         }
     }
 
     // Merge encrypted bodies on read (author sidecar → remote decrypt-on-read).
     // The `store` write guard above is out of scope; take a fresh read guard.
-    let device_id = ctx.device_id.read().clone();
-    let synced_projection_events = {
-        let store_guard = state_store.read();
-        crate::projection::projection_events_from_sync_realms(
+    let device_id = ctx.device_id.clone();
+    let synced_projection_events = state_store.read(|store| {
+        crate::state::projection::projection_events_from_sync_realms(
             &response.realms,
-            Some(&store_guard),
+            Some(store),
             Some((&account_did, &device_id)),
         )
-    };
-    let next_projection_events = if is_full_sync {
-        synced_projection_events
-    } else {
-        crate::app::merge_projection_events(&projection_events.read(), synced_projection_events)
-    };
-    projection_events.set(next_projection_events);
+    });
+    if is_full_sync {
+        ctx.projection_sink.projection(ClientProjectionEvent::Reset);
+    }
+    for event in synced_projection_events {
+        ctx.projection_sink
+            .projection(ClientProjectionEvent::Account(event));
+    }
 
-    device_queue.set(state_store.read().load().to_device_inbox.len());
+    ctx.projection_sink
+        .projection(ClientProjectionEvent::DeviceQueue {
+            pending: state_store.read(|store| store.load().to_device_inbox.len()),
+        });
     if to_device_batch_allows_cursor_advance(&response.to_device, response.to_device_limited) {
-        sync_cursor.set(response.cursor.clone());
+        ctx.projection_sink
+            .projection(ClientProjectionEvent::CursorCheckpoint {
+                scope: "account".to_owned(),
+                cursor: response.cursor.clone(),
+            });
     } else {
         tracing::debug!(
             cursor = %response.cursor,
@@ -1567,17 +1540,21 @@ pub fn apply_response(
 /// `identity_event_ids[]` and the events themselves live in the
 /// frame-level event log.
 async fn process_to_device_delivery(
-    api: &ArkretApi,
+    api: &TransportClient,
     response: &ClientSyncOutcome,
     ctx: &SyncEngineContext,
 ) -> anyhow::Result<()> {
+    let key_clients = crate::transport::EndpointClients::from_http(api.sdk_http_client()?);
+    let keys = key_clients.keys();
     let mut ack_safe_prefix = to_device_batch_all_ack_safe(&response.to_device)
-        && ctx.state_store.read().persist_error().is_none();
+        && ctx
+            .state_store
+            .read(|store| store.persist_error().is_none());
     if ack_safe_prefix
         && !response.to_device.is_empty()
         && let Some(ack_token) = response.to_device_ack_token.as_deref()
     {
-        api.ack_device_messages(ack_token).await?;
+        keys.ack_device_messages(ack_token).await?;
     }
 
     let mut next_cursor = if response.to_device_limited {
@@ -1593,15 +1570,14 @@ async fn process_to_device_delivery(
                 "to-device backfill exceeded {MAX_TO_DEVICE_BACKFILL_PAGES} pages without finishing"
             );
         }
-        let page = api
+        let page = keys
             .receive_device_messages_page(Some(&cursor), Some(TO_DEVICE_PAGE_LIMIT))
             .await?;
         let messages = device_messages_get_values(&page)?;
-        let persisted = {
-            let mut state_store = ctx.state_store;
-            state_store.write().ingest_to_device_messages(&messages);
-            state_store.read().persist_error().is_none()
-        };
+        let persisted = ctx.state_store.write(|store| {
+            store.ingest_to_device_messages(&messages);
+            store.persist_error().is_none()
+        });
         if !persisted || !to_device_batch_all_ack_safe(&messages) {
             ack_safe_prefix = false;
         }
@@ -1609,7 +1585,7 @@ async fn process_to_device_delivery(
             && !messages.is_empty()
             && let Some(ack_token) = page.ack_token.as_deref()
         {
-            api.ack_device_messages(ack_token).await?;
+            keys.ack_device_messages(ack_token).await?;
         }
         if !(page.has_more || page.limited) {
             break;
@@ -1619,18 +1595,27 @@ async fn process_to_device_delivery(
             anyhow::bail!("to-device page reported more data without next_cursor");
         }
     }
-    let mut device_queue = ctx.device_queue;
-    device_queue.set(ctx.state_store.read().load().to_device_inbox.len());
+    ctx.projection_sink
+        .projection(ClientProjectionEvent::DeviceQueue {
+            pending: ctx
+                .state_store
+                .read(|store| store.load().to_device_inbox.len()),
+        });
     Ok(())
 }
 
-async fn poll_device_message_queue(api: &ArkretApi, ctx: &SyncEngineContext) -> anyhow::Result<()> {
-    let first_page = api.receive_device_messages().await?;
-    ingest_device_message_pages(api, first_page, ctx).await
+async fn poll_device_message_queue(
+    api: &TransportClient,
+    ctx: &SyncEngineContext,
+) -> anyhow::Result<()> {
+    let key_clients = crate::transport::EndpointClients::from_http(api.sdk_http_client()?);
+    let keys = key_clients.keys();
+    let first_page = keys.receive_device_messages().await?;
+    ingest_device_message_pages(&keys, first_page, ctx).await
 }
 
 async fn ingest_device_message_pages(
-    api: &ArkretApi,
+    keys: &crate::transport::KeysEndpoints<'_>,
     first_page: DeviceMessagesGetOutcome,
     ctx: &SyncEngineContext,
 ) -> anyhow::Result<()> {
@@ -1638,17 +1623,16 @@ async fn ingest_device_message_pages(
     let mut page_count = 0usize;
     loop {
         let messages = device_messages_get_values(&page)?;
-        let persisted = {
-            let mut state_store = ctx.state_store;
-            state_store.write().ingest_to_device_messages(&messages);
-            state_store.read().persist_error().is_none()
-        };
+        let persisted = ctx.state_store.write(|store| {
+            store.ingest_to_device_messages(&messages);
+            store.persist_error().is_none()
+        });
         if persisted
             && to_device_batch_all_ack_safe(&messages)
             && !messages.is_empty()
             && let Some(ack_token) = page.ack_token.as_deref()
         {
-            api.ack_device_messages(ack_token).await?;
+            keys.ack_device_messages(ack_token).await?;
         }
         if !(page.has_more || page.limited) {
             break;
@@ -1662,12 +1646,16 @@ async fn ingest_device_message_pages(
         let Some(cursor) = page.next_cursor.clone() else {
             anyhow::bail!("to-device poll page reported more data without next_cursor");
         };
-        page = api
+        page = keys
             .receive_device_messages_page(Some(&cursor), Some(TO_DEVICE_PAGE_LIMIT))
             .await?;
     }
-    let mut device_queue = ctx.device_queue;
-    device_queue.set(ctx.state_store.read().load().to_device_inbox.len());
+    ctx.projection_sink
+        .projection(ClientProjectionEvent::DeviceQueue {
+            pending: ctx
+                .state_store
+                .read(|store| store.load().to_device_inbox.len()),
+        });
     Ok(())
 }
 
@@ -1788,7 +1776,8 @@ pub(crate) fn ingest_message_projection_events(
     if events.is_empty() {
         return 0;
     }
-    let records = crate::projection::message_ops::message_operations_from_events(realm_id, events);
+    let records =
+        crate::state::projection::message_ops::message_operations_from_events(realm_id, events);
     let mut changed = 0;
     for record in records {
         if store.upsert_raw_operation(record.operation_id, record.realm_id, record.payload) {
@@ -1803,8 +1792,9 @@ pub(crate) fn ingest_message_events(
     realm_id: &str,
     events: &[garth::ClientEvent],
 ) -> usize {
-    let records =
-        crate::projection::message_ops::message_operations_from_client_events(realm_id, events);
+    let records = crate::state::projection::message_ops::message_operations_from_client_events(
+        realm_id, events,
+    );
     let mut changed = 0;
     for record in records {
         if store.upsert_raw_operation(record.operation_id, record.realm_id, record.payload) {
@@ -1835,7 +1825,7 @@ pub(crate) fn ingest_kanban_projection_events(
     // sees the full log. The prior code ingested only strand.update +
     // space.create, which silently dropped remote `ak.strand.create` — the
     // root cause of cross-member cards never appearing.
-    let records = crate::projection::kanban_ops::kanban_operations_from_events(events);
+    let records = crate::state::projection::kanban_ops::kanban_operations_from_events(events);
     let mut changed = 0;
     for record in records {
         let operation_id = record.operation_id;
@@ -1852,7 +1842,8 @@ pub(crate) fn ingest_kanban_events(
     realm_id: &str,
     events: &[garth::ClientEvent],
 ) -> usize {
-    let records = crate::projection::kanban_ops::kanban_operations_from_client_events(events);
+    let records =
+        crate::state::projection::kanban_ops::kanban_operations_from_client_events(events);
     let mut changed = 0;
     for record in records {
         let operation_id = record.operation_id;
@@ -2082,7 +2073,7 @@ fn ingest_member_identity_events_from_projection(
 ///
 /// Finds `ak.cross_signing.reset` / `ak.device.revoke` events in one Realm
 /// projection `body`, then calls
-/// [`crate::did_resolver::DidResolutionCache::invalidate`] for the related actor
+/// [`crate::identity::did_resolver::DidResolutionCache::invalidate`] for the related actor
 /// DID. Events may appear in:
 /// - inline `identity_events[]` on each member roster entry;
 /// - top-level projection event logs at `state.events[]` / `events[]`.
@@ -2095,7 +2086,7 @@ fn ingest_member_identity_events_from_projection(
 /// TRUST-CACHE boundary: this only clears cache entries so the next resolution
 /// walks the authority chain again; it does not replace authority validation.
 fn invalidate_cache_for_revocation_events(
-    cache: &mut crate::did_resolver::DidResolutionCache,
+    cache: &mut crate::identity::did_resolver::DidResolutionCache,
     body: &Value,
 ) {
     /// Return whether the event kind is reset / revoke.
@@ -2120,7 +2111,7 @@ fn invalidate_cache_for_revocation_events(
 
     /// Invalidate for a batch of events when kind matches and DID syntax is valid.
     fn invalidate_from_events(
-        cache: &mut crate::did_resolver::DidResolutionCache,
+        cache: &mut crate::identity::did_resolver::DidResolutionCache,
         events: &[Value],
         fallback: Option<&Value>,
     ) {
@@ -2166,11 +2157,15 @@ fn apply_notification_projection(
     invite_notifications: Option<Vec<Value>>,
 ) {
     let projection_from_sync =
-        crate::projection::notifications::notification_items_from_value(&response.notifications);
+        crate::state::projection::notifications::notification_items_from_value(
+            &response.notifications,
+        );
     let account_notification_projection = response
         .account_data
         .iter()
-        .filter(|entry| crate::projection::notifications::is_notification_account_data(entry))
+        .filter(|entry| {
+            crate::state::projection::notifications::is_notification_account_data(entry)
+        })
         .cloned()
         .collect::<Vec<_>>();
     let should_save_notification_projection = projection_from_sync.is_some()
@@ -2185,7 +2180,7 @@ fn apply_notification_projection(
     });
     if let Some(invites) = invite_notifications {
         let joined_realms = response.realms.keys().cloned().collect::<BTreeSet<_>>();
-        crate::projection::notifications::merge_invite_notifications(
+        crate::state::projection::notifications::merge_invite_notifications(
             &mut notification_projection,
             invites,
             &joined_realms,
@@ -2200,10 +2195,8 @@ fn apply_account_data(
     store: &mut LocalStateStore,
     response: &ClientSyncOutcome,
     account_did: &str,
-    theme: &mut Signal<String>,
-    last_error: &mut Signal<Option<String>>,
-) {
-    let _ = last_error; // reserved for future malformed-payload reports
+) -> Option<String> {
+    let mut synced_theme = None;
     for entry in &response.account_data {
         let Some(data_type) = entry.get("data_type").and_then(Value::as_str) else {
             continue;
@@ -2211,12 +2204,14 @@ fn apply_account_data(
         // client.ui — theme + avatar pointer.
         if data_type == "client.ui" {
             if let Some(content) = entry.get("content") {
-                let local_theme = theme.read().clone();
+                let local_theme = store
+                    .load_private_data(account_did, "theme")
+                    .unwrap_or_else(|| "night".to_owned());
                 if let Some(remote_theme) =
                     crate::account_data::merge_client_ui_theme(&local_theme, content)
                 {
-                    theme.set(remote_theme.clone());
-                    store.save_private_data(account_did, "theme", remote_theme);
+                    store.save_private_data(account_did, "theme", remote_theme.clone());
+                    synced_theme = Some(remote_theme);
                 }
                 if let Some(avatar_blob_ref) =
                     crate::account_data::avatar_blob_ref_from_client_ui(content)
@@ -2234,7 +2229,7 @@ fn apply_account_data(
                 .get("content")
                 .and_then(|content| content.get("presence_visibility"))
                 .and_then(Value::as_str)
-                .and_then(crate::local_state::PresenceVisibility::try_from_wire)
+                .and_then(crate::state::PresenceVisibility::try_from_wire)
             else {
                 tracing::warn!(
                     "sync engine: ignoring malformed ak.presence.visibility account_data"
@@ -2252,9 +2247,8 @@ fn apply_account_data(
         if data_type == "ak.presence.preference" {
             if let Some(content) = entry.get("content")
                 && content.get("ciphertext").is_none()
-                && let Ok(preference) = serde_json::from_value::<
-                    crate::local_state::PresencePreferenceState,
-                >(content.clone())
+                && let Ok(preference) =
+                    serde_json::from_value::<crate::state::PresencePreferenceState>(content.clone())
             {
                 store.set_presence_preference(preference);
             }
@@ -2305,6 +2299,7 @@ fn apply_account_data(
             }
         }
     }
+    synced_theme
 }
 
 #[cfg(test)]
@@ -2929,7 +2924,7 @@ mod tests {
 
     use arkret_sdk::{Did, DidDocument};
 
-    use crate::did_resolver::DidResolutionCache;
+    use crate::identity::did_resolver::DidResolutionCache;
 
     fn seed_cache(did_str: &str) -> (DidResolutionCache, Did) {
         let mut cache = DidResolutionCache::new(8);

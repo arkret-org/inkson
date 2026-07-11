@@ -8,19 +8,20 @@ use serde_json::{Map, Value, json};
 use crate::components::{
     EmptyState, EmptyStateKind, SecurityStateBadge, SelfAttributionBadge, UiIcon, WriteStateIcon,
 };
-use crate::local_state::LocalStateStore;
 use crate::operation::uuid_v7;
 use crate::rank::rank_for_drop;
 use crate::routes::Route;
+use crate::state::LocalStateStore;
+use crate::transport::auth::{with_authed_api, with_authed_sdk_client};
 use crate::ui::button::{Button, ButtonSize, ButtonVariant};
 use crate::ui::checkbox::Checkbox;
 use crate::ui::input::Input;
 use crate::ui::label::Label;
 use crate::ui::select::{Select, SelectOption};
 use crate::ui::textarea::Textarea;
-use crate::views::helpers::{short_protocol_id, with_authed_api, with_authed_sdk_client};
+use crate::views::helpers::short_protocol_id;
 
-mod dnd;
+mod drag_drop_controller;
 // YOU-07-001: card due-calendar pure calculation helpers moved to `due_calendar`
 // (move-only).
 mod due_calendar;
@@ -29,13 +30,13 @@ mod due_calendar;
 /// hard-coded cards.
 mod model;
 
-use dnd::*;
+use drag_drop_controller::*;
 use due_calendar::*;
 pub(crate) use model::strand_update_operations_from_events;
 use model::*;
 
 #[cfg(test)]
-pub(crate) use crate::projection::kanban_ops::kanban_operations_from_events;
+pub(crate) use crate::state::projection::kanban_ops::kanban_operations_from_events;
 
 #[used]
 static TOAST_EDITOR_SCRIPT: Asset = asset!(
@@ -84,7 +85,7 @@ fn CardMarkdownEditor(
             };
             // YOU-06-002: the editor JS only extracts file bytes and hands
             // them to Rust over the eval channel; the upload itself runs
-            // through the canonical `ArkretApi` pipeline (auth headers,
+            // through the canonical `TransportClient` pipeline (auth headers,
             // retry/backoff, error-envelope decoding) instead of a JS
             // `fetch` that hand-rolls the wire.
             let mut eval = document::eval(&script);
@@ -344,7 +345,7 @@ fn CalendarScheduleEditForm(
 
 /// Decode one `uploadImage` bridge request from the Toast editor JS and run
 /// it through the canonical Rust blob pipeline
-/// (`ArkretApi::upload_blob_bytes_scoped`, multipart/form-data per
+/// (`BlobEndpoints::upload_bytes_scoped`, multipart/form-data per
 /// YOU-01-007), so authorization, retry/backoff and spec error-envelope
 /// decoding stay owned by the network layer. Returns
 /// `(blob_ref, media_type)` for the editor to build its markdown target.
@@ -380,10 +381,17 @@ async fn toast_editor_upload_via_api(
         .map(ToOwned::to_owned);
     let realm_id = realm_id.trim();
     let realm_id = (!realm_id.is_empty()).then(|| realm_id.to_owned());
-    let outcome = with_authed_api(base_url, token, move |api| async move {
-        api.upload_blob_bytes_scoped(bytes, &media_type, realm_id.as_deref(), filename.as_deref())
-            .await
-    })
+    let outcome = crate::transport::auth::with_endpoint_clients(
+        base_url,
+        token,
+        None,
+        move |clients| async move {
+            clients
+                .blob()
+                .upload_bytes_scoped(bytes, &media_type, realm_id.as_deref(), filename.as_deref())
+                .await
+        },
+    )
     .await
     .map_err(|error| error.display())?;
     Ok((outcome.blob_ref.to_string(), outcome.media_type))
@@ -494,7 +502,7 @@ fn toast_editor_bootstrap_script(host_id: &str, fallback_id: &str, value: &str) 
     // YOU-06-002: JS never talks to the protocol endpoint itself. It only
     // extracts the picked file's bytes and hands them to Rust over the
     // bidirectional eval channel; the upload runs through the canonical
-    // `ArkretApi::upload_blob_bytes_scoped` pipeline and Rust sends the
+    // `BlobEndpoints::upload_bytes_scoped` pipeline and Rust sends the
     // typed `BlobUploadOutcome` fields back for the markdown insert.
     let nextUploadId = 1;
     const pendingUploads = new Map();
@@ -717,9 +725,9 @@ pub fn KanbanPanel(
     });
     let mut board_view_id = use_signal(String::new);
     let mut lifecycle_container_projection =
-        use_signal(Vec::<crate::projection_views::SpaceContainerProjectionView>::new);
+        use_signal(Vec::<crate::state::projection_views::SpaceContainerProjectionView>::new);
     let mut lifecycle_strand_projection =
-        use_signal(Vec::<crate::projection_views::StrandProjectionView>::new);
+        use_signal(Vec::<crate::state::projection_views::StrandProjectionView>::new);
     // Cap-Gate-2: consume the app-level CapabilityEngine context so the
     // Archive / Restore buttons can pre-gate themselves. When the engine
     // carries no grants for the actor the gate stays open (inkson still
@@ -1089,7 +1097,7 @@ pub fn KanbanPanel(
                 .map(|resp| strand_update_operations_from_events(&resp.event_values()))
                 .unwrap_or_default();
             match with_authed_sdk_client(&base, api_token, |http| async move {
-                crate::realm_read_api::collection_projection(&http, &view).await
+                crate::transport::realm_read::collection_projection(&http, &view).await
             })
             .await
             {
@@ -1224,7 +1232,8 @@ pub fn KanbanPanel(
                 let view_for_call = view.clone();
                 if let Ok(projection) =
                     with_authed_sdk_client(&base, api_token, |http| async move {
-                        crate::realm_read_api::collection_projection(&http, &view_for_call).await
+                        crate::transport::realm_read::collection_projection(&http, &view_for_call)
+                            .await
                     })
                     .await
                 {
@@ -1572,7 +1581,7 @@ pub fn KanbanPanel(
                 let mut store = state_store;
                 spawn(async move {
                     let result =
-                        crate::authed_api::with_endpoint_clients(&base, api_token, None, {
+                        crate::transport::auth::with_endpoint_clients(&base, api_token, None, {
                             let subject_id = subject_id.clone();
                             let realm_id = realm_id.clone();
                             move |clients| async move {
@@ -2086,7 +2095,7 @@ pub fn KanbanPanel(
                                                         .map(|resp| strand_update_operations_from_events(&resp.event_values()))
                                                         .unwrap_or_default();
                                                     match with_authed_sdk_client(&base, api_token, |http| async move {
-                                                        crate::realm_read_api::collection_projection(&http, &view).await
+                                                        crate::transport::realm_read::collection_projection(&http, &view).await
                                                     })
                                                     .await
                                                     {

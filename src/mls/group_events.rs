@@ -11,8 +11,8 @@
 
 use serde_json::{Value, json};
 
-use crate::local_state::{LocalSealView, LocalStateStore};
 use crate::operation::{trim_realm_id, uuid_v7};
+use crate::state::{LocalSealView, LocalStateStore};
 
 /// Restrict a state/seal ref to the canonical `sha256:` digest grammar used
 /// by this MLS surface (`arkret_sdk::Hash::new` also accepts blake3, which is
@@ -146,7 +146,7 @@ pub(crate) fn mls_policy_root_from_seal_view(
 /// and would drift the commit away from genesis. We return the recorded
 /// genesis-locked root when present, falling back to the Seal-derived root only
 /// for groups created before this value was tracked (`encryption-and-audit.md`
-/// §2.5.1, [`crate::local_state::types::PersistedState::mls_genesis_policy_root`]).
+/// §2.5.1, [`crate::state::types::PersistedState::mls_genesis_policy_root`]).
 fn mls_commit_policy_root(
     state_store: &LocalStateStore,
     seal_view: &LocalSealView,

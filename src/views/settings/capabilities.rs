@@ -16,9 +16,10 @@ use arkret_sdk::models::{Capability, CapabilitySubject};
 use dioxus::prelude::*;
 
 use crate::components::{EmptyState, EmptyStateKind};
+use crate::transport::auth::with_authed_sdk_client;
 use crate::ui::button::{Button, ButtonSize, ButtonVariant};
 use crate::ui::dialog::Dialog;
-use crate::views::helpers::{display_name_for_did, short_protocol_id, with_authed_sdk_client};
+use crate::views::helpers::{display_name_for_did, short_protocol_id};
 
 /// One row in the user's capability list. Backed by either the user
 /// being the subject (capability held) or the issuer (capability
@@ -91,7 +92,7 @@ pub fn CapabilitiesSettingsCard(account_did: Signal<String>, token: Signal<Strin
         }
         spawn(async move {
             match with_authed_sdk_client(&base, tok, |http| async move {
-                crate::realm_read_api::effective_grants(&http, &did).await
+                crate::transport::realm_read::effective_grants(&http, &did).await
             })
             .await
             {

@@ -6,12 +6,13 @@ use serde_json::Value;
 
 use super::data::SPACE_KIND_OPTIONS;
 use crate::models::{RealmTreeNode, RealmTreeNodeKind};
+use crate::transport::auth::authed_api;
 use crate::ui::button::{Button, ButtonVariant};
 use crate::ui::input::Input;
 use crate::ui::label::Label;
 use crate::ui::select::{Select, SelectOption};
 use crate::ui::textarea::Textarea;
-use crate::views::helpers::{authed_api, short_protocol_id};
+use crate::views::helpers::short_protocol_id;
 
 #[component]
 pub(super) fn NewSpaceSection(
@@ -390,7 +391,7 @@ pub(super) fn NewSpaceSection(
                                             } else {
                                                 Some(default_realm_id.as_str())
                                             };
-                                            match crate::realm_write_api::create_space_under_realm(
+                                            match crate::transport::realm_write::create_space_under_realm(
                                                 &submitter,
                                                 &realm_id,
                                                 &actor,
@@ -511,7 +512,7 @@ pub(super) fn NewSpaceSection(
                                         new_space_state.set("Submitting ak.space.archive...".to_owned());
                                         spawn(async move {
                                             match authed_api(&base, api_token).and_then(|api| api.event_submitter()) {
-                                                Ok(submitter) => match crate::realm_write_api::change_space_lifecycle(
+                                                Ok(submitter) => match crate::transport::realm_write::change_space_lifecycle(
                                                     &submitter, &space_id, &realm_id, &actor, EventKind::SpaceArchive,
                                                 ).await {
                                                     Ok(()) => new_space_state.set(format!(
@@ -542,7 +543,7 @@ pub(super) fn NewSpaceSection(
                                         new_space_state.set("Submitting ak.space.restore...".to_owned());
                                         spawn(async move {
                                             match authed_api(&base, api_token).and_then(|api| api.event_submitter()) {
-                                                Ok(submitter) => match crate::realm_write_api::change_space_lifecycle(
+                                                Ok(submitter) => match crate::transport::realm_write::change_space_lifecycle(
                                                     &submitter, &space_id, &realm_id, &actor, EventKind::SpaceRestore,
                                                 ).await {
                                                     Ok(()) => new_space_state.set(format!(
@@ -573,7 +574,7 @@ pub(super) fn NewSpaceSection(
                                         new_space_state.set("Submitting ak.space.tombstone...".to_owned());
                                         spawn(async move {
                                             match authed_api(&base, api_token).and_then(|api| api.event_submitter()) {
-                                                Ok(submitter) => match crate::realm_write_api::change_space_lifecycle(
+                                                Ok(submitter) => match crate::transport::realm_write::change_space_lifecycle(
                                                     &submitter, &space_id, &realm_id, &actor, EventKind::SpaceTombstone,
                                                 ).await {
                                                     Ok(()) => new_space_state.set(format!(

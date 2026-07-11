@@ -2,8 +2,8 @@ use std::collections::BTreeSet;
 
 use serde_json::Value;
 
-use crate::local_state::LocalStateStore;
 use crate::models::RealmTreeNodeKind;
+use crate::state::LocalStateStore;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct MetadataSubject {

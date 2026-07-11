@@ -3,7 +3,12 @@ use chrono::Utc;
 use dioxus::prelude::*;
 use garth::{LoginKind, OidcLogin, SessionEngine, SessionGrantState};
 
-use crate::account_auth::{
+use crate::components::UiIcon;
+use crate::config::{
+    LocalConfigStore, normalize_device_id, normalize_server_url, principal_server_options_for,
+    same_server_url,
+};
+use crate::identity::account_auth::{
     AuthorityResolver, build_oidc_authorize_scaffold, build_persisted_oidc_scaffold,
     capture_current_browser_callback_url, clear_persisted_oidc_scaffold,
     extract_authorization_code_from_callback, extract_error_description_from_callback,
@@ -11,13 +16,8 @@ use crate::account_auth::{
     oidc_request_canonical_digest, open_oidc_authorize_url, persist_oidc_scaffold,
     restore_oidc_scaffold,
 };
-use crate::api::ArkretApi;
-use crate::components::UiIcon;
-use crate::config::{
-    LocalConfigStore, normalize_device_id, normalize_server_url, principal_server_options_for,
-    same_server_url,
-};
-use crate::local_state::{LocalStateStore, PersistedSessionGrant};
+use crate::state::{LocalStateStore, PersistedSessionGrant};
+use crate::transport::TransportClient;
 use crate::ui::button::{Button, ButtonVariant};
 use crate::ui::card::Card;
 use crate::ui::input::Input;
@@ -30,7 +30,7 @@ struct CompletedLogin {
     actor: String,
     personal_handle: Option<String>,
     device_id: String,
-    dpop_device_key: crate::local_state::DpopDeviceKeyRecord,
+    dpop_device_key: crate::state::DpopDeviceKeyRecord,
     session_credential: String,
     /// Persisted principal session grant. This is the live credential for
     /// `/_arkret/self/*`; refresh rotates this grant before its own expiry.
@@ -67,6 +67,9 @@ pub fn LoginPanel(
     // A4 — base_url / state_store from session context instead of props.
     let mut base_url = crate::app::SessionContext::get().base_url;
     let state_store = crate::app::SessionContext::get().state_store;
+    let session = use_context::<crate::runtime::services::RuntimeServices>()
+        .session
+        .clone();
     let mut auth_status = use_signal(|| {
         if auto_capture_callback {
             "Completing sign in...".to_owned()
@@ -436,29 +439,32 @@ pub fn LoginPanel(
                                     class: "ghost",
                                     "data-testid": "refresh-now-button",
                                     disabled: is_busy(),
-                                    onclick: move |_| {
+                                    onclick: {
+                                        let session = session.clone();
+                                        move |_| {
+                                        let session = session.clone();
                                         is_busy.set(true);
                                         auth_status.set("Refreshing session...".to_owned());
                                         spawn(async move {
-                                            match crate::session::refresh_current_session().await {
-                                                crate::session::CurrentSessionRefresh::Credential(
+                                            match session.refresh().await {
+                                                crate::runtime::session::CurrentSessionRefresh::Credential(
                                                     session_credential,
                                                 ) => {
                                                     token.set(session_credential);
                                                     auth_status.set("Session restored".to_owned());
                                                     on_login.call(());
                                                 }
-                                                crate::session::CurrentSessionRefresh::SignInRequired { reason } => {
+                                                crate::runtime::session::CurrentSessionRefresh::SignInRequired { reason } => {
                                                     auth_status.set(format!(
                                                         "Sign in required: {reason}"
                                                     ));
                                                 }
-                                                crate::session::CurrentSessionRefresh::LoginRequired { reason } => {
+                                                crate::runtime::session::CurrentSessionRefresh::LoginRequired { reason } => {
                                                     auth_status.set(format!(
                                                         "Session could not be restored: {reason}"
                                                     ));
                                                 }
-                                                crate::session::CurrentSessionRefresh::RetryLater { reason } => {
+                                                crate::runtime::session::CurrentSessionRefresh::RetryLater { reason } => {
                                                     auth_status.set(format!(
                                                         "Session refresh pending: {reason}"
                                                     ));
@@ -466,6 +472,7 @@ pub fn LoginPanel(
                                             }
                                             is_busy.set(false);
                                         });
+                                        }
                                     },
                                     "Refresh now"
                                 }
@@ -506,7 +513,7 @@ fn persist_completed_login_dpop_key(
     secure_store: &dyn crate::secure_key_store::SecureKeyStore,
     actor: &str,
     device_id: &str,
-    record: &crate::local_state::DpopDeviceKeyRecord,
+    record: &crate::state::DpopDeviceKeyRecord,
 ) -> Result<(), String> {
     crate::secure_key_store::set_active_device_seed_scope(Some(actor));
     crate::secure_key_store::store_grant_binding_seed_b64url(secure_store, &record.seed_b64)
@@ -568,7 +575,7 @@ pub(crate) async fn start_oidc_strand(
 ) -> Result<(), String> {
     // T1.Y1 — discover the Account Authority + auth methods from the Principal
     // Server's root `/_arkret/describe` (service-surface §2.5.1).
-    let principal = ArkretApi::new(principal_server_url)
+    let principal = TransportClient::unauthenticated(principal_server_url)
         .map_err(|error| format!("Invalid principal server URL: {error}"))?;
     let description = principal
         .describe()
@@ -586,7 +593,7 @@ pub(crate) async fn start_oidc_strand(
     let discovery = fetch_oidc_discovery(&discovery_url)
         .await
         .map_err(|error| format!("OIDC discovery failed: {error}"))?;
-    let redirect_uri = crate::account_auth::current_oidc_redirect_uri();
+    let redirect_uri = crate::identity::account_auth::current_oidc_redirect_uri();
     let bundle = build_oidc_authorize_scaffold(
         &discovery,
         &method,
@@ -697,7 +704,7 @@ async fn finish_oidc_callback(
         scaffold.principal_server_url.clone()
     };
     let sdk_base_url =
-        crate::session_refresh::sdk_base_url_from_gate_account_base(&gate_account_base)
+        crate::identity::session_refresh::sdk_base_url_from_gate_account_base(&gate_account_base)
             .map_err(|error| format!("Invalid Account Authority base: {error}"))?;
     let actor_hint = scaffold.principal_actor_id.trim().to_owned();
     let device = if scaffold.device_id.trim().is_empty() {
@@ -716,7 +723,7 @@ async fn finish_oidc_callback(
         .map_err(|error| format!("DPoP key store not ready: {error}"))?;
     let dpop_handle = {
         let mut store = state_store.write();
-        let handle = crate::account_auth::grant_dpop::ensure_device_key(&mut store)
+        let handle = crate::identity::account_auth::grant_dpop::ensure_device_key(&mut store)
             .map_err(|error| format!("DPoP key failed: {error}"))?;
         crate::event_signer::bind_active_signer_device_id(&device)
             .map_err(|error| format!("Event signer device binding failed: {error}"))?;
@@ -782,12 +789,13 @@ async fn finish_oidc_callback(
         .session_signing_key_pkcs8_pem()
         .map_err(|error| format!("export device session key: {error}"))?
         .to_string();
-    let dpop_device_key = crate::account_auth::grant_dpop::dpop_device_key_record_from_seed(
-        dpop_handle.seed_b64().as_str(),
-    )
-    .map_err(|error| format!("DPoP device key record failed: {error}"))?;
+    let dpop_device_key =
+        crate::identity::account_auth::grant_dpop::dpop_device_key_record_from_seed(
+            dpop_handle.seed_b64().as_str(),
+        )
+        .map_err(|error| format!("DPoP device key record failed: {error}"))?;
     let principal_target = principal_server_url;
-    let principal = ArkretApi::new(&principal_target)
+    let principal = TransportClient::unauthenticated(&principal_target)
         .map_err(|error| format!("Invalid principal server URL: {error}"))?;
     let actor = session_grant.principal_id.as_str().to_owned();
     if actor.trim().is_empty() {
@@ -803,7 +811,7 @@ async fn finish_oidc_callback(
         .with_bearer(session_grant.grant_jwt.clone())
         .with_dpop_device(dpop_handle.clone());
     let account =
-        async { crate::account_api::account_me(&authed_principal.sdk_http_client()?).await }
+        async { crate::transport::account::account_me(&authed_principal.sdk_http_client()?).await }
             .await
             .map_err(|error| {
                 format!("Principal server did not accept the session grant + DPoP: {error}")
@@ -914,8 +922,8 @@ mod tests {
         }
     }
 
-    fn dpop_record_for_seed(seed: [u8; 32]) -> crate::local_state::DpopDeviceKeyRecord {
-        crate::account_auth::grant_dpop::dpop_device_key_record_from_seed(
+    fn dpop_record_for_seed(seed: [u8; 32]) -> crate::state::DpopDeviceKeyRecord {
+        crate::identity::account_auth::grant_dpop::dpop_device_key_record_from_seed(
             &URL_SAFE_NO_PAD.encode(seed),
         )
         .expect("dpop record")
@@ -1018,7 +1026,7 @@ mod tests {
     fn completed_login_dpop_key_preserves_returning_account_key_material() {
         let _lock = seed_scope_test_lock();
         let _reset = SeedScopeReset;
-        let mut store = crate::local_state::isolated_store_for_tests("completed-login-dpop-key");
+        let mut store = crate::state::isolated_store_for_tests("completed-login-dpop-key");
         let secure_store = crate::secure_key_store::MemorySecureKeyStore::default();
         let actor = "did:web:alice.example";
         let device = "ak:device:01964137-0000-7000-8000-000000000001";

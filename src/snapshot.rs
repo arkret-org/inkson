@@ -1,7 +1,7 @@
 use chrono::{DateTime, Duration, Utc};
 
-use crate::api::ArkretApi;
-use crate::local_state::LocalStateStore;
+use crate::state::LocalStateStore;
+use crate::transport::TransportClient;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct SnapshotFallbackReason {
@@ -43,7 +43,7 @@ pub struct SnapshotBootstrapResult {
 }
 
 pub async fn download_verify_and_apply_snapshot<R>(
-    api: &ArkretApi,
+    api: &TransportClient,
     store: &mut LocalStateStore,
     realm_id: &str,
     service_did: &arkret_sdk::Did,
@@ -53,7 +53,11 @@ pub async fn download_verify_and_apply_snapshot<R>(
 where
     R: arkret_sdk::DidResolver + ?Sized,
 {
-    let manifest = match api.snapshot_head(realm_id).await {
+    let snapshot_clients =
+        crate::transport::EndpointClients::from_http(api.sdk_http_client().map_err(|error| {
+            SnapshotFallbackReason::unavailable(format!("snapshot transport failed: {error}"))
+        })?);
+    let manifest = match snapshot_clients.directory().snapshot_head(realm_id).await {
         Ok(Some(manifest)) => manifest,
         Ok(None) => {
             return Err(SnapshotFallbackReason::unavailable(
@@ -69,7 +73,8 @@ where
 
     let mut chunks = Vec::with_capacity(manifest.chunks.len());
     for descriptor in &manifest.chunks {
-        let chunk = api
+        let chunk = snapshot_clients
+            .blob()
             .download_snapshot_chunk_verified(descriptor)
             .await
             .map_err(|error| {

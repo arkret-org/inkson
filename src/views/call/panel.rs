@@ -19,10 +19,11 @@ use super::types::{
     CallMode, CallParticipant, CallStage, RecordingState, SharedTransport, TranscriptionState,
 };
 use crate::media::rtc::{DesiredMedia, MediaJoinRequest};
+use crate::transport::auth::with_event_submitter;
 use crate::ui::button::{Button, ButtonVariant};
 use crate::ui::checkbox::Checkbox;
 use crate::views::call_signals::CallSignalHub;
-use crate::views::helpers::{display_name_for_did, short_protocol_id, with_event_submitter};
+use crate::views::helpers::{display_name_for_did, short_protocol_id};
 
 #[component]
 #[allow(clippy::too_many_arguments)]
@@ -406,7 +407,7 @@ pub fn CallPanel(
                     spawn(async move {
                         let recording_id = format!("rtc-recording-{}", crate::operation::uuid_v7());
                         match with_event_submitter(&base, api_token, |sub| async move {
-                            crate::media_api::submit_call_recording_start(
+                            crate::transport::media::submit_call_recording_start(
                                 &sub,
                                 &realm,
                                 &actor,
@@ -432,7 +433,7 @@ pub fn CallPanel(
                         let transcript_id =
                             format!("rtc-transcript-{}", crate::operation::uuid_v7());
                         match with_event_submitter(&base, api_token, |sub| async move {
-                            crate::media_api::submit_call_transcription_start(
+                            crate::transport::media::submit_call_transcription_start(
                                 &sub,
                                 &realm,
                                 &actor,

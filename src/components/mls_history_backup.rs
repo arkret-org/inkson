@@ -37,8 +37,8 @@ use serde_json::Value;
 use crate::components::backup_job_scheduler::{
     BackupJob, BackupJobScheduler, BackupSchedulerConfig, upsert_backup_job,
 };
-use crate::local_state::LocalStateStore;
-use crate::views::helpers::with_authed_api;
+use crate::state::LocalStateStore;
+use crate::transport::auth::with_authed_api;
 
 const MLS_HISTORY_BACKUP_DEBOUNCE: Duration = Duration::from_millis(1500);
 const MLS_HISTORY_BACKUP_MIN_INTERVAL: Duration = Duration::from_secs(300);
@@ -227,7 +227,7 @@ pub(crate) fn schedule_mls_history_backup_after_commit(
 /// `mls_recovery_backup_configured` — these sites uploaded unconditionally
 /// before and that behaviour is preserved.
 pub(crate) async fn upload_mls_history_backup_now(
-    api: &crate::api::ArkretApi,
+    api: &crate::transport::TransportClient,
     base_url: &str,
     actor_id: &str,
     device_id: &str,

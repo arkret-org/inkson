@@ -2,8 +2,8 @@ use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use super::effects::EffectRegistry;
-use super::projection::{NoopProjectionSink, SharedProjectionSink};
-use crate::session::SessionCoordinator;
+use super::projection::{ProjectionRouter, SharedProjectionSink};
+use crate::runtime::session::SessionCoordinator;
 
 pub trait RuntimeClock: Send + Sync {
     fn unix_timestamp(&self) -> i64;
@@ -39,7 +39,7 @@ pub struct RuntimeServices {
     pub client: crate::client_core::InksonClientRuntime,
     pub session: SessionCoordinator,
     pub effects: EffectRegistry,
-    pub projection_sink: SharedProjectionSink,
+    pub projection_sink: ProjectionRouter,
     pub clock: Arc<dyn RuntimeClock>,
     pub telemetry: Arc<dyn RuntimeTelemetry>,
 }
@@ -53,14 +53,13 @@ impl RuntimeServices {
             client: crate::client_core::InksonClientRuntime::from_state_adapter(state_store),
             session,
             effects: EffectRegistry::default(),
-            projection_sink: Arc::new(NoopProjectionSink),
+            projection_sink: ProjectionRouter::default(),
             clock: Arc::new(SystemRuntimeClock),
             telemetry: Arc::new(TracingRuntimeTelemetry),
         }
     }
 
-    pub fn with_projection_sink(mut self, projection_sink: SharedProjectionSink) -> Self {
-        self.projection_sink = projection_sink;
-        self
+    pub fn install_projection_sink(&self, projection_sink: SharedProjectionSink) {
+        self.projection_sink.install(projection_sink);
     }
 }

@@ -97,7 +97,7 @@ pub fn RealmAdminPanel(
     //  - frontier head    → debug visibility into what Move builders thread
     //  - state_root       → admin can confirm divergence between local + server
     let seal_view = state_store.read().seal_view_for_realm(&selected_realm_id);
-    let bottom_cells: Vec<(String, crate::local_state::BottomCellInfo)> = seal_view
+    let bottom_cells: Vec<(String, crate::state::BottomCellInfo)> = seal_view
         .bottom_cells
         .iter()
         .map(|(k, v)| (k.clone(), v.clone()))
@@ -617,11 +617,11 @@ pub fn RealmAdminPanel(
                                     let realm = realm.clone();
                                     let api_token = token();
                                     spawn(async move {
-                                        match crate::views::helpers::with_authed_sdk_client(
+                                        match crate::transport::auth::with_authed_sdk_client(
                                             &base,
                                             api_token,
                                             |http| async move {
-                                                crate::realm_read_api::admin_notary_describe(
+                                                crate::transport::realm_read::admin_notary_describe(
                                                     &http, &realm,
                                                 )
                                                 .await
@@ -792,16 +792,16 @@ pub fn RealmAdminPanel(
                                         }
                                         let patch = Value::Object(patch);
                                         spawn(async move {
-                                            match crate::views::helpers::with_event_submitter(
+                                            match crate::transport::auth::with_event_submitter(
                                                 &base,
                                                 api_token,
                                                 |sub| async move {
                                                     match subject_kind {
                                                         RealmTreeNodeKind::Realm => {
-                                                            crate::realm_write_api::update_realm_metadata(&sub, &home_realm_id, &actor_id, patch).await
+                                                            crate::transport::realm_write::update_realm_metadata(&sub, &home_realm_id, &actor_id, patch).await
                                                         }
                                                         RealmTreeNodeKind::Space => {
-                                                            crate::realm_write_api::update_space_metadata(&sub, &home_realm_id, &subject_id, &actor_id, patch).await
+                                                            crate::transport::realm_write::update_space_metadata(&sub, &home_realm_id, &subject_id, &actor_id, patch).await
                                                         }
                                                     }
                                                 },
@@ -952,11 +952,11 @@ pub fn RealmAdminPanel(
                                     .get(&realm)
                                     .is_some_and(projection_has_recommended_encryption_floor);
                                 spawn(async move {
-                                    match crate::views::helpers::with_event_submitter(
+                                    match crate::transport::auth::with_event_submitter(
                                         &base,
                                         api_token,
                                         |sub| async move {
-                                            crate::realm_write_api::set_realm_policy_events(
+                                            crate::transport::realm_write::set_realm_policy_events(
                                                 &sub,
                                                 &realm,
                                                 &actor,
@@ -1049,7 +1049,7 @@ pub fn RealmAdminPanel(
                                     }
                                 };
                                 spawn(async move {
-                                    match crate::views::helpers::with_authed_api(
+                                    match crate::transport::auth::with_authed_api(
                                         &base,
                                         api_token,
                                         |api| async move {
@@ -1155,11 +1155,11 @@ pub fn RealmAdminPanel(
                                     leave_confirm_open.set(false);
                                     spawn(async move {
                                         let realm_for_msg = realm.clone();
-                                        match crate::views::helpers::with_event_submitter(
+                                        match crate::transport::auth::with_event_submitter(
                                             &base,
                                             api_token,
                                             |sub| async move {
-                                                crate::realm_write_api::leave_realm(&sub, &realm, &actor_id).await
+                                                crate::transport::realm_write::leave_realm(&sub, &realm, &actor_id).await
                                             },
                                         )
                                         .await
@@ -1378,7 +1378,7 @@ pub fn RealmAdminPanel(
                                     .unwrap_or_else(|| envelope.event_id.as_str())
                                     .to_owned();
                                 spawn(async move {
-                                    match crate::views::helpers::with_authed_api(
+                                    match crate::transport::auth::with_authed_api(
                                         &base,
                                         api_token,
                                         |api| async move {
@@ -1464,7 +1464,7 @@ pub fn RealmAdminPanel(
                                     .unwrap_or_else(|| envelope.event_id.as_str())
                                     .to_owned();
                                 spawn(async move {
-                                    match crate::views::helpers::with_authed_api(
+                                    match crate::transport::auth::with_authed_api(
                                         &base,
                                         api_token,
                                         |api| async move {
@@ -1538,11 +1538,11 @@ pub fn RealmAdminPanel(
                                 let grant_id = format!("ak:grant:{}", crate::operation::uuid_v7());
                                 admin_grant_id.set(grant_id.clone());
                                 spawn(async move {
-                                    match crate::views::helpers::with_event_submitter(
+                                    match crate::transport::auth::with_event_submitter(
                                         &base,
                                         api_token,
                                         |sub| async move {
-                                            crate::realm_write_api::grant_realm_admin(&sub, &realm, &actor_id, &grant_id, &subject).await
+                                            crate::transport::realm_write::grant_realm_admin(&sub, &realm, &actor_id, &grant_id, &subject).await
                                         },
                                     )
                                     .await
@@ -1582,11 +1582,11 @@ pub fn RealmAdminPanel(
                                     return;
                                 }
                                 spawn(async move {
-                                    match crate::views::helpers::with_event_submitter(
+                                    match crate::transport::auth::with_event_submitter(
                                         &base,
                                         api_token,
                                         |sub| async move {
-                                            crate::realm_write_api::revoke_realm_admin(
+                                            crate::transport::realm_write::revoke_realm_admin(
                                                 &sub,
                                                 &realm,
                                                 &actor_id,
@@ -1787,7 +1787,7 @@ pub fn RealmAdminPanel(
                                             let reason = destroy_reason().trim().to_owned();
                                             spawn(async move {
                                                 let realm_for_msg = realm.clone();
-                                                let result = crate::views::helpers::with_event_submitter(
+                                                let result = crate::transport::auth::with_event_submitter(
                                                     &base,
                                                     api_token,
                                                     |sub| async move {
@@ -1797,9 +1797,9 @@ pub fn RealmAdminPanel(
                                                             } else {
                                                                 reason
                                                             };
-                                                            crate::realm_write_api::destroy_realm(&sub, &realm, &actor_id, &reason).await
+                                                            crate::transport::realm_write::destroy_realm(&sub, &realm, &actor_id, &reason).await
                                                         } else {
-                                                            crate::realm_write_api::archive_realm(&sub, &realm, &actor_id).await
+                                                            crate::transport::realm_write::archive_realm(&sub, &realm, &actor_id).await
                                                         }
                                                     },
                                                 )

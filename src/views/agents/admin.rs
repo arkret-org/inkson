@@ -24,10 +24,11 @@ use super::model::{
     render_agent_pairing_qr_svg, requested_scope_for_presets,
 };
 use crate::components::UiIcon;
+use crate::transport::auth::with_authed_sdk_client;
 use crate::ui::button::{Button, ButtonSize, ButtonVariant};
 use crate::ui::checkbox::Checkbox;
 use crate::ui::input::Input;
-use crate::views::helpers::{short_protocol_id, with_authed_sdk_client};
+use crate::views::helpers::short_protocol_id;
 
 fn agent_field(agent: &AgentView, key: &str) -> String {
     agent

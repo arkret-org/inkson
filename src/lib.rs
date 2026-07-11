@@ -9,8 +9,6 @@
     warn(clippy::unwrap_used, clippy::expect_used, clippy::panic)
 )]
 
-pub mod account_api;
-pub mod account_auth;
 pub mod account_data;
 /// Single-source-of-truth resolver for the post-boot "account health" prompt
 /// chain (device authorization → MLS unlock → MLS backup → recovery-missing →
@@ -18,11 +16,9 @@ pub mod account_data;
 /// per-prompt suppression conditions that used to live inline in `app.rs`.
 /// See `docs/user-strands-key-lifecycle.md` §3.
 pub mod account_health;
-pub mod api;
 pub mod api_error;
 pub mod app;
 pub mod audit;
-pub mod authed_api;
 pub mod avatar_crop;
 pub mod blob;
 pub mod build_info;
@@ -35,7 +31,6 @@ pub mod card_comments;
 /// the client-side surface; the canonical struct lives in
 /// `arkret_sdk::arkret_core::models::circle`.
 pub mod circle;
-pub mod circle_api;
 pub mod circle_mls;
 pub mod client_core;
 pub(crate) mod clock;
@@ -46,15 +41,6 @@ pub mod content;
 pub mod cross_signing;
 pub mod crypto;
 pub mod crypto_boundary;
-pub mod cursor;
-pub mod device_directory;
-pub mod device_enrollment;
-pub mod device_name;
-pub mod device_pairing;
-pub mod device_revoke;
-pub mod did_key;
-pub mod did_resolver;
-pub mod directory_api;
 pub(crate) mod directory_helpers;
 pub mod disappearing;
 pub mod discovery;
@@ -67,26 +53,22 @@ pub mod file_transfer;
 pub mod hlc;
 pub mod hpke_backup;
 pub mod i18n;
-pub mod identity_handle;
+pub(crate) mod identity;
 /// Round 4 (spec a77b995) — invite-claim strand (subject_proof +
 /// binding_proof transcript + 5 terminal states UI).
 pub mod invite_claim;
 pub mod key_backup;
 pub mod key_store;
 pub mod keyed_cooldown;
-pub mod keys_api;
 /// Round R2/R3 (T16) — late key recovery UX helpers.
 pub mod late_recovery;
-pub mod local_state;
 pub mod media;
-pub mod media_api;
 /// R3.1 (arkret-spec @ 7157ee8) — Realm-scoped
 /// `ak.member.identity.update` event store. Sync ingests inlined
 /// `members[].identity_events[]` here; UI views resolve the current
 /// effective [`arkret_sdk::MemberIdentity`] via the SDK's
 /// replacement-edge filter helper. MLS decryption (MID-4) + proof
 /// signature verification (MID-5) are gated on `TODO(R4)`.
-pub mod member_identity_store;
 /// G3.Y2 — messaging UI scaffolding (polls, mentions picker,
 /// discussion-promote, sidecar-hash). The chat view consumes these
 /// helpers; see `crate::messaging::mod` for the rationale.
@@ -108,7 +90,7 @@ pub(crate) mod payload;
 // against authenticated endpoints. Re-add only together with real
 // wiring (enqueue on send failure, authed replay, app-shell drain).
 // HYG-03: the former empty `oidc` placeholder module was removed — OIDC
-// sign-in lives in `crate::account_auth` + `crate::views::login`; the module
+// sign-in lives in `crate::identity::account_auth` + `crate::views::login`; the module
 // carried only a doc comment and no code.
 pub mod operation;
 pub mod organization;
@@ -124,10 +106,6 @@ pub mod perf;
 // (`arkret_sdk::validate_last_active_at`), which soland now enforces at
 // admission — the receive path here consumes the already-validated
 // projection.
-/// Sync projection layer (account/realm wire payloads -> local projection
-/// models); moved out of `views/` (YGN-ARCH-01 step 3).
-pub mod projection;
-pub mod projection_views;
 pub mod push;
 pub(crate) mod random;
 pub mod rank;
@@ -137,9 +115,7 @@ pub mod realm_events_engine;
 /// extracted out of the (formerly 12k-line) `app` module so the
 /// hierarchy + projection-parsing logic is unit-testable in isolation.
 pub(crate) mod realm_helpers;
-pub mod realm_read_api;
 pub(crate) mod realm_tree;
-pub mod realm_write_api;
 pub mod recovery_crypto;
 pub mod recovery_proof;
 pub mod recovery_strand;
@@ -150,13 +126,14 @@ pub(crate) mod runtime_helpers;
 pub mod secure_key_store;
 pub mod security_state;
 pub mod service_parse;
-pub mod session;
-pub mod session_refresh;
 pub mod snapshot;
+/// Sync projection layer (account/realm wire payloads -> local projection
+/// models); moved out of `views/` (YGN-ARCH-01 step 3).
+pub(crate) mod state;
 pub mod sync_engine;
 pub mod sync_parse;
 pub mod telemetry;
-pub mod transport;
+pub(crate) mod transport;
 pub mod wire_helpers;
 /// C3: shared UI component layer. The former local `src/ui/` moved unchanged
 /// into the `yoface` crate (13 `#[css_module]` wrappers plus background utility

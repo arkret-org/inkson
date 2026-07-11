@@ -1,7 +1,7 @@
 //! MLS (Messaging Layer Security) integration for inkson.
 //!
 //! Grouped from the former top-level MLS governance and persistence files.
-//! MIMI protocol calls live in `crate::api::mls`, which uses the shared SDK
+//! MIMI protocol calls live in `crate::transport::mls`, which uses the shared SDK
 //! request/response types directly.
 
 pub mod account_recovery;

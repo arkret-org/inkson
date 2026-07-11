@@ -10,7 +10,7 @@
 //! instead of having to navigate to Settings → Devices → Pair and refresh.
 //!
 //! Approval finalizes through `POST /_arkret/gate/account/device-pair`
-//! (`ArkretApi::account_device_pair`); rejection dismisses locally. Both clear
+//! (`TransportClient::account_device_pair`); rejection dismisses locally. Both clear
 //! the request from the inbox so the prompt does not nag again. The spec MUST
 //! that the request alone never marks the new device trusted is honored: nothing
 //! happens without the explicit Approve click.
@@ -19,12 +19,13 @@ use std::collections::HashSet;
 
 use dioxus::prelude::*;
 
-use crate::device_pairing::{
+use crate::identity::device_pairing::{
     PendingPairingRequest, pairing_request_body, parse_pending_pairing_requests,
 };
+use crate::transport::auth::with_authed_api;
 use crate::ui::button::{Button, ButtonVariant};
 use crate::ui::dialog::Dialog;
-use crate::views::helpers::{short_protocol_id, with_authed_api};
+use crate::views::helpers::short_protocol_id;
 
 #[component]
 pub fn DevicePairApprovalPrompt(token: Signal<String>, device_id: Signal<String>) -> Element {
@@ -162,9 +163,14 @@ pub fn DevicePairApprovalPrompt(token: Signal<String>, device_id: Signal<String>
                             let code = approve_code.clone();
                             status.set("Approving…".to_owned());
                             spawn(async move {
-                                match with_authed_api(&base, api_token, |api| async move {
-                                    api.account_device_pair(&body).await
-                                })
+                                match crate::transport::auth::with_endpoint_clients(
+                                    &base,
+                                    api_token,
+                                    None,
+                                    |clients| async move {
+                                        clients.keys().account_device_pair(&body).await
+                                    },
+                                )
                                 .await
                                 {
                                     Ok(_) => {

@@ -22,7 +22,7 @@ use dioxus::prelude::*;
 use serde::{Deserialize, Serialize};
 
 use crate::components::{EmptyState, EmptyStateKind};
-use crate::local_state::LocalStateStore;
+use crate::state::LocalStateStore;
 use crate::ui::button::{Button, ButtonVariant};
 use crate::ui::input::Input;
 use crate::ui::label::Label;

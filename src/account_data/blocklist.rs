@@ -283,7 +283,7 @@ pub const DEFAULT_BLOCKLIST_APPLIES_TO: &[&str] = &[
 
 /// Canonical wire body for the `ak.account.blocklist` account-data entry.
 /// The settings UI calls this just before PUTting via
-/// [`crate::api::ArkretApi::set_account_data`]; keep the shape aligned with
+/// [`crate::transport::TransportClient::set_account_data`]; keep the shape aligned with
 /// `discovery/client-preferences.md` §3.5 so other clients agree on layout.
 ///
 /// Per-entry shape: `{ entry_id?, target: { kind, did|domain }, mode: "block",

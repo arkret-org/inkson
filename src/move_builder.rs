@@ -12,7 +12,7 @@
 //!   strand-position cell helpers used by the kanban board (`views/kanban`).
 //!
 //! The did:key multibase encoding helpers previously defined here now live
-//! in [`crate::did_key`] (shared with `local_state` / `cross_signing`).
+//! in [`crate::identity::did_key`] (shared with `local_state` / `cross_signing`).
 
 /// Identifies the cas-register cell that holds a Strand's position inside
 /// a given Board. Per

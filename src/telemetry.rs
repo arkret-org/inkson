@@ -34,7 +34,7 @@
 use chrono::Utc;
 use tracing::info;
 
-use crate::local_state::{LocalStateStore, UserActionLogEntry};
+use crate::state::{LocalStateStore, UserActionLogEntry};
 
 /// AKP-0007 P3B.8.1 — initialise the opt-in Sentry client.
 ///
@@ -246,7 +246,7 @@ mod tests {
     use super::*;
     // YOU-05-010: shared hermetic state-store fixture from `local_state`.
     #[cfg(not(target_arch = "wasm32"))]
-    use crate::local_state::isolated_store_for_tests as isolated_store;
+    use crate::state::isolated_store_for_tests as isolated_store;
 
     #[test]
     fn outcome_labels_match_sodmin_wire_shape() {
@@ -391,7 +391,7 @@ mod tests {
     #[cfg(not(target_arch = "wasm32"))]
     #[test]
     fn telemetry_buffer_caps_at_telemetry_buffer_cap() {
-        use crate::local_state::TELEMETRY_BUFFER_CAP;
+        use crate::state::TELEMETRY_BUFFER_CAP;
         let mut store = isolated_store("buffer-cap");
         for i in 0..(TELEMETRY_BUFFER_CAP + 50) {
             emit_user_action_log(

@@ -4,10 +4,10 @@ use ed25519_dalek::Signer;
 use serde_json::{Value, json};
 
 use crate::cross_signing::{CrossSigningKeyRole, load_signing_key};
-use crate::local_state::LocalStateStore;
 use crate::mls::persistence::MlsSnapshotEnvelope;
 use crate::operation::trim_realm_id;
 use crate::secure_key_store::SecureKeyStore;
+use crate::state::LocalStateStore;
 
 pub(crate) const CROSS_SIGNING_PUBLISH_LATEST_KEY: &str = "cross_signing.publish.latest";
 
@@ -443,12 +443,12 @@ mod tests {
 
     use super::*;
     use crate::cross_signing::{CrossSigningExecutor, CrossSigningSetupPlan};
-    use crate::local_state::isolated_store_for_tests;
     use crate::mls::runtime::{
         apply_welcome_messages_with_device_snapshot, ensure_creator_mls_snapshot,
         store_mls_key_package_identity_state,
     };
     use crate::secure_key_store::MemorySecureKeyStore;
+    use crate::state::isolated_store_for_tests;
 
     struct ActiveSignerGuard(Option<std::sync::Arc<crate::event_signer::InksonEventSigner>>);
 

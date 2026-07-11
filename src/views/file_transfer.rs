@@ -2,13 +2,13 @@ use std::collections::BTreeMap;
 
 use dioxus::prelude::*;
 
-use crate::api::ArkretApi;
 use crate::components::UiIcon;
 use crate::file_transfer::{
     FileTransferItem, data_url_for_download, decrypt_file_transfer_item, display_filename,
     file_transfer_items_from_account_data, format_size, load_file_transfer_crypto_context,
     load_or_create_file_transfer_crypto_context, upload_actor_private_file,
 };
+use crate::transport::TransportClient;
 
 #[component]
 pub fn FileTransferPanel(token: Signal<String>, account_did: String, device_id: String) -> Element {
@@ -84,8 +84,10 @@ pub fn FileTransferPanel(token: Signal<String>, account_did: String, device_id: 
                                 uploading.set(true);
                                 status.set("Uploading".to_owned());
                                 spawn(async move {
-                                    let api = match ArkretApi::new(&base_url) {
-                                        Ok(api) => crate::views::helpers::attach_device_dpop(api.with_bearer(api_token.clone())),
+                                    let api = match TransportClient::unauthenticated(&base_url)
+                                        .map(|api| api.with_bearer(api_token.clone()))
+                                    {
+                                        Ok(api) => crate::transport::auth::attach_device_dpop(api),
                                         Err(error) => {
                                             status.set(format!("Invalid server URL: {error}"));
                                             uploading.set(false);
@@ -267,8 +269,10 @@ fn FileTransferRow(
                             let transfer_id = transfer_id.clone();
                             status.set("Preparing download".to_owned());
                             spawn(async move {
-                                let api = match ArkretApi::new(&base_url) {
-                                    Ok(api) => crate::views::helpers::attach_device_dpop(api.with_bearer(api_token)),
+                                let api = match TransportClient::unauthenticated(&base_url)
+                                    .map(|api| api.with_bearer(api_token))
+                                {
+                                    Ok(api) => crate::transport::auth::attach_device_dpop(api),
                                     Err(error) => {
                                         status.set(format!("Invalid server URL: {error}"));
                                         return;
@@ -322,8 +326,10 @@ fn refresh_items(
     refreshing.set(true);
     status.set("Refreshing".to_owned());
     spawn(async move {
-        let api = match ArkretApi::new(&base_url) {
-            Ok(api) => crate::views::helpers::attach_device_dpop(api.with_bearer(api_token)),
+        let api = match TransportClient::unauthenticated(&base_url)
+            .map(|api| api.with_bearer(api_token))
+        {
+            Ok(api) => crate::transport::auth::attach_device_dpop(api),
             Err(error) => {
                 status.set(format!("Invalid server URL: {error}"));
                 refreshing.set(false);

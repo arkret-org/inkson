@@ -419,7 +419,7 @@ pub fn BlocklistSettingsCard(account_did: Signal<String>, token: Signal<String>)
 mod tests {
     #[test]
     fn blocklist_uses_client_blocklist_state_store_methods() {
-        let mut store = crate::local_state::LocalStateStore::default();
+        let mut store = crate::state::LocalStateStore::default();
         assert!(store.client_blocklist().is_empty());
 
         assert!(store.block_user("did:web:bob.example", None));

@@ -1,7 +1,7 @@
 use serde_json::json;
 
-use crate::local_state::LocalStateStore;
 use crate::secure_key_store::SecureKeyStore;
+use crate::state::LocalStateStore;
 
 #[derive(Clone, Debug)]
 pub struct CircleScopeRotateDraft {
@@ -142,13 +142,13 @@ pub fn build_circle_remove_scope_rotate_draft(
 }
 
 pub async fn submit_circle_scope_rotate_draft(
-    api: &crate::api::ArkretApi,
+    api: &crate::transport::TransportClient,
     state_store: &mut LocalStateStore,
     realm_id: &str,
     circle_id: &str,
     draft: CircleScopeRotateDraft,
 ) -> anyhow::Result<arkret_sdk::CircleScopeRotateOutcome> {
-    let outcome = crate::circle_api::submit_circle_scope_rotate_events(
+    let outcome = crate::transport::circle::submit_circle_scope_rotate_events(
         &api.event_submitter()?,
         circle_id,
         &draft.events,
@@ -166,14 +166,14 @@ pub async fn submit_circle_scope_rotate_draft(
 }
 
 pub async fn drain_circle_scope_rotate_obligations(
-    api: &crate::api::ArkretApi,
+    api: &crate::transport::TransportClient,
     state_store: &mut LocalStateStore,
     secure_store: &dyn SecureKeyStore,
     realm_id: &str,
     actor_id: &str,
     device_id: &str,
 ) -> anyhow::Result<CircleScopeRotateDrainOutcome> {
-    let circles = crate::circle_api::list_circles(&api.sdk_http_client()?, realm_id).await?;
+    let circles = crate::transport::circle::list_circles(&api.sdk_http_client()?, realm_id).await?;
     let mut outcome = CircleScopeRotateDrainOutcome::default();
     for circle in circles.circles {
         let circle_id = circle.circle_id.to_string();

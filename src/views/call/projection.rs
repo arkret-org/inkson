@@ -127,7 +127,7 @@ fn value_has_backend_direct_transcript_ref(value: &Value) -> bool {
 /// Derive the realm's anchored media-service DIDs and preferred focus from
 /// the local `ak.realm.media_service` projection.
 pub(super) fn media_service_selection(
-    state: &crate::local_state::ClientLocalState,
+    state: &crate::state::ClientLocalState,
     realm_id: &str,
 ) -> (Vec<String>, String) {
     let mut dids = BTreeSet::new();
@@ -165,7 +165,7 @@ pub(super) fn media_service_selection(
 }
 
 pub(super) fn media_governance_evidence(
-    state: &crate::local_state::ClientLocalState,
+    state: &crate::state::ClientLocalState,
     realm_id: &str,
     media_plaintext_ui_confirmed: bool,
 ) -> Option<MediaGovernanceEvidence> {
@@ -204,7 +204,7 @@ pub(super) fn media_governance_evidence(
 }
 
 pub(super) fn media_service_decrypts_enabled(
-    state: &crate::local_state::ClientLocalState,
+    state: &crate::state::ClientLocalState,
     realm_id: &str,
 ) -> bool {
     latest_body_for_kind(state, realm_id, "ak.realm.policy_components")
@@ -219,7 +219,7 @@ pub(super) fn media_service_decrypts_enabled(
 }
 
 fn latest_body_for_kind(
-    state: &crate::local_state::ClientLocalState,
+    state: &crate::state::ClientLocalState,
     realm_id: &str,
     expected_kind: &str,
 ) -> Option<Value> {
@@ -257,7 +257,7 @@ pub(super) fn participant_list_from_input(input: &str) -> Vec<String> {
 }
 
 pub(super) fn call_state_participant_identities(
-    state: &crate::local_state::ClientLocalState,
+    state: &crate::state::ClientLocalState,
     realm_id: &str,
     call_id: &str,
 ) -> BTreeSet<String> {
@@ -303,7 +303,7 @@ pub(super) fn call_state_participant_identities(
 /// field are skipped (the remote's key cannot be derived → fail-closed for that
 /// one remote).
 pub(super) fn call_state_participant_device_map(
-    state: &crate::local_state::ClientLocalState,
+    state: &crate::state::ClientLocalState,
     realm_id: &str,
     call_id: &str,
 ) -> BTreeMap<String, String> {
@@ -348,7 +348,7 @@ pub(super) fn call_state_participant_device_map(
 /// needed for moderator-forced mute, whose wire shape must target both actor
 /// and device.
 pub(super) fn call_state_participant_actor_device_map(
-    state: &crate::local_state::ClientLocalState,
+    state: &crate::state::ClientLocalState,
     realm_id: &str,
     call_id: &str,
 ) -> BTreeMap<String, String> {
@@ -495,24 +495,22 @@ mod tests {
 
     #[test]
     fn media_service_selection_reads_declared_focus() {
-        let mut state = crate::local_state::ClientLocalState::default();
-        state
-            .raw_operations
-            .push(crate::local_state::RawOperationRecord {
-                operation_id: "op-1".to_owned(),
-                realm_id: Some("ak:realm:01904100-0000-7000-8000-9b64700c6ee8".to_owned()),
-                received_at: chrono::Utc::now(),
-                payload: json!({
-                    "kind": "ak.realm.media_service",
-                    "body": {
-                        "service_id": "did:web:media.example",
-                        "foci": [
-                            {"focus_id": "fra-1", "type": "livekit"},
-                            {"focus_id": "us-east-1", "type": "livekit"}
-                        ]
-                    }
-                }),
-            });
+        let mut state = crate::state::ClientLocalState::default();
+        state.raw_operations.push(crate::state::RawOperationRecord {
+            operation_id: "op-1".to_owned(),
+            realm_id: Some("ak:realm:01904100-0000-7000-8000-9b64700c6ee8".to_owned()),
+            received_at: chrono::Utc::now(),
+            payload: json!({
+                "kind": "ak.realm.media_service",
+                "body": {
+                    "service_id": "did:web:media.example",
+                    "foci": [
+                        {"focus_id": "fra-1", "type": "livekit"},
+                        {"focus_id": "us-east-1", "type": "livekit"}
+                    ]
+                }
+            }),
+        });
         let (dids, focus_id) =
             media_service_selection(&state, "ak:realm:01904100-0000-7000-8000-9b64700c6ee8");
         assert_eq!(dids, vec!["did:web:media.example"]);
@@ -521,8 +519,8 @@ mod tests {
 
     #[test]
     fn call_state_participant_identities_read_sfu_handles() {
-        let mut state = crate::local_state::ClientLocalState::default();
-        state.raw_operations.push(crate::local_state::RawOperationRecord {
+        let mut state = crate::state::ClientLocalState::default();
+        state.raw_operations.push(crate::state::RawOperationRecord {
             operation_id: "op-1".to_owned(),
             realm_id: Some("ak:realm:01904100-0000-7000-8000-9b64700c6ee8".to_owned()),
             received_at: chrono::Utc::now(),
@@ -548,33 +546,31 @@ mod tests {
 
     #[test]
     fn call_state_participant_device_map_pairs_identity_and_device() {
-        let mut state = crate::local_state::ClientLocalState::default();
-        state
-            .raw_operations
-            .push(crate::local_state::RawOperationRecord {
-                operation_id: "op-1".to_owned(),
-                realm_id: Some("ak:realm:01904100-0000-7000-8000-9b64700c6ee8".to_owned()),
-                received_at: chrono::Utc::now(),
-                payload: json!({
-                    "kind": "ak.call.state",
-                    "body": {
-                        "call_id": "ak:call:0196441c-0000-7000-8000-000000000000",
-                        "state": "active",
-                        "participants": [
-                            {
-                                "actor_id": "did:web:alice.example",
-                                "device_id": "ak:device:01904100-0000-7000-8000-00000000000a",
-                                "participant_identity": "ak:rtc_participant:alice"
-                            },
-                            {
-                                // Missing device_id -> skipped (cannot derive its key).
-                                "actor_id": "did:web:carol.example",
-                                "participant_identity": "ak:rtc_participant:carol"
-                            }
-                        ]
-                    }
-                }),
-            });
+        let mut state = crate::state::ClientLocalState::default();
+        state.raw_operations.push(crate::state::RawOperationRecord {
+            operation_id: "op-1".to_owned(),
+            realm_id: Some("ak:realm:01904100-0000-7000-8000-9b64700c6ee8".to_owned()),
+            received_at: chrono::Utc::now(),
+            payload: json!({
+                "kind": "ak.call.state",
+                "body": {
+                    "call_id": "ak:call:0196441c-0000-7000-8000-000000000000",
+                    "state": "active",
+                    "participants": [
+                        {
+                            "actor_id": "did:web:alice.example",
+                            "device_id": "ak:device:01904100-0000-7000-8000-00000000000a",
+                            "participant_identity": "ak:rtc_participant:alice"
+                        },
+                        {
+                            // Missing device_id -> skipped (cannot derive its key).
+                            "actor_id": "did:web:carol.example",
+                            "participant_identity": "ak:rtc_participant:carol"
+                        }
+                    ]
+                }
+            }),
+        });
         let map = call_state_participant_device_map(
             &state,
             "ak:realm:01904100-0000-7000-8000-9b64700c6ee8",
@@ -590,28 +586,26 @@ mod tests {
 
     #[test]
     fn call_state_participant_actor_device_map_pairs_actor_and_device() {
-        let mut state = crate::local_state::ClientLocalState::default();
-        state
-            .raw_operations
-            .push(crate::local_state::RawOperationRecord {
-                operation_id: "op-1".to_owned(),
-                realm_id: Some("ak:realm:01904100-0000-7000-8000-9b64700c6ee8".to_owned()),
-                received_at: chrono::Utc::now(),
-                payload: json!({
-                    "kind": "ak.call.state",
-                    "body": {
-                        "call_id": "ak:call:0196441c-0000-7000-8000-000000000000",
-                        "state": "active",
-                        "participants": [
-                            {
-                                "actor_id": "did:web:alice.example",
-                                "device_id": "ak:device:01904100-0000-7000-8000-00000000000a",
-                                "participant_identity": "ak:rtc_participant:alice"
-                            }
-                        ]
-                    }
-                }),
-            });
+        let mut state = crate::state::ClientLocalState::default();
+        state.raw_operations.push(crate::state::RawOperationRecord {
+            operation_id: "op-1".to_owned(),
+            realm_id: Some("ak:realm:01904100-0000-7000-8000-9b64700c6ee8".to_owned()),
+            received_at: chrono::Utc::now(),
+            payload: json!({
+                "kind": "ak.call.state",
+                "body": {
+                    "call_id": "ak:call:0196441c-0000-7000-8000-000000000000",
+                    "state": "active",
+                    "participants": [
+                        {
+                            "actor_id": "did:web:alice.example",
+                            "device_id": "ak:device:01904100-0000-7000-8000-00000000000a",
+                            "participant_identity": "ak:rtc_participant:alice"
+                        }
+                    ]
+                }
+            }),
+        });
         let map = call_state_participant_actor_device_map(
             &state,
             "ak:realm:01904100-0000-7000-8000-9b64700c6ee8",
@@ -664,8 +658,8 @@ mod tests {
 
     #[test]
     fn call_state_projection_skips_backend_recording_result() {
-        let mut state = crate::local_state::ClientLocalState::default();
-        state.raw_operations.push(crate::local_state::RawOperationRecord {
+        let mut state = crate::state::ClientLocalState::default();
+        state.raw_operations.push(crate::state::RawOperationRecord {
             operation_id: "op-1".to_owned(),
             realm_id: Some("ak:realm:019a7360-0000-7000-8000-000000000000".to_owned()),
             received_at: chrono::Utc::now(),
@@ -699,8 +693,8 @@ mod tests {
 
     #[test]
     fn call_state_projection_skips_backend_transcript_result() {
-        let mut state = crate::local_state::ClientLocalState::default();
-        state.raw_operations.push(crate::local_state::RawOperationRecord {
+        let mut state = crate::state::ClientLocalState::default();
+        state.raw_operations.push(crate::state::RawOperationRecord {
             operation_id: "op-1".to_owned(),
             realm_id: Some("ak:realm:019a7360-0000-7000-8000-000000000000".to_owned()),
             received_at: chrono::Utc::now(),

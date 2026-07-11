@@ -89,8 +89,11 @@ pub async fn verify_recovery_recipients(
     let mut out = Vec::with_capacity(recipients.len());
     for recipient in recipients {
         let principal_did = recipient.principal_id.as_str().to_owned();
-        let document =
-            crate::did_resolver::fetch_raw_did_document_json(http, &recipient.principal_id).await;
+        let document = crate::identity::did_resolver::fetch_raw_did_document_json(
+            http,
+            &recipient.principal_id,
+        )
+        .await;
         let verified = document
             .as_ref()
             .is_some_and(|document| resolve_recovery_recipient(recipient, document).is_ok());

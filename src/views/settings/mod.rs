@@ -146,7 +146,8 @@ pub(crate) fn push_client_ui_account_data_with_avatar(
     );
     spawn(async move {
         match with_event_submitter(&base_url, api_token, |sub| async move {
-            crate::account_api::set_account_data(&sub, CLIENT_UI_ACCOUNT_DATA_KEY, body).await
+            crate::transport::account::set_account_data(&sub, CLIENT_UI_ACCOUNT_DATA_KEY, body)
+                .await
         })
         .await
         {
@@ -225,8 +226,11 @@ pub(crate) fn push_blocklist_account_data(
     if entries.is_empty() {
         spawn(async move {
             if let Err(err) = with_event_submitter(&base_url, api_token, |sub| async move {
-                crate::account_api::delete_account_data(&sub, CLIENT_BLOCKLIST_ACCOUNT_DATA_KEY)
-                    .await
+                crate::transport::account::delete_account_data(
+                    &sub,
+                    CLIENT_BLOCKLIST_ACCOUNT_DATA_KEY,
+                )
+                .await
             })
             .await
             {
@@ -252,8 +256,12 @@ pub(crate) fn push_blocklist_account_data(
         };
     spawn(async move {
         match with_event_submitter(&base_url, api_token, |sub| async move {
-            crate::account_api::set_account_data(&sub, CLIENT_BLOCKLIST_ACCOUNT_DATA_KEY, body)
-                .await
+            crate::transport::account::set_account_data(
+                &sub,
+                CLIENT_BLOCKLIST_ACCOUNT_DATA_KEY,
+                body,
+            )
+            .await
         })
         .await
         {
@@ -379,7 +387,7 @@ pub(crate) fn push_contact_remark_account_data(
             let key_for_log = key.clone();
             if let Err(err) = with_event_submitter(&base_url, api_token, |sub| {
                 let key = key.clone();
-                async move { crate::account_api::delete_account_data(&sub, &key).await }
+                async move { crate::transport::account::delete_account_data(&sub, &key).await }
             })
             .await
             {
@@ -434,7 +442,7 @@ pub fn SettingsPanel(
     let initial_presence_preference = {
         let preference = state_store.read().presence_preference();
         if !preference.is_empty() && !preference.is_active(chrono::Utc::now()) {
-            crate::local_state::PresencePreferenceState::default()
+            crate::state::PresencePreferenceState::default()
         } else {
             preference
         }
@@ -984,7 +992,7 @@ pub fn SettingsPanel(
                                                                                 return;
                                                                             }
                                                                         };
-                                                                        let api = match crate::views::helpers::authed_api(&base, api_token.clone()) {
+                                                                        let api = match crate::transport::auth::authed_api(&base, api_token.clone()) {
                                                                             Ok(api) => api,
                                                                             Err(err) => {
                                                                                 avatar_uploading.set(false);
@@ -995,14 +1003,25 @@ pub fn SettingsPanel(
                                                                                 return;
                                                                             }
                                                                         };
-                                                                        match api.upload_blob_bytes(bytes, "image/jpeg").await {
+                                                                        let clients = match api.sdk_http_client() {
+                                                                            Ok(http) => crate::transport::EndpointClients::from_http(http),
+                                                                            Err(err) => {
+                                                                                avatar_uploading.set(false);
+                                                                                avatar_upload_status.set(format!(
+                                                                                    "{}: {err}",
+                                                                                    crate::i18n::tr("settings.avatar.error"),
+                                                                                ));
+                                                                                return;
+                                                                            }
+                                                                        };
+                                                                        match clients.blob().upload_bytes(bytes, "image/jpeg").await {
                                                                             Ok(resp) => {
                                                                                 let blob_ref = resp.blob_ref.to_string();
                                                                                 // Publish publicly first; only then refresh the
                                                                                 // local mirror so a failed profile update does not
                                                                                 // display an avatar that never became active.
                                                                                 match async {
-                                                                                    crate::account_api::update_profile(
+                                                                                    crate::transport::account::update_profile(
                                                                                         &api.sdk_http_client()?,
                                                                                         None,
                                                                                         None,
@@ -1123,9 +1142,9 @@ pub fn SettingsPanel(
                                                         // Tombstone the public profile entry.
                                                         spawn(async move {
                                                             if let Ok(api) =
-                                                                crate::views::helpers::authed_api(&base, api_token)
+                                                                crate::transport::auth::authed_api(&base, api_token)
                                                                 && let Err(err) = async {
-                                                                    crate::account_api::update_profile(
+                                                                    crate::transport::account::update_profile(
                                                                         &api.sdk_http_client()?,
                                                                         None,
                                                                         None,
@@ -2100,7 +2119,7 @@ pub fn SettingsPanel(
                             value: Some(presence_visibility_selected.into()),
                             on_value_change: move |v: Option<String>| {
                                 let Some(v) = v else { return; };
-                                let visibility = match crate::local_state::PresenceVisibility::try_from_wire(&v) {
+                                let visibility = match crate::state::PresenceVisibility::try_from_wire(&v) {
                                     Some(visibility) => visibility,
                                     None => return,
                                 };
@@ -2167,7 +2186,7 @@ pub fn SettingsPanel(
                                     return;
                                 }
                                 let has_preference = manual_state != "auto" || !message.is_empty();
-                                let preference = crate::local_state::PresencePreferenceState {
+                                let preference = crate::state::PresencePreferenceState {
                                     manual_state: (manual_state != "auto").then_some(manual_state),
                                     status_message: (!message.is_empty()).then_some(message),
                                     clears_at: has_preference
@@ -2199,7 +2218,7 @@ pub fn SettingsPanel(
                                 presence_status_message.set(String::new());
                                 presence_expiry_choice.set("never".to_owned());
                                 state_store.write().set_presence_preference(
-                                    crate::local_state::PresencePreferenceState::default(),
+                                    crate::state::PresencePreferenceState::default(),
                                 );
                                 presence_status_feedback.set("Status cleared.".to_owned());
                                 push_presence_preference_account_data(
@@ -2842,7 +2861,7 @@ pub fn SettingsPanel(
                             onclick: move |_| {
                                 let raw_actor = new_contact_remark_did();
                                 let Some(actor_id) =
-                                    crate::identity_handle::principal_did_from_identifier(&raw_actor)
+                                    crate::identity::handle::principal_did_from_identifier(&raw_actor)
                                 else {
                                     crate::components::feedback::toast_error("feedback.invalid_actor_identifier", vec![], None);
                                     return;
@@ -2905,7 +2924,7 @@ pub fn SettingsPanel(
                         "Your handle is managed by your organization. This client cannot set or change it directly — request changes through your organization's issuer."
                     }
                     div { class: "actions",
-                        if let Some(href) = crate::account_auth::issuer_handle_management_url(&base_url()) {
+                        if let Some(href) = crate::identity::account_auth::issuer_handle_management_url(&base_url()) {
                             a {
                                 class: "btn secondary",
                                 "data-testid": "handle-issuer-link",

@@ -620,7 +620,7 @@ fn apply_card_detail_draft_marks_card_queued() {
 /// position, return `At { list_space_id, rank }`; absent ⇒ `Initial`.
 #[test]
 fn locate_strand_position_finds_present_strand_with_rank() {
-    use crate::projection_views::{
+    use crate::state::projection_views::{
         CollectionProjectionGroupView, CollectionProjectionView, ProjectionItemView,
         StateFrontierView,
     };
@@ -678,7 +678,7 @@ fn locate_strand_position_finds_present_strand_with_rank() {
 /// is actually non-initial, which is the safe behaviour.
 #[test]
 fn locate_strand_position_missing_strand_returns_initial() {
-    use crate::projection_views::{CollectionProjectionView, StateFrontierView};
+    use crate::state::projection_views::{CollectionProjectionView, StateFrontierView};
     let projection = CollectionProjectionView {
         projection: "collection".to_owned(),
         renderer: Some("board".to_owned()),

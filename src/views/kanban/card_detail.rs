@@ -5,10 +5,11 @@ use super::{
     CardAuthorDisplayContext, card_author_display_label, dispatch_card_detail_update,
     json_path_string,
 };
-use crate::local_state::{LocalStateStore, RawOperationRecord};
 use crate::operation::sdk_event_local_operation_id;
 use crate::routes::Route;
-use crate::views::helpers::{short_protocol_id, with_authed_api};
+use crate::state::{LocalStateStore, RawOperationRecord};
+use crate::transport::auth::with_authed_api;
+use crate::views::helpers::short_protocol_id;
 
 pub(super) fn route_card_strand_id(route: &Route) -> Option<String> {
     match route {

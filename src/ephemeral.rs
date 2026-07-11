@@ -28,7 +28,7 @@ pub(crate) fn validate_outgoing_registered_event_payload(
 }
 
 pub fn build_read_cursor_advance_event(
-    marker: &crate::local_state::ReadMarkerRecord,
+    marker: &crate::state::ReadMarkerRecord,
 ) -> anyhow::Result<arkret_sdk::Event> {
     let kind = EventKind::try_new(&marker.marker_type).ok_or_else(|| {
         anyhow::anyhow!(
@@ -254,7 +254,7 @@ fn bucket_presence_timestamp(ts: chrono::DateTime<chrono::Utc>) -> String {
 /// The caller MUST attach a device-signed proof via the active
 /// [`crate::event_signer`] before submit — the bare envelope returned
 /// here carries `proof = None` and the submit guard / receiver will
-/// reject it. See [`super::ArkretApi::submit_call_signal_v1`] for the
+/// reject it. See [`super::TransportClient::submit_call_signal_v1`] for the
 /// signing + submit path.
 pub fn build_call_signal_envelope_v1(
     realm_id: &str,

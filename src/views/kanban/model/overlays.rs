@@ -66,7 +66,7 @@ pub(crate) fn overlay_local_card_creates_with_decrypt(
 }
 
 pub(crate) fn overlay_collection_projection_with_operations(
-    projection: &crate::projection_views::CollectionProjectionView,
+    projection: &crate::state::projection_views::CollectionProjectionView,
     state_store: &LocalStateStore,
     board_space_id: &str,
     remote_operations: &[RawOperationRecord],
@@ -120,7 +120,7 @@ pub(crate) fn strand_update_operations_from_events(events: &[Value]) -> Vec<RawO
 
 pub(crate) fn strand_update_operation_from_event(event: &Value) -> Option<RawOperationRecord> {
     // Single source in the projection layer (YGN-ARCH-01 step 3).
-    crate::projection::kanban_ops::raw_operation_from_event(event, "ak.strand.update")
+    crate::state::projection::kanban_ops::raw_operation_from_event(event, "ak.strand.update")
 }
 
 pub(crate) fn sync_selected_card_from_columns(
@@ -817,7 +817,7 @@ pub(crate) fn collection_item_private_field_value<'a>(
 }
 
 pub(crate) fn strand_projection_private_field_value<'a>(
-    strand: &'a crate::projection_views::StrandProjectionView,
+    strand: &'a crate::state::projection_views::StrandProjectionView,
     paths: &[&'static str],
 ) -> Option<(&'a Value, &'static str)> {
     paths.iter().find_map(|path| {

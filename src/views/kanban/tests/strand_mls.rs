@@ -190,7 +190,7 @@ fn card_builder_reads_author_plaintext_from_sidecar_without_mls_group() {
         actor_id: "did:web:alice.example",
         device_id: "ak:device:01904100-0000-7000-8000-000000000001",
     };
-    let strand_view = crate::projection_views::StrandProjectionView {
+    let strand_view = crate::state::projection_views::StrandProjectionView {
         strand_id: strand.to_owned(),
         realm_id: realm.to_owned(),
         title: "Encrypted card".to_owned(),

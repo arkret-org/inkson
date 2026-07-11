@@ -56,14 +56,14 @@ fn canonical_personal_handle(handle: &str) -> Option<String> {
     if trimmed.is_empty() {
         return None;
     }
-    crate::identity_handle::normalize_user_handle_display(trimmed)
+    crate::identity::handle::normalize_user_handle_display(trimmed)
 }
 
 /// Build the account's personal **handle** (`<localpart>:<domain>`) from the
 /// `account_me` projection, for the account menu label and the recovery-key
 /// download filename.
 ///
-/// `account.handle` (see [`crate::api::account`]'s `primary_handle_from_viewer`)
+/// `account.handle` (see [`crate::transport::account`]'s `primary_handle_from_viewer`)
 /// is the **full canonical handle** carried by the signed primary handle claim
 /// — it is *not* a bare localpart. Invalid or empty values are treated as an
 /// absent primary handle claim; directory handles and server URLs must not be
@@ -73,7 +73,7 @@ pub(crate) fn personal_handle_from_account_handle(account_handle: &str) -> Optio
     if trimmed.is_empty() {
         return None;
     }
-    crate::identity_handle::normalize_user_handle_display(trimmed)
+    crate::identity::handle::normalize_user_handle_display(trimmed)
 }
 
 /// Private-data dictionary key (scoped per account DID) under which the

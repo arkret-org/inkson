@@ -1,7 +1,7 @@
-//! `EventSubmitter` — the ArkretApi-free durable/ephemeral event submission
+//! `EventSubmitter` — the TransportClient-free durable/ephemeral event submission
 //! engine. Holds the authenticated SDK http-client plus a lazily-populated,
 //! per-instance service-describe cache. The cache lifetime matches the former
-//! per-`ArkretApi` `OnceCell`: the signing path (`event_proof_context`) fetches
+//! per-`TransportClient` `OnceCell`: the signing path (`event_proof_context`) fetches
 //! `describe` at most once per submitter, and non-signing paths
 //! (`submit_signed_*`, ephemeral, frontier, backfill) never fetch it.
 
@@ -13,7 +13,7 @@ use serde_json::Value;
 use tokio::sync::OnceCell;
 
 #[cfg(test)]
-use crate::api_error::ArkretApiError;
+use crate::api_error::TransportClientError;
 use crate::ephemeral::{
     attach_broadcast_ephemeral_proof, build_presence_envelope, build_receipt_read_envelope,
     build_typing_envelope, ensure_events_submit_accepted,
@@ -28,8 +28,8 @@ use crate::service_parse::parse_server_description;
 use crate::wire_helpers::query_component;
 
 /// Authenticated durable/ephemeral event submission engine extracted from the
-/// former `ArkretApi` events surface. Constructed per authenticated call from
-/// the shared SDK http-client (see `crate::authed_api::with_event_submitter`).
+/// former `TransportClient` events surface. Constructed per authenticated call from
+/// the shared SDK http-client (see `crate::transport::auth::with_event_submitter`).
 pub struct EventSubmitter {
     http: arkret_sdk::http_client::Client,
     describe_cache: OnceCell<ServerDescription>,
@@ -822,7 +822,7 @@ mod tests {
 
     #[test]
     fn actor_seq_cas_conflict_classifier_is_narrow() {
-        let cas: anyhow::Error = ArkretApiError {
+        let cas: anyhow::Error = TransportClientError {
             status: StatusCode::CONFLICT,
             error: ErrorEnvelope::new(
                 "cas_conflict",
@@ -832,7 +832,7 @@ mod tests {
         .into();
         assert!(crate::api_error::is_actor_seq_cas_conflict_error(&cas));
 
-        let different_conflict: anyhow::Error = ArkretApiError {
+        let different_conflict: anyhow::Error = TransportClientError {
             status: StatusCode::CONFLICT,
             error: ErrorEnvelope::new("cas_conflict", "expected head mismatch"),
         }

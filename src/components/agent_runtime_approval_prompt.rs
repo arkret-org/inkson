@@ -4,13 +4,14 @@ use std::time::Duration;
 use dioxus::prelude::*;
 use serde_json::Value;
 
+use crate::transport::auth::{with_authed_api, with_authed_sdk_client};
 use crate::ui::button::{Button, ButtonVariant};
 use crate::ui::dialog::Dialog;
 use crate::views::agents::{
     build_agent_key_authorize_event_for_pairing, parse_runtime_key_approval_request,
     runtime_key_pairing_error_message, summarize_runtime_key_approval_request,
 };
-use crate::views::helpers::{short_protocol_id, with_authed_api, with_authed_sdk_client};
+use crate::views::helpers::short_protocol_id;
 
 const APPROVAL_POLL_INTERVAL: Duration = Duration::from_millis(5_000);
 
@@ -271,7 +272,7 @@ async fn fetch_pending_agent_runtime_approval(
     base_url: &str,
     token: String,
     handled: HashSet<String>,
-) -> Result<Option<PendingAgentRuntimeApproval>, crate::authed_api::ApiCallError> {
+) -> Result<Option<PendingAgentRuntimeApproval>, crate::transport::auth::ApiCallError> {
     with_authed_sdk_client(base_url, token, move |http| async move {
         let list = http.agent_list().await?;
         for row in list.agents {

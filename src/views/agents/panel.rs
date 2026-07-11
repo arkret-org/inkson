@@ -12,9 +12,10 @@ use super::model::{
     AuditChainVerifyOutcome, HandoffState, InteropApprovalState, LiveSessionRow, PublishModalState,
     live_session_rows, verify_agent_audit_binding, verify_audit_chain,
 };
+use crate::transport::auth::with_authed_api;
 use crate::ui::button::{Button, ButtonVariant};
 use crate::ui::input::Input;
-use crate::views::helpers::{short_protocol_id, with_authed_api};
+use crate::views::helpers::short_protocol_id;
 
 #[component]
 pub fn AgentsPanel(

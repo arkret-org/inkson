@@ -23,11 +23,11 @@
 
 use dioxus::prelude::*;
 
+use crate::transport::auth::with_authed_sdk_client;
 use crate::ui::button::{Button, ButtonVariant};
 use crate::ui::input::Input;
 use crate::ui::label::Label;
 use crate::ui::select::{Select, SelectOption};
-use crate::views::helpers::with_authed_sdk_client;
 
 /// One consent cell row distilled from the holder-private projection.
 #[derive(Clone, Debug, PartialEq)]
@@ -172,7 +172,7 @@ pub fn ConsentSettingsPanel(account_did: Signal<String>, token: Signal<String>) 
             load_error.set(None);
             spawn(async move {
                 match with_authed_sdk_client(&base, api_token, |http| async move {
-                    crate::account_api::consent_cells(&http).await
+                    crate::transport::account::consent_cells(&http).await
                 })
                 .await
                 {
@@ -337,7 +337,7 @@ pub fn ConsentSettingsPanel(account_did: Signal<String>, token: Signal<String>) 
                                             write_status.set("granting…".to_owned());
                                             spawn(async move {
                                                 match with_authed_sdk_client(&base, api_token, |http| async move {
-                                                    crate::account_api::grant_consent(&http, &holder, &peer, &scope, expires_at).await
+                                                    crate::transport::account::grant_consent(&http, &holder, &peer, &scope, expires_at).await
                                                 })
                                                 .await
                                                 {
@@ -412,7 +412,7 @@ pub fn ConsentSettingsPanel(account_did: Signal<String>, token: Signal<String>) 
                                             write_status.set("requesting…".to_owned());
                                             spawn(async move {
                                                 match with_authed_sdk_client(&base, api_token, |http| async move {
-                                                    crate::account_api::request_consent(&http, &holder, &me_did, &scope).await
+                                                    crate::transport::account::request_consent(&http, &holder, &me_did, &scope).await
                                                 })
                                                 .await
                                                 {
@@ -547,7 +547,7 @@ pub fn ConsentSettingsPanel(account_did: Signal<String>, token: Signal<String>) 
                                                                         write_status.set("granting…".to_owned());
                                                                         spawn(async move {
                                                                             match with_authed_sdk_client(&base, api_token, |http| async move {
-                                                                                crate::account_api::grant_consent(&http, &holder, &peer, &scope, expires_at).await
+                                                                                crate::transport::account::grant_consent(&http, &holder, &peer, &scope, expires_at).await
                                                                             })
                                                                             .await
                                                                             {
@@ -620,7 +620,7 @@ pub fn ConsentSettingsPanel(account_did: Signal<String>, token: Signal<String>) 
                                                                 write_status.set("revoking…".to_owned());
                                                                 spawn(async move {
                                                                     match with_authed_sdk_client(&base, api_token, |http| async move {
-                                                                        crate::account_api::revoke_consent(&http, &holder, &peer, &scope).await
+                                                                        crate::transport::account::revoke_consent(&http, &holder, &peer, &scope).await
                                                                     })
                                                                     .await
                                                                     {

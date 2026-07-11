@@ -6,14 +6,13 @@
 use dioxus::prelude::*;
 use pulldown_cmark::{CowStr, Event, Options, Parser as MdParser, Tag, TagEnd, html as md_html};
 
-use crate::api::ArkretApi;
 use crate::config::LocalConfigStore;
 
 /// Marker recognised in message bodies that points at an uploaded blob.
 ///
 /// Produced by chat composer drag-and-drop when the upload pipeline sends
 /// bytes via
-/// `ArkretApi::upload_blob_bytes` (A6.2).
+/// `BlobEndpoints::upload_bytes` (A6.2).
 const ATTACHMENT_MARKER_PREFIX: &str = "[Attachment:";
 const ATTACHMENT_MARKER_SUFFIX: char = ']';
 
@@ -480,11 +479,9 @@ async fn authenticated_blob_data_url(blob_ref: &str, media_type: &str) -> anyhow
         anyhow::bail!("no authenticated session for blob download");
     }
     // ②(A+②): grant + per-request DPoP for the self-path blob fetch (§3.3).
-    let bytes = crate::views::helpers::attach_device_dpop(
-        ArkretApi::new(&config.server_url)?.with_bearer(token),
-    )
-    .get_blob_bytes(blob_ref)
-    .await?;
+    let api = crate::transport::auth::authed_api(&config.server_url, token)?;
+    let clients = crate::transport::EndpointClients::from_http(api.sdk_http_client()?);
+    let bytes = clients.blob().get_bytes(blob_ref).await?;
     let mime = if media_type.trim().is_empty() {
         "application/octet-stream"
     } else {

@@ -31,13 +31,13 @@ pub trait LocalStateBackend: Send + Sync {
 }
 
 struct OwnedLocalStateBackend {
-    store: Mutex<crate::local_state::LocalStateStore>,
+    store: Mutex<crate::state::LocalStateStore>,
 }
 
 impl OwnedLocalStateBackend {
     fn with_store<R>(
         &self,
-        f: impl FnOnce(&crate::local_state::LocalStateStore) -> R,
+        f: impl FnOnce(&crate::state::LocalStateStore) -> R,
     ) -> arkret_sdk::Result<R> {
         let store = self.store.lock().map_err(|error| {
             arkret_sdk::Error::Protocol(format!("local state lock poisoned: {error}"))
@@ -47,7 +47,7 @@ impl OwnedLocalStateBackend {
 
     fn with_store_mut<R>(
         &self,
-        f: impl FnOnce(&mut crate::local_state::LocalStateStore) -> R,
+        f: impl FnOnce(&mut crate::state::LocalStateStore) -> R,
     ) -> arkret_sdk::Result<R> {
         let mut store = self.store.lock().map_err(|error| {
             arkret_sdk::Error::Protocol(format!("local state lock poisoned: {error}"))
@@ -105,7 +105,7 @@ impl LocalStateBackend for OwnedLocalStateBackend {
 }
 
 impl InksonLocalStateStoreAdapter {
-    pub fn new(store: crate::local_state::LocalStateStore) -> Self {
+    pub fn new(store: crate::state::LocalStateStore) -> Self {
         Self::from_backend(OwnedLocalStateBackend {
             store: Mutex::new(store),
         })
@@ -205,7 +205,7 @@ pub struct InksonClientRuntime {
 }
 
 impl InksonClientRuntime {
-    pub fn new(state_store: crate::local_state::LocalStateStore) -> Self {
+    pub fn new(state_store: crate::state::LocalStateStore) -> Self {
         let adapter = InksonLocalStateStoreAdapter::new(state_store);
         Self::from_state_adapter(adapter)
     }
@@ -579,7 +579,7 @@ mod tests {
             crate::operation::uuid_v7()
         ));
         let adapter = super::InksonLocalStateStoreAdapter::new(
-            crate::local_state::LocalStateStore::with_path(path),
+            crate::state::LocalStateStore::with_path(path),
         );
         let account_scope = garth::CursorScope::Account {
             service_did: None,

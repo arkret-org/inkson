@@ -3,9 +3,9 @@
 
 use serde_json::json;
 
-use crate::local_state::isolated_store_for_tests as temp_state_store;
 use crate::mls::runtime::*;
 use crate::secure_key_store::{MemorySecureKeyStore, SecureKeyStoreError};
+use crate::state::isolated_store_for_tests as temp_state_store;
 
 fn genesis_governance_binding(group_id: &str) -> arkret_sdk::MlsGovernanceBindingPayload {
     let realm_id =
@@ -252,7 +252,7 @@ fn restore_mls_history_backup_rejects_epoch_rollback() {
     let mut state = temp_state_store("restore-rollback");
     state.set_realm_seal_view(
         realm,
-        crate::local_state::LocalSealView {
+        crate::state::LocalSealView {
             mls_epoch: Some(record.epoch + 1),
             ..Default::default()
         },

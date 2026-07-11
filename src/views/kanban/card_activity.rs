@@ -2,7 +2,7 @@ use serde_json::Value;
 
 use super::model::*;
 use super::{compact_timestamp_label, json_path_string};
-use crate::local_state::RawOperationRecord;
+use crate::state::RawOperationRecord;
 use crate::views::helpers::short_protocol_id;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

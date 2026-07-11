@@ -15,33 +15,33 @@ impl RuntimeErrorClass {
     }
 }
 
-impl From<crate::session::CurrentSessionRefresh> for RuntimeErrorClass {
-    fn from(value: crate::session::CurrentSessionRefresh) -> Self {
+impl From<crate::runtime::session::CurrentSessionRefresh> for RuntimeErrorClass {
+    fn from(value: crate::runtime::session::CurrentSessionRefresh) -> Self {
         match value {
-            crate::session::CurrentSessionRefresh::Credential(_) => Self::Retryable {
+            crate::runtime::session::CurrentSessionRefresh::Credential(_) => Self::Retryable {
                 reason: "session refreshed; retry the operation".to_owned(),
             },
-            crate::session::CurrentSessionRefresh::SignInRequired { reason } => {
+            crate::runtime::session::CurrentSessionRefresh::SignInRequired { reason } => {
                 Self::NeedsSignIn { reason }
             }
-            crate::session::CurrentSessionRefresh::LoginRequired { reason } => {
+            crate::runtime::session::CurrentSessionRefresh::LoginRequired { reason } => {
                 Self::Terminal { reason }
             }
-            crate::session::CurrentSessionRefresh::RetryLater { reason } => {
+            crate::runtime::session::CurrentSessionRefresh::RetryLater { reason } => {
                 Self::Retryable { reason }
             }
         }
     }
 }
 
-impl From<&crate::authed_api::ApiCallError> for RuntimeErrorClass {
-    fn from(value: &crate::authed_api::ApiCallError) -> Self {
+impl From<&crate::transport::auth::ApiCallError> for RuntimeErrorClass {
+    fn from(value: &crate::transport::auth::ApiCallError) -> Self {
         match value {
-            crate::authed_api::ApiCallError::AuthExpired(error) => Self::Terminal {
+            crate::transport::auth::ApiCallError::AuthExpired(error) => Self::Terminal {
                 reason: error.to_string(),
             },
-            crate::authed_api::ApiCallError::Unavailable(error)
-            | crate::authed_api::ApiCallError::Failed(error) => Self::Retryable {
+            crate::transport::auth::ApiCallError::Unavailable(error)
+            | crate::transport::auth::ApiCallError::Failed(error) => Self::Retryable {
                 reason: error.to_string(),
             },
         }

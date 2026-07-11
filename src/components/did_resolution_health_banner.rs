@@ -8,7 +8,7 @@ use chrono::{DateTime, Utc};
 use dioxus::prelude::*;
 
 use super::UiIcon;
-use crate::did_resolver::DidResolutionCache;
+use crate::identity::did_resolver::DidResolutionCache;
 use crate::models::IdentityDescribeOutcome;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

@@ -3,11 +3,12 @@ use dioxus_router::Link;
 
 use crate::components::{HelpTip, UiIcon};
 use crate::i18n::tr;
-use crate::local_state::ClientLocalState;
 use crate::models::{RealmTreeNode, RealmTreeNodeKind, projection_realm_id_for_known_node};
 use crate::routes::Route;
+use crate::state::ClientLocalState;
+use crate::transport::auth::with_authed_sdk_client;
 use crate::ui::button::{Button, ButtonSize, ButtonVariant};
-use crate::views::helpers::{short_protocol_id, with_authed_sdk_client};
+use crate::views::helpers::short_protocol_id;
 
 #[derive(Clone, Debug, PartialEq)]
 struct DashboardNotificationSummary {
@@ -49,7 +50,8 @@ pub fn DashboardPanel(
     let state_store = crate::app::SessionContext::get().state_store;
     let mut protocol_health = use_signal(Vec::<(String, String)>::new);
     let mut health_loading = use_signal(|| false);
-    let mut recent_strands = use_signal(Vec::<crate::projection_views::StrandProjectionView>::new);
+    let mut recent_strands =
+        use_signal(Vec::<crate::state::projection_views::StrandProjectionView>::new);
     let mut recent_strands_loaded_for = use_signal(String::new);
     let mut recent_strands_status = use_signal(String::new);
     let mut contacts_summary = use_signal(Option::<DashboardContactsSummary>::default);
@@ -133,7 +135,7 @@ pub fn DashboardPanel(
             contacts_status.set("Loading contacts".to_owned());
             let base = base_url.clone();
             spawn(async move {
-                match crate::authed_api::with_endpoint_clients(
+                match crate::transport::auth::with_endpoint_clients(
                     &base,
                     api_token,
                     None,
@@ -171,7 +173,7 @@ pub fn DashboardPanel(
         let realm_id = active_projection_realm_id.clone();
         spawn(async move {
             match with_authed_sdk_client(&base, api_token, |http| async move {
-                crate::realm_read_api::list_strand_projections(&http, &realm_id).await
+                crate::transport::realm_read::list_strand_projections(&http, &realm_id).await
             })
             .await
             {
@@ -564,7 +566,7 @@ pub fn DashboardPanel(
                                             // single `with_authed_api` so an Unavailable or
                                             // AuthExpired error tags every row at once
                                             // instead of silently returning an empty Vec.
-                                            let result = crate::views::helpers::with_authed_api(
+                                            let result = crate::transport::auth::with_authed_api(
                                                 &base,
                                                 api_token,
                                                 |api| async move {
@@ -573,11 +575,11 @@ pub fn DashboardPanel(
                                                         Ok(d) => rows.push(("Describe".to_owned(), format!("{} v{}", d.service_type, d.protocol_version))),
                                                         Err(e) => rows.push(("Describe".to_owned(), format!("Error: {e}"))),
                                                     }
-                                                    match async { crate::account_api::sync_describe(&api.sdk_http_client()?).await }.await {
+                                                    match async { crate::transport::account::sync_describe(&api.sdk_http_client()?).await }.await {
                                                         Ok(s) => rows.push(("Sync".to_owned(), format!("{} profiles", s.supported_sync_profiles.len()))),
                                                         Err(e) => rows.push(("Sync".to_owned(), format!("Error: {e}"))),
                                                     }
-                                                    match async { crate::account_api::identity_describe(&api.sdk_http_client()?).await }.await {
+                                                    match async { crate::transport::account::identity_describe(&api.sdk_http_client()?).await }.await {
                                                         Ok(i) => rows.push(("Identity".to_owned(), format!("mode={}", i.registry_mode))),
                                                         Err(e) => rows.push(("Identity".to_owned(), format!("Error: {e}"))),
                                                     }

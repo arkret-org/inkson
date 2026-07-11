@@ -14,11 +14,12 @@ use super::model::{
     joined_realm_ids, merge_invite_notifications, notification_id_for_dedupe,
     raw_notifications_from_sources, read_cursor_targets, realm_title_hints_from_values,
 };
-use crate::api::ArkretApi;
 use crate::api_error::is_auth_expired_error;
-use crate::local_state::LocalStateStore;
 use crate::notification_rules::{dnd_settings_from_account_data, push_rules_from_account_data};
-use crate::views::helpers::{short_protocol_id, with_authed_api, with_event_submitter};
+use crate::state::LocalStateStore;
+use crate::transport::TransportClient;
+use crate::transport::auth::{with_authed_api, with_event_submitter};
+use crate::views::helpers::short_protocol_id;
 
 /// Project the SDK `AuthzInviteList.invites` (typed `Invite` rows) into the
 /// `Vec<Value>` shape the local notification pipeline folds through lenient
@@ -30,32 +31,12 @@ fn invites_to_values(invites: Vec<arkret_sdk::models::Invite>) -> Vec<Value> {
         .collect()
 }
 
-pub(crate) async fn optional_invite_notifications(api: &ArkretApi) -> anyhow::Result<Vec<Value>> {
-    match async { crate::account_api::invites(&api.sdk_http_client()?).await }.await {
+pub(crate) async fn optional_invite_notifications(
+    api: &TransportClient,
+) -> anyhow::Result<Vec<Value>> {
+    match async { crate::transport::account::invites(&api.sdk_http_client()?).await }.await {
         Ok(response) => Ok(invites_to_values(response.invites)),
-        Err(error) if is_auth_expired_error(&error) => {
-            match crate::session::refresh_current_session().await {
-                crate::session::CurrentSessionRefresh::Credential(refreshed) => {
-                    let refreshed_api = api.clone().with_bearer(refreshed);
-                    Ok(invites_to_values(
-                        crate::account_api::invites(&refreshed_api.sdk_http_client()?)
-                            .await?
-                            .invites,
-                    ))
-                }
-                crate::session::CurrentSessionRefresh::SignInRequired { reason } => {
-                    Err(anyhow::anyhow!(
-                        "session refresh cannot continue locally: {reason}; invites: {error}"
-                    ))
-                }
-                crate::session::CurrentSessionRefresh::LoginRequired { reason } => Err(
-                    anyhow::anyhow!("session refresh requires login: {reason}; invites: {error}"),
-                ),
-                crate::session::CurrentSessionRefresh::RetryLater { reason } => Err(
-                    anyhow::anyhow!("session refresh pending: {reason}; invites: {error}"),
-                ),
-            }
-        }
+        Err(error) if is_auth_expired_error(&error) => Err(error),
         Err(error) => {
             tracing::debug!(
                 ?error,
@@ -179,7 +160,7 @@ pub(crate) fn mark_all_notifications_read(
         let marker_count = markers.len();
         match with_event_submitter(&base_url, session_credential, |sub| async move {
             for marker in markers {
-                crate::account_api::submit_read_cursor_advance(&sub, &marker).await?;
+                crate::transport::account::submit_read_cursor_advance(&sub, &marker).await?;
             }
             Ok::<_, anyhow::Error>(())
         })
@@ -251,7 +232,7 @@ pub(crate) fn mark_notification_read_state(
     status_msg.set("Notification marked read; syncing read cursor...".to_owned());
     spawn(async move {
         match with_event_submitter(&base_url, session_credential, |sub| async move {
-            crate::account_api::submit_read_cursor_advance(&sub, &marker).await?;
+            crate::transport::account::submit_read_cursor_advance(&sub, &marker).await?;
             Ok::<_, anyhow::Error>(())
         })
         .await
@@ -314,7 +295,7 @@ fn accept_invite_notification(
         let accepted_realm_for_api = accepted_realm.clone();
         let session_credential = session_credential();
         match with_authed_api(&base_url, session_credential, |api| async move {
-            let account = crate::account_api::account_me(&api.sdk_http_client()?).await?;
+            let account = crate::transport::account::account_me(&api.sdk_http_client()?).await?;
             let submit = api
                 .accept_realm_invite(&accepted_realm_for_api, &account.did, &invite_id)
                 .await?;

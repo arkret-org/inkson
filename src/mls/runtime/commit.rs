@@ -12,7 +12,7 @@ use crate::secure_key_store::SecureKeyStore;
 /// returned snapshot ONLY after the server accepts it (persist-on-accept,
 /// same contract as the kanban encrypted-write path).
 pub fn force_epoch_rotation_commit(
-    state_store: &crate::local_state::LocalStateStore,
+    state_store: &crate::state::LocalStateStore,
     secure_store: &dyn SecureKeyStore,
     realm_id: &str,
     actor_id: &str,
@@ -35,7 +35,7 @@ pub fn force_epoch_rotation_commit(
 }
 
 pub fn force_epoch_rotation_commit_for_effective_scope(
-    state_store: &crate::local_state::LocalStateStore,
+    state_store: &crate::state::LocalStateStore,
     secure_store: &dyn SecureKeyStore,
     realm_id: &str,
     circle_id: Option<&str>,
@@ -83,7 +83,7 @@ pub fn force_epoch_rotation_commit_for_effective_scope(
 }
 
 pub fn build_mls_remove_commit_for_effective_scope(
-    state_store: &crate::local_state::LocalStateStore,
+    state_store: &crate::state::LocalStateStore,
     secure_store: &dyn SecureKeyStore,
     realm_id: &str,
     circle_id: Option<&str>,
@@ -159,7 +159,7 @@ pub fn canonical_mls_remove_membership_frontier(
 }
 
 pub fn build_add_member_commit_for_effective_scope(
-    state_store: &crate::local_state::LocalStateStore,
+    state_store: &crate::state::LocalStateStore,
     secure_store: &dyn SecureKeyStore,
     realm_id: &str,
     circle_id: Option<&str>,
@@ -208,7 +208,7 @@ pub fn build_add_member_commit_for_effective_scope(
 }
 
 pub fn build_add_members_commit_for_effective_scope(
-    state_store: &crate::local_state::LocalStateStore,
+    state_store: &crate::state::LocalStateStore,
     secure_store: &dyn SecureKeyStore,
     realm_id: &str,
     circle_id: Option<&str>,
@@ -346,7 +346,7 @@ pub fn idle_self_update_jitter_passed(
 /// surfaced as a typed error, NOT silently swallowed, so the driver can log
 /// once and move on without advancing local state.
 pub fn build_idle_self_update_commit(
-    state_store: &crate::local_state::LocalStateStore,
+    state_store: &crate::state::LocalStateStore,
     secure_store: &dyn SecureKeyStore,
     realm_id: &str,
     actor_id: &str,

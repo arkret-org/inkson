@@ -6,7 +6,6 @@ use dioxus_router::hooks::*;
 use dioxus_router::{Link, Navigator, Outlet, Router};
 use serde_json::Value;
 
-use crate::api::ArkretApi;
 use crate::api_error::is_auth_expired_error;
 use crate::components::{SecurityStateBadge, UiIcon};
 use crate::config::{ClientConfig, LocalConfigStore, normalize_device_id, normalize_server_url};
@@ -15,14 +14,10 @@ use crate::conformance::{
     profile_ready,
 };
 use crate::i18n::{Locale, TextDirection};
-use crate::local_state::{
-    ClientLocalState, LocalStateStore, PersistedSessionGrant, default_strand_id_for_realm,
-};
 use crate::models::{
     RealmTreeNode, RealmTreeNodeKind, ServerDescription, ServerDescriptionExt,
     projection_realm_id_for_known_node,
 };
-use crate::projection::ProjectionEvent;
 // R28-B — realm-tree / projection / field-extraction helpers moved to
 // `crate::realm_tree`. Re-export the two `pub` entry points used by
 // `crate::sync_engine` so the existing `crate::app::…` call sites keep
@@ -33,6 +28,11 @@ pub(crate) use crate::realm_tree::{
     realm_tree_nodes_from_sync_realms,
 };
 use crate::routes::Route;
+use crate::state::projection::ProjectionEvent;
+use crate::state::{
+    ClientLocalState, LocalStateStore, PersistedSessionGrant, default_strand_id_for_realm,
+};
+use crate::transport::TransportClient;
 use crate::ui::button::{Button, ButtonSize, ButtonVariant};
 use crate::ui::checkbox::Checkbox;
 use crate::ui::input::Input;
@@ -83,6 +83,7 @@ mod feature_gate;
 mod handles;
 mod manage_pages;
 mod notifications_drawer;
+mod projection_adapter;
 mod session_boot;
 mod session_context;
 mod sidebar;
@@ -267,7 +268,7 @@ fn AppBootstrap() -> Element {
     // Construct the typed session coordinator once. Runtime and UI effects
     // share this owner instead of registering unrelated thread-local callbacks.
     let session_coordinator = use_hook(move || {
-        crate::session::SessionCoordinator::new(move || {
+        crate::runtime::session::SessionCoordinator::new(move || {
             Box::pin(refresh_session_credential_for_active_context(
                 base_url,
                 account_did,
@@ -276,7 +277,7 @@ fn AppBootstrap() -> Element {
                 token,
                 config_store,
                 session_generation,
-            )) as crate::session::LocalRefreshFuture
+            )) as crate::runtime::session::LocalRefreshFuture
         })
     });
     let runtime_services = use_context_provider(|| {
@@ -286,17 +287,6 @@ fn AppBootstrap() -> Element {
         crate::runtime::services::RuntimeServices::new(state_adapter, session_coordinator.clone())
     });
     let client_runtime = runtime_services.client.clone();
-
-    // Install the app-wide, single-flight session coordinator exactly once.
-    // Every auth-expired handler (connect, sync, chat send, Realm create,
-    // the account-menu button, the background poller) routes through
-    // this one closure via `crate::session::refresh_current_session()`, so
-    // refresh policy lives in a single place and concurrent rollovers
-    // coalesce instead of racing.
-    let installed_session_coordinator = session_coordinator.clone();
-    use_hook(move || {
-        crate::session::install_session_coordinator(installed_session_coordinator);
-    });
 
     // Dev-only (wasm + `wasm-localstorage-secrets-test`) real-grant injection
     // for the cotest joint e2e harness. Runs once, synchronously, ahead of the
@@ -615,7 +605,7 @@ fn AppBootstrap() -> Element {
                 if session.trim().is_empty() {
                     return false;
                 }
-                crate::authed_api::with_endpoint_clients(
+                crate::transport::auth::with_endpoint_clients(
                     &base,
                     session,
                     None,
@@ -645,10 +635,28 @@ fn AppBootstrap() -> Element {
     //     hook can `invalidate` / `clear` while ingesting projections.
     // The cache is pure in-memory state, is not persisted, and only lives for a
     // single login session, matching the `DidResolutionCache` docs.
-    let mut did_cache =
-        use_context_provider(|| Signal::new(crate::did_resolver::DidResolutionCache::default()));
+    let mut did_cache = use_context_provider(|| {
+        Signal::new(crate::identity::did_resolver::DidResolutionCache::default())
+    });
     let did_resolution_health = use_signal(crate::components::DidResolutionHealth::healthy);
     let mut theme = use_signal(move || initial_theme);
+    {
+        let projection_router = runtime_services.projection_sink.clone();
+        use_hook(move || {
+            projection_router.install(std::rc::Rc::new(
+                projection_adapter::ProjectionAdapter::new(
+                    projection_events,
+                    sync_cursor,
+                    connection_status,
+                    network_state,
+                    last_error,
+                    device_queue,
+                    theme,
+                    selected_realm_id,
+                ),
+            ));
+        });
+    }
     let system_theme_is_night = use_signal(browser_prefers_dark_theme);
     {
         let mut system_theme_is_night = system_theme_is_night;
@@ -936,7 +944,7 @@ fn AppBootstrap() -> Element {
     // Background session-refresh poller. Proactively rotates the grant
     // a little before it expires so requests rarely hit a cold 401. The
     // refresh itself goes through the shared single-flight refresher
-    // (`crate::session`), so this poller and any reactive 401-retry can
+    // (`crate::runtime::session`), so this poller and any reactive 401-retry can
     // never fire two competing refreshes for the same rollover.
     use_future({
         let mut status = connection_status;
@@ -944,6 +952,7 @@ fn AppBootstrap() -> Element {
         let state_store = state_store;
         let token = token;
         let mut session_boot_state = session_boot_state;
+        let session = runtime_services.session.clone();
         move || async move {
             crate::runtime_helpers::sleep_for(std::time::Duration::from_millis(1)).await;
             loop {
@@ -954,8 +963,8 @@ fn AppBootstrap() -> Element {
                 let due = {
                     let store = state_store.read();
                     matches!(
-                        crate::session_refresh::refresh_decision(&store),
-                        crate::session_refresh::RefreshDecision::Due
+                        crate::identity::session_refresh::refresh_decision(&store),
+                        crate::identity::session_refresh::RefreshDecision::Due
                     )
                 };
                 if due {
@@ -963,13 +972,15 @@ fn AppBootstrap() -> Element {
                         status.set("Restoring session...".to_owned());
                         session_boot_state.set(SessionBootState::Restoring);
                     }
-                    match crate::session::refresh_current_session().await {
-                        crate::session::CurrentSessionRefresh::Credential(_) => {
+                    match session.refresh().await {
+                        crate::runtime::session::CurrentSessionRefresh::Credential(_) => {
                             status.set("Online".to_owned());
                             session_boot_state.set(SessionBootState::Authenticated);
                             last_error.set(None);
                         }
-                        crate::session::CurrentSessionRefresh::SignInRequired { reason } => {
+                        crate::runtime::session::CurrentSessionRefresh::SignInRequired {
+                            reason,
+                        } => {
                             last_error.set(Some(reason));
                             if token().trim().is_empty() {
                                 status
@@ -977,14 +988,16 @@ fn AppBootstrap() -> Element {
                                 session_boot_state.set(SessionBootState::Unauthenticated);
                             }
                         }
-                        crate::session::CurrentSessionRefresh::LoginRequired { reason } => {
+                        crate::runtime::session::CurrentSessionRefresh::LoginRequired {
+                            reason,
+                        } => {
                             last_error.set(Some(reason));
                             if token().trim().is_empty() {
                                 status.set("Session expired; sign in again".to_owned());
                                 session_boot_state.set(SessionBootState::Unauthenticated);
                             }
                         }
-                        crate::session::CurrentSessionRefresh::RetryLater { reason } => {
+                        crate::runtime::session::CurrentSessionRefresh::RetryLater { reason } => {
                             // Keep the current credential alive; a reactive 401
                             // handles a genuinely dead session. Surface the
                             // transient issue for dev tools.
@@ -1001,7 +1014,7 @@ fn AppBootstrap() -> Element {
                     }
                 }
                 crate::runtime_helpers::sleep_for(std::time::Duration::from_secs(
-                    crate::session_refresh::POLL_INTERVAL_SECS,
+                    crate::identity::session_refresh::POLL_INTERVAL_SECS,
                 ))
                 .await;
             }
@@ -1032,6 +1045,7 @@ fn AppBootstrap() -> Element {
         let mut account_recovery_detection_key_seen = account_recovery_detection_key_seen;
         let mut last_error = last_error;
         let state_store_for_recovery_state = state_store;
+        let session = runtime_services.session.clone();
         use_effect(move || {
             let base = base_url();
             let session = token();
@@ -1060,8 +1074,9 @@ fn AppBootstrap() -> Element {
                 let store = state_store_for_recovery_state.read();
                 crate::views::recovery::local_recovery_key_fingerprint(&store, &actor)
             };
+            let session = session.clone();
             spawn(async move {
-                match crate::views::helpers::with_authed_api(&base, session, |api| async move {
+                match crate::transport::auth::with_authed_api(&base, session, |api| async move {
                     // The recovery-state reducer reads both payloads leniently via
                     // `Value` accessors; serialize the typed SDK outcomes back to
                     // their wire JSON.
@@ -1080,9 +1095,7 @@ fn AppBootstrap() -> Element {
                         account_recovery_configured.set(Some(state.server_recovery_configured()));
                     }
                     Err(error) if error.is_auth_expired() => {
-                        crate::session::invalidate_current_session(
-                            "session expired while loading account recovery state",
-                        );
+                        session.invalidate("session expired while loading account recovery state");
                         account_recovery_configured.set(None);
                     }
                     Err(error) => {
@@ -1217,7 +1230,9 @@ fn AppBootstrap() -> Element {
                     .session_grant()
                     .as_ref()
                     .map(|grant| {
-                        !crate::session_refresh::grant_matches_principal_server(grant, &base)
+                        !crate::identity::session_refresh::grant_matches_principal_server(
+                            grant, &base,
+                        )
                     })
                     .unwrap_or(false)
             };
@@ -1257,6 +1272,7 @@ fn AppBootstrap() -> Element {
                 account_did(),
                 device_id(),
                 ConnectContext {
+                    session: runtime_services.session.clone(),
                     connection_status,
                     sync_cursor,
                     token,
@@ -1340,34 +1356,32 @@ fn AppBootstrap() -> Element {
         });
         let completion_effects = sync_effects.clone();
         let ctx = crate::sync_engine::SyncEngineContext {
-            base_url,
-            token,
-            state_store,
-            realm_tree_nodes,
-            projection_events,
-            sync_cursor,
-            connection_status,
-            network_state,
-            last_error,
-            device_queue,
-            theme,
-            account_did,
-            device_id,
-            selected_realm_id,
-            profiles: profiles_signal,
+            base_url: base,
+            token: runtime_adapter::value_reader(token),
+            state_store: runtime_adapter::state_store_handle(state_store),
+            account_did: account_did(),
+            device_id: device_id(),
+            selected_realm_id: runtime_adapter::value_reader(selected_realm_id),
             // Y1/Y2 - pass the session-scoped cache handle provided above into
             // the sync engine so the Y2 invalidation hook can invalidate/clear
             // entries while ingesting projections.
-            did_cache,
+            did_cache: runtime_adapter::value_cell(did_cache),
             // Receive side of `ak.call.signal`: the engine routes inbound
             // call-signal envelopes from every incremental sync body into
             // this hub (the same hub `CallPanel` drains).
             call_signal_hub,
+            session: runtime_services.session.clone(),
             effect: effect.clone(),
+            projection_sink: runtime_services.projection_sink.clone(),
         };
         let mut active_generation = sync_engine_active_generation;
         spawn(async move {
-            crate::sync_engine::run_sync_engine(current_gen, sync_generation, ctx).await;
+            crate::sync_engine::run_sync_engine(
+                current_gen,
+                runtime_adapter::value_reader(sync_generation),
+                ctx,
+            )
+            .await;
             completion_effects.complete(&effect);
             if *active_generation.peek() == Some(current_gen) {
                 active_generation.set(None);
@@ -1411,13 +1425,13 @@ fn AppBootstrap() -> Element {
         });
         let completion_effects = realm_effects.clone();
         let ctx = crate::realm_events_engine::RealmEventsEngineContext {
-            base_url,
-            token,
-            state_store,
-            selected_realm_id,
-            route_enabled: realm_events_route_enabled,
-            realm_live_epoch,
-            profiles: profiles_signal,
+            base_url: runtime_adapter::value_reader(base_url),
+            token: runtime_adapter::value_reader(token),
+            state_store: runtime_adapter::state_store_handle(state_store),
+            selected_realm_id: runtime_adapter::value_reader(selected_realm_id),
+            route_enabled: runtime_adapter::value_reader(realm_events_route_enabled),
+            realm_live_epoch: runtime_adapter::value_cell(realm_live_epoch),
+            profiles: runtime_adapter::value_reader(profiles_signal),
             client_runtime: client_runtime.clone(),
             effect: effect.clone(),
         };
@@ -1425,7 +1439,7 @@ fn AppBootstrap() -> Element {
         spawn(async move {
             crate::realm_events_engine::run_realm_events_engine(
                 current_gen,
-                sync_generation,
+                runtime_adapter::value_reader(sync_generation),
                 realm_id,
                 ctx,
             )
@@ -1534,7 +1548,7 @@ fn AppBootstrap() -> Element {
             spawn(async move {
                 let actor_for_sidecar_restore = actor.clone();
                 let device_for_sidecar_restore = device.clone();
-                match crate::views::helpers::with_authed_api(
+                match crate::transport::auth::with_authed_api(
                     &base,
                     session.clone(),
                     |api| async move {
@@ -1848,10 +1862,10 @@ fn AppBootstrap() -> Element {
             let api_token = lookup_token.clone();
             let existing_personal_handles = personal_handles();
             spawn(async move {
-                match ArkretApi::new(&base)
+                match TransportClient::unauthenticated(&base)
                     .and_then(|api| api.with_bearer(api_token).sdk_http_client())
                 {
-                    Ok(http) => match crate::directory_api::list_handles_for_subject(
+                    Ok(http) => match crate::transport::directory::list_handles_for_subject(
                         &http,
                         &actor,
                         None,
@@ -1962,10 +1976,10 @@ fn AppBootstrap() -> Element {
             spawn(async move {
                 for subject_id in peers {
                     let result =
-                        crate::views::helpers::with_authed_sdk_client(&base, api_token.clone(), {
+                        crate::transport::auth::with_authed_sdk_client(&base, api_token.clone(), {
                             let subject_id = subject_id.clone();
                             move |http| async move {
-                                crate::directory_api::list_handles_for_subject(
+                                crate::transport::directory::list_handles_for_subject(
                                     &http,
                                     &subject_id,
                                     None,
@@ -2280,7 +2294,7 @@ fn AppBootstrap() -> Element {
             admit_in_flight.set(true);
             spawn(async move {
                 let outcome =
-                    crate::views::helpers::with_authed_api(&base, session, |api| async move {
+                    crate::transport::auth::with_authed_api(&base, session, |api| async move {
                         let mut admitted_total = 0_usize;
                         let mut failures = Vec::<String>::new();
                         for (realm_id, _) in candidate_realms {
@@ -2471,7 +2485,7 @@ fn AppBootstrap() -> Element {
                         .filter_map(crate::mls::runtime::realm_key_share_sender_device_pair)
                         .collect();
                     if !sender_pairs.is_empty() {
-                        let _ = crate::views::helpers::with_authed_api(
+                        let _ = crate::transport::auth::with_authed_api(
                             &base,
                             session.clone(),
                             |api| async move {
@@ -2533,7 +2547,7 @@ fn AppBootstrap() -> Element {
                     let request = request_envelope.payload;
                     let actor_c = actor.clone();
                     let device_c = device.clone();
-                    let outcome = crate::views::helpers::with_authed_api(
+                    let outcome = crate::transport::auth::with_authed_api(
                         &base,
                         session.clone(),
                         |api| async move {
@@ -2593,7 +2607,7 @@ fn AppBootstrap() -> Element {
                     let realm_for_log = realm.clone();
                     let actor_c = actor.clone();
                     let device_c = device.clone();
-                    let outcome = crate::views::helpers::with_authed_api(
+                    let outcome = crate::transport::auth::with_authed_api(
                         &base,
                         session.clone(),
                         |api| async move {
@@ -2776,7 +2790,7 @@ fn AppBootstrap() -> Element {
                 .unwrap_or(false);
                 let actor_for_sidecar_restore = detect_actor.clone();
                 let device_for_sidecar_restore = detect_device.clone();
-                match crate::views::helpers::with_authed_api(
+                match crate::transport::auth::with_authed_api(
                     &detect_base,
                     detect_session.clone(),
                     |api| async move {
@@ -3649,7 +3663,8 @@ fn AppBootstrap() -> Element {
                                 base_url(),
                                 account_did(),
                                 device_id(),
-                                ConnectContext {
+                ConnectContext {
+                    session: runtime_services.session.clone(),
                                     connection_status,
                                     sync_cursor,
                                     token,
@@ -3833,7 +3848,8 @@ fn AppBootstrap() -> Element {
                                                     next_url,
                                                     account_did(),
                                                     device_id(),
-                                                    ConnectContext {
+                ConnectContext {
+                    session: runtime_services.session.clone(),
                                                         connection_status,
                                                         sync_cursor,
                                                         token,
@@ -4135,7 +4151,7 @@ fn AppBootstrap() -> Element {
                                                                                 );
                                                                                 return;
                                                                             };
-                                                                            match crate::views::helpers::with_authed_sdk_client(
+                                                                            match crate::transport::auth::with_authed_sdk_client(
                                                                                 &base,
                                                                                 api_token,
                                                                                 |http| async move {
@@ -4277,11 +4293,11 @@ fn AppBootstrap() -> Element {
                                                         let base = base.clone();
                                                         let peer_for_task = peer.clone();
                                                         spawn(async move {
-                                                            let result = crate::views::helpers::with_authed_sdk_client(
+                                                            let result = crate::transport::auth::with_authed_sdk_client(
                                                                 &base,
                                                                 api_token,
                                                                 |http| async move {
-                                                                    crate::account_api::direct_conversation_resolve(&http, &peer_for_task, true).await
+                                                                    crate::transport::account::direct_conversation_resolve(&http, &peer_for_task, true).await
                                                                 },
                                                             ).await;
                                                             match result {
@@ -4491,11 +4507,11 @@ fn AppBootstrap() -> Element {
                                                                     let base = base.clone();
                                                                     let agent_id = agent_id.clone();
                                                                     spawn(async move {
-                                                                        match crate::views::helpers::with_authed_sdk_client(
+                                                                        match crate::transport::auth::with_authed_sdk_client(
                                                                             &base,
                                                                             api_token,
                                                                             |http| async move {
-                                                                                crate::account_api::direct_conversation_resolve(&http, &agent_id, true).await
+                                                                                crate::transport::account::direct_conversation_resolve(&http, &agent_id, true).await
                                                                             },
                                                                         ).await {
                                                                             Ok(response) if matches!(
@@ -5390,8 +5406,10 @@ fn AppBootstrap() -> Element {
                                             disabled: !has_session,
                                             onclick: {
                                                 let base = base_url();
+                                                let session = runtime_services.session.clone();
                                                 move |_| {
                                                     let base = base.clone();
+                                                    let session = session.clone();
                                                     let api_token = token();
                                                     let actor = account_did();
                                                     let device = device_id();
@@ -5399,7 +5417,7 @@ fn AppBootstrap() -> Element {
                                                     spawn(async move {
                                                         match self_authed_api(&base, api_token.clone()) {
                                                             Ok(api) => match async {
-                                                                crate::account_api::account_me(&api.sdk_http_client()?).await
+                                                                crate::transport::account::account_me(&api.sdk_http_client()?).await
                                                             }
                                                             .await
                                                             {
@@ -5444,11 +5462,11 @@ fn AppBootstrap() -> Element {
                                                                         // dead — clicking "Refresh session" must
                                                                         // keep the user signed in, not bounce them to
                                                                         // login on a routine credential rotation.
-                                                                        match crate::session::refresh_current_session().await {
-                                                                            crate::session::CurrentSessionRefresh::Credential(fresh) => {
+                                                                        match session.refresh().await {
+                                                                            crate::runtime::session::CurrentSessionRefresh::Credential(fresh) => {
                                                                                 let canonical_actor = match self_authed_api(&base, fresh) {
                                                                                     Ok(api) => async {
-                                                                                        crate::account_api::account_me(&api.sdk_http_client()?).await
+                                                                                        crate::transport::account::account_me(&api.sdk_http_client()?).await
                                                                                     }
                                                                                         .await
                                                                                         .ok()
@@ -5485,19 +5503,19 @@ fn AppBootstrap() -> Element {
                                                                                     "Session refresh ok: {canonical_actor}"
                                                                                 ));
                                                                             }
-                                                                            crate::session::CurrentSessionRefresh::SignInRequired { reason } => {
+                                                                            crate::runtime::session::CurrentSessionRefresh::SignInRequired { reason } => {
                                                                                 last_error.set(Some(reason));
                                                                                 account_session_state.set(
                                                                                     "Sign in again to refresh this session.".to_owned()
                                                                                 );
                                                                             }
-                                                                            crate::session::CurrentSessionRefresh::LoginRequired { reason } => {
+                                                                            crate::runtime::session::CurrentSessionRefresh::LoginRequired { reason } => {
                                                                                 last_error.set(Some(reason));
                                                                                 account_session_state.set(
                                                                                     "Session expired. Sign in again.".to_owned()
                                                                                 );
                                                                             }
-                                                                            crate::session::CurrentSessionRefresh::RetryLater { reason } => {
+                                                                            crate::runtime::session::CurrentSessionRefresh::RetryLater { reason } => {
                                                                                 account_session_state.set(format!(
                                                                                     "Session refresh pending: {reason}"
                                                                                 ));
@@ -5540,7 +5558,7 @@ fn AppBootstrap() -> Element {
                                                     state_store.read().session_grant();
                                                 let logout_device_handle = {
                                                     let mut store = state_store.write();
-                                                    crate::account_auth::grant_dpop::ensure_device_key(&mut store).ok()
+                                                    crate::identity::account_auth::grant_dpop::ensure_device_key(&mut store).ok()
                                                 };
                                                 // F7 — journal the logout intent durably BEFORE the
                                                 // local wipe. If the tab closes mid-flight or coauth is
@@ -5612,7 +5630,7 @@ fn AppBootstrap() -> Element {
                                                 // "remove this device") is reserved for a separate
                                                 // explicit action; logout only terminates the
                                                 // browser session.
-                                                let _ = crate::account_auth::clear_persisted_oidc_scaffold();
+                                                let _ = crate::identity::account_auth::clear_persisted_oidc_scaffold();
                                                 // Wipe the in-memory UI signals too so the
                                                 // sidebar can't paint a frame of stale
                                                 // Realm tree updates between this click and the

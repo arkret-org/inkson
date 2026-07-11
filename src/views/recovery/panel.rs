@@ -22,11 +22,12 @@ use crate::recovery_crypto::{
     generate_recovery_key, normalize_recovery_key_input, open_recovery_key_with_passkey_prf,
     recovery_key_confirmation_diff, seal_recovery_key_with_passkey_prf,
 };
+use crate::transport::auth::with_authed_api;
 use crate::ui::button::{Button, ButtonVariant};
 use crate::ui::input::Input;
 use crate::ui::label::Label;
 use crate::ui::textarea::Textarea;
-use crate::views::helpers::{display_name_for_did, short_protocol_id, with_authed_api};
+use crate::views::helpers::{display_name_for_did, short_protocol_id};
 
 const RESTORE_BACKUP_TIME_LIMIT: usize = 5;
 
@@ -910,7 +911,7 @@ pub fn RecoveryPanel(
                             move |_| {
                                 let raw_guardian = new_guardian_did();
                                 let guardian_did =
-                                    crate::identity_handle::principal_did_from_identifier(
+                                    crate::identity::handle::principal_did_from_identifier(
                                         &raw_guardian,
                                     )
                                     .unwrap_or_else(|| raw_guardian.trim().to_owned());

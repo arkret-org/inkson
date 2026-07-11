@@ -25,8 +25,8 @@
 use dioxus::prelude::*;
 use serde_json::json;
 
-use crate::local_state::{LocalSealView, LocalStateStore, MoveSubmissionState};
 use crate::operation::{OperationBuilder, sdk_event_local_operation_id, trim_realm_id, uuid_v7};
+use crate::state::{LocalSealView, LocalStateStore, MoveSubmissionState};
 
 /// The structured MLS payload + the canonical AAD it was bound to.
 pub(crate) type LocalEncryptedMessage = (
@@ -372,7 +372,7 @@ pub(crate) enum SecureSendOutcome {
 /// draft, and emit any audit receipt.
 #[allow(clippy::too_many_arguments)]
 pub(crate) async fn submit_secure_send(
-    api: &crate::api::ArkretApi,
+    api: &crate::transport::TransportClient,
     mut state_store: SyncSignal<LocalStateStore>,
     build: SecureSendBuild,
     realm_id: &str,

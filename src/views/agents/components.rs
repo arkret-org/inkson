@@ -9,9 +9,10 @@ use super::model::{
     ActionApproveDialogState, ActionRequestNonceStatus, actor_kind_badge_class, actor_kind_label,
     build_action_approve_payload, build_action_reject_payload, is_action_request_expired,
 };
+use crate::transport::auth::with_authed_api;
 use crate::ui::button::{Button, ButtonVariant};
 use crate::ui::input::Input;
-use crate::views::helpers::{short_protocol_id, with_authed_api};
+use crate::views::helpers::short_protocol_id;
 
 /// Render an `actor_kind` badge for a single envelope. Pure helper so
 /// the dashboard / chat / kanban can reuse the same colored chip

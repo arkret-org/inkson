@@ -35,7 +35,7 @@ use arkret_sdk::{
 use ed25519_dalek::VerifyingKey;
 use serde_json::Value;
 
-use crate::api::ArkretApi;
+use crate::transport::TransportClient;
 
 /// Spec-mandated TTL ceiling for media tokens
 /// (`ak.self.call.media.exchange.issue_token`). Soland defaults to 300s; the
@@ -168,7 +168,7 @@ impl RtcClientError {
     /// to [`Self::ParticipantBindingInvalid`] so the renderer still fails
     /// closed instead of silently joining.
     fn from_api_error(error: &anyhow::Error) -> Self {
-        if let Some(api_error) = error.downcast_ref::<crate::api_error::ArkretApiError>()
+        if let Some(api_error) = error.downcast_ref::<crate::api_error::TransportClientError>()
             && let Some(typed) = Self::from_wire(api_error.error.code())
         {
             return typed;
@@ -286,7 +286,7 @@ impl MediaJoinRequest {
         Ok(dids)
     }
 
-    async fn anchors(&self, api: &ArkretApi) -> Result<MediaServiceAnchors, RtcClientError> {
+    async fn anchors(&self, api: &TransportClient) -> Result<MediaServiceAnchors, RtcClientError> {
         let dids = self.anchor_dids()?;
         let mut anchors = MediaServiceAnchors::new(dids);
         for service_did in &self.media_service_dids {
@@ -471,14 +471,15 @@ fn policy_media_service_decrypts(payload: Option<&Value>) -> bool {
 }
 
 async fn register_media_service_keys(
-    api: &ArkretApi,
+    api: &TransportClient,
     anchors: &mut MediaServiceAnchors,
     service_did: &str,
 ) -> Result<(), RtcClientError> {
-    let outcome =
-        async { crate::account_api::identity_resolve(&api.sdk_http_client()?, service_did).await }
-            .await
-            .map_err(|_| RtcClientError::TokenIssuerUnauthorised)?;
+    let outcome = async {
+        crate::transport::account::identity_resolve(&api.sdk_http_client()?, service_did).await
+    }
+    .await
+    .map_err(|_| RtcClientError::TokenIssuerUnauthorised)?;
     if outcome.did_document.did.as_str() != service_did {
         return Err(RtcClientError::TokenIssuerUnauthorised);
     }
@@ -658,7 +659,7 @@ impl PerSenderFrameKeys {
 /// realm MLS group; passing a non-MLS source is impossible by the
 /// [`MlsExporterSource`] bound, which is what enforces MEDIA-1.
 pub async fn join_call_media(
-    api: &ArkretApi,
+    api: &TransportClient,
     request: &MediaJoinRequest,
     mls_exporter: &impl MlsExporterSource,
 ) -> Result<JoinedMediaSession, RtcClientError> {
@@ -677,7 +678,10 @@ pub async fn join_call_media(
     token_request.desired_media = Some(request.desired_media.into_wire());
 
     let outcome: CallMediaTokenExchangeOutcome = async {
-        crate::media_api::media_token_exchange(&api.sdk_http_client()?, &token_request).await
+        crate::transport::EndpointClients::from_http(api.sdk_http_client()?)
+            .media()
+            .token_exchange(&token_request)
+            .await
     }
     .await
     .map_err(|err| RtcClientError::from_api_error(&err))?;
@@ -699,10 +703,14 @@ pub async fn join_call_media(
         device_id: ids.device_id.clone(),
         mode: MediaIceMode::Sfu,
     };
-    let ice_outcome =
-        async { crate::media_api::ice_config(&api.sdk_http_client()?, &ice_request).await }
+    let ice_outcome = async {
+        crate::transport::EndpointClients::from_http(api.sdk_http_client()?)
+            .media()
+            .ice_config(&ice_request)
             .await
-            .map_err(|err| RtcClientError::from_api_error(&err))?;
+    }
+    .await
+    .map_err(|err| RtcClientError::from_api_error(&err))?;
     let ice_config = verify_ice_config_outcome(&ice_outcome, &anchors)
         .map_err(|err| classify_protocol_error(&err))?;
 

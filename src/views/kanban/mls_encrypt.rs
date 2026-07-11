@@ -7,7 +7,6 @@ use super::{
     collect_encryptable_private_patch_values, kanban_plaintext_block_reason,
     replace_private_patch_values,
 };
-use crate::local_state::{LocalStateStore, MoveSubmissionState};
 // YGN-ARCH-01 step 2: the MLS commit/genesis event construction moved to
 // `crate::mls::group_events` (it serves any effective scope and is consumed
 // by `mls::admission` / `circle_mls` / `sync_engine`, not just kanban).
@@ -16,7 +15,9 @@ use crate::mls::group_events::{
     mls_commit_event_from_store,
 };
 use crate::operation::sdk_event_local_operation_id;
-use crate::views::helpers::{short_protocol_id, with_authed_api};
+use crate::state::{LocalStateStore, MoveSubmissionState};
+use crate::transport::auth::with_authed_api;
+use crate::views::helpers::short_protocol_id;
 
 /// The MLS events an encrypted write must submit, in submit order: the
 /// one-time `ak.mls.genesis` (if not yet emitted) MUST precede any forced

@@ -3,15 +3,15 @@
 //!
 //! Surfaces:
 //! - `device-list` — wrapper element listing the principal's active devices from `GET
-//!   /_arkret/self/account/viewer` via [`crate::api::ArkretApi::list_devices`]
+//!   /_arkret/self/account/viewer` via [`crate::transport::TransportClient::list_devices`]
 //! - `device-row` per row, with `data-device-id` and a `device-row-current` boolean tag on the row
 //!   matching the local `LocalStateStore::device_id`
 //! - `device-revoke-button` per row, which opens a confirmation modal
 //! - `device-revoke-confirm-button` / `device-revoke-status` after the user confirms; revoke
 //!   submits the spec-canonical durable `ak.device.revoke` Control Move on the principal control
 //!   stream (envelope `seal_basis` minted from `ak.self.events.query.frontier`, SPEC-SOL-003) with
-//!   a [`crate::api::ArkretApi::revoke_device`], then rotates the account MLS history secret and
-//!   rewraps local `mls_history` backups.
+//!   a [`crate::transport::TransportClient::revoke_device`], then rotates the account MLS history
+//!   secret and rewraps local `mls_history` backups.
 //!
 //! The pair strand on `/settings/devices/pair` carries:
 //! - `pair-device-start-button` — on the device being added, generates a pairing request payload.
@@ -37,17 +37,18 @@ use dioxus_router::hooks::use_route;
 use serde_json::{Value, json};
 
 use crate::components::{EmptyState, EmptyStateKind, HelpTip};
-use crate::device_pairing::{
+use crate::identity::device_pairing::{
     PendingPairingRequest, pairing_request_body, parse_pending_pairing_requests,
 };
-use crate::local_state::LocalStateStore;
 use crate::operation::uuid_v7;
 use crate::routes::Route;
+use crate::state::LocalStateStore;
+use crate::transport::auth::{with_authed_api, with_authed_sdk_client};
 use crate::ui::button::{Button, ButtonVariant};
 use crate::ui::input::Input;
 use crate::ui::label::Label;
 use crate::ui::textarea::Textarea;
-use crate::views::helpers::{short_protocol_id, with_authed_api, with_authed_sdk_client};
+use crate::views::helpers::short_protocol_id;
 
 #[derive(Clone, Debug, PartialEq)]
 struct DeviceRow {
@@ -209,7 +210,7 @@ pub fn SettingsDevicesPanel(
             load_status.set("Loading…".to_owned());
             spawn(async move {
                 match with_authed_sdk_client(&base, api_token, |http| async move {
-                    crate::keys_api::list_devices(&http).await
+                    crate::transport::keys::list_devices(&http).await
                 })
                 .await
                 {
@@ -247,7 +248,7 @@ pub fn SettingsDevicesPanel(
             load_status.set("Loading…".to_owned());
             spawn(async move {
                 match with_authed_sdk_client(&base, api_token, |http| async move {
-                    crate::keys_api::list_devices(&http).await
+                    crate::transport::keys::list_devices(&http).await
                 })
                 .await
                 {
@@ -479,7 +480,7 @@ fn render_device_row(
     // Friendly name is the primary label; the short device-id fragment
     // (`#<suffix>`) disambiguates devices that share a display name, and
     // the full id stays reachable via the row tooltip.
-    let id_suffix = crate::device_name::device_id_short_suffix(&row.device_id);
+    let id_suffix = crate::identity::device_name::device_id_short_suffix(&row.device_id);
     let has_name = !row.display_name.is_empty();
     let primary_label = if has_name {
         row.display_name.clone()
@@ -701,7 +702,7 @@ fn render_revoke_modal(
                                                 &base_refresh,
                                                 token_refresh,
                                                 |http| async move {
-                                                    crate::keys_api::list_devices(&http).await
+                                                    crate::transport::keys::list_devices(&http).await
                                                 },
                                             )
                                             .await
@@ -894,9 +895,14 @@ fn render_pair_strand(
                                                             return;
                                                         }
                                                     };
-                                                    match with_authed_api(&base, api_token, |api| async move {
-                                                        api.account_device_pair(&body).await
-                                                    })
+                                                    match crate::transport::auth::with_endpoint_clients(
+                                                        &base,
+                                                        api_token,
+                                                        None,
+                                                        |clients| async move {
+                                                            clients.keys().account_device_pair(&body).await
+                                                        },
+                                                    )
                                                     .await
                                                     {
                                                         Ok(value) => {
@@ -1022,7 +1028,7 @@ fn render_pair_strand(
                                 let actor = actor_for_delivery.clone();
                                 async move {
                                     let devices_value = serde_json::to_value(
-                                        &crate::keys_api::list_devices(&api.sdk_http_client()?)
+                                        &crate::transport::keys::list_devices(&api.sdk_http_client()?)
                                             .await?,
                                     )?;
                                     let (_, rows) = parse_devices(&devices_value);
@@ -1046,7 +1052,7 @@ fn render_pair_strand(
                                             "ak.key.verification.request:{}:{}",
                                             requesting_device_id, row.device_id
                                         );
-                                        match crate::keys_api::send_device_message_envelope(
+                                        match crate::transport::keys::send_device_message_envelope(
                                             &http,
                                             &txn_id,
                                             &actor,
@@ -1190,9 +1196,14 @@ fn render_pair_strand(
                         let api_token = token();
                         accept_status.set("Approving sibling device pairing…".to_owned());
                         spawn(async move {
-                            match with_authed_api(&base, api_token, |api| async move {
-                                api.account_device_pair(&body).await
-                            })
+                            match crate::transport::auth::with_endpoint_clients(
+                                &base,
+                                api_token,
+                                None,
+                                |clients| async move {
+                                    clients.keys().account_device_pair(&body).await
+                                },
+                            )
                             .await
                             {
                                 Ok(value) => {

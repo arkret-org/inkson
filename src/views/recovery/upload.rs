@@ -2,8 +2,8 @@
 
 use dioxus::prelude::*;
 
-use crate::local_state::LocalStateStore;
-use crate::views::helpers::with_authed_api;
+use crate::state::LocalStateStore;
+use crate::transport::auth::with_authed_api;
 
 /// RK-as-authority backup: publish the active recovery policy and a
 /// `did_recovery` backup immediately, then create or load the account MLS

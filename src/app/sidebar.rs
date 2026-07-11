@@ -78,8 +78,8 @@ pub(super) fn load_direct_contacts_and_agents_for_sidebar(
     direct_contacts_loaded.set(true);
     own_agents_loaded.set(true);
     spawn(async move {
-        match crate::views::helpers::with_authed_sdk_client(&base, api_token, |http| async move {
-            let contacts = crate::account_api::contacts(&http).await;
+        match crate::transport::auth::with_authed_sdk_client(&base, api_token, |http| async move {
+            let contacts = crate::transport::account::contacts(&http).await;
             let agents = http.agent_list().await.map_err(anyhow::Error::from);
             Ok((contacts, agents))
         })
@@ -131,7 +131,7 @@ pub(super) fn load_direct_contacts_for_sidebar(
     }
     direct_contacts_loaded.set(true);
     spawn(async move {
-        match crate::authed_api::with_endpoint_clients(
+        match crate::transport::auth::with_endpoint_clients(
             &base,
             api_token,
             None,
@@ -244,8 +244,8 @@ pub(super) fn leave_sidebar_realm(
     );
     spawn(async move {
         let realm_for_api = realm_id.clone();
-        match crate::views::helpers::with_event_submitter(&base_url, api_token, |sub| async move {
-            crate::realm_write_api::leave_realm(&sub, &realm_for_api, &actor_id).await
+        match crate::transport::auth::with_event_submitter(&base_url, api_token, |sub| async move {
+            crate::transport::realm_write::leave_realm(&sub, &realm_for_api, &actor_id).await
         })
         .await
         {
@@ -329,10 +329,10 @@ pub(super) fn ensure_sidebar_row_perms(
         return;
     }
     spawn(async move {
-        let perms = match crate::views::helpers::authed_api_with_sync(&base_url, api_token, None) {
+        let perms = match crate::transport::auth::authed_api_with_sync(&base_url, api_token, None) {
             Ok(api) => {
                 let invite = async {
-                    crate::realm_read_api::authz_check_raw(
+                    crate::transport::realm_read::authz_check_raw(
                         &api.sdk_http_client()?,
                         &actor,
                         "ak.invite.create",
@@ -342,7 +342,7 @@ pub(super) fn ensure_sidebar_row_perms(
                 }
                 .await;
                 let settings = async {
-                    crate::realm_read_api::authz_check_raw(
+                    crate::transport::realm_read::authz_check_raw(
                         &api.sdk_http_client()?,
                         &actor,
                         "ak.realm.update",
@@ -380,11 +380,11 @@ pub(super) fn delete_sidebar_contact(
     );
     spawn(async move {
         let peer_for_api = peer.clone();
-        match crate::views::helpers::with_authed_sdk_client(
+        match crate::transport::auth::with_authed_sdk_client(
             &base_url,
             api_token,
             |http| async move {
-                crate::account_api::tombstone_contact(&http, &peer_for_api, false).await
+                crate::transport::account::tombstone_contact(&http, &peer_for_api, false).await
             },
         )
         .await

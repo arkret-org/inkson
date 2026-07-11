@@ -33,13 +33,12 @@
 use std::cell::Cell;
 use std::time::Duration;
 
-use dioxus::prelude::*;
 use garth::{ClientEvent, ClientProjector, RealmStreamStopReason};
 
 use crate::api_error::{is_auth_expired_error, is_invalid_cursor_error, rate_limited_retry_after};
 use crate::config::MultiProfileConfig;
-use crate::local_state::LocalStateStore;
 use crate::runtime::engine_loop::{EngineLoopDirective, run_engine_loop};
+use crate::state::LocalStateStore;
 
 /// Floor / ceiling for the failure backoff. Mirrors the account engine's
 /// human-scale recovery cadence. The doubling ladder is [`garth::Backoff`];
@@ -48,26 +47,27 @@ use crate::runtime::engine_loop::{EngineLoopDirective, run_engine_loop};
 const BACKOFF_FLOOR: Duration = Duration::from_secs(1);
 const BACKOFF_CEILING: Duration = Duration::from_secs(60);
 
-/// Signals the realm events engine needs. `Copy` because Dioxus signals are.
+/// Runtime inputs consumed by the realm events engine. UI frameworks are
+/// confined to the app adapter that constructs these handles.
 #[derive(Clone)]
 pub struct RealmEventsEngineContext {
-    pub base_url: Signal<String>,
-    pub token: Signal<String>,
-    pub state_store: SyncSignal<LocalStateStore>,
+    pub base_url: crate::runtime::input::ValueReader<String>,
+    pub token: crate::runtime::input::ValueReader<String>,
+    pub state_store: crate::runtime::input::StateStoreHandle,
     /// The realm the kanban view is currently showing. The engine exits when
     /// this no longer matches the realm it was spawned for, so a realm switch
     /// retires the old loop while `app` spawns a fresh one for the new realm.
-    pub selected_realm_id: Signal<String>,
+    pub selected_realm_id: crate::runtime::input::ValueReader<String>,
     /// Whether the current route actually consumes a Realm stream. This lets a
     /// stream spawned on Board/Chat exit when navigation returns to Home.
-    pub route_enabled: Signal<bool>,
+    pub route_enabled: crate::runtime::input::ValueReader<bool>,
     /// Bumped once per iteration that folded ≥1 new operation into the local
     /// store, so the kanban panel can re-project off a signal that is NOT the
     /// (cross-member-lossy) account `sync_cursor`.
-    pub realm_live_epoch: Signal<u64>,
+    pub realm_live_epoch: crate::runtime::input::ValueCell<u64>,
     /// Active multi-profile config — the engine exits when the active profile
     /// rotates (mirrors the account engine's profile guard).
-    pub profiles: Signal<MultiProfileConfig>,
+    pub profiles: crate::runtime::input::ValueReader<MultiProfileConfig>,
     pub client_runtime: crate::client_core::InksonClientRuntime,
     pub effect: crate::runtime::effects::EffectHandle,
 }
@@ -93,9 +93,9 @@ enum RealmIterationOutcome {
 /// (preserving the batch re-projection cadence). The ingest is durable BEFORE
 /// the driver checkpoints the cursor (the projector gates cursor advance), and
 /// the cursor stays coherent because the garth adapter writes the same root
-/// `SyncSignal<LocalStateStore>` used by the projector.
+/// state backend used by the projector.
 struct RealmIngestProjector {
-    state_store: SyncSignal<LocalStateStore>,
+    state_store: crate::runtime::input::StateStoreHandle,
     realm_id: String,
     changed: Cell<usize>,
 }
@@ -107,21 +107,15 @@ impl ClientProjector for RealmIngestProjector {
     ) -> impl std::future::Future<Output = arkret_sdk::Result<()>> + '_ {
         async move {
             if !batch.is_empty() {
-                let mut state_store = self.state_store;
-                let mut guard = state_store.write();
-                let changed =
-                    crate::sync_engine::ingest_kanban_events(&mut guard, &self.realm_id, &batch)
-                        + crate::sync_engine::ingest_message_events(
-                            &mut guard,
+                let changed = self.state_store.write(|store| {
+                    crate::sync_engine::ingest_kanban_events(store, &self.realm_id, &batch)
+                        + crate::sync_engine::ingest_message_events(store, &self.realm_id, &batch)
+                        + crate::sync_engine::ingest_membership_events(
+                            store,
                             &self.realm_id,
                             &batch,
                         )
-                        + crate::sync_engine::ingest_membership_events(
-                            &mut guard,
-                            &self.realm_id,
-                            &batch,
-                        );
-                drop(guard);
+                });
                 self.changed.set(self.changed.get() + changed);
             }
             Ok(())
@@ -133,25 +127,27 @@ impl ClientProjector for RealmIngestProjector {
 /// bumped, the active profile rotates, or the selected realm changes.
 pub async fn run_realm_events_engine(
     start_generation: u64,
-    generation: Signal<u64>,
+    generation: crate::runtime::input::ValueReader<u64>,
     realm_id: String,
     ctx: RealmEventsEngineContext,
 ) {
     if realm_id.trim().is_empty() {
         return;
     }
-    let start_profile_id = ctx.profiles.read().active_profile_id.clone();
+    let start_profile_id = ctx.profiles.get().active_profile_id;
     run_engine_loop(
         BACKOFF_FLOOR,
         BACKOFF_CEILING,
         || {
-            generation() == start_generation
-                && ctx.profiles.read().active_profile_id == start_profile_id
-                && ctx.selected_realm_id.read().as_str() == realm_id
-                && (ctx.route_enabled)()
+            generation.get() == start_generation
+                && ctx.profiles.get().active_profile_id == start_profile_id
+                && ctx.selected_realm_id.get() == realm_id
+                && ctx.route_enabled.get()
                 && !ctx.effect.is_cancelled()
         },
-        async || match run_realm_iteration(&realm_id, &ctx, start_generation, generation).await {
+        async || match run_realm_iteration(&realm_id, &ctx, start_generation, generation.clone())
+            .await
+        {
             RealmIterationOutcome::Ok => {
                 EngineLoopDirective::ContinueAfter(Duration::from_millis(250))
             }
@@ -170,10 +166,10 @@ async fn run_realm_iteration(
     realm_id: &str,
     ctx: &RealmEventsEngineContext,
     start_generation: u64,
-    generation: Signal<u64>,
+    generation: crate::runtime::input::ValueReader<u64>,
 ) -> RealmIterationOutcome {
-    let base = ctx.base_url.read().clone();
-    let token = ctx.token.read().clone();
+    let base = ctx.base_url.get();
+    let token = ctx.token.get();
     if base.trim().is_empty() || token.trim().is_empty() {
         return RealmIterationOutcome::NotReady;
     }
@@ -187,15 +183,16 @@ async fn run_realm_iteration(
         };
     }
 
-    let sdk_http =
-        match crate::authed_api::authed_api(&base, token).and_then(|api| api.sdk_http_client()) {
-            Ok(sdk_http) => sdk_http,
-            Err(_) => {
-                return RealmIterationOutcome::Backoff {
-                    retry_after_ms: None,
-                };
-            }
-        };
+    let sdk_http = match crate::transport::auth::authed_api(&base, token)
+        .and_then(|api| api.sdk_http_client())
+    {
+        Ok(sdk_http) => sdk_http,
+        Err(_) => {
+            return RealmIterationOutcome::Backoff {
+                retry_after_ms: None,
+            };
+        }
+    };
 
     let realm_id_typed = match arkret_sdk::RealmId::new(realm_id.to_owned()) {
         Ok(realm_id) => realm_id,
@@ -208,7 +205,7 @@ async fn run_realm_iteration(
     };
 
     // A late response from a retired generation must not touch the store.
-    if generation() != start_generation {
+    if generation.get() != start_generation {
         return RealmIterationOutcome::Ok;
     }
 
@@ -224,7 +221,7 @@ async fn run_realm_iteration(
     // `SyncSignal` store used by this projector. The driver emits/awaits the projector
     // BEFORE checkpointing the cursor, so ingest gates cursor advance.
     let projector = RealmIngestProjector {
-        state_store: ctx.state_store,
+        state_store: ctx.state_store.clone(),
         realm_id: realm_id.to_owned(),
         changed: Cell::new(0),
     };
@@ -249,8 +246,8 @@ async fn run_realm_iteration(
             if is_invalid_cursor_error(&error) {
                 // Broken/expired realm cursor — clear it so the next subscribe
                 // rebuilds from history.
-                let mut state_store = ctx.state_store;
-                state_store.write().save_realm_events_cursor(realm_id, None);
+                ctx.state_store
+                    .write(|store| store.save_realm_events_cursor(realm_id, None));
             }
             return RealmIterationOutcome::Backoff {
                 retry_after_ms: None,
@@ -261,9 +258,8 @@ async fn run_realm_iteration(
     // Bump the live epoch once per window when the projector folded ≥1 op, so
     // the kanban/chat panels re-project on real content (unchanged cadence).
     if projector.changed.get() > 0 {
-        let mut realm_live_epoch = ctx.realm_live_epoch;
-        let next = realm_live_epoch.peek().wrapping_add(1);
-        realm_live_epoch.set(next);
+        ctx.realm_live_epoch
+            .update(|epoch| *epoch = epoch.wrapping_add(1));
     }
 
     match reason {
@@ -274,8 +270,8 @@ async fn run_realm_iteration(
             // Server lost our position — clear the realm cursor so the next
             // subscribe rebuilds from history (inkson rebuilds from history for
             // realm drops rather than scan-catchup).
-            let mut state_store = ctx.state_store;
-            state_store.write().save_realm_events_cursor(realm_id, None);
+            ctx.state_store
+                .write(|store| store.save_realm_events_cursor(realm_id, None));
             RealmIterationOutcome::Backoff {
                 retry_after_ms: reconnect_after_ms,
             }

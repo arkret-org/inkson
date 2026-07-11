@@ -4,9 +4,10 @@ use dioxus::prelude::*;
 use serde_json::json;
 
 use super::model::*;
-use crate::local_state::LocalStateStore;
 use crate::operation::sdk_event_local_operation_id;
-use crate::views::helpers::{short_protocol_id, with_authed_api};
+use crate::state::LocalStateStore;
+use crate::transport::auth::with_authed_api;
+use crate::views::helpers::short_protocol_id;
 
 #[derive(Clone)]
 pub(super) enum CardAssignmentMutation {

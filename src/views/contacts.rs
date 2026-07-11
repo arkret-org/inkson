@@ -4,7 +4,7 @@
 // identity-handles.md §6.1.2 trigger the UI MUST downgrade to an
 // "unverified" badge. For authority surfaces (wallet disclosure /
 // accept invite / audit-trail review) callers MUST first-party verify
-// the DID Document via `crate::did_resolver::build_default_resolver`
+// the DID Document via `crate::identity::did_resolver::build_default_resolver`
 // instead of relying on the cached binding state surfaced here.
 
 use dioxus::prelude::*;
@@ -382,7 +382,7 @@ fn ContactRow(
                                 row_status.set(tr("contacts.dm.opening"));
                                 spawn(async move {
                                     match with_authed_sdk_client(&base, api_token, |http| async move {
-                                        crate::account_api::direct_conversation_resolve(&http, &peer, true).await
+                                        crate::transport::account::direct_conversation_resolve(&http, &peer, true).await
                                     })
                                     .await
                                     {
@@ -549,7 +549,7 @@ fn run_contact_action(
             } => with_authed_sdk_client(&base, api_token, |http| async move {
                 match request_event_ref {
                     Some(request_event_ref) => {
-                        crate::account_api::respond_contact_with_request_id_and_service(
+                        crate::transport::account::respond_contact_with_request_id_and_service(
                             &http,
                             &requester,
                             &request_event_ref,
@@ -559,7 +559,7 @@ fn run_contact_action(
                         .await
                     }
                     None => {
-                        crate::account_api::respond_contact_with_service(
+                        crate::transport::account::respond_contact_with_service(
                             &http,
                             &requester,
                             &verb,
@@ -573,7 +573,7 @@ fn run_contact_action(
             .map(|_| ()),
             ContactRowAction::Tombstone { peer, block } => {
                 with_authed_sdk_client(&base, api_token, |http| async move {
-                    crate::account_api::tombstone_contact(&http, &peer, block).await
+                    crate::transport::account::tombstone_contact(&http, &peer, block).await
                 })
                 .await
                 .map(|_| ())
@@ -619,7 +619,7 @@ pub fn ContactsPanel(token: Signal<String>) -> Element {
             status.set("loading".to_owned());
             spawn(async move {
                 match with_authed_sdk_client(&base, api_token, |http| async move {
-                    crate::account_api::contacts(&http).await
+                    crate::transport::account::contacts(&http).await
                 })
                 .await
                 {

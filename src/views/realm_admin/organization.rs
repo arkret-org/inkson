@@ -8,7 +8,7 @@
 //! Read side: the verified relationships and declared hints are read from the
 //! spec-canonical projection `ak.self.realm_organization.query.list`
 //! (`GET /_arkret/self/realms/{realm_id}/organizations`) via
-//! [`crate::api::ArkretApi::list_realm_organizations`]. The server only returns
+//! [`crate::transport::TransportClient::list_realm_organizations`]. The server only returns
 //! `verified_active` / `revoked_or_expired` rows plus
 //! `declared_organization_hints`.
 //!
@@ -28,7 +28,8 @@ use crate::organization::{
     OrganizationStatementInput, load_organization_control_key, prepare_organization_inception,
     sign_organization_statement, store_organization_control_seed,
 };
-use crate::views::helpers::{short_protocol_id, with_authed_sdk_client};
+use crate::transport::auth::with_authed_sdk_client;
+use crate::views::helpers::short_protocol_id;
 
 /// Context-provided server-administrator signal (D0). Newtype-wrapped so the
 /// context lookup can't collide with any other bare `Signal<bool>`. Sourced from
@@ -66,7 +67,7 @@ const CREATED_ORGANIZATIONS_KEY: &str = "organizations.created";
 
 /// Read the created-organizations index for `account_did` from local state.
 fn load_created_organizations(
-    store: &crate::local_state::LocalStateStore,
+    store: &crate::state::LocalStateStore,
     account_did: &str,
 ) -> Vec<CreatedOrganization> {
     store
@@ -77,7 +78,7 @@ fn load_created_organizations(
 
 /// Append (or replace by DID) a created organization into the per-account index.
 fn upsert_created_organization(
-    store: &mut crate::local_state::LocalStateStore,
+    store: &mut crate::state::LocalStateStore,
     account_did: &str,
     entry: CreatedOrganization,
 ) {
@@ -312,7 +313,7 @@ pub fn RealmOrganizationPanel(
             let session = token();
             async move {
                 with_authed_sdk_client(&base_url, session, |http| async move {
-                    crate::realm_read_api::list_realm_organizations(&http, &realm_id).await
+                    crate::transport::realm_read::list_realm_organizations(&http, &realm_id).await
                 })
                 .await
                 .map(|list| dtos_from_list(&list))
@@ -494,10 +495,10 @@ fn OrganizationCreatePanel(token: Signal<String>, account_did: String) -> Elemen
                                 // the organization itself authorizes no end-user
                                 // devices, and the relationship-binding verifier
                                 // does not depend on this field.
-                                let enrollment_authority = match crate::views::helpers::with_authed_sdk_client(
+                                let enrollment_authority = match crate::transport::auth::with_authed_sdk_client(
                                     &base,
                                     api_token.clone(),
-                                    |http| async move { crate::account_api::identity_describe(&http).await },
+                                    |http| async move { crate::transport::account::identity_describe(&http).await },
                                 )
                                 .await
                                 {
@@ -545,12 +546,12 @@ fn OrganizationCreatePanel(token: Signal<String>, account_did: String) -> Elemen
                                 }
 
                                 let submit_body = prepared.submit_body.clone();
-                                match crate::views::helpers::with_authed_sdk_client(
+                                match crate::transport::auth::with_authed_sdk_client(
                                     &base,
                                     api_token,
                                     move |http| {
                                         let submit_body = submit_body.clone();
-                                        async move { crate::account_api::submit_did_operation(&http, &submit_body).await }
+                                        async move { crate::transport::account::submit_did_operation(&http, &submit_body).await }
                                     },
                                 )
                                 .await
@@ -877,7 +878,7 @@ fn OrganizationBindPanel(token: Signal<String>, realm_id: String, account_did: S
                                     "binding organization…".to_owned()
                                 });
                                 spawn(async move {
-                                    match crate::views::helpers::with_authed_api(
+                                    match crate::transport::auth::with_authed_api(
                                         &base,
                                         api_token,
                                         move |api| {

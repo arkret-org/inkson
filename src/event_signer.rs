@@ -17,8 +17,8 @@
 //!   `secure_key_store::ensure_signing_seed`) and returns a `InksonEventSigner` ready to attach
 //!   detached JWS proofs to event envelopes.
 //! * [`install_active_signer`] / [`active_signer`] — a process-wide `OnceLock` that holds the
-//!   active signer; [`crate::api::ArkretApi::submit_sdk_event`] reaches into this to lazily sign
-//!   SDK events that were built unsigned.
+//!   active signer; [`crate::transport::TransportClient::submit_sdk_event`] reaches into this to
+//!   lazily sign SDK events that were built unsigned.
 //! * [`signer_status`] — diagnostic snapshot for the settings panel.
 //!
 //! ## Canonical bytes alignment
@@ -261,9 +261,9 @@ impl InksonEventSigner {
 
     /// Local seed-backed signer's Ed25519 public key in multibase form.
     pub fn public_key_multibase(&self) -> Option<String> {
-        self.raw_signing_key
-            .as_ref()
-            .map(|key| crate::did_key::encode_ed25519_did_key_multibase(&key.verifying_key()))
+        self.raw_signing_key.as_ref().map(|key| {
+            crate::identity::did_key::encode_ed25519_did_key_multibase(&key.verifying_key())
+        })
     }
 
     /// JWS algorithm name (e.g. `"EdDSA"`).
@@ -547,7 +547,7 @@ pub fn activate_device_signer_from_seed_for_device(
             let verifying = SigningKey::from_bytes(&seed).verifying_key();
             crate::secure_key_store::SigningSeedMaterial {
                 seed,
-                local_signing_did: crate::did_key::did_key_from_verifying_key(&verifying),
+                local_signing_did: crate::identity::did_key::did_key_from_verifying_key(&verifying),
             }
         }
     };
@@ -1329,7 +1329,7 @@ mod tests {
         let _g = reset();
         let seed = [11u8; 32];
         let verifying = SigningKey::from_bytes(&seed).verifying_key();
-        let did = crate::did_key::did_key_from_verifying_key(&verifying);
+        let did = crate::identity::did_key::did_key_from_verifying_key(&verifying);
         let material = crate::secure_key_store::SigningSeedMaterial {
             seed,
             local_signing_did: did.clone(),
@@ -1357,7 +1357,7 @@ mod tests {
         let seed = [12u8; 32];
         let seed_b64url = URL_SAFE_NO_PAD.encode(seed);
         let verifying = SigningKey::from_bytes(&seed).verifying_key();
-        let did = crate::did_key::did_key_from_verifying_key(&verifying);
+        let did = crate::identity::did_key::did_key_from_verifying_key(&verifying);
         let store = crate::secure_key_store::MemorySecureKeyStore::new();
 
         let signer = activate_device_signer_from_seed_b64url(&seed_b64url, Some(&store)).unwrap();

@@ -260,15 +260,23 @@ pub fn AvatarUploader(props: AvatarUploaderProps) -> Element {
                                                         return;
                                                     }
                                                 };
-                                                let api = match crate::views::helpers::authed_api(&base, api_token) {
+                                                let api = match crate::transport::auth::authed_api(&base, api_token) {
                                                     Ok(api) => api,
                                                     Err(err) => {
                                                         status.set(format!("Upload failed: {err}"));
                                                         return;
                                                     }
                                                 };
-                                                match api
-                                                    .upload_blob_bytes_scoped(
+                                                let clients = match api.sdk_http_client() {
+                                                    Ok(http) => crate::transport::EndpointClients::from_http(http),
+                                                    Err(err) => {
+                                                        status.set(format!("Upload failed: {err}"));
+                                                        return;
+                                                    }
+                                                };
+                                                match clients
+                                                    .blob()
+                                                    .upload_bytes_scoped(
                                                         bytes,
                                                         "image/jpeg",
                                                         upload_realm_id.as_deref(),

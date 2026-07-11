@@ -17,7 +17,7 @@ pub(super) fn parse_seed_members(seed_members: &str) -> Vec<String> {
         if trimmed.is_empty() {
             return;
         }
-        let normalized = crate::identity_handle::normalize_user_handle_display(trimmed)
+        let normalized = crate::identity::handle::normalize_user_handle_display(trimmed)
             .unwrap_or_else(|| trimmed.to_owned());
         if !members.iter().any(|existing| existing == &normalized) {
             members.push(normalized);

@@ -1,6 +1,6 @@
 //! Request-body helpers for directory resolve-handle flows.
 
-use crate::identity_handle::parse_user_handle;
+use crate::identity::handle::parse_user_handle;
 
 /// Context for `ak.find.directory.query.resolve_handle`.
 ///

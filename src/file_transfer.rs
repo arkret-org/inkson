@@ -17,8 +17,8 @@ use hkdf::Hkdf;
 use serde_json::{Value, json};
 use sha2::Sha256;
 
-use crate::api::ArkretApi;
 use crate::models::AccountDataSetResult;
+use crate::transport::TransportClient;
 
 pub const FILE_TRANSFER_PURPOSE: &str = "file_transfer";
 pub const FILE_TRANSFER_RECORD_KIND: &str = "file_transfer";
@@ -136,7 +136,7 @@ pub fn load_file_transfer_crypto_context(
 }
 
 pub async fn upload_actor_private_file(
-    api: &ArkretApi,
+    api: &TransportClient,
     crypto: &FileTransferCryptoContext,
     actor_id: &str,
     device_id: &str,
@@ -151,7 +151,9 @@ pub async fn upload_actor_private_file(
     // when the server advertises it in /_arkret/describe, with automatic
     // fallback to the canonical single-shot upload. Outcome shape and
     // blob_ref are identical either way (media-and-blob.md §2.1).
-    let upload = api
+    let clients = crate::transport::EndpointClients::from_http(api.sdk_http_client()?);
+    let upload = clients
+        .blob()
         .upload_file_transfer_ciphertext_auto(prepared.ciphertext.clone(), &prepared.content_digest)
         .await?;
     let uploaded_digest = upload.content_digest.to_string();
@@ -167,9 +169,12 @@ pub async fn upload_actor_private_file(
         anyhow::bail!("file-transfer account_data key derivation drift");
     }
     let envelope = seal_record_envelope(&record, crypto, &account_data_key, actor_id)?;
-    let outcome =
-        crate::account_api::set_account_data(&api.event_submitter()?, &account_data_key, envelope)
-            .await?;
+    let outcome = crate::transport::account::set_account_data(
+        &api.event_submitter()?,
+        &account_data_key,
+        envelope,
+    )
+    .await?;
     let server_response = match outcome {
         AccountDataSetResult::Stored { response } => response,
         AccountDataSetResult::Unsupported { status } => {
@@ -187,7 +192,7 @@ pub async fn upload_actor_private_file(
 }
 
 pub async fn upload_device_bound_file(
-    api: &ArkretApi,
+    api: &TransportClient,
     crypto: &FileTransferCryptoContext,
     actor_id: &str,
     device_id: &str,
@@ -199,7 +204,9 @@ pub async fn upload_device_bound_file(
     let prepared =
         prepare_actor_private_file(crypto, actor_id, device_id, filename, media_type, plaintext)?;
     let account_data_key = prepared.account_data_key.clone();
-    let upload = api
+    let clients = crate::transport::EndpointClients::from_http(api.sdk_http_client()?);
+    let upload = clients
+        .blob()
         .upload_file_transfer_ciphertext_auto(prepared.ciphertext.clone(), &prepared.content_digest)
         .await?;
     let uploaded_digest = upload.content_digest.to_string();
@@ -219,9 +226,12 @@ pub async fn upload_device_bound_file(
         anyhow::bail!("file-transfer account_data key derivation drift");
     }
     let envelope = seal_record_envelope(&record, crypto, &account_data_key, actor_id)?;
-    let outcome =
-        crate::account_api::set_account_data(&api.event_submitter()?, &account_data_key, envelope)
-            .await?;
+    let outcome = crate::transport::account::set_account_data(
+        &api.event_submitter()?,
+        &account_data_key,
+        envelope,
+    )
+    .await?;
     let server_response = match outcome {
         AccountDataSetResult::Stored { response } => response,
         AccountDataSetResult::Unsupported { status } => {
@@ -232,7 +242,7 @@ pub async fn upload_device_bound_file(
     let mut device_message_responses = Vec::with_capacity(dispatches.len());
     let http = api.sdk_http_client()?;
     for dispatch in dispatches {
-        let response = crate::keys_api::send_device_message_envelope(
+        let response = crate::transport::keys::send_device_message_envelope(
             &http,
             &dispatch.txn_id,
             &dispatch.target_actor_id,
@@ -257,11 +267,13 @@ pub async fn upload_device_bound_file(
 }
 
 pub async fn decrypt_file_transfer_item(
-    api: &ArkretApi,
+    api: &TransportClient,
     item: &FileTransferItem,
 ) -> anyhow::Result<Vec<u8>> {
-    let ciphertext = api
-        .get_file_transfer_blob_bytes(&item.record.blob_ref)
+    let clients = crate::transport::EndpointClients::from_http(api.sdk_http_client()?);
+    let ciphertext = clients
+        .blob()
+        .get_file_transfer_bytes(&item.record.blob_ref)
         .await?;
     decrypt_file_transfer_ciphertext(&item.record, &ciphertext)
 }

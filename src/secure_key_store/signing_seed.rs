@@ -570,7 +570,7 @@ fn delete_device_id_scoped(
 fn ed25519_seed_to_did_key(seed: &[u8; 32]) -> String {
     let signing = ed25519_dalek::SigningKey::from_bytes(seed);
     let verifying = signing.verifying_key();
-    crate::did_key::did_key_from_verifying_key(&verifying)
+    crate::identity::did_key::did_key_from_verifying_key(&verifying)
 }
 
 #[cfg(test)]

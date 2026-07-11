@@ -1,8 +1,8 @@
 //! Tests for §2.9 E2EE reaction sealing and routing-tag derivation.
 
-use crate::local_state::isolated_store_for_tests as temp_state_store;
 use crate::mls::runtime::*;
 use crate::secure_key_store::MemorySecureKeyStore;
+use crate::state::isolated_store_for_tests as temp_state_store;
 
 #[test]
 fn reaction_routing_tag_is_deterministic_and_wire_shaped() {

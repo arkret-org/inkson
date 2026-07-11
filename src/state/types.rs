@@ -1,0 +1,1166 @@
+use std::collections::{BTreeMap, BTreeSet};
+
+use arkret_sdk::EncryptedPayload;
+use chime::PushRegistrationState;
+use chrono::{DateTime, Utc};
+use ed25519_dalek::SigningKey;
+use serde::{Deserialize, Serialize};
+use serde_json::{Value, json};
+use zeroize::Zeroize;
+
+// Sibling-module types (`LocalSealView`, the `move_tracking` / `mls_sidecar`
+// helpers) and the parent constants (`RAW_OPERATIONS_MAX`, ...) are reached
+// through the parent module glob.
+use super::*;
+use crate::notification_rules::{DndSettings, WatchLevel};
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RawOperationRecord {
+    pub operation_id: String,
+    pub realm_id: Option<String>,
+    pub received_at: DateTime<Utc>,
+    pub payload: Value,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RealmLifecycleState {
+    #[serde(default)]
+    pub destroyed: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub destroyed_operation_id: Option<String>,
+}
+
+impl RealmLifecycleState {
+    pub(crate) fn destroyed(operation_id: impl Into<String>) -> Self {
+        Self {
+            destroyed: true,
+            destroyed_operation_id: Some(operation_id.into()),
+        }
+    }
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct NotificationClientState {
+    #[serde(default)]
+    pub read: bool,
+    #[serde(default)]
+    pub archived: bool,
+}
+
+/// Realm-scoped cache for `ak.find.directory.query.list_handles_for_subject`.
+///
+/// Handles are display evidence, not identity keys. Cache entries are
+/// therefore bound to the visible subject DID, the Realm context, and the
+/// roster `member_display_state_digest` when the server provided one.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct MemberHandleCacheEntry {
+    pub subject_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub realm_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub primary_handle: Option<String>,
+    #[serde(default)]
+    pub claims_count: usize,
+    pub fetched_at: DateTime<Utc>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub as_of: Option<DateTime<Utc>>,
+    pub cache_expires_at: DateTime<Utc>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub member_display_state_digest: Option<String>,
+}
+
+/// Structurally identical, pending merge (05-5): the fields match
+/// `discovery::ReadMarkerScope`; these should later converge into a
+/// single read_scope type.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ReadScope {
+    pub kind: String,
+    #[serde(rename = "ref", default, skip_serializing_if = "Option::is_none")]
+    pub object_ref: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub track_name: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub track_scope: Option<String>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ReadCursorPosition {
+    pub event_id: String,
+    pub hlc: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ReadMarkerBody {
+    #[serde(default = "new_read_cursor_id")]
+    pub id: String,
+    pub schema: String,
+    pub realm_id: String,
+    pub read_scope: ReadScope,
+    pub position: ReadCursorPosition,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ReadMarkerRecord {
+    #[serde(rename = "type")]
+    pub marker_type: String,
+    pub body: ReadMarkerBody,
+    pub actor: String,
+    pub device_id: String,
+    pub updated_at: DateTime<Utc>,
+}
+
+impl ReadMarkerRecord {
+    pub fn ak_read_cursor_payload(&self) -> Value {
+        json!({
+            "id": &self.body.id,
+            "schema": &self.body.schema,
+            "actor_id": &self.actor,
+            "device_id": &self.device_id,
+            "realm_id": &self.body.realm_id,
+            "read_scope": &self.body.read_scope,
+            "position": &self.body.position,
+            "updated_at": self.updated_at.to_rfc3339_opts(chrono::SecondsFormat::Secs, true),
+        })
+    }
+
+    pub fn ak_read_cursor_operation(&self) -> Value {
+        json!({
+            "kind": &self.marker_type,
+            "payload": self.ak_read_cursor_payload(),
+        })
+    }
+}
+
+/// Server-declared `ak.realm.read_receipt_policy` snapshot for a Realm, as
+/// surfaced to clients via the Seal view (P0 M3) once sync.rs lands.
+/// Locks the per-scope toggle in the settings UI when `disclosure` is
+/// `required` (server forces send) or `disabled` (server forbids send).
+///
+/// Until the sync wires the policy from soland's `ak.component.realm.read_receipt_policy.v1`
+/// cas-register cell, this is populated by tests / dev tooling only.
+/// See `_todos.md` C10.D "Policy lock UI".
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ReadReceiptPolicySnapshot {
+    /// Disclosure mode — `optional` (default), `required`, or `disabled`.
+    /// `required` and `disabled` lock the user's per-Realm override.
+    pub disclosure: String,
+    /// Visibility scope — `public`, `private`, `track_scoped`. Surfaced
+    /// in the lock-reason text so the user knows why the toggle is locked.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub visibility: Option<String>,
+}
+
+impl ReadReceiptPolicySnapshot {
+    /// True when `disclosure` is one of the spec's lock-mandating values.
+    pub fn locks_user_choice(&self) -> bool {
+        matches!(self.disclosure.as_str(), "required" | "disabled")
+    }
+
+    /// Human-readable reason for showing the lock UI; empty when not locked.
+    pub fn lock_reason(&self) -> String {
+        match self.disclosure.as_str() {
+            "required" => format!(
+                "Realm policy: read receipts are REQUIRED ({}). User-level skip is disabled.",
+                self.visibility.as_deref().unwrap_or("public")
+            ),
+            "disabled" => format!(
+                "Realm policy: read receipts are DISABLED ({}). User-level send is disabled.",
+                self.visibility.as_deref().unwrap_or("public")
+            ),
+            _ => String::new(),
+        }
+    }
+}
+
+fn default_true() -> bool {
+    true
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PresenceVisibility {
+    #[default]
+    Public,
+    ContactsOnly,
+    Nobody,
+}
+
+impl PresenceVisibility {
+    pub fn as_wire(self) -> &'static str {
+        match self {
+            Self::Public => "public",
+            Self::ContactsOnly => "contacts_only",
+            Self::Nobody => "nobody",
+        }
+    }
+
+    pub fn from_wire(value: &str) -> Self {
+        Self::try_from_wire(value).unwrap_or_default()
+    }
+
+    pub fn try_from_wire(value: &str) -> Option<Self> {
+        match value {
+            "public" => Some(Self::Public),
+            "contacts_only" => Some(Self::ContactsOnly),
+            "nobody" => Some(Self::Nobody),
+            _ => None,
+        }
+    }
+
+    pub fn allows_presence_send(self) -> bool {
+        !matches!(self, Self::Nobody)
+    }
+}
+
+/// Local mirror of the `ak.presence.preference` account-data payload
+/// (profiles-presence.md §3.6): the user's pinned manual presence state,
+/// transient status message and expiry. Enforced on the send side — the
+/// broadcast loop reads this before every `ak.presence`.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PresencePreferenceState {
+    /// `online` / `idle` / `dnd`; `None` = automatic detection.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub manual_state: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub status_message: Option<String>,
+    /// RFC 3339 UTC expiry; past it the whole preference reads as absent.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub clears_at: Option<String>,
+}
+
+impl PresencePreferenceState {
+    pub fn is_empty(&self) -> bool {
+        self.manual_state.is_none() && self.status_message.is_none()
+    }
+
+    pub fn is_active(&self, now: chrono::DateTime<chrono::Utc>) -> bool {
+        match self.clears_at.as_deref() {
+            None => true,
+            Some(raw) => match chrono::DateTime::parse_from_rfc3339(raw) {
+                Ok(clears_at) => now < clears_at.with_timezone(&chrono::Utc),
+                // Unparseable expiry fails closed to "expired" so a
+                // corrupted value can never pin a stale manual state.
+                Err(_) => false,
+            },
+        }
+    }
+
+    pub fn next_clears_at(
+        &self,
+        now: chrono::DateTime<chrono::Utc>,
+    ) -> Option<chrono::DateTime<chrono::Utc>> {
+        let raw = self.clears_at.as_deref()?;
+        let clears_at = chrono::DateTime::parse_from_rfc3339(raw)
+            .ok()?
+            .with_timezone(&chrono::Utc);
+        (now < clears_at).then_some(clears_at)
+    }
+
+    /// The state to pin broadcasts to at `now`, if the preference is
+    /// active and carries a valid manual state.
+    pub fn effective_manual_state(&self, now: chrono::DateTime<chrono::Utc>) -> Option<&str> {
+        if !self.is_active(now) {
+            return None;
+        }
+        self.manual_state
+            .as_deref()
+            .filter(|state| matches!(*state, "online" | "idle" | "dnd"))
+    }
+
+    /// The status-message override to broadcast at `now`, if any.
+    pub fn effective_status_message(&self, now: chrono::DateTime<chrono::Utc>) -> Option<&str> {
+        if !self.is_active(now) {
+            return None;
+        }
+        self.status_message
+            .as_deref()
+            .map(str::trim)
+            .filter(|message| !message.is_empty())
+    }
+}
+
+pub(crate) fn raw_operation_kind(payload: &Value) -> Option<&str> {
+    payload
+        .get("kind")
+        .and_then(Value::as_str)
+        .or_else(|| payload.get("type").and_then(Value::as_str))
+}
+
+/// Persisted shape of the device identity. Production callers store this
+/// record in [`crate::secure_key_store::SecureKeyStore`]; plaintext
+/// `state.json` storage is retained only for tests and explicitly enabled
+/// development fallback.
+///
+/// This replaces the deterministic `[42; 32]` demo seed used by older Move
+/// builder prototypes. Fresh installs generate via
+/// `getrandom::fill` on first access; existing dev installs that still
+/// hold a `[42; 32]` cache are simply broken - they regenerate the next
+/// time the store is loaded with no record present (Arkret v1 protocol is
+/// pre-release, with no migration path).
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct LocalIdentityRecord {
+    /// Hex-encoded 32-byte ed25519 seed. Production callers persist this
+    /// record in `SecureKeyStore`; the field remains serializable for
+    /// test fixtures and the explicit plaintext development fallback.
+    pub seed_hex: String,
+    /// `did:key:z<multibase>` derived from the seed's verifying key.
+    pub did_key: String,
+}
+
+impl Drop for LocalIdentityRecord {
+    /// R16: the hex-encoded ed25519 seed is long-lived secret material; wipe
+    /// it on drop so copies left over from hydrate / `to_record` round-trips
+    /// don't linger in freed heap. `did_key` is public and left untouched.
+    fn drop(&mut self) {
+        self.seed_hex.zeroize();
+    }
+}
+
+/// In-memory device identity: the per-device ed25519 signing key plus the
+/// derived `did:key`. Construct via [`LocalStateStore::ensure_local_identity`]
+/// (which generates+persists on first call) or [`LocalIdentity::from_record`]
+/// (round-tripping a persisted record).
+///
+/// R16: `signing_key` is `ed25519_dalek::SigningKey`, which derives
+/// `ZeroizeOnDrop` — its secret scalar is wiped automatically when this
+/// struct (or any `Clone` of it) is dropped, so no manual `Drop` is needed
+/// here and the `<redacted>` Debug formatting below is preserved.
+#[derive(Clone)]
+pub struct LocalIdentity {
+    /// Local signing public key encoded as `did:key:z<multibase>`. This is a
+    /// self-describing encoding of the device-local ed25519 signing key, not a
+    /// device DID or actor identity; devices are not independent DID subjects.
+    /// Event `actor_id` must use the account/principal DID (see spec
+    /// models/actor.md §2). This field is only used for local signing / key
+    /// store indexing.
+    pub local_signing_did: String,
+    pub signing_key: SigningKey,
+}
+
+impl std::fmt::Debug for LocalIdentity {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        // Never log the private bytes.
+        f.debug_struct("LocalIdentity")
+            .field("local_signing_did", &self.local_signing_did)
+            .field("signing_key", &"<redacted>")
+            .finish()
+    }
+}
+
+impl PartialEq for LocalIdentity {
+    fn eq(&self, other: &Self) -> bool {
+        self.local_signing_did == other.local_signing_did
+            && self.signing_key.to_bytes() == other.signing_key.to_bytes()
+    }
+}
+
+impl Eq for LocalIdentity {}
+
+impl LocalIdentity {
+    /// Generate a fresh device identity. Uses `getrandom::fill` for the
+    /// 32-byte seed — same RNG inkson uses for OIDC PKCE state/nonce/verifier.
+    pub fn generate() -> anyhow::Result<Self> {
+        let mut seed = [0u8; 32];
+        getrandom::fill(&mut seed).map_err(|err| anyhow::anyhow!("rng fill: {err}"))?;
+        let signing_key = SigningKey::from_bytes(&seed);
+        let local_signing_did = encode_did_key(&signing_key);
+        Ok(Self {
+            local_signing_did,
+            signing_key,
+        })
+    }
+
+    /// Recover an identity from a persisted record. Returns `Err` if the
+    /// hex is malformed or the cached `did_key` mismatches what the seed
+    /// derives — a tamper / corruption signal.
+    pub fn from_record(record: &LocalIdentityRecord) -> anyhow::Result<Self> {
+        let bytes = hex_to_bytes(&record.seed_hex)
+            .ok_or_else(|| anyhow::anyhow!("identity seed_hex is not valid hex"))?;
+        if bytes.len() != 32 {
+            return Err(anyhow::anyhow!(
+                "identity seed must be 32 bytes, got {}",
+                bytes.len()
+            ));
+        }
+        let mut seed = [0u8; 32];
+        seed.copy_from_slice(&bytes);
+        let signing_key = SigningKey::from_bytes(&seed);
+        let derived = encode_did_key(&signing_key);
+        if derived != record.did_key {
+            return Err(anyhow::anyhow!(
+                "identity record tampered: stored did_key {} != derived {derived}",
+                record.did_key
+            ));
+        }
+        Ok(Self {
+            local_signing_did: derived,
+            signing_key,
+        })
+    }
+
+    /// Serialize to the on-disk record shape.
+    pub fn to_record(&self) -> LocalIdentityRecord {
+        let seed_hex = crate::canonical::hex_encode(&self.signing_key.to_bytes());
+        LocalIdentityRecord {
+            seed_hex,
+            did_key: self.local_signing_did.clone(),
+        }
+    }
+}
+
+/// Encode an ed25519 signing key's public half as a `did:key:z<multibase>`
+/// DID. Thin wrapper over the shared [`crate::identity::did_key`] encoder.
+fn encode_did_key(signing_key: &SigningKey) -> String {
+    crate::identity::did_key::did_key_from_verifying_key(&signing_key.verifying_key())
+}
+
+/// Lifecycle state of a locally-submitted Move. Mirrors the states
+/// soland's Move/Seal pipeline can report via the
+/// `SubmitMoveOutcome.state` field plus the post-seal effects the
+/// next `/sync` cycle exposes:
+///
+/// - `PendingSeal` — server accepted the Move into MoveStore, waiting for the next notary batch to
+///   seal it. Initial state for any successful submit.
+/// - `Effective` — notary included the Move in a signed Seal; the reducer ran and the resulting
+///   cell state is now visible.
+/// - `FailedPrecondition` — soland rejected the Move at submit time because a precondition
+///   (`if_state` / `if_cell` / `parent_anchor`) no longer matches the server's view.
+/// - `FailedBottom` — the reducer accepted the Move but produced a bottom (concurrent-candidate)
+///   cell; downstream queries are undefined until an admin resolves the conflict via a `head_in`
+///   repair Move (M8).
+/// - `RejectedSeal` — the notary batch that swept the Move was rejected (signature / signer-set
+///   policy / notary-cell mismatch); the Move never landed.
+/// - `NotaryPaused` — the Space's notary is paused (recovery notary not yet rotated, or quorum
+///   unmet); the Space cannot advance until ops bring it back online.
+/// - `PendingMlsBinding` — the Move targets an E2EE message but its `covered_seals` precondition
+///   references a governance frontier the local MLS group has not yet acknowledged. Held
+///   client-side until the binding is observed; the user sees a toast.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum MoveSubmissionState {
+    PendingSeal,
+    Effective,
+    FailedPrecondition,
+    FailedBottom,
+    RejectedSeal,
+    NotaryPaused,
+    PendingMlsBinding,
+}
+
+impl MoveSubmissionState {
+    /// Map a soland `SubmitMoveOutcome.state` string into the typed
+    /// enum. Unknown strings fall back to `PendingSeal` (the safe
+    /// "we accepted it, server will tell us more later" default) so
+    /// new server-side states surface as in-flight rather than as
+    /// failures.
+    pub fn from_submit_state(state: &str, reason: Option<&str>) -> Self {
+        match state {
+            "accepted" | "pending" | "pending_seal" => Self::PendingSeal,
+            "effective" | "sealed" => Self::Effective,
+            "rejected" => match reason.unwrap_or("") {
+                r if r.contains("notary_paused") => Self::NotaryPaused,
+                r if r.contains("rejected_seal") || r.contains("seal_signature") => {
+                    Self::RejectedSeal
+                }
+                r if r.contains("bottom") => Self::FailedBottom,
+                r if r.contains("covered_seals") || r.contains("mls_binding") => {
+                    Self::PendingMlsBinding
+                }
+                _ => Self::FailedPrecondition,
+            },
+            "failed_precondition" => Self::FailedPrecondition,
+            "failed_bottom" => Self::FailedBottom,
+            "rejected_seal" => Self::RejectedSeal,
+            "notary_paused" => Self::NotaryPaused,
+            "pending_mls_binding" => Self::PendingMlsBinding,
+            _ => Self::PendingSeal,
+        }
+    }
+
+    /// Short tag used by the UI for state-specific styling (badge color
+    /// / icon class). Mirrors the on-disk `serde(rename_all = "snake_case")`
+    /// repr so log lines + CSS classes stay aligned.
+    pub fn slug(self) -> &'static str {
+        match self {
+            Self::PendingSeal => "pending_seal",
+            Self::Effective => "effective",
+            Self::FailedPrecondition => "failed_precondition",
+            Self::FailedBottom => "failed_bottom",
+            Self::RejectedSeal => "rejected_seal",
+            Self::NotaryPaused => "notary_paused",
+            Self::PendingMlsBinding => "pending_mls_binding",
+        }
+    }
+
+    /// Human-readable label (Chinese where the spec / sodmin already
+    /// uses Chinese copy). Surfaces in message status pills / banners.
+    pub fn label_zh(self) -> &'static str {
+        match self {
+            Self::PendingSeal => "待 Seal",
+            Self::Effective => "已生效",
+            Self::FailedPrecondition => "前置条件失败",
+            Self::FailedBottom => "Bottom 冲突",
+            Self::RejectedSeal => "Seal 拒绝",
+            Self::NotaryPaused => "Notary 暂停",
+            Self::PendingMlsBinding => "MLS 绑定待覆盖",
+        }
+    }
+
+    /// CSS-friendly badge class.
+    pub fn badge_class(self) -> &'static str {
+        match self {
+            Self::PendingSeal => "badge amber",
+            Self::Effective => "badge green",
+            Self::FailedPrecondition => "badge red",
+            Self::FailedBottom => "badge red",
+            Self::RejectedSeal => "badge red",
+            Self::NotaryPaused => "badge red",
+            Self::PendingMlsBinding => "badge amber",
+        }
+    }
+
+    /// True when the state represents a terminal failure — the UI
+    /// allows the user to click for a detail dialog.
+    pub fn is_failed(self) -> bool {
+        matches!(
+            self,
+            Self::FailedPrecondition | Self::FailedBottom | Self::RejectedSeal | Self::NotaryPaused
+        )
+    }
+}
+
+/// Per-Move tracking record persisted in the local state store. `move_id`
+/// is content-addressed (`sha256:...`); the reducer round-trips
+/// `realm_id` so client UIs can scope filtering. `kind` is a free-form
+/// classifier the UI uses for icons (e.g. `ak.consent.grant`,
+/// `ak.message.create`, `mls_commit`).
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct MoveSubmissionRecord {
+    pub move_id: String,
+    /// Server-assigned Event id returned by `ak.self.events.command.submit`. Older
+    /// records may only have `move_id` (the local idempotency alias);
+    /// sync `event_states[]` uses this id, so new records persist it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub event_id: Option<String>,
+    pub realm_id: String,
+    pub kind: String,
+    pub state: MoveSubmissionState,
+    pub submitted_at: DateTime<Utc>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reason: Option<String>,
+    /// Optional last-known seal frontier head the Move was bound to.
+    /// Surfaces in the failure detail so an operator can correlate the
+    /// rejected Move to the predecessor that conflicted.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub seal_ref: Option<String>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SnapshotSyncStatus {
+    pub manifest_id: String,
+    pub trust_state: crate::snapshot::SnapshotTrustState,
+    pub updated_at: DateTime<Utc>,
+    #[serde(default)]
+    pub source_event_ids: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub degraded_reason: Option<String>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ClientLocalState {
+    pub sync_cursor: Option<String>,
+    /// Per-realm `ak.self.events.stream.subscribe` resume cursors, keyed by
+    /// realm id. Kept PHYSICALLY SEPARATE from the account-aggregate
+    /// `sync_cursor`: the realm events stream and the account stream are
+    /// bound to different `filter_digest`s (encoding.md §8.3.1), so their
+    /// cursors are not interchangeable and MUST NOT be cross-used.
+    #[serde(default)]
+    pub realm_events_cursors: BTreeMap<String, String>,
+    #[serde(default)]
+    pub client_core_seen_event_ids: BTreeSet<String>,
+    pub raw_operations: Vec<RawOperationRecord>,
+    #[serde(default)]
+    pub realm_lifecycle_state: BTreeMap<String, RealmLifecycleState>,
+    pub realm_tree_projections: BTreeMap<String, Value>,
+    #[serde(default)]
+    pub snapshot_sync: BTreeMap<String, SnapshotSyncStatus>,
+    /// Migrated principal-private draft account-data values, keyed by
+    /// `ak.draft.v1:<kind>:<target_key>:<slot_key>`. The older `drafts`
+    /// map remains a local UI cache; this map is the cross-device sync
+    /// staging area created by explicit migration.
+    #[serde(default)]
+    pub draft_account_data: BTreeMap<String, Value>,
+    /// Migrated principal-private saved-item account-data values, keyed by
+    /// `ak.saved.v1:<collection_key>:<target_key>`.
+    #[serde(default)]
+    pub saved_account_data: BTreeMap<String, Value>,
+    pub drafts: BTreeMap<String, String>,
+    pub pending_encrypted_messages: BTreeMap<String, EncryptedPayload>,
+    #[serde(default)]
+    pub notification_projection: Vec<Value>,
+    #[serde(default)]
+    pub presence_projection: Vec<Value>,
+    #[serde(default)]
+    pub presence_visibility: PresenceVisibility,
+    /// Manual presence preference (`ak.presence.preference`,
+    /// profiles-presence.md §3.6). Local state is authoritative; the
+    /// account-data push is best-effort and encrypted.
+    #[serde(default)]
+    pub presence_preference: PresencePreferenceState,
+    /// Persisted per-device to-device inbox. Both account.subscribe
+    /// `delta.to_device.messages[]` and explicit `device_messages` pulls are
+    /// funneled through this queue before protocol-specific handlers consume
+    /// them. Entries stay local only and are deduplicated by envelope identity
+    /// plus transaction/request ids where present.
+    #[serde(default)]
+    pub to_device_inbox: Vec<Value>,
+    #[serde(default)]
+    pub notification_client_state: BTreeMap<String, NotificationClientState>,
+    /// Per-realm watch level overrides (spec
+    /// `discovery/push-notifications.md` §4.3.2). Only non-default entries are
+    /// stored; an absent realm resolves to `WatchLevel::MentionsOnly`.
+    #[serde(default)]
+    pub realm_watch_levels: BTreeMap<String, WatchLevel>,
+    #[serde(default)]
+    pub muted_notification_kinds: BTreeMap<String, bool>,
+    /// Actor-private do-not-disturb preference for this local account view.
+    /// The synced account_data value is encrypted/opaque to the server, so
+    /// notification projection must evaluate DND from the locally held
+    /// plaintext preference.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub notification_dnd_settings: Option<DndSettings>,
+    /// Read receipt preferences (spec
+    /// `discovery/client-preferences.md` §3.6, account-data key
+    /// `ak.read_receipt.preferences`).
+    ///
+    /// Send and display preferences resolve independently.
+    /// Send and display override maps share the same scope order.
+    /// Until the server wires `ak.account_data.set` for this key,
+    /// preferences live only on this device.
+    #[serde(default = "default_true")]
+    pub read_receipt_default_send: bool,
+    #[serde(default = "default_true")]
+    pub read_receipt_default_display: bool,
+    #[serde(default)]
+    pub read_receipt_realm_overrides: BTreeMap<String, bool>,
+    #[serde(default)]
+    pub read_receipt_realm_display_overrides: BTreeMap<String, bool>,
+    #[serde(default)]
+    pub read_receipt_strand_overrides: BTreeMap<String, bool>,
+    #[serde(default)]
+    pub read_receipt_strand_display_overrides: BTreeMap<String, bool>,
+    /// Server-declared `ak.realm.read_receipt_policy` snapshots, keyed by
+    /// realm id. Populated when sync (P0 M3) lands — surfaces the
+    /// disclosure / visibility values from the
+    /// `ak.component.realm.read_receipt_policy.v1` cas-register cell so
+    /// the settings UI can lock per-Realm toggles when the server's
+    /// policy is `required` or `disabled`.
+    #[serde(default)]
+    pub read_receipt_policy_snapshots: BTreeMap<String, ReadReceiptPolicySnapshot>,
+    /// Latest Seal view per Space, threaded from `/sync`'s Seal
+    /// projection (P0 M3). Move builders pull `frontier[0]` from here
+    /// instead of using the empty-bytes sentinel. UIs use the
+    /// `bottom_cells` map to surface conflict banners when a cell is
+    /// `bottom=expose`.
+    #[serde(default)]
+    pub seal_views: BTreeMap<String, LocalSealView>,
+    #[serde(default)]
+    pub push_registration: Option<PushRegistrationState>,
+    /// Per-device ed25519 identity. Generated + persisted on first access
+    /// via `LocalStateStore::ensure_local_identity`. Move builders read
+    /// this in place of the historical `[42; 32]` demo seed.
+    #[serde(default)]
+    pub local_identity: Option<LocalIdentityRecord>,
+    /// Locally-submitted Move state tracker. Keyed by `move_id`; entries
+    /// arrive when `submit_move` succeeds and get updated when the next
+    /// sync surfaces an Seal that includes the id (or a rejection).
+    /// Drives message / realm_admin state pill UI.
+    #[serde(default)]
+    pub move_submissions: BTreeMap<String, MoveSubmissionRecord>,
+    /// Encrypted private account data (preferences, tags, custom emojis).
+    /// Values are XOR-encrypted with account_key and hex-encoded.
+    #[serde(default)]
+    pub private_data: BTreeMap<String, String>,
+    /// Private ak.read_cursor.advance cursors keyed by Realm + read_scope.
+    #[serde(default)]
+    pub read_cursors: BTreeMap<String, ReadMarkerRecord>,
+    /// Persisted coauth `session_grant` payload. It is the client-visible
+    /// session credential for `/_arkret/self/*` and is rotated through the
+    /// Account Authority refresh endpoint when it nears expiry.
+    #[serde(default)]
+    pub session_grant: Option<PersistedSessionGrant>,
+    /// Client-side telemetry log buffer. Mirrors sodmin's
+    /// `utils/audit.rs` shape - each entry is a structured "user action"
+    /// record (actor / action / outcome / timestamp). Written by
+    /// [`crate::telemetry::emit_user_action_log`] when offline; the flush
+    /// path reads + clears via [`LocalStateStore::drain_telemetry`] once a
+    /// network channel is available.
+    ///
+    /// The buffer is bounded at [`TELEMETRY_BUFFER_CAP`] (oldest
+    /// entries dropped first) so a long offline session can't grow
+    /// `state.json` without bound.
+    #[serde(default)]
+    pub telemetry_log: Vec<UserActionLogEntry>,
+    /// Persisted MLS group state snapshots, keyed by `realm_id`. Each
+    /// entry is the encrypted envelope produced by
+    /// [`crate::mls::persistence::encrypt_state`]; the boot path
+    /// rehydrates each Realm's `LocalMlsDevice` from the latest envelope
+    /// rather than rejoining via Welcome from scratch.
+    #[serde(default)]
+    pub mls_snapshots: BTreeMap<String, crate::mls::persistence::MlsSnapshotEnvelope>,
+    /// Realms whose `ak.mls.genesis` event has already been submitted to
+    /// soland. Tracked per-Realm so genesis is emitted exactly once for a
+    /// locally-created creator group (the server also rejects a duplicate
+    /// genesis with `mls_genesis_already_exists`, but this avoids the
+    /// needless round-trip on every encrypted write after the first).
+    #[serde(default)]
+    pub mls_genesis_emitted: BTreeSet<String>,
+    /// MLS governance `policy_root` locked at `ak.mls.genesis`, keyed by the
+    /// same effective-scope key as [`Self::mls_genesis_emitted`]
+    /// (`mls_effective_scope_snapshot_key`).
+    ///
+    /// `encryption-and-audit.md` §2.5.1: the genesis-locked `policy_root` binds
+    /// the group's epoch chain; soland's `apply_commit_epoch` carries it forward
+    /// unchanged on every commit and rejects any `ak.mls.commit` whose binding
+    /// declares a different value with `governance_binding_mismatch`. Deriving
+    /// `policy_root` from the live Seal `state_root` (which advances on every
+    /// non-policy event — space/strand/message create) made the admission commit
+    /// drift away from the genesis-locked root the moment the creator did any
+    /// work before inviting, so the add-member commit was rejected while its
+    /// Welcome still landed — leaving the invitee at epoch N+1 and the admin at
+    /// epoch N (permanent fork, mutually undecryptable). We therefore record the
+    /// genesis-locked value once and reuse the exact bytes for every later
+    /// commit instead of recomputing from a moving root.
+    #[serde(default)]
+    pub mls_genesis_policy_root: BTreeMap<String, String>,
+    /// X5.1 — local-only plaintext sidecar for the author's own encrypted
+    /// private strand fields. Keyed `realm_id -> strand_id -> field_path ->
+    /// plaintext` where `field_path` is the dotted private patch path
+    /// emitted by the kanban writer (e.g. `"body"`, `"synthesis"`) and
+    /// `plaintext` is the JSON-serialized patch *value* (the same bytes
+    /// `collect_encryptable_private_patch_values` produced before
+    /// encryption, decoded to a UTF-8 string).
+    ///
+    /// Why this exists: OpenMLS refuses (RFC 9420 forward secrecy,
+    /// `validation.rs:115`) to let the *author* decrypt their own
+    /// application messages — the check is a pure leaf-index comparison
+    /// that fires before any key lookup. Account-secret restore
+    /// reconstructs the SAME leaf, so NO author device (original or
+    /// restored) can ever decrypt the author's own ciphertext. The only
+    /// way the author sees their own encrypted card body/synthesis after a
+    /// re-projection (refresh / board switch / live poll) is this local
+    /// plaintext sidecar.
+    ///
+    /// CRITICAL: this MUST NEVER leave the device or enter plaintext durable
+    /// account-state storage. It is written only by
+    /// [`LocalStateStore::save_private_plaintext`], kept as an in-memory cache
+    /// for the current process, and exported only through the dedicated
+    /// encrypted sidecar-backup path.
+    #[serde(default, skip_serializing)]
+    pub mls_private_plaintext: BTreeMap<String, BTreeMap<String, BTreeMap<String, String>>>,
+    /// YOU-02-004 — local-only decrypted-plaintext cache for REMOTE members'
+    /// MLS application messages, keyed `realm_id -> payload_digest ->
+    /// base64url(plaintext)`. The receive chain is persisted forward on every
+    /// successful decrypt (`encryption-and-audit.md` §5.6 first duty: persist the receive chain),
+    /// which deliberately consumes the per-message ratchet key — re-rendering
+    /// the same ciphertext (chat scroll, board re-projection, restart)
+    /// MUST therefore be served from this cache instead of replaying the
+    /// ratchet from an earlier snapshot. `payload_digest` is the envelope's
+    /// canonical `sha256:` digest (bound over epoch/content_type/AAD/
+    /// ciphertext), so the key is stable across re-fetches of the same event.
+    ///
+    /// Like [`Self::mls_private_plaintext`] (the author-side sidecar) this
+    /// MUST NEVER leave the device; eviction is deliberate non-behavior —
+    /// once the ratchet has advanced past a message, the cache entry is the
+    /// only remaining way to render it during this process lifetime. It is not
+    /// serialized into plaintext account-state storage.
+    #[serde(default, skip_serializing)]
+    pub mls_decrypted_plaintext: BTreeMap<String, BTreeMap<String, String>>,
+    /// Per-(realm, epoch) MLS `history_secret`s installed from an inbound
+    /// `ak.realm_key.share` (encryption-and-audit.md history-sharing). Each
+    /// value is a 32-byte exporter-derived secret that lets this device
+    /// decrypt `mls-exporter-aead-v1` content authored at that epoch — even
+    /// epochs that predate this device's join (tier-3 history decrypt).
+    ///
+    /// Keyed `realm_id -> epoch -> secret`. Durable persistence must go through
+    /// the hardened secure store; this inline field is only a transient memory
+    /// fallback and is never serialized into plaintext account-state storage.
+    /// Like the other MLS sidecars this is device-local: the secrets arrive
+    /// HPKE-sealed to this device and are never re-shared from here.
+    ///
+    /// Nested string-keyed maps (not a `(String, u64)` tuple key) because
+    /// `serde_json` rejects non-string map keys — the store flushes to JSON, so
+    /// a tuple key would silently fail to persist. `u64` epoch keys serialize as
+    /// strings, which round-trips cleanly.
+    #[serde(default, skip_serializing)]
+    pub history_secrets: BTreeMap<String, BTreeMap<u64, Vec<u8>>>,
+    /// Actor-private Realm remarks per
+    /// `discovery/client-preferences.md` §3.7. Hydrated from the soland
+    /// `/sync` `account_data[]` projection (entries with
+    /// `data_type == "ak.contacts.realm.<realm_id>"`) and from user edits
+    /// in settings. Keyed by Realm id so the sidebar / dashboard can join
+    /// it against the public `RealmTreeNode.name` at render time and prefer
+    /// `local_name` when set.
+    #[serde(default)]
+    pub realm_remarks: BTreeMap<String, crate::account_data::RealmRemark>,
+    /// Actor-private contact remarks per
+    /// `discovery/client-preferences.md` §3.6. Keyed by actor DID and
+    /// hydrated from `ak.contacts.actor.<did>` account_data entries.
+    #[serde(default)]
+    pub contact_remarks: BTreeMap<String, crate::account_data::ContactRemark>,
+    /// Actor-private personal blocklist per
+    /// `discovery/client-preferences.md` (`ak.account.blocklist`). Each
+    /// entry hides messages from the targeted DID in chat
+    /// renderers and surfaces in the Settings → Privacy panel. The
+    /// shape mirrors the wire body so the future
+    /// `ak.account_data.set("ak.account.blocklist", …)` push can serialise
+    /// straight from this `Vec`.
+    #[serde(default)]
+    pub client_blocklist: Vec<crate::account_data::BlocklistEntry>,
+    /// Round 4 (spec a77b995) — last `trust_domain` advertised by the
+    /// connected principal server's Round 4 `ServiceDescribe` response.
+    /// Threaded through to strands that need to canonicalise into
+    /// transport / signing transcripts (e.g. `ak.cross_signing.publish`).
+    /// `None` until the first successful `/server/describe` lands.
+    #[serde(default)]
+    pub server_trust_domain: Option<String>,
+    /// G3.Y0 — per-device DPoP signing key metadata persisted across launches.
+    /// Used to mint `DPoP:` proofs for session-grant issuance and private
+    /// refresh strands that both require a key the server can bind to `cnf.jkt`.
+    ///
+    /// Production callers store the private seed in `SecureKeyStore`
+    /// under `auth.dpop.device_key.v1`; this state record keeps the
+    /// public `jkt` + creation timestamp for diagnostics. The wasm32
+    /// boot path starts with the synchronous LocalStorage wrapper and
+    /// upgrades the same secure-store entries into IndexedDB +
+    /// SubtleCrypto during app initialization.
+    #[serde(default)]
+    pub dpop_device_key: Option<DpopDeviceKeyRecord>,
+    /// R3.1 (MID-2) — raw inlined `ak.member.identity.update` event
+    /// envelopes harvested from `account.subscribe` `members[]` entries.
+    /// Keyed by `realm_id -> actor_id -> Vec<envelope>`. The runtime
+    /// store ([`crate::identity::member_identity_store::MemberIdentityStore`]) is
+    /// rebuilt from this list on boot; persisting the envelopes (not the
+    /// typed payload) keeps the on-disk schema stable against future
+    /// `MemberIdentityUpdatePayload` extensions and lets the renderer
+    /// re-decrypt encrypted carriers once an MLS welcome arrives later.
+    #[serde(default)]
+    pub member_identity_events: BTreeMap<String, BTreeMap<String, Vec<Value>>>,
+    /// Display-only cache for reverse handle lookup by subject DID. Entries
+    /// come from validated `ak.find.directory.query.list_handles_for_subject` responses
+    /// or equivalent roster evidence and are never used as authority for
+    /// ACL, attribution, membership, or delivery.
+    #[serde(default)]
+    pub member_handle_cache: BTreeMap<String, MemberHandleCacheEntry>,
+    /// This account's primary personal handle (e.g. `david`), resolved at login
+    /// from the account viewer. Persisted per-account so the signed-out
+    /// re-login screen's account selector can label each known account by its
+    /// handle (never the raw DID) — read by DID via
+    /// [`LocalStateStore::primary_handle_for_did`] without making the account
+    /// active. `#[serde(default)]` keeps pre-existing account entries (written
+    /// before this field) loadable.
+    #[serde(default)]
+    pub primary_handle: String,
+}
+
+/// One row for the signed-out account selector (Google-style "choose an
+/// account" list). Built from the [`RootIndex`] `known_dids` joined with each
+/// account's own persisted entry. The `handle` is the display label (callers
+/// MUST prefer it and never render the raw `did`); `device_id` / `server_url`
+/// are the values that account last signed in with, so a reuse-login targets
+/// that exact device + server.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct KnownAccount {
+    /// Canonical account DID. Used as the actor hint + per-account key; never
+    /// shown raw in the UI.
+    pub did: String,
+    /// Resolved primary personal handle (e.g. `david`), or empty when unknown.
+    pub handle: String,
+    /// The `device_id` this account last signed in with on this browser.
+    pub device_id: String,
+    /// The principal-server URL this account last signed in against.
+    pub server_url: String,
+}
+
+/// Cross-account UI device preferences — the ONLY part of local state shared
+/// between accounts on the same browser/install. Lives in the [`RootIndex`],
+/// never under a per-account entry, so toggling a theme on one account is
+/// observed by every account but carries no identity/account/key material.
+///
+/// Kept deliberately minimal: today inkson still persists theme/locale through
+/// the per-account `private_data` channel, so this map is reserved for prefs
+/// that are explicitly routed here. Free-form string KV so adding a pref
+/// doesn't churn the on-disk schema.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DevicePrefs {
+    /// Free-form UI preference KV (e.g. `theme`, `locale`). Cross-account.
+    #[serde(default)]
+    pub values: BTreeMap<String, String>,
+}
+
+/// The pre-DID device material minted at login kickoff, before the principal
+/// DID is known (the authorize request needs a `device_id`). Adopted into the
+/// resolved account's entry — or discarded in favour of a returning account's
+/// own device — once `account_me` resolves the DID. Cleared after adoption.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PendingLogin {
+    /// Freshly-minted device id carried in the authorize request.
+    pub device_id: String,
+    /// RFC 7638 thumbprint of the freshly-minted grant-binding (DPoP) key. Diagnostic
+    /// mirror of the key whose private seed lives under the
+    /// `pending.<device_id>` secure-store namespace.
+    #[serde(default)]
+    pub dpop_jkt: Option<String>,
+}
+
+/// Small, cold-written root index that replaces the former single global
+/// `ClientLocalState` blob. Each account's full [`ClientLocalState`] lives in
+/// its own sibling key (`inkson.local_state.v1.account.<did>`); this index only
+/// records which account is active, the cross-account [`DevicePrefs`], any
+/// in-flight [`PendingLogin`] device material, and the set of known account
+/// DIDs (for enumeration / cleanup). Hot per-write flushes touch only the
+/// active account's key, never this index.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RootIndex {
+    /// The currently-foreground account DID, or `None` when signed out / before
+    /// any account has been adopted on this browser.
+    #[serde(default)]
+    pub active_did: Option<String>,
+    /// Cross-account UI device preferences (the only shared part).
+    #[serde(default)]
+    pub device_prefs: DevicePrefs,
+    /// Pre-DID device material minted at login kickoff; `None` outside an
+    /// in-flight interactive sign-in.
+    #[serde(default)]
+    pub pending_login: Option<PendingLogin>,
+    /// Every account DID with a persisted `…account.<did>` entry, for
+    /// enumeration and cleanup. The active account is always a member.
+    #[serde(default)]
+    pub known_dids: Vec<String>,
+}
+
+impl RootIndex {
+    /// Record `did` as a known account (idempotent), keeping the vector sorted
+    /// and deduplicated so enumeration order is stable across flushes.
+    pub fn note_known_did(&mut self, did: &str) {
+        let did = did.trim();
+        if did.is_empty() || self.known_dids.iter().any(|known| known == did) {
+            return;
+        }
+        self.known_dids.push(did.to_owned());
+        self.known_dids.sort();
+    }
+
+    /// Forget a known account DID (used when an account's entry is purged).
+    pub fn forget_known_did(&mut self, did: &str) {
+        self.known_dids.retain(|known| known != did);
+    }
+}
+
+/// G3.Y0 — persisted shape of the per-device DPoP signing key. The
+/// private seed is stored as base64url-no-pad of 32 raw ed25519 bytes.
+///
+/// We intentionally use ed25519 (EdDSA) rather than ES256 because every
+/// other signing path in inkson is already ed25519 (cross-signing,
+/// move-signing, session-grant introspection proofs) and coauth's
+/// `DpopVerifier` accepts the `EdDSA`
+/// algorithm out of the box. Sticking with ed25519 keeps a single
+/// key-format story across the client.
+///
+/// Production code writes the full record into
+/// [`crate::secure_key_store::SecureKeyStore`] and stores an empty
+/// `seed_b64` in `state.json` so diagnostics can still show the `jkt`.
+/// Unit tests use the plaintext record directly.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DpopDeviceKeyRecord {
+    /// Base64url-no-pad of the 32-byte ed25519 seed.
+    pub seed_b64: String,
+    /// RFC 7638 thumbprint of the public JWK (what soland binds as
+    /// `cnf.jkt` on issued grants). Cached so the UI / refresh path can
+    /// surface it without re-deriving.
+    pub jkt: String,
+    /// Wall-clock the key was generated. Used by the settings panel to
+    /// expose "this device's DPoP key was created at …" and by audit
+    /// trails if a hard-logout later needs to wipe it.
+    pub created_at: DateTime<Utc>,
+}
+
+/// Hard cap on the number of buffered telemetry entries kept in
+/// `ClientLocalState::telemetry_log`. When the cap is reached the
+/// oldest entry is dropped to make room for the new one. 256 is
+/// roughly two minutes of aggressive interaction at 2 actions/sec —
+/// enough to survive a network blip, well below the size at which
+/// `state.json` becomes painful to round-trip.
+pub const TELEMETRY_BUFFER_CAP: usize = 256;
+pub(crate) const MEMBER_HANDLE_CACHE_TTL_SECONDS: i64 = 60 * 60;
+pub(crate) const MEMBER_HANDLE_NEGATIVE_CACHE_TTL_SECONDS: i64 = 5 * 60;
+
+/// Structured client-side telemetry record produced by
+/// [`crate::telemetry::emit_user_action_log`]. Mirrors sodmin's
+/// `utils/audit.rs` line shape but keeps the fields typed so the
+/// flush path can serialise straight to JSON.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct UserActionLogEntry {
+    /// Who took the action. For inkson this is typically the local
+    /// device DID (or `did:anon` when the user hasn't logged in yet).
+    pub actor: String,
+    /// Verb-style action name (e.g. `message.create`,
+    /// `session.refresh`, `device.revoke.confirm`).
+    pub action: String,
+    /// Result of the action; mirrors sodmin's `AdminAuditOutcome`.
+    pub outcome: String,
+    /// Optional free-form context (operator note, error short text).
+    /// Stripped of newlines + clamped to 120 chars before persistence.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub note: Option<String>,
+    /// RFC 3339 timestamp at which the action was recorded. Set by
+    /// the helper, not by the caller.
+    pub recorded_at: DateTime<Utc>,
+}
+
+/// Persisted `ak.session.grant` issued by the Account Authority during login.
+///
+/// ②(A+②) model (api-conventions.md §3.3): the grant itself is the live
+/// credential for `/_arkret/self/*`; soland does not mint a second
+/// client-visible local session credential. Each request presents `Authorization: Bearer
+/// <grant_jwt>` + a per-request `DPoP` proof bound to the device key. Keeping
+/// the grant on disk lets the client keep using it directly and rotate it (DPoP
+/// grant-binding DPoP proof → fresh grant) before its own expiry — no user-visible re-login
+/// as long as the grant chain is still rotatable.
+///
+/// `session_private_key_pem` is retained for the introspection-proof helper; the
+/// rotation proof is signed by the durable grant-binding DPoP key whose
+/// thumbprint is the grant's `cnf.jkt`.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PersistedSessionGrant {
+    /// The signed grant JWT (long-lived, signed by coauth).
+    pub grant_jwt: String,
+    /// PKCS8 PEM of the ephemeral session signing key. Decoded with
+    /// [`crate::identity::account_auth::session_grant_signing_key_from_pem`] before
+    /// signing a fresh introspection proof.
+    pub session_private_key_pem: String,
+    /// Grant id assigned by coauth. Embedded in introspection proof claims.
+    pub grant_id: String,
+    /// Audience the grant is bound to (typically the principal-server URL).
+    pub audience: String,
+    /// Principal ID the grant authorizes.
+    pub principal_id: String,
+    /// Device id bound to the grant.
+    pub device_id: String,
+    /// Principal-server base URL whose `/_arkret/self/*` surface accepts this grant.
+    pub principal_server_url: String,
+    /// When the grant itself stops being usable. Once we pass this the
+    /// next refresh attempt will fail and the user must re-login.
+    #[serde(default)]
+    pub grant_expires_at: Option<DateTime<Utc>>,
+    /// RFC 3339 timestamp of when this record was last written.
+    pub stored_at: DateTime<Utc>,
+}
+
+impl Default for ClientLocalState {
+    fn default() -> Self {
+        Self {
+            sync_cursor: None,
+            realm_events_cursors: BTreeMap::new(),
+            client_core_seen_event_ids: BTreeSet::new(),
+            raw_operations: Vec::new(),
+            realm_lifecycle_state: BTreeMap::new(),
+            realm_tree_projections: BTreeMap::new(),
+            snapshot_sync: BTreeMap::new(),
+            draft_account_data: BTreeMap::new(),
+            saved_account_data: BTreeMap::new(),
+            drafts: BTreeMap::new(),
+            pending_encrypted_messages: BTreeMap::new(),
+            notification_projection: Vec::new(),
+            presence_projection: Vec::new(),
+            presence_visibility: PresenceVisibility::Public,
+            presence_preference: PresencePreferenceState::default(),
+            to_device_inbox: Vec::new(),
+            notification_client_state: BTreeMap::new(),
+            realm_watch_levels: BTreeMap::new(),
+            muted_notification_kinds: BTreeMap::new(),
+            notification_dnd_settings: None,
+            read_receipt_default_send: true,
+            read_receipt_default_display: true,
+            read_receipt_realm_overrides: BTreeMap::new(),
+            read_receipt_realm_display_overrides: BTreeMap::new(),
+            read_receipt_strand_overrides: BTreeMap::new(),
+            read_receipt_strand_display_overrides: BTreeMap::new(),
+            read_receipt_policy_snapshots: BTreeMap::new(),
+            seal_views: BTreeMap::new(),
+            push_registration: None,
+            local_identity: None,
+            move_submissions: BTreeMap::new(),
+            private_data: BTreeMap::new(),
+            read_cursors: BTreeMap::new(),
+            session_grant: None,
+            telemetry_log: Vec::new(),
+            mls_snapshots: BTreeMap::new(),
+            mls_genesis_emitted: BTreeSet::new(),
+            mls_genesis_policy_root: BTreeMap::new(),
+            mls_private_plaintext: BTreeMap::new(),
+            mls_decrypted_plaintext: BTreeMap::new(),
+            history_secrets: BTreeMap::new(),
+            realm_remarks: BTreeMap::new(),
+            contact_remarks: BTreeMap::new(),
+            client_blocklist: Vec::new(),
+            server_trust_domain: None,
+            dpop_device_key: None,
+            member_identity_events: BTreeMap::new(),
+            member_handle_cache: BTreeMap::new(),
+            primary_handle: String::new(),
+        }
+    }
+}
+
+/// YOU-02-004 — interior-mutable receive-chain write-back overlay.
+///
+/// The MLS decrypt-on-read paths only hold `&LocalStateStore` (they run
+/// inside Dioxus render passes where taking the `Signal` write lock would
+/// re-enter the active read borrow), yet `encryption-and-audit.md` §5.6
+/// makes persisting the advanced group state after every successful decrypt
+/// a MUST. This overlay is the bridge: decrypts record the advanced
+/// snapshot + decrypted plaintext here through a shared `Arc<Mutex<_>>`
+/// (same sharing pattern as `persist_health`), every read path and
+/// [`LocalStateStore::flush`] merge it over `cached`, and `&mut self`
+/// mutation paths absorb it into `cached` before touching the same maps.
+#[derive(Debug, Default)]
+pub(crate) struct MlsReceiveOverlay {
+    /// Advanced (post-decrypt) snapshot envelopes, keyed by realm_id.
+    /// Invariant: an entry here is always derived from (and strictly newer
+    /// than) the `cached` envelope for the same realm; `&mut` snapshot
+    /// writers clear/absorb the entry so it can never shadow a newer
+    /// send-path snapshot.
+    pub(crate) snapshots: BTreeMap<String, crate::mls::persistence::MlsSnapshotEnvelope>,
+    /// Decrypted-plaintext cache entries pending absorption into
+    /// `ClientLocalState::mls_decrypted_plaintext`
+    /// (`realm_id -> payload_digest -> base64url(plaintext)`).
+    pub(crate) plaintexts: BTreeMap<String, BTreeMap<String, String>>,
+}
+
+impl MlsReceiveOverlay {
+    pub(crate) fn is_empty(&self) -> bool {
+        self.snapshots.is_empty() && self.plaintexts.is_empty()
+    }
+
+    /// Merge this overlay over a `ClientLocalState` (overlay wins — see the
+    /// invariant on [`Self::snapshots`]).
+    pub(crate) fn apply_to(&self, state: &mut ClientLocalState) {
+        for (realm_id, envelope) in &self.snapshots {
+            state
+                .mls_snapshots
+                .insert(realm_id.clone(), envelope.clone());
+        }
+        for (realm_id, entries) in &self.plaintexts {
+            let slot = state
+                .mls_decrypted_plaintext
+                .entry(realm_id.clone())
+                .or_default();
+            for (digest, plaintext) in entries {
+                slot.insert(digest.clone(), plaintext.clone());
+            }
+        }
+    }
+}

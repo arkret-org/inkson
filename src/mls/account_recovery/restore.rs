@@ -18,7 +18,7 @@ use super::series::verify_series_chain;
 
 fn mls_history_backup_needs_restore(
     body: &Value,
-    state_store: &crate::local_state::LocalStateStore,
+    state_store: &crate::state::LocalStateStore,
     local_secret: &str,
 ) -> bool {
     let Ok(envelope) = crate::mls::runtime::decode_mls_history_backup_envelope(body) else {
@@ -59,7 +59,7 @@ fn mls_history_backup_needs_restore(
 /// stale, or undecryptable.
 pub fn mls_restore_prompt_required(
     list_payload: &Value,
-    state_store: &crate::local_state::LocalStateStore,
+    state_store: &crate::state::LocalStateStore,
     secure_store: &dyn crate::secure_key_store::SecureKeyStore,
     actor_id: &str,
     device_id: &str,
@@ -100,7 +100,9 @@ pub struct RestoreReport {
 /// preferred `mls_account_secret` body if one is present (None if absent). No
 /// Recovery Key is required — this is the SAFE half that can run at silent boot
 /// to *detect* whether account-secret recovery is available.
-pub async fn fetch_mls_account_secret_backup(api: &crate::api::ArkretApi) -> Result<Option<Value>> {
+pub async fn fetch_mls_account_secret_backup(
+    api: &crate::transport::TransportClient,
+) -> Result<Option<Value>> {
     let payload = serde_json::to_value(
         &api.list_key_backups()
             .await
@@ -116,7 +118,7 @@ pub async fn fetch_mls_account_secret_backup(api: &crate::api::ArkretApi) -> Res
 /// before acquiring `state_store.write()`, then pass the returned payload into
 /// [`restore_mls_history_with_passphrase_from_payload`]. That keeps the local
 /// state write guard out of the network await.
-pub async fn fetch_mls_restore_payload(api: &crate::api::ArkretApi) -> Result<Value> {
+pub async fn fetch_mls_restore_payload(api: &crate::transport::TransportClient) -> Result<Value> {
     let backups = api
         .list_key_backups()
         .await
@@ -125,7 +127,7 @@ pub async fn fetch_mls_restore_payload(api: &crate::api::ArkretApi) -> Result<Va
 }
 
 pub async fn fetch_mls_restore_payload_with_unlock_proof(
-    api: &crate::api::ArkretApi,
+    api: &crate::transport::TransportClient,
     actor_id: &str,
     device_id: &str,
 ) -> Result<Value> {
@@ -206,7 +208,7 @@ pub async fn fetch_mls_restore_payload_with_unlock_proof(
 /// completed.
 pub fn restore_mls_history_with_passphrase_from_payload(
     list_payload: &Value,
-    state_store: &mut crate::local_state::LocalStateStore,
+    state_store: &mut crate::state::LocalStateStore,
     secure_store: &dyn crate::secure_key_store::SecureKeyStore,
     actor_id: &str,
     device_id: &str,
@@ -264,7 +266,7 @@ pub fn restore_mls_history_with_passphrase_from_payload(
 /// the path that works without first holding the account secret.
 pub fn restore_mls_history_with_recovery_key_from_payload(
     list_payload: &Value,
-    state_store: &mut crate::local_state::LocalStateStore,
+    state_store: &mut crate::state::LocalStateStore,
     secure_store: &dyn crate::secure_key_store::SecureKeyStore,
     actor_id: &str,
     device_id: &str,
@@ -310,7 +312,7 @@ pub fn restore_mls_history_with_recovery_key_from_payload(
 /// uploaded `mls_history` backup.
 pub fn restore_mls_history_with_local_secret_from_payload(
     list_payload: &Value,
-    state_store: &mut crate::local_state::LocalStateStore,
+    state_store: &mut crate::state::LocalStateStore,
     secure_store: &dyn crate::secure_key_store::SecureKeyStore,
     actor_id: &str,
     device_id: &str,
@@ -333,7 +335,7 @@ pub fn restore_mls_history_with_local_secret_from_payload(
 /// are counted, never abort the rest.
 fn restore_history_and_sidecar(
     list_payload: &Value,
-    state_store: &mut crate::local_state::LocalStateStore,
+    state_store: &mut crate::state::LocalStateStore,
     secure_store: &dyn crate::secure_key_store::SecureKeyStore,
     actor_id: &str,
     device_id: &str,
@@ -376,7 +378,7 @@ fn restore_history_and_sidecar(
 /// restore.
 fn restore_private_plaintext_sidecar(
     sidecar_body: &Value,
-    state_store: &mut crate::local_state::LocalStateStore,
+    state_store: &mut crate::state::LocalStateStore,
     secure_store: &dyn crate::secure_key_store::SecureKeyStore,
     actor_id: &str,
 ) -> Result<()> {
@@ -406,8 +408,8 @@ fn restore_private_plaintext_sidecar(
 /// This is the function the recovery UI / a future "unlock MLS" prompt calls
 /// once the user has supplied the passphrase. Returns per-backup counts.
 pub async fn auto_restore_mls_history_with_passphrase(
-    api: &crate::api::ArkretApi,
-    state_store: &mut crate::local_state::LocalStateStore,
+    api: &crate::transport::TransportClient,
+    state_store: &mut crate::state::LocalStateStore,
     secure_store: &dyn crate::secure_key_store::SecureKeyStore,
     actor_id: &str,
     device_id: &str,

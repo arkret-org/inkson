@@ -69,8 +69,8 @@ mod device_identity_proof_tests {
 
     fn pubkey(seed: u8) -> arkret_sdk::signatures::PublicKeyMaterial {
         let sk = ed25519_dalek::SigningKey::from_bytes(&[seed; 32]);
-        let did = crate::did_key::did_key_from_verifying_key(&sk.verifying_key());
-        crate::device_directory::public_key_from_directory_value(&did).unwrap()
+        let did = crate::identity::did_key::did_key_from_verifying_key(&sk.verifying_key());
+        crate::identity::device_directory::public_key_from_directory_value(&did).unwrap()
     }
 
     #[test]
@@ -80,7 +80,7 @@ mod device_identity_proof_tests {
         let seed = 51u8;
         let signer = crate::event_signer::build_ed25519_signer([seed; 32], actor);
         let envelope = signed_message_envelope(&signer, actor, device);
-        crate::device_directory::seed_positive_for_test(actor, device, pubkey(seed));
+        crate::identity::device_directory::seed_positive_for_test(actor, device, pubkey(seed));
 
         assert_eq!(
             verify_chat_envelope_proof(&envelope),
@@ -89,7 +89,7 @@ mod device_identity_proof_tests {
         let message = chat_message_from_event("ak:realm:r", &envelope)
             .expect("verified message must enter the view");
         assert_eq!(message.sender, actor);
-        crate::device_directory::invalidate(actor, device);
+        crate::identity::device_directory::invalidate(actor, device);
     }
 
     #[test]
@@ -99,13 +99,13 @@ mod device_identity_proof_tests {
         let signer = crate::event_signer::build_ed25519_signer([52u8; 32], actor);
         let envelope = signed_message_envelope(&signer, actor, device);
         // Cache holds a DIFFERENT device's key → verification fails → drop.
-        crate::device_directory::seed_positive_for_test(actor, device, pubkey(123));
+        crate::identity::device_directory::seed_positive_for_test(actor, device, pubkey(123));
         assert_eq!(
             verify_chat_envelope_proof(&envelope),
             ChatProofVerdict::Rejected
         );
         assert!(chat_message_from_event("ak:realm:r", &envelope).is_none());
-        crate::device_directory::invalidate(actor, device);
+        crate::identity::device_directory::invalidate(actor, device);
     }
 
     #[test]
@@ -114,13 +114,13 @@ mod device_identity_proof_tests {
         let device = "ak:device:chat-c1";
         let signer = crate::event_signer::build_ed25519_signer([53u8; 32], actor);
         let envelope = signed_message_envelope(&signer, actor, device);
-        crate::device_directory::seed_negative_for_test(actor, device);
+        crate::identity::device_directory::seed_negative_for_test(actor, device);
         assert_eq!(
             verify_chat_envelope_proof(&envelope),
             ChatProofVerdict::Rejected
         );
         assert!(chat_message_from_event("ak:realm:r", &envelope).is_none());
-        crate::device_directory::invalidate(actor, device);
+        crate::identity::device_directory::invalidate(actor, device);
     }
 
     #[test]
@@ -132,12 +132,12 @@ mod device_identity_proof_tests {
         let mut envelope = signed_message_envelope(&signer, actor, device);
         // Point the verification_method at a different controller DID.
         envelope["proofs"][0]["verification_method"] = json!("did:web:imposter.example#device");
-        crate::device_directory::seed_positive_for_test(actor, device, pubkey(seed));
+        crate::identity::device_directory::seed_positive_for_test(actor, device, pubkey(seed));
         assert_eq!(
             verify_chat_envelope_proof(&envelope),
             ChatProofVerdict::Rejected
         );
-        crate::device_directory::invalidate(actor, device);
+        crate::identity::device_directory::invalidate(actor, device);
     }
 
     #[test]
@@ -147,7 +147,7 @@ mod device_identity_proof_tests {
         let signer = crate::event_signer::build_ed25519_signer([55u8; 32], actor);
         let envelope = signed_message_envelope(&signer, actor, device);
         // No cache entry → Unresolved → message visible but flagged.
-        crate::device_directory::invalidate(actor, device);
+        crate::identity::device_directory::invalidate(actor, device);
         assert_eq!(
             verify_chat_envelope_proof(&envelope),
             ChatProofVerdict::Unresolved
@@ -167,7 +167,7 @@ mod device_identity_proof_tests {
             format!("{actor}#{device}"),
         );
         let envelope = signed_message_envelope_inner(&signer, actor, None);
-        crate::device_directory::seed_positive_for_test(actor, device, pubkey(56));
+        crate::identity::device_directory::seed_positive_for_test(actor, device, pubkey(56));
 
         assert_eq!(
             verify_chat_envelope_proof(&envelope),
@@ -176,7 +176,7 @@ mod device_identity_proof_tests {
         let message = chat_message_from_event("ak:realm:r", &envelope)
             .expect("standard Event envelope without device_id uses proof fragment");
         assert_eq!(message.crypto_state, MessageCryptoState::Plaintext);
-        crate::device_directory::invalidate(actor, device);
+        crate::identity::device_directory::invalidate(actor, device);
     }
 
     #[test]

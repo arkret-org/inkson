@@ -72,7 +72,7 @@ fn active_series_record(backup_class: &str, active_series_id: &str) -> Value {
 }
 
 // YOU-05-010: shared hermetic state-store fixture from `local_state`.
-use crate::local_state::isolated_store_for_tests as temp_state_store;
+use crate::state::isolated_store_for_tests as temp_state_store;
 
 fn history_envelope(
     realm_id: &str,

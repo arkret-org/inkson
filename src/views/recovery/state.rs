@@ -6,8 +6,8 @@ use dioxus::prelude::*;
 
 use super::RECOVERY_STATE_KEY;
 use super::types::RecoveryState;
-use crate::local_state::LocalStateStore;
 use crate::recovery_crypto::fingerprint_recovery_key;
+use crate::state::LocalStateStore;
 
 pub(crate) fn load_state(
     state_store: &SyncSignal<LocalStateStore>,

@@ -26,7 +26,7 @@ pub struct InitialMlsSnapshotSummary {
 /// this genesis snapshot, their first encrypted write would fail with
 /// `MissingWelcome` even though there is no Welcome to wait for.
 pub fn ensure_creator_mls_snapshot(
-    state_store: &mut crate::local_state::LocalStateStore,
+    state_store: &mut crate::state::LocalStateStore,
     secure_store: &dyn SecureKeyStore,
     realm_id: &str,
     actor_id: &str,
@@ -43,7 +43,7 @@ pub fn ensure_creator_mls_snapshot(
 }
 
 pub fn ensure_creator_mls_snapshot_for_effective_scope(
-    state_store: &mut crate::local_state::LocalStateStore,
+    state_store: &mut crate::state::LocalStateStore,
     secure_store: &dyn SecureKeyStore,
     realm_id: &str,
     circle_id: Option<&str>,
@@ -111,7 +111,7 @@ pub fn ensure_creator_mls_snapshot_for_effective_scope(
 }
 
 pub fn initial_mls_snapshot_summary_from_existing(
-    state_store: &crate::local_state::LocalStateStore,
+    state_store: &crate::state::LocalStateStore,
     secure_store: &dyn SecureKeyStore,
     realm_id: &str,
     actor_id: &str,
@@ -128,7 +128,7 @@ pub fn initial_mls_snapshot_summary_from_existing(
 }
 
 pub fn initial_mls_snapshot_summary_from_existing_for_effective_scope(
-    state_store: &crate::local_state::LocalStateStore,
+    state_store: &crate::state::LocalStateStore,
     secure_store: &dyn SecureKeyStore,
     realm_id: &str,
     circle_id: Option<&str>,

@@ -3,9 +3,9 @@
 
 use serde_json::json;
 
-use crate::local_state::isolated_store_for_tests as temp_state_store;
 use crate::mls::runtime::*;
 use crate::secure_key_store::{MemorySecureKeyStore, SecureKeyStoreError};
+use crate::state::isolated_store_for_tests as temp_state_store;
 
 #[cfg(not(target_arch = "wasm32"))]
 struct ActiveSignerGuard(Option<std::sync::Arc<crate::event_signer::InksonEventSigner>>);
@@ -134,7 +134,7 @@ fn authoring_exporter_aead_content_retains_history_secret() {
 /// Returns alice's live group for minting application messages.
 #[cfg(not(target_arch = "wasm32"))]
 fn two_member_group_with_bob_snapshot(
-    state: &mut crate::local_state::LocalStateStore,
+    state: &mut crate::state::LocalStateStore,
     secure: &MemorySecureKeyStore,
     realm: &str,
     bob_actor: &str,
@@ -189,7 +189,7 @@ fn receive_chain_persists_across_restart_and_plaintext_is_never_at_rest() {
         "inkson-test-receive-chain-{}.json",
         crate::operation::uuid_v7()
     ));
-    let mut state = crate::local_state::LocalStateStore::with_path(path.clone());
+    let mut state = crate::state::LocalStateStore::with_path(path.clone());
     let secure = MemorySecureKeyStore::new();
     let realm = "ak:realm:01904100-0000-7000-8000-0000000000b1";
     let bob_actor = "did:web:bob.example";
@@ -225,7 +225,7 @@ fn receive_chain_persists_across_restart_and_plaintext_is_never_at_rest() {
 
     // "Restart": a brand-new store over the same backing file must see
     // the advanced receive chain (NOT the pre-decrypt snapshot).
-    let restarted = crate::local_state::LocalStateStore::with_path(path.clone());
+    let restarted = crate::state::LocalStateStore::with_path(path.clone());
     let reloaded = restarted.mls_snapshot_for(realm).unwrap();
     assert_eq!(reloaded.ciphertext_hex, advanced.ciphertext_hex);
     // E2EE-at-rest: the plaintext cache is stripped before persist, so after a
@@ -263,7 +263,7 @@ fn out_of_order_skipped_keys_survive_restart() {
         "inkson-test-skipped-keys-{}.json",
         crate::operation::uuid_v7()
     ));
-    let mut state = crate::local_state::LocalStateStore::with_path(path.clone());
+    let mut state = crate::state::LocalStateStore::with_path(path.clone());
     let secure = MemorySecureKeyStore::new();
     let realm = "ak:realm:01904100-0000-7000-8000-0000000000c1";
     let bob_actor = "did:web:bob.example";
@@ -288,7 +288,7 @@ fn out_of_order_skipped_keys_survive_restart() {
     assert_eq!(plain3, br#""three""#);
 
     // Restart, then decrypt the skipped earlier message.
-    let restarted = crate::local_state::LocalStateStore::with_path(path.clone());
+    let restarted = crate::state::LocalStateStore::with_path(path.clone());
     let plain1 =
         decrypt_application_payload(&restarted, &secure, realm, bob_actor, bob_device, &m1)
             .expect("persisted skipped key decrypts m1 after restart");
@@ -963,7 +963,7 @@ fn history_secrets_do_not_land_in_account_state_json() {
     let key = crate::secure_key_store::mls_history_secret_store_key(realm);
     let _ = store.delete_secret(&key);
     {
-        let mut state = crate::local_state::LocalStateStore::with_path(path.clone());
+        let mut state = crate::state::LocalStateStore::with_path(path.clone());
         state.save_history_secret(realm.to_owned(), 7, secret.clone());
         assert_eq!(state.history_secret_for(realm, 7), Some(secret.clone()));
     }
@@ -1150,7 +1150,7 @@ fn realm_key_share_sender_signature_round_trips() {
 
     let seed = [42u8; 32];
     let verifying = SigningKey::from_bytes(&seed).verifying_key();
-    let did = crate::did_key::did_key_from_verifying_key(&verifying);
+    let did = crate::identity::did_key::did_key_from_verifying_key(&verifying);
     let _signer_guard = ActiveSignerGuard::install(seed, &did);
 
     let realm = "ak:realm:01904100-0000-7000-8000-0000000000f5";

@@ -192,7 +192,7 @@ async fn hard_logout_at_authority(
         .as_deref()
         .ok_or_else(|| anyhow::anyhow!("pending logout missing device jkt"))?;
 
-    let handle = crate::account_auth::grant_dpop::device_handle_from_seed(seed, jkt)
+    let handle = crate::identity::account_auth::grant_dpop::device_handle_from_seed(seed, jkt)
         .map_err(|error| anyhow::anyhow!("rebuild device handle: {error}"))?;
     // Prefer the journalled gate_account_base; re-resolve from the principal
     // server only if it was not captured.
@@ -202,13 +202,13 @@ async fn hard_logout_at_authority(
             let principal_server_url = record.principal_server_url.as_deref().ok_or_else(|| {
                 anyhow::anyhow!("pending logout missing gate_account_base and principal_server_url")
             })?;
-            crate::account_auth::resolve_principal_gate_account_base(principal_server_url)
+            crate::identity::account_auth::resolve_principal_gate_account_base(principal_server_url)
                 .await
                 .map_err(|error| anyhow::anyhow!("resolve account authority: {error}"))?
         }
     };
     let sdk_base_url =
-        crate::session_refresh::sdk_base_url_from_gate_account_base(&gate_account_base)?;
+        crate::identity::session_refresh::sdk_base_url_from_gate_account_base(&gate_account_base)?;
     let client = ClientBuilder::new(sdk_base_url)
         .allow_insecure_localhost()
         .auth(Auth::Dpop(

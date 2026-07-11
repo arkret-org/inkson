@@ -1,5 +1,5 @@
 //! G3.Y2 — messaging UI scaffolding shared by `views::chat` and
-//! `crate::projection`.
+//! `crate::state::projection`.
 //!
 //! This module hosts the *client-side* state machines and serialisers
 //! for the advanced messaging surfaces (mentions, polls, typing,

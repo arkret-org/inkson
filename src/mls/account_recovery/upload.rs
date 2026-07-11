@@ -88,7 +88,7 @@ pub fn select_superseded_backup_ids(
 /// best-effort). Returns `(deleted, failed)`. Called AFTER the new series is
 /// confirmed uploaded so a delete failure never leaves the user unrecoverable.
 pub async fn delete_backups(
-    api: &crate::api::ArkretApi,
+    api: &crate::transport::TransportClient,
     actor_id: &str,
     backup_ids: &[String],
 ) -> (Vec<String>, Vec<String>) {
@@ -119,7 +119,7 @@ fn passphrase_is_blank(passphrase: &[u8]) -> bool {
 /// function returns `Ok`, so local snapshots and the local secret advance
 /// together.
 pub async fn upload_mls_account_secret_rotation_after_device_revoke(
-    api: &crate::api::ArkretApi,
+    api: &crate::transport::TransportClient,
     secure_store: &dyn crate::secure_key_store::SecureKeyStore,
     actor_id: &str,
     device_id: &str,
@@ -207,7 +207,7 @@ pub async fn upload_mls_account_secret_rotation_after_device_revoke(
 /// It re-uses any prior account-secret backup's `backup_id`/series so the upload
 /// stays in the same rotation series. Returns the `backup_id` it wrote.
 pub async fn upload_mls_account_secret_backup_with_passphrase(
-    api: &crate::api::ArkretApi,
+    api: &crate::transport::TransportClient,
     secure_store: &dyn crate::secure_key_store::SecureKeyStore,
     actor_id: &str,
     device_id: &str,
@@ -257,7 +257,7 @@ pub async fn upload_mls_account_secret_backup_with_passphrase(
 /// Upload an HPKE `recovery_public_key` account-secret backup derived from the
 /// user's 24-word Recovery Key.
 pub async fn upload_mls_account_secret_backup_with_recovery_key(
-    api: &crate::api::ArkretApi,
+    api: &crate::transport::TransportClient,
     secure_store: &dyn crate::secure_key_store::SecureKeyStore,
     actor_id: &str,
     device_id: &str,
@@ -281,7 +281,7 @@ pub async fn upload_mls_account_secret_backup_with_recovery_key(
 /// confirmed the 24-word Recovery Key once; future automatic backups only need
 /// the public recipient key and must not ask for the words again.
 pub async fn upload_mls_account_secret_backup_with_recovery_public_key(
-    api: &crate::api::ArkretApi,
+    api: &crate::transport::TransportClient,
     secure_store: &dyn crate::secure_key_store::SecureKeyStore,
     actor_id: &str,
     device_id: &str,
@@ -348,7 +348,7 @@ pub async fn upload_mls_account_secret_backup_with_recovery_public_key(
 /// wrote. Errors if no local account secret exists (the user hasn't used
 /// encryption, so there is nothing to wrap the sidecar with).
 pub async fn upload_mls_private_plaintext_backup(
-    api: &crate::api::ArkretApi,
+    api: &crate::transport::TransportClient,
     secure_store: &dyn crate::secure_key_store::SecureKeyStore,
     actor_id: &str,
     device_id: &str,
@@ -374,7 +374,7 @@ pub async fn upload_mls_private_plaintext_backup(
 /// [`upload_mls_private_plaintext_backup_with_previous`], avoiding a backup-list
 /// request for every ordinary encrypted write.
 pub async fn fetch_mls_private_plaintext_backup_body(
-    api: &crate::api::ArkretApi,
+    api: &crate::transport::TransportClient,
     actor_id: &str,
     device_id: &str,
 ) -> Result<Option<Value>> {
@@ -397,7 +397,7 @@ pub async fn fetch_mls_private_plaintext_backup_body(
 /// selected by `select_mls_private_plaintext_backup` or returned from this
 /// function after a successful upload.
 pub async fn upload_mls_private_plaintext_backup_with_previous(
-    api: &crate::api::ArkretApi,
+    api: &crate::transport::TransportClient,
     secure_store: &dyn crate::secure_key_store::SecureKeyStore,
     actor_id: &str,
     device_id: &str,
@@ -438,7 +438,7 @@ pub async fn upload_mls_private_plaintext_backup_with_previous(
 /// (bounded: once per Realm per session; afterwards the uploader caches the
 /// body it just PUT).
 pub async fn fetch_mls_history_tail_for_realm(
-    api: &crate::api::ArkretApi,
+    api: &crate::transport::TransportClient,
     actor_id: &str,
     device_id: &str,
     realm_id: &str,
@@ -473,7 +473,7 @@ pub async fn fetch_mls_history_tail_for_realm(
 /// Returns `(backup_id, uploaded_body)`; callers should cache the body as the
 /// new series tail for the next chain link.
 pub async fn upload_mls_history_backup_with_previous(
-    api: &crate::api::ArkretApi,
+    api: &crate::transport::TransportClient,
     snapshot: &crate::mls::persistence::MlsSnapshotEnvelope,
     actor_id: &str,
     device_id: &str,

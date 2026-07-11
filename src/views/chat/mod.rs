@@ -5,18 +5,18 @@ use dioxus_primitives::checkbox::CheckboxState;
 use dioxus_router::hooks::use_navigator;
 use serde_json::{Value, json};
 
-use crate::api::ArkretApi;
 use crate::api_error::is_space_membership_denied_error;
 use crate::audit::build_audit_ryw_receipt;
 use crate::components::{HelpTip, SecurityStateBadge, SelfAttributionBadge, UiIcon};
 use crate::hlc::{Hlc, observe_seq};
-use crate::local_state::{ClientLocalState, LocalStateStore};
 use crate::models::SubmitEventResult;
 use crate::operation::{
     OperationBuilder, ak_ops, sdk_event_local_operation_id, trim_realm_id, uuid_v7,
 };
 use crate::payload::sdk_payload_value;
 use crate::routes::Route;
+use crate::state::{ClientLocalState, LocalStateStore};
+use crate::transport::TransportClient;
 use crate::ui::button::{Button, ButtonVariant};
 use crate::ui::checkbox::Checkbox;
 use crate::ui::dialog::Dialog;
@@ -30,7 +30,7 @@ use crate::views::helpers::{
 use crate::views::moderation_appeal::{AppealEntrypoint, AppealState};
 
 mod model;
-mod render;
+mod timeline;
 
 const PRESENCE_HEARTBEAT_SECS: u64 = 25;
 
@@ -40,7 +40,7 @@ const PRESENCE_HEARTBEAT_SECS: u64 = 25;
 #[cfg(test)]
 pub(crate) use model::message_operations_from_events;
 use model::*;
-use render::*;
+use timeline::*;
 
 fn moderation_prompt_state(prompt: &ModerationAppealPrompt) -> AppealState {
     match prompt.state.as_str() {
@@ -130,7 +130,7 @@ fn composer_mention_nodes(
         };
         let insert_label = chip.insert_label().to_owned();
         let parsed_handle = (!chip.is_agent)
-            .then(|| crate::identity_handle::parse_user_handle(&insert_label))
+            .then(|| crate::identity::handle::parse_user_handle(&insert_label))
             .flatten();
         let mut mention = arkret_sdk::Mention::new(subject_id)
             .with_mention_text_original(format!("@{insert_label}"));
@@ -238,7 +238,7 @@ pub fn ChatPanel(
     let base_url = crate::app::SessionContext::base_url_string();
     let mut state_store = crate::app::SessionContext::get().state_store;
     let navigator = use_navigator();
-    let did_cache = use_context::<Signal<crate::did_resolver::DidResolutionCache>>();
+    let did_cache = use_context::<Signal<crate::identity::did_resolver::DidResolutionCache>>();
     let initial_default_channel = (!selected_realm_id.trim().is_empty())
         .then(|| discussion_channel_for_strand(&selected_realm_id, &initial_strand_id));
     let initial_selected_channel = initial_default_channel
@@ -392,8 +392,8 @@ pub fn ChatPanel(
             if !preference.is_empty() && !preference.is_active(now) {
                 state_store_for_presence
                     .write()
-                    .set_presence_preference(crate::local_state::PresencePreferenceState::default());
-                preference = crate::local_state::PresencePreferenceState::default();
+                    .set_presence_preference(crate::state::PresencePreferenceState::default());
+                preference = crate::state::PresencePreferenceState::default();
             }
             let state = preference
                 .effective_manual_state(now)
@@ -419,7 +419,7 @@ pub fn ChatPanel(
             presence_announce_key_seen.set(announce_key);
             let base = base.clone();
             spawn(async move {
-                let _ = crate::views::helpers::with_event_submitter(
+                let _ = crate::transport::auth::with_event_submitter(
                     &base,
                     api_token,
                     |sub| async move {
@@ -764,7 +764,7 @@ pub fn ChatPanel(
             };
             let api_token = token();
             spawn(async move {
-                let _ = crate::views::helpers::with_event_submitter(
+                let _ = crate::transport::auth::with_event_submitter(
                     &base,
                     api_token,
                     |sub| async move {
@@ -902,7 +902,7 @@ pub fn ChatPanel(
             let api_token = token();
             let request_key = agent_participation_sync_key.clone();
             spawn(async move {
-                let result = crate::views::helpers::with_authed_sdk_client(
+                let result = crate::transport::auth::with_authed_sdk_client(
                     &base,
                     api_token,
                     move |http| async move {
@@ -1134,7 +1134,7 @@ pub fn ChatPanel(
             let mut loaded_poll_cards = Vec::new();
             let mut loaded_moderation_appeal_prompts = Vec::new();
             if let Ok(account) =
-                async { crate::account_api::account_me(&api.sdk_http_client()?).await }.await
+                async { crate::transport::account::account_me(&api.sdk_http_client()?).await }.await
                 && account.did == account_did_for_load
                 && let Some(display_name) =
                     account_handle_display_from_server(&account.handle, &base).or_else(|| {
@@ -2211,7 +2211,7 @@ pub fn ChatPanel(
                                         {
                                             Ok(submitter) => {
                                                 if let Err(error) =
-                                                    crate::account_api::set_private_account_data_with_cas(
+                                                    crate::transport::account::set_private_account_data_with_cas(
                                                         &submitter,
                                                         &key_for_submit,
                                                         account_data_value,
@@ -3300,7 +3300,7 @@ pub fn ChatPanel(
                                                                                     let message_id_for_status = card_message_id.clone();
                                                                                     let api_token = api_token.clone();
                                                                                     spawn(async move {
-                                                                                        match crate::views::helpers::with_authed_api(
+                                                                                        match crate::transport::auth::with_authed_api(
                                                                                             &base,
                                                                                             api_token,
                                                                                             |api| async move {
@@ -4101,7 +4101,7 @@ pub fn ChatPanel(
                                             // optimistic promoted indicator so
                                             // a half-applied promote is not
                                             // presented as success.
-                                            let outcome = crate::views::helpers::with_authed_api(
+                                            let outcome = crate::transport::auth::with_authed_api(
                                                 &base,
                                                 api_token,
                                                 |api| async move {
@@ -4253,12 +4253,22 @@ pub fn ChatPanel(
                                 crate::i18n::tr("compose.upload_progress"),
                             );
                             spawn(async move {
-                                let api = match crate::views::helpers::authed_api_with_sync(
+                                let api = match crate::transport::auth::authed_api_with_sync(
                                     &base,
                                     api_token,
                                     None,
                                 ) {
                                     Ok(api) => api,
+                                    Err(err) => {
+                                        compose_upload_status.set(format!(
+                                            "{}: {err}",
+                                            crate::i18n::tr("compose.upload_error"),
+                                        ));
+                                        return;
+                                    }
+                                };
+                                let clients = match api.sdk_http_client() {
+                                    Ok(http) => crate::transport::EndpointClients::from_http(http),
                                     Err(err) => {
                                         compose_upload_status.set(format!(
                                             "{}: {err}",
@@ -4281,8 +4291,9 @@ pub fn ChatPanel(
                                             continue;
                                         }
                                     };
-                                    match api
-                                        .upload_blob_bytes_scoped(
+                                    match clients
+                                        .blob()
+                                        .upload_bytes_scoped(
                                             bytes,
                                             &content_type,
                                             Some(&realm),
@@ -4408,7 +4419,7 @@ pub fn ChatPanel(
                                     let strand_id = strand_id.clone();
                                     let api_token = token();
                                     spawn(async move {
-                                        let _ = crate::views::helpers::with_event_submitter(
+                                        let _ = crate::transport::auth::with_event_submitter(
                                             &base,
                                             api_token,
                                             |sub| async move {
@@ -4758,7 +4769,7 @@ pub fn ChatPanel(
                                         let api_token = token();
                                         let poll_id_for_status = poll_id.clone();
                                         spawn(async move {
-                                            match crate::views::helpers::with_authed_api(
+                                            match crate::transport::auth::with_authed_api(
                                                 &base,
                                                 api_token,
                                                 |api| async move { api.event_submitter()?.submit_sdk_event(&op).await },
@@ -4858,7 +4869,7 @@ pub fn ChatPanel(
                                         let api_token = token();
                                         let poll_id_for_status = poll_id.clone();
                                         spawn(async move {
-                                            match crate::views::helpers::with_authed_api(
+                                            match crate::transport::auth::with_authed_api(
                                                 &base,
                                                 api_token,
                                                 |api| async move { api.event_submitter()?.submit_sdk_event(&op).await },

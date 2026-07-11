@@ -90,9 +90,9 @@ fn presence_visibility_account_data_matches_spec() {
         PRESENCE_VISIBILITY_ACCOUNT_DATA_KEY,
         "ak.presence.visibility"
     );
-    let hidden = build_presence_visibility_body(crate::local_state::PresenceVisibility::Nobody);
+    let hidden = build_presence_visibility_body(crate::state::PresenceVisibility::Nobody);
     assert_eq!(hidden["presence_visibility"], "nobody");
-    let public = build_presence_visibility_body(crate::local_state::PresenceVisibility::Public);
+    let public = build_presence_visibility_body(crate::state::PresenceVisibility::Public);
     assert_eq!(public["presence_visibility"], "public");
 }
 
@@ -102,7 +102,7 @@ fn presence_preference_account_data_matches_spec() {
         PRESENCE_PREFERENCE_ACCOUNT_DATA_KEY,
         "ak.presence.preference"
     );
-    let body = build_presence_preference_body(&crate::local_state::PresencePreferenceState {
+    let body = build_presence_preference_body(&crate::state::PresencePreferenceState {
         manual_state: Some("dnd".to_owned()),
         status_message: Some("In a meeting".to_owned()),
         clears_at: Some("2026-07-03T12:00:00Z".to_owned()),

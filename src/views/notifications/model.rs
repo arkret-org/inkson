@@ -12,7 +12,6 @@ use arkret_sdk::push_rule_core::{
 };
 use serde_json::Value;
 
-use crate::local_state::{ClientLocalState, LocalSealView, LocalStateStore};
 use crate::models::ClientSyncOutcome;
 use crate::notification_rules::{
     DndSettings, NotificationEvalContext, PushRulesConfig, WatchLevel, evaluate_notification,
@@ -21,12 +20,13 @@ use crate::notification_rules::{
 // projection layer (`projection::notifications`, YGN-ARCH-01 step 3). They
 // are re-exported here so the notification view's other call sites and the
 // crate-level `views::notifications::*` re-export keep resolving unchanged.
-pub(crate) use crate::projection::notifications::{
+pub(crate) use crate::state::projection::notifications::{
     append_invite_notifications, default_notification_title, drop_joined_invite_notifications,
     invite_notification_target_for_dedupe, merge_invite_notifications, notification_id_for_dedupe,
     raw_notifications_from_sources, realm_title_hints_from_values, value_string,
     value_string_with_prefix,
 };
+use crate::state::{ClientLocalState, LocalSealView, LocalStateStore};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum UiNotificationGroup {
@@ -383,7 +383,7 @@ fn read_scope_covers_notification(
         "strand" => {
             let notification_strand = strand_id
                 .map(ToOwned::to_owned)
-                .or_else(|| crate::local_state::read_scope_for_cursor(realm_id, None).object_ref);
+                .or_else(|| crate::state::read_scope_for_cursor(realm_id, None).object_ref);
             scope_ref == notification_strand.as_deref()
         }
         _ => false,

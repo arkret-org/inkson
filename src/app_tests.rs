@@ -107,14 +107,14 @@ fn unread_notification_count_ignores_read_and_archived_items() {
     };
     snapshot.notification_client_state.insert(
         "client-read".to_owned(),
-        crate::local_state::NotificationClientState {
+        crate::state::NotificationClientState {
             read: true,
             archived: false,
         },
     );
     snapshot.notification_client_state.insert(
         "client-archived".to_owned(),
-        crate::local_state::NotificationClientState {
+        crate::state::NotificationClientState {
             read: false,
             archived: true,
         },
@@ -141,7 +141,7 @@ fn session_grant(grant_expires_in: i64) -> PersistedSessionGrant {
 #[test]
 fn account_scope_owner_alone_is_not_bootstrap_refresh_material() {
     let actor = "did:web:alice.example";
-    let mut store = crate::local_state::isolated_store_for_tests("account-scope-no-restore");
+    let mut store = crate::state::isolated_store_for_tests("account-scope-no-restore");
     store.adopt_account_scope(actor);
 
     assert!(!has_bootstrap_refresh_material(
@@ -465,7 +465,7 @@ fn recovery_auto_prompt_local_only_key_is_prompted_once_per_fingerprint() {
 
 // YOU-05-010: shared hermetic state-store fixture from `local_state`.
 #[cfg(not(target_arch = "wasm32"))]
-use crate::local_state::isolated_store_for_tests as isolated_store;
+use crate::state::isolated_store_for_tests as isolated_store;
 
 #[test]
 fn boot_session_credential_ignores_config_token_without_boot_material() {

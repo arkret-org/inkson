@@ -9,7 +9,7 @@
 
 use dioxus::prelude::*;
 
-use crate::local_state::LocalStateStore;
+use crate::state::LocalStateStore;
 
 /// Shared per-login-session handles. Provided in `RouterView` via
 /// `use_context_provider`; consumed anywhere below via

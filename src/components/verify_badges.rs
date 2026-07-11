@@ -16,14 +16,14 @@
 use chrono::{DateTime, Utc};
 use dioxus::prelude::*;
 
-use crate::did_resolver::{CachedDidEntry, Freshness};
+use crate::identity::did_resolver::{CachedDidEntry, Freshness};
 
 // TRUST-CACHE: `NeedsVerificationBadge` and `RealmClassBadge` are
 // cache-allowed surfaces per AKP B-E §1 / identity-handles §6. They
 // render the locally-cached binding state but MUST downgrade to the
 // "needs verification" tint on a cache miss or any §6.1.2 trigger.
 // Authority surfaces (wallet disclosure / accept invite / audit-trail
-// review) MUST go through `crate::did_resolver::build_default_resolver`
+// review) MUST go through `crate::identity::did_resolver::build_default_resolver`
 // and verify the DID Document inline before granting trust — they
 // MUST NOT consult these cached badges as a source of truth.
 
@@ -102,7 +102,7 @@ pub fn RealmClassBadge(class: RealmClass) -> Element {
 /// This is pure UX state: it only reflects whether the local DID resolution
 /// cache has a usable actor record, and never replaces authority validation
 /// (the authority path uses
-/// `crate::did_resolver::resolve_with_cache` / `verify_principal`).
+/// `crate::identity::did_resolver::resolve_with_cache` / `verify_principal`).
 /// The three render states map to three badges:
 /// - `Cached`: fresh cache hit; display `cached`, meaning the cached identity is usable.
 /// - `Stale`: cache hit past policy TTL; display `stale`, meaning identity may have changed and
@@ -152,7 +152,7 @@ pub fn trust_cache_state(entry: Option<&CachedDidEntry>, now: DateTime<Utc>) -> 
 /// TRUST-CACHE: this badge is a UX hint only and is not trust evidence.
 #[component]
 pub fn TrustCacheBadge(peer: String) -> Element {
-    let cache = use_context::<Signal<crate::did_resolver::DidResolutionCache>>();
+    let cache = use_context::<Signal<crate::identity::did_resolver::DidResolutionCache>>();
     let now = Utc::now();
     let state = match arkret_sdk::Did::new(peer.clone()) {
         Ok(did) => {

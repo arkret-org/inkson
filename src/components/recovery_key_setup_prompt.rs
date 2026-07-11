@@ -7,10 +7,10 @@
 use dioxus::prelude::*;
 use dioxus_router::hooks::use_navigator;
 
-use crate::local_state::LocalStateStore;
 use crate::recovery_crypto::{
     RecoveryKeyConfirmationDiff, generate_recovery_key, recovery_key_confirmation_diff,
 };
+use crate::state::LocalStateStore;
 use crate::ui::button::{Button, ButtonVariant};
 use crate::ui::dialog::Dialog;
 use crate::ui::label::Label;

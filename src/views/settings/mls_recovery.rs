@@ -14,14 +14,14 @@
 
 use dioxus::prelude::*;
 
-use crate::local_state::LocalStateStore;
 use crate::recovery_crypto::{
     generate_recovery_key, normalize_recovery_key_input, recovery_key_confirmation_matches,
 };
+use crate::state::LocalStateStore;
+use crate::transport::auth::with_authed_api;
 use crate::ui::button::{Button, ButtonVariant};
 use crate::ui::label::Label;
 use crate::ui::textarea::Textarea;
-use crate::views::helpers::with_authed_api;
 
 /// Resolved backup status for the section header / status line.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

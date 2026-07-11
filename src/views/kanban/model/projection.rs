@@ -73,7 +73,7 @@ pub(crate) fn should_replace_projected_container_title(
 }
 
 pub(crate) fn board_space_options_from_projection(
-    containers: &[crate::projection_views::SpaceContainerProjectionView],
+    containers: &[crate::state::projection_views::SpaceContainerProjectionView],
 ) -> Vec<BoardSpaceOption> {
     let mut options = containers
         .iter()
@@ -191,14 +191,14 @@ pub(crate) fn overlay_local_board_space_options(
 }
 
 /// T20 / YOU-01-009 subtask 3 - Map a spec-registered
-/// [`crate::projection_views::CollectionProjectionView`]
+/// [`crate::state::projection_views::CollectionProjectionView`]
 /// (`view.schema.json#/$defs/collection_projection_view`) into the inkson
 /// renderer's [`Vec<KanbanColumn>`] shape.
 ///
 /// Pure adapter so it's unit-testable without a live HTTP client.
 /// Position rank, when present, drives stable ordering inside a column.
 pub(crate) fn collection_projection_to_columns(
-    projection: &crate::projection_views::CollectionProjectionView,
+    projection: &crate::state::projection_views::CollectionProjectionView,
     decrypt_ctx: Option<&MlsDecryptCtx<'_>>,
 ) -> Vec<KanbanColumn> {
     projection
@@ -228,7 +228,7 @@ pub(crate) fn collection_projection_to_columns(
 /// opaque hash; `lazy_link=true` is surfaced via `history_visibility`
 /// without leaking room contents.
 pub(crate) fn card_from_projection_item(
-    item: &crate::projection_views::ProjectionItemView,
+    item: &crate::state::projection_views::ProjectionItemView,
     decrypt_ctx: Option<&MlsDecryptCtx<'_>>,
 ) -> KanbanCard {
     let id = item
@@ -396,8 +396,8 @@ pub(crate) fn card_from_projection_item(
 }
 
 pub(crate) fn columns_from_lifecycle_projection(
-    containers: &[crate::projection_views::SpaceContainerProjectionView],
-    strands: &[crate::projection_views::StrandProjectionView],
+    containers: &[crate::state::projection_views::SpaceContainerProjectionView],
+    strands: &[crate::state::projection_views::StrandProjectionView],
     preferred_board_id: &str,
     decrypt_ctx: Option<&MlsDecryptCtx<'_>>,
 ) -> (Vec<KanbanColumn>, Vec<BoardSpaceOption>, Option<String>) {

@@ -1,4 +1,4 @@
-use crate::local_state::LocalStateStore;
+use crate::state::LocalStateStore;
 
 pub const NOTIFICATION_SOUND_ENABLED_KEY: &str = "notification.sound.enabled.v1";
 
@@ -145,7 +145,7 @@ mod tests {
 
     #[test]
     fn notification_sound_pref_defaults_on_and_parses_false_values() {
-        let mut store = crate::local_state::isolated_store_for_tests("notification-sound-pref");
+        let mut store = crate::state::isolated_store_for_tests("notification-sound-pref");
         let account = "did:web:alice.example";
 
         assert!(notification_sound_enabled(&store, account));

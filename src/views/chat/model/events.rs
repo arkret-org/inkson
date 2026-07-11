@@ -1,11 +1,11 @@
 use super::*;
 #[cfg(test)]
-pub(crate) use crate::projection::message_ops::message_operations_from_events;
+pub(crate) use crate::state::projection::message_ops::message_operations_from_events;
 // YGN-ARCH-01 step 3: the message-candidate walkers + raw-operation
-// extraction moved to `crate::projection::message_ops` (they are the sync
+// extraction moved to `crate::state::projection::message_ops` (they are the sync
 // engine's ingest step, not chat rendering). Re-exported so every existing
 // chat-model consumer keeps resolving through this module.
-pub(crate) use crate::projection::message_ops::{
+pub(crate) use crate::state::projection::message_ops::{
     first_string_in_candidates, message_actor_from_candidates, message_candidates,
     message_kind_is_create, message_kind_is_revise, value_string_at,
 };
@@ -798,7 +798,7 @@ pub(crate) fn decrypt_chat_encrypted_content(
         serde_json::from_value::<arkret_sdk::EncryptedEnvelopeV1>(encrypted_content.clone())
             .ok()?;
     let payload_value = serde_json::to_value(envelope.to_payload().ok()?).ok()?;
-    let plaintext = crate::projection::try_local_mls_decrypt_core(
+    let plaintext = crate::state::projection::try_local_mls_decrypt_core(
         state_store,
         realm_id,
         actor_id,
@@ -869,16 +869,17 @@ pub(crate) fn verify_chat_envelope_proof(event: &Value) -> ChatProofVerdict {
     let Some(device) = persistent_proof_sender_device(envelope, actor) else {
         return ChatProofVerdict::Unresolved;
     };
-    match crate::device_directory::cached_device_signing_key(actor, device) {
-        crate::device_directory::CacheLookup::Hit(key) => {
-            if crate::device_directory::verify_persistent_envelope_proofs(envelope, &key) {
+    match crate::identity::device_directory::cached_device_signing_key(actor, device) {
+        crate::identity::device_directory::CacheLookup::Hit(key) => {
+            if crate::identity::device_directory::verify_persistent_envelope_proofs(envelope, &key)
+            {
                 ChatProofVerdict::Verified
             } else {
                 ChatProofVerdict::Rejected
             }
         }
-        crate::device_directory::CacheLookup::NegativeHit => ChatProofVerdict::Rejected,
-        crate::device_directory::CacheLookup::Miss => ChatProofVerdict::Unresolved,
+        crate::identity::device_directory::CacheLookup::NegativeHit => ChatProofVerdict::Rejected,
+        crate::identity::device_directory::CacheLookup::Miss => ChatProofVerdict::Unresolved,
     }
 }
 
@@ -1020,7 +1021,7 @@ fn verify_minimal_metadata_chat_author(
     let material = arkret_sdk::signatures::PublicKeyMaterial::Ed25519Raw {
         bytes: proof_key_bytes.to_vec(),
     };
-    if crate::device_directory::verify_persistent_envelope_proofs(envelope, &material) {
+    if crate::identity::device_directory::verify_persistent_envelope_proofs(envelope, &material) {
         ChatProofVerdict::Verified
     } else {
         ChatProofVerdict::Rejected
@@ -1428,7 +1429,7 @@ pub(crate) fn poll_cards_from_events(events: &[Value]) -> Vec<crate::messaging::
 }
 
 pub(crate) fn shared_message_pins_from_raw_operations(
-    records: &[crate::local_state::RawOperationRecord],
+    records: &[crate::state::RawOperationRecord],
     active_pin_scope: &SharedPinScope,
 ) -> Vec<SharedMessagePin> {
     let mut pins = Vec::<SharedMessagePin>::new();

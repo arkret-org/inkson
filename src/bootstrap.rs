@@ -19,7 +19,7 @@ use dioxus::prelude::*;
 use serde_json::Value;
 
 use super::server_key;
-use crate::local_state::LocalStateStore;
+use crate::state::LocalStateStore;
 
 pub(crate) const RECOVERY_AUTO_PROMPT_SHOWN_KEY: &str = "recovery.auto_prompt_shown.v1";
 pub(crate) const RECOVERY_AUTO_PROMPT_LOCAL_ONLY_SHOWN_KEY: &str =
@@ -40,8 +40,10 @@ pub(crate) fn has_bootstrap_refresh_material(
 ) -> bool {
     let state = store.load();
     state.session_grant.as_ref().is_some_and(|grant| {
-        crate::session_refresh::grant_matches_principal_server(grant, principal_server_url)
-            && !crate::session_refresh::grant_is_dead(grant)
+        crate::identity::session_refresh::grant_matches_principal_server(
+            grant,
+            principal_server_url,
+        ) && !crate::identity::session_refresh::grant_is_dead(grant)
     })
 }
 
@@ -541,11 +543,14 @@ pub(crate) async fn ensure_local_mls_key_package_published(
     let publish_device_id = device_id.clone();
     let publish_key_package_id = key_package_id.clone();
     let publish_key_package_ref = key_package_ref.clone();
-    let outcome = crate::authed_api::with_authed_api(
+    let outcome = crate::transport::auth::with_endpoint_clients(
         &base_url,
         session_credential.clone(),
-        |api| async move {
-            api.publish_mls_key_package(&publish_device_id, &record)
+        None,
+        |clients| async move {
+            clients
+                .mls()
+                .publish_key_package(&publish_device_id, &record)
                 .await
         },
     )
@@ -614,10 +619,11 @@ pub(crate) async fn bootstrap_mls_welcome_for_realm(
         return Ok(MlsWelcomeBootstrapOutcome::default());
     }
 
-    let messages = crate::authed_api::with_authed_api(
+    let messages = crate::transport::auth::with_endpoint_clients(
         &base_url,
         session_credential.clone(),
-        |api| async move { api.receive_device_messages().await },
+        None,
+        |clients| async move { clients.keys().receive_device_messages().await },
     )
     .await
     .map_err(|error| error.display())?;
@@ -717,7 +723,7 @@ pub(crate) async fn bootstrap_mls_welcome_for_realm(
     let actor_for_backup = actor_id.clone();
     let device_for_backup = device_id.clone();
     let realm_for_backup = realm_id.clone();
-    let backup_id = crate::authed_api::with_authed_api(
+    let backup_id = crate::transport::auth::with_authed_api(
         &base_url,
         session_credential.clone(),
         |api| async move {
@@ -745,10 +751,11 @@ pub(crate) async fn bootstrap_mls_welcome_for_realm(
         true,
         persist_error.as_deref(),
     ) && let Some(ack_token) = ack_token
-        && let Err(error) = crate::authed_api::with_authed_api(
+        && let Err(error) = crate::transport::auth::with_endpoint_clients(
             &base_url,
             session_credential.clone(),
-            |api| async move { api.ack_device_messages(&ack_token).await },
+            None,
+            |clients| async move { clients.keys().ack_device_messages(&ack_token).await },
         )
         .await
     {

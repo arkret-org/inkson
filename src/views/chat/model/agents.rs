@@ -13,7 +13,7 @@ fn raw_operation_kind(payload: &Value) -> Option<&str> {
 /// Contrast with `members_panel::raw_operation_realm_matches_exact`, which
 /// fail-closes on unknown ownership.
 fn raw_operation_realm_matches_or_unscoped(
-    record: &crate::local_state::RawOperationRecord,
+    record: &crate::state::RawOperationRecord,
     realm_id: &str,
 ) -> bool {
     let expected = realm_id.trim();
@@ -89,7 +89,7 @@ fn agent_endpoint_controller_handle(payload: &Value) -> Option<String> {
         ],
     )
     .and_then(|handle| {
-        crate::identity_handle::parse_user_handle(&handle).map(|parsed| parsed.handle)
+        crate::identity::handle::parse_user_handle(&handle).map(|parsed| parsed.handle)
     })
 }
 
@@ -144,7 +144,7 @@ fn merge_agent_metadata(existing: &mut AgentParticipantMetadata, next: AgentPart
 /// consumed only when present. Missing controller falls back to the
 /// endpoint event actor.
 pub(crate) fn agent_metadata_from_raw_operations(
-    raw_operations: &[crate::local_state::RawOperationRecord],
+    raw_operations: &[crate::state::RawOperationRecord],
     realm_id: &str,
 ) -> std::collections::BTreeMap<String, AgentParticipantMetadata> {
     let mut out = std::collections::BTreeMap::new();
@@ -221,7 +221,7 @@ pub(crate) fn participation_allows_public_reply(
 /// the endpoint DID set.
 #[cfg(test)]
 pub(crate) fn agent_ids_from_raw_operations(
-    raw_operations: &[crate::local_state::RawOperationRecord],
+    raw_operations: &[crate::state::RawOperationRecord],
     realm_id: &str,
 ) -> Vec<String> {
     agent_metadata_from_raw_operations(raw_operations, realm_id)
@@ -253,7 +253,7 @@ pub(crate) fn agent_metadata_from_mentions(
             controller_handle: mention
                 .controller_handle_at_time
                 .as_ref()
-                .and_then(|handle| crate::identity_handle::parse_user_handle(handle.canonical()))
+                .and_then(|handle| crate::identity::handle::parse_user_handle(handle.canonical()))
                 .map(|parsed| parsed.handle)
                 .unwrap_or_default(),
             agent_slug: agent_slug.trim().to_owned(),

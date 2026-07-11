@@ -1,7 +1,7 @@
 //! 6.1 / 6.3 — recovery client orchestration.
 //!
 //! Pure request builders (unit-tested) + thin async wrappers over
-//! [`crate::api::ArkretApi`] that drive the REC-1 recovery strand:
+//! [`crate::transport::TransportClient`] that drive the REC-1 recovery strand:
 //!
 //! - 6.1: fetch + parse the active recovery policy.
 //! - 6.3: open a recovery session, sign + submit a `principal_signing` proof, then complete with
@@ -21,7 +21,7 @@ use base64::engine::general_purpose::URL_SAFE_NO_PAD as B64;
 use ed25519_dalek::SigningKey;
 use serde_json::{Map, Value, json};
 
-use crate::api::ArkretApi;
+use crate::transport::TransportClient;
 
 pub const RECOVERY_POLICY_SIGNED_FIELDS: &[&str] = &[
     "schema",
@@ -169,7 +169,7 @@ fn count_matching_did_recovery_first_backups(
 
 /// 6.1 — fetch + parse the active recovery policy.
 pub async fn fetch_active_recovery_policy(
-    api: &ArkretApi,
+    api: &TransportClient,
 ) -> anyhow::Result<Option<ActiveRecoveryPolicy>> {
     // `parse_active_recovery_policy` reads `active_policy.*` leniently via
     // `Value` accessors; serialize the typed outcome back to its wire JSON.
@@ -350,7 +350,7 @@ fn recovery_policy_signature_transcript(payload: &Value, signed_fields: &[&str])
 }
 
 pub async fn ensure_active_recovery_policy(
-    api: &ArkretApi,
+    api: &TransportClient,
     principal_id: &str,
     device_id: &str,
 ) -> anyhow::Result<ActiveRecoveryPolicy> {
@@ -377,7 +377,7 @@ pub async fn ensure_active_recovery_policy(
 }
 
 pub async fn ensure_recovery_policy_and_did_recovery_backup(
-    api: &ArkretApi,
+    api: &TransportClient,
     principal_id: &str,
     device_id: &str,
     recovery_key: &str,
@@ -503,7 +503,7 @@ pub fn create_session_body(
 /// 6.3 — open a recovery session. Returns the session JSON (carries the
 /// challenge + every binding field the proof transcript needs).
 pub async fn open_recovery_session(
-    api: &ArkretApi,
+    api: &TransportClient,
     principal_id: &str,
     requesting_device_id: &str,
     trust_domain: &str,
@@ -527,7 +527,7 @@ pub async fn open_recovery_session(
 /// 6.3 — sign a `principal_signing` proof for `session` (with the principal
 /// control key) and submit it. Returns the `proof_submit_response`.
 pub async fn submit_principal_signing_proof(
-    api: &ArkretApi,
+    api: &TransportClient,
     session: &Value,
     verification_method: &str,
     principal_signing_key: &SigningKey,
@@ -552,7 +552,7 @@ pub async fn submit_principal_signing_proof(
 /// and `ak.device.list_update` (recovery-session.schema.json `complete_request`).
 /// The server resolves + verifies each by id; it does not author control events.
 pub async fn complete_recovery_session(
-    api: &ArkretApi,
+    api: &TransportClient,
     recovery_session_id: &str,
     authorization_event_id: &str,
     device_list_update_event_id: &str,
@@ -576,7 +576,7 @@ pub async fn complete_recovery_session(
 /// `complete_response`.)
 #[allow(clippy::too_many_arguments)]
 pub async fn run_principal_signing_recovery(
-    api: &ArkretApi,
+    api: &TransportClient,
     principal_id: &str,
     requesting_device_id: &str,
     trust_domain: &str,

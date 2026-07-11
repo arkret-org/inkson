@@ -36,11 +36,12 @@ use dioxus::prelude::*;
 use dioxus_primitives::checkbox::CheckboxState;
 use serde_json::{Value, json};
 
+use crate::transport::auth::with_authed_sdk_client;
 use crate::ui::button::{Button, ButtonVariant};
 use crate::ui::checkbox::Checkbox;
 use crate::ui::dialog::Dialog;
 use crate::ui::textarea::Textarea;
-use crate::views::helpers::{short_protocol_id, with_authed_sdk_client};
+use crate::views::helpers::short_protocol_id;
 
 /// Build the canonical `applet_package` Value the install preview/commit
 /// surface expects from a manifest input. For inline JSON the parsed object is

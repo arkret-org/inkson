@@ -1,8 +1,8 @@
 //! Tests for account- and device-scoped snapshot-secret management.
 
-use crate::local_state::isolated_store_for_tests as temp_state_store;
 use crate::mls::runtime::*;
 use crate::secure_key_store::{MemorySecureKeyStore, SecureKeyStore, SecureKeyStoreError};
+use crate::state::isolated_store_for_tests as temp_state_store;
 
 #[test]
 fn device_snapshot_secret_is_created_and_reused() {

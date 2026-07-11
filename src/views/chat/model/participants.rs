@@ -133,7 +133,7 @@ pub(crate) fn mention_handle_label_from_value(value: &str) -> Option<String> {
     if trimmed.is_empty() || trimmed.starts_with("did:") {
         return None;
     }
-    crate::identity_handle::parse_user_handle(trimmed).map(|handle| handle.display)
+    crate::identity::handle::parse_user_handle(trimmed).map(|handle| handle.display)
 }
 
 pub(crate) fn participant_handle_label_from_value(

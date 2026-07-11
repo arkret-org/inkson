@@ -6,7 +6,7 @@ use serde_json::json;
 use super::types::SharedTransport;
 use crate::media::rtc::{JoinedMediaSession, MediaJoinRequest, PerSenderFrameKeys, RtcClientError};
 use crate::rtc_transport::new_transport;
-use crate::views::helpers::with_authed_api;
+use crate::transport::auth::with_authed_api;
 
 // ── Controller helpers ──────────────────────────────────────────────────
 
@@ -70,7 +70,7 @@ async fn join_via_api(
     // rotates with the group epoch.
     let mut join = join.clone();
     join.epoch_id = exporter.epoch();
-    let api = crate::views::helpers::authed_api(base, api_token.to_owned())
+    let api = crate::transport::auth::authed_api(base, api_token.to_owned())
         .map_err(|_| RtcClientError::FocusUnavailableForClient)?;
     let session = crate::media::rtc::join_call_media(&api, &join, &exporter).await?;
     // Retain the live MLS exporter (and the leg's static SFrame context) so the
