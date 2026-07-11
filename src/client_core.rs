@@ -454,11 +454,11 @@ fn reconnect_result_from_interrupt(
                 reset_cursor: true,
             }
         }
-        arkret_sdk::AccountStreamInterrupt::Unauthorized { reason } => {
+        arkret_sdk::AccountStreamInterrupt::Unauthorized => {
             AccountSubscribeSnapshotResult::ReconnectAfter {
                 reconnect_after_ms: clamp(None),
                 reconnect_cursor: None,
-                reason,
+                reason: None,
                 reset_cursor: false,
             }
         }
