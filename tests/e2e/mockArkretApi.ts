@@ -2026,6 +2026,13 @@ export async function mockArkretApi(
       });
     }
 
+    const agentParticipationMatch = url.pathname.match(
+      /^\/_arkret\/self\/agents\/([^/]+)\/participation$/,
+    );
+    if (agentParticipationMatch && route.request().method() === "GET") {
+      return json(route, { entries: [] });
+    }
+
     const agentGetMatch = url.pathname.match(/^\/_arkret\/self\/agents\/([^/]+)$/);
     if (agentGetMatch && route.request().method() === "GET") {
       const agentPrincipalId = decodeURIComponent(agentGetMatch[1]);

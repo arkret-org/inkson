@@ -27,7 +27,9 @@ use crate::components::UiIcon;
 use crate::transport::auth::with_authed_sdk_client;
 use crate::ui::button::{Button, ButtonSize, ButtonVariant};
 use crate::ui::checkbox::Checkbox;
+use crate::ui::dialog::Dialog;
 use crate::ui::input::Input;
+use crate::ui::textarea::Textarea;
 use crate::views::helpers::short_protocol_id;
 
 fn agent_field(agent: &AgentView, key: &str) -> String {
@@ -223,6 +225,57 @@ fn spawn_load_agent_details(
     });
 }
 
+fn spawn_load_agent_participation(
+    base: String,
+    api_token: String,
+    id: String,
+    selected_agent_id: Signal<String>,
+    mut participation_realm: Signal<String>,
+    mut participation_reply: Signal<bool>,
+    mut participation_mention: Signal<bool>,
+    mut participation_aob: Signal<bool>,
+    mut participation_entries: Signal<Vec<AgentParticipationEntry>>,
+) {
+    spawn(async move {
+        if id.trim().is_empty() {
+            participation_entries.set(Vec::new());
+            return;
+        }
+        let requested_id = id.clone();
+        let result = with_authed_sdk_client(&base, api_token, move |http| {
+            let id = id.clone();
+            async move {
+                http.agent_participation_get(&id)
+                    .await
+                    .map_err(anyhow::Error::from)
+            }
+        })
+        .await;
+        if selected_agent_id() != requested_id {
+            return;
+        }
+        let Ok(response) = result else {
+            participation_entries.set(Vec::new());
+            return;
+        };
+
+        if let Some(entry) = response.entries.first() {
+            if let AgentParticipationScope::Realm { realm_id } = &entry.scope {
+                participation_realm.set(realm_id.as_str().to_owned());
+            }
+            participation_reply.set(entry.selection.reply);
+            participation_mention.set(entry.selection.accept_third_party_mention);
+            participation_aob.set(entry.selection.act_on_behalf);
+        } else {
+            participation_realm.set(String::new());
+            participation_reply.set(false);
+            participation_mention.set(false);
+            participation_aob.set(false);
+        }
+        participation_entries.set(response.entries);
+    });
+}
+
 #[component]
 pub fn PersonalAgentAdminPanel(token: Signal<String>, controller_did: String) -> Element {
     // A4 — base_url from session context instead of a prop.
@@ -241,12 +294,14 @@ pub fn PersonalAgentAdminPanel(token: Signal<String>, controller_did: String) ->
     let mut agent_list_refresh_epoch = use_signal(|| 0_u64);
     let mut grant_json = use_signal(|| "{}".to_owned());
     let mut deactivate_confirm = use_signal(String::new);
+    let mut deactivate_dialog_open = use_signal(|| false);
     let mut last_op_status = use_signal(String::new);
     let mut participation_realm = use_signal(String::new);
     let mut participation_reply = use_signal(|| false);
     let mut participation_mention = use_signal(|| false);
     let mut participation_aob = use_signal(|| false);
     let mut participation_entries = use_signal(Vec::<AgentParticipationEntry>::new);
+    let mut copied_pairing_url = use_signal(String::new);
 
     {
         let base = base_url.clone();
@@ -259,6 +314,23 @@ pub fn PersonalAgentAdminPanel(token: Signal<String>, controller_did: String) ->
                 selected_agent_id,
                 list_status,
                 agent_list_refresh_epoch,
+            );
+        });
+    }
+
+    {
+        let base = base_url.clone();
+        use_effect(move || {
+            spawn_load_agent_participation(
+                base.clone(),
+                token(),
+                selected_agent_id(),
+                selected_agent_id,
+                participation_realm,
+                participation_reply,
+                participation_mention,
+                participation_aob,
+                participation_entries,
             );
         });
     }
@@ -689,11 +761,14 @@ pub fn PersonalAgentAdminPanel(token: Signal<String>, controller_did: String) ->
                                 div { class: "mono muted", title: "{selected_id_now}", "{selected_id_now}" }
                             }
                             if !selected_status.is_empty() {
-                                span {
-                                    class: "{agent_state_badge_class(&selected_status)}",
-                                    "data-testid": "agent-state-badge",
-                                    "data-state": "{selected_status}",
-                                    "{agent_state_label(&selected_status)}"
+                                div { class: "agent-admin-current-status",
+                                    span { class: "muted", "Status" }
+                                    span {
+                                        class: "{agent_state_badge_class(&selected_status)}",
+                                        "data-testid": "agent-state-badge",
+                                        "data-state": "{selected_status}",
+                                        "{agent_state_label(&selected_status)}"
+                                    }
                                 }
                             }
                         }
@@ -764,6 +839,7 @@ pub fn PersonalAgentAdminPanel(token: Signal<String>, controller_did: String) ->
                                 } else {
                                     build_agent_pairing_deep_link(&base_url, &pairing_token)
                                 };
+                                let pairing_url_was_copied = copied_pairing_url() == deep_link;
                                 let pairing_qr_svg = render_agent_pairing_qr_svg(&deep_link);
                                 let pairing_badge = if selected_pairing_is_expired { "badge red" } else { "badge green" };
                                 let pairing_label = if selected_pairing_is_expired { "Expired" } else { "Ready" };
@@ -771,11 +847,53 @@ pub fn PersonalAgentAdminPanel(token: Signal<String>, controller_did: String) ->
                                 let replacement_agent_slug = selected_slug.clone();
                                 rsx! {
                                     div {
-                                        class: "agent-admin-section",
+                                        class: "agent-admin-section agent-admin-pairing-card",
                                         "data-testid": "agent-admin-pairing-card",
                                         div { class: "agent-admin-section-head",
                                             strong { "Connect an agent runtime" }
-                                            span { class: "{pairing_badge}", "{pairing_label}" }
+                                            div { class: "agent-admin-pairing-head-actions",
+                                                span { class: "{pairing_badge}", "{pairing_label}" }
+                                                if !selected_pairing_is_expired {
+                                                    Button {
+                                                        variant: ButtonVariant::Secondary,
+                                                        size: ButtonSize::Sm,
+                                                        class: if pairing_url_was_copied {
+                                                            "btn agent-admin-pairing-action success"
+                                                        } else {
+                                                            "btn agent-admin-pairing-action"
+                                                        },
+                                                        "data-testid": "agent-admin-copy-pairing-link-button",
+                                                        disabled: deep_link.is_empty(),
+                                                        onclick: {
+                                                            let deep_link = deep_link.clone();
+                                                            move |_| {
+                                                                copy_text_to_clipboard(&deep_link);
+                                                                copied_pairing_url.set(deep_link.clone());
+                                                                let copied_url = deep_link.clone();
+                                                                spawn(async move {
+                                                                    crate::runtime_helpers::sleep_for(
+                                                                        Duration::from_millis(2_000),
+                                                                    )
+                                                                    .await;
+                                                                    if copied_pairing_url() == copied_url {
+                                                                        copied_pairing_url.set(String::new());
+                                                                    }
+                                                                });
+                                                            }
+                                                        },
+                                                        if pairing_url_was_copied {
+                                                            UiIcon { name: "check" }
+                                                        } else {
+                                                            UiIcon { name: "copy" }
+                                                        }
+                                                        span {
+                                                            "aria-live": "polite",
+                                                            "aria-atomic": "true",
+                                                            if pairing_url_was_copied { "Copied" } else { "Copy URL" }
+                                                        }
+                                                    }
+                                                }
+                                            }
                                         }
                                         if selected_pairing_is_expired {
                                             div {
@@ -785,27 +903,35 @@ pub fn PersonalAgentAdminPanel(token: Signal<String>, controller_did: String) ->
                                             }
                                         }
                                         if !selected_pairing_is_expired {
-                                            if !pairing_qr_svg.is_empty() {
-                                                div {
-                                                    class: "agent-admin-qr",
-                                                    "data-testid": "agent-admin-pairing-qr",
-                                                    dangerous_inner_html: "{pairing_qr_svg}",
+                                            div { class: "agent-admin-pairing-panel",
+                                                div { class: "agent-admin-pairing-qr-pane",
+                                                    strong { class: "agent-admin-pairing-pane-label", "QR" }
+                                                    if pairing_qr_svg.is_empty() {
+                                                        div { class: "muted", "QR unavailable" }
+                                                    } else {
+                                                        div {
+                                                            class: "agent-admin-qr",
+                                                            "data-testid": "agent-admin-pairing-qr",
+                                                            role: "img",
+                                                            "aria-label": "Agent runtime pairing QR code",
+                                                            dangerous_inner_html: "{pairing_qr_svg}",
+                                                        }
+                                                    }
+                                                }
+                                                div { class: "agent-admin-pairing-url-pane",
+                                                    strong { class: "agent-admin-pairing-pane-label", "URL" }
+                                                    Textarea {
+                                                        class: "mono agent-admin-pairing-url-field",
+                                                        "data-testid": "agent-admin-pairing-url",
+                                                        readonly: true,
+                                                        rows: "7",
+                                                        value: "{deep_link}",
+                                                    }
                                                 }
                                             }
                                         }
-                                        div { class: "actions",
-                                            if !selected_pairing_is_expired {
-                                                Button {
-                                                    variant: ButtonVariant::Secondary,
-                                                    "data-testid": "agent-admin-copy-pairing-link-button",
-                                                    disabled: deep_link.is_empty(),
-                                                    onclick: {
-                                                        let deep_link = deep_link.clone();
-                                                        move |_| copy_text_to_clipboard(&deep_link)
-                                                    },
-                                                    "Copy link"
-                                                }
-                                            } else {
+                                        if selected_pairing_is_expired {
+                                            div { class: "actions",
                                                 Button {
                                                     variant: ButtonVariant::Primary,
                                                     "data-testid": "agent-admin-create-replacement-button",
@@ -827,138 +953,6 @@ pub fn PersonalAgentAdminPanel(token: Signal<String>, controller_did: String) ->
                                             }
                                         }
                                     }
-                                }
-                            }
-                        }
-
-                        div { class: "agent-admin-section", "data-testid": "agent-admin-lifecycle",
-                            div { class: "agent-admin-section-head",
-                                strong { "Status" }
-                                span { class: "muted", "Stored on server" }
-                            }
-                            div { class: "actions",
-                                Button {
-                                    variant: ButtonVariant::Secondary,
-                                    "data-testid": "agent-admin-pause-button",
-                                    onclick: {
-                                        let base = base_url.clone();
-                                        move |_| {
-                                            let id = selected_agent_id();
-                                            if id.is_empty() { return; }
-                                            let id_for_status = id.clone();
-                                            let base = base.clone();
-                                            let api_token = token();
-                                            let body = AgentPauseRequestBody { reason: Some("controller_paused".to_owned()) };
-                                            spawn(async move {
-                                                match with_authed_sdk_client(&base, api_token, move |http| {
-                                                    let id = id.clone();
-                                                    let body = body.clone();
-                                                    async move { http.agent_pause(&id, &body).await.map_err(anyhow::Error::from) }
-                                                })
-                                                .await
-                                                {
-                                                    Ok(r) => {
-                                                        let status = r.status.as_wire_str().to_owned();
-                                                        agents.with_mut(|rows| {
-                                                            update_agent_status(rows, &id_for_status, &status)
-                                                        });
-                                                        last_op_status.set(format!("Paused. Status: {status}."));
-                                                    }
-                                                    Err(err) => last_op_status.set(format!(
-                                                        "Pause failed: {}",
-                                                        err.display()
-                                                    )),
-                                                }
-                                            });
-                                        }
-                                    },
-                                    "Pause"
-                                }
-                                Button {
-                                    variant: ButtonVariant::Secondary,
-                                    "data-testid": "agent-admin-resume-button",
-                                    onclick: {
-                                        let base = base_url.clone();
-                                        move |_| {
-                                            let id = selected_agent_id();
-                                            if id.is_empty() { return; }
-                                            let id_for_status = id.clone();
-                                            let base = base.clone();
-                                            let api_token = token();
-                                            let body = AgentResumeRequestBody { sidecar_exposure_ack: None };
-                                            spawn(async move {
-                                                match with_authed_sdk_client(&base, api_token, move |http| {
-                                                    let id = id.clone();
-                                                    let body = body.clone();
-                                                    async move { http.agent_resume(&id, &body).await.map_err(anyhow::Error::from) }
-                                                })
-                                                .await
-                                                {
-                                                    Ok(r) => {
-                                                        let status = r.status.as_wire_str().to_owned();
-                                                        agents.with_mut(|rows| {
-                                                            update_agent_status(rows, &id_for_status, &status)
-                                                        });
-                                                        last_op_status.set(format!("Resumed. Status: {status}."));
-                                                    }
-                                                    Err(err) => last_op_status.set(format!(
-                                                        "Resume failed: {}",
-                                                        err.display()
-                                                    )),
-                                                }
-                                            });
-                                        }
-                                    },
-                                    "Resume"
-                                }
-                            }
-                            div { class: "workflow-form agent-admin-deactivate-form",
-                                Input {
-                                    "data-testid": "agent-admin-deactivate-confirm-input",
-                                    placeholder: "Type DEACTIVATE to enable",
-                                    value: "{deactivate_confirm}",
-                                    oninput: move |event: FormEvent| deactivate_confirm.set(event.value()),
-                                }
-                                Button {
-                                    variant: ButtonVariant::Destructive,
-                                    "data-testid": "agent-admin-deactivate-button",
-                                    disabled: deactivate_confirm() != "DEACTIVATE",
-                                    onclick: {
-                                        let base = base_url.clone();
-                                        move |_| {
-                                            let id = selected_agent_id();
-                                            if id.is_empty() { return; }
-                                            let id_for_status = id.clone();
-                                            let base = base.clone();
-                                            let api_token = token();
-                                            let body = AgentDeactivateRequestBody { reason: Some("controller_deactivated".to_owned()) };
-                                            spawn(async move {
-                                                match with_authed_sdk_client(&base, api_token, move |http| {
-                                                    let id = id.clone();
-                                                    let body = body.clone();
-                                                    async move { http.agent_deactivate(&id, &body).await.map_err(anyhow::Error::from) }
-                                                })
-                                                .await
-                                                {
-                                                    Ok(r) => {
-                                                        let status = r.status.as_wire_str().to_owned();
-                                                        agents.with_mut(|rows| {
-                                                            update_agent_status(rows, &id_for_status, &status)
-                                                        });
-                                                        last_op_status.set(format!(
-                                                            "Deactivated. Status: {status}."
-                                                        ));
-                                                    }
-                                                    Err(err) => last_op_status.set(format!(
-                                                        "Deactivate failed: {}",
-                                                        err.display()
-                                                    )),
-                                                }
-                                            });
-                                            deactivate_confirm.set(String::new());
-                                        }
-                                    },
-                                    "Deactivate"
                                 }
                             }
                         }
@@ -1117,7 +1111,27 @@ pub fn PersonalAgentAdminPanel(token: Signal<String>, controller_did: String) ->
                                     "data-testid": "agent-admin-participation-realm-input",
                                     placeholder: "Realm ID",
                                     value: "{participation_realm}",
-                                    oninput: move |event: FormEvent| participation_realm.set(event.value()),
+                                    oninput: move |event: FormEvent| {
+                                        let value = event.value();
+                                        let matching_selection = participation_entries
+                                            .read()
+                                            .iter()
+                                            .find_map(|entry| match &entry.scope {
+                                                AgentParticipationScope::Realm { realm_id }
+                                                    if realm_id.as_str() == value.trim() =>
+                                                {
+                                                    Some(entry.selection)
+                                                }
+                                                _ => None,
+                                            });
+                                        participation_realm.set(value);
+                                        if let Some(selection) = matching_selection {
+                                            participation_reply.set(selection.reply);
+                                            participation_mention
+                                                .set(selection.accept_third_party_mention);
+                                            participation_aob.set(selection.act_on_behalf);
+                                        }
+                                    },
                                 }
                                 label { class: "agent-admin-toggle-row", "data-testid": "agent-admin-participation-reply-row",
                                     Checkbox {
@@ -1199,66 +1213,94 @@ pub fn PersonalAgentAdminPanel(token: Signal<String>, controller_did: String) ->
                                         },
                                         "Save"
                                     }
-                                    Button {
-                                        variant: ButtonVariant::Secondary,
-                                        "data-testid": "agent-admin-participation-load-button",
-                                        onclick: {
-                                            let base = base_url.clone();
-                                            move |_| {
-                                                let id = selected_agent_id();
-                                                if id.is_empty() { return; }
-                                                let base = base.clone();
-                                                let api_token = token();
-                                                spawn(async move {
-                                                    match with_authed_sdk_client(&base, api_token, move |http| {
-                                                        let id = id.clone();
-                                                        async move {
-                                                            http.agent_participation_get(&id).await.map_err(anyhow::Error::from)
-                                                        }
-                                                    })
-                                                    .await
-                                                    {
-                                                        Ok(r) => {
-                                                            let entry_count = r.entries.len();
-                                                            // Rehydrate the editor from the loaded
-                                                            // selection: without this a Save right
-                                                            // after Load would overwrite the stored
-                                                            // policy with the stale checkbox defaults.
-                                                            let wanted = participation_realm();
-                                                            let wanted = wanted.trim().to_owned();
-                                                            let hydrate = r
-                                                                .entries
-                                                                .iter()
-                                                                .find(|entry| match &entry.scope {
-                                                                    AgentParticipationScope::Realm { realm_id } => {
-                                                                        wanted.is_empty() || realm_id.as_str() == wanted
-                                                                    }
-                                                                    _ => false,
-                                                                })
-                                                                .or_else(|| r.entries.first());
-                                                            if let Some(entry) = hydrate {
-                                                                if let AgentParticipationScope::Realm { realm_id } = &entry.scope {
-                                                                    participation_realm.set(realm_id.as_str().to_owned());
-                                                                }
-                                                                participation_reply.set(entry.selection.reply);
-                                                                participation_mention.set(entry.selection.accept_third_party_mention);
-                                                                participation_aob.set(entry.selection.act_on_behalf);
+                                    if selected_status == "active" {
+                                        Button {
+                                            variant: ButtonVariant::Secondary,
+                                            "data-testid": "agent-admin-pause-button",
+                                            onclick: {
+                                                let base = base_url.clone();
+                                                move |_| {
+                                                    let id = selected_agent_id();
+                                                    if id.is_empty() { return; }
+                                                    let id_for_status = id.clone();
+                                                    let base = base.clone();
+                                                    let api_token = token();
+                                                    let body = AgentPauseRequestBody { reason: Some("controller_paused".to_owned()) };
+                                                    spawn(async move {
+                                                        match with_authed_sdk_client(&base, api_token, move |http| {
+                                                            let id = id.clone();
+                                                            let body = body.clone();
+                                                            async move { http.agent_pause(&id, &body).await.map_err(anyhow::Error::from) }
+                                                        })
+                                                        .await
+                                                        {
+                                                            Ok(r) => {
+                                                                let status = r.status.as_wire_str().to_owned();
+                                                                agents.with_mut(|rows| {
+                                                                    update_agent_status(rows, &id_for_status, &status)
+                                                                });
+                                                                last_op_status.set(format!("Paused. Status: {status}."));
                                                             }
-                                                            participation_entries.set(r.entries);
-                                                            last_op_status.set(format!(
-                                                                "Loaded Realm behavior for {} scope(s).",
-                                                                entry_count
-                                                            ));
+                                                            Err(err) => last_op_status.set(format!(
+                                                                "Pause failed: {}",
+                                                                err.display()
+                                                            )),
                                                         }
-                                                        Err(err) => last_op_status.set(format!(
-                                                            "Realm behavior load failed: {}",
-                                                            err.display()
-                                                        )),
-                                                    }
-                                                });
-                                            }
-                                        },
-                                        "Load"
+                                                    });
+                                                }
+                                            },
+                                            "Pause"
+                                        }
+                                    }
+                                    if selected_status == "paused" {
+                                        Button {
+                                            variant: ButtonVariant::Secondary,
+                                            "data-testid": "agent-admin-resume-button",
+                                            onclick: {
+                                                let base = base_url.clone();
+                                                move |_| {
+                                                    let id = selected_agent_id();
+                                                    if id.is_empty() { return; }
+                                                    let id_for_status = id.clone();
+                                                    let base = base.clone();
+                                                    let api_token = token();
+                                                    let body = AgentResumeRequestBody { sidecar_exposure_ack: None };
+                                                    spawn(async move {
+                                                        match with_authed_sdk_client(&base, api_token, move |http| {
+                                                            let id = id.clone();
+                                                            let body = body.clone();
+                                                            async move { http.agent_resume(&id, &body).await.map_err(anyhow::Error::from) }
+                                                        })
+                                                        .await
+                                                        {
+                                                            Ok(r) => {
+                                                                let status = r.status.as_wire_str().to_owned();
+                                                                agents.with_mut(|rows| {
+                                                                    update_agent_status(rows, &id_for_status, &status)
+                                                                });
+                                                                last_op_status.set(format!("Resumed. Status: {status}."));
+                                                            }
+                                                            Err(err) => last_op_status.set(format!(
+                                                                "Resume failed: {}",
+                                                                err.display()
+                                                            )),
+                                                        }
+                                                    });
+                                                }
+                                            },
+                                            "Resume"
+                                        }
+                                    }
+                                    if selected_status != "deactivated" {
+                                        Button {
+                                            variant: ButtonVariant::Destructive,
+                                            "data-testid": "agent-admin-deactivate-button",
+                                            onclick: move |_| {
+                                                deactivate_confirm.set(String::new());
+                                                deactivate_dialog_open.set(true);
+                                            },
+                                            "Deactivate"
+                                        }
                                     }
                                 }
                                 if !participation_entries_snapshot.is_empty() {
@@ -1288,6 +1330,93 @@ pub fn PersonalAgentAdminPanel(token: Signal<String>, controller_did: String) ->
                                                     }
                                                 }
                                             }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+
+                        if deactivate_dialog_open() {
+                            Dialog {
+                                open: true,
+                                on_open_change: move |open: bool| {
+                                    deactivate_dialog_open.set(open);
+                                    if !open {
+                                        deactivate_confirm.set(String::new());
+                                    }
+                                },
+                                "data-testid": "agent-admin-deactivate-modal",
+                                "aria-labelledby": "agent-admin-deactivate-title",
+                                div { class: "modal event agent-admin-deactivate-modal",
+                                    div { class: "modal-head event-head",
+                                        h3 { id: "agent-admin-deactivate-title", "Deactivate {selected_title}?" }
+                                        span { class: "badge red", "Permanent" }
+                                    }
+                                    div { class: "modal-body agent-admin-deactivate-modal-body",
+                                        p {
+                                            "Deactivation is permanent. It revokes this agent's keys, capabilities, and runtime access. Use Pause instead if you may want to resume the agent later."
+                                        }
+                                        label { class: "workflow-form",
+                                            span { "Type " strong { class: "mono", "DEACTIVATE" } " to confirm." }
+                                            Input {
+                                                "data-testid": "agent-admin-deactivate-confirm-input",
+                                                placeholder: "DEACTIVATE",
+                                                value: "{deactivate_confirm}",
+                                                oninput: move |event: FormEvent| deactivate_confirm.set(event.value()),
+                                            }
+                                        }
+                                    }
+                                    div { class: "modal-foot actions",
+                                        Button {
+                                            variant: ButtonVariant::Secondary,
+                                            "data-testid": "agent-admin-deactivate-cancel-button",
+                                            onclick: move |_| {
+                                                deactivate_dialog_open.set(false);
+                                                deactivate_confirm.set(String::new());
+                                            },
+                                            "Cancel"
+                                        }
+                                        Button {
+                                            variant: ButtonVariant::Destructive,
+                                            "data-testid": "agent-admin-deactivate-confirm-button",
+                                            disabled: deactivate_confirm() != "DEACTIVATE",
+                                            onclick: {
+                                                let base = base_url.clone();
+                                                move |_| {
+                                                    let id = selected_agent_id();
+                                                    if id.is_empty() { return; }
+                                                    let id_for_status = id.clone();
+                                                    let base = base.clone();
+                                                    let api_token = token();
+                                                    let body = AgentDeactivateRequestBody { reason: Some("controller_deactivated".to_owned()) };
+                                                    spawn(async move {
+                                                        match with_authed_sdk_client(&base, api_token, move |http| {
+                                                            let id = id.clone();
+                                                            let body = body.clone();
+                                                            async move { http.agent_deactivate(&id, &body).await.map_err(anyhow::Error::from) }
+                                                        })
+                                                        .await
+                                                        {
+                                                            Ok(r) => {
+                                                                let status = r.status.as_wire_str().to_owned();
+                                                                agents.with_mut(|rows| {
+                                                                    update_agent_status(rows, &id_for_status, &status)
+                                                                });
+                                                                last_op_status.set(format!(
+                                                                    "Deactivated. Status: {status}."
+                                                                ));
+                                                                deactivate_dialog_open.set(false);
+                                                                deactivate_confirm.set(String::new());
+                                                            }
+                                                            Err(err) => last_op_status.set(format!(
+                                                                "Deactivate failed: {}",
+                                                                err.display()
+                                                            )),
+                                                        }
+                                                    });
+                                                }
+                                            },
+                                            "Deactivate agent"
                                         }
                                     }
                                 }

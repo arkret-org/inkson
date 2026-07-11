@@ -318,8 +318,15 @@ test("account settings split account/server info and surface personal agents", a
   await expect(page.getByTestId("agent-admin-pairing-card")).toBeVisible();
   await expect(page.getByTestId("agent-admin-pairing-card")).toContainText("Ready");
   await expect(page.getByTestId("agent-admin-pairing-qr")).toBeVisible();
+  await expect(page.getByTestId("agent-admin-pairing-url")).toBeVisible();
+  await expect(page.getByTestId("agent-admin-pairing-url")).not.toHaveValue("");
   await expect(page.getByTestId("agent-admin-copy-pairing-link-button")).toBeVisible();
   await expect(page.getByTestId("agent-admin-copy-pairing-link-button")).toBeEnabled();
+  await page.getByTestId("agent-admin-copy-pairing-link-button").click();
+  await expect(page.getByTestId("agent-admin-copy-pairing-link-button")).toHaveText("Copied");
+  await expect(page.getByTestId("agent-admin-copy-pairing-link-button")).toHaveText("Copy URL", {
+    timeout: 3_000,
+  });
   await expect(page.getByTestId("agent-admin-pairing-agent-display-name")).toHaveCount(0);
   await expect(page.getByTestId("agent-admin-pairing-code")).toHaveCount(0);
   await expect(page.getByTestId("agent-admin-pairing-request-id")).toHaveCount(0);
@@ -342,6 +349,23 @@ test("account settings split account/server info and surface personal agents", a
     "data-state",
     "pending_runtime_key",
   );
+  await expect(page.getByTestId("agent-state-badge").locator("..")).toContainText(
+    /Status\s*Pending/,
+  );
+  await expect(page.getByTestId("agent-admin-lifecycle")).toHaveCount(0);
+  await expect(page.getByTestId("agent-admin-participation-load-button")).toHaveCount(0);
+  await expect(page.getByTestId("agent-admin-pause-button")).toHaveCount(0);
+  await expect(page.getByTestId("agent-admin-resume-button")).toHaveCount(0);
+
+  const deactivateButton = page.getByTestId("agent-admin-deactivate-button");
+  await expect(deactivateButton).toBeVisible();
+  await deactivateButton.click();
+  await expect(page.getByTestId("agent-admin-deactivate-modal")).toBeVisible();
+  await expect(page.getByTestId("agent-admin-deactivate-confirm-button")).toBeDisabled();
+  await page.getByTestId("agent-admin-deactivate-confirm-input").fill("DEACTIVATE");
+  await expect(page.getByTestId("agent-admin-deactivate-confirm-button")).toBeEnabled();
+  await page.getByTestId("agent-admin-deactivate-cancel-button").click();
+  await expect(page.getByTestId("agent-admin-deactivate-modal")).toHaveCount(0);
 });
 
 test("expired personal agent pairing shows pair-again guidance", async ({ page }) => {

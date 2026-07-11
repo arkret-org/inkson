@@ -551,6 +551,14 @@
   justify-content: flex-start;
 }
 
+.agent-admin-current-status {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  flex: 0 0 auto;
+}
+
 .agent-admin-empty-detail {
   display: grid;
   gap: 6px;
@@ -559,9 +567,13 @@
   text-align: center;
 }
 
-.agent-admin-deactivate-form {
-  grid-template-columns: minmax(0, 1fr) auto;
-  align-items: center;
+.agent-admin-deactivate-modal-body {
+  display: grid;
+  gap: 14px;
+}
+
+.agent-admin-deactivate-modal-body p {
+  margin: 0;
 }
 
 .agent-admin-grant-row {
@@ -599,6 +611,97 @@
   display: block;
   width: 100%;
   height: auto;
+}
+
+.agent-admin-pairing-card {
+  gap: 12px;
+}
+
+.agent-admin-pairing-head-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  flex-wrap: wrap;
+  min-width: 0;
+}
+
+.agent-admin-pairing-action .ui-icon {
+  width: 14px;
+  height: 14px;
+}
+
+.agent-admin-pairing-action {
+  min-width: 104px;
+  justify-content: center;
+}
+
+.agent-admin-pairing-panel {
+  display: grid;
+  grid-template-columns: minmax(250px, 0.74fr) minmax(240px, 1.26fr);
+  min-width: 0;
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: color-mix(in srgb, var(--surface-2) 78%, var(--surface));
+}
+
+.agent-admin-pairing-qr-pane,
+.agent-admin-pairing-url-pane {
+  display: grid;
+  align-content: start;
+  gap: 10px;
+  min-width: 0;
+  padding: 16px;
+}
+
+.agent-admin-pairing-qr-pane {
+  justify-items: stretch;
+  border-right: 1px solid color-mix(in srgb, var(--border) 82%, transparent);
+}
+
+.agent-admin-pairing-card .agent-admin-qr {
+  justify-self: center;
+}
+
+.agent-admin-pairing-pane-label {
+  color: var(--text-3);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+}
+
+.agent-admin-pairing-url-field {
+  width: 100%;
+  min-height: 210px;
+  box-sizing: border-box;
+  resize: none;
+  overflow: auto;
+}
+
+@media (max-width: 900px) {
+  .agent-admin-pairing-card .agent-admin-section-head {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .agent-admin-pairing-head-actions {
+    justify-content: flex-start;
+    width: 100%;
+  }
+
+  .agent-admin-pairing-panel {
+    grid-template-columns: 1fr;
+  }
+
+  .agent-admin-pairing-qr-pane {
+    border-right: 0;
+    border-bottom: 1px solid color-mix(in srgb, var(--border) 82%, transparent);
+  }
+
+  .agent-admin-pairing-url-field {
+    min-height: 128px;
+  }
 }
 
 @media (min-width: 981px) {
@@ -1419,8 +1522,7 @@
 
 @media (max-width: 980px) {
   .agent-admin-layout,
-  .agent-admin-detail-grid,
-  .agent-admin-deactivate-form {
+  .agent-admin-detail-grid {
     grid-template-columns: 1fr;
   }
 
