@@ -904,7 +904,7 @@ pub fn PersonalAgentAdminPanel(token: Signal<String>) -> Element {
                                             div {
                                                 class: "agent-admin-status error",
                                                 "data-testid": "agent-admin-pairing-expired-message",
-                                                "This pairing request expired. The expired handle cannot be used again; pair again to get a fresh pairing request. Expired agents do not reserve the slug."
+                                                "This pairing request expired. The expired code and link can never be used again; pair again to issue a fresh code and QR for this agent."
                                             }
                                         }
                                         if !selected_pairing_is_expired {
@@ -939,12 +939,88 @@ pub fn PersonalAgentAdminPanel(token: Signal<String>) -> Element {
                                             div { class: "actions",
                                                 Button {
                                                     variant: ButtonVariant::Primary,
-                                                    "data-testid": "agent-admin-create-replacement-button",
+                                                    "data-testid": "agent-admin-renew-pairing-button",
                                                     onclick: {
-                                                        let replacement_agent_slug = replacement_agent_slug.clone();
+                                                        // `ak.self.agent.command.renew_pairing`:
+                                                        // re-open pairing on this agent in place —
+                                                        // fresh one-time code + QR, same principal,
+                                                        // no replacement agent.
+                                                        let base = base_url.clone();
+                                                        let renew_agent_id = selected_id_now.clone();
+                                                        let renew_slug = replacement_agent_slug.clone();
                                                         move |_| {
-                                                            new_agent_slug.set(replacement_agent_slug.clone());
-                                                            create_mode.set(true);
+                                                            let base = base.clone();
+                                                            let api_token = token();
+                                                            let renewed_agent_id = renew_agent_id.clone();
+                                                            let slug = renew_slug.clone();
+                                                            spawn(async move {
+                                                                let renew_id = renewed_agent_id.clone();
+                                                                let outcome = match with_authed_sdk_client(
+                                                                    &base,
+                                                                    api_token.clone(),
+                                                                    move |http| {
+                                                                        let renew_id = renew_id.clone();
+                                                                        async move {
+                                                                            http.agent_renew_pairing(
+                                                                                &renew_id,
+                                                                                &arkret_sdk::models::AgentRenewPairingRequestBody::default(),
+                                                                            )
+                                                                            .await
+                                                                            .map_err(anyhow::Error::from)
+                                                                        }
+                                                                    },
+                                                                )
+                                                                .await
+                                                                {
+                                                                    Ok(outcome) => outcome,
+                                                                    Err(err) => {
+                                                                        last_op_status.set(format!(
+                                                                            "Pair again failed: {}",
+                                                                            err.display()
+                                                                        ));
+                                                                        return;
+                                                                    }
+                                                                };
+                                                                let expires_at = outcome
+                                                                    .expires_at
+                                                                    .to_rfc3339_opts(chrono::SecondsFormat::Millis, true);
+                                                                // Patch the row locally so the pairing
+                                                                // card re-renders immediately; the
+                                                                // detail effect refetch reconciles with
+                                                                // the server view afterwards.
+                                                                agents.with_mut(|rows| {
+                                                                    for row in rows.iter_mut() {
+                                                                        if agent_id(row) != renewed_agent_id.as_str() {
+                                                                            continue;
+                                                                        }
+                                                                        row.status = "pending_runtime_key".to_owned();
+                                                                        if let Some(object) = row.agent.as_object_mut() {
+                                                                            object.insert("status".to_owned(), json!("pending_runtime_key"));
+                                                                        }
+                                                                        if let Some(key_state) = row.key_state.as_object_mut() {
+                                                                            key_state.insert("status".to_owned(), json!("pending_runtime_key"));
+                                                                            key_state.insert("pairing_request_id".to_owned(), json!(outcome.pairing_request_id.clone()));
+                                                                            key_state.insert("pairing_code".to_owned(), json!(outcome.pairing_code.clone()));
+                                                                            key_state.insert("pairing_expires_at".to_owned(), json!(expires_at.clone()));
+                                                                        } else {
+                                                                            row.key_state = json!({
+                                                                                "status": "pending_runtime_key",
+                                                                                "pairing_request_id": outcome.pairing_request_id.clone(),
+                                                                                "pairing_code": outcome.pairing_code.clone(),
+                                                                                "pairing_expires_at": expires_at.clone(),
+                                                                            });
+                                                                        }
+                                                                    }
+                                                                });
+                                                                last_op_status.set(format!(
+                                                                    "Pairing renewed for {}. Scan the new QR or copy the new link; the old one is dead.",
+                                                                    if slug.trim().is_empty() {
+                                                                        short_protocol_id(&renewed_agent_id)
+                                                                    } else {
+                                                                        slug.clone()
+                                                                    }
+                                                                ));
+                                                            });
                                                         }
                                                     },
                                                     "Pair again"

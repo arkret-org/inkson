@@ -98,7 +98,23 @@ pub(super) fn load_direct_contacts_and_agents_for_sidebar(
                     }
                 }
                 match agents {
-                    Ok(response) => own_agent_rows.set(response.agents),
+                    // The Contacts sidebar is a chat surface: only agents that
+                    // ever became effective belong here. Pending / expired /
+                    // deactivated provisioning attempts stay in Settings →
+                    // My Agents.
+                    Ok(response) => own_agent_rows.set(
+                        response
+                            .agents
+                            .into_iter()
+                            .filter(|agent| {
+                                matches!(
+                                    agent.status,
+                                    arkret_sdk::AgentStatus::Active
+                                        | arkret_sdk::AgentStatus::Paused
+                                )
+                            })
+                            .collect(),
+                    ),
                     Err(err) => {
                         own_agents_loaded.set(false);
                         tracing::warn!(error = %err, "failed to load personal agents for Contacts sidebar");

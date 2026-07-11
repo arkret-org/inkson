@@ -2021,6 +2021,59 @@ export async function mockArkretApi(
       });
     }
 
+    const agentRenewPairingMatch = url.pathname.match(
+      /^\/_arkret\/self\/agents\/([^/]+)\/renew-pairing$/,
+    );
+    if (agentRenewPairingMatch && route.request().method() === "POST") {
+      const agentId = decodeURIComponent(agentRenewPairingMatch[1]);
+      const agent = personalAgents.get(agentId);
+      if (!agent) {
+        return json(
+          route,
+          {
+            ok: false,
+            error: { code: "not_found", message: "agent not found" },
+          },
+          404,
+        );
+      }
+      if (agent.status !== "pending_runtime_key" && agent.status !== "pairing_expired") {
+        return json(
+          route,
+          {
+            ok: false,
+            error: {
+              code: "failed_precondition",
+              message: "agent already has an authorized runtime key",
+            },
+          },
+          412,
+        );
+      }
+      personalAgentCounter += 1;
+      const renewedExpiresAt = "2099-07-06T00:20:00Z";
+      const keyState = {
+        status: "pending_runtime_key",
+        pairing_request_id: `pair-renew-${personalAgentCounter}`,
+        pairing_code: "135791",
+        pairing_expires_at: renewedExpiresAt,
+        requested_scope:
+          (personalAgentKeyStates.get(agentId) ?? {}).requested_scope ?? null,
+      };
+      personalAgents.set(agentId, {
+        ...agent,
+        status: "pending_runtime_key",
+        updated_at: "2026-07-06T00:30:00Z",
+      });
+      personalAgentKeyStates.set(agentId, keyState);
+      return json(route, {
+        agent_id: agentId,
+        pairing_request_id: keyState.pairing_request_id,
+        pairing_code: keyState.pairing_code,
+        expires_at: keyState.pairing_expires_at,
+      });
+    }
+
     const agentGrantsMatch = url.pathname.match(
       /^\/_arkret\/self\/agents\/([^/]+)\/grants$/,
     );
