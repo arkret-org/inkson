@@ -86,12 +86,14 @@ mod manage_pages;
 mod navigation_state;
 mod notifications_drawer;
 mod projection_adapter;
+mod recovery_effects;
 mod route_surface;
 mod session_boot;
 mod session_context;
 mod session_shell;
 mod sidebar;
 mod sidebar_width;
+mod sync_effects;
 pub(crate) use clipboard::*;
 pub(crate) use command_palette::*;
 use connect::*;
@@ -102,12 +104,14 @@ pub(crate) use handles::*;
 pub(crate) use manage_pages::*;
 use navigation_state::NavigationState;
 use notifications_drawer::NotificationsDrawer;
+use recovery_effects::AccountRecoveryEffects;
 use route_surface::{RouteSurface, RouteSurfaceState};
 use session_boot::*;
 pub(crate) use session_context::SessionContext;
 use session_shell::SessionShell;
 use sidebar::*;
 use sidebar_width::*;
+use sync_effects::SyncEffects;
 
 const UI_PREFERENCES_SCOPE: &str = "ui.browser";
 const SIDEBAR_WIDTH_PREFERENCE_KEY: &str = "layout.sidebar.width";
@@ -294,7 +298,6 @@ fn AppBootstrap() -> Element {
         );
         crate::runtime::services::RuntimeServices::new(state_adapter, session_coordinator.clone())
     });
-    let client_runtime = runtime_services.client.clone();
 
     // Dev-only (wasm + `wasm-localstorage-secrets-test`) real-grant injection
     // for the cotest joint e2e harness. Runs once, synchronously, ahead of the
@@ -602,8 +605,8 @@ fn AppBootstrap() -> Element {
     // `Signal<DidResolutionCache>` with `use_context_provider`.
     //   * Authority resolution sites can fetch it via `use_context::<Signal<DidResolutionCache>>()`
     //     and use `did_resolver::resolve_with_cache` for cache-first resolution.
-    //   * The same handle is copied into `SyncEngineContext.did_cache` below so the Y2 invalidation
-    //     hook can `invalidate` / `clear` while ingesting projections.
+    //   * `SyncEffects` copies the same handle into `SyncEngineContext.did_cache` so the Y2
+    //     invalidation hook can invalidate/clear while ingesting projections.
     // The cache is pure in-memory state, is not persisted, and only lives for a
     // single login session, matching the `DidResolutionCache` docs.
     let mut did_cache = use_context_provider(|| {
@@ -895,82 +898,13 @@ fn AppBootstrap() -> Element {
     // then signs in (on the same mount) would never auto-connect, since
     // the one-shot would have already been spent during the empty-session
     // first render.
-    // SyncEngine generation counter. Declared up front so the
-    // bootstrap connect() can pass it via `ConnectContext`. The engine
-    // itself is spawned by the `use_effect` further down.
+    // SyncEngine generation counter. Declared up front so bootstrap connect()
+    // and the session-owned `SyncEffects` component share one liveness axis.
     let mut sync_generation = use_signal(|| 0u64);
-    let mut sync_engine_active_generation = use_signal(|| Option::<u64>::None);
+    let sync_engine_active_generation = use_signal(|| Option::<u64>::None);
     // Dedup key (`<generation>|<realm_id>`) for the per-realm events engine, so
     // a base_url/token re-render doesn't stack a second loop on the same realm.
-    let mut realm_events_engine_active_key = use_signal(|| Option::<String>::None);
-
-    {
-        let mut account_recovery_configured = account_recovery_configured;
-        let mut account_recovery_detection_key_seen = account_recovery_detection_key_seen;
-        let mut last_error = last_error;
-        let state_store_for_recovery_state = state_store;
-        let session_coordinator = runtime_services.session.clone();
-        use_effect(move || {
-            let base = base_url();
-            let credential = token();
-            let actor = account_did();
-            let generation = sync_generation();
-            if !matches!(session_boot_state(), SessionBootState::Authenticated)
-                || base.trim().is_empty()
-                || credential.trim().is_empty()
-                || actor.trim().is_empty()
-            {
-                account_recovery_configured.set(None);
-                account_recovery_detection_key_seen.set(None);
-                return;
-            }
-            let detection_key = format!("{generation}|{base}|{actor}");
-            if account_recovery_detection_key_seen().as_deref() == Some(detection_key.as_str()) {
-                return;
-            }
-            account_recovery_detection_key_seen.set(Some(detection_key.clone()));
-            // DIAG (describe-storm): this effect re-fetches recovery-policy +
-            // backups whenever `detection_key` changes. On a wedged account it
-            // storms; log the key so consecutive values reveal which field
-            // (generation) keeps flipping. Remove once the driver is fixed.
-            tracing::debug!(target: "recovery_diag", key = %detection_key, "recovery_state re-fetch (recovery-policy+backups)");
-            let local_fingerprint = {
-                let store = state_store_for_recovery_state.read();
-                crate::views::recovery::local_recovery_key_fingerprint(&store, &actor)
-            };
-            let session_coordinator = session_coordinator.clone();
-            spawn(async move {
-                match crate::transport::auth::with_authed_api(&base, credential, |api| async move {
-                    // The recovery-state reducer reads both payloads leniently via
-                    // `Value` accessors; serialize the typed SDK outcomes back to
-                    // their wire JSON.
-                    let policy = serde_json::to_value(&api.get_recovery_policy().await?)?;
-                    let backups = serde_json::to_value(&api.list_key_backups().await?)?;
-                    Ok::<(serde_json::Value, serde_json::Value), anyhow::Error>((policy, backups))
-                })
-                .await
-                {
-                    Ok((policy, backups)) => {
-                        let state = crate::recovery_strand::account_recovery_state_from_payloads(
-                            &policy,
-                            &backups,
-                            local_fingerprint,
-                        );
-                        account_recovery_configured.set(Some(state.server_recovery_configured()));
-                    }
-                    Err(error) if error.is_auth_expired() => {
-                        session_coordinator
-                            .invalidate("session expired while loading account recovery state");
-                        account_recovery_configured.set(None);
-                    }
-                    Err(error) => {
-                        last_error.set(Some(format!("recovery_state: {}", error.display())));
-                        account_recovery_configured.set(None);
-                    }
-                }
-            });
-        });
-    }
+    let realm_events_engine_active_key = use_signal(|| Option::<String>::None);
 
     // AKP-0007 P3B.4.3 — active multi-profile snapshot, threaded into
     // the sync engine context so the loop can detect a profile rotation
@@ -1067,7 +1001,7 @@ fn AppBootstrap() -> Element {
     // Bootstrap handshake: on first render with a valid session, run
     // `connect()` exactly once to do the `/server/describe` +
     // account viewer probes and the initial server-authoritative full
-    // sync. After that, the SyncEngine (below) owns continuous sync.
+    // sync. After that, `SyncEffects` owns continuous sync.
     let mut bootstrap_pending = use_signal(|| true);
     let secure_store_ready = secure_store_bootstrap_ready();
     if bootstrap_pending() {
@@ -1192,131 +1126,6 @@ fn AppBootstrap() -> Element {
             }
         }
     }
-
-    // SyncEngine — long-poll loop that keeps `realm_tree_projections` +
-    // derived signals continuously aligned with `/sync`. Spawn per
-    // generation so logout / server-switch / account-change can stop
-    // the previous loop cleanly by bumping the counter.
-    //
-    // The use_effect re-runs whenever `sync_generation`, `base_url`, or
-    // `token` changes. Each respawn passes the engine the generation
-    // value it started with so a stale iteration can self-check and
-    // exit before writing back to signals owned by the new generation.
-    let sync_effects = runtime_services.effects.clone();
-    let sync_session = runtime_services.session.clone();
-    let sync_projection_sink = runtime_services.projection_sink.clone();
-    use_effect(move || {
-        let current_gen = sync_generation();
-        let base = base_url();
-        let session = token();
-        if base.trim().is_empty() || session.trim().is_empty() || !sync_bootstrap_complete() {
-            return;
-        }
-        if *sync_engine_active_generation.peek() == Some(current_gen) {
-            return;
-        }
-        sync_engine_active_generation.set(Some(current_gen));
-        let effect = sync_effects.register(crate::runtime::effects::EffectKey {
-            owner: crate::runtime::effects::EffectOwner::Account(account_did()),
-            name: "account-sync".to_owned(),
-            generation: current_gen,
-        });
-        let completion_effects = sync_effects.clone();
-        let ctx = crate::sync_engine::SyncEngineContext {
-            base_url: base,
-            token: runtime_adapter::value_reader(token),
-            state_store: runtime_adapter::state_store_handle(state_store),
-            account_did: account_did(),
-            device_id: device_id(),
-            selected_realm_id: runtime_adapter::value_reader(selected_realm_id),
-            // Y1/Y2 - pass the session-scoped cache handle provided above into
-            // the sync engine so the Y2 invalidation hook can invalidate/clear
-            // entries while ingesting projections.
-            did_cache: runtime_adapter::value_cell(did_cache),
-            // Receive side of `ak.call.signal`: the engine routes inbound
-            // call-signal envelopes from every incremental sync body into
-            // this hub (the same hub `CallPanel` drains).
-            call_signal_hub,
-            session: sync_session.clone(),
-            effect: effect.clone(),
-            projection_sink: sync_projection_sink.clone(),
-        };
-        let mut active_generation = sync_engine_active_generation;
-        spawn(async move {
-            crate::sync_engine::run_sync_engine(
-                current_gen,
-                runtime_adapter::value_reader(sync_generation),
-                ctx,
-            )
-            .await;
-            completion_effects.complete(&effect);
-            if *active_generation.peek() == Some(current_gen) {
-                active_generation.set(None);
-            }
-        });
-    });
-
-    // Per-realm `events/subscribe` engine — the realm-scoped counterpart to the
-    // account SyncEngine above. It long-polls the SELECTED realm's durable event
-    // stream with that realm's OWN cursor, so cross-member events that never ride
-    // the (delivery-routing-gated) account push still reach the board. Respawned
-    // when the generation, realm, base_url, or token change; the previous loop
-    // self-exits when its realm no longer matches the selection.
-    let realm_effects = runtime_services.effects.clone();
-    use_effect(move || {
-        let current_gen = sync_generation();
-        let base = base_url();
-        let session = token();
-        let realm_id = selected_realm_id();
-        let route_enabled = realm_events_route_enabled();
-        if base.trim().is_empty()
-            || session.trim().is_empty()
-            || realm_id.trim().is_empty()
-            || !route_enabled
-            || !sync_bootstrap_complete()
-        {
-            return;
-        }
-        let active_key = format!("{current_gen}|{realm_id}");
-        if realm_events_engine_active_key.peek().as_deref() == Some(active_key.as_str()) {
-            return;
-        }
-        realm_events_engine_active_key.set(Some(active_key.clone()));
-        let effect = realm_effects.register(crate::runtime::effects::EffectKey {
-            owner: crate::runtime::effects::EffectOwner::Realm {
-                account: account_did(),
-                realm: realm_id.clone(),
-            },
-            name: "realm-events".to_owned(),
-            generation: current_gen,
-        });
-        let completion_effects = realm_effects.clone();
-        let ctx = crate::realm_events_engine::RealmEventsEngineContext {
-            base_url: runtime_adapter::value_reader(base_url),
-            token: runtime_adapter::value_reader(token),
-            state_store: runtime_adapter::state_store_handle(state_store),
-            selected_realm_id: runtime_adapter::value_reader(selected_realm_id),
-            route_enabled: runtime_adapter::value_reader(realm_events_route_enabled),
-            realm_live_epoch: runtime_adapter::value_cell(realm_live_epoch),
-            profiles: runtime_adapter::value_reader(profiles_signal),
-            client_runtime: client_runtime.clone(),
-            effect: effect.clone(),
-        };
-        let mut active_key_signal = realm_events_engine_active_key;
-        spawn(async move {
-            crate::realm_events_engine::run_realm_events_engine(
-                current_gen,
-                runtime_adapter::value_reader(sync_generation),
-                realm_id,
-                ctx,
-            )
-            .await;
-            completion_effects.complete(&effect);
-            if active_key_signal.peek().as_deref() == Some(active_key.as_str()) {
-                active_key_signal.set(None);
-            }
-        });
-    });
 
     // D1: detect the account-MLS unlock requirement as soon as a logged-in
     // session finishes bootstrap, without waiting for the user to enter a
@@ -3218,6 +3027,28 @@ fn AppBootstrap() -> Element {
             is_server_admin,
             theme,
             system_theme_is_night,
+            AccountRecoveryEffects {
+                account_recovery_configured,
+                account_recovery_detection_key_seen,
+                last_error,
+                token,
+                account_did,
+                sync_generation,
+                session_boot_state,
+            }
+            SyncEffects {
+                sync_generation,
+                sync_engine_active_generation,
+                realm_events_engine_active_key,
+                sync_bootstrap_complete,
+                token,
+                account_did,
+                device_id,
+                selected_realm_id,
+                realm_events_route_enabled,
+                realm_live_epoch,
+                profiles: profiles_signal,
+            }
             style { "{DXC_THEME}" }
             style { "{DXC_BUTTON_STYLE}" }
             style { "{STYLE}" }
