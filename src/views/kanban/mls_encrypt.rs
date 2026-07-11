@@ -279,7 +279,7 @@ pub(super) fn dispatch_card_detail_update(
     let local_synthesis_revision_body = synthesis_revision_body
         .clone()
         .filter(|_| !effective_security_encrypted);
-    state_store.write().append_raw_operation(
+    state_store.write().enqueue_local_projection_command(
         operation_id.clone(),
         Some(realm_id.clone()),
         json!({

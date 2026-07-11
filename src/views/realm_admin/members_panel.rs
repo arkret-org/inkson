@@ -202,7 +202,7 @@ fn member_agent_row_from_value(
         return None;
     }
     let agent_principal_id = agent_principal_id.to_owned();
-    let slug = row.slug.trim().to_owned();
+    let slug = row.agent_slug?.trim().to_owned();
     if slug.is_empty() {
         return None;
     }

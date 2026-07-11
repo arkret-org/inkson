@@ -432,7 +432,7 @@ pub(super) fn dispatch_calendar_rsvp(
         }
     };
     let operation_id = sdk_event_local_operation_id(&op).to_owned();
-    state_store.write().append_raw_operation(
+    state_store.write().enqueue_local_projection_command(
         operation_id.clone(),
         Some(realm_id.clone()),
         serde_json::json!({

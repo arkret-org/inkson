@@ -8,9 +8,8 @@
 //! are unchanged.
 
 use chime::{
-    ChimePushRegisterDeviceRequest, PushBridgeDescribeOutcome,
-    PushGatewayIntegrationDescribeOutcome, PushRegistrationState, floria_push_bridge_describe_url,
-    floria_push_integration_describe_url,
+    ChimePushRegisterDeviceRequest, IntegrationDescribeOutcome, PushBridgeDescribeOutcome,
+    PushRegistrationState, floria_push_bridge_describe_url, floria_push_integration_describe_url,
 };
 use serde_json::Value;
 
@@ -217,7 +216,7 @@ pub async fn describe_push_gateway_bridge(
 
 pub async fn describe_push_gateway_integration(
     push_gateway_url: &str,
-) -> anyhow::Result<PushGatewayIntegrationDescribeOutcome> {
+) -> anyhow::Result<IntegrationDescribeOutcome> {
     let describe_url = floria_push_integration_describe_url(push_gateway_url)?;
     let response = push_describe_client()?.get(&describe_url).send().await?;
     let status = response.status();
@@ -252,9 +251,7 @@ pub fn summarize_push_gateway_bridge(bridge: &PushBridgeDescribeOutcome) -> Stri
     )
 }
 
-pub fn summarize_push_gateway_integration(
-    manifest: &PushGatewayIntegrationDescribeOutcome,
-) -> String {
+pub fn summarize_push_gateway_integration(manifest: &IntegrationDescribeOutcome) -> String {
     let dependencies = if manifest.dependencies.is_empty() {
         "none".to_owned()
     } else {

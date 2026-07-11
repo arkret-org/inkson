@@ -78,35 +78,10 @@ impl LocalStateStore {
             return LocalIdentity::from_record(&record);
         }
 
-        #[cfg(target_arch = "wasm32")]
         if self.cached.local_identity.is_some() {
-            tracing::warn!("discarding wasm plaintext local identity seed instead of migrating it");
+            tracing::warn!("discarding plaintext local identity seed");
             self.cached.local_identity = None;
             let _ = self.flush();
-        }
-
-        #[cfg(not(target_arch = "wasm32"))]
-        if let Some(record) = self.cached.local_identity.clone() {
-            let identity = LocalIdentity::from_record(&record)?;
-            match store_identity_record_in_secure_store(secure_store, &record) {
-                Ok(()) => {
-                    self.cached.local_identity = None;
-                    let _ = self.flush();
-                    return Ok(identity);
-                }
-                Err(error) if plaintext_identity_seed_fallback_allowed() => {
-                    tracing::warn!(
-                        ?error,
-                        "secure identity handoff failed; using explicit plaintext identity fallback",
-                    );
-                    return Ok(identity);
-                }
-                Err(error) => {
-                    return Err(anyhow::anyhow!(
-                        "secure identity handoff failed and plaintext identity fallback is disabled: {error}"
-                    ));
-                }
-            }
         }
 
         let identity = LocalIdentity::generate()?;

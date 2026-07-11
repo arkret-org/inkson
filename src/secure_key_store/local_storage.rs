@@ -79,10 +79,7 @@ impl LocalStorageSecureKeyStore {
         })
     }
 
-    // Module-scope visibility so `migrate_localstorage_entries_to_indexeddb`
-    // can reuse the same getter without re-implementing the window /
-    // Storage probe.
-    pub(super) fn storage() -> Result<web_sys::Storage, SecureKeyStoreError> {
+    fn storage() -> Result<web_sys::Storage, SecureKeyStoreError> {
         let window = web_sys::window().ok_or_else(|| {
             SecureKeyStoreError::Unsupported("web_sys::window unavailable (non-browser host)")
         })?;
@@ -107,23 +104,6 @@ impl LocalStorageSecureKeyStore {
 
     fn entry_key(&self, key: &str) -> String {
         format!("inkson.secret.{}.{key}", self.service_name)
-    }
-
-    /// Store a transient AEAD-wrapped mirror used only by the
-    /// IndexedDB backend to survive page-unload races before its async
-    /// write commits. Public LocalStorage reads/writes still reject
-    /// sensitive keys; boot migrates these mirrors into IndexedDB before
-    /// dropping the wrapping seed.
-    pub(super) fn store_unload_race_mirror(
-        &self,
-        key: &str,
-        value: &str,
-    ) -> Result<(), SecureKeyStoreError> {
-        let storage = Self::storage()?;
-        let wrapped = wrap_secret(value, &self.wrapping_key)?;
-        storage
-            .set_item(&self.entry_key(key), &wrapped)
-            .map_err(|err| SecureKeyStoreError::Backend(format!("localStorage set: {err:?}")))
     }
 }
 

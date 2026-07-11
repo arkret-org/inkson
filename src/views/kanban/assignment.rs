@@ -264,7 +264,7 @@ pub(super) fn dispatch_card_assignees_update(
     for mutation in &mutations {
         let operation = mutation.operation();
         let operation_id = sdk_event_local_operation_id(operation).to_owned();
-        state_store.write().append_raw_operation(
+        state_store.write().enqueue_local_projection_command(
             operation_id.clone(),
             Some(realm_id.clone()),
             json!({

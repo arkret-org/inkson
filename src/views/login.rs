@@ -129,7 +129,7 @@ pub fn LoginPanel(
                     let switched = if store.pending_login().is_some() {
                         store.adopt_pending_login(&completed.actor)
                     } else {
-                        store.adopt_account_scope(&completed.actor)
+                        store.switch_active_account(&completed.actor)
                     };
                     // Same actor but a different principal server: the cached
                     // projections/cursor are scoped to the old server and are

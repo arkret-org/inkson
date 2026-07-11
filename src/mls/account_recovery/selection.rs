@@ -7,13 +7,6 @@ use super::backup_body::{
     is_passphrase_account_secret_backup, is_recovery_public_key_account_secret_backup,
 };
 
-const ACTIVE_SERIES_KEYS: &[&str] = &[
-    "active_series",
-    "active_series_records",
-    "key_backup_active_series",
-    "key_backup_active_series_records",
-];
-
 /// Pure body-selection: pick the latest `mls_private_plaintext` backup from a
 /// `list_key_backups`-shaped payload, if present. Newer `series_seq` wins,
 /// followed by the creation timestamp.
@@ -60,64 +53,25 @@ pub(super) fn active_series_id_for_backup_class<'a>(
     list_payload: &'a Value,
     backup_class: &str,
 ) -> Option<&'a str> {
-    for key in ACTIVE_SERIES_KEYS {
-        if let Some(value) = list_payload.get(*key)
-            && let Some(series_id) = active_series_id_in_value(value, backup_class)
-        {
-            return Some(series_id);
-        }
-    }
-    for control_key in ["principal_control", "control_stream"] {
-        if let Some(control) = list_payload.get(control_key) {
-            for key in ACTIVE_SERIES_KEYS {
-                if let Some(value) = control.get(*key)
-                    && let Some(series_id) = active_series_id_in_value(value, backup_class)
-                {
-                    return Some(series_id);
-                }
-            }
-        }
-    }
-    None
-}
-
-fn active_series_id_in_value<'a>(value: &'a Value, backup_class: &str) -> Option<&'a str> {
-    match value {
-        Value::Array(records) => records
-            .iter()
-            .find_map(|record| active_series_id_in_value(record, backup_class)),
-        Value::Object(map) => {
-            if map.get("backup_class").and_then(Value::as_str) == Some(backup_class) {
-                return Some(
-                    map.get("active_series_id")
-                        .and_then(Value::as_str)
-                        .unwrap_or_default(),
-                );
-            }
-            if let Some(entry) = map.get(backup_class) {
-                return match entry {
-                    Value::String(series_id) => Some(series_id.as_str()),
-                    Value::Object(entry_map) => Some(
-                        entry_map
-                            .get("active_series_id")
-                            .and_then(Value::as_str)
-                            .unwrap_or_default(),
-                    ),
-                    Value::Array(_) => active_series_id_in_value(entry, backup_class),
-                    _ => Some(""),
-                };
-            }
-            map.values()
-                .find_map(|entry| active_series_id_in_value(entry, backup_class))
-        }
-        _ => None,
-    }
+    list_payload
+        .get("active_series")
+        .and_then(Value::as_array)
+        .and_then(|records| {
+            records.iter().find(|record| {
+                record.get("schema").and_then(Value::as_str)
+                    == Some(crate::key_backup::KEY_BACKUP_ACTIVE_SERIES_SCHEMA)
+                    && record.get("backup_class").and_then(Value::as_str) == Some(backup_class)
+            })
+        })
+        .and_then(|record| record.get("active_series_id"))
+        .and_then(Value::as_str)
+        .filter(|series_id| !series_id.is_empty())
 }
 
 fn matches_active_series(body: &Value, active_series: Option<&str>) -> bool {
     match active_series {
         Some(series_id) => !series_id.is_empty() && backup_series_id(body) == series_id,
-        None => true,
+        None => false,
     }
 }
 
@@ -150,11 +104,8 @@ pub fn mls_account_secret_backup_version(body: &Value) -> u32 {
 /// NOT be able to resurrect an old low-seq link by stamping a newer
 /// timestamp); `created_at` is only a last-resort tiebreak.
 ///
-/// When supplied by the caller, a verified active-series record
-/// (key-management.md section 7.6) selects the only eligible series. Without
-/// that record, this keeps the legacy compatibility ordering and
-/// `verify_series_chain` still fails closed on a broken chain within the
-/// selected series.
+/// A verified active-series record (key-management.md section 7.6) selects the
+/// only eligible series. Missing active-series metadata fails closed.
 pub fn select_mls_account_secret_backup(list_payload: &Value) -> Option<Value> {
     let active_series = active_series_id_for_backup_class(
         list_payload,

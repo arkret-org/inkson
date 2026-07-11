@@ -1,6 +1,6 @@
 //! Core store persistence: cursors, projections, drafts, notifications,
-//! watch levels, read cursors, push registration, OIDC / DPoP secure-store
-//! migration, and account-scope lifecycle.
+//! watch levels, read cursors, push registration, OIDC / DPoP secure storage,
+//! and account-scope lifecycle.
 
 use super::*;
 
@@ -242,78 +242,6 @@ fn local_state_store_persists_to_disk_between_instances() {
 }
 
 #[test]
-fn local_state_migrates_local_only_drafts_to_account_data_staging() {
-    let path = temp_state_path("draft-account-data-migration");
-    let mut store = LocalStateStore::with_path(path.clone());
-    store.save_draft(
-        "ak:realm:01904100-0000-7000-8000-000000000001",
-        "draft survives migration",
-    );
-
-    let migrated = store
-        .migrate_local_only_drafts_to_account_data(
-            b"inkson-account-data-test-key",
-            "ak:device:01904100-0000-7000-8000-000000000001",
-            "01970e589d21-0000-a13f9c2e",
-            "2026-06-07T00:00:00Z",
-        )
-        .unwrap();
-    assert_eq!(migrated.len(), 1);
-    assert!(!migrated[0].account_data_key.contains("ak:realm:"));
-
-    let reader = LocalStateStore::with_path(path);
-    let entries = reader.draft_account_data_entries();
-    let value = entries
-        .get(&migrated[0].account_data_key)
-        .expect("migrated draft persisted");
-    assert_eq!(value["content"]["body"], "draft survives migration");
-    assert_eq!(
-        value["origin_device_id"],
-        "ak:device:01904100-0000-7000-8000-000000000001"
-    );
-    assert_eq!(
-        reader
-            .load()
-            .drafts
-            .get("ak:realm:01904100-0000-7000-8000-000000000001")
-            .map(String::as_str),
-        Some("draft survives migration")
-    );
-}
-
-#[test]
-fn local_state_stages_saved_items_as_private_account_data() {
-    let path = temp_state_path("saved-account-data-migration");
-    let mut store = LocalStateStore::with_path(path.clone());
-    let migrated = store
-        .migrate_local_only_saved_items_to_account_data(
-            b"inkson-account-data-test-key",
-            &[crate::account_data::LegacySavedItem {
-                collection_title: "Focus".to_owned(),
-                target_ref: "ak:message:01904100-0000-7000-8000-000000000001".to_owned(),
-                note: Some("read later".to_owned()),
-            }],
-            "01970e589d21-0000-a13f9c2e",
-        )
-        .unwrap();
-    assert_eq!(migrated.len(), 1);
-    assert!(!migrated[0].account_data_key.contains("Focus"));
-    assert!(!migrated[0].account_data_key.contains("ak:message:"));
-
-    let reader = LocalStateStore::with_path(path);
-    let entries = reader.saved_account_data_entries();
-    let value = entries
-        .get(&migrated[0].account_data_key)
-        .expect("migrated saved item persisted");
-    assert_eq!(value["kind"], "saved_item");
-    assert_eq!(value["collection_title"], "Focus");
-    assert_eq!(
-        value["target_ref"],
-        "ak:message:01904100-0000-7000-8000-000000000001"
-    );
-}
-
-#[test]
 fn local_state_store_persists_notifications_and_mute_preferences() {
     let path = temp_state_path("notifications");
     let mut store = LocalStateStore::with_path(path.clone());
@@ -523,7 +451,7 @@ fn local_state_store_persists_push_registration_state() {
 }
 
 #[test]
-fn dpop_device_key_migrates_into_secure_key_store() {
+fn dpop_device_key_uses_secure_key_store() {
     use crate::secure_key_store::{MemorySecureKeyStore, SecureKeyStore};
     let path = temp_state_path("dpop-secure-store");
     let mut store = LocalStateStore::with_path(path);
@@ -575,25 +503,15 @@ fn clear_account_scoped_preserves_device_level_and_session_grant_state() {
     store.save_realm_tree_projection("ak:space:a", serde_json::json!({}));
     store.save_draft("ak:space:a", "draft");
     store.save_private_data("did:web:tester.example", "theme", "night");
-    store
-        .migrate_local_only_drafts_to_account_data(
-            b"inkson-account-data-test-key",
-            "ak:device:01904100-0000-7000-8000-000000000001",
-            "01970e589d21-0000-a13f9c2e",
-            "2026-06-07T00:00:00Z",
-        )
-        .unwrap();
-    store
-        .migrate_local_only_saved_items_to_account_data(
-            b"inkson-account-data-test-key",
-            &[crate::account_data::LegacySavedItem {
-                collection_title: "Focus".to_owned(),
-                target_ref: "ak:message:01904100-0000-7000-8000-000000000001".to_owned(),
-                note: None,
-            }],
-            "01970e589d21-0000-a13f9c2e",
-        )
-        .unwrap();
+    store.ensure_cached_loaded();
+    store.cached.draft_account_data.insert(
+        "ak.draft.v1:test".to_owned(),
+        serde_json::json!({ "kind": "message" }),
+    );
+    store.cached.saved_account_data.insert(
+        "ak.saved.v1:test".to_owned(),
+        serde_json::json!({ "kind": "saved_item" }),
+    );
     // Device-level state that MUST survive. ensure_local_identity
     // generates a fresh seed + DID and persists the record under
     // local_identity — the canonical device-level field this helper
@@ -647,13 +565,13 @@ fn clear_account_scoped_preserves_device_level_and_session_grant_state() {
 }
 
 #[test]
-fn adopt_account_scope_isolates_accounts_per_did() {
+fn switch_active_account_isolates_accounts_per_did() {
     let path = temp_state_path("adopt-account-scope");
     let mut store = LocalStateStore::with_path(path);
 
     // Establish alice as the active account with a grant + cursor + projection.
     assert!(
-        store.adopt_account_scope("did:web:alice.example"),
+        store.switch_active_account("did:web:alice.example"),
         "first adopt (no active account) switches and reports a change"
     );
     assert_eq!(
@@ -675,14 +593,14 @@ fn adopt_account_scope_isolates_accounts_per_did() {
     }));
 
     // Re-adopting the same actor is a no-op and keeps alice's state.
-    assert!(!store.adopt_account_scope("did:web:alice.example"));
+    assert!(!store.switch_active_account("did:web:alice.example"));
     assert_eq!(store.load().sync_cursor.as_deref(), Some("sx:alice"));
     assert!(store.load().session_grant.is_some());
 
     // Switching to a different identity loads bob's OWN (empty) entry — alice's
     // grant/cursor/projection live in a separate key and can never leak into
     // bob's session.
-    assert!(store.adopt_account_scope("did:web:bob.example"));
+    assert!(store.switch_active_account("did:web:bob.example"));
     let state = store.load();
     assert!(
         state.sync_cursor.is_none(),
@@ -707,7 +625,7 @@ fn adopt_account_scope_isolates_accounts_per_did() {
     let mut known = store.known_account_dids();
     known.sort();
     assert_eq!(known, vec!["did:web:alice.example", "did:web:bob.example"]);
-    assert!(store.adopt_account_scope("did:web:alice.example"));
+    assert!(store.switch_active_account("did:web:alice.example"));
     assert_eq!(store.load().sync_cursor.as_deref(), Some("sx:alice"));
     assert!(
         store.load().session_grant.is_some(),
@@ -720,9 +638,9 @@ fn per_account_entries_persist_independently_across_store_instances() {
     let path = temp_state_path("per-account-persist");
     {
         let mut store = LocalStateStore::with_path(path.clone());
-        store.adopt_account_scope("did:web:alice.example");
+        store.switch_active_account("did:web:alice.example");
         store.save_sync_cursor("sx:alice");
-        store.adopt_account_scope("did:web:bob.example");
+        store.switch_active_account("did:web:bob.example");
         store.save_sync_cursor("sx:bob");
         // Bob is the active account at flush time.
     }
@@ -735,7 +653,7 @@ fn per_account_entries_persist_independently_across_store_instances() {
     assert_eq!(reader.load().sync_cursor.as_deref(), Some("sx:bob"));
     // Switching back to alice reads alice's OWN persisted entry, untouched.
     let mut reader = reader;
-    reader.adopt_account_scope("did:web:alice.example");
+    reader.switch_active_account("did:web:alice.example");
     assert_eq!(reader.load().sync_cursor.as_deref(), Some("sx:alice"));
 }
 
@@ -744,9 +662,9 @@ fn forget_account_purges_only_the_target_entry_and_device_prefs_survive() {
     let path = temp_state_path("forget-account");
     let mut store = LocalStateStore::with_path(path);
     store.set_device_pref("theme", "night");
-    store.adopt_account_scope("did:web:alice.example");
+    store.switch_active_account("did:web:alice.example");
     store.save_sync_cursor("sx:alice");
-    store.adopt_account_scope("did:web:bob.example");
+    store.switch_active_account("did:web:bob.example");
     store.save_sync_cursor("sx:bob");
 
     store.forget_account("did:web:bob.example");
@@ -764,7 +682,7 @@ fn forget_account_purges_only_the_target_entry_and_device_prefs_survive() {
     // Cross-account device prefs are untouched by purging an account.
     assert_eq!(store.device_pref("theme").as_deref(), Some("night"));
     // Alice's entry is intact.
-    store.adopt_account_scope("did:web:alice.example");
+    store.switch_active_account("did:web:alice.example");
     assert_eq!(store.load().sync_cursor.as_deref(), Some("sx:alice"));
 }
 
@@ -773,9 +691,9 @@ fn primary_handle_is_per_account_and_readable_by_did() {
     let path = temp_state_path("primary-handle");
     let mut store = LocalStateStore::with_path(path);
 
-    store.adopt_account_scope("did:webvh:zA:alice.example");
+    store.switch_active_account("did:webvh:zA:alice.example");
     store.set_primary_handle("alice");
-    store.adopt_account_scope("did:webvh:zB:david.example");
+    store.switch_active_account("did:webvh:zB:david.example");
     store.set_primary_handle("david");
 
     // Each account's handle is readable BY DID without making it active.
@@ -806,7 +724,7 @@ fn known_accounts_lists_each_account_with_its_handle_and_device() {
     let mut store = LocalStateStore::with_path(path);
 
     store.register_known_account("did:webvh:zA:alice.example");
-    store.adopt_account_scope("did:webvh:zA:alice.example");
+    store.switch_active_account("did:webvh:zA:alice.example");
     store.set_primary_handle("alice");
     store.set_session_grant(Some(PersistedSessionGrant {
         grant_jwt: "alice.grant".to_owned(),
@@ -821,7 +739,7 @@ fn known_accounts_lists_each_account_with_its_handle_and_device() {
     }));
 
     store.register_known_account("did:webvh:zB:david.example");
-    store.adopt_account_scope("did:webvh:zB:david.example");
+    store.switch_active_account("did:webvh:zB:david.example");
     store.set_primary_handle("david");
 
     let accounts = store.known_accounts();
@@ -840,45 +758,6 @@ fn known_accounts_lists_each_account_with_its_handle_and_device() {
         .find(|account| account.did == "did:webvh:zB:david.example")
         .expect("david present");
     assert_eq!(david.handle, "david");
-}
-
-#[test]
-fn account_entry_without_primary_handle_field_loads() {
-    // Backward-compat: an account entry written before `primary_handle` existed
-    // must still deserialize (serde default → empty handle).
-    let path = temp_state_path("legacy-account-entry");
-    let did = "did:webvh:zLegacy:user.example";
-    let store = LocalStateStore::with_path(path.clone());
-    // Hand-write the account entry file WITHOUT the primary_handle field.
-    let account_file = {
-        use base64::Engine as _;
-        let sanitized = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(did.as_bytes());
-        let stem = path.file_stem().unwrap().to_str().unwrap();
-        let ext = path.extension().unwrap().to_str().unwrap();
-        path.parent()
-            .unwrap()
-            .join(format!("{stem}.account.{sanitized}.{ext}"))
-    };
-    // Serialize a full entry, then strip the `primary_handle` field to mimic a
-    // pre-field on-disk blob (the other fields must still be present so the
-    // entry parses; `#[serde(default)]` only fills the absent handle).
-    let mut entry = serde_json::to_value(ClientLocalState {
-        sync_cursor: Some("sx:legacy".to_owned()),
-        ..ClientLocalState::default()
-    })
-    .unwrap();
-    entry.as_object_mut().unwrap().remove("primary_handle");
-    assert!(
-        entry.get("primary_handle").is_none(),
-        "primary_handle stripped to mimic legacy blob"
-    );
-    std::fs::write(&account_file, serde_json::to_vec_pretty(&entry).unwrap()).unwrap();
-    // Reading the legacy entry's handle by DID succeeds with no handle.
-    assert!(store.primary_handle_for_did(did).is_none());
-    // And the entry is otherwise loadable.
-    let mut store = store;
-    store.adopt_account_scope(did);
-    assert_eq!(store.load().sync_cursor.as_deref(), Some("sx:legacy"));
 }
 
 #[test]
@@ -903,7 +782,7 @@ fn adopt_pending_login_preserves_returning_account_entry() {
     let path = temp_state_path("pending-returning");
     let mut store = LocalStateStore::with_path(path);
     // Alice already has a persisted entry on this browser.
-    store.adopt_account_scope("did:web:alice.example");
+    store.switch_active_account("did:web:alice.example");
     store.save_sync_cursor("sx:alice");
     // Sign out, then a fresh sign-in kicks off pending device material.
     store.begin_pending_login("ak:device:fresh-2", Some("jkt-fresh"));
@@ -914,37 +793,4 @@ fn adopt_pending_login_preserves_returning_account_entry() {
     // secure-store seed/device_id tuple was already re-homed before this root
     // marker is adopted.
     assert_eq!(store.load().sync_cursor.as_deref(), Some("sx:alice"));
-}
-
-#[test]
-fn legacy_single_blob_migrates_to_root_index_and_account_entry() {
-    let path = temp_state_path("legacy-migrate");
-    // Hand-write a legacy global blob: a `ClientLocalState` at the root key
-    // with an `account_scope_owner`, exactly the pre-refactor shape.
-    let owner = "did:web:legacy.example";
-    let mut legacy = serde_json::to_value(ClientLocalState {
-        sync_cursor: Some("sx:legacy".to_owned()),
-        ..ClientLocalState::default()
-    })
-    .unwrap();
-    legacy
-        .as_object_mut()
-        .unwrap()
-        .insert("account_scope_owner".to_owned(), serde_json::json!(owner));
-    std::fs::write(&path, serde_json::to_vec_pretty(&legacy).unwrap()).unwrap();
-
-    // First load runs the read-time migration.
-    let store = LocalStateStore::with_path(path.clone());
-    assert_eq!(store.active_account_did().as_deref(), Some(owner));
-    assert!(store.known_account_dids().iter().any(|did| did == owner));
-    assert_eq!(store.load().sync_cursor.as_deref(), Some("sx:legacy"));
-
-    // The root key now holds a RootIndex (has `known_dids`), not a ClientLocalState.
-    let raw = std::fs::read_to_string(&path).unwrap();
-    let value: serde_json::Value = serde_json::from_str(&raw).unwrap();
-    assert!(value.get("known_dids").is_some(), "root is now an index");
-    assert!(
-        value.get("sync_cursor").is_none(),
-        "the blob moved out of the root key"
-    );
 }

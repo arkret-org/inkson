@@ -2,6 +2,7 @@ use super::*;
 
 #[derive(Clone)]
 pub(super) enum KanbanCommand {
+    RefreshProjection,
     SubmitOperation {
         base_url: String,
         token: Signal<String>,
@@ -76,6 +77,12 @@ pub(super) struct KanbanController {
 }
 
 impl KanbanController {
+    pub fn refresh_projection(mut self) {
+        self.command_queue
+            .write()
+            .push_back(KanbanCommand::RefreshProjection);
+    }
+
     pub fn enqueue_operation(
         mut self,
         base_url: String,

@@ -1,13 +1,11 @@
 //! Personal productivity account-data helpers for draft sync and saved items.
 
 use std::cmp::Ordering;
-use std::collections::BTreeMap;
 
 use base64::Engine as _;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use hkdf::Hkdf;
-use serde::{Deserialize, Serialize};
-use serde_json::{Value, json};
+use serde_json::Value;
 use sha2::Sha256;
 
 use crate::canonical::{canonical_sha256, validate_timestamp_canonical};
@@ -32,23 +30,6 @@ pub struct DraftMergeOutcome {
     pub choice: AccountDataMergeChoice,
     pub winner: arkret_sdk::DraftSyncValue,
     pub conflict_copy: Option<arkret_sdk::DraftSyncValue>,
-}
-
-#[derive(Clone, Debug, PartialEq)]
-pub struct DraftAccountDataItem {
-    pub account_data_key: String,
-    pub value: arkret_sdk::DraftSyncValue,
-    pub state_digest: String,
-    pub legacy_scope_id: Option<String>,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct LegacySavedItem {
-    pub collection_title: String,
-    pub target_ref: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub note: Option<String>,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -173,27 +154,6 @@ pub fn build_message_draft_sync_value(
     Ok(value)
 }
 
-pub fn draft_account_data_item(
-    namespace_key: &[u8],
-    value: arkret_sdk::DraftSyncValue,
-    legacy_scope_id: Option<String>,
-) -> anyhow::Result<DraftAccountDataItem> {
-    validate_draft_sync_value(&value)?;
-    let account_data_key = super::draft_account_data_key(
-        namespace_key,
-        value.kind,
-        &value.target_ref,
-        &value.draft_slot,
-    )?;
-    let state_digest = canonical_sha256(&value)?;
-    Ok(DraftAccountDataItem {
-        account_data_key,
-        value,
-        state_digest,
-        legacy_scope_id,
-    })
-}
-
 pub fn saved_account_data_item(
     namespace_key: &[u8],
     value: arkret_sdk::SavedItemValue,
@@ -214,68 +174,6 @@ pub fn saved_item_account_data_value(value: &arkret_sdk::SavedItemValue) -> anyh
     Ok(serde_json::to_value(
         arkret_sdk::PersonalProductivityValue::SavedItem(value.clone()),
     )?)
-}
-
-pub fn migrate_legacy_local_drafts(
-    namespace_key: &[u8],
-    drafts: &BTreeMap<String, String>,
-    origin_device_id: &str,
-    updated_hlc: &str,
-    retention_expires_at: &str,
-) -> anyhow::Result<Vec<DraftAccountDataItem>> {
-    arkret_sdk::DeviceId::new(origin_device_id.to_owned())
-        .map_err(|error| anyhow::anyhow!("origin_device_id is invalid: {error:?}"))?;
-    Hlc::parse(updated_hlc)?;
-    validate_timestamp_canonical(retention_expires_at)
-        .map_err(|error| anyhow::anyhow!("retention_expires_at is not canonical: {error:?}"))?;
-
-    let mut migrated = Vec::new();
-    for (scope_id, draft) in drafts {
-        let body = draft.trim();
-        if body.is_empty() {
-            continue;
-        }
-        let value = build_message_draft_sync_value(
-            scope_id,
-            json!({ "body": body }),
-            updated_hlc,
-            origin_device_id,
-            retention_expires_at,
-        )?;
-        migrated.push(draft_account_data_item(
-            namespace_key,
-            value,
-            Some(scope_id.clone()),
-        )?);
-    }
-    Ok(migrated)
-}
-
-pub fn migrate_legacy_saved_items(
-    namespace_key: &[u8],
-    items: &[LegacySavedItem],
-    updated_hlc: &str,
-) -> anyhow::Result<Vec<SavedAccountDataItem>> {
-    Hlc::parse(updated_hlc)?;
-    let mut migrated = Vec::new();
-    for item in items {
-        if item.collection_title.trim().is_empty() || item.target_ref.trim().is_empty() {
-            continue;
-        }
-        let value = arkret_sdk::SavedItemValue {
-            collection_title: item.collection_title.clone(),
-            target_ref: item.target_ref.clone(),
-            note: item
-                .note
-                .as_deref()
-                .map(str::trim)
-                .filter(|note| !note.is_empty())
-                .map(ToOwned::to_owned),
-            updated_hlc: updated_hlc.to_owned(),
-        };
-        migrated.push(saved_account_data_item(namespace_key, value)?);
-    }
-    Ok(migrated)
 }
 
 pub fn compare_draft_versions(

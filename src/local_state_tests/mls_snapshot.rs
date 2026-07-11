@@ -85,7 +85,7 @@ fn logout_session_clear_preserves_account_e2ee_state() {
 
     {
         let mut store = LocalStateStore::with_path(path.clone());
-        store.adopt_account_scope(actor);
+        store.switch_active_account(actor);
         store.save_mls_snapshot(
             realm,
             encrypt_state(realm, "abcd", 1, b"state", "secret", b"salt"),

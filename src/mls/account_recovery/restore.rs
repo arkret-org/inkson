@@ -271,11 +271,7 @@ pub fn restore_mls_history_with_recovery_key_from_payload(
     actor_id: &str,
     device_id: &str,
     recovery_private_key: &[u8],
-    // SEC-05: the actor's currently-accepted recovery policy. When supplied the
-    // HPKE account-secret backup's `recovery_policy_ref` MUST match it before the
-    // secret is imported; pass `None` only where the caller cannot resolve the
-    // policy (legacy / offline path).
-    expected_recovery_policy_ref: Option<(&str, u64)>,
+    expected_recovery_policy_ref: (&str, u64),
 ) -> Result<RestoreReport> {
     let _ = device_id;
     let mut report = RestoreReport::default();

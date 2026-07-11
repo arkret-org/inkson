@@ -144,40 +144,23 @@ pub(crate) fn participant_handle_label_from_value(
     if let Some(label) = participant_inline_handle_claim_label(object.get("handle_claims"), did) {
         return Some(label);
     }
-    // R3.1 wire rename: spec field is `handle`. Older payloads may
-    // still ship `handle_uri` (arkret:// URI form retired @ 7157ee8);
-    // accept both for migration compatibility.
-    [
-        "handle",
-        "handle_uri",
-        "handleUri",
-        "user_handle",
-        "userHandle",
-        "acct_alias",
-        "acctAlias",
-        "acct",
-        "mxid",
-    ]
-    .iter()
-    .find_map(|key| {
-        object
-            .get(*key)
-            .and_then(Value::as_str)
-            .filter(|raw| did != Some(raw.trim()))
-            .and_then(mention_handle_label_from_value)
-    })
-    .or_else(|| {
-        [
-            "profile", "account", "member", "user", "actor", "subject", "details",
-        ]
-        .iter()
-        .find_map(|key| {
-            object
-                .get(*key)
-                .filter(|child| child.is_object())
-                .and_then(|child| participant_handle_label_from_value(child, did))
+    object
+        .get("handle")
+        .and_then(Value::as_str)
+        .filter(|raw| did != Some(raw.trim()))
+        .and_then(mention_handle_label_from_value)
+        .or_else(|| {
+            [
+                "profile", "account", "member", "user", "actor", "subject", "details",
+            ]
+            .iter()
+            .find_map(|key| {
+                object
+                    .get(*key)
+                    .filter(|child| child.is_object())
+                    .and_then(|child| participant_handle_label_from_value(child, did))
+            })
         })
-    })
 }
 
 fn participant_inline_handle_claim_label(

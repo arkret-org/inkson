@@ -1,6 +1,6 @@
 //! Realm event and device envelope builders.
 //!
-//! These helpers are transport-neutral and live outside the legacy API facade.
+//! These helpers are transport-neutral and independent of the API transport.
 
 use std::collections::BTreeMap;
 

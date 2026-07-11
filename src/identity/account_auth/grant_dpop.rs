@@ -30,7 +30,7 @@
 //! [`crate::secure_key_store::SecureKeyStore`]. On wasm32 the default
 //! boot path starts with the synchronous localStorage wrapper and
 //! upgrades to the IndexedDB/SubtleCrypto tier via
-//! `upgrade_wasm_secure_key_store_async`, so the DPoP seed follows the
+//! `initialize_wasm_secure_key_store_async`, so the DPoP seed follows the
 //! same handoff as session credentials. Tests keep using plaintext
 //! state records to remain deterministic and dependency-free.
 

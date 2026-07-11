@@ -38,8 +38,8 @@ pub(super) fn SecureStoreEffects(state: SecureStoreEffectState) -> Element {
         let mut token_for_secure_upgrade = token;
         use_future(move || async move {
             crate::runtime_helpers::sleep_for(std::time::Duration::from_millis(1)).await;
-            tracing::debug!(target: "secure_store", "secure store upgrade: invoking upgrade_wasm_secure_key_store_async");
-            match crate::secure_key_store::upgrade_wasm_secure_key_store_async("inkson").await {
+            tracing::debug!(target: "secure_store", "initializing IndexedDB secure store");
+            match crate::secure_key_store::initialize_wasm_secure_key_store_async("inkson").await {
                 Ok(Some(secure_store)) => {
                     tracing::debug!(target: "secure_store", "secure store upgrade: Ok(Some) — IndexedDb tier installed");
                     let loaded_config = config_store_for_secure_upgrade

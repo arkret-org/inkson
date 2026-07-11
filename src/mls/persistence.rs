@@ -69,9 +69,8 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 
-/// Magic-bytes prefix burned into every envelope so a future format
-/// migration can refuse pre-v1 blobs cleanly.
-pub const MLS_ENVELOPE_MAGIC: &[u8] = b"yg-mls-snap-v1";
+/// Magic-bytes prefix burned into every v1 envelope.
+pub const MLS_ENVELOPE_MAGIC: &[u8] = b"inkson-mls-snap-v1";
 
 /// AEAD envelope version. `1` = ChaCha20-Poly1305 AEAD with
 /// `(salt, epoch, recorded_at, magic)` bound into the AAD.

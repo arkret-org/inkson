@@ -142,7 +142,7 @@ fn session_grant(grant_expires_in: i64) -> PersistedSessionGrant {
 fn account_scope_owner_alone_is_not_bootstrap_refresh_material() {
     let actor = "did:web:alice.example";
     let mut store = crate::state::isolated_store_for_tests("account-scope-no-restore");
-    store.adopt_account_scope(actor);
+    store.switch_active_account(actor);
 
     assert!(!has_bootstrap_refresh_material(
         &store,
@@ -842,8 +842,16 @@ fn mls_recovery_setup_missing_stays_false_when_account_backup_exists() {
     );
     let secure = crate::secure_key_store::MemorySecureKeyStore::new();
     let payload = serde_json::json!({
+        "active_series": [{
+            "schema": crate::key_backup::KEY_BACKUP_ACTIVE_SERIES_SCHEMA,
+            "actor_id": "did:web:alice.example",
+            "backup_class": "secret_storage",
+            "active_series_id": "ak:backup_series:01964137-1000-7000-8000-0000000000a1",
+        }],
         "backups": [{
             "backup_id": "ak:backup:passphrase",
+            "backup_class": "secret_storage",
+            "series_id": "ak:backup_series:01964137-1000-7000-8000-0000000000a1",
             "encryption": { "recipient_method": "passphrase_kdf" },
             "contents": [{
                 "item_type": crate::mls::account_recovery::MLS_ACCOUNT_SECRET_ITEM_TYPE,

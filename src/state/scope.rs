@@ -159,9 +159,7 @@ impl LocalStateStore {
     }
 
     /// Make `actor` the active account, loading its own per-account entry.
-    /// This is the per-account replacement for the old
-    /// `stamp_account_scope_owner` / `adopt_account_scope` wipe dance: account
-    /// isolation is now structural (one key per account), so switching is just
+    /// Account isolation is structural (one key per account), so switching is
     /// re-pointing the persisted `active_did` and swapping `cached` for the
     /// target account's persisted entry — never wiping another account's data.
     ///
@@ -201,37 +199,6 @@ impl LocalStateStore {
         // Flush `cached` under the now-active account's key.
         let _ = self.flush();
         true
-    }
-
-    /// Record `actor` as the active account without wiping anything. Used by
-    /// paths that have validated the actor (e.g. the connect bootstrap's
-    /// account-viewer probe) and just need the active pointer + known-DID set
-    /// updated. When the active account is unchanged this is a cheap no-op.
-    pub fn stamp_account_scope_owner(&mut self, actor: &str) {
-        self.ensure_cached_loaded();
-        let actor = actor.trim();
-        if actor.is_empty() {
-            return;
-        }
-        let root = self.read_root();
-        if root.active_did.as_deref() == Some(actor) {
-            if !root.known_dids.iter().any(|known| known == actor) {
-                self.mutate_root(|root| root.note_known_did(actor));
-            }
-            return;
-        }
-        self.switch_active_account(actor);
-    }
-
-    /// Adopt the account-scope for `actor`. With per-account isolation this is
-    /// [`Self::switch_active_account`]: returning to a different account loads
-    /// that account's own independent state (its grant, cursor, projections,
-    /// device key), so a previous identity's revoked grant / foreign cursor can
-    /// never leak — they live in a separate key entirely.
-    ///
-    /// Returns `true` when the active account changed.
-    pub fn adopt_account_scope(&mut self, actor: &str) -> bool {
-        self.switch_active_account(actor)
     }
 
     /// Purge a single account's persisted state: its `…account.<did>` entry,
@@ -406,54 +373,6 @@ impl LocalStateStore {
         load_dpop_device_key_from_secure_store(secure_store)
     }
 
-    pub fn migrate_local_only_drafts_to_account_data(
-        &mut self,
-        namespace_key: &[u8],
-        origin_device_id: &str,
-        updated_hlc: &str,
-        retention_expires_at: &str,
-    ) -> anyhow::Result<Vec<crate::account_data::DraftAccountDataItem>> {
-        self.ensure_cached_loaded();
-        let migrated = crate::account_data::migrate_legacy_local_drafts(
-            namespace_key,
-            &self.cached.drafts,
-            origin_device_id,
-            updated_hlc,
-            retention_expires_at,
-        )?;
-        for item in &migrated {
-            self.cached.draft_account_data.insert(
-                item.account_data_key.clone(),
-                serde_json::to_value(&item.value)?,
-            );
-        }
-        if !migrated.is_empty() {
-            let _ = self.flush();
-        }
-        Ok(migrated)
-    }
-
-    pub fn migrate_local_only_saved_items_to_account_data(
-        &mut self,
-        namespace_key: &[u8],
-        items: &[crate::account_data::LegacySavedItem],
-        updated_hlc: &str,
-    ) -> anyhow::Result<Vec<crate::account_data::SavedAccountDataItem>> {
-        self.ensure_cached_loaded();
-        let migrated =
-            crate::account_data::migrate_legacy_saved_items(namespace_key, items, updated_hlc)?;
-        for item in &migrated {
-            self.cached.saved_account_data.insert(
-                item.account_data_key.clone(),
-                crate::account_data::saved_item_account_data_value(&item.value)?,
-            );
-        }
-        if !migrated.is_empty() {
-            let _ = self.flush();
-        }
-        Ok(migrated)
-    }
-
     pub fn stage_saved_account_data_item(
         &mut self,
         item: &crate::account_data::SavedAccountDataItem,
@@ -489,14 +408,6 @@ impl LocalStateStore {
         {
             let _ = self.flush();
         }
-    }
-
-    pub fn draft_account_data_entries(&self) -> BTreeMap<String, Value> {
-        self.load().draft_account_data
-    }
-
-    pub fn saved_account_data_entries(&self) -> BTreeMap<String, Value> {
-        self.load().saved_account_data
     }
 
     pub fn save_draft(&mut self, draft_scope_id: impl Into<String>, draft: impl Into<String>) {

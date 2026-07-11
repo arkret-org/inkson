@@ -30,7 +30,7 @@ pub(super) fn submit_kanban_operation_event(
     let kind = operation.kind.as_str().to_owned();
     let actor_id = operation.actor_id.to_string();
     let created_at = operation.created_at.to_rfc3339();
-    state_store.write().append_raw_operation(
+    state_store.write().enqueue_local_projection_command(
         operation_id.clone(),
         Some(realm_id),
         json!({
@@ -312,7 +312,7 @@ pub(super) fn submit_kanban_move(
         rebase_attempts: 0,
     };
     write_records.write().push(record);
-    state_store.write().append_raw_operation(
+    state_store.write().enqueue_local_projection_command(
         op_id.clone(),
         Some(realm_id.clone()),
         json!({
@@ -628,7 +628,7 @@ pub(super) fn dispatch_space_container_lifecycle(
     // state immediately via `project_board` (`apply_space_*`). On submit
     // failure we mark the op `dropped`, which `raw_operation_allows_overlay`
     // excludes — reverting the optimistic flip without a direct signal write.
-    state_store.write().append_raw_operation(
+    state_store.write().enqueue_local_projection_command(
         operation_id.clone(),
         Some(realm_id.clone()),
         json!({
@@ -718,7 +718,7 @@ pub(super) fn dispatch_strand_lifecycle(
     // Append the lifecycle op so the `columns` `use_memo` folds the optimistic
     // flip via `project_board` (`ak.strand.archive` / `ak.strand.restore`). On
     // submit failure we mark it `dropped` to revert — no direct signal write.
-    state_store.write().append_raw_operation(
+    state_store.write().enqueue_local_projection_command(
         operation_id.clone(),
         Some(realm_id.clone()),
         json!({
@@ -847,7 +847,7 @@ pub(super) fn dispatch_board_archive_cascade(
             .iter()
             .map(|event| {
                 let operation_id = sdk_event_local_operation_id(event).to_owned();
-                store.append_raw_operation(
+                store.enqueue_local_projection_command(
                     operation_id.clone(),
                     Some(realm_id.clone()),
                     json!({
@@ -1048,7 +1048,7 @@ pub(super) fn submit_strand_position_cas_move_with_attempt(
         rebase_attempts: attempt,
     };
     write_records.write().push(record);
-    state_store.write().append_raw_operation(
+    state_store.write().enqueue_local_projection_command(
         move_id.clone(),
         Some(realm_id.clone()),
         json!({

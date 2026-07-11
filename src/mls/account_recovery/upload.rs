@@ -313,9 +313,10 @@ pub async fn upload_mls_account_secret_backup_with_recovery_public_key(
     let active_policy = crate::recovery_strand::fetch_active_recovery_policy(api)
         .await
         .map_err(|err| anyhow!("fetch active recovery policy for backup binding: {err}"))?;
-    let recovery_policy_ref = active_policy
+    let active_policy = active_policy
         .as_ref()
-        .map(|policy| (policy.policy_id.as_str(), policy.version));
+        .ok_or_else(|| anyhow!("active recovery policy is required for account-secret backup"))?;
+    let recovery_policy_ref = (active_policy.policy_id.as_str(), active_policy.version);
 
     let account_backup_id = fresh_backup_id();
     let recovery_key_ref = format!("{actor_id}#recovery");

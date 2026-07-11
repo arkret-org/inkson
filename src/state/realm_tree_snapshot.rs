@@ -221,7 +221,7 @@ impl LocalStateStore {
 
     /// The effective `content_scheme` selector for `realm_id`. RRK durability is
     /// only effective when this is `mls-exporter-aead-v1`
-    /// (encryption-and-audit.md §2.10.8). `None` falls back to the legacy
+    /// (encryption-and-audit.md §2.10.8). `None` uses the
     /// `mls-rfc9420` PrivateMessage path (no deliverable `history_secret`).
     pub fn realm_content_scheme(&self, realm_id: &str) -> Option<String> {
         self.load()

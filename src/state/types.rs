@@ -586,13 +586,11 @@ pub struct ClientLocalState {
     pub realm_tree_projections: BTreeMap<String, Value>,
     #[serde(default)]
     pub snapshot_sync: BTreeMap<String, SnapshotSyncStatus>,
-    /// Migrated principal-private draft account-data values, keyed by
-    /// `ak.draft.v1:<kind>:<target_key>:<slot_key>`. The older `drafts`
-    /// map remains a local UI cache; this map is the cross-device sync
-    /// staging area created by explicit migration.
+    /// Principal-private draft account-data values, keyed by
+    /// `ak.draft.v1:<kind>:<target_key>:<slot_key>`.
     #[serde(default)]
     pub draft_account_data: BTreeMap<String, Value>,
-    /// Migrated principal-private saved-item account-data values, keyed by
+    /// Principal-private saved-item account-data values, keyed by
     /// `ak.saved.v1:<collection_key>:<target_key>`.
     #[serde(default)]
     pub saved_account_data: BTreeMap<String, Value>,
@@ -859,9 +857,7 @@ pub struct ClientLocalState {
     /// re-login screen's account selector can label each known account by its
     /// handle (never the raw DID) — read by DID via
     /// [`LocalStateStore::primary_handle_for_did`] without making the account
-    /// active. `#[serde(default)]` keeps pre-existing account entries (written
-    /// before this field) loadable.
-    #[serde(default)]
+    /// active.
     pub primary_handle: String,
 }
 

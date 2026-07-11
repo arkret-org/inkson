@@ -489,7 +489,7 @@ mod tests {
         .expect("unlock proof builds");
 
         assert!(proof["auth_data"].get("device_id").is_none());
-        // The device-signed compatibility path (no recovery session) MUST declare
+        // The device-signed path (no recovery session) MUST declare
         // `principal_signing`: it is the only proof_kind the server exempts from
         // requiring a durable recovery-session record. Declaring a recovery-
         // ceremony kind (e.g. `recovery_unlock`) makes the server fail closed with

@@ -223,17 +223,9 @@ fn wasm_indexeddb_required_key_classifier_covers_high_value_secrets() {
     assert!(is_wasm_indexeddb_required_secret_key(
         "coauth.session_credential.did:example:alice"
     ));
-    // The hard-logout journal embeds a grant-binding seed → seed-grade: both
-    // IndexedDB-required and excluded from the localStorage mirror.
+    // The hard-logout journal embeds a grant-binding seed and is IndexedDB-only.
     assert!(is_wasm_indexeddb_required_secret_key(
         PENDING_LOGOUT_SECRET_KEY
-    ));
-    assert!(is_wasm_no_localstorage_mirror_key(
-        PENDING_LOGOUT_SECRET_KEY
-    ));
-    assert!(is_wasm_no_localstorage_mirror_key(SIGNING_SEED_KEY));
-    assert!(!is_wasm_no_localstorage_mirror_key(
-        "coauth.session_credential.did:example:alice"
     ));
 
     assert!(!is_wasm_indexeddb_required_secret_key(
@@ -601,14 +593,13 @@ fn history_secrets_json_drops_malformed_entries() {
 }
 
 /// The SecureKeyStore key for a realm is the hardened prefix plus a stable,
-/// character-safe base64 encoding of the realm id — and is classified into both
-/// the IndexedDB-required and no-localStorage-mirror tiers (key material).
+/// character-safe base64 encoding of the realm id and is classified as
+/// IndexedDB-only key material.
 #[test]
 fn history_secret_store_key_is_classified_indexeddb_only() {
     let key = mls_history_secret_store_key("ak:realm:abc123");
     assert!(key.starts_with(MLS_HISTORY_SECRET_KEY_PREFIX));
     assert!(is_wasm_indexeddb_required_secret_key(&key));
-    assert!(is_wasm_no_localstorage_mirror_key(&key));
     // Stable across calls (no nonce / randomness in the key derivation).
     assert_eq!(key, mls_history_secret_store_key("ak:realm:abc123"));
     assert_ne!(key, mls_history_secret_store_key("ak:realm:other"));

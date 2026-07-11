@@ -13,7 +13,7 @@
 //! | Target          | Default backend         | Notes |
 //! |-----------------|-------------------------|-------|
 //! | macOS / Linux / Windows | [`KeyringSecureKeyStore`] | Uses the `keyring` crate (Keychain / Secret Service / Credential Manager). |
-//! | wasm32          | [`LocalStorageSecureKeyStore`] for low-value first-paint secrets, then [`IndexedDbSecureKeyStore`] after async upgrade | Ed25519 signing seeds, account MLS secrets, and session credentials require the IndexedDB + non-extractable SubtleCrypto tier and fail closed before upgrade. |
+//! | wasm32          | [`LocalStorageSecureKeyStore`] for low-value first-paint secrets, then [`IndexedDbSecureKeyStore`] after async initialization | Ed25519 signing seeds, account MLS secrets, and session credentials require the IndexedDB + non-extractable SubtleCrypto tier and fail closed before initialization. |
 //! | iOS / Android   | [`HostBridgeSecureKeyStore`] when the host installs a bridge; otherwise [`MemorySecureKeyStore`] | Mobile artifacts are outside the local 1.0 milestone. |
 //!
 //! ## Why not reuse `crate::key_store::KeyStore`?
@@ -58,10 +58,7 @@ pub use host_bridge::{
     install_host_secret_bridge,
 };
 #[cfg(target_arch = "wasm32")]
-pub use indexed_db::{
-    IndexedDbSecureKeyStore, migrate_localstorage_entries_to_indexeddb,
-    upgrade_wasm_secure_key_store_async,
-};
+pub use indexed_db::{IndexedDbSecureKeyStore, initialize_wasm_secure_key_store_async};
 #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
 pub use keyring::KeyringSecureKeyStore;
 #[cfg(target_arch = "wasm32")]
@@ -88,7 +85,7 @@ pub use signing_seed::{
 // LocalStorage over `String`/`[u8; 32]`, memory over `Arc<Mutex<…>>`) are all
 // genuinely `Send + Sync`, so pin the process-global slot to the `+ Send + Sync`
 // trait object; callers freely coerce it down to the bare `Arc<dyn SecureKeyStore>`.
-static WASM_UPGRADED_SECURE_KEY_STORE: OnceLock<Arc<dyn SecureKeyStore + Send + Sync>> =
+static WASM_INDEXEDDB_SECURE_KEY_STORE: OnceLock<Arc<dyn SecureKeyStore + Send + Sync>> =
     OnceLock::new();
 
 #[cfg(target_arch = "wasm32")]
@@ -130,13 +127,13 @@ pub(crate) const fn wasm_localstorage_secret_downgrade_enabled() -> bool {
     false
 }
 
-/// Ensure wasm callers that need seed-grade material run on the upgraded
+/// Ensure wasm callers that need seed-grade material run on the initialized
 /// IndexedDB/SubtleCrypto tier before touching signing seeds.
 #[cfg(target_arch = "wasm32")]
 pub async fn ensure_wasm_secure_key_store_ready(
     service_name: &str,
 ) -> Result<Arc<dyn SecureKeyStore>, SecureKeyStoreError> {
-    if let Some(store) = WASM_UPGRADED_SECURE_KEY_STORE.get() {
+    if let Some(store) = WASM_INDEXEDDB_SECURE_KEY_STORE.get() {
         return Ok(store.clone());
     }
     if wasm_localstorage_secret_downgrade_enabled() {
@@ -144,7 +141,7 @@ pub async fn ensure_wasm_secure_key_store_ready(
     }
     // `Some(store)` is the `+ Send + Sync` trait object; `Ok(store)` coerces it
     // down to the bare `Arc<dyn SecureKeyStore>` return type at the argument site.
-    match upgrade_wasm_secure_key_store_async(service_name).await? {
+    match initialize_wasm_secure_key_store_async(service_name).await? {
         Some(store) => Ok(store),
         None => Err(SecureKeyStoreError::Unsupported(
             WASM_ED25519_SEED_INDEXEDDB_REQUIRED,
@@ -167,10 +164,7 @@ pub(crate) fn is_wasm_ed25519_seed_key(key: &str) -> bool {
 /// `{ "<epoch>": "<base64url(secret)>" }` and the full key is
 /// `inkson.mls_history_secret.v1.<base64(realm_id)>`. This is raw exporter key
 /// material — it MUST live only in the IndexedDB + non-extractable SubtleCrypto
-/// tier (same protection level as the account MLS secret) and MUST NOT be
-/// mirrored to localStorage, so the prefix appears in BOTH
-/// [`is_wasm_indexeddb_required_secret_key`] and
-/// [`is_wasm_no_localstorage_mirror_key`].
+/// tier (same protection level as the account MLS secret).
 pub(crate) const MLS_HISTORY_SECRET_KEY_PREFIX: &str = "inkson.mls_history_secret.v1.";
 
 #[cfg(any(target_arch = "wasm32", test))]
@@ -181,20 +175,6 @@ pub(crate) fn is_wasm_indexeddb_required_secret_key(key: &str) -> bool {
         || key.starts_with("inkson_mls_account_secret")
         || key.starts_with("inkson.mls_key_package.identity_state.")
         || key.starts_with("coauth.session_credential.")
-        || key.starts_with(MLS_HISTORY_SECRET_KEY_PREFIX)
-}
-
-/// Keys that MUST NOT be mirrored to the transient localStorage unload-race
-/// copy (see the IndexedDB store's `store_secret`): raw signing-seed material
-/// that should live only in the strong IndexedDB tier. Unlike the broader
-/// [`is_wasm_indexeddb_required_secret_key`] set — whose account/MLS secrets
-/// are deliberately mirrored to close the YOU-02-009 unload race — these are
-/// kept out of localStorage entirely.
-#[cfg(any(target_arch = "wasm32", test))]
-pub(crate) fn is_wasm_no_localstorage_mirror_key(key: &str) -> bool {
-    is_wasm_ed25519_seed_key(key)
-        || key == PENDING_LOGOUT_SECRET_KEY
-        || key.starts_with("inkson.mls_key_package.identity_state.")
         || key.starts_with(MLS_HISTORY_SECRET_KEY_PREFIX)
 }
 
@@ -239,23 +219,23 @@ pub(crate) fn decode_history_secrets_json(json: &str) -> std::collections::BTree
         .collect()
 }
 
-/// True once the wasm async upgrade to the IndexedDB + SubtleCrypto tier has
+/// True once the wasm IndexedDB + SubtleCrypto tier has
 /// completed. History-secret reads/writes fail closed before this so raw key
 /// material never lands in the weaker localStorage tier.
 #[cfg(target_arch = "wasm32")]
-pub(crate) fn wasm_secure_store_upgraded() -> bool {
-    WASM_UPGRADED_SECURE_KEY_STORE.get().is_some()
+pub(crate) fn wasm_secure_store_ready() -> bool {
+    WASM_INDEXEDDB_SECURE_KEY_STORE.get().is_some()
 }
 
 /// E2EE-at-rest T1 — load a realm's aggregated `history_secret`s from the
-/// hardened SecureKeyStore. Returns `None` before the IndexedDB upgrade (fail
+/// hardened SecureKeyStore. Returns `None` before IndexedDB initialization (fail
 /// closed) so callers fall back to any transitional inline copy; returns
 /// `Some(empty)` when upgraded but no secrets are stored for the realm.
 pub(crate) fn load_realm_history_secrets(
     realm_id: &str,
 ) -> Option<std::collections::BTreeMap<u64, Vec<u8>>> {
     #[cfg(target_arch = "wasm32")]
-    if !wasm_secure_store_upgraded() {
+    if !wasm_secure_store_ready() {
         return None;
     }
     let store = default_secure_key_store("inkson");
@@ -272,7 +252,7 @@ pub(crate) fn load_realm_history_secrets(
 
 /// E2EE-at-rest T1 — persist a realm's aggregated `history_secret`s to the
 /// hardened (IndexedDB-only, no localStorage mirror) SecureKeyStore tier.
-/// Returns `false` before the IndexedDB upgrade (fail closed) so the caller
+/// Returns `false` before IndexedDB initialization (fail closed) so the caller
 /// keeps the transitional inline copy for a later flush. An empty map deletes
 /// the entry.
 pub(crate) fn persist_realm_history_secrets(
@@ -280,7 +260,7 @@ pub(crate) fn persist_realm_history_secrets(
     by_epoch: &std::collections::BTreeMap<u64, Vec<u8>>,
 ) -> bool {
     #[cfg(target_arch = "wasm32")]
-    if !wasm_secure_store_upgraded() {
+    if !wasm_secure_store_ready() {
         return false;
     }
     let store = default_secure_key_store("inkson");
@@ -295,34 +275,6 @@ pub(crate) fn persist_realm_history_secrets(
             false
         }
     }
-}
-
-/// E2EE-at-rest T1 — migrate any inline `history_secret`s carried in a legacy
-/// account-state blob into the hardened SecureKeyStore, merging with whatever
-/// is already stored (existing stored entries win). Returns `true` only when
-/// EVERY realm persisted successfully, so the caller may then safely drop the
-/// inline copy; `false` (incl. before upgrade) means keep the inline copy.
-pub(crate) fn persist_inline_history_secrets(
-    inline: &std::collections::BTreeMap<String, std::collections::BTreeMap<u64, Vec<u8>>>,
-) -> bool {
-    if inline.is_empty() {
-        return false;
-    }
-    #[cfg(target_arch = "wasm32")]
-    if !wasm_secure_store_upgraded() {
-        return false;
-    }
-    let mut all_ok = true;
-    for (realm_id, by_epoch) in inline {
-        let mut merged = load_realm_history_secrets(realm_id).unwrap_or_default();
-        for (epoch, secret) in by_epoch {
-            merged.entry(*epoch).or_insert_with(|| secret.clone());
-        }
-        if !persist_realm_history_secrets(realm_id, &merged) {
-            all_ok = false;
-        }
-    }
-    all_ok
 }
 
 #[cfg(target_arch = "wasm32")]
@@ -392,37 +344,6 @@ pub fn unwrap_secret(
     Ok(String::from_utf8(plain).ok())
 }
 
-/// wasm-only: one-time migration of the legacy global wrap_seed
-/// (`inkson.secret.inkson.wrap_seed.v1`) into an account DID's namespace
-/// (`inkson.secret.<did>.wrap_seed.v1`). The wrap_seed is now namespaced by the
-/// active account scope (see [`signing_seed::wrap_seed_namespace`]); copying the
-/// historical global seed under the migrated owner's namespace keeps any
-/// secrets that owner wrapped under the old shared key decryptable. Best-effort
-/// and idempotent: no-op when the source is absent or the destination exists.
-#[cfg(target_arch = "wasm32")]
-pub fn migrate_global_wrap_seed_to_namespace(owner_did: &str) {
-    let owner_did = owner_did.trim();
-    if owner_did.is_empty() {
-        return;
-    }
-    let Some(storage) = web_sys::window().and_then(|w| w.local_storage().ok().flatten()) else {
-        return;
-    };
-    let suffix = ".wrap_seed.v1";
-    let source_key = format!("inkson.secret.inkson{suffix}");
-    let dest_key = format!("inkson.secret.{owner_did}{suffix}");
-    if source_key == dest_key {
-        return;
-    }
-    // Don't clobber an existing per-account seed.
-    if matches!(storage.get_item(&dest_key), Ok(Some(_))) {
-        return;
-    }
-    if let Ok(Some(seed)) = storage.get_item(&source_key) {
-        let _ = storage.set_item(&dest_key, &seed);
-    }
-}
-
 /// Pick the most secure backend available at compile time.
 ///
 /// | Target          | Backend |
@@ -430,7 +351,7 @@ pub fn migrate_global_wrap_seed_to_namespace(owner_did: &str) {
 /// | macOS / Linux / Windows | [`KeyringSecureKeyStore`] |
 /// | Android         | [`AndroidKeystoreSecureKeyStore`] when a host bridge is installed; otherwise [`MemorySecureKeyStore`] |
 /// | iOS             | [`IosKeychainSecureKeyStore`] when a host bridge is installed; otherwise [`MemorySecureKeyStore`] |
-/// | wasm32          | [`LocalStorageSecureKeyStore`] for non-signing sync fallback; [`IndexedDbSecureKeyStore`] after async upgrade |
+/// | wasm32          | [`LocalStorageSecureKeyStore`] for non-signing sync fallback; [`IndexedDbSecureKeyStore`] after async initialization |
 ///
 /// The returned trait object is `Arc`-shared so one selection can be
 /// installed process-wide. **Mobile app artifacts are not shipped in
@@ -440,15 +361,15 @@ pub fn migrate_global_wrap_seed_to_namespace(owner_did: &str) {
 /// in plaintext heap" UX warning.
 ///
 /// **wasm32 callers**: this returns the synchronous
-/// [`LocalStorageSecureKeyStore`] fallback until async upgrade, but
+/// [`LocalStorageSecureKeyStore`] fallback until async initialization, but
 /// that backend refuses Ed25519 signing seed keys. Call
-/// [`upgrade_wasm_secure_key_store_async`] to promote the process
+/// [`initialize_wasm_secure_key_store_async`] to initialize the process
 /// default to the IndexedDB + SubtleCrypto-non-extractable tier before
 /// signer bootstrap.
 pub fn default_secure_key_store(service_name: &str) -> Arc<dyn SecureKeyStore> {
     #[cfg(target_arch = "wasm32")]
     {
-        if let Some(store) = WASM_UPGRADED_SECURE_KEY_STORE.get() {
+        if let Some(store) = WASM_INDEXEDDB_SECURE_KEY_STORE.get() {
             return match LocalStorageSecureKeyStore::new(service_name) {
                 Ok(fallback) => Arc::new(FallbackSecureKeyStore::new(
                     store.clone(),
@@ -457,7 +378,7 @@ pub fn default_secure_key_store(service_name: &str) -> Arc<dyn SecureKeyStore> {
                 Err(err) => {
                     tracing::warn!(
                         ?err,
-                        "LocalStorageSecureKeyStore fallback init failed after IndexedDB upgrade"
+                        "LocalStorageSecureKeyStore fallback init failed after IndexedDB initialization"
                     );
                     store.clone()
                 }
@@ -469,8 +390,8 @@ pub fn default_secure_key_store(service_name: &str) -> Arc<dyn SecureKeyStore> {
         // bootstrap details.
         //
         // The LocalStorage store remains the sync first-paint fallback;
-        // the app upgrades to `IndexedDbSecureKeyStore` via
-        // `upgrade_wasm_secure_key_store_async` once async init can run.
+        // the app initializes `IndexedDbSecureKeyStore` via
+        // `initialize_wasm_secure_key_store_async` once async init can run.
         // Both stores share the same `SecureKeyStore` interface. Ed25519
         // seed callers still require the IndexedDB tier explicitly.
         match LocalStorageSecureKeyStore::new(service_name) {

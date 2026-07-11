@@ -176,9 +176,11 @@ pub fn MlsUnlockPrompt(
                             let restore_result = crate::hpke_backup::derive_recovery_keypair_from_recovery_key(&pass)
                                 .map_err(|err| anyhow::anyhow!("derive recovery key: {err}"))
                                 .and_then(|(recovery_private_key, _)| {
-                                    let expected_policy = active_policy.as_ref().map(|policy| {
-                                        (policy.policy_id.as_str(), policy.version)
-                                    });
+                                    let policy = active_policy.as_ref().ok_or_else(|| {
+                                        anyhow::anyhow!("active recovery policy is required")
+                                    })?;
+                                    let expected_policy =
+                                        (policy.policy_id.as_str(), policy.version);
                                     crate::mls::account_recovery::restore_mls_history_with_recovery_key_from_payload(
                                         &payload,
                                         &mut store,

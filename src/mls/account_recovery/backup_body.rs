@@ -222,13 +222,13 @@ pub fn build_mls_account_secret_recovery_public_key_backup(
     recovery_key_ref: &str,
     account_secret: &str,
     account_secret_version: u32,
-    // SEC-05: the actor's currently-accepted recovery policy `(policy_id,
-    // policy_version)`. When present it is written into the envelope's
-    // `recovery_policy_ref` and the fresh-device restore path cross-checks it
+    // The actor's currently-accepted recovery policy `(policy_id,
+    // policy_version)`. It is written into the envelope's
+    // `recovery_policy_ref`; the fresh-device restore path cross-checks it
     // against the live accepted policy before importing the secret, so a
     // compromised server can't replay an old-policy / non-frontier account-secret
     // backup sealed to the same recovery public key.
-    recovery_policy_ref: Option<(&str, u64)>,
+    recovery_policy_ref: (&str, u64),
 ) -> Result<Value> {
     crate::key_backup::build_recovery_public_key_backup_body(
         backup_id,
@@ -245,23 +245,19 @@ pub fn build_mls_account_secret_recovery_public_key_backup(
             ..Default::default()
         },
         account_secret.as_bytes(),
-        recovery_policy_ref,
+        Some(recovery_policy_ref),
     )
 }
 
 /// SEC-05: verify a `recovery_public_key` account-secret backup envelope's
 /// `recovery_policy_ref` against the actor's currently-accepted policy before it
-/// is opened. Fails closed (key-management.md §7.5.2/§7.7) when an expected
-/// policy is supplied but the envelope's ref is absent or does not match, so a
-/// compromised server cannot replay a backup minted under an old policy /
-/// non-current frontier. With `None` expected policy the check is skipped.
+/// is opened. The envelope's ref must be present and match so a compromised
+/// server cannot replay a backup minted under an old policy or frontier.
 pub fn ensure_recovery_public_key_backup_policy_matches(
     body: &Value,
-    expected_recovery_policy_ref: Option<(&str, u64)>,
+    expected_recovery_policy_ref: (&str, u64),
 ) -> Result<()> {
-    let Some((expected_id, expected_version)) = expected_recovery_policy_ref else {
-        return Ok(());
-    };
+    let (expected_id, expected_version) = expected_recovery_policy_ref;
     let policy_ref = body.get("recovery_policy_ref").ok_or_else(|| {
         anyhow!(
             "recovery_public_key account-secret backup carries no recovery_policy_ref; \
@@ -288,13 +284,12 @@ pub fn ensure_recovery_public_key_backup_policy_matches(
 /// Open the HPKE `recovery_public_key` account-secret backup with the recovery
 /// private key, returning `(secret, version)`.
 ///
-/// SEC-05: when `expected_recovery_policy_ref` is supplied the envelope's
-/// `recovery_policy_ref` MUST match the accepted policy (validated BEFORE the
-/// HPKE open) or the import is rejected.
+/// The envelope's `recovery_policy_ref` must match the accepted policy before
+/// the HPKE open.
 pub fn open_mls_account_secret_recovery_public_key_backup(
     recovery_private_key: &[u8],
     body: &Value,
-    expected_recovery_policy_ref: Option<(&str, u64)>,
+    expected_recovery_policy_ref: (&str, u64),
 ) -> Result<(String, u32)> {
     ensure_recovery_public_key_backup_policy_matches(body, expected_recovery_policy_ref)?;
     let bytes =

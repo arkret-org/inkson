@@ -1,5 +1,4 @@
-//! Local device-identity generation, secure-store handoff, migration, and
-//! tamper-detection tests.
+//! Local device-identity generation, secure-store persistence, and tamper-detection tests.
 
 use super::*;
 // `secure.get_secret(...)` is a `SecureKeyStore` trait method; bring the
@@ -28,7 +27,7 @@ fn ensure_local_identity_generates_persists_and_round_trips() {
 }
 
 #[test]
-fn secure_identity_handoff_moves_seed_out_of_state_record() {
+fn secure_identity_store_keeps_seed_out_of_state_record() {
     let path = temp_state_path("local-identity-secure");
     let secure = crate::secure_key_store::MemorySecureKeyStore::new();
     let id = {
@@ -42,7 +41,7 @@ fn secure_identity_handoff_moves_seed_out_of_state_record() {
             .load()
             .local_identity
             .is_none(),
-        "state.json must not keep the identity seed after secure-store handoff",
+        "state.json must not keep the identity seed",
     );
     let stored = secure
         .get_secret(LocalStateStore::SECURE_IDENTITY_KEY)
@@ -56,37 +55,6 @@ fn secure_identity_handoff_moves_seed_out_of_state_record() {
             .signing_key
             .to_bytes(),
         id.signing_key.to_bytes(),
-    );
-}
-
-#[test]
-fn secure_identity_handoff_migrates_existing_plaintext_seed() {
-    let path = temp_state_path("local-identity-migrate");
-    let existing = {
-        let mut store = LocalStateStore::with_path(path.clone());
-        store
-            .ensure_local_identity_in_plaintext_state()
-            .expect("plaintext test identity")
-    };
-    let secure = crate::secure_key_store::MemorySecureKeyStore::new();
-    let migrated = {
-        let mut store = LocalStateStore::with_path(path.clone());
-        store
-            .ensure_local_identity_with_secure_store(&secure)
-            .expect("secure migration")
-    };
-    assert_eq!(migrated.local_signing_did, existing.local_signing_did);
-    assert!(
-        LocalStateStore::with_path(path)
-            .load()
-            .local_identity
-            .is_none()
-    );
-    assert!(
-        secure
-            .get_secret(LocalStateStore::SECURE_IDENTITY_KEY)
-            .unwrap()
-            .is_some()
     );
 }
 

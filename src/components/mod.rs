@@ -12,7 +12,6 @@ pub(crate) mod backup_job_scheduler;
 /// AKP-0007 P3B.2 — Circle error queue. Producers push
 /// [`crate::circle::CircleErrorKind`]; the unified `feedback::ToastHost`
 /// drains it and renders the localized user-facing string.
-pub mod circle_error_toast;
 /// AKP-0007 P3B.2 — Circle scope picker + composer banner + confidential-
 /// discussion-of cross-link banner. Shared between the new-Strand form,
 /// the composer header, and the Strand detail view.
@@ -61,7 +60,6 @@ pub mod recovery_key_setup_prompt;
 /// G3.Y3 — global policy-deny event queue. Producers (the HTTP layer)
 /// push denies; the unified `feedback::ToastHost` mounted near the app
 /// shell surfaces them so no view needs to thread its own error UI.
-pub mod policy_deny_banner;
 /// P3B.8 — "Report a problem" dialog + crash telemetry opt-in
 /// toggle. Crash reports are off by default.
 pub mod report_problem;
@@ -82,7 +80,6 @@ pub mod write_state;
 pub use account_switcher::AccountSwitcher;
 pub use agent_runtime_approval_prompt::AgentRuntimeApprovalPrompt;
 pub use avatar_uploader::{AvatarUploader, AvatarUploaderProps};
-pub use circle_error_toast::{maybe_dispatch_circle_error, push_circle_error, take_circle_error};
 pub use circle_scope_picker::{
     CircleComposerBanner, CircleScopePicker, ConfidentialDiscussionOfBanner,
 };
@@ -95,8 +92,9 @@ pub use empty_state::{EmptyState, EmptyStateKind};
 pub use encryption_floor_prompt::EncryptionFloorPrompt;
 pub use error_boundary::{ErrorBoundary, RetryableError};
 pub use feedback::{
-    AppBanner, AppBannerKind, FeedbackSeverity, Toast, ToastHost, push_toast, toast_error,
-    toast_info, toast_success, toast_warning,
+    AppBanner, AppBannerKind, FeedbackSeverity, Toast, ToastHost, is_policy_deny_code,
+    maybe_dispatch_circle_error, push_policy_deny_toast, push_toast, toast_error, toast_info,
+    toast_success, toast_warning,
 };
 pub use mls_backup_prompt::{
     MlsBackupPrompt, MlsBackupSignal, maybe_auto_backup_mls_after_encrypted_write,
@@ -111,9 +109,6 @@ pub(crate) use mls_history_backup::{
     schedule_mls_history_backup_after_commit, upload_mls_history_backup_now,
 };
 pub use mls_unlock::{MlsRecoverySetupMissingBanner, MlsUnlockPrompt};
-pub use policy_deny_banner::{
-    PolicyDenyEvent, is_policy_deny_code, push_policy_deny, take_policy_deny,
-};
 pub use recovery_key_setup_prompt::RecoveryKeySetupPrompt;
 pub use report_problem::{
     CrashTelemetryPrefs, CrashTelemetryToggle, ReportProblemButton, build_report_body,

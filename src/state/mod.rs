@@ -16,11 +16,7 @@ use serde_json::Value;
 use crate::notification_rules::WatchLevel;
 
 /// Root-index storage key. Per-account `ClientLocalState` entries live under
-/// the sibling key `account_state_key(did)`. The `.v1` suffix is preserved
-/// across the per-account refactor — only the *shape* stored under this key
-/// changed (old: a single global `ClientLocalState`; new: a small [`RootIndex`]
-/// that points at per-account entries). Read-time migration upgrades any blob
-/// still in the old shape.
+/// the sibling key `account_state_key(did)`.
 #[cfg(target_arch = "wasm32")]
 const LOCAL_STATE_STORAGE_KEY: &str = "inkson.local_state.v1";
 
@@ -89,6 +85,15 @@ mod remarks_blocklist;
 mod scope;
 mod to_device_raw;
 
+#[derive(Clone, Debug, PartialEq)]
+enum LocalProjectionCommand {
+    AppendRawOperation {
+        operation_id: String,
+        realm_id: Option<String>,
+        payload: Value,
+    },
+}
+
 #[derive(Debug)]
 pub struct LocalStateStore {
     /// The ACTIVE account's full state. Every existing read/write method
@@ -145,6 +150,7 @@ pub struct LocalStateStore {
     /// the overlay data mutex so the short data-access sections never nest
     /// inside it in both orders (no deadlock).
     mls_decrypt_serial: Arc<Mutex<()>>,
+    pending_projection_commands: std::collections::VecDeque<LocalProjectionCommand>,
     #[cfg(not(target_arch = "wasm32"))]
     path: PathBuf,
 }
@@ -279,6 +285,7 @@ impl Default for LocalStateStore {
             persist_health: Arc::new(Mutex::new(None)),
             mls_receive_overlay: Arc::new(Mutex::new(MlsReceiveOverlay::default())),
             mls_decrypt_serial: Arc::new(Mutex::new(())),
+            pending_projection_commands: std::collections::VecDeque::new(),
             #[cfg(not(target_arch = "wasm32"))]
             path: default_state_path(),
         }
@@ -297,6 +304,40 @@ impl LocalStateStore {
     const SECURE_IDENTITY_KEY: &'static str = "identity.local.primary.v1";
 
     const SECURE_DPOP_DEVICE_KEY: &'static str = "auth.dpop.device_key.v1";
+
+    pub(crate) fn enqueue_local_projection_command(
+        &mut self,
+        operation_id: impl Into<String>,
+        realm_id: Option<String>,
+        payload: Value,
+    ) {
+        self.pending_projection_commands
+            .push_back(LocalProjectionCommand::AppendRawOperation {
+                operation_id: operation_id.into(),
+                realm_id,
+                payload,
+            });
+    }
+
+    fn drain_local_projection_commands(&mut self) -> Vec<LocalProjectionCommand> {
+        self.pending_projection_commands.drain(..).collect()
+    }
+
+    pub(crate) fn project_pending_local_commands(&mut self) {
+        for command in self.drain_local_projection_commands() {
+            match command {
+                LocalProjectionCommand::AppendRawOperation {
+                    operation_id,
+                    realm_id,
+                    payload,
+                } => self.append_raw_operation(operation_id, realm_id, payload),
+            }
+        }
+    }
+
+    pub(crate) fn has_pending_local_projection_commands(&self) -> bool {
+        !self.pending_projection_commands.is_empty()
+    }
 
     fn lock_persist_health(&self) -> MutexGuard<'_, Option<String>> {
         self.persist_health
@@ -443,6 +484,7 @@ impl LocalStateStore {
             persist_health: Arc::new(Mutex::new(None)),
             mls_receive_overlay: Arc::new(Mutex::new(MlsReceiveOverlay::default())),
             mls_decrypt_serial: Arc::new(Mutex::new(())),
+            pending_projection_commands: std::collections::VecDeque::new(),
             path: path.into(),
         }
     }
@@ -457,7 +499,7 @@ impl LocalStateStore {
     // account `root.active_did` selects.
     //
     // `read_persisted_state` returns the ACTIVE account's state (its callers
-    // only want the state); `load_persisted_root` reads + migrates the index;
+    // only want the state); `load_persisted_root` reads the index;
     // `write_persisted_state` writes the active account's entry and the index.
 
     #[cfg(not(target_arch = "wasm32"))]
@@ -505,80 +547,18 @@ impl LocalStateStore {
         }
     }
 
-    /// Read + migrate the root index. On the old single-blob shape (a
-    /// `ClientLocalState` parked at the root key with no `known_dids`) this
-    /// rewrites the root key into a [`RootIndex`] and moves the blob into the
-    /// owner's `account.<did>` entry (read-time, one-time, key name unchanged).
-    /// Returns the resolved index (default when nothing is persisted yet).
+    /// Read the root index, preserving malformed data before resetting.
     fn load_persisted_root(&self) -> RootIndex {
         let Some(raw) = self.read_root_raw() else {
             return RootIndex::default();
         };
-        // Discriminator: the new index always serializes a `known_dids` array;
-        // the old `ClientLocalState` never had that field.
-        let is_new_shape = serde_json::from_str::<Value>(&raw)
-            .ok()
-            .and_then(|value| {
-                value
-                    .as_object()
-                    .map(|object| object.contains_key("known_dids"))
-            })
-            .unwrap_or(false);
-        if is_new_shape {
-            match serde_json::from_str::<RootIndex>(&raw) {
-                Ok(root) => return root,
-                Err(error) => {
-                    tracing::error!(%error, "root index unreadable; starting from default");
-                    *self.lock_persist_health() = Some(format!(
-                        "local state root index was unreadable ({error}); started from defaults"
-                    ));
-                    return RootIndex::default();
-                }
-            }
-        }
-        // Old shape (or corrupt): try to migrate a single global blob.
-        self.migrate_old_blob_to_root(&raw)
-    }
-
-    /// One-time migration of the legacy single-blob `ClientLocalState`.
-    /// `account_scope_owner` (if present) becomes the active/known account and
-    /// the whole blob is written to its `account.<did>` entry; the root key is
-    /// rewritten as a [`RootIndex`]. A blob that doesn't parse as the old shape
-    /// is treated as corrupt: preserved and reset to a default index.
-    fn migrate_old_blob_to_root(&self, raw: &str) -> RootIndex {
-        let old = match serde_json::from_str::<ClientLocalState>(raw) {
-            Ok(old) => old,
+        match serde_json::from_str::<RootIndex>(&raw) {
+            Ok(root) => root,
             Err(error) => {
-                self.preserve_corrupt_root(raw, &error.to_string());
-                return RootIndex::default();
+                self.preserve_corrupt_root(&raw, &error.to_string());
+                RootIndex::default()
             }
-        };
-        // The legacy blob no longer carries `account_scope_owner` as a typed
-        // field (it was removed with this refactor), so recover the owner from
-        // the raw JSON to decide where the blob lands.
-        let owner = serde_json::from_str::<Value>(raw).ok().and_then(|value| {
-            value
-                .get("account_scope_owner")
-                .and_then(Value::as_str)
-                .map(str::trim)
-                .filter(|owner| !owner.is_empty())
-                .map(ToOwned::to_owned)
-        });
-        let mut root = RootIndex::default();
-        if let Some(owner) = owner {
-            // Move the blob into the owner's account entry, then rewrite root.
-            if let Err(error) = self.write_account_state(&owner, &old) {
-                tracing::error!(%error, "migrate: writing owner account entry failed");
-            }
-            root.active_did = Some(owner.clone());
-            root.note_known_did(&owner);
-            // The wrap_seed stays GLOBAL (service namespace), so the owner's
-            // previously-stored secrets remain under the same wrapping key and
-            // need no migration. (Per-account isolation is at the entry-key
-            // level, not the wrap_seed.)
         }
-        let _ = self.write_root(&root);
-        root
     }
 
     #[cfg(not(target_arch = "wasm32"))]
@@ -633,7 +613,7 @@ impl LocalStateStore {
 
     /// Read the ACTIVE account's `ClientLocalState`. Resolves the namespace
     /// (active DID, or the anonymous sentinel when signed out) from the
-    /// (migrated) root index, then reads that entry. `None` when the entry is
+    /// root index, then reads that entry. `None` when the entry is
     /// absent.
     fn read_persisted_state(&self) -> Option<ClientLocalState> {
         self.read_account_state(&self.effective_account_key())
@@ -665,22 +645,7 @@ impl LocalStateStore {
         let key = account_state_key(did);
         let json = browser_storage().and_then(|storage| storage.get_item(&key).ok().flatten())?;
         match serde_json::from_str::<ClientLocalState>(&json) {
-            Ok(mut state) => {
-                // E2EE-at-rest T1.5: one-time self-heal — once the hardened
-                // SecureKeyStore is ready, lift any inline `history_secret`s out
-                // of the (plaintext) account-state blob into the IndexedDB-only
-                // tier and drop the inline copy so they stop being persisted in
-                // the clear. Before the upgrade this is a no-op; the next flush
-                // ([`Self::write_account_state`]) retries the migration.
-                if !state.history_secrets.is_empty()
-                    && crate::secure_key_store::persist_inline_history_secrets(
-                        &state.history_secrets,
-                    )
-                {
-                    state.history_secrets.clear();
-                }
-                Some(state)
-            }
+            Ok(state) => Some(state),
             Err(error) => {
                 if let Some(storage) = browser_storage() {
                     let _ = storage.set_item(&format!("{key}.corrupt"), &json);
@@ -826,25 +791,8 @@ fn sanitize_did_for_filename(did: &str) -> String {
 }
 
 fn e2ee_safe_persist_state(state: &ClientLocalState) -> ClientLocalState {
-    let history_secrets_persisted = state.history_secrets.is_empty()
-        || crate::secure_key_store::persist_inline_history_secrets(&state.history_secrets);
-    e2ee_safe_persist_state_after_history_migration(state, history_secrets_persisted)
-}
-
-/// Build the only form of account state that may be written to plaintext
-/// localStorage / JSON files. The runtime cache keeps these maps in memory so
-/// the active session stays usable. Raw MLS history keys are stripped only
-/// after the hardened SecureKeyStore write succeeds; before the wasm
-/// IndexedDB/SubtleCrypto upgrade they remain as a transitional durable copy so
-/// a refresh cannot permanently lose pre-join history access.
-fn e2ee_safe_persist_state_after_history_migration(
-    state: &ClientLocalState,
-    history_secrets_persisted: bool,
-) -> ClientLocalState {
     let mut stripped = state.clone();
-    if history_secrets_persisted {
-        stripped.history_secrets.clear();
-    }
+    stripped.history_secrets.clear();
     stripped.mls_private_plaintext.clear();
     stripped.mls_decrypted_plaintext.clear();
     stripped

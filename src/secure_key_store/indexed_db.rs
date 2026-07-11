@@ -1,20 +1,14 @@
 //! wasm32-only IndexedDB + non-extractable SubtleCrypto
-//! [`SecureKeyStore`] tier, plus the async upgrade / migration path.
+//! [`SecureKeyStore`] tier and its async initialization path.
 
 #![cfg(target_arch = "wasm32")]
 
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
-use base64::Engine as _;
-use base64::engine::general_purpose::STANDARD_NO_PAD;
 use garth::{SecretBytes, SecureKeyStoreBackendInfo};
 
-use super::{
-    LocalStorageSecureKeyStore, SecureKeyStore, SecureKeyStoreError,
-    WASM_UPGRADED_SECURE_KEY_STORE, is_wasm_ed25519_seed_key, is_wasm_no_localstorage_mirror_key,
-    unwrap_secret, wasm_localstorage_secret_downgrade_enabled,
-};
+use super::{SecureKeyStore, SecureKeyStoreError, WASM_INDEXEDDB_SECURE_KEY_STORE};
 
 /// wasm32 IndexedDB-backed secret store that upgrades the wrapping-key
 /// tier from the `localStorage` byte seed to a SubtleCrypto-derived
@@ -918,61 +912,22 @@ impl SecureKeyStore for IndexedDbSecureKeyStore {
                 .map_err(|err| SecureKeyStoreError::Backend(format!("cache lock: {err}")))?;
             guard.insert(key.to_owned(), value.to_owned());
         }
-        // YOU-02-009: the async IndexedDB put below can lose a page-unload
-        // race while dependent state (e.g. the MLS snapshot this secret
-        // decrypts) is persisted *synchronously* to localStorage — leaving a
-        // snapshot on disk whose decryption key never landed. Close the
-        // ordering gap by synchronously writing an AEAD-wrapped fallback
-        // copy to localStorage first. The mirror is transient: it is
-        // removed once the IndexedDB put succeeds, and the boot-time H6
-        // migration sweeps any unload-race survivor back into IndexedDB.
-        // Ed25519 signing seeds — and the hard-logout journal, which embeds a
-        // grant-binding seed — stay IndexedDB-only (H6 fail-closed): never mirrored to
-        // the localStorage unload-race copy.
-        let mirrored = if is_wasm_no_localstorage_mirror_key(key) {
-            false
-        } else {
-            // Re-open the fallback per write so its wrapping seed is
-            // guaranteed to exist in localStorage at mirror time (the H6
-            // migration prunes the seed after each boot sweep).
-            match LocalStorageSecureKeyStore::new(&self.service_name)
-                .and_then(|fallback| fallback.store_unload_race_mirror(key, value))
-            {
-                Ok(()) => true,
-                Err(err) => {
-                    tracing::warn!(?err, key=%key, "localStorage unload-race mirror failed");
-                    false
-                }
-            }
-        };
         // Fire-and-forget persistence. Failures are logged; the cache
         // already has the new value so subsequent reads succeed even
-        // if the write loses out to a page-unload race (in which case
-        // the localStorage mirror above is the recovery copy).
+        // if the write loses out to a page-unload race. Callers that publish
+        // dependent remote state must use `store_secret_bytes_durable`.
         //
         // Reuse the cached `IdbDatabase` handle instead of opening a
         // fresh one per write.
         let key_for_async = key.to_owned();
         let value_for_async = value.to_owned();
-        let service_name_for_async = self.service_name.clone();
         let crypto_key = self.crypto_key.clone();
         let db = self.db.clone();
         wasm_bindgen_futures::spawn_local(async move {
             match Self::persist_entry_value(&db.0, &crypto_key.0, &key_for_async, &value_for_async)
                 .await
             {
-                Ok(()) => {
-                    // Durable in IndexedDB — drop the transient
-                    // localStorage mirror so secrets do not linger in
-                    // the weaker tier (H6 threat model).
-                    if mirrored
-                        && let Ok(fallback) =
-                            LocalStorageSecureKeyStore::new(&service_name_for_async)
-                        && let Err(err) = fallback.delete_secret(&key_for_async)
-                    {
-                        tracing::warn!(?err, key=%key_for_async, "mirror cleanup failed");
-                    }
-                }
+                Ok(()) => {}
                 Err(err) => {
                     tracing::warn!(?err, key=%key_for_async, "indexedDB persist failed");
                 }
@@ -1040,14 +995,6 @@ impl SecureKeyStore for IndexedDbSecureKeyStore {
                 .map_err(|err| SecureKeyStoreError::Backend(format!("cache lock: {err}")))?;
             guard.remove(key);
         }
-        // YOU-02-009: also drop any transient localStorage mirror left by
-        // `store_secret` so a deleted secret cannot be resurrected by the
-        // boot-time migration sweep.
-        if let Ok(fallback) = LocalStorageSecureKeyStore::new(&self.service_name)
-            && let Err(err) = fallback.delete_secret(key)
-        {
-            tracing::warn!(?err, key=%key, "localStorage mirror delete failed");
-        }
         // Reuse the cached `IdbDatabase` handle for the spawned delete.
         let key_for_async = key.to_owned();
         let db = self.db.clone();
@@ -1075,7 +1022,7 @@ impl SecureKeyStore for IndexedDbSecureKeyStore {
     }
 }
 
-/// wasm32-only async upgrade path.
+/// wasm32-only async IndexedDB initialization path.
 ///
 /// The boot sequence on wasm32 looks like:
 ///
@@ -1083,7 +1030,7 @@ impl SecureKeyStore for IndexedDbSecureKeyStore {
 ///      [`LocalStorageSecureKeyStore`]. This unblocks first paint without waiting on
 ///      IndexedDB/SubtleCrypto.
 ///   2. App `main` then `spawn_local`s an async task that calls
-///      `upgrade_wasm_secure_key_store_async(service_name).await`, which returns either:
+///      `initialize_wasm_secure_key_store_async(service_name).await`, which returns either:
 ///        * `Ok(Some(store))` — a fully-initialised [`IndexedDbSecureKeyStore`] installed as the
 ///          process-wide default returned by [`super::default_secure_key_store`].
 ///        * `Ok(None)` — IndexedDB or SubtleCrypto were unavailable (private-mode Firefox, file://
@@ -1091,15 +1038,11 @@ impl SecureKeyStore for IndexedDbSecureKeyStore {
 ///          secrets; signer bootstrap remains fail-closed.
 ///        * `Err(...)` — backend failure during init. Caller should log and keep the LocalStorage
 ///          store only for non-signing secrets.
-///   3. The first time an entry is written through the IndexedDB store,
-///      [`migrate_localstorage_entries_to_indexeddb`] (also async) can be invoked to copy any
-///      pre-existing wrapped secrets across, then drop the LocalStorage seed.
-///
 /// Returning `Option<Arc<...>>` rather than panicking on
 /// "browser doesn't support this" mirrors the rest of the secure
 /// key store contract (sync `default_secure_key_store` also falls
 /// back to `MemorySecureKeyStore` rather than crashing).
-pub async fn upgrade_wasm_secure_key_store_async(
+pub async fn initialize_wasm_secure_key_store_async(
     service_name: &str,
 ) -> Result<Option<Arc<dyn SecureKeyStore + Send + Sync>>, SecureKeyStoreError> {
     // Idempotent: if the upgraded IndexedDB store is already installed, return
@@ -1110,15 +1053,15 @@ pub async fn upgrade_wasm_secure_key_store_async(
     // on the next load, silently dropping secrets like the MLS KeyPackage init
     // key). `ensure_wasm_secure_key_store_ready` guards its own call site, but
     // `upgrade_*` is also invoked directly (app boot), so it must guard too.
-    if let Some(store) = WASM_UPGRADED_SECURE_KEY_STORE.get() {
+    if let Some(store) = WASM_INDEXEDDB_SECURE_KEY_STORE.get() {
         return Ok(Some(store.clone()));
     }
-    static UPGRADE_MUTEX: std::sync::OnceLock<tokio::sync::Mutex<()>> = std::sync::OnceLock::new();
-    let _upgrade_guard = UPGRADE_MUTEX
+    static INIT_MUTEX: std::sync::OnceLock<tokio::sync::Mutex<()>> = std::sync::OnceLock::new();
+    let _init_guard = INIT_MUTEX
         .get_or_init(|| tokio::sync::Mutex::new(()))
         .lock()
         .await;
-    if let Some(store) = WASM_UPGRADED_SECURE_KEY_STORE.get() {
+    if let Some(store) = WASM_INDEXEDDB_SECURE_KEY_STORE.get() {
         return Ok(Some(store.clone()));
     }
     // Probe for SubtleCrypto first — older browsers / file:// origins
@@ -1130,146 +1073,12 @@ pub async fn upgrade_wasm_secure_key_store_async(
         return Ok(None);
     }
     let store = IndexedDbSecureKeyStore::new_async(service_name).await?;
-    // One-shot migration of any pre-existing LocalStorage entries
-    // into the new IndexedDB store, then prune the LocalStorage side so a future
-    // disk dump can't recover the seed alongside the ciphertext.
-    let migrated = migrate_localstorage_entries_to_indexeddb(service_name, &store)
-        .await
-        .unwrap_or_else(|err| {
-            tracing::warn!(?err, "H6 LocalStorage→IndexedDB migration failed");
-            0
-        });
-    if migrated > 0 {
-        tracing::info!("H6 migration: {migrated} entry(s) migrated from LocalStorage to IndexedDB");
-    }
     // `IndexedDbSecureKeyStore` is genuinely `Send + Sync` (its `!Send` JS handles
     // ride inside `IndexedDbSendBoundary`), so it can inhabit the `+ Send + Sync`
     // trait object the process-global `OnceLock` requires.
     let store: Arc<dyn SecureKeyStore + Send + Sync> = Arc::new(store);
-    let _ = WASM_UPGRADED_SECURE_KEY_STORE.set(store.clone());
+    let _ = WASM_INDEXEDDB_SECURE_KEY_STORE.set(store.clone());
     Ok(Some(store))
-}
-
-/// Walk `localStorage` looking for keys under the
-/// `inkson.secret.<service_name>.*` prefix written by
-/// [`LocalStorageSecureKeyStore`], decrypt each via the
-/// existing AEAD wrapping seed, re-store under the IndexedDB tier
-/// via [`IndexedDbSecureKeyStore::store_secret`], then `removeItem`
-/// the original localStorage key plus the wrapping seed itself.
-///
-/// Ed25519 signing seeds are deleted instead of migrated in the production
-/// hardening path. The `wasm-localstorage-secrets-test` feature is the
-/// test-only exception: first-paint fixtures may already have generated a valid
-/// session-device seed in localStorage, so migration preserves it to keep later
-/// recovery-policy signatures bound to the same authorized device key.
-///
-/// Returns the count of migrated entries. Silently skips entries
-/// that fail to decrypt — they're either corrupted or written by a
-/// different installation (different wrapping_seed). A
-/// `Ok(_)` return means migration ran (possibly with skipped
-/// entries); `Err` indicates an environmental failure like no
-/// `window.localStorage` (private-mode Firefox, file:// origin).
-///
-/// Idempotent: a second run finds nothing to migrate and returns 0.
-pub async fn migrate_localstorage_entries_to_indexeddb(
-    service_name: &str,
-    indexed_store: &IndexedDbSecureKeyStore,
-) -> Result<usize, SecureKeyStoreError> {
-    let storage = match LocalStorageSecureKeyStore::storage() {
-        Ok(s) => s,
-        Err(_) => return Ok(0),
-    };
-    // Read the H2 wrapping seed (still bytes in localStorage — that
-    // is the threat model H6 is moving away from). When absent
-    // there's nothing to migrate.
-    let seed_key = LocalStorageSecureKeyStore::wrapping_seed_key(service_name);
-    let wrapping_seed_b64 = match storage.get_item(&seed_key) {
-        Ok(Some(b)) => b,
-        Ok(None) => return Ok(0),
-        Err(err) => {
-            return Err(SecureKeyStoreError::Backend(format!(
-                "migrate read seed: {err:?}"
-            )));
-        }
-    };
-    let wrapping_seed_bytes = match STANDARD_NO_PAD.decode(wrapping_seed_b64.as_bytes()) {
-        Ok(b) => b,
-        Err(_) => return Ok(0),
-    };
-    if wrapping_seed_bytes.len() != 32 {
-        return Ok(0);
-    }
-    let mut wrapping_key = [0u8; 32];
-    wrapping_key.copy_from_slice(&wrapping_seed_bytes);
-
-    // Enumerate localStorage entries whose key matches the H2
-    // prefix `inkson.secret.<service_name>.*` (excluding the
-    // wrap_seed key itself).
-    let prefix = format!("inkson.secret.{service_name}.");
-    let length = storage
-        .length()
-        .map_err(|err| SecureKeyStoreError::Backend(format!("ls length: {err:?}")))?;
-    let mut candidates: Vec<String> = Vec::new();
-    for i in 0..length {
-        let key = match storage.key(i) {
-            Ok(Some(k)) => k,
-            _ => continue,
-        };
-        if key == seed_key {
-            continue;
-        }
-        if !key.starts_with(&prefix) {
-            continue;
-        }
-        candidates.push(key);
-    }
-    let mut migrated = 0usize;
-    let mut removed_sensitive = 0usize;
-    for full_key in &candidates {
-        let entry_name = full_key
-            .strip_prefix(&prefix)
-            .unwrap_or(full_key.as_str())
-            .to_owned();
-        if is_wasm_ed25519_seed_key(&entry_name) && !wasm_localstorage_secret_downgrade_enabled() {
-            let _ = storage.remove_item(full_key);
-            removed_sensitive += 1;
-            tracing::warn!(
-                key=%entry_name,
-                "H6 migrate: removed localStorage Ed25519 seed instead of decrypting or migrating it"
-            );
-            continue;
-        }
-        let wrapped = match storage.get_item(full_key) {
-            Ok(Some(v)) => v,
-            _ => continue,
-        };
-        let Ok(Some(plain)) = unwrap_secret(&wrapped, &wrapping_key) else {
-            tracing::warn!(key=%entry_name, "H6 migrate: decrypt failed; skipping");
-            continue;
-        };
-        if let Err(err) = indexed_store.store_secret(&entry_name, &plain) {
-            tracing::warn!(?err, key=%entry_name, "H6 migrate: IDB write failed");
-            continue;
-        }
-        // Remove the LocalStorage copy only after the IDB write
-        // returns Ok. The IDB persistence task is fire-and-forget
-        // (see `IndexedDbSecureKeyStore::store_secret` doc-comment),
-        // so we accept a small window where both sides could exist
-        // — the next migration run will reconcile.
-        let _ = storage.remove_item(full_key);
-        migrated += 1;
-    }
-    // Finally drop the wrapping seed too, so a future disk dump
-    // only carries the IndexedDB's non-extractable CryptoKey.
-    if migrated > 0 || removed_sensitive > 0 {
-        let _ = storage.remove_item(&seed_key);
-    }
-    if removed_sensitive > 0 {
-        tracing::warn!(
-            "H6 migration: removed {removed_sensitive} localStorage Ed25519 seed entry/entries"
-        );
-    }
-    Ok(migrated)
 }
 
 fn indexeddb_and_subtle_available() -> bool {

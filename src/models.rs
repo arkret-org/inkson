@@ -80,8 +80,7 @@ pub struct ContactListRow {
     /// Principal Server on cross-PS rows, so this is populated whenever soland
     /// learned it from a cross-PS delivery; it stays `None` for same-PS
     /// contacts, where respond correctly falls back to same-PS behaviour.
-    /// Accepts a couple of likely wire spellings for forward compatibility.
-    #[serde(default, alias = "requester_service_did", alias = "source_service_did")]
+    #[serde(default)]
     pub peer_service_did: Option<String>,
     /// U3 — event ref of the `ak.consent.grant` this peer gave me for the
     /// `invite` (or `any`) scope. When present, the realm-invite "from contacts"
@@ -829,14 +828,12 @@ pub struct BackfillView {
     pub prev_cursor: Option<String>,
     pub next_cursor: Option<String>,
     // Spec `EventsQueryOutcome.has_more` (was the soland-local `limited`).
-    #[serde(default, alias = "limited")]
+    #[serde(default)]
     pub has_more: bool,
 }
 
 impl BackfillView {
-    /// UI projection code still has tolerant event walkers for historical
-    /// server shapes. Keep that leniency behind an explicit adapter so the
-    /// standard backfill response itself remains SDK typed.
+    /// Convert SDK-typed events to JSON for projection reducers.
     pub fn event_values(&self) -> Vec<Value> {
         self.events
             .iter()
@@ -918,7 +915,7 @@ impl std::fmt::Display for DirectoryDidDocumentJson {
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct ResolveHandleView {
-    #[serde(default, alias = "subject")]
+    #[serde(default)]
     pub did: String,
     pub handle: String,
     pub did_document: Option<DirectoryDidDocumentJson>,

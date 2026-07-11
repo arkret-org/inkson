@@ -291,10 +291,9 @@ pub(crate) enum ParticipantRosterRow {
 /// (`device-lifecycle.md` §8.2, fail-closed).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum ChatProofVerdict {
-    /// No `proofs` carried on this projection — nothing to verify here. Existing
-    /// (legacy / proofless) projections keep their prior behavior; the device
-    /// signature gate only applies once envelopes carry `proofs`.
-    NotApplicable,
+    /// Non-persistent system row with no attributed actor. Persistent actor
+    /// messages without proofs are rejected before projection.
+    Unattributed,
     /// Sender proof verified against the authoritative directory verify key.
     Verified,
     /// Proof present but verification failed, or the device is revoked / absent

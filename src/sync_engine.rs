@@ -279,7 +279,7 @@ fn push_account_event_payload(
         Err(error) => {
             tracing::debug!(
                 error = %error,
-                "account sync event payload was not a typed Event; preserving legacy ingest path"
+                "account sync event payload was not a typed Event; ignoring payload"
             );
         }
     }
@@ -1541,7 +1541,7 @@ pub fn apply_response(
 /// for inlined `identity_events[]` arrays. Each
 /// `ak.member.identity.update` envelope is recorded on the
 /// `LocalStateStore` keyed by `(realm_id, actor_id)`. Also handles the
-/// `state.events[]` form where the roster only carries
+/// canonical `state.events[]` form where the roster only carries
 /// `identity_event_ids[]` and the events themselves live in the
 /// frame-level event log.
 async fn process_to_device_delivery(
@@ -1689,21 +1689,11 @@ fn to_device_batch_allows_cursor_advance(messages: &[Value], limited: bool) -> b
 }
 
 fn sync_realm_state_events(body: &Value) -> Vec<Value> {
-    let mut events = Vec::new();
-    if let Some(items) = body.get("state").and_then(Value::as_array) {
-        events.extend(items.iter().cloned());
-    }
-    if let Some(items) = body
-        .get("state")
+    body.get("state")
         .and_then(|state| state.get("events"))
         .and_then(Value::as_array)
-    {
-        events.extend(items.iter().cloned());
-    }
-    if let Some(items) = body.get("events").and_then(Value::as_array) {
-        events.extend(items.iter().cloned());
-    }
-    events
+        .cloned()
+        .unwrap_or_default()
 }
 
 fn ingest_kanban_state_events_from_projection(
@@ -2004,7 +1994,7 @@ fn ingest_member_identity_events_from_projection(
     realm_id: &str,
     body: &Value,
 ) {
-    // Build a quick lookup over any `state.events[]` array on the
+    // Build a quick lookup over the canonical `state.events[]` array on the
     // projection so that referenced identity_event_ids can be resolved
     // without a separate query.
     let state_log_events = sync_realm_state_events(body);
@@ -2081,7 +2071,7 @@ fn ingest_member_identity_events_from_projection(
 /// [`crate::identity::did_resolver::DidResolutionCache::invalidate`] for the related actor
 /// DID. Events may appear in:
 /// - inline `identity_events[]` on each member roster entry;
-/// - top-level projection event logs at `state.events[]` / `events[]`.
+/// - projection event logs at `state.events[]`.
 ///
 /// Actor DID is read from the event `actor_id` / `did`, falling back to the
 /// roster entry `actor_id` / `did`. Forbidden `actor` / `sender` fields are
@@ -2132,8 +2122,7 @@ fn invalidate_cache_for_revocation_events(
         }
     }
 
-    // Scan top-level event log shapes: legacy `state[]`, `state.events[]`,
-    // and fallback `events[]`.
+    // Scan the canonical top-level `state[]` event log.
     let state_events = sync_realm_state_events(body);
     invalidate_from_events(cache, &state_events, None);
 
@@ -2652,8 +2641,7 @@ mod tests {
         ));
         let mut store = LocalStateStore::with_path(temp);
         let body = json!({
-            "state": {
-                "events": [{
+            "state": { "events": [{
                     "event_id": "ak:event:01904100-0000-7000-8000-0000000000a1",
                     "operation_id": "ak:operation:01904100-0000-7000-8000-0000000000a1",
                     "event_kind": "ak.strand.update",
@@ -2666,8 +2654,7 @@ mod tests {
                             "synthesis": {"$op": "set", "value": "bob synthesis"}
                         }
                     }
-                }]
-            }
+                }] }
         });
 
         let changed = ingest_kanban_state_events_from_projection(
@@ -2696,8 +2683,7 @@ mod tests {
         let strand_id = "ak:strand:01904100-0000-7000-8000-000000000002";
         let mut store = temp_store("discussion-pin-state-events");
         let body = json!({
-            "state": {
-                "events": [{
+            "state": { "events": [{
                     "event_id": "ak:event:01904100-0000-7000-8000-0000000000b1",
                     "event_kind": "ak.pin.add",
                     "actor_id": "did:web:mei.example",
@@ -2708,8 +2694,7 @@ mod tests {
                         "target_ref": "ak:message:01904100-0000-7000-8000-000000000101",
                         "rank": "r001"
                     }
-                }]
-            }
+                }] }
         });
 
         let changed = ingest_discussion_state_events_from_projection(&mut store, realm_id, &body);
@@ -2734,8 +2719,7 @@ mod tests {
         let strand_id = "ak:strand:01904100-0000-7000-8000-000000000002";
         let mut store = temp_store("discussion-message-state-events");
         let body = json!({
-            "state": {
-                "events": [
+            "state": { "events": [
                     {
                         "event_id": "ak:event:01904100-0000-7000-8000-0000000000c1",
                         "event_kind": "ak.message.revise",
@@ -2764,8 +2748,7 @@ mod tests {
                             "reason": "user requested tombstone"
                         }
                     }
-                ]
-            }
+                ] }
         });
 
         let changed = ingest_discussion_state_events_from_projection(&mut store, realm_id, &body);
@@ -2964,13 +2947,13 @@ mod tests {
 
     #[test]
     fn device_revoke_event_in_state_events_invalidates_actor() {
-        // Top-level state.events[] use canonical `actor_id`; forbidden
+        // state.events[] use canonical `actor_id`; forbidden
         // `actor` / `sender` fields are ignored by the scanner.
         let (mut cache, did) = seed_cache("did:web:bob.example");
         let body = json!({
             "state": { "events": [
                 { "event_id": "e9", "kind": "ak.device.revoke", "actor_id": "did:web:bob.example" }
-            ]}
+            ] }
         });
         invalidate_cache_for_revocation_events(&mut cache, &body);
         assert!(cache.get(&did, chrono::Utc::now()).is_none());
@@ -2985,7 +2968,7 @@ mod tests {
             "state": { "events": [
                 { "event_id": "e10", "kind": "ak.device.revoke", "actor": "did:web:dave.example" },
                 { "event_id": "e11", "kind": "ak.device.revoke", "sender": "did:web:dave.example" }
-            ]}
+            ] }
         });
         invalidate_cache_for_revocation_events(&mut cache, &body);
         assert!(

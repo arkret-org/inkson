@@ -1,12 +1,8 @@
 //! Unified feedback surface — toast queue + [`ToastHost`] + [`AppBanner`].
 //!
 //! `docs/design/unified-feedback-system.md` Wave 0: a single stacked
-//! toast host replaces the per-concern `PolicyDenyBanner` and
-//! `CircleErrorToast` surfaces. The two legacy producer queues
-//! (`policy_deny_banner::push_policy_deny`,
-//! `circle_error_toast::push_circle_error`) are kept untouched — the
-//! host drains them alongside the new generic queue and converts each
-//! event into a [`Toast`].
+//! toast host replaces the per-concern feedback surfaces. Every producer
+//! writes directly to this single queue.
 //!
 //! Producer side is a process-wide `Mutex<VecDeque<Toast>>` rather than
 //! a Dioxus context/Signal on purpose: producers (the HTTP layer, sync
@@ -28,8 +24,6 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 use dioxus::prelude::*;
 
-use super::circle_error_toast::take_circle_error;
-use super::policy_deny_banner::{PolicyDenyEvent, take_policy_deny};
 use crate::circle::CircleErrorKind;
 use crate::i18n::tr;
 use crate::ui::button::{Button, ButtonSize, ButtonVariant};
@@ -85,9 +79,7 @@ pub struct Toast {
     pub captured_at_ms: u64,
     /// Monotonic id — keyed rendering and targeted dismissal.
     pub id: u64,
-    /// Producer channel tag (`data-source` on the rendered item):
-    /// `"app"` for [`push_toast`], `"policy-deny"` / `"circle-error"`
-    /// for the bridged legacy queues.
+    /// Producer channel tag (`data-source` on the rendered item).
     pub source: &'static str,
 }
 
@@ -124,9 +116,7 @@ pub const TOAST_QUEUE_CAP: usize = 20;
 /// single "+N more" row until expanded.
 pub const TOAST_VISIBLE_MAX: usize = 3;
 
-/// Process-wide toast queue. Stacked (unlike the legacy single-slot
-/// policy/circle queues): concurrent successes and failures must both
-/// stay visible per the design's acceptance criteria.
+/// Process-wide toast queue. Concurrent successes and failures remain visible.
 static TOAST_QUEUE: Mutex<VecDeque<Toast>> = Mutex::new(VecDeque::new());
 
 fn enqueue_toast(toast: Toast) {
@@ -181,26 +171,58 @@ pub fn drain_toasts() -> Vec<Toast> {
     }
 }
 
-/// Bridge: a queued [`PolicyDenyEvent`] (HTTP-layer 403 with a
-/// policy-shaped envelope) becomes a Warning toast. The obligations
-/// transcript moves into `detail` so the visible message stays short.
-pub fn policy_deny_to_toast(event: PolicyDenyEvent) -> Toast {
+/// Convert an HTTP-layer policy denial into a warning toast.
+pub fn policy_deny_to_toast(
+    code: String,
+    message: String,
+    obligations: Vec<serde_json::Value>,
+) -> Toast {
     let detail = serde_json::to_string(&serde_json::json!({
-        "code": event.code,
-        "message": event.message,
-        "obligations": event.obligations,
+        "code": code,
+        "message": message,
+        "obligations": obligations,
     }))
     .ok();
     Toast {
         severity: FeedbackSeverity::Warning,
         key: "feedback.policy_denied".to_owned(),
-        args: vec![("code", event.code), ("message", event.message)],
+        args: vec![("code", code), ("message", message)],
         fallback: None,
         detail,
-        captured_at_ms: event.captured_at_ms,
+        captured_at_ms: crate::clock::now_unix_ms(),
         id: next_toast_id(),
         source: "policy-deny",
     }
+}
+
+pub fn push_policy_deny_toast(
+    code: impl Into<String>,
+    message: impl Into<String>,
+    obligations: Vec<serde_json::Value>,
+) {
+    enqueue_toast(policy_deny_to_toast(
+        code.into(),
+        message.into(),
+        obligations,
+    ));
+}
+
+pub fn is_policy_deny_code(code: &str) -> bool {
+    use arkret_sdk::error::{ERROR_CODE_CAPABILITY_DENIED, ERROR_CODE_POLICY_DENIED};
+
+    code == ERROR_CODE_POLICY_DENIED
+        || code == ERROR_CODE_CAPABILITY_DENIED
+        || matches!(
+            code,
+            "policy_blocked"
+                | "policy_timeout"
+                | "capability_revoked"
+                | "missing_capability"
+                | "consent_required"
+                | "consent_denied"
+                | "delegation_exceeds_grantor_expiry"
+                | "capability_not_held"
+        )
 }
 
 /// Bridge: a queued AKP-0007 [`CircleErrorKind`] becomes an Error
@@ -219,17 +241,18 @@ pub fn circle_error_to_toast(kind: CircleErrorKind) -> Toast {
     }
 }
 
-/// Drain every producer channel: the generic toast queue plus the two
-/// bridged legacy queues (single-slot each, hence `while let`).
-fn drain_all_feedback() -> Vec<Toast> {
-    let mut out = drain_toasts();
-    while let Some(event) = take_policy_deny() {
-        out.push(policy_deny_to_toast(event));
+pub fn maybe_dispatch_circle_error(code: &str, reason: Option<&str>) -> bool {
+    if let Some(kind) = CircleErrorKind::from_error_code(code) {
+        enqueue_toast(circle_error_to_toast(kind));
+        return true;
     }
-    while let Some(kind) = take_circle_error() {
-        out.push(circle_error_to_toast(kind));
+    if let Some(reason) = reason
+        && let Some(kind) = CircleErrorKind::from_reason_code(reason)
+    {
+        enqueue_toast(circle_error_to_toast(kind));
+        return true;
     }
-    out
+    false
 }
 
 /// Localize a toast: `tr(key)`, fall back to `toast.fallback` on a
@@ -270,7 +293,7 @@ pub fn ToastHost() -> Element {
     // queued toast is picked up within milliseconds of the producing
     // call. Writing the signal during render triggers exactly one extra
     // rerender (the queue is then empty, so it settles).
-    let incoming = drain_all_feedback();
+    let incoming = drain_toasts();
     if !incoming.is_empty() {
         for toast in &incoming {
             // Auto-dismiss: one task per toast. Removal is keyed on the
@@ -465,7 +488,7 @@ mod tests {
     use super::*;
 
     // NOTE: no `tr()` in these tests — localization requires a Dioxus
-    // runtime. We only test queue semantics and bridge conversions.
+    // runtime. We only test queue semantics and typed conversions.
 
     // Queue semantics live in ONE test because TOAST_QUEUE is a shared
     // process-wide static and `cargo test` runs tests in parallel;
@@ -515,13 +538,12 @@ mod tests {
     }
 
     #[test]
-    fn policy_deny_bridges_to_warning_toast() {
-        let event = PolicyDenyEvent::new(
-            "policy_denied",
-            "external_policy_blocks_user",
+    fn policy_deny_converts_to_warning_toast() {
+        let toast = policy_deny_to_toast(
+            "policy_denied".to_owned(),
+            "external_policy_blocks_user".to_owned(),
             vec![json!({"kind": "log_event", "target": "audit_log"})],
         );
-        let toast = policy_deny_to_toast(event);
         assert_eq!(toast.severity, FeedbackSeverity::Warning);
         assert_eq!(toast.key, "feedback.policy_denied");
         assert_eq!(toast.source, "policy-deny");
@@ -538,7 +560,7 @@ mod tests {
     }
 
     #[test]
-    fn circle_error_bridges_to_error_toast_with_fallback() {
+    fn circle_error_converts_to_error_toast_with_fallback() {
         let toast = circle_error_to_toast(CircleErrorKind::RealmMismatch);
         assert_eq!(toast.severity, FeedbackSeverity::Error);
         assert_eq!(toast.key, CircleErrorKind::RealmMismatch.i18n_key());

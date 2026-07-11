@@ -5,6 +5,31 @@ use serde_json::json;
 use super::*;
 
 #[test]
+fn local_projection_commands_wait_for_the_projector() {
+    let path = temp_state_path("local-projection-command-queue");
+    let mut store = LocalStateStore::with_path(path);
+    let operation_id = "ak:op:0196419b-0000-7000-8000-000000000001";
+    let realm_id = "ak:realm:0196419b-0000-7000-8000-000000000001";
+
+    store.enqueue_local_projection_command(
+        operation_id,
+        Some(realm_id.to_owned()),
+        json!({ "kind": "ak.strand.create", "write_state": "queued" }),
+    );
+
+    assert!(store.load().raw_operations.is_empty());
+    assert!(store.has_pending_local_projection_commands());
+
+    store.project_pending_local_commands();
+
+    let state = store.load();
+    assert_eq!(state.raw_operations.len(), 1);
+    assert_eq!(state.raw_operations[0].operation_id, operation_id);
+    assert_eq!(state.raw_operations[0].realm_id.as_deref(), Some(realm_id));
+    assert!(!store.has_pending_local_projection_commands());
+}
+
+#[test]
 fn mls_encrypted_projection_detects_epoch_pause_scope() {
     let path = temp_state_path("mls-encrypted-projection");
     let mut store = LocalStateStore::with_path(path);

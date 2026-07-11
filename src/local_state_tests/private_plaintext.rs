@@ -146,7 +146,7 @@ fn private_plaintext_sidecar_stays_memory_only_in_account_state() {
 }
 
 #[test]
-fn history_secret_inline_copy_survives_until_secure_store_persist_succeeds() {
+fn history_secret_is_never_written_to_plaintext_state() {
     let mut by_epoch = BTreeMap::new();
     by_epoch.insert(7, b"history-secret".to_vec());
     let mut state = ClientLocalState::default();
@@ -154,18 +154,10 @@ fn history_secret_inline_copy_survives_until_secure_store_persist_succeeds() {
         .history_secrets
         .insert("ak:realm:history".to_owned(), by_epoch);
 
-    let not_migrated = e2ee_safe_persist_state_after_history_migration(&state, false);
+    let persisted = e2ee_safe_persist_state(&state);
     assert!(
-        not_migrated
-            .history_secrets
-            .contains_key("ak:realm:history"),
-        "history_secret stays durable until IndexedDB persist succeeds"
-    );
-
-    let migrated = e2ee_safe_persist_state_after_history_migration(&state, true);
-    assert!(
-        migrated.history_secrets.is_empty(),
-        "history_secret is stripped once hardened storage accepted it"
+        persisted.history_secrets.is_empty(),
+        "history_secret must never enter plaintext persistence"
     );
 }
 

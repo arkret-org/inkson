@@ -180,21 +180,20 @@ mod device_identity_proof_tests {
     }
 
     #[test]
-    fn proofless_projection_is_not_applicable() {
+    fn proofless_attributed_projection_is_rejected() {
         let envelope = json!({
             "kind": "ak.message.create",
-            "actor_id": "did:web:legacy.example",
-            "device_id": "ak:device:legacy",
-            "message_id": "ak:msg:legacy",
+            "actor_id": "did:web:alice.example",
+            "device_id": "ak:device:alice",
+            "message_id": "ak:msg:proofless",
             "strand_id": "ak:strand:general",
-            "content": { "body": "legacy proofless message" }
+            "content": { "body": "proofless message" }
         });
         assert_eq!(
             verify_chat_envelope_proof(&envelope),
-            ChatProofVerdict::Unresolved
+            ChatProofVerdict::Rejected
         );
-        // No regression: a proofless projection still renders.
-        assert!(chat_message_from_event("ak:realm:r", &envelope).is_some());
+        assert!(chat_message_from_event("ak:realm:r", &envelope).is_none());
     }
 }
 

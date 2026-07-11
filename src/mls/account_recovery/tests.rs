@@ -56,7 +56,7 @@ fn recovery_hpke_backup() -> Value {
         "did:web:alice.example#recovery",
         ACCOUNT_SECRET,
         1,
-        None,
+        ("ak:recovery_policy:P1", 3),
     )
     .unwrap()
 }
@@ -68,6 +68,31 @@ fn active_series_record(backup_class: &str, active_series_id: &str) -> Value {
         "backup_class": backup_class,
         "active_series_id": active_series_id,
         "previous_series_ids": [],
+    })
+}
+
+fn backup_series_id(body: &Value) -> &str {
+    body.get("series_id")
+        .and_then(Value::as_str)
+        .expect("backup must carry a series_id")
+}
+
+fn payload_with_inferred_active_series(backups: Vec<Value>) -> Value {
+    let active_series = ["secret_storage", "mls_history", "did_recovery"]
+        .into_iter()
+        .filter_map(|backup_class| {
+            backups
+                .iter()
+                .find(|body| {
+                    body.get("backup_class").and_then(Value::as_str) == Some(backup_class)
+                        && body.get("series_id").and_then(Value::as_str).is_some()
+                })
+                .map(|body| active_series_record(backup_class, backup_series_id(body)))
+        })
+        .collect::<Vec<_>>();
+    serde_json::json!({
+        "active_series": active_series,
+        "backups": backups,
     })
 }
 
@@ -218,14 +243,15 @@ fn select_account_secret_finds_it_in_a_list_payload() {
     let account_secret_body = wrap();
     // A `list_key_backups`-shaped payload mixing a history backup, an
     // unrelated recovery vault, and the account-secret backup.
-    let payload = serde_json::json!({
-        "backups": [
-            { "backup_id": "ak:backup:a", "backup_class": "mls_history" },
-            { "backup_id": "ak:backup:b", "backup_class": "recovery",
-              "contents": [ { "secret_id": "inkson_recovery_vault_payload" } ] },
-            account_secret_body.clone(),
-        ]
-    });
+    let payload = payload_with_inferred_active_series(vec![
+        serde_json::json!({ "backup_id": "ak:backup:a", "backup_class": "mls_history" }),
+        serde_json::json!({
+            "backup_id": "ak:backup:b",
+            "backup_class": "recovery",
+            "contents": [{ "secret_id": "inkson_recovery_vault_payload" }]
+        }),
+        account_secret_body.clone(),
+    ]);
     let found = select_mls_account_secret_backup(&payload).expect("account secret present");
     assert!(is_mls_account_secret_backup(&found));
     // No-account-secret payload returns None.
@@ -249,10 +275,13 @@ fn preferred_account_secret_requires_recovery_public_key() {
         "did:web:alice.example#recovery",
         ACCOUNT_SECRET,
         1,
-        None,
+        ("ak:recovery_policy:P1", 3),
     )
     .unwrap();
-    let payload = serde_json::json!({ "backups": [passphrase_wrapped.clone(), hpke.clone()] });
+    let payload = serde_json::json!({
+        "active_series": [active_series_record("secret_storage", backup_series_id(&hpke))],
+        "backups": [passphrase_wrapped.clone(), hpke.clone()]
+    });
 
     let found = select_preferred_mls_account_secret_backup(&payload)
         .expect("preferred account secret present");
@@ -261,7 +290,7 @@ fn preferred_account_secret_requires_recovery_public_key() {
         serde_json::json!("recovery_public_key")
     );
 
-    let passphrase_only = serde_json::json!({ "backups": [passphrase_wrapped.clone()] });
+    let passphrase_only = payload_with_inferred_active_series(vec![passphrase_wrapped.clone()]);
     assert!(select_preferred_mls_account_secret_backup(&passphrase_only).is_none());
 }
 
@@ -270,10 +299,15 @@ fn select_account_secret_prefers_highest_series_seq() {
     let mut older = wrap();
     older["backup_id"] = serde_json::json!("ak:backup:01964137-0000-7000-8000-00000000bee1");
     older["series_seq"] = serde_json::json!(1);
+    older["series_id"] = serde_json::json!(ACTIVE_SECRET_STORAGE_SERIES);
     let mut newer = wrap();
     newer["backup_id"] = serde_json::json!("ak:backup:01964137-0000-7000-8000-00000000bee2");
     newer["series_seq"] = serde_json::json!(2);
+    newer["series_id"] = serde_json::json!(ACTIVE_SECRET_STORAGE_SERIES);
     let payload = serde_json::json!({
+        "active_series": [
+            active_series_record("secret_storage", ACTIVE_SECRET_STORAGE_SERIES)
+        ],
         "backups": [newer.clone(), older]
     });
 
@@ -288,9 +322,8 @@ fn prompt_required_when_local_secret_exists_but_history_is_missing() {
     crate::mls::runtime::store_account_mls_secret(&store, ACTOR, "stale-local-secret").unwrap();
     let state = temp_state_store("prompt-missing-history");
     let envelope = history_envelope("ak:realm:prompt", "group-a", 7, ACCOUNT_SECRET);
-    let payload = serde_json::json!({
-        "backups": [recovery_hpke_backup(), history_body(&envelope)]
-    });
+    let payload =
+        payload_with_inferred_active_series(vec![recovery_hpke_backup(), history_body(&envelope)]);
 
     assert!(mls_restore_prompt_required(
         &payload, &state, &store, ACTOR, DEVICE
@@ -304,9 +337,7 @@ fn prompt_not_required_when_local_history_is_current_and_decryptable() {
     let mut state = temp_state_store("prompt-current-history");
     let envelope = history_envelope("ak:realm:prompt", "group-a", 7, ACCOUNT_SECRET);
     state.save_mls_snapshot(envelope.realm_id.clone(), envelope.clone());
-    let payload = serde_json::json!({
-        "backups": [wrap(), history_body(&envelope)]
-    });
+    let payload = payload_with_inferred_active_series(vec![wrap(), history_body(&envelope)]);
 
     assert!(!mls_restore_prompt_required(
         &payload, &state, &store, ACTOR, DEVICE
@@ -376,9 +407,10 @@ fn prompt_required_when_local_snapshot_uses_forked_random_secret() {
     // epoch/group gates.
     let local_envelope = history_envelope("ak:realm:prompt", "group-a", 7, "forked-random-secret");
     state.save_mls_snapshot(local_envelope.realm_id.clone(), local_envelope);
-    let payload = serde_json::json!({
-        "backups": [recovery_hpke_backup(), history_body(&server_envelope)]
-    });
+    let payload = payload_with_inferred_active_series(vec![
+        recovery_hpke_backup(),
+        history_body(&server_envelope),
+    ]);
 
     assert!(
         mls_restore_prompt_required(&payload, &state, &store, ACTOR, DEVICE),
@@ -426,12 +458,17 @@ fn fresh_device_restores_via_recovery_key_no_passphrase() {
         "did:web:alice.example#recovery",
         ACCOUNT_SECRET,
         crate::mls::runtime::ACCOUNT_MLS_SECRET_CURRENT_VERSION,
-        None,
+        ("ak:recovery_policy:P1", 3),
     )
     .unwrap();
+    let history_body_value = history_body(&history);
 
     let payload = serde_json::json!({
-        "backups": [account_secret_body, history_body(&history)]
+        "active_series": [
+            active_series_record("secret_storage", backup_series_id(&account_secret_body)),
+            active_series_record("mls_history", backup_series_id(&history_body_value))
+        ],
+        "backups": [account_secret_body, history_body_value]
     });
     // Device B: empty secure store, empty state store.
     let store = MemorySecureKeyStore::new();
@@ -444,7 +481,7 @@ fn fresh_device_restores_via_recovery_key_no_passphrase() {
         ACTOR,
         DEVICE,
         &recovery_sk,
-        None,
+        ("ak:recovery_policy:P1", 3),
     )
     .unwrap();
 
@@ -475,7 +512,7 @@ fn fresh_device_restores_via_recovery_key_no_passphrase() {
             ACTOR,
             DEVICE,
             &other_sk,
-            None,
+            ("ak:recovery_policy:P1", 3),
         )
         .is_err(),
         "wrong recovery key must fail"
@@ -496,7 +533,7 @@ fn recovery_public_key_backup_policy_ref_is_enforced_on_open() {
         "did:web:alice.example#recovery",
         ACCOUNT_SECRET,
         1,
-        Some(("ak:recovery_policy:P1", 3)),
+        ("ak:recovery_policy:P1", 3),
     )
     .unwrap();
 
@@ -504,7 +541,7 @@ fn recovery_public_key_backup_policy_ref_is_enforced_on_open() {
     let (secret, _version) = open_mls_account_secret_recovery_public_key_backup(
         &recovery_sk,
         &body,
-        Some(("ak:recovery_policy:P1", 3)),
+        ("ak:recovery_policy:P1", 3),
     )
     .unwrap();
     assert_eq!(secret, ACCOUNT_SECRET);
@@ -514,7 +551,7 @@ fn recovery_public_key_backup_policy_ref_is_enforced_on_open() {
         open_mls_account_secret_recovery_public_key_backup(
             &recovery_sk,
             &body,
-            Some(("ak:recovery_policy:P1", 2)),
+            ("ak:recovery_policy:P1", 2),
         )
         .is_err(),
         "old policy version must be rejected"
@@ -525,14 +562,11 @@ fn recovery_public_key_backup_policy_ref_is_enforced_on_open() {
         open_mls_account_secret_recovery_public_key_backup(
             &recovery_sk,
             &body,
-            Some(("ak:recovery_policy:P2", 3)),
+            ("ak:recovery_policy:P2", 3),
         )
         .is_err(),
         "different policy id must be rejected"
     );
-
-    // No expected policy supplied → check skipped (legacy / offline path).
-    assert!(open_mls_account_secret_recovery_public_key_backup(&recovery_sk, &body, None).is_ok());
 }
 
 #[test]
@@ -541,7 +575,7 @@ fn recovery_public_key_backup_without_policy_ref_rejected_when_policy_expected()
 
     let (recovery_sk, recovery_pk) = crate::hpke_backup::generate_recovery_keypair().unwrap();
     // Backup built WITHOUT a policy ref.
-    let body = build_mls_account_secret_recovery_public_key_backup(
+    let mut body = build_mls_account_secret_recovery_public_key_backup(
         BACKUP_ID,
         ACTOR,
         DEVICE,
@@ -549,15 +583,16 @@ fn recovery_public_key_backup_without_policy_ref_rejected_when_policy_expected()
         "did:web:alice.example#recovery",
         ACCOUNT_SECRET,
         1,
-        None,
+        ("ak:recovery_policy:P1", 3),
     )
     .unwrap();
+    body.as_object_mut().unwrap().remove("recovery_policy_ref");
     // SEC-05: with an expected policy and no ref on the envelope → fail closed.
     assert!(
         open_mls_account_secret_recovery_public_key_backup(
             &recovery_sk,
             &body,
-            Some(("ak:recovery_policy:P1", 3)),
+            ("ak:recovery_policy:P1", 3),
         )
         .is_err(),
         "missing recovery_policy_ref must fail closed when a policy is expected"
@@ -586,9 +621,7 @@ fn restore_replaces_stale_local_secret_before_history_replay() {
         ACCOUNT_SECRET,
         b"deterministic-salt",
     );
-    let payload = serde_json::json!({
-        "backups": [wrap(), history_body(&envelope)]
-    });
+    let payload = payload_with_inferred_active_series(vec![wrap(), history_body(&envelope)]);
     let store = MemorySecureKeyStore::new();
     crate::mls::runtime::store_account_mls_secret_version(
         &store,
@@ -645,7 +678,7 @@ fn backup_prompt_not_required_when_server_backup_present() {
     // backup: fresh-device recovery material exists, so nothing to upload.
     let store = MemorySecureKeyStore::new();
     crate::mls::runtime::store_account_mls_secret(&store, ACTOR, ACCOUNT_SECRET).unwrap();
-    let payload = serde_json::json!({ "backups": [recovery_hpke_backup()] });
+    let payload = payload_with_inferred_active_series(vec![recovery_hpke_backup()]);
     assert!(!mls_backup_prompt_required(&payload, &store, ACTOR, DEVICE));
 }
 
@@ -756,7 +789,7 @@ fn mls_history_successor_chains_onto_previous_tail() {
 }
 
 #[test]
-fn mls_history_tail_selection_is_per_realm_and_per_series() {
+fn mls_history_tail_selection_uses_the_active_series_tail() {
     let series_a = "ak:backup_series:01964137-0000-7000-8000-0000000000a0";
     let env_a = history_envelope("ak:realm:a", "g-a", 1, ACCOUNT_SECRET);
     let mut a0 = history_body(&env_a);
@@ -771,9 +804,13 @@ fn mls_history_tail_selection_is_per_realm_and_per_series() {
     let env_b = history_envelope("ak:realm:b", "g-b", 5, ACCOUNT_SECRET);
     let mut b0 = history_body(&env_b);
     b0["backup_id"] = serde_json::json!("ak:backup:b0");
+    b0["series_id"] = serde_json::json!(series_a);
     // Non-history classes must never be selected as history tails.
     let account = wrap();
-    let payload = serde_json::json!({ "backups": [a0, a1.clone(), b0.clone(), account] });
+    let payload = serde_json::json!({
+        "active_series": [active_series_record("mls_history", series_a)],
+        "backups": [a0, a1.clone(), b0.clone(), account]
+    });
 
     // Per-Realm chaining target: realm a -> highest-seq link a1; realm b
     // -> its genesis; unknown realm -> none.
@@ -786,7 +823,10 @@ fn mls_history_tail_selection_is_per_realm_and_per_series() {
     // Restore-side quota guard: only series tails survive the filter.
     let tails = mls_history_series_tail_ids(&payload);
     assert!(tails.contains("ak:backup:a1"));
-    assert!(tails.contains("ak:backup:b0"));
+    assert!(
+        !tails.contains("ak:backup:b0"),
+        "one active series has exactly one fetchable tail"
+    );
     assert!(
         !tails.contains("ak:backup:a0"),
         "superseded chain links must not be fetched/restored"
@@ -810,7 +850,10 @@ fn select_account_secret_prefers_tail_seq_over_newer_timestamp() {
     stale["series_seq"] = serde_json::json!(1);
     stale["created_at"] = serde_json::json!("2026-12-31T23:59:59Z");
 
-    let payload = serde_json::json!({ "backups": [stale, tail.clone()] });
+    let payload = serde_json::json!({
+        "active_series": [active_series_record("secret_storage", series)],
+        "backups": [stale, tail.clone()]
+    });
     let found = select_mls_account_secret_backup(&payload).expect("account secret present");
     assert_eq!(
         found["backup_id"], tail["backup_id"],
@@ -909,10 +952,13 @@ fn select_history_honors_active_series_record() {
 #[test]
 fn select_history_backups_filters_by_class() {
     let payload = serde_json::json!({
+        "active_series": [
+            active_series_record("mls_history", ACTIVE_MLS_HISTORY_SERIES)
+        ],
         "backups": [
-            { "backup_id": "ak:backup:a", "backup_class": "mls_history" },
+            { "backup_id": "ak:backup:a", "backup_class": "mls_history", "series_id": ACTIVE_MLS_HISTORY_SERIES },
             { "backup_id": "ak:backup:b", "backup_class": "secret_storage" },
-            { "backup_id": "ak:backup:c", "backup_class": "mls_history" },
+            { "backup_id": "ak:backup:c", "backup_class": "mls_history", "series_id": ACTIVE_MLS_HISTORY_SERIES },
             { "backup_id": "ak:backup:d" },
         ]
     });
@@ -1008,13 +1054,11 @@ fn select_sidecar_finds_and_prefers_highest_series_seq() {
     let mut newer = base_body.clone();
     newer["backup_id"] = serde_json::json!("ak:backup:01964137-0000-7000-8000-0000000000a2");
     newer["series_seq"] = serde_json::json!(2);
-    let payload = serde_json::json!({
-        "backups": [
-            { "backup_id": "ak:backup:h", "backup_class": "mls_history" },
-            older,
-            newer.clone(),
-        ]
-    });
+    let payload = payload_with_inferred_active_series(vec![
+        serde_json::json!({ "backup_id": "ak:backup:h", "backup_class": "mls_history" }),
+        older,
+        newer.clone(),
+    ]);
     let found = select_mls_private_plaintext_backup(&payload).expect("sidecar present");
     assert!(is_mls_private_plaintext_backup(&found));
     assert_eq!(found["backup_id"], newer["backup_id"]);
@@ -1074,11 +1118,15 @@ fn restore_brings_back_the_sidecar_into_the_store() {
     );
 
     // The sidecar is encrypted under the ACCOUNT SECRET (not the passphrase).
-    let (_json, sidecar_body) = wrap_sidecar();
+    let (_json, mut sidecar_body) = wrap_sidecar();
+    let account_secret_body = wrap();
+    sidecar_body["series_id"] = account_secret_body["series_id"].clone();
 
-    let payload = serde_json::json!({
-        "backups": [wrap(), history_body(&history), sidecar_body]
-    });
+    let payload = payload_with_inferred_active_series(vec![
+        account_secret_body,
+        history_body(&history),
+        sidecar_body,
+    ]);
     let store = MemorySecureKeyStore::new();
     let mut state = temp_state_store("restore-sidecar");
 

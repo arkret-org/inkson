@@ -23,15 +23,11 @@ pub(crate) struct OutboxMessage {
     pub(crate) message_id: String,
     pub(crate) body: String,
     pub(crate) reply_to: Option<String>,
-    /// Structured mentions already resolved by the picker. Older v1
-    /// outbox rows predate this field, so they deserialize as empty and
-    /// retain their original plain-text replay behavior.
-    #[serde(default)]
+    /// Structured mentions already resolved by the picker.
     pub(crate) mentions: Vec<MentionNode>,
     /// Canonical controller handle captured when an offline `@me/<slug>`
     /// intent is queued. It is used only to expand the local `@me` alias
     /// before the replayed message is submitted.
-    #[serde(default)]
     pub(crate) own_controller_handle: Option<String>,
 }
 
@@ -84,26 +80,5 @@ pub(crate) fn navigator_online() -> bool {
     #[cfg(not(target_arch = "wasm32"))]
     {
         true
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn legacy_v1_outbox_rows_default_new_mention_fields() {
-        let row: OutboxMessage = serde_json::from_value(json!({
-            "realm_id": "ak:realm:0196419b-0000-7000-8000-000000000000",
-            "strand_id": "ak:strand:0196419b-0000-7000-8000-000000000001",
-            "channel_kind": "discussion",
-            "message_id": "ak:message:0196419b-0000-7000-8000-000000000002",
-            "body": "hello",
-            "reply_to": null
-        }))
-        .expect("legacy outbox row");
-
-        assert!(row.mentions.is_empty());
-        assert!(row.own_controller_handle.is_none());
     }
 }

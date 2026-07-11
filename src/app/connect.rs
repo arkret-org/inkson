@@ -864,14 +864,13 @@ pub(super) fn connect(base: String, actor: String, device: String, ctx: ConnectC
                     // drafts, seal views, read markers, remarks, and the
                     // previous identity's session grant + OIDC bundle) is
                     // someone else's data and must be wiped before the sync
-                    // below repopulates the store. `adopt_account_scope`
-                    // performs the wipe and stamps the new owner so a later
-                    // login recognises the scope. Device-level state
+                    // below repopulates the store. Account switching loads the
+                    // new owner's isolated entry. Device-level state
                     // (local_identity, push_registration, DPoP key) is
                     // preserved.
                     if !actor.trim().is_empty() {
                         let mut store = state_store.write();
-                        store.adopt_account_scope(&canonical_actor);
+                        store.switch_active_account(&canonical_actor);
                         // Also wipe the in-memory UI signals so the
                         // sidebar can't paint the previous actor's
                         // Realm tree updates between this point and the sync that's
@@ -891,18 +890,14 @@ pub(super) fn connect(base: String, actor: String, device: String, ctx: ConnectC
                         // No previous identity to displace — just record
                         // who the scope now belongs to (don't wipe: a
                         // just-established grant could be dropped).
-                        state_store
-                            .write()
-                            .stamp_account_scope_owner(&canonical_actor);
+                        state_store.write().switch_active_account(&canonical_actor);
                     }
                     account_did.set(canonical_actor.clone());
                 } else {
                     // Actor unchanged — record the scope owner so a later
                     // login for a different identity is recognised and the
                     // stale scope is reset.
-                    state_store
-                        .write()
-                        .stamp_account_scope_owner(&canonical_actor);
+                    state_store.write().switch_active_account(&canonical_actor);
                 }
                 if let Some(personal_handle) = account_personal_handle {
                     account_primary_handle.set(personal_handle.clone());

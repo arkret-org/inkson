@@ -16,9 +16,6 @@
 //!   * [`super::LocalStorageSecureKeyStore`] refuses Ed25519 seed keys.
 //!   * [`load_signing_seed`] / [`store_signing_seed`] require [`super::IndexedDbSecureKeyStore`] on
 //!     wasm32.
-//!   * `migrate_localstorage_entries_to_indexeddb` deletes historical localStorage Ed25519 seed
-//!     entries instead of decrypting or migrating them.
-//!
 //! Before the async IndexedDB/SubtleCrypto upgrade completes, browser
 //! signer bootstrap fails closed and ProofMode remains Production.
 
@@ -36,7 +33,7 @@ use super::{SecureKeyStore, SecureKeyStoreError, require_wasm_indexeddb_ed25519_
 /// The seed is additionally scoped *per account* (see
 /// [`signing_seed_key_for`]): two accounts signed in on the same browser MUST
 /// hold completely separate device signing keys, never one shared key. The
-/// bare `SIGNING_SEED_KEY` is a **bootstrap/legacy** scope used only before an
+/// bare `SIGNING_SEED_KEY` is a bootstrap scope used only before an
 /// account scope is known. Interactive session grants are bound by the separate
 /// grant-binding key below, so a returning account's signing seed must not be
 /// overwritten by a fresh login.
@@ -76,7 +73,7 @@ pub fn active_device_seed_scope() -> Option<String> {
 /// Process-global pending-login device id. During the pre-DID phase of an
 /// interactive sign-in the wrap_seed (and any pending secrets) live under the
 /// `pending.<device_id>` namespace; once the principal DID resolves, that
-/// material is adopted/migrated under the DID namespace. `None` outside an
+/// material is transferred under the DID namespace. `None` outside an
 /// in-flight pending sign-in.
 static PENDING_LOGIN_DEVICE_ID: RwLock<Option<String>> = RwLock::new(None);
 

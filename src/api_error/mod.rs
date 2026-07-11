@@ -48,7 +48,7 @@ struct ApiErrorBody {
 ///
 /// G3.Y3 — additionally, when `status` is 403 *and* the decoded
 /// envelope carries a policy-shaped code, dispatch a
-/// [`crate::components::PolicyDenyEvent`] so the global banner picks
+/// a policy-denial toast so the global feedback host picks
 /// it up without each call site needing to wire its own UI. The
 /// obligations array (per `authz/policy-server.md` §3) is pulled from
 /// the envelope's `details["obligations"]` slot if present.
@@ -126,8 +126,7 @@ pub fn decode_arkret_error(status: StatusCode, bytes: &[u8]) -> ErrorEnvelope {
 }
 
 /// G3.Y3 — on a 403 with a policy-shaped envelope, push a
-/// [`crate::components::PolicyDenyEvent`] onto the global queue so the
-/// unified `feedback::ToastHost` mounted near the app shell surfaces it
+/// a warning toast onto the global queue so the `feedback::ToastHost` surfaces it
 /// without each call site needing to plumb its own error UI.
 ///
 /// Skips auth-expired codes (those have their own session-death
@@ -149,9 +148,9 @@ pub(crate) fn maybe_dispatch_policy_deny(status: StatusCode, envelope: &ErrorEnv
         .and_then(|v| v.as_array())
         .cloned()
         .unwrap_or_default();
-    crate::components::push_policy_deny(crate::components::PolicyDenyEvent::new(
+    crate::components::push_policy_deny_toast(
         code.to_owned(),
         envelope.message().to_owned(),
         obligations,
-    ));
+    );
 }

@@ -26,7 +26,6 @@ const PROFILES_STORAGE_KEY: &str = "inkson.profiles.v1";
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ClientConfig {
     pub server_url: String,
-    #[serde(default = "default_principal_servers")]
     pub principal_servers: Vec<String>,
     pub account_did: String,
     pub device_id: String,
@@ -370,14 +369,11 @@ fn session_credential_cache()
     CACHE.get_or_init(|| std::sync::Mutex::new(std::collections::HashMap::new()))
 }
 
-/// Move `session_credential` into the SecureKeyStore. Returns `true` when
-/// the on-disk copy must be redacted. If the secure store rejects the
-/// write, persistence still proceeds without the plaintext credential.
-fn persist_session_credential_secret(account_did: &str, session_credential: &str) -> bool {
+/// Move `session_credential` into the SecureKeyStore. Plaintext persistence is
+/// always redacted, including when the secure backend rejects the write.
+fn persist_session_credential_secret(account_did: &str, session_credential: &str) {
     if account_did.is_empty() {
-        // No namespace to key the secret under; only an empty token is
-        // "safe" to drop from the persisted blob.
-        return session_credential.is_empty();
+        return;
     }
     let store = config_secure_store();
     let key = session_credential_secret_key(account_did);
@@ -385,21 +381,19 @@ fn persist_session_credential_secret(account_did: &str, session_credential: &str
         // Empty config writes also happen during first-paint restore and
         // profile/bootstrap churn. Do not treat them as logout; explicit
         // session invalidation calls `clear_session_credential_secret`.
-        return true;
+        return;
     }
     match store.store_secret(&key, session_credential) {
         Ok(()) => {
             if let Ok(mut cache) = session_credential_cache().lock() {
                 cache.insert(account_did.to_owned(), Some(session_credential.to_owned()));
             }
-            true
         }
         Err(error) => {
             tracing::warn!(
                 ?error,
                 "secure_key_store session_credential write failed; config persisted without credential",
             );
-            true
         }
     }
 }
@@ -456,9 +450,8 @@ fn restore_session_credential_secret(account_did: &str) -> Option<String> {
 /// SecureKeyStore and blanked.
 fn redact_config_for_disk(config: &ClientConfig) -> ClientConfig {
     let mut redacted = config.clone();
-    if persist_session_credential_secret(&redacted.account_did, &redacted.session_credential) {
-        redacted.session_credential = String::new();
-    }
+    persist_session_credential_secret(&redacted.account_did, &redacted.session_credential);
+    redacted.session_credential.clear();
     redacted
 }
 
@@ -466,9 +459,8 @@ fn redact_config_for_disk(config: &ClientConfig) -> ClientConfig {
 fn redact_profiles_for_disk(profiles: &MultiProfileConfig) -> MultiProfileConfig {
     let mut redacted = profiles.clone();
     for profile in &mut redacted.profiles {
-        if persist_session_credential_secret(&profile.account_did, &profile.session_credential) {
-            profile.session_credential = String::new();
-        }
+        persist_session_credential_secret(&profile.account_did, &profile.session_credential);
+        profile.session_credential.clear();
     }
     redacted
 }
@@ -610,36 +602,21 @@ impl LocalConfigStore {
         self.reattach_session_credential(config, secure_store)
     }
 
-    /// Reattach the session credential to `config` through `store`: prefer the value
-    /// already in the SecureKeyStore; otherwise, if the credential exists only in
-    /// the plaintext config blob (legacy persistence, or a test/old-browser
-    /// injection), migrate it into `store` and use it. The store write is
-    /// best-effort — when the wasm IndexedDB-only hardening is enforced it is
-    /// refused and the token is still used in-memory for this load. Production
-    /// blobs never carry a credential (redacted on save), so the migration branch is
-    /// inert there.
+    /// Reattach the session credential exclusively through `store`. Plaintext
+    /// config blobs are never accepted as a credential source.
     fn reattach_session_credential(
         &self,
         mut config: ClientConfig,
         store: &dyn crate::secure_key_store::SecureKeyStore,
     ) -> ClientConfig {
+        config.session_credential.clear();
         if config.account_did.is_empty() {
             return config;
         }
-        let blob_token = std::mem::take(&mut config.session_credential);
         if let Some(token) =
             restore_session_credential_secret_from_store(&config.account_did, store)
         {
             config.session_credential = token;
-        } else if !blob_token.trim().is_empty() {
-            let _ = store.store_secret(
-                &session_credential_secret_key(&config.account_did),
-                &blob_token,
-            );
-            if let Ok(mut cache) = session_credential_cache().lock() {
-                cache.insert(config.account_did.clone(), Some(blob_token.clone()));
-            }
-            config.session_credential = blob_token;
         }
         config
     }
@@ -1006,21 +983,6 @@ mod tests {
     }
 
     #[test]
-    fn client_config_reads_legacy_json_without_principal_servers() {
-        let config: ClientConfig = serde_json::from_str(
-            r#"{
-                "server_url": "https://legacy.example",
-                "account_did": "",
-                "device_id": "ak:device:01964137-0000-7000-8000-000000000003",
-                "session_credential": ""
-            }"#,
-        )
-        .expect("legacy config");
-
-        assert_eq!(config.principal_servers, vec!["https://local.host"]);
-    }
-
-    #[test]
     fn principal_server_options_merge_current_configured_and_default() {
         let configured = vec![
             "https://prod.example/".to_owned(),
@@ -1231,6 +1193,34 @@ mod tests {
                 .load_with_secure_store(&secure_store)
                 .session_credential,
             "sx_from_supplied_store"
+        );
+    }
+
+    #[test]
+    fn plaintext_config_credential_is_never_rehydrated() {
+        let path = temp_config_path("plaintext-credential-rejected");
+        let account_did = "did:web:plaintext-credential.example";
+        let plaintext = ClientConfig::from_fields(
+            "https://plaintext-credential.example",
+            account_did,
+            "ak:device:01964137-0000-7000-8000-0000000000ab",
+            "sx_plaintext_must_be_ignored",
+        );
+        LocalConfigStore::with_path(path.clone())
+            .write_config_blob(&plaintext)
+            .expect("seed plaintext config");
+
+        let secure_store = crate::secure_key_store::MemorySecureKeyStore::new();
+        let loaded = LocalConfigStore::with_path(path).load_with_secure_store(&secure_store);
+
+        assert!(loaded.session_credential.is_empty());
+        assert!(
+            crate::secure_key_store::SecureKeyStore::get_secret(
+                &secure_store,
+                &session_credential_secret_key(account_did),
+            )
+            .expect("read secure store")
+            .is_none()
         );
     }
 

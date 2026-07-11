@@ -842,7 +842,7 @@ pub(crate) fn verify_chat_envelope_proof(event: &Value) -> ChatProofVerdict {
             // parity with realm_key_share / member_identity / call_signal /
             // welcome-claim receiver gates). Only a wholly unattributed row
             // (no actor_id anywhere — non-persistent / system) is
-            // NotApplicable.
+            // Unattributed.
             let attributed = candidates.iter().copied().any(|candidate| {
                 candidate
                     .get("actor_id")
@@ -850,9 +850,9 @@ pub(crate) fn verify_chat_envelope_proof(event: &Value) -> ChatProofVerdict {
                     .is_some_and(|actor| !actor.trim().is_empty())
             });
             return if attributed {
-                ChatProofVerdict::Unresolved
+                ChatProofVerdict::Rejected
             } else {
-                ChatProofVerdict::NotApplicable
+                ChatProofVerdict::Unattributed
             };
         }
     };
@@ -939,9 +939,9 @@ fn verify_minimal_metadata_chat_author(
                 .is_some_and(|actor| !actor.trim().is_empty())
         });
         return if attributed {
-            ChatProofVerdict::Unresolved
+            ChatProofVerdict::Rejected
         } else {
-            ChatProofVerdict::NotApplicable
+            ChatProofVerdict::Unattributed
         };
     };
     let actor = envelope

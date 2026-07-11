@@ -1,8 +1,7 @@
 //! Thin host-adapter entry points for the shared `garth` client runtime.
 //!
-//! The production path still uses the existing inkson engines until the E-wave
-//! migration replaces them. This module gives that migration a typed,
-//! target-aware construction point without pulling UI state into client-core.
+//! This module provides typed, target-aware construction points for the shared
+//! client runtime without pulling UI state into client-core.
 
 use std::sync::{Arc, Mutex};
 
