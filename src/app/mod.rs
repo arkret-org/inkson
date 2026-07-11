@@ -7,7 +7,7 @@ use dioxus_router::{Link, Navigator, Outlet, Router};
 use serde_json::Value;
 
 use crate::api_error::is_auth_expired_error;
-use crate::components::{SecurityStateBadge, UiIcon};
+use crate::components::{SecurityStateBadge, SelfAttributionBadge, UiIcon};
 use crate::config::{ClientConfig, LocalConfigStore, normalize_device_id, normalize_server_url};
 use crate::conformance::{
     PROFILE_E2EE_CLIENT, PROFILE_FULL_CLIENT, PROFILE_KANBAN_MVP, PROFILE_MINIMAL_CLIENT,
@@ -1874,6 +1874,10 @@ fn AppBootstrap() -> Element {
                     .await
                     {
                         Ok(res) => {
+                            let directory_primary_handle = res
+                                .primary_handle
+                                .as_ref()
+                                .map(|handle| handle.canonical().to_owned());
                             let directory_handles = display_handles_from_directory_response(&res);
                             if directory_handles.is_empty() {
                                 // Mirror the error branches below: keep any
@@ -1887,6 +1891,9 @@ fn AppBootstrap() -> Element {
                                     );
                                 }
                             } else {
+                                if let Some(primary_handle) = directory_primary_handle {
+                                    try_set_signal(account_primary_handle, primary_handle);
+                                }
                                 let handles = merge_personal_handles(
                                     &existing_personal_handles,
                                     directory_handles,
@@ -3000,7 +3007,6 @@ fn AppBootstrap() -> Element {
     let active_projection_realm_id =
         projection_realm_id_for_known_node(&loaded_realm_tree_nodes, &active_realm_id)
             .unwrap_or_default();
-    let direct_contact_count = direct_contact_rows.read().len() + usize::from(has_session);
     let pinned_realm_ids = {
         let store = state_store.read();
         pinned_realm_ids_from_store(&store)
@@ -4046,17 +4052,6 @@ fn AppBootstrap() -> Element {
                         }
                     }
                     if realm_sidebar_tab() == "direct" {
-                        if !sidebar_is_collapsed {
-                            Link {
-                                class: "sidebar-nav-item contact-sidebar-summary",
-                                "data-testid": "contacts-sidebar-summary",
-                                title: "Open the full Contacts list",
-                                to: Route::Contacts,
-                                span { class: "sidebar-nav-icon", UiIcon { name: "users" } }
-                                span { class: "grow truncate", {crate::i18n::tr("nav.contacts")} }
-                                span { class: "pill muted xs", "{direct_contact_count}" }
-                            }
-                        }
                         if has_session && (direct_sidebar_query_value.is_empty()
                             || own_agent_rows.read().iter().any(|agent| {
                                 sidebar_text_matches_query(
@@ -4075,7 +4070,12 @@ fn AppBootstrap() -> Element {
                         {
                             {
                                 let self_did = account_did();
-                                let self_display_name = display_name_for_did(&state_store.read(), &self_did);
+                                let primary_handle = account_primary_handle();
+                                let self_label = if primary_handle.trim().is_empty() {
+                                    display_name_for_did(&state_store.read(), &self_did)
+                                } else {
+                                    primary_handle
+                                };
                                 let own_agent_count = own_agent_rows.read().len();
                                 rsx! {
                                     div {
@@ -4089,8 +4089,10 @@ fn AppBootstrap() -> Element {
                                             "aria-expanded": if own_agents_expanded() { "true" } else { "false" },
                                             onclick: move |_| own_agents_expanded.toggle(),
                                             span { class: "sidebar-nav-icon", UiIcon { name: "user" } }
-                                            span { class: "grow truncate", "{self_display_name}" }
-                                            span { class: "pill muted xs", "You" }
+                                            span { class: "grow truncate", "{self_label}" }
+                                            SelfAttributionBadge {
+                                                test_id: Some("contact-sidebar-self-badge".to_owned()),
+                                            }
                                             if own_agent_count > 0 {
                                                 span { class: "pill muted xs contact-agent-count", "Agents {own_agent_count}" }
                                             }

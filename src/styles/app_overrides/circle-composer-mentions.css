@@ -1266,9 +1266,6 @@
   min-height: 36px;
   grid-template-columns: var(--sidebar-icon-track) minmax(0, 1fr) repeat(3, auto);
 }
-.contact-sidebar-summary {
-  border-style: dashed;
-}
 .contact-sidebar-row {
   min-height: 36px;
   grid-template-columns: var(--sidebar-icon-track) minmax(0, 1fr) repeat(2, auto);

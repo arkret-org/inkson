@@ -909,11 +909,8 @@ pub(super) fn connect(base: String, actor: String, device: String, ctx: ConnectC
                     let handles = merge_personal_handles(&personal_handles(), [personal_handle]);
                     personal_handles_status.set(personal_handles_status_for(&handles));
                     personal_handles.set(handles);
-                } else {
-                    account_primary_handle.set(String::new());
-                    if personal_handles().is_empty() {
-                        personal_handles_status.set("Not published".to_owned());
-                    }
+                } else if personal_handles().is_empty() {
+                    personal_handles_status.set("Not published".to_owned());
                 }
                 let grant_device = {
                     let store = state_store.read();

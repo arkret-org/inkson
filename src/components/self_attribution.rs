@@ -14,7 +14,7 @@ pub fn SelfAttributionBadge(class: Option<String>, test_id: Option<String>) -> E
         span {
             class: "{class_name}",
             "data-testid": "{test_id}",
-            title: "This item was authored by this account",
+            title: "This is your account",
             "ME"
         }
     }

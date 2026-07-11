@@ -28,8 +28,9 @@ test("workspace sidebar separates contact-based direct chats", async ({ page }) 
 
   await expect(shell.getByTestId("contacts-sidebar-search-input")).toBeVisible();
   await expect(shell.getByTestId("sidebar-new-contact-cta")).toBeVisible();
-  await expect(shell.getByTestId("contacts-sidebar-summary")).toContainText("Contacts");
-  await expect(shell.getByTestId("contact-sidebar-self-row")).toContainText("You");
+  await expect(shell.getByTestId("contacts-sidebar-summary")).toHaveCount(0);
+  await expect(shell.getByTestId("contact-sidebar-self-row")).toContainText("alice:local.host");
+  await expect(shell.getByTestId("contact-sidebar-self-badge")).toHaveText("ME");
   await expect(shell.locator(".contact-sidebar-group").first()).toHaveAttribute(
     "data-testid",
     "contact-sidebar-self-group",
