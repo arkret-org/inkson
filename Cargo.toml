@@ -335,7 +335,7 @@ chacha20poly1305 = {version = "0.10",default-features = false}
 chime = {version = "0.3.0",path = "../chime"}
 chrono = "0.4.45"
 arkret-sdk = {package = "arkret",version = "0.3.0",path = "../arkret-rust-sdk/crates/sdk"}
-dioxus = "0.7.9"
+dioxus = {version = "0.7.9",default-features = false,features = ["minimal", "asset", "document", "mounted"]}
 dioxus-icons = {version = "0.1.0",default-features = false}
 dioxus-primitives = {version = "0.0.1",git = "https://github.com/DioxusLabs/components",default-features = false}
 dioxus-router = "0.7.9"
