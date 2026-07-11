@@ -1118,7 +1118,10 @@ pub fn DirectoryPanel(
                                         class: "secondary",
                                         "data-testid": "block-actor-button",
                                         "data-actor-did": "{actor_id}",
-                                        to: Route::SettingsSection { section: "blocklist".to_owned() },
+                                        to: Route::SettingsSection {
+                                            section: "blocklist".to_owned(),
+                                            filter: String::new(),
+                                        },
                                         "Block"
                                     }
                                 }
@@ -1137,7 +1140,10 @@ pub fn DirectoryPanel(
                                         class: "secondary",
                                         "data-testid": "establish-tsp-button",
                                         "data-remote-vid": "{actor_id}",
-                                        to: Route::SettingsSection { section: "connections".to_owned() },
+                                        to: Route::SettingsSection {
+                                            section: "connections".to_owned(),
+                                            filter: String::new(),
+                                        },
                                         "Establish TSP"
                                     }
                                 }

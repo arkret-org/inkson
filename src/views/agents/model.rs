@@ -566,10 +566,8 @@ pub fn expand_preset_grant(
 /// R3 spec sync (b47ff6ec) — UI label for an agent FSM state.
 ///
 /// `ak.agent.{pause,resume,deactivate}` lattice is now `fsm` (terminal:
-/// `deactivated`). The badge text below mirrors the wire vocabulary
-/// surfaced by the soland `AgentResBody.state` field; unknown values
-/// fall through to the raw wire string so future state additions are
-/// still legible.
+/// `deactivated`). The badge text mirrors the wire vocabulary; unknown
+/// values fall through so future state additions are still legible.
 pub fn agent_state_label(state: &str) -> &str {
     match state {
         "pending" | "pending_runtime_key" => "Pending",
@@ -596,8 +594,8 @@ pub fn agent_state_badge_class(state: &str) -> &'static str {
 }
 
 /// R3 — whether the agent admin list should hide this row by default.
-/// `deactivated` is terminal; the default list filters it out, but a
-/// "Show deactivated" toggle re-includes it for audit purposes.
+/// `deactivated` is terminal and hidden from ordinary UI filters. A direct
+/// `?filter=deactivated` audit deep link can still reveal those records.
 pub fn agent_state_is_terminal(state: &str) -> bool {
     state == "deactivated"
 }

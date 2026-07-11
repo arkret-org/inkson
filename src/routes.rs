@@ -71,8 +71,8 @@ pub enum Route {
     #[route("/settings/recovery", RoutePage)]
     SettingsRecovery,
 
-    #[route("/settings/:section", SettingsSectionPage)]
-    SettingsSection { section: String },
+    #[route("/settings/:section?:filter", SettingsSectionPage)]
+    SettingsSection { section: String, filter: String },
 
     #[route("/devices/verify", RoutePage)]
     VerifyDevice,
@@ -200,8 +200,8 @@ fn RealmMembersPage(realm_id: String) -> Element {
 }
 
 #[component]
-fn SettingsSectionPage(section: String) -> Element {
-    let _ = section;
+fn SettingsSectionPage(section: String, filter: String) -> Element {
+    let _ = (section, filter);
     rsx! {}
 }
 
@@ -336,7 +336,7 @@ impl Route {
     /// Extract settings section from routes that carry one.
     pub fn settings_section(&self) -> Option<&str> {
         match self {
-            Route::SettingsSection { section } => Some(section.as_str()),
+            Route::SettingsSection { section, .. } => Some(section.as_str()),
             Route::NotificationsSettings => Some("notifications"),
             Route::SettingsDevices | Route::SettingsDevicesPair => Some("devices"),
             Route::SettingsRecovery | Route::Recovery => Some("recovery"),
@@ -496,7 +496,8 @@ mod tests {
     fn test_settings_section_extraction() {
         assert_eq!(
             Route::SettingsSection {
-                section: "encryption".to_owned()
+                section: "encryption".to_owned(),
+                filter: String::new(),
             }
             .settings_section(),
             Some("encryption")

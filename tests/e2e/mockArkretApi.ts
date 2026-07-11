@@ -287,6 +287,14 @@ export async function mockArkretApi(
     created_at: "2026-07-06T00:00:00Z",
     updated_at: "2026-07-06T00:05:00Z",
   });
+  personalAgents.set("did:web:agents.example:deactivated", {
+    agent_principal_id: "did:web:agents.example:deactivated",
+    display_name: "Deactivated Agent",
+    agent_slug: "deactivated",
+    status: "deactivated",
+    created_at: "2026-07-05T00:00:00Z",
+    updated_at: "2026-07-06T00:10:00Z",
+  });
   const eventRealmId = (event: Record<string, unknown>) =>
     String(event.realm_id ?? "");
   const accountDeviceSummaries = () =>
