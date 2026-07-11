@@ -28,12 +28,11 @@ use crate::recovery_strand::{
 };
 use crate::routes::Route;
 use crate::transport::TransportClient;
+use crate::transport::auth::{with_authed_api, with_authed_sdk_client};
 use crate::ui::button::{Button, ButtonVariant};
 use crate::ui::input::Input;
 use crate::ui::label::Label;
-use crate::views::helpers::{
-    handle_from_did, short_protocol_id, with_authed_api, with_authed_sdk_client,
-};
+use crate::views::helpers::{handle_from_did, short_protocol_id};
 
 /// Storage key for the onboarding-step-4 recovery choice (`vault` / `social` / `key`).
 const ONBOARDING_RECOVERY_CHOICE_KEY: &str = "onboarding.recovery_choice";

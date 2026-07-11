@@ -3,6 +3,7 @@ use dioxus::prelude::*;
 
 use crate::api_error::normalize_wait_for_sync_token;
 use crate::config::{ClientConfig, LocalConfigStore};
+use crate::transport::auth::with_endpoint_clients;
 use crate::ui::button::{Button, ButtonVariant};
 
 /// Derive a lowercase handle string from a DID, suitable for registration.

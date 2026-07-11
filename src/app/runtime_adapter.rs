@@ -1,4 +1,4 @@
-use dioxus::prelude::{ReadableExt, SyncSignal, WritableExt};
+use dioxus::prelude::{ReadableExt, Signal, SyncSignal, WritableExt};
 
 use crate::client_core::LocalStateBackend;
 use crate::state::LocalStateStore;
@@ -9,7 +9,7 @@ pub(super) fn value_reader<T: Clone + 'static>(
     crate::runtime::input::ValueReader::new(move || signal.read().clone())
 }
 
-pub(super) fn value_cell<T: Clone + 'static>(
+pub(crate) fn value_cell<T: Clone + 'static>(
     signal: Signal<T>,
 ) -> crate::runtime::input::ValueCell<T> {
     crate::runtime::input::ValueCell::new(

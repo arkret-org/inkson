@@ -1533,7 +1533,7 @@ pub(super) fn connect(base: String, actor: String, device: String, ctx: ConnectC
                         crate::sync_engine::prefetch_persistent_event_sender_keys(
                             &authed,
                             &sync,
-                            ctx.did_cache,
+                            super::runtime_adapter::value_cell(ctx.did_cache),
                             |realm_id| {
                                 state_store
                                     .read()

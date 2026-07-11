@@ -17,6 +17,7 @@ use crate::payload::sdk_payload_value;
 use crate::routes::Route;
 use crate::state::{ClientLocalState, LocalStateStore};
 use crate::transport::TransportClient;
+use crate::transport::auth::{authed_api_with_sync, with_authed_api_with_sync};
 use crate::ui::button::{Button, ButtonVariant};
 use crate::ui::checkbox::Checkbox;
 use crate::ui::dialog::Dialog;
@@ -24,8 +25,8 @@ use crate::ui::input::Input;
 use crate::ui::label::Label;
 use crate::ui::textarea::Textarea;
 use crate::views::helpers::{
-    MentionNode, active_sync_token, authed_api_with_sync, parse_agent_selector_mention_tokens,
-    parse_mention_nodes, short_protocol_id, with_authed_api_with_sync,
+    MentionNode, active_sync_token, parse_agent_selector_mention_tokens, parse_mention_nodes,
+    short_protocol_id,
 };
 use crate::views::moderation_appeal::{AppealEntrypoint, AppealState};
 
@@ -1164,7 +1165,7 @@ pub fn ChatPanel(
                 crate::sync_engine::prefetch_persistent_event_sender_keys(
                     &api,
                     &sync,
-                    did_cache,
+                    crate::app::runtime_adapter::value_cell(did_cache),
                     |realm_id| {
                         state_store
                             .read()
@@ -1205,7 +1206,7 @@ pub fn ChatPanel(
                     crate::sync_engine::prefetch_persistent_event_sender_keys_from_values(
                         &api,
                         &backfill_events,
-                        did_cache,
+                        crate::app::runtime_adapter::value_cell(did_cache),
                     )
                     .await;
                 }

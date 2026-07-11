@@ -108,6 +108,10 @@ impl TransportClient {
         &self.http
     }
 
+    pub(crate) fn base_url(&self) -> &Url {
+        &self.base_url
+    }
+
     pub fn unauthenticated(base_url: &str) -> anyhow::Result<Self> {
         Self::new(base_url, RequestContext::new(""))
     }

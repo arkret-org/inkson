@@ -36,6 +36,7 @@ use crate::i18n::Locale;
 use crate::models::AccountDataSetResult;
 use crate::notification_rules::WatchLevel;
 use crate::routes::Route;
+use crate::transport::auth::{with_authed_sdk_client, with_event_submitter};
 use crate::ui::button::{Button, ButtonSize, ButtonVariant};
 use crate::ui::checkbox::Checkbox;
 use crate::ui::dialog::Dialog;
@@ -44,9 +45,7 @@ use crate::ui::label::Label;
 use crate::ui::select::{Select, SelectOption};
 use crate::ui::slider::Slider;
 use crate::ui::textarea::Textarea;
-use crate::views::helpers::{
-    display_name_for_did, short_protocol_id, with_authed_sdk_client, with_event_submitter,
-};
+use crate::views::helpers::{display_name_for_did, short_protocol_id};
 use crate::workflows::blocked_release_workflows;
 
 /// `ak.account_data` key used by the read-receipt preferences entry. Spec:

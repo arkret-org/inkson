@@ -7,11 +7,10 @@ use crate::components::{EmptyState, EmptyStateKind, HelpTip};
 use crate::models::*;
 use crate::object_address::OpenedLink;
 use crate::routes::Route;
+use crate::transport::auth::{with_authed_api, with_authed_sdk_client};
 use crate::ui::button::{Button, ButtonVariant};
 use crate::ui::input::Input;
-use crate::views::helpers::{
-    display_name_for_did, short_protocol_id, with_authed_api, with_authed_sdk_client,
-};
+use crate::views::helpers::{display_name_for_did, short_protocol_id};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum DirectoryTab {

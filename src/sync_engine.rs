@@ -348,7 +348,7 @@ pub async fn run_sync_engine(
         || generation.get() == start_generation && !ctx.effect.is_cancelled(),
         async || match run_iteration(
             start_generation,
-            generation,
+            generation.clone(),
             &ctx,
             &mut deltas_since_invites,
         )
@@ -356,7 +356,13 @@ pub async fn run_sync_engine(
         {
             IterationOutcome::Ok { realm_ids } => {
                 ctx.projection_sink.sync_status(SyncStatusEvent::Online);
-                run_circle_scope_rotate_pass(start_generation, generation, &ctx, &realm_ids).await;
+                run_circle_scope_rotate_pass(
+                    start_generation,
+                    generation.clone(),
+                    &ctx,
+                    &realm_ids,
+                )
+                .await;
                 // YOU-02-004R (`encryption-and-audit.md` §5.6) — non-send
                 // self-preservation trigger. A long-lived read-only member's
                 // epoch is otherwise never force-advanced (the send path only
@@ -365,7 +371,7 @@ pub async fn run_sync_engine(
                 // the idle self-update pass. It is a no-op for every Realm not
                 // yet over the §5.6 floor / before this member's jitter slot,
                 // so the common case costs one cheap scan.
-                run_idle_self_update_pass(start_generation, generation, &ctx).await;
+                run_idle_self_update_pass(start_generation, generation.clone(), &ctx).await;
                 // Server-side long-poll absorbs the idle wait on a
                 // spec-compliant server; if the server returns
                 // immediately (older soland), MIN_INTER_ITERATION_MS
@@ -543,12 +549,11 @@ async fn run_circle_scope_rotate_pass(
                 );
                 continue;
             }
-            if ctx
-                .state_store
-                .read()
-                .mls_snapshot_for_effective_scope(&realm_id, Some(&circle_id))
-                .is_none()
-            {
+            if ctx.state_store.read(|store| {
+                store
+                    .mls_snapshot_for_effective_scope(&realm_id, Some(&circle_id))
+                    .is_none()
+            }) {
                 tracing::debug!(
                     %realm_id,
                     %circle_id,
@@ -815,13 +820,13 @@ async fn run_iteration(
 
     // Read cursor freshly each iteration — login strand / server switch
     // may have cleared it underneath us.
-    let cursor = ctx
-        .state_store
-        .read()
-        .load()
-        .sync_cursor
-        .clone()
-        .filter(|c| !c.trim().is_empty());
+    let cursor = ctx.state_store.read(|store| {
+        store
+            .load()
+            .sync_cursor
+            .clone()
+            .filter(|c| !c.trim().is_empty())
+    });
     let is_full_sync = cursor.is_none();
 
     let sdk_http = match api.sdk_http_client() {
@@ -1484,7 +1489,7 @@ pub fn apply_response(
         .find(|node| node.kind == RealmTreeNodeKind::Realm)
         .map(|node| node.id.clone());
     {
-        let current = selected_realm_id.get();
+        let current = ctx.selected_realm_id.get();
         let trimmed = current.trim();
         let needs_reset = trimmed.is_empty() || !reconciled.iter().any(|node| node.id == trimmed);
         if needs_reset {

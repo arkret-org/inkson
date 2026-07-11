@@ -492,7 +492,8 @@ pub async fn resolve_device_signing_key(
     // ingest it into the anchor's resolver first (best-effort: a failure leaves
     // the anchor without evidence, and the synchronous resolve below then
     // fail-closes). `did:key` actors self-resolve and skip the fetch.
-    let _ = anchor.ensure_actor_document(&api.http, &actor_did).await;
+    let http = reqwest::Client::new();
+    let _ = anchor.ensure_actor_document(&http, &actor_did).await;
 
     let cross_signed_key = match anchor.resolve_did_document(&actor_did) {
         Some(did_document) => tier2_accepted_key(&outcome, &did_document, &actor_did, &device_id),

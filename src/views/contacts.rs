@@ -15,14 +15,13 @@ use crate::components::{DismissiblePopup, TrustCacheBadge};
 use crate::i18n::tr;
 use crate::models::ContactListRow;
 use crate::routes::Route;
+use crate::transport::auth::{with_authed_api, with_authed_sdk_client};
 use crate::ui::button::{Button, ButtonVariant};
 use crate::ui::checkbox::Checkbox;
 use crate::ui::input::Input;
 use crate::ui::label::Label;
 use crate::ui::textarea::Textarea;
-use crate::views::helpers::{
-    display_name_for_did, short_protocol_id, with_authed_api, with_authed_sdk_client,
-};
+use crate::views::helpers::{display_name_for_did, short_protocol_id};
 
 /// Maximum length of the optional contact-request greeting (protocol contract:
 /// `message` is `1..2000`).

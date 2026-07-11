@@ -1,3 +1,4 @@
+use crate::config::validate_server_url;
 use crate::models::{RealmJoinCandidate, SubmitEventResult};
 use crate::realm_helpers::select_join_candidate;
 
@@ -34,15 +35,15 @@ impl crate::transport::TransportClient {
             return self.event_submitter()?.submit_sdk_event(event).await;
         };
         let endpoint_url = validate_server_url(endpoint)?;
-        if endpoint_url == self.base_url {
+        if endpoint_url == *self.base_url() {
             return self.event_submitter()?.submit_sdk_event(event).await;
         }
 
         let mut routed = crate::transport::TransportClient::unauthenticated(endpoint)?;
-        if let Some(token) = self.authorization_credential.as_deref() {
-            routed = routed.with_bearer(token.to_owned());
+        if !self.context().credential.trim().is_empty() {
+            routed = routed.with_bearer(self.context().credential.clone());
         }
-        if let Some(sync_token) = self.wait_for_sync_token.as_deref() {
+        if let Some(sync_token) = self.context().cursor.as_deref() {
             routed = routed.with_wait_for(sync_token.to_owned());
         }
         routed.event_submitter()?.submit_sdk_event(event).await

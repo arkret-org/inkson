@@ -205,12 +205,7 @@ pub struct InksonClientRuntime {
 }
 
 impl InksonClientRuntime {
-    pub fn new(state_store: crate::state::LocalStateStore) -> Self {
-        let adapter = InksonLocalStateStoreAdapter::new(state_store);
-        Self::from_state_adapter(adapter)
-    }
-
-    pub fn from_state_adapter(adapter: InksonLocalStateStoreAdapter) -> Self {
+    pub(crate) fn from_state_adapter(adapter: InksonLocalStateStoreAdapter) -> Self {
         #[cfg(not(target_arch = "wasm32"))]
         let executor = garth::NativeExecutor;
         #[cfg(target_arch = "wasm32")]

@@ -64,7 +64,7 @@ pub(crate) use theme::*;
 // (move only). The glob re-export keeps inline call sites and `app_tests.rs`
 // `use super::*` resolution unchanged.
 mod realm_surface;
-mod runtime_adapter;
+pub(crate) mod runtime_adapter;
 pub(crate) use realm_surface::*;
 
 // Structural split: non-component helpers, data-assembly routines, the
@@ -953,70 +953,76 @@ fn AppBootstrap() -> Element {
         let token = token;
         let mut session_boot_state = session_boot_state;
         let session = runtime_services.session.clone();
-        move || async move {
-            crate::runtime_helpers::sleep_for(std::time::Duration::from_millis(1)).await;
-            loop {
-                // Freshness gate — only refresh when the persisted grant is
-                // near its own expiry. The read borrow is dropped before any
-                // await, so concurrent `state_store.write()` callers never hit
-                // `AlreadyBorrowedMut`.
-                let due = {
-                    let store = state_store.read();
-                    matches!(
-                        crate::identity::session_refresh::refresh_decision(&store),
-                        crate::identity::session_refresh::RefreshDecision::Due
-                    )
-                };
-                if due {
-                    if token().trim().is_empty() {
-                        status.set("Restoring session...".to_owned());
-                        session_boot_state.set(SessionBootState::Restoring);
+        move || {
+            let session = session.clone();
+            async move {
+                crate::runtime_helpers::sleep_for(std::time::Duration::from_millis(1)).await;
+                loop {
+                    // Freshness gate — only refresh when the persisted grant is
+                    // near its own expiry. The read borrow is dropped before any
+                    // await, so concurrent `state_store.write()` callers never hit
+                    // `AlreadyBorrowedMut`.
+                    let due = {
+                        let store = state_store.read();
+                        matches!(
+                            crate::identity::session_refresh::refresh_decision(&store),
+                            crate::identity::session_refresh::RefreshDecision::Due
+                        )
+                    };
+                    if due {
+                        if token().trim().is_empty() {
+                            status.set("Restoring session...".to_owned());
+                            session_boot_state.set(SessionBootState::Restoring);
+                        }
+                        match session.refresh().await {
+                            crate::runtime::session::CurrentSessionRefresh::Credential(_) => {
+                                status.set("Online".to_owned());
+                                session_boot_state.set(SessionBootState::Authenticated);
+                                last_error.set(None);
+                            }
+                            crate::runtime::session::CurrentSessionRefresh::SignInRequired {
+                                reason,
+                            } => {
+                                last_error.set(Some(reason));
+                                if token().trim().is_empty() {
+                                    status.set(
+                                        "Session could not be restored; sign in again".to_owned(),
+                                    );
+                                    session_boot_state.set(SessionBootState::Unauthenticated);
+                                }
+                            }
+                            crate::runtime::session::CurrentSessionRefresh::LoginRequired {
+                                reason,
+                            } => {
+                                last_error.set(Some(reason));
+                                if token().trim().is_empty() {
+                                    status.set("Session expired; sign in again".to_owned());
+                                    session_boot_state.set(SessionBootState::Unauthenticated);
+                                }
+                            }
+                            crate::runtime::session::CurrentSessionRefresh::RetryLater {
+                                reason,
+                            } => {
+                                // Keep the current credential alive; a reactive 401
+                                // handles a genuinely dead session. Surface the
+                                // transient issue for dev tools.
+                                last_error.set(Some(format!(
+                                    "background session refresh pending: {reason}"
+                                )));
+                                if token().trim().is_empty() {
+                                    status.set(
+                                        "Session restore is unavailable; sign in again".to_owned(),
+                                    );
+                                    session_boot_state.set(SessionBootState::Unauthenticated);
+                                }
+                            }
+                        }
                     }
-                    match session.refresh().await {
-                        crate::runtime::session::CurrentSessionRefresh::Credential(_) => {
-                            status.set("Online".to_owned());
-                            session_boot_state.set(SessionBootState::Authenticated);
-                            last_error.set(None);
-                        }
-                        crate::runtime::session::CurrentSessionRefresh::SignInRequired {
-                            reason,
-                        } => {
-                            last_error.set(Some(reason));
-                            if token().trim().is_empty() {
-                                status
-                                    .set("Session could not be restored; sign in again".to_owned());
-                                session_boot_state.set(SessionBootState::Unauthenticated);
-                            }
-                        }
-                        crate::runtime::session::CurrentSessionRefresh::LoginRequired {
-                            reason,
-                        } => {
-                            last_error.set(Some(reason));
-                            if token().trim().is_empty() {
-                                status.set("Session expired; sign in again".to_owned());
-                                session_boot_state.set(SessionBootState::Unauthenticated);
-                            }
-                        }
-                        crate::runtime::session::CurrentSessionRefresh::RetryLater { reason } => {
-                            // Keep the current credential alive; a reactive 401
-                            // handles a genuinely dead session. Surface the
-                            // transient issue for dev tools.
-                            last_error.set(Some(format!(
-                                "background session refresh pending: {reason}"
-                            )));
-                            if token().trim().is_empty() {
-                                status.set(
-                                    "Session restore is unavailable; sign in again".to_owned(),
-                                );
-                                session_boot_state.set(SessionBootState::Unauthenticated);
-                            }
-                        }
-                    }
+                    crate::runtime_helpers::sleep_for(std::time::Duration::from_secs(
+                        crate::identity::session_refresh::POLL_INTERVAL_SECS,
+                    ))
+                    .await;
                 }
-                crate::runtime_helpers::sleep_for(std::time::Duration::from_secs(
-                    crate::identity::session_refresh::POLL_INTERVAL_SECS,
-                ))
-                .await;
             }
         }
     });
@@ -1045,15 +1051,15 @@ fn AppBootstrap() -> Element {
         let mut account_recovery_detection_key_seen = account_recovery_detection_key_seen;
         let mut last_error = last_error;
         let state_store_for_recovery_state = state_store;
-        let session = runtime_services.session.clone();
+        let session_coordinator = runtime_services.session.clone();
         use_effect(move || {
             let base = base_url();
-            let session = token();
+            let credential = token();
             let actor = account_did();
             let generation = sync_generation();
             if !matches!(session_boot_state(), SessionBootState::Authenticated)
                 || base.trim().is_empty()
-                || session.trim().is_empty()
+                || credential.trim().is_empty()
                 || actor.trim().is_empty()
             {
                 account_recovery_configured.set(None);
@@ -1074,9 +1080,9 @@ fn AppBootstrap() -> Element {
                 let store = state_store_for_recovery_state.read();
                 crate::views::recovery::local_recovery_key_fingerprint(&store, &actor)
             };
-            let session = session.clone();
+            let session_coordinator = session_coordinator.clone();
             spawn(async move {
-                match crate::transport::auth::with_authed_api(&base, session, |api| async move {
+                match crate::transport::auth::with_authed_api(&base, credential, |api| async move {
                     // The recovery-state reducer reads both payloads leniently via
                     // `Value` accessors; serialize the typed SDK outcomes back to
                     // their wire JSON.
@@ -1095,7 +1101,8 @@ fn AppBootstrap() -> Element {
                         account_recovery_configured.set(Some(state.server_recovery_configured()));
                     }
                     Err(error) if error.is_auth_expired() => {
-                        session.invalidate("session expired while loading account recovery state");
+                        session_coordinator
+                            .invalidate("session expired while loading account recovery state");
                         account_recovery_configured.set(None);
                     }
                     Err(error) => {
@@ -2499,7 +2506,7 @@ fn AppBootstrap() -> Element {
                                 crate::sync_engine::prefetch_device_key_pairs(
                                     &api,
                                     sender_pairs,
-                                    share_did_cache,
+                                    runtime_adapter::value_cell(share_did_cache),
                                 )
                                 .await;
                                 Ok::<(), anyhow::Error>(())
@@ -3334,6 +3341,9 @@ fn AppBootstrap() -> Element {
     // frame before the persisted flag is read back).
     let encryption_floor_prompt_acknowledged =
         crate::app::encryption_floor_prompt_acknowledged(&state_store.read(), &account_did());
+    let mobile_connect_session = runtime_services.session.clone();
+    let server_connect_session = runtime_services.session.clone();
+    let manual_refresh_session = runtime_services.session.clone();
 
     rsx! {
         style { "{DXC_THEME}" }
@@ -3670,7 +3680,7 @@ fn AppBootstrap() -> Element {
                                 account_did(),
                                 device_id(),
                 ConnectContext {
-                    session: runtime_services.session.clone(),
+                    session: mobile_connect_session.clone(),
                                     connection_status,
                                     sync_cursor,
                                     token,
@@ -3855,7 +3865,7 @@ fn AppBootstrap() -> Element {
                                                     account_did(),
                                                     device_id(),
                 ConnectContext {
-                    session: runtime_services.session.clone(),
+                    session: server_connect_session.clone(),
                                                         connection_status,
                                                         sync_cursor,
                                                         token,
@@ -5408,7 +5418,7 @@ fn AppBootstrap() -> Element {
                                             disabled: !has_session,
                                             onclick: {
                                                 let base = base_url();
-                                                let session = runtime_services.session.clone();
+                                                let session = manual_refresh_session.clone();
                                                 move |_| {
                                                     let base = base.clone();
                                                     let session = session.clone();

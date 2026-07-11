@@ -11,13 +11,13 @@ use crate::components::SelfAttributionBadge;
 use crate::operation::ak_ops;
 use crate::routes::Route;
 use crate::state::{LocalStateStore, MoveSubmissionState, RawOperationRecord};
+use crate::transport::auth::authed_api_with_sync;
 use crate::ui::button::{Button, ButtonSize, ButtonVariant};
 use crate::ui::checkbox::Checkbox;
 use crate::ui::input::Input;
 use crate::ui::label::Label;
 use crate::views::helpers::{
-    active_sync_token, authed_api_with_sync, display_name_for_did, handle_display_from_did,
-    short_protocol_id,
+    active_sync_token, display_name_for_did, handle_display_from_did, short_protocol_id,
 };
 
 /// Number of member rows the list renders per page. The member list is
@@ -2203,9 +2203,10 @@ pub(crate) async fn seal_history_to_recovery_recipients(
     // Fetch each recipient principal's raw DID Document (carrying service /
     // keyAgreement) so the SDK authority can verify the active RRK service entry.
     let mut did_documents: BTreeMap<String, Value> = BTreeMap::new();
+    let did_http = reqwest::Client::new();
     for recipient in &policy.recovery_recipients {
         if let Some(document) = crate::identity::did_resolver::fetch_raw_did_document_json(
-            &api.http,
+            &did_http,
             &recipient.principal_id,
         )
         .await
