@@ -4042,6 +4042,16 @@ fn AppBootstrap() -> Element {
                             }
                         }
                         if has_session && (direct_sidebar_query_value.is_empty()
+                            || own_agent_rows.read().iter().any(|agent| {
+                                sidebar_text_matches_query(
+                                    &direct_sidebar_query_value,
+                                    &[
+                                        agent.agent_principal_id.as_str(),
+                                        agent.display_name.as_deref().unwrap_or_default(),
+                                        agent.agent_slug.as_deref().unwrap_or_default(),
+                                    ],
+                                )
+                            })
                             || sidebar_text_matches_query(
                                 &direct_sidebar_query_value,
                                 &[&account_did(), &display_name_for_did(&state_store.read(), &account_did()), &account_primary_handle()],
@@ -4078,7 +4088,13 @@ fn AppBootstrap() -> Element {
                                                         let agent_label = agent.display_name.clone()
                                                             .or_else(|| agent.agent_slug.clone())
                                                             .unwrap_or_else(|| short_protocol_id(&agent_id));
-                                                        let agent_status = format!("{:?}", agent.status).to_ascii_lowercase();
+                                                        let agent_status = match agent.status {
+                                                            arkret_sdk::AgentStatus::PendingRuntimeKey => "pending",
+                                                            arkret_sdk::AgentStatus::Active => "active",
+                                                            arkret_sdk::AgentStatus::PairingExpired => "pairing expired",
+                                                            arkret_sdk::AgentStatus::Paused => "paused",
+                                                            arkret_sdk::AgentStatus::Deactivated => "deactivated",
+                                                        };
                                                         let controller_did = self_did.clone();
                                                         rsx! {
                                                             button {

@@ -286,7 +286,6 @@ export async function mockArkretApi(
     status: "active",
     created_at: "2026-07-06T00:00:00Z",
     updated_at: "2026-07-06T00:05:00Z",
-    controller_principal_id: accountPrincipalId,
   });
   const eventRealmId = (event: Record<string, unknown>) =>
     String(event.realm_id ?? "");

@@ -99,7 +99,10 @@ pub(super) fn load_direct_contacts_and_agents_for_sidebar(
                 }
                 match agents {
                     Ok(response) => own_agent_rows.set(response.agents),
-                    Err(_) => own_agents_loaded.set(false),
+                    Err(err) => {
+                        own_agents_loaded.set(false);
+                        tracing::warn!(error = %err, "failed to load personal agents for Contacts sidebar");
+                    }
                 }
             }
             Err(err) => {
