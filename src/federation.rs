@@ -91,8 +91,8 @@ impl TrustBundle {
         // Pinned `public_key` is interpreted as the expected service DID
         // string until the SDK exposes a typed Ed25519 verifier surface to
         // inkson. We match it case-sensitively against the well-known DID.
-        if seal.public_key != record.service_did.as_str() {
-            return TrustCheck::SignatureMismatch(record.service_did.as_str().to_owned());
+        if seal.public_key != record.service_id.as_str() {
+            return TrustCheck::SignatureMismatch(record.service_id.as_str().to_owned());
         }
         TrustCheck::Trusted
     }
@@ -217,7 +217,7 @@ mod tests {
         let mut bundle = TrustBundle::new();
         bundle.add_anchor(seal("bob.example", "did:web:bob.example"));
         let record = WellKnownArkretServer {
-            service_did: arkret_sdk::Did::new("did:web:bob.example".to_owned()).unwrap(),
+            service_id: arkret_sdk::Did::new("did:web:bob.example".to_owned()).unwrap(),
             base_url: "https://bob.example".to_owned(),
             protocol_versions: vec!["1.0".to_owned()],
             endpoints: Vec::new(),
@@ -235,7 +235,7 @@ mod tests {
         let mut bundle = TrustBundle::new();
         bundle.add_anchor(seal("bob.example", "did:web:bob.example"));
         let record = WellKnownArkretServer {
-            service_did: arkret_sdk::Did::new("did:web:eve.example".to_owned()).unwrap(),
+            service_id: arkret_sdk::Did::new("did:web:eve.example".to_owned()).unwrap(),
             base_url: "https://eve.example".to_owned(),
             protocol_versions: vec!["1.0".to_owned()],
             endpoints: Vec::new(),

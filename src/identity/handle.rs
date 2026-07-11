@@ -14,7 +14,7 @@
 //! `format!("did:web:{domain}:users:{localpart}")` materialisation has been
 //! removed: it both bypassed the directory-attested reduction and hard-coded
 //! the `did:web` method even though v1 core defaults principal/service to
-//! `did:webvh`. The authoritative `subject_id` / `recipient_service_did` must
+//! `did:webvh`. The authoritative `subject_id` / `recipient_service_id` must
 //! be taken from the Directory `resolve_handle` response (verified claim
 //! subject + member delivery binding) and never from this parser.
 use unicode_normalization::UnicodeNormalization;

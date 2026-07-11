@@ -126,11 +126,6 @@ pub enum AppView {
     /// quarantined invites. Approve / reject buttons POST
     /// `/_arkret/local/admin/invite-quarantine/{id}/resolve`.
     Quarantine,
-    /// Agent endpoint + interop_session monitor.
-    /// Spec `extensions/agent-integration.md`. Writes `ak.agent.endpoint` /
-    /// `ak.agent.interop_session.{start,status,result}` via
-    /// `crate::operation::ak_ops::agent_*` builders.
-    Agents,
     /// A6.1 — global cross-Space message search panel. Triggered by
     /// the `topbar-search-button`, `Cmd+F` (Ctrl+F off-mac), or by
     /// direct navigation to `Route::Search`.

@@ -1,43 +1,8 @@
-//! Agents - endpoint registry + interop_session monitor.
-//!
-//! Spec: `arkret-spec/spec/v1/zh/extensions/agent-integration.md`.
-//!
-//! Mirror of [`crate::views::applets::AppletsPanel`] but at the agent
-//! layer:
-//!   * `ak.agent.endpoint` registers an agent_id + invocation protocol + capability_proof
-//!     requirement.
-//!   * `ak.agent.interop_session.{start,status,result}` track agent invocations. The terminal
-//!     `result` event carries a typed result payload + the audit_binding proof so the audit chat
-//!     can verify the agent's output corresponds to the signed input.
-//!
-//! Incoming `ak.agent.interop_session.result` events fetched from
-//! soland are decoded + verified via
-//! `arkret_sdk::agent_binding::verify_audit_binding_by_kind`. The
-//! panel renders a per-result badge so operators can tell at a glance
-//! whether the signature matches.
-//!
-//! G3.Y4 additions:
-//!   * `agent-protocol-handoff-button` initiates a handoff to a registered agent endpoint.
-//!   * `agent-protocol-handoff-confirm-button` confirms the handoff intent and emits the
-//!     `ak.agent.interop_session.start` event via soland's `agent_bridge` route.
-//!   * `agent-protocol-handoff-status` carries the pending → approved → running → completed/failed
-//!     lifecycle via `data-state`.
-//!   * `agent-protocol-transcript-panel` lists each incremental status step as
-//!     `agent-protocol-transcript-row` carrying `data-step-index` + `data-step-kind`.
-//!   * `agent-protocol-audit-verify-button` verifies the full chain (start → status* → result) and
-//!     surfaces the outcome via `agent-protocol-audit-verify-result`'s `data-state` attribute.
-//!
-//! Module layout (purely structural split; the external path
-//! `crate::views::agents::*` stays identical via the re-exports below):
-//!   * [`model`]      — pure data types, presets, state machines, and verification helpers.
-//!   * [`panel`]      — the `AgentsPanel` endpoint registry + interop monitor.
-//!   * [`admin`]      — the Settings -> My Agents `PersonalAgentAdminPanel`.
-//!   * [`components`] — reusable agent components (badges, dialogs, disclosure panels).
+//! Personal-agent administration, approval, and lifecycle surfaces.
 
 mod admin;
 mod components;
 pub(crate) mod model;
-mod panel;
 
 #[cfg(test)]
 mod tests;
@@ -49,14 +14,11 @@ pub use components::{
 };
 pub use model::{
     ActionApproveDialogState, ActionRequestNonceStatus, AgentGrantPreset, AgentServiceScopePreset,
-    AuditChainVerifyOutcome, HandoffState, InteropApprovalState, LiveSessionRow, PublishModalState,
     actor_kind_badge_class, actor_kind_label, agent_state_badge_class, agent_state_is_terminal,
-    agent_state_label, agents_enabled, build_act_on_behalf_message_operation,
-    build_action_approve_payload, build_action_reject_payload,
-    build_agent_key_authorize_event_for_pairing, build_agent_pairing_bootstrap_json,
-    content_actions_for_presets, expand_preset_grant, is_action_request_expired,
-    is_pairing_request_expired, live_session_rows, parse_runtime_key_approval_request,
+    agent_state_label, build_act_on_behalf_message_operation, build_action_approve_payload,
+    build_action_reject_payload, build_agent_key_authorize_event_for_pairing,
+    build_agent_pairing_bootstrap_json, content_actions_for_presets, expand_preset_grant,
+    is_action_request_expired, is_pairing_request_expired, parse_runtime_key_approval_request,
     participation_ceiling_reason, requested_scope_for_presets, runtime_key_pairing_error_message,
-    service_actions_for_presets, summarize_runtime_key_approval_request, verify_audit_chain,
+    service_actions_for_presets, summarize_runtime_key_approval_request,
 };
-pub use panel::AgentsPanel;

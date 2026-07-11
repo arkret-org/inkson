@@ -33,7 +33,7 @@ pub(crate) fn select_join_candidate(
             left.priority
                 .unwrap_or(u16::MAX)
                 .cmp(&right.priority.unwrap_or(u16::MAX))
-                .then_with(|| left.service_did.cmp(&right.service_did))
+                .then_with(|| left.service_id.cmp(&right.service_id))
         })
         .ok_or_else(|| {
             anyhow::anyhow!(

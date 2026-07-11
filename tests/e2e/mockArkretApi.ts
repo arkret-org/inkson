@@ -280,7 +280,7 @@ export async function mockArkretApi(
   const personalAgentGrants = new Map<string, Array<Record<string, unknown>>>();
   let personalAgentCounter = 0;
   personalAgents.set("did:web:agents.example:assistant", {
-    agent_principal_id: "did:web:agents.example:assistant",
+    agent_id: "did:web:agents.example:assistant",
     display_name: "Alice Assistant",
     slug: "assistant",
     status: "active",
@@ -288,7 +288,7 @@ export async function mockArkretApi(
     updated_at: "2026-07-06T00:05:00Z",
   });
   personalAgents.set("did:web:agents.example:deactivated", {
-    agent_principal_id: "did:web:agents.example:deactivated",
+    agent_id: "did:web:agents.example:deactivated",
     display_name: "Deactivated Agent",
     slug: "deactivated",
     status: "deactivated",
@@ -541,7 +541,7 @@ export async function mockArkretApi(
     ) {
       if (url.hostname === "auth.local.host") {
         return json(route, {
-          service_did: "did:web:auth.local.host",
+          service_id: "did:web:auth.local.host",
           service_type: "auth_server",
           protocol_version: "1.0",
           auth_metadata: {
@@ -571,7 +571,7 @@ export async function mockArkretApi(
         });
       }
       return json(route, {
-        service_did: "did:web:server.local",
+        service_id: "did:web:server.local",
         trust_domain: "ak:trust_domain:server.local",
         service_type: "principal_server",
         protocol_version: "1.0",
@@ -796,7 +796,7 @@ export async function mockArkretApi(
       // Spec ak.self.events.query.describe -> canonical ServiceDescribe shape
       // (17 required fields; inkson decodes the SDK ServerDescription).
       return json(route, {
-        service_did: "did:web:server.local",
+        service_id: "did:web:server.local",
         trust_domain: "ak:trust_domain:server.local",
         service_type: "principal_server",
         protocol_version: "1.0",
@@ -1471,7 +1471,7 @@ export async function mockArkretApi(
       return json(route, {
         schema: "ak.schema.principal_locator.v1",
         subject_id: "did:web:carol.example",
-        recipient_service_did: "did:web:server.local",
+        recipient_service_id: "did:web:server.local",
         issued_at: "2026-06-07T00:00:00Z",
         expires_at: "2026-06-07T00:15:00Z",
         locator_ref_digest: `sha256:${"1".repeat(64)}`,
@@ -1502,7 +1502,7 @@ export async function mockArkretApi(
         body.requester ??
         "did:web:server.local";
       const memberDeliveryBinding = {
-        recipient_service_did: "did:web:server.local",
+        recipient_service_id: "did:web:server.local",
         recipient_service_type: "principal_server",
         binding_source: "explicit",
         delivery_modes: ["events", "sync", "to_device", "push", "key_packages"],
@@ -1553,7 +1553,7 @@ export async function mockArkretApi(
             subject,
             handle: subjectPrimaryHandle,
             issuer: "did:web:server.local",
-            issuer_service_did: "did:web:server.local",
+            issuer_service_id: "did:web:server.local",
             binding_state: "verified",
             claim_kind: "handle_binding",
             visibility: "public",
@@ -1583,7 +1583,7 @@ export async function mockArkretApi(
       route.request().method() === "GET"
     ) {
       return json(route, {
-        service_did: "did:web:server.local",
+        service_id: "did:web:server.local",
         trust_domain: "ak:trust_domain:server.local",
         service_type: "directory_service",
         protocol_version: "1.0",
@@ -1642,7 +1642,7 @@ export async function mockArkretApi(
       route.request().method() === "GET"
     ) {
       return json(route, {
-        service_did: "did:web:server.local",
+        service_id: "did:web:server.local",
         registry_mode: "development_local",
         supported_receipts: ["local"],
         protocol_version: "1.0",
@@ -1669,7 +1669,7 @@ export async function mockArkretApi(
       route.request().method() === "GET"
     ) {
       return json(route, {
-        service_did: "did:web:server.local",
+        service_id: "did:web:server.local",
         supported_sync_profiles: ["initial", "incremental"],
         limits: {},
         frontier: {},
@@ -1756,10 +1756,10 @@ export async function mockArkretApi(
             },
             agents: [
               {
-                agent_principal_id: "did:web:agents.example:bob-helper",
-                controller_principal_id: "did:web:bob.example",
+                agent_id: "did:web:agents.example:bob-helper",
+                controller_id: "did:web:bob.example",
                 display_name: "Bob Helper",
-                agent_slug: "helper",
+                slug: "helper",
                 direct_conversation: {
                   realm_id: "ak:realm:01964137-0000-7000-8000-0000000000b1",
                   main_strand_id: "ak:strand:01964137-0000-7000-8000-0000000000b2",
@@ -1787,7 +1787,7 @@ export async function mockArkretApi(
             bidirectional_scopes: [],
             effective_scopes: ["direct_message"],
             // Cross-PS incoming request: respond must reverse-deliver to this PS.
-            peer_service_did: "did:web:ps.dave.example",
+            peer_service_id: "did:web:ps.dave.example",
           },
           {
             // Accepted contact who granted me `invite` scope but with NO real
@@ -1990,9 +1990,9 @@ export async function mockArkretApi(
           400,
         );
       }
-      const agentPrincipalId = `did:web:agents.example:${slug}`;
+      const agentId = `did:web:agents.example:${slug}`;
       const agent = {
-        agent_principal_id: agentPrincipalId,
+        agent_id: agentId,
         ...(typeof body.display_name === "string"
           ? { display_name: body.display_name }
           : {}),
@@ -2001,7 +2001,7 @@ export async function mockArkretApi(
         created_at: "2026-07-06T00:00:00Z",
         updated_at: "2026-07-06T00:00:00Z",
         requested_scope: body.requested_scope ?? null,
-        controller_principal_id: accountPrincipalId,
+        controller_id: accountPrincipalId,
       };
       const keyState = {
         status: "pending_runtime_key",
@@ -2010,11 +2010,11 @@ export async function mockArkretApi(
         pairing_expires_at: personalAgentPairingExpiresAt,
         requested_scope: body.requested_scope ?? null,
       };
-      personalAgents.set(agentPrincipalId, agent);
-      personalAgentKeyStates.set(agentPrincipalId, keyState);
-      personalAgentGrants.set(agentPrincipalId, []);
+      personalAgents.set(agentId, agent);
+      personalAgentKeyStates.set(agentId, keyState);
+      personalAgentGrants.set(agentId, []);
       return json(route, {
-        agent_principal_id: agentPrincipalId,
+        agent_id: agentId,
         pairing_request_id: keyState.pairing_request_id,
         pairing_code: keyState.pairing_code,
         expires_at: keyState.pairing_expires_at,
@@ -2025,12 +2025,12 @@ export async function mockArkretApi(
       /^\/_arkret\/self\/agents\/([^/]+)\/grants$/,
     );
     if (agentGrantsMatch && route.request().method() === "POST") {
-      const agentPrincipalId = decodeURIComponent(agentGrantsMatch[1]);
+      const agentId = decodeURIComponent(agentGrantsMatch[1]);
       const body = ((await contractRequestBody(route)) ?? {}) as Record<
         string,
         unknown
       >;
-      const grants = personalAgentGrants.get(agentPrincipalId) ?? [];
+      const grants = personalAgentGrants.get(agentId) ?? [];
       const grant = {
         grant_id: `ak:grant:01964137-0000-7000-8000-${String(grants.length + 1).padStart(12, "0")}`,
         ...(typeof body.grant === "object" && body.grant !== null
@@ -2038,7 +2038,7 @@ export async function mockArkretApi(
           : {}),
       };
       grants.push(grant);
-      personalAgentGrants.set(agentPrincipalId, grants);
+      personalAgentGrants.set(agentId, grants);
       return json(route, {
         ok: true,
         grant_id: grant.grant_id,
@@ -2054,8 +2054,8 @@ export async function mockArkretApi(
 
     const agentGetMatch = url.pathname.match(/^\/_arkret\/self\/agents\/([^/]+)$/);
     if (agentGetMatch && route.request().method() === "GET") {
-      const agentPrincipalId = decodeURIComponent(agentGetMatch[1]);
-      const agent = personalAgents.get(agentPrincipalId);
+      const agentId = decodeURIComponent(agentGetMatch[1]);
+      const agent = personalAgents.get(agentId);
       if (!agent) {
         return json(
           route,
@@ -2069,8 +2069,8 @@ export async function mockArkretApi(
       return json(route, {
         agent,
         status: agent.status ?? "pending_runtime_key",
-        grants: personalAgentGrants.get(agentPrincipalId) ?? [],
-        key_state: personalAgentKeyStates.get(agentPrincipalId) ?? null,
+        grants: personalAgentGrants.get(agentId) ?? [],
+        key_state: personalAgentKeyStates.get(agentId) ?? null,
       });
     }
 
@@ -2082,8 +2082,8 @@ export async function mockArkretApi(
         string,
         unknown
       >;
-      const agentPrincipalId = String(body.agent_principal_id ?? "");
-      const agent = personalAgents.get(agentPrincipalId);
+      const agentId = String(body.agent_id ?? "");
+      const agent = personalAgents.get(agentId);
       if (!agent) {
         return json(
           route,
@@ -2098,8 +2098,8 @@ export async function mockArkretApi(
         "ak:event:01964137-0000-7000-8000-00000000a601";
       agent.status = "active";
       agent.updated_at = "2026-07-06T00:05:00Z";
-      const previousKeyState = personalAgentKeyStates.get(agentPrincipalId) ?? {};
-      personalAgentKeyStates.set(agentPrincipalId, {
+      const previousKeyState = personalAgentKeyStates.get(agentId) ?? {};
+      personalAgentKeyStates.set(agentId, {
         ...previousKeyState,
         status: "active",
         verification_method: body.verification_method,
@@ -2108,7 +2108,7 @@ export async function mockArkretApi(
       });
       return json(route, {
         ok: true,
-        agent_principal_id: agentPrincipalId,
+        agent_id: agentId,
         status: "active",
         authorized_event_ref: authorizedEventRef,
         verification_method: body.verification_method,
@@ -2224,7 +2224,7 @@ export async function mockArkretApi(
         content_digest:
           "sha256:01015dc8af66d01f557ea63f13538f1964848840a350c5311d1efc8ad138bb91",
         upload_receipt: {
-          service_did: "did:web:server.local",
+          service_id: "did:web:server.local",
           content_digest_verified: true,
         },
       });
@@ -2407,7 +2407,7 @@ function realmPreview() {
 function joinCandidate() {
   return {
     realm_id: DEMO_REALM,
-    service_did: "did:web:server.local",
+    service_id: "did:web:server.local",
     service_type: "principal_server",
     role: "primary",
     endpoint: null,
@@ -2433,7 +2433,7 @@ function mimiProviderDirectory() {
   return {
     providers: [
       {
-        service_did: "did:web:mimi.example.com",
+        service_id: "did:web:mimi.example.com",
         service_type: "mimi_provider_facade",
         provider_id: "mimi://mimi.example.com",
         base_url: "https://mimi.example.com/_arkret/open/mimi",

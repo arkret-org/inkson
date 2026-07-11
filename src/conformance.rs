@@ -182,14 +182,6 @@ pub fn client_profile_declarations() -> Vec<ClientProfileDeclaration> {
             tier: ConformanceTier::V1_1Extension,
         },
         ClientProfileDeclaration {
-            profile_id: "ak.profile.agent_runtime.v1",
-            label: "agent_runtime",
-            description: "Agent runtime: A2A / ACP / MCP protocol session events (extensions/agent-protocol-interop).",
-            local_supported: false,
-            degradation_path: "Show agent capability claims read-only; do not initiate protocol sessions.",
-            tier: ConformanceTier::V1_1Extension,
-        },
-        ClientProfileDeclaration {
             profile_id: "ak.profile.mimi_interop.v1",
             label: "mimi_interop",
             description: "MIMI interop: provider facade, room binding, ciphertext envelope (extensions/mimi-interop).",
@@ -221,7 +213,7 @@ pub fn local_supported_profile_ids() -> Vec<&'static str> {
 /// `sync/operations-sync.md`, `crypto-media/encryption-and-audit.md`,
 /// `crypto-media/audited-e2ee.md` (attested / disclosed audit profile),
 /// `crypto-media/webrtc-signaling.md`, `extensions/applet-integration.md`,
-/// `extensions/agent-protocol-interop.md`, `extensions/mimi-interop.md`.
+/// `extensions/mimi-interop.md`.
 /// Canonical registry: `artifacts/registry/event-kind-registry.json`.
 pub fn known_event_kinds() -> Vec<&'static str> {
     arkret_sdk::events::kinds::STANDARD_EVENT_KINDS.to_vec()
@@ -422,12 +414,12 @@ pub struct PlaintextBoundary {
 
 impl PlaintextBoundary {
     /// Check if sending plaintext to a service is allowed.
-    pub fn can_send_plaintext(&self, service_did: &str) -> bool {
+    pub fn can_send_plaintext(&self, service_id: &str) -> bool {
         if self.is_e2ee {
             // E2EE Realms: plaintext must not leave the client
             return false;
         }
-        self.allowed_services.iter().any(|s| s == service_did)
+        self.allowed_services.iter().any(|s| s == service_id)
     }
 
     /// Check if a message payload should be encrypted before sending.
@@ -583,7 +575,7 @@ mod tests {
         // `ak.self.account.stream.subscribe` which the fixture intentionally omits, so
         // the readiness gate flags it as missing.
         let server: ServerDescription = serde_json::from_value(json!({
-            "service_did": "did:web:server.example",
+            "service_id": "did:web:server.example",
             "trust_domain": "ak:trust_domain:server.example",
             "service_type": "principal_server",
             "protocol_version": "1.0",

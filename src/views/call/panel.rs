@@ -275,7 +275,7 @@ pub fn CallPanel(
                     } else {
                         DesiredMedia::audio_only()
                     },
-                    media_service_dids: media_dids,
+                    media_service_ids: media_dids,
                     governance_evidence,
                 };
                 match join_and_build_transport(
@@ -674,7 +674,7 @@ pub fn CallPanel(
                                                 focus_id: focus_id.clone(),
                                                 epoch_id: 0,
                                                 desired_media: if want_video { DesiredMedia::audio_video() } else { DesiredMedia::audio_only() },
-                                                media_service_dids: media_dids,
+                                                media_service_ids: media_dids,
                                                 governance_evidence,
                                             };
                                             match join_and_build_transport(

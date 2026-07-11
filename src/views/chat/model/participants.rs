@@ -302,13 +302,13 @@ pub(crate) fn participant_roster_rows(
         let Some(metadata) = participant.agent_metadata.as_ref() else {
             continue;
         };
-        if metadata.controller_did.is_empty()
-            || !visible_dids.contains(metadata.controller_did.as_str())
+        if metadata.controller_id.is_empty()
+            || !visible_dids.contains(metadata.controller_id.as_str())
         {
             continue;
         }
         agents_by_controller
-            .entry(metadata.controller_did.clone())
+            .entry(metadata.controller_id.clone())
             .or_default()
             .push(participant.clone());
     }
@@ -659,12 +659,12 @@ pub(crate) fn agent_controller_label(
     }
     participants
         .iter()
-        .find(|candidate| candidate.did == metadata.controller_did)
+        .find(|candidate| candidate.did == metadata.controller_id)
         .and_then(participant_sender_label)
-        .or_else(|| crate::views::helpers::handle_display_from_did(&metadata.controller_did))
+        .or_else(|| crate::views::helpers::handle_display_from_did(&metadata.controller_id))
         .or_else(|| {
-            (!metadata.controller_did.trim().is_empty())
-                .then(|| short_principal_label(&metadata.controller_did))
+            (!metadata.controller_id.trim().is_empty())
+                .then(|| short_principal_label(&metadata.controller_id))
         })
 }
 
@@ -691,7 +691,7 @@ pub(crate) fn mention_candidate_for_participant(
         let selector = metadata.and_then(|metadata| {
             if metadata.agent_slug.trim().is_empty() {
                 None
-            } else if metadata.controller_did.trim() == account_did.trim() {
+            } else if metadata.controller_id.trim() == account_did.trim() {
                 Some(format!("me/{}", metadata.agent_slug.trim()))
             } else {
                 agent_selector_label(participant)
@@ -710,7 +710,7 @@ pub(crate) fn mention_candidate_for_participant(
                 .unwrap_or_else(|| "agent".to_owned()),
             is_agent: true,
             controller_subject_id: metadata
-                .map(|metadata| metadata.controller_did.clone())
+                .map(|metadata| metadata.controller_id.clone())
                 .unwrap_or_default(),
             controller_handle_at_time: metadata
                 .map(|metadata| metadata.controller_handle.clone())
@@ -747,7 +747,7 @@ pub(crate) fn agent_candidate_is_visible(
         || participant
             .agent_metadata
             .as_ref()
-            .is_some_and(|metadata| metadata.controller_did.trim() == account_did.trim())
+            .is_some_and(|metadata| metadata.controller_id.trim() == account_did.trim())
 }
 
 pub(crate) fn readable_participation_agent_ids(
@@ -762,7 +762,7 @@ pub(crate) fn readable_participation_agent_ids(
             participant
                 .agent_metadata
                 .as_ref()
-                .is_some_and(|metadata| metadata.controller_did.trim() == account_did)
+                .is_some_and(|metadata| metadata.controller_id.trim() == account_did)
         })
         .map(|participant| participant.did.clone())
         .collect::<Vec<_>>();

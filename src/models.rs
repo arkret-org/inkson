@@ -41,12 +41,12 @@ pub struct DirectConversationSummary {
 
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct ContactAgentRow {
-    pub agent_principal_id: String,
-    pub controller_principal_id: String,
+    pub agent_id: String,
+    pub controller_id: String,
     #[serde(default)]
     pub display_name: Option<String>,
     #[serde(default)]
-    pub agent_slug: Option<String>,
+    pub slug: String,
     #[serde(default)]
     pub direct_conversation: Option<DirectConversationSummary>,
 }
@@ -74,14 +74,15 @@ pub struct ContactListRow {
     /// Cross-PS addressing: the peer's originating Principal Server service DID,
     /// used to reverse-deliver an accept/reject when the request came from
     /// another PS. Passed through to `contacts/respond` as
-    /// `requester_service_did`.
+    /// `requester_service_id`.
     ///
     /// `GET /_arkret/self/contacts` now surfaces the peer's originating
     /// Principal Server on cross-PS rows, so this is populated whenever soland
     /// learned it from a cross-PS delivery; it stays `None` for same-PS
     /// contacts, where respond correctly falls back to same-PS behaviour.
-    #[serde(default)]
-    pub peer_service_did: Option<String>,
+    /// Accepts a couple of likely wire spellings for forward compatibility.
+    #[serde(default, alias = "requester_service_id", alias = "source_service_id")]
+    pub peer_service_id: Option<String>,
     /// U3 — event ref of the `ak.consent.grant` this peer gave me for the
     /// `invite` (or `any`) scope. When present, the realm-invite "from contacts"
     /// path can build `IntroductionEvidence::ConsentGrant { consent_grant_ref }`
@@ -156,7 +157,7 @@ impl ContactListRow {
             direct_conversation: row
                 .direct_conversation
                 .map(DirectConversationSummary::from_sdk),
-            peer_service_did: row.peer_service_did.map(|value| value.to_string()),
+            peer_service_id: row.peer_service_id.map(|value| value.to_string()),
             invite_consent_grant_ref: row.invite_consent_grant_ref.map(|value| value.to_string()),
             agents: row
                 .agents
@@ -170,10 +171,10 @@ impl ContactListRow {
 impl ContactAgentRow {
     fn from_sdk(row: arkret_sdk::ContactAgentProjection) -> Self {
         Self {
-            agent_principal_id: row.agent_principal_id.to_string(),
-            controller_principal_id: row.controller_principal_id.to_string(),
+            agent_id: row.agent_id.to_string(),
+            controller_id: row.controller_id.to_string(),
             display_name: row.display_name,
-            agent_slug: row.agent_slug,
+            slug: row.agent_slug.unwrap_or_default(),
             direct_conversation: row
                 .direct_conversation
                 .map(DirectConversationSummary::from_sdk),
@@ -382,7 +383,7 @@ impl ServerDescriptionExt for ServerDescription {
     }
 
     fn missing_v1_principal_server_requirements(&self) -> Vec<&'static str> {
-        // `service_did` is a `Did` validated on construction; failure to
+        // `service_id` is a `Did` validated on construction; failure to
         // start with "did:" makes the whole response un-deserialisable.
         let mut missing = Vec::new();
         if self.service_type != "principal_server" {
@@ -415,7 +416,7 @@ impl ServerDescriptionExt for ServerDescription {
 }
 
 // R35: `ak.identity.describe` body. The SDK's canonical type is
-// `IdentityDescription` (same fields, with `service_did: Did` validated on
+// `IdentityDescription` (same fields, with `service_id: Did` validated on
 // construction); the SDK's own `IdentityDescribeOutcome` is a transparent
 // newtype around it. We re-export the inner struct under the inkson-local
 // name so call sites (`registry_mode` read in `views/dashboard.rs`) stay

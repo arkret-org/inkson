@@ -18,7 +18,7 @@ const APPROVAL_POLL_INTERVAL: Duration = Duration::from_millis(5_000);
 #[derive(Clone, Debug, PartialEq)]
 struct PendingAgentRuntimeApproval {
     request_key: String,
-    agent_principal_id: String,
+    agent_id: String,
     display_name: String,
     agent_slug: String,
     pairing_code: String,
@@ -88,11 +88,11 @@ pub fn AgentRuntimeApprovalPrompt(token: Signal<String>, account_did: Signal<Str
     };
 
     let agent_label = if request.display_name.trim().is_empty() {
-        short_protocol_id(&request.agent_principal_id)
+        short_protocol_id(&request.agent_id)
     } else {
         request.display_name.clone()
     };
-    let agent_id_label = short_protocol_id(&request.agent_principal_id);
+    let agent_id_label = short_protocol_id(&request.agent_id);
     let verification_label = short_protocol_id(&request.verification_method);
     let fingerprint_label = short_protocol_id(&request.public_key_fingerprint);
     let status_value = status();
@@ -128,7 +128,7 @@ pub fn AgentRuntimeApprovalPrompt(token: Signal<String>, account_did: Signal<Str
                     div {
                         class: "device-pair-approval-device",
                         "data-testid": "agent-runtime-approval-agent",
-                        "data-agent-id": "{request.agent_principal_id}",
+                        "data-agent-id": "{request.agent_id}",
                         strong { "{agent_label}" }
                         span { class: "muted mono", "{agent_id_label}" }
                         if !request.agent_slug.trim().is_empty() {
@@ -198,8 +198,8 @@ pub fn AgentRuntimeApprovalPrompt(token: Signal<String>, account_did: Signal<Str
                                     return;
                                 }
                             };
-                            if body.agent_principal_id.as_str()
-                                != approve_request.agent_principal_id
+                            if body.agent_id.as_str()
+                                != approve_request.agent_id
                             {
                                 status.set(runtime_key_pairing_error_message(
                                     "runtime key request targets a different agent",
@@ -218,12 +218,12 @@ pub fn AgentRuntimeApprovalPrompt(token: Signal<String>, account_did: Signal<Str
                                     let key_state = key_state.clone();
                                     let controller = controller.clone();
                                     async move {
-                                        let service_did =
-                                            api.describe_cached().await?.service_did.to_string();
+                                        let service_id =
+                                            api.describe_cached().await?.service_id.to_string();
                                         let authorize_event =
                                             build_agent_key_authorize_event_for_pairing(
                                                 &controller,
-                                                &service_did,
+                                                &service_id,
                                                 &key_state,
                                                 &body,
                                             )?;
@@ -279,11 +279,11 @@ async fn fetch_pending_agent_runtime_approval(
             if row.status != arkret_sdk::models::AgentStatus::PendingRuntimeKey {
                 continue;
             }
-            let agent_principal_id = row.agent_principal_id.as_str();
-            if agent_principal_id.trim().is_empty() {
+            let agent_id = row.agent_id.as_str();
+            if agent_id.trim().is_empty() {
                 continue;
             }
-            let view = http.agent_get(agent_principal_id).await?;
+            let view = http.agent_get(agent_id).await?;
             let Some(request) = pending_runtime_approval_from_view(&view) else {
                 continue;
             };
@@ -309,10 +309,10 @@ fn pending_runtime_approval_from_view(
     }
     let request_json = serde_json::to_string(&request_value).ok()?;
     let summary = summarize_runtime_key_approval_request(&request_json).ok()?;
-    let agent_principal_id = agent_field(view, "agent_principal_id")
+    let agent_id = agent_field(view, "agent_id")
         .filter(|value| !value.trim().is_empty())
-        .unwrap_or_else(|| summary.agent_principal_id.clone());
-    if agent_principal_id != summary.agent_principal_id {
+        .unwrap_or_else(|| summary.agent_id.clone());
+    if agent_id != summary.agent_id {
         return None;
     }
     let pairing_code = key_state_str(&view.key_state, "pairing_code")?;
@@ -320,7 +320,7 @@ fn pending_runtime_approval_from_view(
         .or_else(|| Some(summary.pairing_request_id.clone()))?;
     Some(PendingAgentRuntimeApproval {
         request_key,
-        agent_principal_id,
+        agent_id,
         display_name: agent_field(view, "display_name").unwrap_or_default(),
         agent_slug: agent_field(view, "slug").unwrap_or_default(),
         pairing_code,

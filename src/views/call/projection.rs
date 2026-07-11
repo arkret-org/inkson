@@ -485,7 +485,7 @@ mod tests {
     }
 
     #[test]
-    fn default_focus_id_derives_from_service_did() {
+    fn default_focus_id_derives_from_service_id() {
         assert_eq!(
             default_focus_id(&["did:web:media.example".to_owned()]),
             "media.example"
@@ -773,7 +773,7 @@ mod tests {
                             "call_id": call_id,
                             "focus_id": "fra-1",
                             "recording_id": recording_id,
-                            "media_service_did": "did:web:recorder.example",
+                            "media_service_id": "did:web:recorder.example",
                             "recording_start_event_id": start_event_id
                         },
                         "ciphertext_digest": ciphertext_digest

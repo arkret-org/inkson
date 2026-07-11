@@ -13,7 +13,7 @@ export function mockArkretContract(req) {
 
   if (method === "GET" && path === "/_arkret/describe") {
     return json({
-      service_did: "did:web:server.local",
+      service_id: "did:web:server.local",
       trust_domain: "ak:trust_domain:server.local",
       service_type: "principal_server",
       protocol_version: "1.0",
@@ -78,7 +78,7 @@ export function mockArkretContract(req) {
 
   if (method === "GET" && path === "/_arkret/find/directory/describe") {
     return json({
-      service_did: "did:web:server.local",
+      service_id: "did:web:server.local",
       trust_domain: "ak:trust_domain:server.local",
       service_type: "directory_service",
       protocol_version: "1.0",

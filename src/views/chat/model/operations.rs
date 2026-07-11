@@ -467,11 +467,10 @@ pub(crate) async fn submit_chat_operation_with_plaintext_retry(
         Err(error) if is_plaintext_visibility_policy_error(&error) => {
             let mut services = plaintext_visible_services.to_vec();
             if let Ok(description) = api.describe().await {
-                let service_did = description.service_did.as_str().trim();
-                if !service_did.is_empty()
-                    && !services.iter().any(|existing| existing == service_did)
+                let service_id = description.service_id.as_str().trim();
+                if !service_id.is_empty() && !services.iter().any(|existing| existing == service_id)
                 {
-                    services.push(service_did.to_owned());
+                    services.push(service_id.to_owned());
                 }
             }
             if services.is_empty() {

@@ -23,7 +23,7 @@ new work right now.
 
 **What to do:**
 
-1. Open **Settings → Agents** (or `/agents` on the web).
+1. Open **Settings → Agents**.
 2. Find the agent in the list. Its status badge will read **Paused**.
 3. If you paused it on purpose (e.g. for a maintenance window), no
    action is needed — just wait until you're ready to **Resume**.

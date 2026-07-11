@@ -40,7 +40,7 @@ pub fn ActorKindBadge(actor_kind: Option<String>) -> Element {
 /// DID; otherwise it shows a placeholder.
 #[component]
 pub fn SidecarThreadGuard(
-    controller_did: String,
+    controller_id: String,
     agent_id: String,
     participants: Vec<String>,
     children: Element,
@@ -50,7 +50,7 @@ pub fn SidecarThreadGuard(
         .map(|p| p.trim().to_owned())
         .filter(|p| !p.is_empty())
         .collect();
-    let mut expected = vec![controller_did.clone(), agent_id.clone()];
+    let mut expected = vec![controller_id.clone(), agent_id.clone()];
     expected.sort();
     let mut found = normalized.clone();
     found.sort();
@@ -60,7 +60,7 @@ pub fn SidecarThreadGuard(
             div {
                 class: "event",
                 "data-testid": "sidecar-thread-guard-ok",
-                "data-controller-did": "{controller_did}",
+                "data-controller-id": "{controller_id}",
                 "data-agent-did": "{agent_id}",
                 {children}
             }
@@ -76,7 +76,7 @@ pub fn SidecarThreadGuard(
                     "AKP-0008 §4.5 / AKP-0009 §3 invariant 10 — sidecar threads are controller × native-agent 1:1 channels and MUST NOT render as a group chat. Refusing to render this thread until the participant set normalizes."
                 }
                 div { class: "muted",
-                    "Expected controller: {controller_did}; agent: {agent_id}. Observed {normalized.len()} participant(s)."
+                    "Expected controller: {controller_id}; agent: {agent_id}. Observed {normalized.len()} participant(s)."
                 }
             }
         }
@@ -95,7 +95,7 @@ pub fn SidecarThreadGuard(
 /// agent view's exposure field populates this list automatically.
 #[component]
 pub fn SidecarExposureDisclosure(
-    controller_did: String,
+    controller_id: String,
     resume_sidecar_refs: Signal<Vec<String>>,
 ) -> Element {
     let mut ref_input = use_signal(String::new);
@@ -106,7 +106,7 @@ pub fn SidecarExposureDisclosure(
                 span { class: "badge", "AKP-0009 §3 inv. 10" }
             }
             div { class: "muted",
-                "Controller: {controller_did}. Before resuming a paused agent, acknowledge any sidecar Circles that became newly visible while it was paused. Acknowledged refs are sent as the resume sidecar_exposure_ack."
+                "Controller: {controller_id}. Before resuming a paused agent, acknowledge any sidecar Circles that became newly visible while it was paused. Acknowledged refs are sent as the resume sidecar_exposure_ack."
             }
             div { class: "muted", "data-testid": "sidecar-exposure-data-source",
                 "Data source: soland sidecar exposure projection (ak.agent.sidecar_projection.v1) pending — enter the disclosed sidecar object_refs below until the projection auto-populates this list."
@@ -180,7 +180,7 @@ pub fn ActionApproveDialog(
     actor_id: String,
     space_id: String,
     request_id: String,
-    agent_principal_id: String,
+    agent_id: String,
     proposed_action: String,
     target_json: String,
     payload_digest: String,
@@ -236,7 +236,7 @@ pub fn ActionApproveDialog(
                         let actor = actor_id.clone();
                         let space = space_id.clone();
                         let request_id = request_id.clone();
-                        let agent = agent_principal_id.clone();
+                        let agent = agent_id.clone();
                         let action = proposed_action.clone();
                         let target_json = target_json.clone();
                         let digest = payload_digest.clone();
@@ -267,8 +267,8 @@ pub fn ActionApproveDialog(
                                     }));
                                 let request_payload = json!({
                                     "request_id": request_id,
-                                    "agent_principal_id": agent,
-                                    "controller_principal_id": actor.clone(),
+                                    "agent_id": agent,
+                                    "controller_id": actor.clone(),
                                     "proposed_action": action,
                                     "target": target,
                                     "request_canonical_digest": digest,
@@ -348,7 +348,7 @@ pub fn ActionApproveDialog(
 /// `ak.self.account.subscribe`; until the subscribe fold is attached to
 /// this component, operators can paste a draft or action request payload.
 #[component]
-pub fn DraftApprovalPanel(token: Signal<String>, controller_did: String) -> Element {
+pub fn DraftApprovalPanel(token: Signal<String>, controller_id: String) -> Element {
     // A4 — base_url from session context instead of a prop.
     let base_url = crate::app::SessionContext::base_url_string();
     let mut drafts = use_signal(Vec::<Value>::new);
@@ -358,7 +358,7 @@ pub fn DraftApprovalPanel(token: Signal<String>, controller_did: String) -> Elem
 
     // Controller-private events (action_approve / action_reject) author
     // in the controller's principal-control realm.
-    let principal_realm = arkret_sdk::Did::new(controller_did.clone())
+    let principal_realm = arkret_sdk::Did::new(controller_id.clone())
         .ok()
         .map(|principal| arkret_sdk::principal_control_realm_id(&principal).to_string());
 
@@ -450,7 +450,7 @@ pub fn DraftApprovalPanel(token: Signal<String>, controller_did: String) -> Elem
                                 .unwrap_or("?")
                                 .to_owned();
                             let agent_id = draft
-                                .get("agent_principal_id")
+                                .get("agent_id")
                                 .and_then(Value::as_str)
                                 .unwrap_or("?")
                                 .to_owned();
@@ -489,7 +489,7 @@ pub fn DraftApprovalPanel(token: Signal<String>, controller_did: String) -> Elem
                                             disabled: principal_realm.is_none(),
                                             onclick: {
                                                 let base = base_url.clone();
-                                                let actor = controller_did.clone();
+                                                let actor = controller_id.clone();
                                                 let realm = principal_realm.clone();
                                                 move |_| {
                                                     let Some(realm) = realm.clone() else { return; };
@@ -554,7 +554,7 @@ pub fn DraftApprovalPanel(token: Signal<String>, controller_did: String) -> Elem
                                             disabled: principal_realm.is_none(),
                                             onclick: {
                                                 let base = base_url.clone();
-                                                let actor = controller_did.clone();
+                                                let actor = controller_id.clone();
                                                 let realm = principal_realm.clone();
                                                 move |_| {
                                                     let Some(realm) = realm.clone() else { return; };

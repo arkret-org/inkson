@@ -6,7 +6,7 @@
 //!
 //! The builders below produce the wire shape soland validators and the
 //! SDK reducer consume. Each carries the canonical `applet_id` (or
-//! `service_did` for registration / discovery) as `target_ref` so
+//! `service_id` for registration / discovery) as `target_ref` so
 //! soland's `target-ref-required` envelope-shape check passes.
 
 use std::collections::BTreeMap;
@@ -40,7 +40,7 @@ fn parse_runtime_status(runtime_status: &str) -> anyhow::Result<arkret_sdk::Appl
 pub fn applet_discovery(
     realm_id: &str,
     actor: &str,
-    service_did: &str,
+    service_id: &str,
     manifest: serde_json::Value,
 ) -> OperationBuilder {
     OperationBuilder::new(
@@ -48,9 +48,9 @@ pub fn applet_discovery(
         actor,
         arkret_sdk::events::kinds::EventKind::AppletDiscovery,
     )
-    .target_ref(service_did)
+    .target_ref(service_id)
     .body(json!({
-        "service_did": service_did,
+        "service_id": service_id,
         "manifest": manifest,
     }))
 }

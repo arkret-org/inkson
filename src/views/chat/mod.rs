@@ -226,7 +226,7 @@ fn chat_visible_read_receipt_should_display(
 
 #[component]
 pub fn ChatPanel(
-    plaintext_service_did: String,
+    plaintext_service_id: String,
     account_did: String,
     device_id: String,
     token: Signal<String>,
@@ -419,19 +419,10 @@ pub fn ChatPanel(
             &base_url,
         );
     }
-    // Mark agent endpoints registered in this Realm so the @mention
-    // picker, member list, and sender row can render a 🤖 badge.
-    // Source of truth is the local store's `ak.agent.endpoint` raw
-    // operations (same projection the Agents panel reads from).
+    // Mark agents referenced by structured mentions so the @mention picker,
+    // member list, and sender row can render an agent badge.
     {
-        let mut agent_metadata = agent_metadata_from_raw_operations(
-            &state_store.read().load().raw_operations,
-            &selected_realm_id,
-        );
-        merge_agent_metadata_maps(
-            &mut agent_metadata,
-            agent_metadata_from_mentions(&all_messages_snapshot),
-        );
+        let agent_metadata = agent_metadata_from_mentions(&all_messages_snapshot);
         upsert_agent_participants(&mut participants, &agent_metadata, &account_did);
         annotate_agent_participants_with_metadata(&mut participants, &agent_metadata);
     }
@@ -521,7 +512,7 @@ pub fn ChatPanel(
                 device_id: device_id.clone(),
                 selected_realm_id: selected_realm_id.clone(),
                 initial_strand_id: initial_strand_id.clone(),
-                plaintext_service_did: plaintext_service_did.clone(),
+                plaintext_service_id: plaintext_service_id.clone(),
                 sync_cursor,
                 realm_live_epoch,
                 frontier_state,
@@ -1215,7 +1206,7 @@ pub fn ChatPanel(
                         selected_realm_id: selected_realm_id.clone(),
                         selected_channel_id: selected_channel_value.clone(),
                         device_id: device_id.clone(),
-                        plaintext_service_did: plaintext_service_did.clone(),
+                        plaintext_service_id: plaintext_service_id.clone(),
                         base_url: base_url.clone(),
                         focus_message_id: focus_message_id.clone(),
                         blocked_dids: blocked_did_set.clone(),
@@ -1345,7 +1336,7 @@ pub fn ChatPanel(
                                         }
                                     }
                                     ParticipantRosterRow::ControllerWithAgents { controller, agents } => {
-                                        let controller_did = controller.did.clone();
+                                        let controller_id = controller.did.clone();
                                         let agent_count = agents.len();
                                         let display_label = participant_roster_display_label(
                                             &state_store.read(),
@@ -1363,7 +1354,7 @@ pub fn ChatPanel(
                                             details {
                                                 class: "participant-agent-group",
                                                 "data-testid": "participant-agent-group",
-                                                "data-controller-did": "{controller_did}",
+                                                "data-controller-id": "{controller_id}",
                                                 summary {
                                                     class: "participant-agent-group-summary",
                                                     "aria-label": "{group_aria_label}",
@@ -1678,7 +1669,7 @@ pub fn ChatPanel(
                     participants: participants_for_messages.clone(),
                     selected_realm_id: selected_realm_id.clone(),
                     device_id: device_id.clone(),
-                    plaintext_service_did: plaintext_service_did.clone(),
+                    plaintext_service_id: plaintext_service_id.clone(),
                     selected_channel_security_encrypted,
                     selected_realm_pending_mls_binding,
                     public_agent_dids: public_agent_dids.clone(),

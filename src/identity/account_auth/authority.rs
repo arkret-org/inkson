@@ -113,11 +113,11 @@ impl AuthorityResolver {
         let metadata = &description.auth_metadata;
         let gate_account_base = resolve_gate_account_base(principal_server_url, metadata)?;
         let principal_audience = {
-            let service_did = description.service_did.as_str().trim();
-            if service_did.is_empty() {
+            let service_id = description.service_id.as_str().trim();
+            if service_id.is_empty() {
                 principal_audience(principal_server_url)?
             } else {
-                service_did.to_owned()
+                service_id.to_owned()
             }
         };
         Ok(Self {

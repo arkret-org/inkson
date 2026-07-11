@@ -26,7 +26,7 @@ use crate::views::helpers::{display_name_for_did, short_protocol_id};
 
 #[component]
 pub(super) fn RealmsSection(
-    plaintext_service_did: String,
+    plaintext_service_id: String,
     secure_store_ready: bool,
     token: Signal<String>,
     account_did: Signal<String>,
@@ -740,8 +740,8 @@ pub(super) fn RealmsSection(
                                         let seed_text = seed_members();
                                         let actor = account_did();
                                         let device = device_id();
-                                        let configured_plaintext_service_did =
-                                            plaintext_service_did.clone();
+                                        let configured_plaintext_service_id =
+                                            plaintext_service_id.clone();
                                         spawn(async move {
                                             if crate::event_signer::active_signer().is_none() {
                                                 match crate::event_signer::bootstrap_default_signer("inkson") {
@@ -765,16 +765,16 @@ pub(super) fn RealmsSection(
                                             match authed_api(&base, api_token.clone()) {
                                                 Ok(api) => {
                                                     let mut plaintext_services = plaintext_services_for_policy(
-                                                        &configured_plaintext_service_did,
+                                                        &configured_plaintext_service_id,
                                                     );
                                                     if let Ok(description) = api.describe().await {
-                                                        let service_did = description.service_did.as_str().trim();
-                                                        if !service_did.is_empty()
+                                                        let service_id = description.service_id.as_str().trim();
+                                                        if !service_id.is_empty()
                                                             && !plaintext_services
                                                                 .iter()
-                                                                .any(|existing| existing == service_did)
+                                                                .any(|existing| existing == service_id)
                                                         {
-                                                            plaintext_services.push(service_did.to_owned());
+                                                            plaintext_services.push(service_id.to_owned());
                                                         }
                                                     }
                                                     // Spec realm.schema.json requires

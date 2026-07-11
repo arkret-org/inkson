@@ -21,7 +21,6 @@ pub(super) use crate::payload::{payload_value, sdk_payload_value, strand_id_valu
 // UI state), so a non-canonical id from a buggy or malicious server must
 // surface as a recoverable error — on wasm a panic kills the whole page.
 
-mod agent;
 mod applet;
 mod calendar;
 mod capability;
@@ -36,7 +35,6 @@ mod relation;
 mod space;
 mod strand;
 
-pub use agent::*;
 pub use applet::*;
 pub use calendar::*;
 pub use capability::*;

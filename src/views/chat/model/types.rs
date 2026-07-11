@@ -248,7 +248,7 @@ impl SpaceParticipantRole {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct AgentParticipantMetadata {
-    pub(crate) controller_did: String,
+    pub(crate) controller_id: String,
     pub(crate) controller_handle: String,
     pub(crate) agent_slug: String,
     pub(crate) display_name: String,
@@ -262,8 +262,8 @@ pub(crate) struct SpaceParticipant {
     pub(crate) display_name_rank: u8,
     pub(crate) role: SpaceParticipantRole,
     pub(crate) is_self: bool,
-    /// `true` when this DID was registered as an agent endpoint
-    /// (`ak.agent.endpoint`). Surfaces a 🤖 badge in member lists,
+    /// `true` when selector mention metadata identifies this DID as an agent.
+    /// Surfaces a 🤖 badge in member lists,
     /// @mention picker rows, and chat sender attribution so operators
     /// can immediately distinguish bot/agent principals from real
     /// human members.

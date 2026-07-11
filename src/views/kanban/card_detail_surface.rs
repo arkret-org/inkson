@@ -3,7 +3,7 @@ use super::*;
 #[derive(Clone, PartialEq)]
 pub(super) struct CardDetailContext {
     pub base_url: String,
-    pub plaintext_service_did: String,
+    pub plaintext_service_id: String,
     pub account_did: String,
     pub device_id: String,
     pub selected_realm_id: String,
@@ -22,7 +22,7 @@ pub(super) struct CardDetailContext {
 pub(super) fn CardDetail(controller: KanbanController, context: CardDetailContext) -> Element {
     let CardDetailContext {
         base_url,
-        plaintext_service_did,
+        plaintext_service_id,
         account_did,
         device_id,
         selected_realm_id,
@@ -1254,7 +1254,7 @@ pub(super) fn CardDetail(controller: KanbanController, context: CardDetailContex
                                                         role: "tabpanel",
                                                         "aria-hidden": "{active_detail_tab != CardDetailContentTab::Discussion}",
                                                         crate::views::chat::ChatPanel {
-                                                            plaintext_service_did: plaintext_service_did.clone(),
+                                                            plaintext_service_id: plaintext_service_id.clone(),
                                                             account_did: account_did.clone(),
                                                             device_id: device_id.clone(),
                                                             token,

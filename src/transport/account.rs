@@ -183,14 +183,14 @@ async fn contact_request_event_id_for_requester(
 /// requester's Principal Server service DID for cross-PS reverse delivery.
 ///
 /// Protocol contract (soland finalized): the `contacts/respond` body
-/// accepts an optional `requester_service_did`. Same-PS responses leave it
+/// accepts an optional `requester_service_id`. Same-PS responses leave it
 /// empty; cross-PS responses pass the originating PS so soland can route the
 /// accept/reject back. Empty / whitespace-only values are dropped.
 pub async fn respond_contact_with_service(
     http: &arkret_sdk::http_client::Client,
     requester: &str,
     action: &str,
-    requester_service_did: Option<&str>,
+    requester_service_id: Option<&str>,
 ) -> anyhow::Result<arkret_sdk::ContactRespondOutcome> {
     let request_event_ref = contact_request_event_id_for_requester(http, requester).await?;
     respond_contact_with_request_id_and_service(
@@ -198,7 +198,7 @@ pub async fn respond_contact_with_service(
         requester,
         &request_event_ref,
         action,
-        requester_service_did,
+        requester_service_id,
     )
     .await
 }
@@ -208,7 +208,7 @@ pub async fn respond_contact_with_request_id_and_service(
     requester: &str,
     request_event_ref: &str,
     action: &str,
-    requester_service_did: Option<&str>,
+    requester_service_id: Option<&str>,
 ) -> anyhow::Result<arkret_sdk::ContactRespondOutcome> {
     let body = arkret_sdk::ContactRespondRequestBody {
         request_id: arkret_sdk::EventId::new(request_event_ref.trim().to_owned()).map_err(
@@ -217,9 +217,9 @@ pub async fn respond_contact_with_request_id_and_service(
         requester: did_for_request_field("requester", requester)?,
         action: contact_response_action(action)?,
         granted_scopes: Vec::new(),
-        requester_service_did: optional_did_for_request_field(
-            "requester_service_did",
-            requester_service_did,
+        requester_service_id: optional_did_for_request_field(
+            "requester_service_id",
+            requester_service_id,
         )?,
     };
     http.contacts_respond(&body)
@@ -381,7 +381,7 @@ pub async fn tombstone_contact(
         revoke_scopes: Vec::new(),
         full_peer_revoke: false,
         block_peer,
-        peer_service_did: None,
+        peer_service_id: None,
     };
     http.contacts_tombstone(&body)
         .await
