@@ -1998,14 +1998,15 @@ fn AppBootstrap() -> Element {
                                                 for agent in own_agent_rows.read().iter() {
                                                     {
                                                         let agent_id = agent.agent_id.to_string();
-                                                        let agent_label = agent.slug.clone();
-                                                        let agent_status = match agent.status {
-                                                            arkret_sdk::AgentStatus::PendingRuntimeKey => "pending",
-                                                            arkret_sdk::AgentStatus::Active => "active",
-                                                            arkret_sdk::AgentStatus::PairingExpired => "pairing expired",
-                                                            arkret_sdk::AgentStatus::Paused => "paused",
-                                                            arkret_sdk::AgentStatus::Deactivated => "deactivated",
-                                                        };
+                                                        let agent_label = agent
+                                                            .display_name
+                                                            .clone()
+                                                            .unwrap_or_else(|| agent.slug.clone());
+                                                        let avatar_blob_ref = agent
+                                                            .avatar_blob_ref
+                                                            .as_ref()
+                                                            .map(ToString::to_string)
+                                                            .unwrap_or_default();
                                                         let controller_id = self_did.clone();
                                                         rsx! {
                                                             button {
@@ -2070,10 +2071,18 @@ fn AppBootstrap() -> Element {
                                                                         });
                                                                     }
                                                                 },
-                                                                span { class: "sidebar-nav-icon", UiIcon { name: "bot" } }
+                                                                span { class: "sidebar-nav-icon contact-sidebar-agent-avatar",
+                                                                    if avatar_blob_ref.is_empty() {
+                                                                        UiIcon { name: "bot" }
+                                                                    } else {
+                                                                        crate::content::renderer::AuthenticatedBlobImage {
+                                                                            blob_ref: avatar_blob_ref,
+                                                                            alt_text: agent_label.clone(),
+                                                                        }
+                                                                    }
+                                                                }
                                                                 span { class: "grow truncate", "{agent_label}" }
                                                                 span { class: "pill muted xs", "AI agent" }
-                                                                span { class: "pill muted xs", "{agent_status}" }
                                                             }
                                                         }
                                                     }
@@ -2372,6 +2381,11 @@ fn AppBootstrap() -> Element {
                                                         .or_else(|| Some(agent.slug.clone()))
                                                         .unwrap_or_else(|| short_protocol_id(&agent_id));
                                                     let agent_direct = agent.direct_conversation.clone();
+                                                    let avatar_blob_ref = agent
+                                                        .avatar_blob_ref
+                                                        .as_ref()
+                                                        .map(ToString::to_string)
+                                                        .unwrap_or_default();
                                                     let controller = peer.clone();
                                                     rsx! {
                                                         button {
@@ -2435,7 +2449,16 @@ fn AppBootstrap() -> Element {
                                                                     });
                                                                 }
                                                             },
-                                                            span { class: "sidebar-nav-icon", UiIcon { name: "bot" } }
+                                                            span { class: "sidebar-nav-icon contact-sidebar-agent-avatar",
+                                                                if avatar_blob_ref.is_empty() {
+                                                                    UiIcon { name: "bot" }
+                                                                } else {
+                                                                    crate::content::renderer::AuthenticatedBlobImage {
+                                                                        blob_ref: avatar_blob_ref,
+                                                                        alt_text: agent_label.clone(),
+                                                                    }
+                                                                }
+                                                            }
                                                             span { class: "grow truncate", "{agent_label}" }
                                                             span { class: "pill muted xs", "AI agent" }
                                                         }

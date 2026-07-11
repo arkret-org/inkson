@@ -283,6 +283,7 @@ export async function mockArkretApi(
     agent_id: "did:web:agents.example:assistant",
     display_name: "Alice Assistant",
     slug: "assistant",
+    avatar_blob_ref: DEMO_BLOB_REF,
     status: "active",
     created_at: "2026-07-06T00:00:00Z",
     updated_at: "2026-07-06T00:05:00Z",
@@ -1760,6 +1761,7 @@ export async function mockArkretApi(
                 controller_id: "did:web:bob.example",
                 display_name: "Bob Helper",
                 slug: "helper",
+                avatar_blob_ref: DEMO_BLOB_REF,
                 direct_conversation: {
                   realm_id: "ak:realm:01964137-0000-7000-8000-0000000000b1",
                   main_strand_id: "ak:strand:01964137-0000-7000-8000-0000000000b2",
@@ -1997,6 +1999,9 @@ export async function mockArkretApi(
           ? { display_name: body.display_name }
           : {}),
         slug,
+        ...(typeof body.avatar_blob_ref === "string"
+          ? { avatar_blob_ref: body.avatar_blob_ref }
+          : {}),
         status: "pending_runtime_key",
         created_at: "2026-07-06T00:00:00Z",
         updated_at: "2026-07-06T00:00:00Z",

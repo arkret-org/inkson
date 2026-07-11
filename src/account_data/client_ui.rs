@@ -72,7 +72,8 @@ pub fn avatar_blob_ref_from_client_ui(value: &Value) -> Option<String> {
         .and_then(Value::as_str)
         .map(str::trim)
         .filter(|s| !s.is_empty())
-        .map(ToOwned::to_owned)
+        .and_then(|value| arkret_sdk::BlobRef::new(value.to_owned()).ok())
+        .map(|value| value.to_string())
 }
 
 /// True when a remote `client.ui` payload explicitly tombstones the avatar

@@ -1306,6 +1306,17 @@
   color: var(--accent);
 }
 
+.contact-sidebar-agent-avatar {
+  overflow: hidden;
+  border-radius: 50%;
+}
+
+.contact-sidebar-agent-avatar img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
 .shell.app.sidebar-collapsed .contact-agent-list,
 .shell.app.sidebar-collapsed .contact-agent-count,
 .shell.app.sidebar-collapsed .contact-agent-chevron {

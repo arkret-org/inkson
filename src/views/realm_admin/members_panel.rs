@@ -3,13 +3,11 @@ use std::collections::{BTreeMap, BTreeSet};
 use arkret_sdk::models::{AgentParticipation, AgentParticipationEntry, AgentParticipationScope};
 use dioxus::prelude::*;
 use dioxus_primitives::checkbox::CheckboxState;
-use dioxus_router::Link;
 use serde_json::{Value, json};
 
 use super::capabilities::{RealmMemberCapabilities, authz_json_allowed};
 use crate::components::SelfAttributionBadge;
 use crate::operation::ak_ops;
-use crate::routes::Route;
 use crate::state::{LocalStateStore, MoveSubmissionState, RawOperationRecord};
 use crate::transport::auth::authed_api_with_sync;
 use crate::ui::button::{Button, ButtonSize, ButtonVariant};
@@ -107,8 +105,7 @@ struct MemberProfile {
     subject_id: Option<String>,
     invite_id: Option<String>,
     display_name: Option<String>,
-    avatar_blob_ref: Option<String>,
-    avatar_url: Option<String>,
+    avatar_blob_ref: Option<arkret_sdk::BlobRef>,
     handles: Vec<String>,
     remark_name: Option<String>,
     remark_note: Option<String>,
@@ -126,7 +123,6 @@ impl MemberProfile {
             invite_id: None,
             display_name: None,
             avatar_blob_ref: None,
-            avatar_url: None,
             handles: Vec::new(),
             remark_name: None,
             remark_note: None,
@@ -552,16 +548,8 @@ fn profile_from_projected_member_object(
             &["display_profile", "avatar_blob_ref"],
             &["member_identity", "display_profile", "avatar_blob_ref"],
         ],
-    );
-    profile.avatar_url = projection_path_string(
-        map,
-        &[
-            &["avatar_url"],
-            &["profile", "avatar_url"],
-            &["identity", "avatar_url"],
-            &["picture"],
-        ],
-    );
+    )
+    .and_then(|value| arkret_sdk::BlobRef::new(value).ok());
     profile.handles = collect_member_handles(map, profile.subject_id.as_deref());
     profile.membership = trimmed_string(map.get("membership").or_else(|| map.get("state")));
     profile.member_display_state_digest = trimmed_string(map.get("member_display_state_digest"));
@@ -585,9 +573,6 @@ fn merge_member_profile(target: &mut MemberProfile, incoming: MemberProfile) {
     }
     if target.avatar_blob_ref.is_none() {
         target.avatar_blob_ref = incoming.avatar_blob_ref;
-    }
-    if target.avatar_url.is_none() {
-        target.avatar_url = incoming.avatar_url;
     }
     for handle in incoming.handles {
         push_unique(&mut target.handles, handle);
@@ -724,11 +709,7 @@ fn enrich_member_profile_from_store(
             }
         }
         if profile.avatar_blob_ref.is_none() {
-            profile.avatar_blob_ref = identity
-                .display_profile
-                .avatar_blob_ref
-                .as_ref()
-                .map(ToString::to_string);
+            profile.avatar_blob_ref = identity.display_profile.avatar_blob_ref.clone();
         }
     }
     if let Some(subject_id) = member_handle_lookup_subject(profile)
@@ -922,6 +903,23 @@ fn group_members_with_owned_agents(
             .then_with(|| left.controller.actor_id.cmp(&right.controller.actor_id))
     });
     groups
+}
+
+fn split_owned_agents_for_realm(
+    owned_agents: &[MemberAgentRow],
+    member_set: &BTreeSet<String>,
+) -> (Vec<MemberAgentRow>, Vec<MemberAgentRow>) {
+    let joined = owned_agents
+        .iter()
+        .filter(|agent| member_set.contains(&agent.agent_id))
+        .cloned()
+        .collect();
+    let available = owned_agents
+        .iter()
+        .filter(|agent| !member_set.contains(&agent.agent_id) && agent.status == "active")
+        .cloned()
+        .collect();
+    (joined, available)
 }
 
 fn split_member_profiles(members: Vec<MemberProfile>) -> (Vec<MemberProfile>, Vec<MemberProfile>) {
@@ -1216,14 +1214,6 @@ fn member_group_in_section(
         MemberRosterSection::MyAgents => group.controller.actor_id.trim() == account_did.trim(),
         MemberRosterSection::PendingInvites => false,
     }
-}
-
-fn agent_invite_target(agent_id: &str, service_id: &str) -> String {
-    format!(
-        "subject_id={} recipient_service_id={}",
-        agent_id.trim(),
-        service_id.trim()
-    )
 }
 
 fn member_line_identity_visible(
@@ -1562,8 +1552,7 @@ fn PendingInviteRow(
     let member = profile.actor_id.clone();
     let member_label = profile.primary_label();
     let avatar_initial = member_avatar_initial(&profile);
-    let avatar_blob_ref = profile.avatar_blob_ref.clone();
-    let avatar_url = profile.avatar_url.clone();
+    let avatar_blob_ref = profile.avatar_blob_ref.as_ref().map(ToString::to_string);
     let invite_id = profile.invite_id.clone().unwrap_or_default();
     let can_cancel_this_invite = can_cancel_invite && !invite_id.trim().is_empty();
     let cancel_title = if can_cancel_this_invite {
@@ -1606,13 +1595,6 @@ fn PendingInviteRow(
                                 blob_ref,
                                 alt_text: member_label.clone(),
                             }
-                        }
-                    } else if let Some(url) = avatar_url.clone() {
-                        img {
-                            class: "member-avatar-img",
-                            src: "{url}",
-                            alt: "{member_label}",
-                            title: "{member}"
                         }
                     } else if avatar_initial == "?" {
                         crate::components::UiIcon { name: "user-plus" }
@@ -3109,6 +3091,7 @@ pub fn RealmMembersPanel(
     sync_cursor: Signal<String>,
     frontier_state: Signal<String>,
 ) -> Element {
+    let _active_service_id = active_service_id;
     // A4 — base_url / state_store from session context instead of props.
     let base_url = crate::app::SessionContext::base_url_string();
     let mut state_store = crate::app::SessionContext::get().state_store;
@@ -3121,6 +3104,7 @@ pub fn RealmMembersPanel(
     let mut member_roster_section = use_signal(|| MemberRosterSection::Members);
     // Invite is now a modal launched from the list header "+" button.
     let mut invite_modal_open = use_signal(|| false);
+    let mut agent_add_modal_open = use_signal(|| false);
     // Client-side member search + incremental paging. `member_filter`
     // narrows the projected roster; `member_visible` caps how many rows we
     // actually mount so a 10k-member Realm doesn't render 10k DOM nodes.
@@ -3390,16 +3374,18 @@ pub fn RealmMembersPanel(
         })
         .cloned()
         .collect();
+    let (self_realm_agent_rows, available_self_agent_rows) =
+        split_owned_agents_for_realm(&self_owned_agent_rows, &member_set);
     let selected_section_total = match selected_section {
         MemberRosterSection::Members => total_regular_members,
         MemberRosterSection::Owners => total_owner_members,
         MemberRosterSection::Admins => total_admin_members,
-        MemberRosterSection::MyAgents => self_owned_agent_rows.len(),
+        MemberRosterSection::MyAgents => self_realm_agent_rows.len(),
         MemberRosterSection::PendingInvites => total_pending_invites,
     };
     let selected_section_visible_count = match selected_section {
         MemberRosterSection::PendingInvites => pending_invite_match_count,
-        MemberRosterSection::MyAgents => self_owned_agent_rows.len(),
+        MemberRosterSection::MyAgents => self_realm_agent_rows.len(),
         _ => filtered_count,
     };
     let selected_section_empty = selected_section_visible_count == 0;
@@ -3435,6 +3421,132 @@ pub fn RealmMembersPanel(
 
     rsx! {
             div { class: "timeline", "data-testid": "realm-members-panel",
+                if selected_section == MemberRosterSection::MyAgents && agent_add_modal_open() {
+                    crate::components::DismissiblePopup {
+                        overlay_class: "modal-backdrop",
+                        surface_class: "modal invite-modal",
+                        overlay_test_id: Some("add-realm-agent-modal".to_owned()),
+                        aria_label: "Add agent to Realm",
+                        on_dismiss: move |_| agent_add_modal_open.set(false),
+                        div { class: "modal-head",
+                            h3 { "Add agent to Realm" }
+                            Button {
+                                variant: ButtonVariant::Secondary,
+                                class: "icon-button close",
+                                "aria-label": "Close",
+                                "data-testid": "add-realm-agent-modal-close",
+                                onclick: move |_| agent_add_modal_open.set(false),
+                                "\u{2715}"
+                            }
+                        }
+                        div { class: "modal-body workflow-form",
+                            p { class: "muted",
+                                "Choose one of your active agents. It joins immediately under your control and does not receive an invitation."
+                            }
+                            if available_self_agent_rows.is_empty() {
+                                div { class: "members-empty compact", "data-testid": "available-realm-agents-empty",
+                                    div { class: "members-empty-icon", crate::components::UiIcon { name: "bot" } }
+                                    div { class: "members-empty-title", "No agents available to add." }
+                                    div { class: "muted members-empty-hint", "Create or activate an agent in Settings, or remove an existing agent from this Realm first." }
+                                }
+                            } else {
+                                div { class: "member-self-agent-list", "data-testid": "available-realm-agent-list",
+                                    for available_agent in available_self_agent_rows.clone() {
+                                        {
+                                            let agent_id = available_agent.agent_id.clone();
+                                            let agent_title = available_agent.display_name.clone();
+                                            let status_class = crate::views::agents::agent_state_badge_class(&available_agent.status);
+                                            let status_label = crate::views::agents::agent_state_label(&available_agent.status).to_owned();
+                                            rsx! {
+                                                div { class: "member-self-agent-row", "data-testid": "available-realm-agent-row", "data-agent-did": "{agent_id}",
+                                                    div { class: "member-agent-summary",
+                                                        div { class: "member-avatar member-avatar-agent", "aria-hidden": "true",
+                                                            crate::components::UiIcon { name: "bot" }
+                                                        }
+                                                        div { class: "member-row-text",
+                                                            div { class: "member-row-title",
+                                                                span { title: "{agent_id}", "{agent_title}" }
+                                                                span { class: "{status_class}", "{status_label}" }
+                                                                if !available_agent.slug.is_empty() {
+                                                                    span { class: "badge", "{available_agent.slug}" }
+                                                                }
+                                                            }
+                                                            div { class: "muted member-row-sub mono", title: "{agent_id}", "{short_protocol_id(&agent_id)}" }
+                                                        }
+                                                    }
+                                                    Button {
+                                                        variant: ButtonVariant::Primary,
+                                                        size: ButtonSize::Sm,
+                                                        "data-testid": "confirm-add-agent-to-realm",
+                                                        onclick: {
+                                                            let base = base_url.clone();
+                                                            let realm = selected_realm_id.clone();
+                                                            let target = agent_id.clone();
+                                                            let target_label = agent_title.clone();
+                                                            let actor_id = account_did.clone();
+                                                            move |_| {
+                                                                let base = base.clone();
+                                                                let realm = realm.clone();
+                                                                let target = target.clone();
+                                                                let target_label = target_label.clone();
+                                                                let actor_id = actor_id.clone();
+                                                                let api_token = token();
+                                                                spawn(async move {
+                                                                    let realm_for_api = realm.clone();
+                                                                    match crate::transport::auth::with_event_submitter(
+                                                                        &base,
+                                                                        api_token,
+                                                                        |sub| async move {
+                                                                            crate::transport::realm_write::transition_member_state(
+                                                                                &sub,
+                                                                                &realm_for_api,
+                                                                                &actor_id,
+                                                                                &target,
+                                                                                None,
+                                                                                "join",
+                                                                                "controller_add_agent",
+                                                                            )
+                                                                            .await
+                                                                        },
+                                                                    )
+                                                                    .await
+                                                                    {
+                                                                        Ok(resp) => {
+                                                                            let mls_encrypted = state_store
+                                                                                .read()
+                                                                                .realm_projection_is_mls_encrypted(&realm);
+                                                                            if mls_encrypted {
+                                                                                state_store.write().record_move_submission_with_event_id(
+                                                                                    resp.event_id.clone(),
+                                                                                    Some(resp.event_id.clone()),
+                                                                                    realm.clone(),
+                                                                                    "mls_member_add",
+                                                                                    MoveSubmissionState::PendingMlsBinding,
+                                                                                    Some("epoch_update_required: agent membership frontier changed; MLS Add commit required".to_owned()),
+                                                                                    None,
+                                                                                );
+                                                                            }
+                                                                            sync_cursor.set(String::new());
+                                                                            agent_add_modal_open.set(false);
+                                                                            let suffix = if mls_encrypted { "; epoch_update_required" } else { "" };
+                                                                            status_msg.set(format!("added agent {} to Realm{}", target_label, suffix));
+                                                                        }
+                                                                        Err(err) => status_msg.set(format!("agent add failed: {}", err.display())),
+                                                                    }
+                                                                });
+                                                            }
+                                                        },
+                                                        "Add"
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
                 if can_invite && invite_modal_open() {
                     crate::components::DismissiblePopup {
                         overlay_class: "modal-backdrop",
@@ -3849,7 +3961,19 @@ pub fn RealmMembersPanel(
                                     "{total_pending_invites} pending"
                                 }
                             }
-                            if can_invite {
+                            if selected_section == MemberRosterSection::MyAgents {
+                                Button {
+                                    variant: ButtonVariant::Secondary,
+                                    size: ButtonSize::Sm,
+                                    class: "member-head-icon-btn-accent",
+                                    "data-testid": "open-add-realm-agent-modal-button",
+                                    title: "Add one of my agents",
+                                    "aria-label": "Add agent to Realm",
+                                    onclick: move |_| agent_add_modal_open.set(true),
+                                    crate::components::UiIcon { name: "plus" }
+                                    "Add agent"
+                                }
+                            } else if can_invite {
                                 Button {
                                     variant: ButtonVariant::Secondary,
                                     size: ButtonSize::IconSm,
@@ -3948,7 +4072,7 @@ pub fn RealmMembersPanel(
                                     member_visible.set(MEMBER_PAGE_SIZE);
                                 },
                                 span { "My agents" }
-                                span { class: "badge", "{self_owned_agent_rows.len()}" }
+                                span { class: "badge", "{self_realm_agent_rows.len()}" }
                             }
                             button {
                                 class: "{pending_section_class}",
@@ -4012,8 +4136,10 @@ pub fn RealmMembersPanel(
                                 "member-group"
                             };
                             let avatar_initial = member_avatar_initial(&member_profile);
-                            let avatar_blob_ref = member_profile.avatar_blob_ref.clone();
-                            let avatar_url = member_profile.avatar_url.clone();
+                            let avatar_blob_ref = member_profile
+                                .avatar_blob_ref
+                                .as_ref()
+                                .map(ToString::to_string);
                             let role_label = member_profile.role_label();
                             let remark_name = member_profile.remark_name.clone().unwrap_or_default();
                             let remark_note = member_profile.remark_note.clone().unwrap_or_default();
@@ -4054,13 +4180,6 @@ pub fn RealmMembersPanel(
                                                                 alt_text: member_label.clone(),
                                                             }
                                                         }
-                                                    } else if let Some(url) = avatar_url.clone() {
-                                                        img {
-                                                            class: "member-avatar-img",
-                                                            src: "{url}",
-                                                            alt: "{member_label}",
-                                                            title: "{member}"
-                                                        }
                                                     } else {
                                                         "{avatar_initial}"
                                                     }
@@ -4076,13 +4195,6 @@ pub fn RealmMembersPanel(
                                                                 blob_ref,
                                                                 alt_text: member_label.clone(),
                                                             }
-                                                        }
-                                                    } else if let Some(url) = avatar_url.clone() {
-                                                        img {
-                                                            class: "member-avatar-img",
-                                                            src: "{url}",
-                                                            alt: "{member_label}",
-                                                            title: "{member}"
                                                         }
                                                     } else {
                                                         "{avatar_initial}"
@@ -4173,28 +4285,26 @@ pub fn RealmMembersPanel(
                                             div { class: "member-self-agent-settings-head",
                                                 div {
                                                     div { class: "entity-title", "AI agents" }
-                                                    div { class: "muted", "All of your personal agents and their Realm membership controls." }
+                                                    div { class: "muted", "Your agents that are members of this Realm." }
                                                 }
-                                                span { class: "badge", "{self_owned_agent_rows.len()} total" }
+                                                span { class: "badge", "{self_realm_agent_rows.len()} total" }
                                             }
-                                            if self_owned_agent_rows.is_empty() {
+                                            if self_realm_agent_rows.is_empty() {
                                                 div { class: "members-empty compact", "data-testid": "member-self-agent-empty",
                                                     div { class: "members-empty-icon", crate::components::UiIcon { name: "bot" } }
-                                                    div { class: "members-empty-title", "No AI agents yet." }
-                                                    div { class: "muted members-empty-hint", "Add AI agents in Settings first." }
-                                                    Link {
-                                                        class: "secondary",
-                                                        "data-testid": "member-agent-empty-open-settings",
-                                                        to: Route::SettingsSection {
-                                                            section: "agents".to_owned(),
-                                                            filter: String::new(),
-                                                        },
-                                                        "Open Settings"
+                                                    div { class: "members-empty-title", "No agents in this Realm." }
+                                                    div { class: "muted members-empty-hint", "Add one of your existing active agents. No invitation or agent approval is required." }
+                                                    Button {
+                                                        variant: ButtonVariant::Primary,
+                                                        size: ButtonSize::Sm,
+                                                        "data-testid": "member-agent-empty-add",
+                                                        onclick: move |_| agent_add_modal_open.set(true),
+                                                        "Add agent"
                                                     }
                                                 }
                                             } else {
                                                 div { class: "member-self-agent-list",
-                                                    for owned_agent in self_owned_agent_rows.clone() {
+                                                    for owned_agent in self_realm_agent_rows.clone() {
                                                         {
                                                             let agent_in_realm = member_set.contains(&owned_agent.agent_id);
                                                             let policy = owned_agent.mention_policy;
@@ -4205,6 +4315,7 @@ pub fn RealmMembersPanel(
                                                             let status_class = crate::views::agents::agent_state_badge_class(&owned_agent.status);
                                                             let status_label = crate::views::agents::agent_state_label(&owned_agent.status).to_owned();
                                                             let can_enable = agent_in_realm;
+                                                            let can_remove_agent = agent_in_realm;
                                                             rsx! {
                                                                 div { class: "member-self-agent-row", "data-testid": "member-self-agent-row", "data-agent-did": "{agent_id}",
                                                                     div { class: "member-agent-summary",
@@ -4226,7 +4337,7 @@ pub fn RealmMembersPanel(
                                                                         if agent_in_realm {
                                                                             span { class: "badge green", "in Realm" }
                                                                             span { class: "{policy_class}", "data-testid": "member-agent-mention-policy", "{policy_label}" }
-                                                                            if can_remove {
+                                                                            if can_remove_agent {
                                                                                 Button {
                                                                                     variant: ButtonVariant::Secondary,
                                                                                     size: ButtonSize::Sm,
@@ -4367,28 +4478,6 @@ pub fn RealmMembersPanel(
                                                                                     span { "Act on my behalf" }
                                                                                 }
                                                                             }
-                                                                        } else if can_invite {
-                                                                            Button {
-                                                                                variant: ButtonVariant::Secondary,
-                                                                                size: ButtonSize::Sm,
-                                                                                "data-testid": "member-agent-add-to-realm",
-                                                                                disabled: active_service_id.trim().is_empty(),
-                                                                                onclick: {
-                                                                                    let agent_id = agent_id.clone();
-                                                                                    let service_id = active_service_id.clone();
-                                                                                    move |_| {
-                                                                                        if service_id.trim().is_empty() {
-                                                                                            status_msg.set("current service DID is unavailable; cannot prepare agent invite".to_owned());
-                                                                                            return;
-                                                                                        }
-                                                                                        invite_target.set(agent_invite_target(&agent_id, &service_id));
-                                                                                        invite_modal_open.set(true);
-                                                                                    }
-                                                                                },
-                                                                                "Add"
-                                                                            }
-                                                                        } else {
-                                                                            span { class: "badge", "not in Realm" }
                                                                         }
                                                                     }
                                                                 }
@@ -4508,6 +4597,33 @@ mod tests {
             MemberRosterSection::MyAgents,
             "did:web:alice.example"
         ));
+    }
+
+    #[test]
+    fn my_agents_list_only_shows_joined_agents_and_picker_only_shows_available_active_agents() {
+        let joined = agent(
+            "did:web:agent-joined.example",
+            "did:web:alice.example",
+            "Joined",
+        );
+        let available = agent(
+            "did:web:agent-available.example",
+            "did:web:alice.example",
+            "Available",
+        );
+        let mut paused = agent(
+            "did:web:agent-paused.example",
+            "did:web:alice.example",
+            "Paused",
+        );
+        paused.status = "paused".to_owned();
+        let members = BTreeSet::from([joined.agent_id.clone()]);
+
+        let (in_realm, candidates) =
+            split_owned_agents_for_realm(&[joined.clone(), available.clone(), paused], &members);
+
+        assert_eq!(in_realm, vec![joined]);
+        assert_eq!(candidates, vec![available]);
     }
 
     fn temp_store(name: &str) -> LocalStateStore {
@@ -4716,7 +4832,7 @@ mod tests {
                         "handle": "alice:acme.example"
                     }],
                     "display_profile": {
-                        "avatar_blob_ref": "ak:blob:sha256:abc"
+                        "avatar_blob_ref": "ak:blob:sha256:01015dc8af66d01f557ea63f13538f1964848840a350c5311d1efc8ad138bb91"
                     }
                 }],
                 "admins": ["did:web:alice.example"]
@@ -4730,7 +4846,13 @@ mod tests {
             .expect("alice profile exists");
         assert_eq!(alice.display_name.as_deref(), Some("Alice"));
         assert_eq!(alice.handles, vec!["alice:acme.example"]);
-        assert_eq!(alice.avatar_blob_ref.as_deref(), Some("ak:blob:sha256:abc"));
+        assert_eq!(
+            alice.avatar_blob_ref.as_ref().map(ToString::to_string),
+            Some(
+                "ak:blob:sha256:01015dc8af66d01f557ea63f13538f1964848840a350c5311d1efc8ad138bb91"
+                    .to_owned()
+            )
+        );
         assert!(alice.is_admin);
     }
 

@@ -99,20 +99,14 @@ pub(super) fn load_direct_contacts_and_agents_for_sidebar(
                 }
                 match agents {
                     // The Contacts sidebar is a chat surface: only agents that
-                    // ever became effective belong here. Pending / expired /
-                    // deactivated provisioning attempts stay in Settings →
-                    // My Agents.
+                    // are currently active belong here. Pending, paused,
+                    // expired, and deactivated agents stay in Settings → My
+                    // Agents.
                     Ok(response) => own_agent_rows.set(
                         response
                             .agents
                             .into_iter()
-                            .filter(|agent| {
-                                matches!(
-                                    agent.status,
-                                    arkret_sdk::AgentStatus::Active
-                                        | arkret_sdk::AgentStatus::Paused
-                                )
-                            })
+                            .filter(|agent| matches!(agent.status, arkret_sdk::AgentStatus::Active))
                             .collect(),
                     ),
                     Err(err) => {

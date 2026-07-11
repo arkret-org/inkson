@@ -36,9 +36,17 @@ test("workspace sidebar separates contact-based direct chats", async ({ page }) 
     "contact-sidebar-self-group",
   );
   await expect(shell.getByTestId("contact-sidebar-self-agents")).toContainText("Alice Assistant");
+  const ownAgentRow = shell.getByTestId("contact-sidebar-agent-row").filter({ hasText: "Alice Assistant" });
+  await expect(ownAgentRow.locator(".contact-sidebar-agent-avatar img")).toHaveCount(1);
+  await expect(ownAgentRow).not.toContainText("active");
+  await expect(ownAgentRow).not.toContainText("paused");
+  await expect(ownAgentRow).toHaveCSS("min-height", "34px");
   await expect(shell.getByTestId("contact-sidebar-agent-toggle").first()).toContainText("Agents 1");
   await shell.getByTestId("contact-sidebar-agent-toggle").first().click();
   await expect(shell.getByTestId("contact-sidebar-contact-agents")).toContainText("Bob Helper");
+  await expect(
+    shell.getByTestId("contact-sidebar-agent-row").filter({ hasText: "Bob Helper" }).locator(".contact-sidebar-agent-avatar img"),
+  ).toHaveCount(1);
   await expect(shell.getByTestId("direct-conversation-row").filter({ hasText: "bob:example.com" })).toContainText(
     "DM",
   );

@@ -34,6 +34,8 @@ use crate::ui::switch::Switch;
 use crate::ui::textarea::Textarea;
 use crate::views::helpers::short_protocol_id;
 
+const AGENT_STATUS_POLL_INTERVAL: Duration = Duration::from_secs(3);
+
 fn agent_field(agent: &AgentView, key: &str) -> String {
     agent
         .agent
@@ -127,6 +129,58 @@ fn upsert_agent_view(rows: &mut Vec<AgentView>, view: AgentView) {
     }
 }
 
+fn replace_agent_directory(rows: &mut Vec<AgentView>, directory_rows: Vec<AgentView>) {
+    let previous_rows = std::mem::take(rows);
+    *rows = directory_rows
+        .into_iter()
+        .map(|mut directory_row| {
+            if let Some(previous) = previous_rows
+                .iter()
+                .find(|row| agent_id(row) == agent_id(&directory_row))
+            {
+                directory_row.grants = previous.grants.clone();
+                directory_row.key_state = previous.key_state.clone();
+            }
+            directory_row
+        })
+        .collect();
+}
+
+#[cfg(test)]
+mod directory_refresh_tests {
+    use super::*;
+
+    #[test]
+    fn directory_refresh_updates_status_without_dropping_loaded_details() {
+        let mut rows = vec![AgentView {
+            agent: json!({
+                "agent_id": "did:web:agents.example:summary",
+                "slug": "summary",
+                "status": "pending_runtime_key",
+            }),
+            status: "pending_runtime_key".to_owned(),
+            grants: vec![json!({ "grant_id": "ak:grant:test" })],
+            key_state: json!({ "pairing_request_id": "pair-1", "pairing_code": "246810" }),
+        }];
+        let directory_rows = vec![AgentView {
+            agent: json!({
+                "agent_id": "did:web:agents.example:summary",
+                "slug": "summary",
+                "status": "active",
+            }),
+            status: "active".to_owned(),
+            grants: Vec::new(),
+            key_state: Value::Null,
+        }];
+
+        replace_agent_directory(&mut rows, directory_rows);
+
+        assert_eq!(rows[0].status, "active");
+        assert_eq!(rows[0].grants[0]["grant_id"], "ak:grant:test");
+        assert_eq!(rows[0].key_state["pairing_request_id"], "pair-1");
+    }
+}
+
 fn update_agent_status(rows: &mut [AgentView], id: &str, status: &str) {
     for row in rows.iter_mut() {
         if agent_id(row) == id {
@@ -198,7 +252,7 @@ fn spawn_refresh_agents(
                 } else {
                     list_status.set(String::new());
                 }
-                agents.set(rows);
+                agents.with_mut(|current| replace_agent_directory(current, rows));
             }
             Err(err) => {
                 if *refresh_epoch.peek() != request_epoch {
@@ -317,6 +371,7 @@ pub fn PersonalAgentAdminPanel(token: Signal<String>) -> Element {
     let mut selected_agent_id = use_signal(String::new);
     let mut create_mode = use_signal(|| false);
     let mut new_agent_slug = use_signal(String::new);
+    let mut new_agent_avatar_blob_ref = use_signal(String::new);
     let mut provision_presets =
         use_signal(|| vec![AgentGrantPreset::Read, AgentGrantPreset::ReplyAsAgent]);
     let mut provision_service_scopes = use_signal(|| AgentServiceScopePreset::DEFAULTS.to_vec());
@@ -338,6 +393,49 @@ pub fn PersonalAgentAdminPanel(token: Signal<String>) -> Element {
                 list_status,
                 agent_list_refresh_epoch,
             );
+        });
+    }
+
+    {
+        let base = base_url.clone();
+        use_future(move || {
+            let base = base.clone();
+            async move {
+                loop {
+                    crate::runtime_helpers::sleep_for(AGENT_STATUS_POLL_INTERVAL).await;
+                    if !agents
+                        .read()
+                        .iter()
+                        .any(|agent| agent.status == "pending_runtime_key")
+                    {
+                        continue;
+                    }
+                    let api_token = token();
+                    if api_token.trim().is_empty() {
+                        continue;
+                    }
+                    match with_authed_sdk_client(&base, api_token, |http| async move {
+                        http.agent_list().await.map_err(anyhow::Error::from)
+                    })
+                    .await
+                    {
+                        Ok(resp) => {
+                            let rows = resp
+                                .agents
+                                .into_iter()
+                                .filter_map(agent_view_from_directory_row)
+                                .collect();
+                            agents.with_mut(|current| replace_agent_directory(current, rows));
+                        }
+                        Err(err) => {
+                            tracing::warn!(
+                                error = %err.display(),
+                                "personal agent status polling failed"
+                            );
+                        }
+                    }
+                }
+            }
         });
     }
 
@@ -515,7 +613,11 @@ pub fn PersonalAgentAdminPanel(token: Signal<String>) -> Element {
                                 "data-testid": "agent-admin-create-open-button",
                                 title: "Create agent",
                                 "aria-label": "Create agent",
-                                onclick: move |_| create_mode.set(true),
+                                onclick: move |_| {
+                                    new_agent_slug.set(String::new());
+                                    new_agent_avatar_blob_ref.set(String::new());
+                                    create_mode.set(true);
+                                },
                                 UiIcon { name: "plus" }
                             }
                         }
@@ -619,6 +721,26 @@ pub fn PersonalAgentAdminPanel(token: Signal<String>) -> Element {
                                     value: "{new_agent_slug}",
                                     oninput: move |event: FormEvent| new_agent_slug.set(event.value()),
                                 }
+                                div { class: "agent-admin-section-head",
+                                    strong { "Avatar" }
+                                    span { class: "muted", "Shown in contacts and agent conversations" }
+                                }
+                                crate::components::AvatarUploader {
+                                    current_blob_ref: new_agent_avatar_blob_ref(),
+                                    alt_text: if new_agent_slug().trim().is_empty() {
+                                        "New agent".to_owned()
+                                    } else {
+                                        new_agent_slug().trim().to_owned()
+                                    },
+                                    api_token: token(),
+                                    test_id_prefix: "agent-admin-provision-avatar".to_owned(),
+                                    on_uploaded: move |blob_ref: String| {
+                                        new_agent_avatar_blob_ref.set(blob_ref);
+                                    },
+                                    on_clear: move |_| {
+                                        new_agent_avatar_blob_ref.set(String::new());
+                                    },
+                                }
                                 div { class: "muted", "Service scope lets the runtime call subscribe, scan, submit, and resource endpoints. Realm membership and participation controls decide whether payloads can be read or messages can be created." }
                                 div { class: "agent-admin-section-head",
                                     strong { "Content capabilities" }
@@ -715,9 +837,15 @@ pub fn PersonalAgentAdminPanel(token: Signal<String>) -> Element {
                                                         return;
                                                     }
                                                 };
+                                                let avatar_blob_ref_value =
+                                                    new_agent_avatar_blob_ref();
                                                 let body = AgentProvisionRequestBody {
                                                     display_name: None,
                                                     slug: slug_value.clone(),
+                                                    avatar_blob_ref: arkret_sdk::BlobRef::new(
+                                                        avatar_blob_ref_value.clone(),
+                                                    )
+                                                    .ok(),
                                                     requested_scope: Some(requested_scope.clone()),
                                                     accountability: Value::Null,
                                                     pairing_ttl_ms: None,
@@ -752,6 +880,7 @@ pub fn PersonalAgentAdminPanel(token: Signal<String>) -> Element {
                                                     let agent_object = json!({
                                                         "agent_id": created_agent_id,
                                                         "slug": slug_value,
+                                                        "avatar_blob_ref": avatar_blob_ref_value,
                                                         "status": "pending_runtime_key",
                                                     });
                                                     let key_state = json!({
@@ -776,6 +905,7 @@ pub fn PersonalAgentAdminPanel(token: Signal<String>) -> Element {
                                                     selected_agent_id.set(created_id.clone());
                                                     selected_grants.set(Vec::new());
                                                     create_mode.set(false);
+                                                    new_agent_avatar_blob_ref.set(String::new());
 
                                                     last_op_status.set(format!(
                                                         "Created {}. Add it to a Realm to enable data access.",
@@ -789,7 +919,10 @@ pub fn PersonalAgentAdminPanel(token: Signal<String>) -> Element {
                                     Button {
                                         variant: ButtonVariant::Secondary,
                                         "data-testid": "agent-admin-create-cancel-button",
-                                        onclick: move |_| create_mode.set(false),
+                                        onclick: move |_| {
+                                            new_agent_avatar_blob_ref.set(String::new());
+                                            create_mode.set(false);
+                                        },
                                         "Cancel"
                                     }
                                 }
@@ -847,8 +980,8 @@ pub fn PersonalAgentAdminPanel(token: Signal<String>) -> Element {
                                 };
                                 let pairing_url_was_copied = copied_pairing_url() == deep_link;
                                 let pairing_qr_svg = render_agent_pairing_qr_svg(&deep_link);
-                                let pairing_badge = if selected_pairing_is_expired { "badge red" } else { "badge green" };
-                                let pairing_label = if selected_pairing_is_expired { "Expired" } else { "Ready" };
+                                let pairing_badge = if selected_pairing_is_expired { "badge red" } else { "badge amber" };
+                                let pairing_label = if selected_pairing_is_expired { "Expired" } else { "Awaiting runtime" };
                                 let replacement_agent_slug = selected_slug.clone();
                                 rsx! {
                                     div {

@@ -272,7 +272,22 @@ test("account settings split account/server info and surface personal agents", a
   await page.getByTestId("agent-admin-create-open-button").click();
   await expect(page.getByTestId("agent-admin-provision")).toBeVisible();
   await expect(page.getByTestId("agent-admin-provision-display-name")).toHaveCount(0);
+  await expect(page.getByTestId("agent-admin-provision-avatar")).toBeVisible();
   await expect(page.getByTestId("agent-admin-provision-button")).toBeDisabled();
+  const agentAvatarPng = Buffer.from(
+    "iVBORw0KGgoAAAANSUhEUgAAAAwAAAAICAYAAADN5B7xAAAAy0lEQVR4nBXLIRXEMBBAwRURHBwRK6I4OCJWRHFwRXwRxcH18u/d8IkIbIEjMAOvwBVYgXfgE0jgG/gFRnRsHUfH7Hh1XB2r493x6UjHt+PX/yGxJY7ETLwSV2Il3olPIolv4pf/MLFNHBNz4jVxTayJ98RnIhPfid/8h8JWOAqz8CpchVV4Fz6FFL6FX/3DxrZxbMyN18a1sTbeG5+NbHw3fvsfwAYOMMELXGCBN/iAgC/48Q8H28FxMA9eB9fBOngffA5y8D34HfwBl3vzwZTfUBgAAAAASUVORK5CYII=",
+    "base64",
+  );
+  await page.getByTestId("agent-admin-provision-avatar-input").setInputFiles({
+    name: "agent-avatar.png",
+    mimeType: "image/png",
+    buffer: agentAvatarPng,
+  });
+  await expect(page.getByTestId("agent-admin-provision-avatar-crop-editor")).toBeVisible();
+  const agentAvatarUpload = page.waitForRequest("**/_arkret/self/blob/upload");
+  await page.getByTestId("agent-admin-provision-avatar-upload-cropped").click();
+  await agentAvatarUpload;
+  await expect(page.getByTestId("agent-admin-provision-avatar-crop-editor")).toHaveCount(0);
   await page.getByTestId("agent-admin-provision-agent-slug").fill("summary");
   await expect(page.getByTestId("agent-admin-provision-button")).toBeEnabled();
   const scrollLayout = await page.evaluate(() => {
@@ -322,6 +337,9 @@ test("account settings split account/server info and surface personal agents", a
   const provisionBody = (await provisionRequest).postDataJSON();
   expect(provisionBody.display_name).toBeUndefined();
   expect(provisionBody.slug).toBe("summary");
+  expect(provisionBody.avatar_blob_ref).toBe(
+    "ak:blob:sha256:01015dc8af66d01f557ea63f13538f1964848840a350c5311d1efc8ad138bb91",
+  );
   expect(provisionBody.requested_scope.actions).toEqual([
     "ak.self.events.stream.subscribe",
     "ak.self.events.query.scan",
@@ -329,7 +347,7 @@ test("account settings split account/server info and surface personal agents", a
   ]);
   expect(JSON.stringify(provisionBody.requested_scope.resources)).not.toContain("realm_id");
   await expect(page.getByTestId("agent-admin-pairing-card")).toBeVisible();
-  await expect(page.getByTestId("agent-admin-pairing-card")).toContainText("Ready");
+  await expect(page.getByTestId("agent-admin-pairing-card")).toContainText("Awaiting runtime");
   await expect(page.getByTestId("agent-admin-pairing-qr")).toBeVisible();
   await expect(page.getByTestId("agent-admin-pairing-url")).toBeVisible();
   await expect(page.getByTestId("agent-admin-pairing-url")).not.toHaveValue("");
@@ -388,6 +406,25 @@ test("account settings split account/server info and surface personal agents", a
   await expect(page.getByTestId("agent-admin-pause-button")).toHaveCount(0);
   await expect(page.getByTestId("agent-admin-resume-button")).toHaveCount(0);
 
+  await page.evaluate(async () => {
+    const response = await fetch("/_arkret/gate/account/agent-key-pair", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        agent_id: "did:web:agents.example:summary",
+        verification_method: "did:web:agents.example:summary#runtime-key-1",
+        public_key: { kty: "OKP", alg: "Ed25519", key: "test" },
+      }),
+    });
+    if (!response.ok) {
+      throw new Error(`mock agent pairing failed: ${response.status}`);
+    }
+  });
+  await expect(
+    page.getByTestId("agent-admin-row").filter({ hasText: "summary" }),
+  ).toContainText("Active", { timeout: 10_000 });
+  await expect(page.getByTestId("agent-admin-pairing-card")).toHaveCount(0);
+
   const deactivateButton = page.getByTestId("agent-admin-deactivate-button");
   await expect(deactivateButton).toBeVisible();
   await deactivateButton.click();
@@ -433,11 +470,11 @@ test("expired personal agent pairing renews in place with a fresh handle", async
   );
 
   // Pair again renews pairing on the SAME agent: no create form, no
-  // replacement principal, and the card flips back to Ready with a fresh
+  // replacement principal, and the card returns to awaiting a runtime with a fresh
   // QR + deep link carrying the renewed handle.
   await page.getByTestId("agent-admin-renew-pairing-button").click();
   await expect(page.getByTestId("agent-admin-provision")).toHaveCount(0);
-  await expect(page.getByTestId("agent-admin-pairing-card")).toContainText("Ready");
+  await expect(page.getByTestId("agent-admin-pairing-card")).toContainText("Awaiting runtime");
   await expect(page.getByTestId("agent-admin-pairing-expired-message")).toHaveCount(0);
   await expect(page.getByTestId("agent-admin-pairing-qr")).toBeVisible();
   await expect(page.getByTestId("agent-admin-pairing-url")).not.toHaveValue("");

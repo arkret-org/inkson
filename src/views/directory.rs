@@ -1062,23 +1062,22 @@ pub fn DirectoryPanel(
                             }
                         }
                         div { class: "actions", style: "align-items: center; gap: 12px;",
-                            // A4b — directory actor avatar. soland's
-                            // `search-actors` projection echoes
-                            // `avatar_url` straight from the
-                            // `AccountRecord` so we can render it
-                            // without an extra round trip.
+                            // Directory actor avatars use the canonical
+                            // authenticated Blob reference from Actor Profile.
                             {
-                                let avatar_url = actor
-                                    .get("avatar_url")
+                                let avatar_blob_ref = actor
+                                    .get("avatar_blob_ref")
                                     .and_then(|v| v.as_str())
                                     .unwrap_or("");
                                 rsx! {
-                                    if !avatar_url.trim().is_empty() {
-                                        img {
+                                    if !avatar_blob_ref.trim().is_empty() {
+                                        div {
                                             class: "avatar-img sm",
                                             "data-testid": "directory-actor-avatar",
-                                            src: "{avatar_url}",
-                                            alt: "Avatar",
+                                            crate::content::renderer::AuthenticatedBlobImage {
+                                                blob_ref: avatar_blob_ref.to_owned(),
+                                                alt_text: "Avatar".to_owned(),
+                                            }
                                         }
                                     } else {
                                         div {

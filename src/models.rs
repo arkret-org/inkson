@@ -48,6 +48,8 @@ pub struct ContactAgentRow {
     #[serde(default)]
     pub slug: String,
     #[serde(default)]
+    pub avatar_blob_ref: Option<arkret_sdk::BlobRef>,
+    #[serde(default)]
     pub direct_conversation: Option<DirectConversationSummary>,
 }
 
@@ -175,6 +177,7 @@ impl ContactAgentRow {
             controller_id: row.controller_id.to_string(),
             display_name: row.display_name,
             slug: row.agent_slug.unwrap_or_default(),
+            avatar_blob_ref: row.avatar_blob_ref,
             direct_conversation: row
                 .direct_conversation
                 .map(DirectConversationSummary::from_sdk),

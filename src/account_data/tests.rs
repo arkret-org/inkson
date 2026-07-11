@@ -594,7 +594,8 @@ fn build_client_ui_body_only_emits_present_fields() {
 // ── A4b — avatar_blob_ref round-trip through client.ui ─────────────
 #[test]
 fn avatar_blob_ref_round_trips_through_client_ui() {
-    let blob_ref = "ak:blob:sha256:0123456789abcdef";
+    let blob_ref =
+        "ak:blob:sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
     let body = build_client_ui_body(Some("light"), None, &BTreeMap::new(), Some(blob_ref));
     assert_eq!(body["avatar_blob_ref"], blob_ref);
     assert_eq!(
@@ -615,6 +616,9 @@ fn avatar_blob_ref_round_trips_through_client_ui() {
     // Non-string values are rejected.
     let weird = json!({"avatar_blob_ref": 42});
     assert_eq!(avatar_blob_ref_from_client_ui(&weird), None);
+
+    let malformed = json!({"avatar_blob_ref": "ak:blob:sha256:not-a-digest"});
+    assert_eq!(avatar_blob_ref_from_client_ui(&malformed), None);
 }
 
 #[test]
