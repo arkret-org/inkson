@@ -76,8 +76,8 @@ pub struct MemberHandleCacheEntry {
 #[serde(deny_unknown_fields)]
 pub struct ReadScope {
     pub kind: String,
-    #[serde(rename = "ref", default, skip_serializing_if = "Option::is_none")]
-    pub object_ref: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub container_ref: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub track_name: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]

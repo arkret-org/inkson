@@ -155,7 +155,10 @@ pub fn build_receipt_read_envelope(
         actor_id: actor.clone(),
         event_id: event,
         hlc: None,
-        read_scope: arkret_sdk::ReadScope::strand(strand.as_str().to_owned(), Some("discussion")),
+        read_scope: arkret_sdk::ReadReceiptScope::strand(
+            strand.as_str().to_owned(),
+            Some("discussion"),
+        ),
         created_at: now,
     };
     let device = arkret_sdk::DeviceId::new(device_id)

@@ -258,13 +258,14 @@ export async function mockArkretApi(
   const circleStates = new Map<string, MockCircleState>([
     [DEMO_CIRCLE, "active"],
   ]);
-  const circleMetadata = new Map<string, { title: string; summary?: string; encryption_profile: string }>([
+  const circleMetadata = new Map<string, { title: string; summary?: string; encryption_profile: string; join_rule: string }>([
     [
       DEMO_CIRCLE,
       {
         title: "Demo Circle",
         summary: "Mock Circle for lifecycle operations",
         encryption_profile: "mls_rfc9420",
+        join_rule: "invite",
       },
     ],
   ]);
@@ -281,7 +282,7 @@ export async function mockArkretApi(
       symbol: { glyph: "ring" },
     },
     directory_visibility: "realm_members",
-    join_rule: "invite",
+    join_rule: circleMetadata.get(circleId)?.join_rule ?? "invite",
     history_visibility: "joined",
     content_encryption_floor: "e2ee_required",
     metadata_encryption_floor: "e2ee_required",
@@ -815,6 +816,7 @@ export async function mockArkretApi(
         title: string;
         summary?: string;
         encryption_profile?: string;
+        join_rule?: string;
       };
       const circleId = `ak:circle:0196419b-0000-7000-8000-${String(circleCounter).padStart(12, "0")}`;
       circleCounter += 1;
@@ -823,6 +825,7 @@ export async function mockArkretApi(
         title: request.title,
         summary: request.summary,
         encryption_profile: request.encryption_profile ?? "mls_rfc9420",
+        join_rule: request.join_rule ?? "invite",
       });
       circleMembers.set(circleId, []);
       return json(route, circleView(circleId));

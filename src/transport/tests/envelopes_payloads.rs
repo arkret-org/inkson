@@ -142,7 +142,7 @@ fn read_receipt_envelope_uses_actor_not_event_as_sender() {
         envelope.payload["read_scope"],
         json!({
             "kind": "strand",
-            "ref": "ak:strand:01964200-0000-7000-8000-000000000001",
+            "object_ref": "ak:strand:01964200-0000-7000-8000-000000000001",
             "track_name": "discussion"
         })
     );

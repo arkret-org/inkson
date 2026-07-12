@@ -386,7 +386,7 @@ pub fn CirclesPanel(
                                 strong { "Boundary preview" }
                                 p { "Initial member: {account_did}" }
                                 p { "Directory: Circle members only" }
-                                p { "Join rule: invite" }
+                                p { "Join rule: open to active Realm members" }
                                 p { "History: joined members" }
                                 p { "{encryption_preview}" }
                             }
@@ -427,7 +427,7 @@ pub fn CirclesPanel(
                                             title: create_title().trim().to_owned(),
                                             summary: (!create_summary().trim().is_empty()).then(|| create_summary().trim().to_owned()),
                                             directory_visibility: Some(arkret_sdk::CircleDirectoryVisibility::Members),
-                                            join_rule: Some(arkret_sdk::CircleJoinRule::Invite),
+                                            join_rule: Some(arkret_sdk::CircleJoinRule::Open),
                                             history_visibility: Some(arkret_sdk::HistoryVisibility::Joined),
                                             content_encryption_floor: None,
                                             metadata_encryption_floor: None,
