@@ -34,7 +34,7 @@ pub use remark::*;
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum AccountDataKey {
-    /// `client.ui` — sidebar collapsed, theme, default view per Realm.
+    /// `ak.client.ui_state` — sidebar collapsed, theme, default view per Realm.
     ClientUi,
     /// `ak.read_receipt.preferences` — global + per-Realm + per-strand send override.
     ClientReadReceipts,
@@ -59,7 +59,7 @@ pub enum AccountDataKey {
 impl AccountDataKey {
     pub fn as_wire(&self) -> &str {
         match self {
-            Self::ClientUi => "client.ui",
+            Self::ClientUi => "ak.client.ui_state",
             Self::ClientReadReceipts => "ak.read_receipt.preferences",
             Self::ClientPresence => "ak.presence.visibility",
             Self::ClientPresencePreference => "ak.presence.preference",
@@ -73,7 +73,7 @@ impl AccountDataKey {
 
     pub fn from_wire(s: &str) -> Self {
         match s {
-            "client.ui" => Self::ClientUi,
+            "ak.client.ui_state" => Self::ClientUi,
             "ak.read_receipt.preferences" => Self::ClientReadReceipts,
             "ak.presence.visibility" => Self::ClientPresence,
             "ak.presence.preference" => Self::ClientPresencePreference,

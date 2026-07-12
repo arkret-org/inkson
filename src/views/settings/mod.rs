@@ -55,7 +55,7 @@ pub(crate) const READ_RECEIPT_ACCOUNT_DATA_KEY: &str = "ak.read_receipt.preferen
 /// `ak.account_data` key used by the cross-device UI preferences entry
 /// (theme, sidebar collapsed, per-Realm view). Spec:
 /// `discovery/client-preferences.md` §2.
-pub(crate) const CLIENT_UI_ACCOUNT_DATA_KEY: &str = "client.ui";
+pub(crate) const CLIENT_UI_ACCOUNT_DATA_KEY: &str = "ak.client.ui_state";
 
 /// `ak.account_data` key used by the actor-private personal blocklist.
 /// Spec: `discovery/client-preferences.md` §2 / §3 privacy preferences.
@@ -100,7 +100,7 @@ pub(crate) fn default_avatar_tone(handles: &[String], account_did: &str) -> usiz
     crate::views::helpers::identity_avatar_tone(handles, account_did)
 }
 
-/// A4a — push the current `client.ui` payload (theme + sidebar
+/// A4a — push the current `ak.client.ui_state` payload (theme + sidebar
 /// collapsed) to soland's `ak.account_data.set` endpoint so other
 /// devices pick up the same preference. Same graceful-degradation
 /// contract as [`push_read_receipt_account_data`].
@@ -119,7 +119,7 @@ pub(crate) fn push_client_ui_account_data(
 /// A4b — variant of [`push_client_ui_account_data`] that also carries
 /// the most-recently uploaded `avatar_blob_ref`. The avatar itself is
 /// also published via `ak.self.account.command.update_profile` so other actors see
-/// it through the directory; mirroring the ref into `client.ui` keeps a
+/// it through the directory; mirroring the ref into `ak.client.ui_state` keeps a
 /// second device that signs in primed before the profile lookup
 /// completes.
 ///
@@ -143,6 +143,13 @@ pub(crate) fn push_client_ui_account_data_with_avatar(
         &std::collections::BTreeMap::new(),
         avatar_blob_ref.as_deref(),
     );
+    let body = match encrypted_account_data_value(CLIENT_UI_ACCOUNT_DATA_KEY, &body) {
+        Ok(body) => body,
+        Err(error) => {
+            tracing::warn!(%error, "ak.client.ui_state encryption failed");
+            return;
+        }
+    };
     spawn(async move {
         match with_event_submitter(&base_url, api_token, |sub| async move {
             crate::transport::account::set_account_data(&sub, CLIENT_UI_ACCOUNT_DATA_KEY, body)
@@ -153,13 +160,13 @@ pub(crate) fn push_client_ui_account_data_with_avatar(
             Ok(AccountDataSetResult::Stored { .. }) => {}
             Ok(AccountDataSetResult::Unsupported { status }) => {
                 tracing::debug!(
-                    "soland ak.account_data.set for client.ui returned {status}; \
+                    "soland ak.account_data.set for ak.client.ui_state returned {status}; \
                      local state still authoritative"
                 );
             }
             Err(err) => {
                 tracing::warn!(
-                    "ak.account_data.set for client.ui failed: {}",
+                    "ak.account_data.set for ak.client.ui_state failed: {}",
                     err.display()
                 );
             }
@@ -544,7 +551,7 @@ pub fn SettingsPanel(
     let mut new_contact_remark_name = use_signal(String::new);
     // A4b — profile (display_name / bio / avatar) state.
     // `avatar_blob_ref` mirrors the most-recently uploaded avatar via
-    // `ak.account_data.set("client.ui", { avatar_blob_ref })` and is also
+    // `ak.account_data.set("ak.client.ui_state", { avatar_blob_ref })` and is also
     // published through the spec profile endpoint so directory projections can index it.
     let initial_avatar_blob_ref = state_store
         .read()
