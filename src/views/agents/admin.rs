@@ -98,6 +98,7 @@ fn grant_matches_content_preset(grant: &Value, preset: AgentGrantPreset) -> bool
         .any(|constraint| {
             constraint
                 .get("controller_approval_required")
+                .or_else(|| constraint.get("approval_required"))
                 .and_then(Value::as_bool)
                 .unwrap_or(false)
         })
@@ -827,8 +828,14 @@ pub fn PersonalAgentAdminPanel(token: Signal<String>) -> Element {
                                                     last_op_status.set("Slug is required.".to_owned());
                                                     return;
                                                 }
+                                                let content_presets = provision_presets.read().clone();
                                                 let service_scopes = provision_service_scopes.read().clone();
+                                                if service_scopes.is_empty() {
+                                                    last_op_status.set("Select at least one runtime service surface.".to_owned());
+                                                    return;
+                                                }
                                                 let requested_scope = match requested_scope_for_presets(
+                                                    &content_presets,
                                                     &service_scopes,
                                                 ) {
                                                     Some(scope) => scope,

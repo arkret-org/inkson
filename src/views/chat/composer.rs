@@ -14,6 +14,7 @@ pub(super) struct ChatComposerContext {
     pub selected_realm_pending_mls_binding: bool,
     pub public_agent_dids: std::collections::BTreeSet<String>,
     pub own_controller_handle: Option<String>,
+    pub mention_insert_request: Option<Signal<Option<MentionInsertRequest>>>,
     pub token: Signal<String>,
     pub sync_cursor: Signal<String>,
     pub frontier_state: Signal<String>,
@@ -34,6 +35,7 @@ pub(super) fn ChatComposer(controller: ChatController, context: ChatComposerCont
         selected_realm_pending_mls_binding,
         public_agent_dids,
         own_controller_handle,
+        mention_insert_request,
         token,
         sync_cursor,
         mut frontier_state,
@@ -56,6 +58,7 @@ pub(super) fn ChatComposer(controller: ChatController, context: ChatComposerCont
     let mut messages = controller.messages;
     let mut is_online = controller.is_online;
     let mut status_msg = controller.status_msg;
+    let mut mention_insert_request_seen = use_signal(String::new);
     let typing_throttle = controller.typing_throttle;
     let composer_class = "discussion-composer";
     let visible_channels_empty = channels.read().is_empty();
@@ -74,6 +77,61 @@ pub(super) fn ChatComposer(controller: ChatController, context: ChatComposerCont
     } else {
         crate::i18n::tr("chat.send_secure")
     };
+
+    {
+        let mut request_signal = mention_insert_request;
+        let request_participants = participants_for_messages.clone();
+        let request_account_did = account_did.clone();
+        let request_public_agent_dids = public_agent_dids.clone();
+        let request_controller_handle = own_controller_handle.clone();
+        use_effect(move || {
+            let Some(request_signal) = request_signal.as_mut() else {
+                return;
+            };
+            let Some(request) = request_signal() else {
+                return;
+            };
+            if mention_insert_request_seen.peek().as_str() == request.request_id {
+                return;
+            }
+            let Some(participant) = request_participants
+                .iter()
+                .find(|participant| participant.did.trim() == request.target_id.trim())
+            else {
+                return;
+            };
+            let Some(candidate) = mention_candidate_for_explicit_target(
+                participant,
+                &request_participants,
+                &request_account_did,
+                &request_public_agent_dids,
+                request.agent_slug.as_deref(),
+                request_controller_handle.as_deref(),
+            ) else {
+                return;
+            };
+            mention_insert_request_seen.set(request.request_id);
+            request_signal.set(None);
+            let inserted = mention_picker_state.write().insert(candidate.clone());
+            if inserted {
+                let current = chat_draft();
+                chat_draft.set(crate::messaging::mentions::replace_active_mention_token(
+                    &current,
+                    None,
+                    candidate.insert_label(),
+                ));
+            }
+            mention_picker_state.write().close();
+            let _ = dioxus::document::eval(
+                r#"
+                requestAnimationFrame(() => {
+                  const input = document.querySelector('[data-testid="card-discussion-panel"] [data-testid="chat-input"]');
+                  if (input instanceof HTMLElement) input.focus();
+                });
+                "#,
+            );
+        });
+    }
 
     rsx! {
             if !visible_channels_empty {
@@ -372,7 +430,7 @@ pub(super) fn ChatComposer(controller: ChatController, context: ChatComposerCont
                                 }
                             }
                             {
-                                let candidates: Vec<crate::messaging::mentions::MentionCandidate> =
+                                let mut candidates: Vec<crate::messaging::mentions::MentionCandidate> =
                                     participants_for_messages
                                         .iter()
                                         .filter(|p| agent_candidate_is_visible(p, &public_agent_dids, &account_did))
@@ -382,6 +440,18 @@ pub(super) fn ChatComposer(controller: ChatController, context: ChatComposerCont
                                             &account_did,
                                         ))
                                         .collect();
+                                candidates.sort_by_key(|candidate| {
+                                    if candidate.did.trim() == account_did.trim() {
+                                        0u8
+                                    } else if candidate.is_agent
+                                        && candidate.controller_subject_id.trim()
+                                            == account_did.trim()
+                                    {
+                                        1u8
+                                    } else {
+                                        2u8
+                                    }
+                                });
                                 // `filter` borrows from `candidates`, not from the
                                 // picker state, so we run it under the read guard and
                                 // only clone the matched candidates we actually render
@@ -400,6 +470,13 @@ pub(super) fn ChatComposer(controller: ChatController, context: ChatComposerCont
                                         } else {
                                             for candidate in matches {
                                                 {
+                                                    let candidate_label =
+                                                        format!("@{}", candidate.insert_label());
+                                                    let candidate_is_self =
+                                                        candidate.did.trim() == account_did.trim();
+                                                    let candidate_agent_slug = candidate
+                                                        .is_agent
+                                                        .then(|| candidate.agent_slug_at_time.clone());
                                                     rsx! {
                                                         Button {
                                                             variant: ButtonVariant::Secondary,
@@ -434,19 +511,20 @@ pub(super) fn ChatComposer(controller: ChatController, context: ChatComposerCont
                                                                     mention_picker_state.write().close();
                                                                 }
                                                             },
-                                                            span { class: "mention-suggestion-name",
-                                                                "@{candidate.insert_label()}"
+                                                            ActorIdentityLabel {
+                                                                label: candidate_label,
+                                                                title: Some(format!("@{}", candidate.insert_label())),
+                                                                class: Some("mention-suggestion-name".to_owned()),
+                                                                test_id: Some("mention-suggestion".to_owned()),
+                                                                self_badge_test_id: None,
+                                                                agent_badge_test_id: Some("mention-suggestion-agent-badge".to_owned()),
+                                                                is_self: candidate_is_self,
+                                                                agent_slug: candidate_agent_slug,
+                                                                agent_selector: None,
                                                             }
                                                             if !candidate.subtitle.is_empty() {
                                                                 span { class: "mention-suggestion-subtitle",
                                                                     "{candidate.subtitle}"
-                                                                }
-                                                            }
-                                                            if candidate.is_agent {
-                                                                span {
-                                                                    class: "badge member-badge member-badge-agent",
-                                                                    "data-testid": "mention-suggestion-agent-badge",
-                                                                    {crate::i18n::tr("member.badge.agent")}
                                                                 }
                                                             }
                                                         }
@@ -845,6 +923,7 @@ pub(super) fn ChatComposer(controller: ChatController, context: ChatComposerCont
                                 let mentions = composer_mention_nodes(
                                     &body,
                                     &mention_picker_state.read().inserted,
+                                    &actor,
                                 );
                                 let local_id = new_chat_message_id();
                                 let channel = channels()
@@ -1085,6 +1164,7 @@ pub(super) fn ChatComposer(controller: ChatController, context: ChatComposerCont
                                 let mentions = composer_mention_nodes(
                                     &body,
                                     &mention_picker_state.read().inserted,
+                                    &actor,
                                 );
                                 let realm = realm.clone();
                                 let actor = actor.clone();

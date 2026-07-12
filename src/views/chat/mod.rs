@@ -7,7 +7,9 @@ use serde_json::{Value, json};
 
 use crate::api_error::is_space_membership_denied_error;
 use crate::audit::build_audit_ryw_receipt;
-use crate::components::{HelpTip, SecurityStateBadge, SelfAttributionBadge, UiIcon};
+use crate::components::{
+    ActorIdentityLabel, HelpTip, SecurityStateBadge, SelfAttributionBadge, UiIcon,
+};
 use crate::hlc::{Hlc, observe_seq};
 use crate::models::SubmitEventResult;
 use crate::operation::{
@@ -38,6 +40,23 @@ mod timeline;
 mod timeline_surface;
 
 const PRESENCE_HEARTBEAT_SECS: u64 = 25;
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct MentionInsertRequest {
+    request_id: String,
+    target_id: String,
+    agent_slug: Option<String>,
+}
+
+impl MentionInsertRequest {
+    pub fn new(target_id: impl Into<String>, agent_slug: Option<String>) -> Self {
+        Self {
+            request_id: uuid_v7(),
+            target_id: target_id.into(),
+            agent_slug: agent_slug.filter(|slug| !slug.trim().is_empty()),
+        }
+    }
+}
 
 // Re-exported for the sync engine so the account-aggregate stream folds
 // discussion message events into the shared `raw_operations` log (local-first
@@ -128,6 +147,7 @@ async fn resolve_agent_selector_mentions(
 fn composer_mention_nodes(
     body: &str,
     picker: &[crate::messaging::mentions::MentionCandidate],
+    account_did: &str,
 ) -> Vec<MentionNode> {
     let mut mentions = parse_mention_nodes(body);
     for chip in picker {
@@ -166,6 +186,17 @@ fn composer_mention_nodes(
             );
         }
         mentions.push(MentionNode::mention(mention));
+    }
+    if crate::messaging::mentions::contains_self_mention_token(body)
+        && !mentions.iter().any(|node| {
+            node.as_mention()
+                .is_some_and(|mention| mention.subject_id.as_str() == account_did.trim())
+        })
+        && let Ok(subject_id) = arkret_sdk::Did::new(account_did.trim().to_owned())
+    {
+        mentions.push(MentionNode::mention(
+            arkret_sdk::Mention::new(subject_id).with_mention_text_original("@me".to_owned()),
+        ));
     }
     mentions
 }
@@ -245,6 +276,7 @@ pub fn ChatPanel(
     /// scrolled into view and flashed on mount (design/route-view-ia.md §3.2).
     #[props(default)]
     focus_message_id: String,
+    mention_insert_request: Option<Signal<Option<MentionInsertRequest>>>,
 ) -> Element {
     // A4 — base_url / state_store from session context instead of props.
     let base_url = crate::app::SessionContext::base_url_string();
@@ -282,6 +314,8 @@ pub fn ChatPanel(
         initial_sync_requested: _,
         initial_sync_finished,
         mention_picker_state: _,
+        owned_agent_slugs,
+        owned_agent_sync_key_seen: _,
         agent_participation_visibility,
         agent_participation_sync_key_seen: _,
         attachment_menu_open: _,
@@ -469,18 +503,30 @@ pub fn ChatPanel(
             &base_url,
         );
     }
-    // Mark agents referenced by structured mentions so the @mention picker,
-    // member list, and sender row can render an agent badge.
-    {
-        let agent_metadata = agent_metadata_from_mentions(&all_messages_snapshot);
-        upsert_agent_participants(&mut participants, &agent_metadata, &account_did);
-        annotate_agent_participants_with_metadata(&mut participants, &agent_metadata);
-    }
-    let participants_for_messages = participants.clone();
-    let own_controller_handle = participants_for_messages
+    let own_controller_handle = participants
         .iter()
         .find(|participant| participant.is_self && !participant.is_agent)
         .and_then(mention_label_for_participant);
+    // Mark agents referenced by structured mentions, then enrich any current
+    // Realm member that is in the controller-owned agent inventory. The latter
+    // is what makes a never-before-mentioned own agent available immediately
+    // as an @me/<slug> picker row.
+    {
+        let mut agent_metadata = agent_metadata_from_mentions(&all_messages_snapshot);
+        upsert_agent_participants(&mut participants, &agent_metadata, &account_did);
+        for (agent_id, metadata) in owned_agent_metadata(
+            &owned_agent_slugs(),
+            &account_did,
+            own_controller_handle.as_deref(),
+        ) {
+            agent_metadata
+                .entry(agent_id)
+                .and_modify(|existing| merge_agent_metadata(existing, metadata.clone()))
+                .or_insert(metadata);
+        }
+        annotate_agent_participants_with_metadata(&mut participants, &agent_metadata);
+    }
+    let participants_for_messages = participants.clone();
 
     let mut known_agent_ids = participants_for_messages
         .iter()
@@ -1725,6 +1771,7 @@ pub fn ChatPanel(
                     selected_realm_pending_mls_binding,
                     public_agent_dids: public_agent_dids.clone(),
                     own_controller_handle: own_controller_handle.clone(),
+                    mention_insert_request,
                     token,
                     sync_cursor,
                     frontier_state,

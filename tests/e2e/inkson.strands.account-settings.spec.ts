@@ -274,6 +274,15 @@ test("account settings split account/server info and surface personal agents", a
   await expect(page.getByTestId("agent-admin-provision-display-name")).toHaveCount(0);
   await expect(page.getByTestId("agent-admin-provision-avatar")).toBeVisible();
   await expect(page.getByTestId("agent-admin-provision-button")).toBeDisabled();
+  await page.getByTestId("agent-admin-provision-agent-slug").fill("summary");
+  await expect(page.getByTestId("agent-admin-provision-avatar-preview")).toHaveClass(
+    /generated-avatar/,
+  );
+  await expect(page.getByTestId("agent-admin-provision-avatar-preview")).toHaveAttribute(
+    "aria-label",
+    "Generated avatar for summary",
+  );
+  await expect(page.getByTestId("agent-admin-provision-avatar-preview").locator("svg")).toBeVisible();
   const agentAvatarPng = Buffer.from(
     "iVBORw0KGgoAAAANSUhEUgAAAAwAAAAICAYAAADN5B7xAAAAy0lEQVR4nBXLIRXEMBBAwRURHBwRK6I4OCJWRHFwRXwRxcH18u/d8IkIbIEjMAOvwBVYgXfgE0jgG/gFRnRsHUfH7Hh1XB2r493x6UjHt+PX/yGxJY7ETLwSV2Il3olPIolv4pf/MLFNHBNz4jVxTayJ98RnIhPfid/8h8JWOAqz8CpchVV4Fz6FFL6FX/3DxrZxbMyN18a1sTbeG5+NbHw3fvsfwAYOMMELXGCBN/iAgC/48Q8H28FxMA9eB9fBOngffA5y8D34HfwBl3vzwZTfUBgAAAAASUVORK5CYII=",
     "base64",
@@ -288,7 +297,6 @@ test("account settings split account/server info and surface personal agents", a
   await page.getByTestId("agent-admin-provision-avatar-upload-cropped").click();
   await agentAvatarUpload;
   await expect(page.getByTestId("agent-admin-provision-avatar-crop-editor")).toHaveCount(0);
-  await page.getByTestId("agent-admin-provision-agent-slug").fill("summary");
   await expect(page.getByTestId("agent-admin-provision-button")).toBeEnabled();
   const scrollLayout = await page.evaluate(() => {
     const root = document.documentElement;
@@ -341,6 +349,9 @@ test("account settings split account/server info and surface personal agents", a
     "ak:blob:sha256:01015dc8af66d01f557ea63f13538f1964848840a350c5311d1efc8ad138bb91",
   );
   expect(provisionBody.requested_scope.actions).toEqual([
+    "ak.event.read",
+    "ak.message.create",
+    "ak.reaction.add",
     "ak.self.events.stream.subscribe",
     "ak.self.events.query.scan",
     "ak.self.events.command.submit",
@@ -386,6 +397,26 @@ test("account settings split account/server info and surface personal agents", a
   await expect(page.getByTestId("agent-admin-capabilities")).toBeVisible();
   await expect(page.getByTestId("agent-admin-content-capability-row")).toHaveCount(5);
   await expect(page.getByTestId("agent-admin-service-capability-row")).toHaveCount(4);
+  await expect(page.getByTestId("agent-admin-content-capability-checkbox").nth(0)).toHaveAttribute(
+    "data-state",
+    "checked",
+  );
+  await expect(page.getByTestId("agent-admin-content-capability-checkbox").nth(1)).toHaveAttribute(
+    "data-state",
+    "unchecked",
+  );
+  await expect(page.getByTestId("agent-admin-content-capability-checkbox").nth(2)).toHaveAttribute(
+    "data-state",
+    "checked",
+  );
+  await expect(page.getByTestId("agent-admin-content-capability-checkbox").nth(3)).toHaveAttribute(
+    "data-state",
+    "unchecked",
+  );
+  await expect(page.getByTestId("agent-admin-content-capability-checkbox").nth(4)).toHaveAttribute(
+    "data-state",
+    "unchecked",
+  );
   await expect(page.getByTestId("agent-admin-service-capability-checkbox").nth(0)).toHaveAttribute(
     "data-state",
     "checked",

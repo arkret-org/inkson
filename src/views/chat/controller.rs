@@ -27,6 +27,7 @@ pub(super) enum ChatProjectionEvent {
         expires_at_ms: Option<i64>,
     },
     ReadCursor(String),
+    OwnedAgents(std::collections::BTreeMap<String, String>),
     AgentParticipation(std::collections::BTreeMap<String, bool>),
     Presence {
         states: std::collections::BTreeMap<String, String>,
@@ -83,6 +84,7 @@ impl ChatProjectionSink {
                 self.0.typing_next_expires_at_ms.set(expires_at_ms);
             }
             ChatProjectionEvent::ReadCursor(cursor) => self.0.latest_read_cursor.set(cursor),
+            ChatProjectionEvent::OwnedAgents(agents) => self.0.owned_agent_slugs.set(agents),
             ChatProjectionEvent::AgentParticipation(visibility) => {
                 self.0.agent_participation_visibility.set(visibility);
             }
@@ -157,6 +159,8 @@ pub(super) struct ChatController {
     pub initial_sync_requested: Signal<bool>,
     pub initial_sync_finished: Signal<bool>,
     pub mention_picker_state: Signal<crate::messaging::mentions::MentionPickerState>,
+    pub owned_agent_slugs: Signal<std::collections::BTreeMap<String, String>>,
+    pub owned_agent_sync_key_seen: Signal<String>,
     pub agent_participation_visibility: Signal<std::collections::BTreeMap<String, bool>>,
     pub agent_participation_sync_key_seen: Signal<String>,
     pub attachment_menu_open: Signal<bool>,
@@ -916,6 +920,8 @@ pub(super) fn use_chat_controller(
         initial_sync_requested: use_signal(|| false),
         initial_sync_finished: use_signal(|| false),
         mention_picker_state: use_signal(crate::messaging::mentions::MentionPickerState::new),
+        owned_agent_slugs: use_signal(std::collections::BTreeMap::<String, String>::new),
+        owned_agent_sync_key_seen: use_signal(String::new),
         agent_participation_visibility: use_signal(std::collections::BTreeMap::<String, bool>::new),
         agent_participation_sync_key_seen: use_signal(String::new),
         attachment_menu_open: use_signal(|| false),

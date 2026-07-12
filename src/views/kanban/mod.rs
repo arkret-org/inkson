@@ -6,7 +6,8 @@ use dioxus_router::hooks::{use_navigator, use_route};
 use serde_json::{Map, Value, json};
 
 use crate::components::{
-    EmptyState, EmptyStateKind, SecurityStateBadge, SelfAttributionBadge, UiIcon, WriteStateIcon,
+    ActorIdentityLabel, EmptyState, EmptyStateKind, SecurityStateBadge, SelfAttributionBadge,
+    UiIcon, WriteStateIcon,
 };
 use crate::operation::uuid_v7;
 use crate::rank::rank_for_drop;

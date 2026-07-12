@@ -12,6 +12,7 @@ pub use components::{
     ActionApproveDialog, ActorKindBadge, DraftApprovalPanel, SidecarExposureDisclosure,
     SidecarThreadGuard,
 };
+pub(crate) use model::mentionable_owned_agent_slugs;
 pub use model::{
     ActionApproveDialogState, ActionRequestNonceStatus, AgentGrantPreset, AgentServiceScopePreset,
     actor_kind_badge_class, actor_kind_label, agent_state_badge_class, agent_state_is_terminal,

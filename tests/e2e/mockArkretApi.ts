@@ -2015,9 +2015,44 @@ export async function mockArkretApi(
         pairing_expires_at: personalAgentPairingExpiresAt,
         requested_scope: body.requested_scope ?? null,
       };
+      const requestedScope =
+        typeof body.requested_scope === "object" && body.requested_scope !== null
+          ? (body.requested_scope as Record<string, unknown>)
+          : {};
+      const contentActionNames = new Set([
+        "ak.event.read",
+        "ak.agent.draft.propose",
+        "ak.agent.action_request",
+        "ak.message.create",
+        "ak.reaction.add",
+        "ak.strand.create",
+        "ak.strand.update",
+        "ak.relation.create",
+      ]);
+      const contentActions = Array.isArray(requestedScope.actions)
+        ? requestedScope.actions.filter(
+            (action): action is string =>
+              typeof action === "string" && contentActionNames.has(action),
+          )
+        : [];
       personalAgents.set(agentId, agent);
       personalAgentKeyStates.set(agentId, keyState);
-      personalAgentGrants.set(agentId, []);
+      personalAgentGrants.set(
+        agentId,
+        contentActions.length === 0
+          ? []
+          : [
+              {
+                grant_id: `ak:grant:01964137-0000-7000-8000-${String(personalAgentCounter).padStart(12, "0")}`,
+                grant: {
+                  actions: contentActions,
+                  ...(Array.isArray(requestedScope.constraints)
+                    ? { constraints: requestedScope.constraints }
+                    : {}),
+                },
+              },
+            ],
+      );
       return json(route, {
         agent_id: agentId,
         pairing_request_id: keyState.pairing_request_id,
