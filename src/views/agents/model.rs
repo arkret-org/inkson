@@ -59,10 +59,9 @@ pub fn actor_kind_badge_class(actor_kind: Option<&str>) -> &'static str {
 // UI/SDK affordances only; the canonical content authorization is the
 // expanded `ak.capability.grant` object for each preset (actions +
 // resource selector + registered constraints + TTL). Runtime endpoint
-// access is selected separately through `AgentServiceScopePreset`; only
-// the runtime service surface is included in `requested_scope`, while
-// content payload access remains gated by Realm membership and
-// participation grants.
+// access is selected separately through `AgentServiceScopePreset`; both
+// selections enter `requested_scope`, while effective content access still
+// requires the materialized grant, Realm membership, and participation.
 // ─────────────────────────────────────────────────────────────────────
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -241,15 +240,19 @@ pub fn service_actions_for_presets(presets: &[AgentServiceScopePreset]) -> Vec<S
 
 /// Build the `requested_scope` (`AgentKeyScope`, the spec object
 /// `{actions, resources, constraints}`) for the provision call from the
-/// selected runtime service surface. Personal agents are account-global:
-/// this key scope is not Realm-bound, and data authority is derived later
-/// from Realm membership plus participation/capability gates. The schema
-/// requires `resources` to be non-empty, so each selected service action
-/// is mirrored as an explicit `operation` resource selector.
+/// selected content presets and runtime service surface. Personal agents are
+/// account-global: this key scope is not Realm-bound, and effective data
+/// authority is still intersected with Realm membership plus participation
+/// and capability gates. The schema requires `resources` to be non-empty, so
+/// each selected action is mirrored as an explicit `operation` selector.
 pub fn requested_scope_for_presets(
+    content_presets: &[AgentGrantPreset],
     service_presets: &[AgentServiceScopePreset],
 ) -> Option<AgentKeyScope> {
     let mut actions: Vec<String> = Vec::new();
+    for action in content_actions_for_presets(content_presets) {
+        push_unique_action(&mut actions, &action);
+    }
     for action in service_actions_for_presets(service_presets) {
         push_unique_action(&mut actions, &action);
     }
@@ -266,10 +269,24 @@ pub fn requested_scope_for_presets(
             service_id: None,
         })
         .collect();
+    let constraints = if content_presets.contains(&AgentGrantPreset::ActOnBehalf) {
+        vec![
+            serde_json::from_value(json!({
+                "constraint_type": "claim_based",
+                "effect": "require_review",
+                "subtype": "accountability",
+                "applies_to_actions": ["ak.message.create"],
+                "controller_approval_required": true,
+            }))
+            .expect("the static act-on-behalf constraint must match the SDK wire type"),
+        ]
+    } else {
+        Vec::new()
+    };
     Some(AgentKeyScope {
         actions,
         resources,
-        constraints: Vec::new(),
+        constraints,
     })
 }
 
@@ -548,7 +565,9 @@ pub fn expand_preset_grant(
         grant["constraints"] = json!([
             {
                 "constraint_type": "claim_based",
+                "effect": "require_review",
                 "subtype": "accountability",
+                "applies_to_actions": ["ak.message.create"],
                 "controller_approval_required": true,
             }
         ]);
@@ -717,6 +736,35 @@ pub(crate) fn agent_status_wire(status: AgentStatus) -> &'static str {
         AgentStatus::Paused => "paused",
         AgentStatus::Deactivated => "deactivated",
     }
+}
+
+/// Build the controller-owned agent identity index used by compact member
+/// surfaces and mention pickers. Terminal and unusable pairing rows are not
+/// candidates; the Realm roster remains responsible for deciding which of
+/// these account-global agents is actually a member of the current Realm.
+pub(crate) fn mentionable_owned_agent_slugs(
+    agents: impl IntoIterator<Item = AgentProjection>,
+) -> std::collections::BTreeMap<String, String> {
+    agents
+        .into_iter()
+        .filter(|agent| {
+            !matches!(
+                agent_status_wire(agent.status),
+                "deactivated" | "pairing_expired"
+            )
+        })
+        .filter_map(|agent| {
+            let agent_id = agent.agent_id.as_str().trim();
+            let slug = agent.slug.trim();
+            if agent_id.is_empty()
+                || slug.is_empty()
+                || arkret_sdk::models::validate_agent_slug(slug).is_err()
+            {
+                return None;
+            }
+            Some((agent_id.to_owned(), slug.to_owned()))
+        })
+        .collect()
 }
 
 /// Hash pasted draft content or action request payload fragments.

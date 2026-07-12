@@ -721,6 +721,21 @@ pub(crate) fn mention_candidate_for_participant(
         });
     }
 
+    if participant.is_self {
+        let display_name = participant_sender_label(participant)
+            .unwrap_or_else(|| short_principal_label(&participant.did));
+        return Some(crate::messaging::mentions::MentionCandidate {
+            did: participant.did.clone(),
+            display_name,
+            insert_label: "me".to_owned(),
+            subtitle: "You".to_owned(),
+            is_agent: false,
+            controller_subject_id: String::new(),
+            controller_handle_at_time: String::new(),
+            agent_slug_at_time: String::new(),
+        });
+    }
+
     let handle_label = mention_label_for_participant(participant)?;
     let display_name = handle_label.clone();
     Some(crate::messaging::mentions::MentionCandidate {
@@ -732,6 +747,51 @@ pub(crate) fn mention_candidate_for_participant(
         controller_subject_id: String::new(),
         controller_handle_at_time: String::new(),
         agent_slug_at_time: String::new(),
+    })
+}
+
+pub(crate) fn mention_candidate_for_explicit_target(
+    participant: &SpaceParticipant,
+    participants: &[SpaceParticipant],
+    account_did: &str,
+    public_agent_dids: &std::collections::BTreeSet<String>,
+    requested_agent_slug: Option<&str>,
+    own_controller_handle: Option<&str>,
+) -> Option<crate::messaging::mentions::MentionCandidate> {
+    if let Some(agent_slug) = requested_agent_slug
+        .map(str::trim)
+        .filter(|slug| !slug.is_empty())
+    {
+        let controller_handle = own_controller_handle
+            .map(str::trim)
+            .filter(|handle| !handle.is_empty())?;
+        return Some(crate::messaging::mentions::MentionCandidate {
+            did: participant.did.clone(),
+            display_name: agent_slug.to_owned(),
+            insert_label: format!("me/{agent_slug}"),
+            subtitle: "Your agent".to_owned(),
+            is_agent: true,
+            controller_subject_id: account_did.trim().to_owned(),
+            controller_handle_at_time: controller_handle.to_owned(),
+            agent_slug_at_time: agent_slug.to_owned(),
+        });
+    }
+    if !agent_candidate_is_visible(participant, public_agent_dids, account_did) {
+        return None;
+    }
+    mention_candidate_for_participant(participant, participants, account_did).or_else(|| {
+        let fallback_label = participant_sender_label(participant)
+            .unwrap_or_else(|| short_principal_label(&participant.did));
+        Some(crate::messaging::mentions::MentionCandidate {
+            did: participant.did.clone(),
+            display_name: fallback_label.clone(),
+            insert_label: fallback_label,
+            subtitle: String::new(),
+            is_agent: false,
+            controller_subject_id: String::new(),
+            controller_handle_at_time: String::new(),
+            agent_slug_at_time: String::new(),
+        })
     })
 }
 

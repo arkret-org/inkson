@@ -89,8 +89,9 @@ impl MentionPickerState {
     }
 
     /// Filter `candidates` down to those whose `display_name` or `did`
-    /// matches the current query (case-insensitive substring), capped
-    /// at 8 rows to keep the picker compact.
+    /// matches the current query (case-insensitive substring). The popover is
+    /// scroll-bounded by CSS, so the model keeps every match available; this
+    /// matters for controllers with more than a handful of personal agents.
     pub fn filter<'a>(&self, candidates: &'a [MentionCandidate]) -> Vec<&'a MentionCandidate> {
         let q = self.query.trim().to_ascii_lowercase();
         let inserted: std::collections::BTreeSet<&str> =
@@ -108,7 +109,6 @@ impl MentionPickerState {
                         || c.did.to_ascii_lowercase().contains(&q)
                 }
             })
-            .take(8)
             .collect()
     }
 
@@ -162,6 +162,27 @@ pub fn active_mention_token_at_end(value: &str) -> Option<(String, usize, usize)
         return None;
     }
     Some((query.to_owned(), start, end))
+}
+
+/// Detect the reserved current-controller alias without mistaking an email,
+/// a longer handle, or an agent selector (`@me/<slug>`) for the self mention.
+pub fn contains_self_mention_token(value: &str) -> bool {
+    value.match_indices("@me").any(|(start, token)| {
+        let end = start + token.len();
+        let before = value[..start].chars().next_back();
+        let after = value[end..].chars().next();
+        let left_boundary = before.is_none_or(|ch| {
+            ch.is_whitespace() || matches!(ch, '(' | '[' | '{' | '<' | '"' | '\'')
+        });
+        let right_boundary = after.is_none_or(|ch| {
+            ch.is_whitespace()
+                || matches!(
+                    ch,
+                    ')' | ']' | '}' | '>' | '"' | '\'' | ',' | '.' | ';' | '!' | '?'
+                )
+        });
+        left_boundary && right_boundary
+    })
 }
 
 pub fn replace_active_mention_token(
@@ -305,6 +326,23 @@ mod tests {
     }
 
     #[test]
+    fn picker_keeps_all_owned_agent_matches_available() {
+        let candidates = (0..12)
+            .map(|index| MentionCandidate {
+                did: format!("did:web:agents.example:agent-{index}"),
+                display_name: format!("agent-{index}"),
+                insert_label: format!("me/agent-{index}"),
+                subtitle: "Your agent".to_owned(),
+                is_agent: true,
+                controller_subject_id: "did:web:alice.example".to_owned(),
+                controller_handle_at_time: "alice:example.com".to_owned(),
+                agent_slug_at_time: format!("agent-{index}"),
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(MentionPickerState::new().filter(&candidates).len(), 12);
+    }
+
+    #[test]
     fn insert_is_idempotent() {
         let mut state = MentionPickerState::new();
         assert!(state.insert(alice()));
@@ -324,6 +362,16 @@ mod tests {
         );
         assert!(active_mention_token_at_end("email@host").is_none());
         assert!(active_mention_token_at_end("hello @bob done").is_none());
+    }
+
+    #[test]
+    fn self_alias_requires_an_exact_standalone_token() {
+        assert!(contains_self_mention_token("ping @me"));
+        assert!(contains_self_mention_token("ping (@me), please"));
+        assert!(!contains_self_mention_token("mail@me"));
+        assert!(!contains_self_mention_token("@media"));
+        assert!(!contains_self_mention_token("@me:example.com"));
+        assert!(!contains_self_mention_token("ask @me/summary"));
     }
 
     #[test]

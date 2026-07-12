@@ -413,6 +413,29 @@ button[data-style="link"]:disabled:hover {
   color: #fff;
 }
 
+.actor-identity-label {
+  display: inline-flex;
+  min-width: 0;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 5px;
+}
+.actor-identity-primary {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.actor-identity-self-badge,
+.actor-identity-agent-badge {
+  flex: 0 0 auto;
+}
+.actor-identity-selector {
+  color: var(--text-2);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  overflow-wrap: anywhere;
+}
+
 /* Compose drop-zone (A6.2): outlines the composer while a drag is
    pending and surfaces a translucent overlay with the file-drop hint. */
 .compose-drop-zone { position: relative; }
@@ -573,6 +596,18 @@ button[data-style="link"]:disabled:hover {
   align-items: center;
   justify-content: center;
   color: var(--muted, #888);
+}
+.avatar-img.generated-avatar {
+  display: block;
+  background: #f0f3f6;
+  padding: 7px;
+  box-shadow: var(--shadow-sm);
+}
+.avatar-img.generated-avatar svg {
+  display: block;
+  width: 100%;
+  height: 100%;
+  shape-rendering: crispEdges;
 }
 .avatar-uploader {
   display: grid;

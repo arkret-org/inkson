@@ -1,6 +1,9 @@
 use super::*;
 
-fn merge_agent_metadata(existing: &mut AgentParticipantMetadata, next: AgentParticipantMetadata) {
+pub(crate) fn merge_agent_metadata(
+    existing: &mut AgentParticipantMetadata,
+    next: AgentParticipantMetadata,
+) {
     if existing.controller_id.is_empty() {
         existing.controller_id = next.controller_id;
     }
@@ -140,4 +143,38 @@ pub(crate) fn annotate_agent_participants_with_metadata(
             }
         }
     }
+}
+
+pub(crate) fn owned_agent_metadata(
+    agent_slugs: &std::collections::BTreeMap<String, String>,
+    controller_id: &str,
+    controller_handle: Option<&str>,
+) -> std::collections::BTreeMap<String, AgentParticipantMetadata> {
+    let controller_id = controller_id.trim();
+    if controller_id.is_empty() {
+        return std::collections::BTreeMap::new();
+    }
+    let controller_handle = controller_handle.unwrap_or_default().trim();
+    agent_slugs
+        .iter()
+        .filter_map(|(agent_id, slug)| {
+            let agent_id = agent_id.trim();
+            let slug = slug.trim();
+            if agent_id.is_empty()
+                || slug.is_empty()
+                || arkret_sdk::models::validate_agent_slug(slug).is_err()
+            {
+                return None;
+            }
+            Some((
+                agent_id.to_owned(),
+                AgentParticipantMetadata {
+                    controller_id: controller_id.to_owned(),
+                    controller_handle: controller_handle.to_owned(),
+                    agent_slug: slug.to_owned(),
+                    display_name: slug.to_owned(),
+                },
+            ))
+        })
+        .collect()
 }

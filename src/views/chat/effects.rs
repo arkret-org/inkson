@@ -41,12 +41,51 @@ pub(super) fn ChatEffects(
     let mut outbox_flushing = controller.outbox_flushing;
     let mut status_msg = controller.status_msg;
     let mut messages = controller.messages;
+    let mut owned_agent_sync_key_seen = controller.owned_agent_sync_key_seen;
     let mut agent_participation_sync_key_seen = controller.agent_participation_sync_key_seen;
     let presence_states = controller.presence_states;
     let presence_labels = controller.presence_labels;
     let presence_status_messages = controller.presence_status_messages;
     let mut presence_sync_key_seen = controller.presence_sync_key_seen;
     let initial_sync_requested = controller.initial_sync_requested;
+
+    {
+        let base = base_url.clone();
+        let account = account_did.clone();
+        use_effect(move || {
+            let api_token = token();
+            let request_key = account.trim().to_owned();
+            if account.trim().is_empty()
+                || api_token.trim().is_empty()
+                || owned_agent_sync_key_seen.peek().as_str() == request_key
+            {
+                return;
+            }
+            owned_agent_sync_key_seen.set(request_key.clone());
+            event_sink.emit(ChatProjectionEvent::OwnedAgents(
+                std::collections::BTreeMap::new(),
+            ));
+            let base = base.clone();
+            spawn(async move {
+                let result = crate::transport::auth::with_authed_sdk_client(
+                    &base,
+                    api_token,
+                    |http| async move {
+                        let list = http.agent_list().await?;
+                        Ok::<_, anyhow::Error>(crate::views::agents::mentionable_owned_agent_slugs(
+                            list.agents,
+                        ))
+                    },
+                )
+                .await;
+                if owned_agent_sync_key_seen.peek().as_str() == request_key
+                    && let Ok(agents) = result
+                {
+                    event_sink.emit(ChatProjectionEvent::OwnedAgents(agents));
+                }
+            });
+        });
+    }
 
     {
         let realm = selected_realm_id.clone();

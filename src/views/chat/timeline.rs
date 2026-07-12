@@ -3,7 +3,7 @@
 use dioxus::prelude::*;
 
 use super::model::*;
-use crate::components::{SelfAttributionBadge, UiIcon};
+use crate::components::{ActorIdentityLabel, UiIcon};
 use crate::views::helpers::{MentionNode, short_protocol_id};
 
 pub(super) fn push_unique_mention_node(mentions: &mut Vec<MentionNode>, mention: MentionNode) {
@@ -109,6 +109,12 @@ pub(super) fn DiscussionParticipantRow(
         .map(|rest| rest.split(':').next().unwrap_or(rest).to_owned());
     let owner_label = agent_controller_label(&participant, &participants);
     let selector_label = agent_selector_label(&participant);
+    let agent_slug = participant
+        .agent_metadata
+        .as_ref()
+        .map(|metadata| metadata.agent_slug.clone())
+        .filter(|slug| !slug.trim().is_empty());
+    let identity_label = agent_slug.clone().unwrap_or_else(|| display_label.clone());
     let controller_id_attr = participant
         .agent_metadata
         .as_ref()
@@ -133,14 +139,16 @@ pub(super) fn DiscussionParticipantRow(
             span { class: "participant-avatar", UiIcon { name: avatar_icon.to_owned() } }
             div { class: "participant-main",
                 strong {
-                    class: "mono participant-did",
-                    title: "{participant_did_attr}",
-                    "{display_label}"
-                    if participant.is_self {
-                        SelfAttributionBadge {
-                            class: Some("participant-badge self participant-inline-self-badge".to_owned()),
-                            test_id: Some("participant-self-badge".to_owned()),
-                        }
+                    ActorIdentityLabel {
+                        label: identity_label,
+                        title: Some(participant_did_attr.clone()),
+                        class: Some("mono participant-did".to_owned()),
+                        test_id: Some("participant".to_owned()),
+                        self_badge_test_id: Some("participant-self-badge".to_owned()),
+                        agent_badge_test_id: Some("member-badge-agent".to_owned()),
+                        is_self: participant.is_self,
+                        agent_slug,
+                        agent_selector: None,
                     }
                     if !participant.is_agent {
                         if let Some(host) = binding_host.as_ref() {
@@ -167,15 +175,6 @@ pub(super) fn DiscussionParticipantRow(
                     }
                 }
                 div { class: "participant-badges",
-                    if participant.is_agent {
-                        span {
-                            class: "badge member-badge member-badge-agent",
-                            "data-testid": "member-badge-agent",
-                            title: "Automated member (bot)",
-                            "\u{1f916} "
-                            {crate::i18n::tr("member.badge.agent")}
-                        }
-                    }
                     span {
                         class: match participant.role {
                             SpaceParticipantRole::Owner => "badge participant-badge admin",

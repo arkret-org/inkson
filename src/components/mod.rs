@@ -42,6 +42,7 @@ pub mod error_boundary;
 /// drains the policy-deny and circle-error queues too) + `AppBanner`
 /// (single-slot persistent banner, offline state).
 pub mod feedback;
+pub mod generated_avatar;
 /// One-time account-MLS-secret BACKUP prompt — the mirror of `mls_unlock`.
 /// Mounted once near the app shell; renders only when boot/per-Realm
 /// detection flags `needs_mls_backup` (local secret exists, no server backup).
@@ -96,6 +97,7 @@ pub use feedback::{
     maybe_dispatch_circle_error, push_policy_deny_toast, push_toast, toast_error, toast_info,
     toast_success, toast_warning,
 };
+pub use generated_avatar::{GeneratedAvatar, GeneratedAvatarProps};
 pub use mls_backup_prompt::{
     MlsBackupPrompt, MlsBackupSignal, maybe_auto_backup_mls_after_encrypted_write,
     try_needs_mls_backup_signal,
@@ -113,7 +115,7 @@ pub use recovery_key_setup_prompt::RecoveryKeySetupPrompt;
 pub use report_problem::{
     CrashTelemetryPrefs, CrashTelemetryToggle, ReportProblemButton, build_report_body,
 };
-pub use self_attribution::SelfAttributionBadge;
+pub use self_attribution::{ActorIdentityLabel, SelfAttributionBadge};
 pub use shortcut_help::{
     ShortcutHelpOverlay, default_shortcuts, key_event_is_help_trigger, target_is_text_input,
 };

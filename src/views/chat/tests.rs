@@ -1205,8 +1205,7 @@ fn durable_reaction_folds_onto_controller_only_create() {
         ..ClientLocalState::default()
     };
 
-    let messages =
-        fold_local_state_into_chat_messages_with_sidecar(seed, &state, None, None);
+    let messages = fold_local_state_into_chat_messages_with_sidecar(seed, &state, None, None);
 
     assert_eq!(messages.len(), 1);
     assert_eq!(
@@ -1258,8 +1257,7 @@ fn durable_redaction_folds_onto_controller_only_create() {
         ..ClientLocalState::default()
     };
 
-    let messages =
-        fold_local_state_into_chat_messages_with_sidecar(seed, &state, None, None);
+    let messages = fold_local_state_into_chat_messages_with_sidecar(seed, &state, None, None);
 
     assert_eq!(messages.len(), 1);
     assert!(messages[0].redacted);
@@ -2630,6 +2628,117 @@ fn mention_candidate_for_own_agent_uses_me_alias() {
     );
     assert_eq!(candidate.controller_handle_at_time, "alice:example.com");
     assert_eq!(candidate.agent_slug_at_time, "summary");
+}
+
+#[test]
+fn mention_candidate_for_current_user_uses_structured_me_alias() {
+    let participant = SpaceParticipant {
+        did: "did:web:example.com:users:alice".to_owned(),
+        display_name: Some("Alice".to_owned()),
+        handle_label: None,
+        display_name_rank: 0,
+        role: SpaceParticipantRole::Owner,
+        is_self: true,
+        is_agent: false,
+        agent_metadata: None,
+    };
+
+    let candidate = mention_candidate_for_participant(
+        &participant,
+        std::slice::from_ref(&participant),
+        &participant.did,
+    )
+    .expect("current-user mention candidate");
+    assert_eq!(candidate.did, participant.did);
+    assert_eq!(candidate.insert_label(), "me");
+    assert_eq!(candidate.subtitle, "You");
+
+    let mentions = composer_mention_nodes(
+        "ping @me",
+        std::slice::from_ref(&candidate),
+        &participant.did,
+    );
+    let mention = mentions[0].as_mention().expect("structured self mention");
+    assert_eq!(mention.subject_id.as_str(), participant.did);
+    assert_eq!(mention.mention_text_original.as_deref(), Some("@me"));
+
+    let typed_mentions = composer_mention_nodes("ping @me", &[], &participant.did);
+    let typed_mention = typed_mentions[0]
+        .as_mention()
+        .expect("typed structured self mention");
+    assert_eq!(typed_mention.subject_id.as_str(), participant.did);
+    assert_eq!(typed_mention.mention_text_original.as_deref(), Some("@me"));
+
+    assert!(composer_mention_nodes("ask @me/summary", &[], &participant.did).is_empty());
+}
+
+#[test]
+fn owned_agent_inventory_enriches_existing_realm_member_metadata() {
+    let slugs = std::collections::BTreeMap::from([(
+        "did:web:agents.example:summary".to_owned(),
+        "summary".to_owned(),
+    )]);
+    let metadata = owned_agent_metadata(
+        &slugs,
+        "did:web:example.com:users:alice",
+        Some("alice:example.com"),
+    );
+    let summary = metadata
+        .get("did:web:agents.example:summary")
+        .expect("owned agent metadata");
+    assert_eq!(summary.controller_id, "did:web:example.com:users:alice");
+    assert_eq!(summary.controller_handle, "alice:example.com");
+    assert_eq!(summary.agent_slug, "summary");
+}
+
+#[test]
+fn explicit_member_click_builds_user_and_owned_agent_mentions() {
+    let account_did = "did:web:example.com:users:alice";
+    let member = SpaceParticipant {
+        did: "did:web:example.com:users:bob".to_owned(),
+        display_name: Some("Bob".to_owned()),
+        handle_label: None,
+        display_name_rank: 0,
+        role: SpaceParticipantRole::Member,
+        is_self: false,
+        is_agent: false,
+        agent_metadata: None,
+    };
+    let clicked_member = mention_candidate_for_explicit_target(
+        &member,
+        std::slice::from_ref(&member),
+        account_did,
+        &std::collections::BTreeSet::new(),
+        None,
+        Some("alice:example.com"),
+    )
+    .expect("explicit member mention");
+    assert_eq!(clicked_member.did, member.did);
+    assert!(!clicked_member.is_agent);
+
+    let unannotated_owned_agent = SpaceParticipant {
+        did: "did:web:agents.example:summary".to_owned(),
+        display_name: None,
+        handle_label: None,
+        display_name_rank: u8::MAX,
+        role: SpaceParticipantRole::Member,
+        is_self: false,
+        is_agent: false,
+        agent_metadata: None,
+    };
+    let clicked_agent = mention_candidate_for_explicit_target(
+        &unannotated_owned_agent,
+        std::slice::from_ref(&unannotated_owned_agent),
+        account_did,
+        &std::collections::BTreeSet::new(),
+        Some("summary"),
+        Some("alice:example.com"),
+    )
+    .expect("explicit owned-agent mention");
+    assert_eq!(clicked_agent.insert_label(), "me/summary");
+    assert!(clicked_agent.is_agent);
+    assert_eq!(clicked_agent.controller_subject_id, account_did);
+    assert_eq!(clicked_agent.agent_slug_at_time, "summary");
 }
 
 #[test]

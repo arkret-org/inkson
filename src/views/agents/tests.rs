@@ -104,14 +104,20 @@ mod personal_agent_tests {
     }
 
     #[test]
-    fn requested_scope_uses_service_actions_without_realm() {
-        assert!(requested_scope_for_presets(&[]).is_none());
+    fn requested_scope_uses_selected_actions_without_realm() {
+        assert!(requested_scope_for_presets(&[], &[]).is_none());
 
-        let scope = requested_scope_for_presets(&AgentServiceScopePreset::DEFAULTS)
-            .expect("service presets produce a runtime scope");
+        let scope = requested_scope_for_presets(
+            &[AgentGrantPreset::Read, AgentGrantPreset::ReplyAsAgent],
+            &AgentServiceScopePreset::DEFAULTS,
+        )
+        .expect("selected presets produce an agent key scope");
         assert_eq!(
             scope.actions,
             vec![
+                "ak.event.read",
+                "ak.message.create",
+                "ak.reaction.add",
                 "ak.self.events.stream.subscribe",
                 "ak.self.events.query.scan",
                 "ak.self.events.command.submit",
@@ -121,6 +127,18 @@ mod personal_agent_tests {
         assert_eq!(
             wire["resources"],
             serde_json::json!([
+                {
+                    "kind": "operation",
+                    "operation": "ak.event.read"
+                },
+                {
+                    "kind": "operation",
+                    "operation": "ak.message.create"
+                },
+                {
+                    "kind": "operation",
+                    "operation": "ak.reaction.add"
+                },
                 {
                     "kind": "operation",
                     "operation": "ak.self.events.stream.subscribe"
@@ -139,33 +157,56 @@ mod personal_agent_tests {
     }
 
     #[test]
-    fn content_presets_do_not_expand_runtime_scope() {
-        let scope = requested_scope_for_presets(&[AgentServiceScopePreset::SubscribeEvents])
-            .expect("service scope is required for runtime reachability");
+    fn content_presets_expand_the_provision_scope() {
+        let scope = requested_scope_for_presets(
+            &[AgentGrantPreset::Read, AgentGrantPreset::Draft],
+            &[AgentServiceScopePreset::SubscribeEvents],
+        )
+        .expect("service scope is required for runtime reachability");
 
-        assert_eq!(scope.actions, vec!["ak.self.events.stream.subscribe"]);
         assert_eq!(
-            content_actions_for_presets(&[AgentGrantPreset::Read, AgentGrantPreset::Draft]),
+            scope.actions,
             vec![
                 "ak.event.read".to_owned(),
                 "ak.agent.draft.propose".to_owned(),
-                "ak.agent.action_request".to_owned()
+                "ak.agent.action_request".to_owned(),
+                "ak.self.events.stream.subscribe".to_owned(),
             ]
         );
     }
 
     #[test]
     fn requested_scope_can_include_service_surface_without_content_grant() {
-        let scope = requested_scope_for_presets(&[
-            AgentServiceScopePreset::ScanCatchUp,
-            AgentServiceScopePreset::ResolveResources,
-        ])
+        let scope = requested_scope_for_presets(
+            &[],
+            &[
+                AgentServiceScopePreset::ScanCatchUp,
+                AgentServiceScopePreset::ResolveResources,
+            ],
+        )
         .expect("service-only scope is still a valid agent key ceiling");
 
         assert_eq!(
             scope.actions,
             vec!["ak.self.events.query.scan", "ak.self.events.resource.get"]
         );
+    }
+
+    #[test]
+    fn act_on_behalf_scope_requires_controller_review_for_message_create() {
+        let scope = requested_scope_for_presets(
+            &[AgentGrantPreset::ActOnBehalf],
+            &[AgentServiceScopePreset::SubmitEvents],
+        )
+        .expect("act-on-behalf produces an explicit scope");
+
+        let wire = serde_json::to_value(scope).unwrap();
+        let constraint = &wire["constraints"][0];
+        assert_eq!(constraint["constraint_type"], "claim_based");
+        assert_eq!(constraint["effect"], "require_review");
+        assert_eq!(constraint["subtype"], "accountability");
+        assert_eq!(constraint["applies_to_actions"][0], "ak.message.create");
+        assert_eq!(constraint["controller_approval_required"], true);
     }
 
     #[test]
@@ -201,7 +242,9 @@ mod personal_agent_tests {
         assert_eq!(grant["resources"], serde_json::json!([]));
         let constraint = &grant["constraints"][0];
         assert_eq!(constraint["constraint_type"], "claim_based");
+        assert_eq!(constraint["effect"], "require_review");
         assert_eq!(constraint["subtype"], "accountability");
+        assert_eq!(constraint["applies_to_actions"][0], "ak.message.create");
         assert_eq!(constraint["controller_approval_required"], true);
     }
 
@@ -362,7 +405,7 @@ mod personal_agent_tests {
         let service_id = "did:web:arkret.example";
         let agent = "did:web:agents.example:summary";
         let verification_method = "did:web:agents.example:summary#runtime-key-1";
-        let scope = requested_scope_for_presets(&AgentServiceScopePreset::DEFAULTS).unwrap();
+        let scope = requested_scope_for_presets(&[], &AgentServiceScopePreset::DEFAULTS).unwrap();
         let key_state = serde_json::json!({
             "pairing_request_id": "agent_pairing_request:01999999-0000-7000-8000-00000000feed",
             "pairing_code": "12345678",

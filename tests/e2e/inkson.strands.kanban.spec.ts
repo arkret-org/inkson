@@ -36,6 +36,12 @@ test("kanban card detail embeds discussion without boundary copy", async ({ page
   await detailPopup.getByTestId("card-detail-tab-discussion").click();
   await expect(page.getByTestId("chat-panel")).toBeVisible();
   await expect(page.getByTestId("open-primary-discussion")).toHaveCount(0);
+  await detailPopup.getByTestId("card-detail-sidebar-tab-members").click();
+  const firstMemberMention = detailPopup.getByTestId("card-detail-member-mention-button").first();
+  await expect(firstMemberMention).toBeVisible();
+  await firstMemberMention.click();
+  await expect(detailPopup.getByTestId("chat-input")).toHaveValue("@me ");
+  await expect(detailPopup.getByTestId("chat-input")).toBeFocused();
   const popupBox = await detailPopup.boundingBox();
   if (!popupBox) {
     throw new Error("card detail modal bounding box was unavailable");

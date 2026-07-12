@@ -93,10 +93,11 @@ pub fn AvatarUploader(props: AvatarUploaderProps) -> Element {
                         }
                     }
                 } else {
-                    div {
-                        class: "avatar-img lg placeholder",
-                        "data-testid": "{preview_test_id}",
-                        "—"
+                    crate::components::GeneratedAvatar {
+                        seed: alt_text.clone(),
+                        alt_text: format!("Generated avatar for {alt_text}"),
+                        class: "avatar-img lg generated-avatar".to_owned(),
+                        test_id: Some(preview_test_id.clone()),
                     }
                 }
             }

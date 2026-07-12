@@ -40,6 +40,41 @@ pub(super) fn CardDetail(controller: KanbanController, context: CardDetailContex
     let navigator = use_navigator();
     let route = use_route::<Route>();
     let capability_engine = use_context::<Signal<crate::capability::CapabilityEngine>>();
+    let mut owned_agent_slugs = use_signal(BTreeMap::<String, String>::new);
+    let mut owned_agent_sync_key_seen = use_signal(String::new);
+    let mut member_mention_request =
+        use_signal(|| Option::<crate::views::chat::MentionInsertRequest>::None);
+    {
+        let base = base_url.clone();
+        let account = account_did.clone();
+        use_effect(move || {
+            let api_token = token();
+            let request_key = account.trim().to_owned();
+            if account.trim().is_empty()
+                || api_token.trim().is_empty()
+                || owned_agent_sync_key_seen.peek().as_str() == request_key
+            {
+                return;
+            }
+            owned_agent_sync_key_seen.set(request_key.clone());
+            owned_agent_slugs.set(BTreeMap::new());
+            let base = base.clone();
+            spawn(async move {
+                let result = with_authed_sdk_client(&base, api_token, |http| async move {
+                    let list = http.agent_list().await?;
+                    Ok::<_, anyhow::Error>(crate::views::agents::mentionable_owned_agent_slugs(
+                        list.agents,
+                    ))
+                })
+                .await;
+                if owned_agent_sync_key_seen.peek().as_str() == request_key
+                    && let Ok(agents) = result
+                {
+                    owned_agent_slugs.set(agents);
+                }
+            });
+        });
+    }
     let KanbanController {
         board_space_options: _,
         selected_board_space_id,
@@ -1265,6 +1300,7 @@ pub(super) fn CardDetail(controller: KanbanController, context: CardDetailContex
                                                             initial_strand_id: card.primary_strand_id.clone(),
                                                             embedded: true,
                                                             direct_mode: false,
+                                                            mention_insert_request: Some(member_mention_request),
                                                         }
                                                     }
                                                 }
@@ -2201,6 +2237,35 @@ pub(super) fn CardDetail(controller: KanbanController, context: CardDetailContex
                                                                             identity.as_ref(),
                                                                             cached_handle.as_deref(),
                                                                         );
+                                                                        let owned_agent_slug_index =
+                                                                            owned_agent_slugs.read();
+                                                                        let agent_slug = owned_agent_slug_index
+                                                                            .get(&did)
+                                                                            .or_else(|| {
+                                                                                row.subject_id
+                                                                                    .as_ref()
+                                                                                    .and_then(|subject_id| {
+                                                                                        owned_agent_slug_index
+                                                                                            .get(subject_id)
+                                                                                    })
+                                                                            })
+                                                                            .cloned();
+                                                                        let identity_label = agent_slug
+                                                                            .clone()
+                                                                            .unwrap_or(label);
+                                                                        let mention_agent_slug = agent_slug.clone();
+                                                                        let is_self = actor_is_current_account(
+                                                                            &did,
+                                                                            &account_did,
+                                                                        ) || row
+                                                                            .subject_id
+                                                                            .as_deref()
+                                                                            .is_some_and(|subject_id| {
+                                                                                actor_is_current_account(
+                                                                                    subject_id,
+                                                                                    &account_did,
+                                                                                )
+                                                                            });
                                                                         let in_strand = participant_set.contains(&did);
                                                                         let row_class = if in_strand {
                                                                             "card-detail-actor-row participant"
@@ -2222,8 +2287,36 @@ pub(super) fn CardDetail(controller: KanbanController, context: CardDetailContex
                                                                                 key: "{did}",
                                                                                 class: "{row_class}",
                                                                                 "data-strand-participant": "{in_strand}",
-                                                                                span { class: "{dot_class}", title: "{dot_title}", "aria-label": "{dot_title}" }
-                                                                                span { class: "card-detail-actor-did", title: "{did}", "{label}" }
+                                                                                button {
+                                                                                    r#type: "button",
+                                                                                    class: "card-detail-actor-mention-button",
+                                                                                    "data-testid": "card-detail-member-mention-button",
+                                                                                    "aria-label": "Mention {identity_label}",
+                                                                                    onclick: {
+                                                                                        let mention_target = did.clone();
+                                                                                        let mention_agent_slug = mention_agent_slug.clone();
+                                                                                        move |_| {
+                                                                                            member_mention_request.set(Some(
+                                                                                                crate::views::chat::MentionInsertRequest::new(
+                                                                                                    mention_target.clone(),
+                                                                                                    mention_agent_slug.clone(),
+                                                                                                ),
+                                                                                            ));
+                                                                                        }
+                                                                                    },
+                                                                                    span { class: "{dot_class}", title: "{dot_title}", "aria-label": "{dot_title}" }
+                                                                                    ActorIdentityLabel {
+                                                                                        label: identity_label,
+                                                                                        title: Some(did.clone()),
+                                                                                        class: Some("card-detail-actor-did".to_owned()),
+                                                                                        test_id: Some("card-detail-member".to_owned()),
+                                                                                        self_badge_test_id: None,
+                                                                                        agent_badge_test_id: None,
+                                                                                        is_self,
+                                                                                        agent_slug,
+                                                                                        agent_selector: None,
+                                                                                    }
+                                                                                }
                                                                             }
                                                                         }
                                                                     }
