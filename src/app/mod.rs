@@ -166,6 +166,7 @@ const APP_OVERRIDES: &str = concat!(
     include_str!("../styles/app_overrides/sidebar-actions.css"),
     include_str!("../styles/app_overrides/account-trigger-menu.css"),
     include_str!("../styles/app_overrides/members-agents-admin.css"),
+    include_str!("../styles/app_overrides/sidecar-shell.css"),
 );
 
 /// C3: yoface shared-component design tokens. The first layer is shadcn
@@ -289,6 +290,8 @@ fn AppBootstrap() -> Element {
         state_store,
         base_url,
     });
+    let mut sidecar_session = use_signal(|| None::<crate::sidecar::SidecarSession>);
+    use_context_provider(|| crate::sidecar::SidecarSessionContext(sidecar_session));
     // Construct the typed session coordinator once. Runtime and UI effects
     // share this owner instead of registering unrelated thread-local callbacks.
     let session_coordinator = use_hook(move || {
@@ -1970,7 +1973,21 @@ fn AppBootstrap() -> Element {
                             ))
                         {
                             {
-                                let self_did = account_did();
+                                let active_account_did = account_did();
+                                let self_did = if active_account_did.trim().is_empty() {
+                                    let configured = config_store.read().load().account_did;
+                                    if configured.trim().is_empty() {
+                                        state_store
+                                            .read()
+                                            .session_grant()
+                                            .map(|grant| grant.principal_id)
+                                            .unwrap_or_default()
+                                    } else {
+                                        configured
+                                    }
+                                } else {
+                                    active_account_did
+                                };
                                 let primary_handle = account_primary_handle();
                                 let self_label = if primary_handle.trim().is_empty() {
                                     display_name_for_did(&state_store.read(), &self_did)
@@ -2026,6 +2043,7 @@ fn AppBootstrap() -> Element {
                                                                 onclick: {
                                                                     let base = base_url();
                                                                     let agent_id = agent_id.clone();
+                                                                    let agent_label = agent_label.clone();
                                                                     let controller_id = controller_id.clone();
                                                                     move |event: dioxus::events::MouseEvent| {
                                                                         event.prevent_default();
@@ -2033,46 +2051,98 @@ fn AppBootstrap() -> Element {
                                                                         let api_token = token();
                                                                         let base = base.clone();
                                                                         let agent_id = agent_id.clone();
+                                                                        let agent_label = agent_label.clone();
                                                                         let controller_id = controller_id.clone();
+                                                                        let trace_id = crate::operation::uuid_v7();
+                                                                        tracing::info!(
+                                                                            target: "sidecar",
+                                                                            event = "sidecar.route.requested",
+                                                                            trace_id = %trace_id,
+                                                                            source_kind = "direct_agent",
+                                                                            addressed_agent_count = 1,
+                                                                        );
                                                                         spawn(async move {
-                                                                            let request = (|| -> anyhow::Result<arkret_sdk::AgentSidecarThreadEnsureRequestBody> {
-                                                                                let controller = arkret_sdk::Did::new(controller_id.clone())?;
-                                                                                let agent = arkret_sdk::Did::new(agent_id)?;
-                                                                                let self_realm = arkret_sdk::principal_control_realm_id(&controller);
-                                                                                let realm_id = arkret_sdk::RealmId::new(self_realm.clone())?;
-                                                                                let strand_id = arkret_sdk::StrandId::new(default_strand_id_for_realm(&self_realm))?;
-                                                                                Ok(arkret_sdk::AgentSidecarThreadEnsureRequestBody {
-                                                                                    controller_id: controller,
-                                                                                    addressed_agent_ids: vec![agent],
-                                                                                    context_ref: arkret_sdk::AgentSidecarContextRef::strand(realm_id, strand_id),
-                                                                                })
-                                                                            })();
-                                                                            let Ok(request) = request else {
-                                                                                crate::components::feedback::toast_error(
-                                                                                    "feedback.direct_open_failed", vec![], Some("Invalid agent identity".to_owned()),
-                                                                                );
-                                                                                return;
-                                                                            };
+                                                                            tracing::info!(
+                                                                                target: "sidecar",
+                                                                                event = "sidecar.ensure.started",
+                                                                                trace_id = %trace_id,
+                                                                                context_ref_kind = "strand",
+                                                                                attempt = 1_u8,
+                                                                            );
+                                                                            let agent_id_for_request = agent_id.clone();
                                                                             match crate::transport::auth::with_authed_sdk_client(
                                                                                 &base,
                                                                                 api_token,
                                                                                 |http| async move {
-                                                                                    http.agent_sidecar_thread_ensure(&request)
+                                                                                    let controller = if controller_id.trim().is_empty() {
+                                                                                        http.account_viewer()
+                                                                                            .await
+                                                                                            .map_err(anyhow::Error::from)?
+                                                                                            .principal_id
+                                                                                    } else {
+                                                                                        arkret_sdk::Did::new(controller_id)
+                                                                                            .map_err(anyhow::Error::from)?
+                                                                                    };
+                                                                                    let agent = arkret_sdk::Did::new(agent_id_for_request)
+                                                                                        .map_err(anyhow::Error::from)?;
+                                                                                    let self_realm = arkret_sdk::principal_control_realm_id(&controller);
+                                                                                    let request = arkret_sdk::AgentSidecarThreadEnsureRequestBody {
+                                                                                        controller_id: controller.clone(),
+                                                                                        addressed_agent_ids: vec![agent],
+                                                                                        context_ref: arkret_sdk::AgentSidecarContextRef::strand(
+                                                                                            arkret_sdk::RealmId::new(self_realm.clone())
+                                                                                                .map_err(anyhow::Error::from)?,
+                                                                                            arkret_sdk::StrandId::new(default_strand_id_for_realm(&self_realm))
+                                                                                                .map_err(anyhow::Error::from)?,
+                                                                                        ),
+                                                                                    };
+                                                                                    let response = http
+                                                                                        .agent_sidecar_thread_ensure(&request)
                                                                                         .await
-                                                                                        .map_err(anyhow::Error::from)
+                                                                                        .map_err(anyhow::Error::from)?;
+                                                                                    Ok::<_, anyhow::Error>((controller, response))
                                                                                 },
                                                                             ).await {
-                                                                                Ok(response) => {
-                                                                                    let controller = arkret_sdk::Did::new(controller_id)
-                                                                                        .expect("controller DID validated before request");
+                                                                                Ok((controller, response)) => {
+                                                                                    let realm_id = arkret_sdk::principal_control_realm_id(&controller);
+                                                                                    let pending_count = response.pending_member_reconciliations.len();
+                                                                                    tracing::info!(
+                                                                                        target: "sidecar",
+                                                                                        event = "sidecar.ensure.completed",
+                                                                                        trace_id = %trace_id,
+                                                                                        pending_reconciliation_count = pending_count,
+                                                                                    );
+                                                                                    sidecar_session.set(Some(crate::sidecar::SidecarSession {
+                                                                                        trace_id,
+                                                                                        controller_id: controller.to_string(),
+                                                                                        addressed_agent_ids: vec![agent_id],
+                                                                                        addressed_agent_label: agent_label,
+                                                                                        source_realm_id: realm_id.clone(),
+                                                                                        source_strand_id: default_strand_id_for_realm(&realm_id),
+                                                                                        private_circle_id: response.private_circle_id.to_string(),
+                                                                                        private_strand_id: response.private_strand_id.to_string(),
+                                                                                        private_relation_id: response.private_relation_id.to_string(),
+                                                                                        pending_member_reconciliations: response.pending_member_reconciliations.clone(),
+                                                                                        migrated_draft: String::new(),
+                                                                                        opened_at: chrono::Utc::now(),
+                                                                                    }));
                                                                                     let _ = navigator.push(Route::DirectConversation {
-                                                                                        realm_id: arkret_sdk::principal_control_realm_id(&controller),
+                                                                                        realm_id,
                                                                                         strand_id: response.private_strand_id.to_string(),
                                                                                     });
                                                                                 }
-                                                                                Err(err) => crate::components::feedback::toast_error(
-                                                                                    "feedback.direct_open_failed", vec![], Some(err.display()),
-                                                                                ),
+                                                                                Err(err) => {
+                                                                                    tracing::warn!(
+                                                                                        target: "sidecar",
+                                                                                        event = "sidecar.ensure.failed",
+                                                                                        trace_id = %trace_id,
+                                                                                        stage = "ensure",
+                                                                                        error = %err.display(),
+                                                                                    );
+                                                                                    crate::components::feedback::toast_error(
+                                                                                        "feedback.direct_open_failed", vec![], Some(err.display()),
+                                                                                    );
+                                                                                }
                                                                             }
                                                                         });
                                                                     }

@@ -62,6 +62,74 @@ test("workspace sidebar separates contact-based direct chats", async ({ page }) 
   await expect(shell.getByTestId("contacts-manage-page")).toContainText("bob:example.com");
 });
 
+test("owned agent ensure opens the dedicated private Sidecar shell", async ({ page }) => {
+  const shell = latestTestId(page, "client-shell");
+  await dismissBlockingRecoveryModal(page);
+  await shell.getByTestId("realm-sidebar-tab-direct").click();
+
+  const ensureResponse = page.waitForResponse(
+    (response) =>
+      response.url().includes("/_arkret/self/agent-sidecar-threads:ensure"),
+    { timeout: 20_000 },
+  );
+  const ownedAgentRow = shell
+    .getByTestId("contact-sidebar-agent-row")
+    .filter({ hasText: "Alice Assistant" });
+  await ownedAgentRow.click();
+  await expect((await ensureResponse).ok()).toBeTruthy();
+
+  await expect(page).toHaveURL(
+    /\/direct\/.*\/ak:strand:01964137-0000-7000-8000-0000000000a2$/,
+  );
+  await expect(shell.getByTestId("sidecar-context-strip")).toBeVisible();
+  await expect(shell.getByTestId("sidecar-addressed-now")).toContainText(
+    "Alice Assistant",
+  );
+  await expect(shell.getByTestId("sidecar-security-state")).toContainText(
+    "Private but not E2EE",
+  );
+  await expect(shell.getByTestId("sidecar-plaintext-disclosure")).toBeVisible();
+  await expect(shell.getByTestId("discussion-users-panel")).toHaveCount(0);
+  await expect(shell.getByTestId("chat-call-voice-button")).toBeHidden();
+
+  await shell.getByRole("button", { name: "Access" }).click();
+  await expect(shell.getByTestId("sidecar-access-panel")).toContainText(
+    "Addressed now",
+  );
+  await expect(shell.getByTestId("sidecar-access-panel")).toContainText(
+    "other eligible personal agents",
+  );
+
+  await shell.getByTestId("discussion-settings-toggle").click();
+  await expect(shell.getByTestId("sidecar-connection-details")).toContainText(
+    "Trace ID",
+  );
+});
+
+test("pending sidecar reconciliation blocks send without claiming readiness", async ({ page }) => {
+  const shell = latestTestId(page, "client-shell");
+  await dismissBlockingRecoveryModal(page);
+  await shell.getByTestId("realm-sidebar-tab-direct").click();
+  const ensureResponse = page.waitForResponse(
+    (response) =>
+      response.url().endsWith("/_arkret/self/agent-sidecar-threads:ensure"),
+    { timeout: 20_000 },
+  );
+  await shell
+    .getByTestId("contact-sidebar-agent-row")
+    .filter({ hasText: "Alice Assistant" })
+    .click();
+  await expect((await ensureResponse).ok()).toBeTruthy();
+
+  await expect(shell.getByTestId("sidecar-security-state")).toHaveText(
+    "Reconciling access",
+  );
+  await expect(shell.getByTestId("sidecar-readiness-gate")).toContainText(
+    "1 member",
+  );
+  await expect(shell.getByTestId("send-chat-button")).toBeDisabled();
+});
+
 test("new space strand uses sidebar realm context without home realm picker", async ({ page }) => {
   await refreshServer(page);
   const shell = latestTestId(page, "client-shell");

@@ -164,6 +164,7 @@ fn owned_agent_ids_from_mentions(mentions: &[MentionNode], controller_id: &str) 
 async fn ensure_owned_agent_sidecar(
     base_url: &str,
     api_token: String,
+    trace_id: &str,
     controller_id: &str,
     realm_id: &str,
     strand_id: &str,
@@ -184,6 +185,14 @@ async fn ensure_owned_agent_sidecar(
             arkret_sdk::StrandId::new(strand_id.to_owned())?,
         ),
     };
+    tracing::info!(
+        target: "sidecar",
+        event = "sidecar.ensure.started",
+        trace_id,
+        context_ref_kind = "strand",
+        attempt = 1_u8,
+        addressed_agent_count = request.addressed_agent_ids.len(),
+    );
     let outcome =
         crate::transport::auth::with_authed_sdk_client(base_url, api_token, |http| async move {
             http.agent_sidecar_thread_ensure(&request)
@@ -192,7 +201,43 @@ async fn ensure_owned_agent_sidecar(
         })
         .await
         .map_err(|error| anyhow::anyhow!(error.display()))?;
+    tracing::info!(
+        target: "sidecar",
+        event = "sidecar.ensure.completed",
+        trace_id,
+        pending_reconciliation_count = outcome.pending_member_reconciliations.len(),
+    );
     Ok(Some(outcome))
+}
+
+fn sidecar_agent_label(agent_ids: &[String], participants: &[SpaceParticipant]) -> String {
+    let labels = agent_ids
+        .iter()
+        .map(|agent_id| {
+            participants
+                .iter()
+                .find(|participant| participant.did == *agent_id)
+                .and_then(|participant| {
+                    participant
+                        .display_name
+                        .clone()
+                        .or_else(|| participant.handle_label.clone())
+                })
+                .unwrap_or_else(|| {
+                    agent_id
+                        .rsplit([':', '/'])
+                        .next()
+                        .filter(|value| !value.is_empty())
+                        .unwrap_or("Agent")
+                        .to_owned()
+                })
+        })
+        .collect::<Vec<_>>();
+    match labels.as_slice() {
+        [] => "AI Sidecar".to_owned(),
+        [label] => label.clone(),
+        _ => format!("{} + {} agents", labels[0], labels.len() - 1),
+    }
 }
 
 fn composer_mention_nodes(
@@ -323,6 +368,11 @@ pub fn ChatPanel(
     initial_strand_id: String,
     embedded: bool,
     direct_mode: bool,
+    /// Present only when `/direct/...` was reached through the standard
+    /// Agent Sidecar ensure flow. Contact DMs continue to use direct mode
+    /// without receiving Sidecar-specific membership semantics.
+    #[props(default)]
+    sidecar_session: Option<crate::sidecar::SidecarSession>,
     /// Optional deep-link target: when non-empty, the message with this id is
     /// scrolled into view and flashed on mount (design/route-view-ia.md §3.2).
     #[props(default)]
@@ -334,6 +384,23 @@ pub fn ChatPanel(
     let mut state_store = crate::app::SessionContext::get().state_store;
     let navigator = use_navigator();
     let controller = use_chat_controller(&selected_realm_id, &initial_strand_id, &account_did);
+    let mut migrated_draft_applied_for = use_signal(String::new);
+    {
+        let session = sidecar_session.clone();
+        let mut draft = controller.draft;
+        use_effect(move || {
+            let Some(session) = session.as_ref() else {
+                return;
+            };
+            if session.migrated_draft.trim().is_empty()
+                || migrated_draft_applied_for.peek().as_str() == session.trace_id
+            {
+                return;
+            }
+            draft.set(session.migrated_draft.clone());
+            migrated_draft_applied_for.set(session.trace_id.clone());
+        });
+    }
     let ChatController {
         mut channels,
         selected_channel,
@@ -394,8 +461,14 @@ pub fn ChatPanel(
         .into_iter()
         .map(|entry| entry.did)
         .collect();
-    let mut right_panel =
-        use_signal(|| Option::<DiscussionSidePanel>::Some(DiscussionSidePanel::Users));
+    let sidecar_mode = sidecar_session.is_some();
+    let mut right_panel = use_signal(move || {
+        if sidecar_mode {
+            None
+        } else {
+            Option::<DiscussionSidePanel>::Some(DiscussionSidePanel::Users)
+        }
+    });
     let selected_channel_value = selected_channel();
     let all_channels = channels();
     let filter_value = track_filter();
@@ -414,7 +487,9 @@ pub fn ChatPanel(
         .find(|channel| channel.strand_id == selected_channel_value)
         .cloned()
         .or_else(|| visible_channels.first().cloned());
-    let selected_channel_name = if embedded {
+    let selected_channel_name = if let Some(session) = sidecar_session.as_ref() {
+        session.addressed_agent_label.clone()
+    } else if embedded {
         "Discussion".to_owned()
     } else {
         selected_channel_info
@@ -446,6 +521,32 @@ pub fn ChatPanel(
     let selected_realm_pending_mls_binding = state_store
         .read()
         .realm_has_pending_mls_binding(&selected_realm_id);
+    let sidecar_security_label = sidecar_session.as_ref().map(|session| {
+        if !session.membership_ready() {
+            "Reconciling access"
+        } else if selected_channel_security_encrypted && selected_realm_pending_mls_binding {
+            "Preparing encryption"
+        } else if selected_channel_security_encrypted {
+            "E2EE"
+        } else {
+            "Private but not E2EE"
+        }
+    });
+    let sidecar_send_block_reason = sidecar_session.as_ref().and_then(|session| {
+        if !session.membership_ready() {
+            Some(format!(
+                "Access is still reconciling for {} member(s). Sending is disabled until the Sidecar membership projection is ready.",
+                session.pending_reconciliation_count()
+            ))
+        } else if selected_channel_security_encrypted && selected_realm_pending_mls_binding {
+            Some(
+                "Encryption membership is still being prepared. Sending is disabled until this device and the addressed Agent are ready."
+                    .to_owned(),
+            )
+        } else {
+            None
+        }
+    });
     // Fold the durable lifecycle log directly onto the controller's
     // optimistic rows. A sender's create can still be controller-only when a
     // remote reaction arrives, so projecting raw operations in isolation
@@ -529,9 +630,10 @@ pub fn ChatPanel(
     let active_right_panel = if embedded { None } else { right_panel() };
     let right_open = active_right_panel.is_some();
     let shell_class = format!(
-        "discussion-shell{}{}{}{}",
+        "discussion-shell{}{}{}{}{}",
         if embedded { " embedded" } else { "" },
         if direct_mode { " direct-mode" } else { "" },
+        if sidecar_mode { " sidecar-mode" } else { "" },
         if left_open { "" } else { " left-collapsed" },
         if right_open { "" } else { " right-collapsed" }
     );
@@ -966,12 +1068,24 @@ pub fn ChatPanel(
                 header { class: "discussion-chat-head",
                     div { class: "discussion-title-stack",
                         div { class: "discussion-title-row",
-                            SecurityStateBadge {
-                                encrypted: selected_channel_security_encrypted,
-                                compact: true,
-                                test_id: Some("selected-strand-security-state".to_owned()),
+                            if let Some(security_label) = sidecar_security_label {
+                                span {
+                                    class: if security_label == "E2EE" { "badge success" } else if security_label == "Private but not E2EE" { "badge warning" } else { "badge amber" },
+                                    "data-testid": "sidecar-security-state",
+                                    "{security_label}"
+                                }
+                            } else {
+                                SecurityStateBadge {
+                                    encrypted: selected_channel_security_encrypted,
+                                    compact: true,
+                                    test_id: Some("selected-strand-security-state".to_owned()),
+                                }
                             }
+                            if sidecar_mode { UiIcon { name: "bot" } }
                             h1 { "{selected_channel_name}" }
+                        }
+                        if sidecar_mode {
+                            span { class: "muted sidecar-subtitle", "Private AI sidecar · you and eligible personal agents in this Realm" }
                         }
                     }
                     if !embedded {
@@ -1142,8 +1256,8 @@ pub fn ChatPanel(
                         Button {
                             variant: ButtonVariant::Secondary,
                             class: if active_right_panel == Some(DiscussionSidePanel::Settings) { "icon-button active" } else { "icon-button" },
-                            "aria-label": "Settings",
-                            title: "Settings",
+                            "aria-label": if sidecar_mode { "Connection details" } else { "Settings" },
+                            title: if sidecar_mode { "Connection details" } else { "Settings" },
                             "data-testid": "discussion-settings-toggle",
                             onclick: move |_| {
                                 let next_panel = if right_panel() == Some(DiscussionSidePanel::Settings) {
@@ -1158,8 +1272,8 @@ pub fn ChatPanel(
                         Button {
                             variant: ButtonVariant::Secondary,
                             class: if active_right_panel == Some(DiscussionSidePanel::Users) { "icon-button active" } else { "icon-button" },
-                            "aria-label": "Users",
-                            title: "Users",
+                            "aria-label": if sidecar_mode { "Access" } else { "Users" },
+                            title: if sidecar_mode { "Access" } else { "Users" },
                             "data-testid": "discussion-users-toggle",
                             onclick: move |_| {
                                 let next_panel = if right_panel() == Some(DiscussionSidePanel::Users) {
@@ -1172,6 +1286,43 @@ pub fn ChatPanel(
                             UiIcon { name: "users" }
                         }
                     }
+                    }
+                }
+
+                if let Some(session) = sidecar_session.as_ref() {
+                    div { class: "sidecar-context-strip", "data-testid": "sidecar-context-strip",
+                        div { class: "sidecar-context-main",
+                            span { class: "muted", "Context" }
+                            strong { "Realm discussion" }
+                            span { class: "mono muted", "{session.source_strand_id}" }
+                        }
+                        a {
+                            class: "button secondary",
+                            href: "/chat/{session.source_realm_id}",
+                            "data-testid": "sidecar-open-context",
+                            "Open context"
+                        }
+                        div { class: "sidecar-addressed-now", "data-testid": "sidecar-addressed-now",
+                            span { class: "muted", "Addressed now" }
+                            strong { "{session.addressed_agent_label}" }
+                            span { class: "badge", {sidecar_security_label.unwrap_or("Opening")} }
+                        }
+                    }
+                    if !session.migrated_draft.trim().is_empty() {
+                        div { class: "event info sidecar-draft-notice", "data-testid": "sidecar-draft-migrated", role: "status",
+                            strong { "Message moved to this private composer" }
+                            span { "It has not been sent. Review it before sending." }
+                        }
+                    }
+                    if let Some(reason) = sidecar_send_block_reason.as_ref() {
+                        div { class: "event warning-banner", "data-testid": "sidecar-readiness-gate", role: "alert",
+                            strong { {sidecar_security_label.unwrap_or("Not ready")} }
+                            span { "{reason}" }
+                        }
+                    } else if !selected_channel_security_encrypted {
+                        div { class: "event warning-banner", "data-testid": "sidecar-plaintext-disclosure", role: "status",
+                            "This Sidecar is isolated by membership, delivery, and query permissions. Messages are not end-to-end encrypted."
+                        }
                     }
                 }
 
@@ -1373,7 +1524,7 @@ pub fn ChatPanel(
                 aside { class: "discussion-panel discussion-details-panel", "data-testid": "discussion-users-panel",
                     div { class: "discussion-panel-head",
                         div { class: "discussion-title-row",
-                            h2 { {crate::i18n::tr("chat.users_header")} }
+                            h2 { {if sidecar_mode { "Access".to_owned() } else { crate::i18n::tr("chat.users_header") }} }
                         }
                     }
                     // T7.5: lightweight tab bar so members and settings
@@ -1388,7 +1539,7 @@ pub fn ChatPanel(
                             class: "discussion-right-tab active",
                             "data-testid": "discussion-right-tab-members",
                             onclick: move |_| right_panel.set(Some(DiscussionSidePanel::Users)),
-                            {crate::i18n::tr("chat.tabs.members")}
+                            {if sidecar_mode { "Access".to_owned() } else { crate::i18n::tr("chat.tabs.members") }}
                         }
                         Button {
                             variant: ButtonVariant::Secondary,
@@ -1396,7 +1547,36 @@ pub fn ChatPanel(
                             class: "discussion-right-tab",
                             "data-testid": "discussion-right-tab-settings",
                             onclick: move |_| right_panel.set(Some(DiscussionSidePanel::Settings)),
-                            {crate::i18n::tr("chat.tabs.settings")}
+                            {if sidecar_mode { "Connection details".to_owned() } else { crate::i18n::tr("chat.tabs.settings") }}
+                        }
+                    }
+                    if let Some(session) = sidecar_session.as_ref() {
+                        div { class: "discussion-detail-section sidecar-access-section", "data-testid": "sidecar-access-panel",
+                            div { class: "discussion-subhead", span { "Sidecar members" } }
+                            div { class: "sidecar-access-row",
+                                div { strong { "You" } span { class: "muted", "Controller" } }
+                                span { class: "badge success", "Active" }
+                            }
+                            for (index, agent_id) in session.addressed_agent_ids.iter().enumerate() {
+                                div { class: "sidecar-access-row", key: "{agent_id}",
+                                    div {
+                                        strong {
+                                            if index == 0 { "{session.addressed_agent_label}" } else { "Personal agent" }
+                                        }
+                                        span { class: "muted mono", "{agent_id}" }
+                                    }
+                                    span { class: "badge", "Addressed now" }
+                                }
+                            }
+                            div { class: "event info",
+                                "This is the currently addressed set. The Sidecar Circle can also include other eligible personal agents; Inkson does not present this list as a 1:1 membership boundary."
+                            }
+                            div { class: "discussion-subhead", span { "Encryption" } }
+                            div { class: "detail-row", span { "Profile" } strong { {sidecar_security_label.unwrap_or("Opening")} } }
+                            div { class: "detail-row", span { "Membership reconciliation" } strong {
+                                if session.membership_ready() { "Complete" } else { "Pending" }
+                            } }
+                            div { class: "detail-row", span { "Pending members" } strong { "{session.pending_reconciliation_count()}" } }
                         }
                     }
                     // G3.Y2 — presence list. One row per participant
@@ -1577,7 +1757,7 @@ pub fn ChatPanel(
                 aside { class: "discussion-panel discussion-details-panel", "data-testid": "discussion-settings-panel",
                     div { class: "discussion-panel-head",
                         div { class: "discussion-title-row",
-                            h2 { {crate::i18n::tr("chat.settings_header")} }
+                            h2 { {if sidecar_mode { "Connection details".to_owned() } else { crate::i18n::tr("chat.settings_header") }} }
                         }
                     }
                     // T7.5: same tab bar as the users panel so the user
@@ -1590,7 +1770,7 @@ pub fn ChatPanel(
                             class: "discussion-right-tab",
                             "data-testid": "discussion-right-tab-members",
                             onclick: move |_| right_panel.set(Some(DiscussionSidePanel::Users)),
-                            {crate::i18n::tr("chat.tabs.members")}
+                            {if sidecar_mode { "Access".to_owned() } else { crate::i18n::tr("chat.tabs.members") }}
                         }
                         Button {
                             variant: ButtonVariant::Secondary,
@@ -1598,7 +1778,44 @@ pub fn ChatPanel(
                             class: "discussion-right-tab active",
                             "data-testid": "discussion-right-tab-settings",
                             onclick: move |_| right_panel.set(Some(DiscussionSidePanel::Settings)),
-                            {crate::i18n::tr("chat.tabs.settings")}
+                            {if sidecar_mode { "Connection details".to_owned() } else { crate::i18n::tr("chat.tabs.settings") }}
+                        }
+                    }
+                    if let Some(session) = sidecar_session.as_ref() {
+                        div { class: "discussion-detail-section sidecar-diagnostics-section", "data-testid": "sidecar-connection-details",
+                            div { class: "detail-row", span { "Trace ID" } strong { class: "mono", "{session.trace_id}" } }
+                            div { class: "detail-row", span { "Ensure" } strong { "Complete" } }
+                            div { class: "detail-row", span { "Circle membership" } strong {
+                                if session.membership_ready() { "Complete" } else { "Reconciling" }
+                            } }
+                            div { class: "detail-row", span { "Encryption" } strong { {sidecar_security_label.unwrap_or("Opening")} } }
+                            div { class: "detail-row", span { "Message submit" } strong { "Not started" } }
+                            div { class: "detail-row", span { "Notification fanout" } strong { "Not started" } }
+                            div { class: "detail-row", span { "Agent receipt" } strong { "Not received" } }
+                            div { class: "detail-row", span { "Last updated" } strong { {session.opened_at.format("%H:%M:%S").to_string()} } }
+                            div { class: "actions",
+                                Button {
+                                    variant: ButtonVariant::Secondary,
+                                    "data-testid": "sidecar-copy-diagnostics",
+                                    onclick: {
+                                        let summary = session.diagnostic_summary(
+                                            sidecar_security_label.unwrap_or("Opening"),
+                                        );
+                                        move |_| yoface::utils::dom::copy_text_to_clipboard(&summary)
+                                    },
+                                    "Copy diagnostic summary"
+                                }
+                                Button {
+                                    variant: ButtonVariant::Secondary,
+                                    onclick: move |_| {
+                                        navigator.push(Route::SettingsSection {
+                                            section: "agents".to_owned(),
+                                            filter: String::new(),
+                                        });
+                                    },
+                                    "Open agent settings"
+                                }
+                            }
                         }
                     }
                     div { class: "discussion-detail-section",
@@ -1676,9 +1893,9 @@ pub fn ChatPanel(
                 }
             }
 
-            // G3.Y2 — discussion promote confirmation modal. Renders
-            // a single input for the child Board Space title + a confirm
-            // button that fires a Realm-scoped ak.space.create.
+            // Experimental private-discussion workflow. It remains feature
+            // gated until the multi-event operation can resume safely after a
+            // partial failure.
             if crate::messaging::discussion_promote::discussion_promote_enabled()
                 && promote_discussion_draft.read().is_open()
             {
@@ -1686,7 +1903,7 @@ pub fn ChatPanel(
                     "data-testid": "discussion-promote-modal",
                     div { class: "discussion-modal",
                         div { class: "discussion-modal-head",
-                            h2 { "Promote discussion to its own Space" }
+                            h2 { "Create a private Circle discussion" }
                             Button {
                                 variant: ButtonVariant::Secondary,
                                 r#type: "button",
@@ -1695,7 +1912,7 @@ pub fn ChatPanel(
                             }
                         }
                         label { class: "form-row",
-                            span { "Child Space title" }
+                            span { "Private discussion title" }
                             input {
                                 r#type: "text",
                                 "data-testid": "discussion-promote-confirm-input",
@@ -1770,7 +1987,7 @@ pub fn ChatPanel(
                                                     .write()
                                                     .remove(&source_id_for_rollback);
                                                 status_msg.set(format!(
-                                                    "Discussion promote failed: {}",
+                                                    "Private discussion creation failed: {}",
                                                     err.display()
                                                 ));
                                             }
@@ -1820,6 +2037,7 @@ pub fn ChatPanel(
                     plaintext_service_id: plaintext_service_id.clone(),
                     selected_channel_security_encrypted,
                     selected_realm_pending_mls_binding,
+                    sidecar_send_block_reason: sidecar_send_block_reason.clone(),
                     public_agent_dids: public_agent_dids.clone(),
                     own_controller_handle: own_controller_handle.clone(),
                     mention_insert_request,

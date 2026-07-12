@@ -35,14 +35,20 @@ export async function dismissBlockingRecoveryModal(page: import("@playwright/tes
       .then(() => true)
       .catch(() => false);
     if (!visible) {
-      return;
+      break;
     }
-    const dismiss = modal.getByRole("button", { name: /^(Not now|Dismiss)$/ });
+    const dismiss = modal.getByRole("button", {
+      name: /^(Not now|Dismiss|Do this later)$/,
+    });
     if ((await dismiss.count()) === 0) {
-      return;
+      break;
     }
     await dismiss.first().evaluate((button: HTMLElement) => button.click());
     await page.waitForTimeout(150);
+  }
+  const authorizeLater = page.getByRole("button", { name: "Do this later" }).last();
+  if (await authorizeLater.isVisible().catch(() => false)) {
+    await authorizeLater.click();
   }
 }
 
@@ -305,10 +311,21 @@ export function registerStrandsBeforeEach() {
       )
         ? "2000-01-01T00:00:00Z"
         : undefined,
+      sidecarPendingMemberReconciliations: testInfo.title.startsWith(
+        "pending sidecar",
+      )
+        ? [
+            {
+              agent_id: "did:web:agents.example:alice-assistant",
+              reason: "membership_projection_pending",
+            },
+          ]
+        : undefined,
     });
     if (testInfo.title.startsWith("login page")) {
       return;
     }
+    await addSessionGrantInjection(page);
     await page.addInitScript((initialConfig) => {
       if (localStorage.getItem("inkson.config.v1")) {
         return;

@@ -45,6 +45,7 @@ pub(super) struct RouteSurfaceState {
 
 #[component]
 pub(super) fn RouteSurface(state: RouteSurfaceState) -> Element {
+    let sidecar_session = use_context::<crate::sidecar::SidecarSessionContext>().0;
     let RouteSurfaceState {
         content_route,
         navigation,
@@ -172,6 +173,8 @@ pub(super) fn RouteSurface(state: RouteSurfaceState) -> Element {
                             selected_realm_id.set(realm_id.clone());
                         }
                         if minimal_ready {
+                            let active_sidecar_session = sidecar_session()
+                                .filter(|session| session.matches_route(&realm_id, &strand_id));
                             rsx! {
                                 crate::views::chat::ChatPanel {
                                     plaintext_service_id: active_service_id.clone(),
@@ -185,6 +188,7 @@ pub(super) fn RouteSurface(state: RouteSurfaceState) -> Element {
                                     initial_strand_id: strand_id.clone(),
                                     embedded: false,
                                     direct_mode: true,
+                                    sidecar_session: active_sidecar_session,
                                 }
                             }
                         } else {

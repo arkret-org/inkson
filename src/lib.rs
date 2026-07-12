@@ -127,6 +127,7 @@ pub(crate) mod runtime_helpers;
 pub mod secure_key_store;
 pub mod security_state;
 pub mod service_parse;
+pub mod sidecar;
 pub mod snapshot;
 /// Sync projection layer (account/realm wire payloads -> local projection
 /// models); moved out of `views/` (YGN-ARCH-01 step 3).

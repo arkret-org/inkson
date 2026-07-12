@@ -1,6 +1,6 @@
 import { defineConfig, devices } from "@playwright/test";
 
-const baseURL = process.env.INKSON_E2E_BASE_URL ?? "http://127.0.0.1:4527";
+const baseURL = process.env.INKSON_E2E_BASE_URL ?? "http://127.0.0.1:4727";
 const shouldStartServer = !process.env.INKSON_E2E_BASE_URL;
 
 export default defineConfig({
@@ -25,10 +25,13 @@ export default defineConfig({
   webServer: shouldStartServer
     ? {
         command:
-          "dx serve --platform web --features wasm-localstorage-secrets-test --addr 127.0.0.1 --port 4527 --open false --hot-reload false --watch false",
-        url: baseURL,
+          "dx build --platform web --features wasm-localstorage-secrets-test && dx serve --platform web --features wasm-localstorage-secrets-test --addr 127.0.0.1 --port 4727 --open false --hot-reload false --watch false",
+        // `dx serve` binds the HTTP socket before the first WASM build is
+        // usable. Probe the generated module rather than `/`, otherwise
+        // Playwright can start tests against a shell whose `#main` is empty.
+        url: `${baseURL}/wasm/inkson.js`,
         reuseExistingServer: !process.env.CI,
-        timeout: 240_000,
+        timeout: 600_000,
         // Never let the E2E dx process overwrite the live development server's
         // wasm/CSS-module bundle in target/dx. CSS-module class hashes and
         // stylesheets must be emitted by the same build invocation.

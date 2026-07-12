@@ -19,7 +19,7 @@ pub fn discussion_promote_enabled() -> bool {
     cfg!(feature = "experimental-discussion-promote")
 }
 
-/// Modal state for the "promote discussion" confirmation dialog.
+/// Modal state for the experimental "create private Circle discussion" dialog.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct PromoteDiscussionDraft {
     /// Message id (or Strand id, depending on entry point) being

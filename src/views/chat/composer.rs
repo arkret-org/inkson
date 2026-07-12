@@ -12,6 +12,7 @@ pub(super) struct ChatComposerContext {
     pub plaintext_service_id: String,
     pub selected_channel_security_encrypted: bool,
     pub selected_realm_pending_mls_binding: bool,
+    pub sidecar_send_block_reason: Option<String>,
     pub public_agent_dids: std::collections::BTreeSet<String>,
     pub own_controller_handle: Option<String>,
     pub mention_insert_request: Option<Signal<Option<MentionInsertRequest>>>,
@@ -33,6 +34,7 @@ pub(super) fn ChatComposer(controller: ChatController, context: ChatComposerCont
         plaintext_service_id,
         selected_channel_security_encrypted,
         selected_realm_pending_mls_binding,
+        sidecar_send_block_reason,
         public_agent_dids,
         own_controller_handle,
         mention_insert_request,
@@ -42,6 +44,7 @@ pub(super) fn ChatComposer(controller: ChatController, context: ChatComposerCont
     } = context;
     let base_url = crate::app::SessionContext::base_url_string();
     let navigator = use_navigator();
+    let mut sidecar_session = use_context::<crate::sidecar::SidecarSessionContext>().0;
     let mut state_store = crate::app::SessionContext::get().state_store;
     let messages_snapshot = (controller.messages)();
     let messages_for_composer_lookup = &messages_snapshot;
@@ -81,6 +84,9 @@ pub(super) fn ChatComposer(controller: ChatController, context: ChatComposerCont
     } else {
         crate::i18n::tr("chat.send_secure")
     };
+    let sidecar_send_blocked = sidecar_send_block_reason.is_some();
+    let participants_for_plaintext_sidecar = participants_for_messages.clone();
+    let participants_for_encrypted_sidecar = participants_for_messages.clone();
 
     {
         let mut request_signal = mention_insert_request;
@@ -908,6 +914,7 @@ pub(super) fn ChatComposer(controller: ChatController, context: ChatComposerCont
                     Button {
                         variant: ButtonVariant::Primary,
                         "data-testid": "send-chat-button",
+                        disabled: sidecar_send_blocked,
                         onclick: {
                             let base = base_url.clone();
                             let service_id = plaintext_service_id.clone();
@@ -945,6 +952,14 @@ pub(super) fn ChatComposer(controller: ChatController, context: ChatComposerCont
                                             .any(|token| token.controller_handle == "me"));
                                 if targets_owned_agent {
                                     status_msg.set("Opening private AI sidecar thread…".to_owned());
+                                    let trace_id = uuid_v7();
+                                    tracing::info!(
+                                        target: "sidecar",
+                                        event = "sidecar.route.requested",
+                                        trace_id = %trace_id,
+                                        source_realm_id = %realm,
+                                        source_strand_id = %channel.strand_id,
+                                    );
                                     let base = base.clone();
                                     let api_token = token();
                                     let realm = realm.clone();
@@ -954,6 +969,8 @@ pub(super) fn ChatComposer(controller: ChatController, context: ChatComposerCont
                                     let own_controller_handle = own_controller_handle.clone();
                                     let wait_for = active_sync_token(sync_cursor());
                                     let mut resolved_mentions = mentions;
+                                    let participants_for_sidecar =
+                                        participants_for_plaintext_sidecar.clone();
                                     let navigator = navigator.clone();
                                     spawn(async move {
                                         for mention in resolve_agent_selector_mentions(
@@ -975,6 +992,7 @@ pub(super) fn ChatComposer(controller: ChatController, context: ChatComposerCont
                                         match ensure_owned_agent_sidecar(
                                             &base,
                                             api_token,
+                                            &trace_id,
                                             &actor,
                                             &realm,
                                             &strand_id,
@@ -983,10 +1001,32 @@ pub(super) fn ChatComposer(controller: ChatController, context: ChatComposerCont
                                         .await
                                         {
                                             Ok(Some(sidecar)) => {
+                                                let addressed_agent_ids = owned_agent_ids_from_mentions(
+                                                    &resolved_mentions,
+                                                    &actor,
+                                                );
+                                                let addressed_agent_label = sidecar_agent_label(
+                                                    &addressed_agent_ids,
+                                                    &participants_for_sidecar,
+                                                );
                                                 status_msg.set(
-                                                    "Private AI sidecar thread ready; send remains in the private composer."
+                                                    "Private AI sidecar opened; the message has not been sent."
                                                         .to_owned(),
                                                 );
+                                                sidecar_session.set(Some(crate::sidecar::SidecarSession {
+                                                    trace_id,
+                                                    controller_id: actor.clone(),
+                                                    addressed_agent_ids,
+                                                    addressed_agent_label,
+                                                    source_realm_id: realm.clone(),
+                                                    source_strand_id: strand_id,
+                                                    private_circle_id: sidecar.private_circle_id.to_string(),
+                                                    private_strand_id: sidecar.private_strand_id.to_string(),
+                                                    private_relation_id: sidecar.private_relation_id.to_string(),
+                                                    pending_member_reconciliations: sidecar.pending_member_reconciliations.clone(),
+                                                    migrated_draft: body_for_resolution,
+                                                    opened_at: chrono::Utc::now(),
+                                                }));
                                                 let _ = navigator.push(Route::DirectConversation {
                                                     realm_id: realm,
                                                     strand_id: sidecar.private_strand_id.to_string(),
@@ -1209,7 +1249,7 @@ pub(super) fn ChatComposer(controller: ChatController, context: ChatComposerCont
                     Button {
                         variant: send_secure_variant,
                         "data-testid": send_secure_testid,
-                        disabled: selected_realm_pending_mls_binding,
+                        disabled: selected_realm_pending_mls_binding || sidecar_send_blocked,
                         onclick: {
                             let base = base_url.clone();
                             let realm = selected_realm_id.clone();
@@ -1251,6 +1291,14 @@ pub(super) fn ChatComposer(controller: ChatController, context: ChatComposerCont
                                             .any(|token| token.controller_handle == "me"));
                                 if targets_owned_agent {
                                     status_msg.set("Opening private AI sidecar thread…".to_owned());
+                                    let trace_id = uuid_v7();
+                                    tracing::info!(
+                                        target: "sidecar",
+                                        event = "sidecar.route.requested",
+                                        trace_id = %trace_id,
+                                        source_realm_id = %realm,
+                                        source_strand_id = %strand_id,
+                                    );
                                     let base = base.clone();
                                     let api_token = token();
                                     let wait_for = active_sync_token(sync_cursor());
@@ -1260,6 +1308,8 @@ pub(super) fn ChatComposer(controller: ChatController, context: ChatComposerCont
                                     let body_for_resolution = body.clone();
                                     let own_controller_handle = own_controller_handle.clone();
                                     let mut resolved_mentions = mentions;
+                                    let participants_for_sidecar =
+                                        participants_for_encrypted_sidecar.clone();
                                     let navigator = navigator.clone();
                                     spawn(async move {
                                         for mention in resolve_agent_selector_mentions(
@@ -1281,6 +1331,7 @@ pub(super) fn ChatComposer(controller: ChatController, context: ChatComposerCont
                                         match ensure_owned_agent_sidecar(
                                             &base,
                                             api_token,
+                                            &trace_id,
                                             &actor_for_sidecar,
                                             &realm_for_sidecar,
                                             &strand_for_sidecar,
@@ -1289,10 +1340,32 @@ pub(super) fn ChatComposer(controller: ChatController, context: ChatComposerCont
                                         .await
                                         {
                                             Ok(Some(sidecar)) => {
+                                                let addressed_agent_ids = owned_agent_ids_from_mentions(
+                                                    &resolved_mentions,
+                                                    &actor_for_sidecar,
+                                                );
+                                                let addressed_agent_label = sidecar_agent_label(
+                                                    &addressed_agent_ids,
+                                                    &participants_for_sidecar,
+                                                );
                                                 status_msg.set(
-                                                    "Private AI sidecar thread ready; send remains in the private composer."
+                                                    "Private AI sidecar opened; the message has not been sent."
                                                         .to_owned(),
                                                 );
+                                                sidecar_session.set(Some(crate::sidecar::SidecarSession {
+                                                    trace_id,
+                                                    controller_id: actor_for_sidecar.clone(),
+                                                    addressed_agent_ids,
+                                                    addressed_agent_label,
+                                                    source_realm_id: realm_for_sidecar.clone(),
+                                                    source_strand_id: strand_for_sidecar,
+                                                    private_circle_id: sidecar.private_circle_id.to_string(),
+                                                    private_strand_id: sidecar.private_strand_id.to_string(),
+                                                    private_relation_id: sidecar.private_relation_id.to_string(),
+                                                    pending_member_reconciliations: sidecar.pending_member_reconciliations.clone(),
+                                                    migrated_draft: body_for_resolution,
+                                                    opened_at: chrono::Utc::now(),
+                                                }));
                                                 let _ = navigator.push(Route::DirectConversation {
                                                     realm_id: realm_for_sidecar,
                                                     strand_id: sidecar.private_strand_id.to_string(),

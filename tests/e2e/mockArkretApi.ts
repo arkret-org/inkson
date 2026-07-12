@@ -66,6 +66,7 @@ type MockArkretApiOptions = {
   includeDemoRealms?: boolean;
   includeLowFloorRealm?: boolean;
   personalAgentPairingExpiresAt?: string;
+  sidecarPendingMemberReconciliations?: Array<Record<string, unknown>>;
 };
 
 type MockAccountDevice = {
@@ -228,6 +229,8 @@ export async function mockArkretApi(
   const currentDeviceId =
     options.currentDeviceId ?? "ak:device:01964137-0000-7000-8000-0000000000a1";
   const includeDemoRealms = options.includeDemoRealms ?? true;
+  const sidecarPendingMemberReconciliations =
+    options.sidecarPendingMemberReconciliations ?? [];
   const includeLowFloorRealm = options.includeLowFloorRealm ?? false;
   const personalAgentPairingExpiresAt =
     options.personalAgentPairingExpiresAt ?? "2099-07-06T00:10:00Z";
@@ -303,6 +306,9 @@ export async function mockArkretApi(
       const summary: Record<string, unknown> = {
         device_id: device.device_id,
         status: device.status ?? (device.authorized_at ? "active" : "unknown"),
+        verification_state:
+          device.verification_state ??
+          (device.status === "revoked" ? "needs_reverification" : "verified"),
       };
       if (device.display_name !== undefined) {
         summary.display_name = device.display_name;
@@ -312,9 +318,6 @@ export async function mockArkretApi(
       }
       if (device.revoked_at) {
         summary.revoked_at = device.revoked_at;
-      }
-      if (device.verification_state) {
-        summary.verification_state = device.verification_state;
       }
       if (device.device_id === currentDeviceId) {
         summary.is_current_session_device = true;
@@ -1966,6 +1969,7 @@ export async function mockArkretApi(
         private_circle_id: "ak:circle:01964137-0000-7000-8000-0000000000a1",
         private_strand_id: "ak:strand:01964137-0000-7000-8000-0000000000a2",
         private_relation_id: "ak:relation:01964137-0000-7000-8000-0000000000a3",
+        pending_member_reconciliations: sidecarPendingMemberReconciliations,
       });
     }
 
