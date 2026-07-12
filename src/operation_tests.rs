@@ -882,7 +882,6 @@ fn strand_lifecycle_helpers_emit_canonical_kinds() {
 #[test]
 fn applet_helpers_emit_canonical_kinds_and_target_refs() {
     let service_id = "did:web:applet.example";
-    let session_id = "ak:session:01904100-0000-7000-8000-aa55aa55aa55";
     let applet_id = "did:web:applet.example";
     let realm = "ak:realm:0196419b-0000-7000-8000-0000000000aa";
     let actor = "did:web:alice.example";
@@ -892,37 +891,6 @@ fn applet_helpers_emit_canonical_kinds_and_target_refs() {
     assert_eq!(disc.kind.as_str(), "ak.applet.discovery");
     assert_eq!(disc.payload["manifest"]["version"], 1);
     assert_eq!(disc.local_target_ref(), Some(service_id));
-
-    let start = ak_ops::applet_interop_session_start(
-        realm,
-        actor,
-        applet_id,
-        session_id,
-        json!({"op": "ping"}),
-    )
-    .expect("builds")
-    .build("node");
-    assert_eq!(start.kind.as_str(), "ak.applet.interop_session.start");
-    assert_eq!(start.payload["applet_id"], applet_id);
-    assert_eq!(start.payload["session_id"], session_id);
-    assert_eq!(start.local_target_ref(), Some(session_id));
-    assert_registered_payload_valid(&start);
-
-    let status = ak_ops::applet_interop_session_status(
-        realm,
-        actor,
-        applet_id,
-        session_id,
-        "running",
-        json!({"progress_basis_points": 5000}),
-    )
-    .expect("builds")
-    .build("node");
-    assert_eq!(status.kind.as_str(), "ak.applet.interop_session.status");
-    assert_eq!(status.payload["applet_id"], applet_id);
-    assert_eq!(status.payload["runtime_status"], "running");
-    assert!(status.payload.get("status").is_none());
-    assert_registered_payload_valid(&status);
 
     let err = ak_ops::applet_bridge_error(
         realm,

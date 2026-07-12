@@ -203,7 +203,7 @@ pub fn AppletsPanel(token: Signal<String>, selected_realm_id: String) -> Element
     let mut install_circle_id = use_signal(String::new);
     let mut trace_open_for = use_signal(|| Option::<String>::None);
 
-    // Pull registry + session rows from the local raw-operation
+    // Pull registry rows from the local raw-operation
     // projection. The shape is keyed by op_type so a row's evidence is
     // the actual canonical event the projection observed; this view is
     // explicitly local-only — soland's projection_events feed will fan
@@ -216,17 +216,6 @@ pub fn AppletsPanel(token: Signal<String>, selected_realm_id: String) -> Element
                 .get("kind")
                 .and_then(Value::as_str)
                 .map(|k| k == "ak.applet.registration")
-                .unwrap_or(false)
-        })
-        .cloned()
-        .collect();
-    let sessions: Vec<_> = raw_ops
-        .iter()
-        .filter(|r| {
-            r.payload
-                .get("kind")
-                .and_then(Value::as_str)
-                .map(|k| k.starts_with("ak.applet.interop_session."))
                 .unwrap_or(false)
         })
         .cloned()
@@ -303,7 +292,7 @@ pub fn AppletsPanel(token: Signal<String>, selected_realm_id: String) -> Element
     };
 
     rsx! {
-        div { class: "timeline", "data-testid": "applets-panel", role: "region", "aria-label": "Applet registry and protocol sessions",
+        div { class: "timeline", "data-testid": "applets-panel", role: "region", "aria-label": "Applet registry and bridge errors",
             div { class: "event",
                 div { class: "event-head",
                     span { "Applet registry" }
@@ -341,49 +330,6 @@ pub fn AppletsPanel(token: Signal<String>, selected_realm_id: String) -> Element
                     }
                 }
             }
-            div { class: "event", "data-testid": "applet-session-list",
-                div { class: "event-head",
-                    span { "Active protocol sessions" }
-                    span { class: "badge",
-                        "{sessions.len()} session-event(s)"
-                    }
-                }
-                if sessions.is_empty() {
-                    div { class: "muted", "data-testid": "applet-session-empty",
-                        "No protocol sessions observed. Once an applet calls ak.applet.interop_session.start the row appears here with its status updates."
-                    }
-                } else {
-                    for s in sessions {
-                        {
-                            let kind = s.payload.get("kind")
-                                .and_then(Value::as_str)
-                                .unwrap_or("?")
-                                .to_owned();
-                            let session_id = s.payload.get("body")
-                                .and_then(|b| b.get("session_id"))
-                                .and_then(Value::as_str)
-                                .unwrap_or("?")
-                                .to_owned();
-                            let status_opt = s.payload.get("body")
-                                .and_then(|b| b.get("status"))
-                                .and_then(Value::as_str)
-                                .map(ToOwned::to_owned);
-                            let session_id_label = short_protocol_id(&session_id);
-                            rsx! {
-                                div { class: "event", "data-testid": "applet-session-row",
-                                    div { class: "event-head",
-                                        span { class: "mono", "{kind}" }
-                                        span { class: "mono", title: "{session_id}", "{session_id_label}" }
-                                    }
-                                    if let Some(status_str) = status_opt {
-                                        div { class: "muted", "status: {status_str}" }
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-            }
             div { class: "event", "data-testid": "applet-bridge-errors",
                 div { class: "event-head",
                     span { "Bridge errors" }
@@ -399,8 +345,8 @@ pub fn AppletsPanel(token: Signal<String>, selected_realm_id: String) -> Element
                                 .and_then(Value::as_str)
                                 .unwrap_or("?")
                                 .to_owned();
-                            let session_id = e.payload.get("body")
-                                .and_then(|b| b.get("session_id"))
+                            let failed_transaction_ref = e.payload.get("body")
+                                .and_then(|b| b.get("failed_transaction_ref"))
                                 .and_then(Value::as_str)
                                 .unwrap_or("?")
                                 .to_owned();
@@ -408,12 +354,12 @@ pub fn AppletsPanel(token: Signal<String>, selected_realm_id: String) -> Element
                                 .and_then(|b| b.get("message"))
                                 .and_then(Value::as_str)
                                 .map(ToOwned::to_owned);
-                            let session_id_label = short_protocol_id(&session_id);
+                            let failed_transaction_ref_label = short_protocol_id(&failed_transaction_ref);
                             rsx! {
                                 div { class: "event", "data-testid": "applet-bridge-error-row",
                                     div { class: "event-head",
                                         span { class: "mono", "{error_code}" }
-                                        span { class: "mono", title: "{session_id}", "{session_id_label}" }
+                                        span { class: "mono", title: "{failed_transaction_ref}", "{failed_transaction_ref_label}" }
                                     }
                                     if let Some(msg) = msg_opt {
                                         div { class: "muted", "{msg}" }
@@ -866,18 +812,6 @@ pub fn AppletsPanel(token: Signal<String>, selected_realm_id: String) -> Element
 
 #[cfg(test)]
 mod tests {
-
-    #[test]
-    fn applet_session_kind_filter_matches_three_session_event_kinds() {
-        // The view filters with `kind.starts_with("ak.applet.interop_session.")`.
-        for kind in [
-            "ak.applet.interop_session.start",
-            "ak.applet.interop_session.status",
-        ] {
-            assert!(kind.starts_with("ak.applet.interop_session."));
-        }
-        assert!(!"ak.applet.registration".starts_with("ak.applet.interop_session."));
-    }
 
     // ── G3.Y4 — install helpers ─────────────────────────────────
 
