@@ -51,10 +51,7 @@
 use std::sync::{Arc, Mutex, OnceLock};
 
 use arkret_sdk::signatures::proof::{EventSigner as SdkEventSigner, ProofType};
-use arkret_sdk::{
-    Did, Error as ArkretError, Hash, Move, MoveSignature, MoveSigner, Result as ArkretResult,
-    UnsignedMove,
-};
+use arkret_sdk::{Did, Hash, Move, MoveSignature, MoveSigner, UnsignedMove, WireError};
 use base64::Engine as _;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use chrono::{DateTime, Utc};
@@ -147,9 +144,9 @@ struct InksonMoveSignerAdapter<'a> {
 }
 
 impl MoveSigner for InksonMoveSignerAdapter<'_> {
-    fn sign_move(&self, unsigned: &UnsignedMove) -> ArkretResult<Move> {
+    fn sign_move(&self, unsigned: &UnsignedMove) -> Result<Move, WireError> {
         if unsigned.issuer != self.did {
-            return Err(ArkretError::Protocol(format!(
+            return Err(WireError::Protocol(format!(
                 "Move issuer {} does not match signer DID {}",
                 unsigned.issuer, self.did
             )));
@@ -176,12 +173,12 @@ impl MoveSigner for InksonMoveSignerAdapter<'_> {
         &self.verification_method
     }
 
-    fn sign_payload(&self, canonical_bytes: &[u8]) -> ArkretResult<MoveSignature> {
+    fn sign_payload(&self, canonical_bytes: &[u8]) -> Result<MoveSignature, WireError> {
         let signature = self
             .owner
             .inner
             .sign(canonical_bytes)
-            .map_err(|error| ArkretError::Protocol(error.to_string()))?;
+            .map_err(|error| WireError::Protocol(error.to_string()))?;
         let header = serde_json::to_vec(&serde_json::json!({
             "alg": self.owner.algorithm(),
         }))?;

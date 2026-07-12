@@ -36,13 +36,17 @@ const RECORD_WRAP_KEY_INFO: &[u8] = b"arkret-file-transfer-record-wrap-v1";
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct FileTransferCryptoContext {
+    account_data_secret: [u8; CONTENT_KEY_LEN],
     namespace_key: [u8; CONTENT_KEY_LEN],
     record_wrap_key: [u8; CONTENT_KEY_LEN],
 }
 
 impl FileTransferCryptoContext {
     pub fn from_account_secret(account_secret: &str) -> anyhow::Result<Self> {
+        let account_data_secret = decode_fixed::<CONTENT_KEY_LEN>(account_secret.trim())
+            .map_err(|error| anyhow::anyhow!("account secret: {error}"))?;
         Ok(Self {
+            account_data_secret,
             namespace_key: derive_account_subkey(account_secret, NAMESPACE_KEY_INFO)?,
             record_wrap_key: derive_account_subkey(account_secret, RECORD_WRAP_KEY_INFO)?,
         })
@@ -814,13 +818,21 @@ fn seal_record_envelope(
             },
         )
         .map_err(|error| anyhow::anyhow!("file-transfer record seal failed: {error}"))?;
-    Ok(json!({
+    let inner_envelope = json!({
         "scheme": FILE_TRANSFER_RECORD_ENVELOPE_SCHEME,
         "aead_profile": FILE_TRANSFER_AEAD_PROFILE,
         "nonce": URL_SAFE_NO_PAD.encode(nonce),
         "aad": aad,
         "ciphertext": URL_SAFE_NO_PAD.encode(ciphertext),
-    }))
+    });
+    let envelope = arkret_sdk::account_data_crypto::seal_account_data_value(
+        &crypto.account_data_secret,
+        actor_id,
+        account_data_key,
+        &inner_envelope,
+    )?;
+    serde_json::to_value(envelope)
+        .map_err(|error| anyhow::anyhow!("file-transfer account-data envelope JSON: {error}"))
 }
 
 fn open_record_envelope(
@@ -828,6 +840,17 @@ fn open_record_envelope(
     crypto: &FileTransferCryptoContext,
     account_data_key: &str,
 ) -> anyhow::Result<FileTransferRecord> {
+    let outer: arkret_sdk::account_data_crypto::AccountDataEncryptedValue =
+        serde_json::from_value(envelope.clone()).map_err(|error| {
+            anyhow::anyhow!("file-transfer account-data outer envelope: {error}")
+        })?;
+    let actor_id = outer.aad.actor_id.clone();
+    let envelope = arkret_sdk::account_data_crypto::open_account_data_value(
+        &crypto.account_data_secret,
+        &actor_id,
+        account_data_key,
+        &outer,
+    )?;
     if envelope.get("scheme").and_then(Value::as_str) != Some(FILE_TRANSFER_RECORD_ENVELOPE_SCHEME)
     {
         anyhow::bail!("file-transfer account-data envelope scheme mismatch");
@@ -835,9 +858,9 @@ fn open_record_envelope(
     if envelope.get("aead_profile").and_then(Value::as_str) != Some(FILE_TRANSFER_AEAD_PROFILE) {
         anyhow::bail!("file-transfer account-data envelope AEAD mismatch");
     }
-    let nonce = decode_fixed::<XCHACHA_NONCE_LEN>(required_str(envelope, "nonce")?)?;
+    let nonce = decode_fixed::<XCHACHA_NONCE_LEN>(required_str(&envelope, "nonce")?)?;
     let ciphertext = URL_SAFE_NO_PAD
-        .decode(required_str(envelope, "ciphertext")?)
+        .decode(required_str(&envelope, "ciphertext")?)
         .map_err(|error| anyhow::anyhow!("file-transfer record ciphertext base64: {error}"))?;
     let aad = envelope
         .get("aad")
@@ -1061,8 +1084,13 @@ mod tests {
     const RECIPIENT_DEVICE: &str = "ak:device:01904100-0000-7000-8000-000000000002";
     const OTHER_DEVICE: &str = "ak:device:01904100-0000-7000-8000-000000000003";
 
+    fn test_account_secret() -> String {
+        URL_SAFE_NO_PAD.encode([7u8; 32])
+    }
+
     fn device_bound_fixture() -> (FileTransferRecord, Vec<u8>, Vec<u8>, Value) {
-        let crypto = FileTransferCryptoContext::from_account_secret("test-account-secret").unwrap();
+        let crypto =
+            FileTransferCryptoContext::from_account_secret(&test_account_secret()).unwrap();
         let prepared = prepare_actor_private_file(
             &crypto,
             ACTOR,
@@ -1104,7 +1132,8 @@ mod tests {
 
     #[test]
     fn prepared_file_round_trips_through_record_envelope_and_content_aead() {
-        let crypto = FileTransferCryptoContext::from_account_secret("test-account-secret").unwrap();
+        let crypto =
+            FileTransferCryptoContext::from_account_secret(&test_account_secret()).unwrap();
         let prepared = prepare_actor_private_file(
             &crypto,
             ACTOR,
@@ -1236,7 +1265,8 @@ mod tests {
 
     #[test]
     fn record_envelope_must_match_account_data_key() {
-        let crypto = FileTransferCryptoContext::from_account_secret("test-account-secret").unwrap();
+        let crypto =
+            FileTransferCryptoContext::from_account_secret(&test_account_secret()).unwrap();
         let prepared = prepare_actor_private_file(
             &crypto,
             ACTOR,
@@ -1270,7 +1300,8 @@ mod tests {
 
     #[test]
     fn digest_or_blob_ref_drift_fails_closed() {
-        let crypto = FileTransferCryptoContext::from_account_secret("test-account-secret").unwrap();
+        let crypto =
+            FileTransferCryptoContext::from_account_secret(&test_account_secret()).unwrap();
         let prepared = prepare_actor_private_file(
             &crypto,
             ACTOR,
@@ -1294,7 +1325,8 @@ mod tests {
 
     #[test]
     fn top_level_and_content_aad_must_match() {
-        let crypto = FileTransferCryptoContext::from_account_secret("test-account-secret").unwrap();
+        let crypto =
+            FileTransferCryptoContext::from_account_secret(&test_account_secret()).unwrap();
         let prepared = prepare_actor_private_file(
             &crypto,
             ACTOR,

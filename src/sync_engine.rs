@@ -2242,25 +2242,32 @@ fn apply_account_data(
         let Some(data_type) = entry.get("data_type").and_then(Value::as_str) else {
             continue;
         };
-        // client.ui — theme + avatar pointer.
-        if data_type == "client.ui" {
-            if let Some(content) = entry.get("content") {
-                let local_theme = store
-                    .load_private_data(account_did, "theme")
-                    .unwrap_or_else(|| "night".to_owned());
-                if let Some(remote_theme) =
-                    crate::account_data::merge_client_ui_theme(&local_theme, content)
-                {
-                    store.save_private_data(account_did, "theme", remote_theme.clone());
-                    synced_theme = Some(remote_theme);
+        // ak.client.ui_state — theme + avatar pointer.
+        if data_type == "ak.client.ui_state" {
+            match crate::account_data::decrypt_account_data_entry(account_did, data_type, entry) {
+                Ok(content) => {
+                    let local_theme = store
+                        .load_private_data(account_did, "theme")
+                        .unwrap_or_else(|| "night".to_owned());
+                    if let Some(remote_theme) =
+                        crate::account_data::merge_client_ui_theme(&local_theme, &content)
+                    {
+                        store.save_private_data(account_did, "theme", remote_theme.clone());
+                        synced_theme = Some(remote_theme);
+                    }
+                    if let Some(avatar_blob_ref) =
+                        crate::account_data::avatar_blob_ref_from_client_ui(&content)
+                    {
+                        store.save_private_data(account_did, "avatar_blob_ref", avatar_blob_ref);
+                    } else if crate::account_data::avatar_blob_ref_tombstoned_from_client_ui(
+                        &content,
+                    ) {
+                        store.save_private_data(account_did, "avatar_blob_ref", "");
+                    }
                 }
-                if let Some(avatar_blob_ref) =
-                    crate::account_data::avatar_blob_ref_from_client_ui(content)
-                {
-                    store.save_private_data(account_did, "avatar_blob_ref", avatar_blob_ref);
-                } else if crate::account_data::avatar_blob_ref_tombstoned_from_client_ui(content) {
-                    store.save_private_data(account_did, "avatar_blob_ref", "");
-                }
+                Err(error) => tracing::warn!(
+                    "sync engine: ignoring undecryptable ak.client.ui_state: {error}"
+                ),
             }
             continue;
         }

@@ -160,12 +160,40 @@ pub fn parse_dnd_settings(value: &Value) -> Option<DndSettings> {
     serde_json::from_value(body).ok()
 }
 
-pub fn push_rules_from_account_data(entries: &[Value]) -> Option<PushRulesConfig> {
-    account_data_content(entries, "ak.push_rules").and_then(parse_push_rules)
+pub fn push_rules_from_account_data(
+    actor_id: &str,
+    entries: &[Value],
+) -> Option<PushRulesConfig> {
+    encrypted_account_data_content(actor_id, entries, "ak.push_rules").and_then(|value| {
+        parse_push_rules(&value)
+    })
 }
 
-pub fn dnd_settings_from_account_data(entries: &[Value]) -> Option<DndSettings> {
-    account_data_content(entries, "ak.dnd_schedule").and_then(parse_dnd_settings)
+pub fn dnd_settings_from_account_data(actor_id: &str, entries: &[Value]) -> Option<DndSettings> {
+    encrypted_account_data_content(actor_id, entries, "ak.dnd_schedule").and_then(|value| {
+        parse_dnd_settings(&value)
+    })
+}
+
+fn encrypted_account_data_content(
+    actor_id: &str,
+    entries: &[Value],
+    data_type: &str,
+) -> Option<Value> {
+    let entry = entries.iter().find(|entry| {
+        entry
+            .get("data_type")
+            .or_else(|| entry.get("type"))
+            .and_then(Value::as_str)
+            == Some(data_type)
+    })?;
+    match crate::account_data::decrypt_account_data_entry(actor_id, data_type, entry) {
+        Ok(value) => Some(value),
+        Err(error) => {
+            tracing::warn!(%error, %data_type, "ignoring undecryptable notification account_data");
+            None
+        }
+    }
 }
 
 pub fn evaluate_notification(
@@ -853,7 +881,7 @@ mod tests {
     }
 
     #[test]
-    fn account_data_helpers_extract_canonical_keys() {
+    fn plaintext_parsers_extract_canonical_account_data_keys() {
         let entries = vec![
             json!({
                 "data_type": "ak.push_rules",
@@ -866,7 +894,8 @@ mod tests {
         ];
 
         assert_eq!(
-            push_rules_from_account_data(&entries)
+            account_data_content(&entries, "ak.push_rules")
+                .and_then(parse_push_rules)
                 .unwrap()
                 .rules
                 .first()
@@ -874,6 +903,11 @@ mod tests {
                 .rule_id,
             "r1"
         );
-        assert!(dnd_settings_from_account_data(&entries).unwrap().enabled);
+        assert!(
+            account_data_content(&entries, "ak.dnd_schedule")
+                .and_then(parse_dnd_settings)
+                .unwrap()
+                .enabled
+        );
     }
 }

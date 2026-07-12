@@ -1492,7 +1492,7 @@ fn AppBootstrap() -> Element {
                         theme.set(next.clone());
                         state_store.write().save_private_data(&account_did(), "theme", next.clone());
                         // A4a — best-effort cross-device sync via
-                        // `ak.account_data.set(client.ui)`.
+                        // `ak.account_data.set(ak.client.ui_state)`.
                         crate::views::settings::push_client_ui_account_data(
                             base_url(),
                             token(),
@@ -3058,7 +3058,7 @@ fn AppBootstrap() -> Element {
                                 theme.set(next.clone());
                                 state_store.write().save_private_data(&account_did(), "theme", next.clone());
                                 // A4a — best-effort cross-device sync
-                                // via `ak.account_data.set(client.ui)`.
+                                // via `ak.account_data.set(ak.client.ui_state)`.
                                 crate::views::settings::push_client_ui_account_data(
                                     base_url(),
                                     token(),

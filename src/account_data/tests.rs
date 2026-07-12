@@ -67,8 +67,8 @@ fn snapshot_head_persists_through_serde_round_trip() {
 fn snapshot_head_absent_from_state_defaults_to_none() {
     let persisted = json!({
         "entries": {
-            "client.ui": {
-                "key": "client.ui",
+            "ak.client.ui_state": {
+                "key": "ak.client.ui_state",
                 "value": {"theme": "light"},
                 "digest": "sha256:00",
                 "hlc": ""
@@ -83,7 +83,7 @@ fn snapshot_head_absent_from_state_defaults_to_none() {
 #[test]
 fn key_round_trip() {
     for s in [
-        "client.ui",
+        "ak.client.ui_state",
         "ak.read_receipt.preferences",
         "ak.presence.visibility",
         "ak.presence.preference",
@@ -569,7 +569,7 @@ fn blocklist_entries_parse_canonical_account_data_body() {
     );
 }
 
-// ── A4a — client.ui shape + merge logic ────────────────────────────
+// ── A4a — ak.client.ui_state shape + merge logic ────────────────────────────
 #[test]
 fn build_client_ui_body_only_emits_present_fields() {
     let body = build_client_ui_body(Some("light"), None, &BTreeMap::new(), None);
@@ -591,7 +591,7 @@ fn build_client_ui_body_only_emits_present_fields() {
     assert_eq!(body["sidebar_collapsed"], false);
 }
 
-// ── A4b — avatar_blob_ref round-trip through client.ui ─────────────
+// ── A4b — avatar_blob_ref round-trip through ak.client.ui_state ─────────────
 #[test]
 fn avatar_blob_ref_round_trips_through_client_ui() {
     let blob_ref =

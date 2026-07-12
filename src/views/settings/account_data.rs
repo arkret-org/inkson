@@ -65,7 +65,7 @@ pub(super) fn push_read_receipt_account_data(
     api_token: String,
     state_store: SyncSignal<LocalStateStore>,
 ) {
-    let body = build_read_receipt_preferences_body(
+    let plaintext = build_read_receipt_preferences_body(
         state_store.read().read_receipt_default_send(),
         state_store.read().read_receipt_default_display(),
         &state_store.read().read_receipt_realm_overrides(),
@@ -73,6 +73,13 @@ pub(super) fn push_read_receipt_account_data(
         &state_store.read().read_receipt_strand_overrides(),
         &state_store.read().read_receipt_strand_display_overrides(),
     );
+    let body = match encrypted_account_data_value(READ_RECEIPT_ACCOUNT_DATA_KEY, &plaintext) {
+        Ok(body) => body,
+        Err(error) => {
+            tracing::warn!(%error, "ak.read_receipt.preferences encryption failed");
+            return;
+        }
+    };
     spawn(async move {
         match with_event_submitter(&base_url, api_token, |sub| async move {
             crate::transport::account::set_account_data(&sub, READ_RECEIPT_ACCOUNT_DATA_KEY, body)

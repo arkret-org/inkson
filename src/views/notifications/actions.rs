@@ -65,8 +65,10 @@ pub(crate) fn refresh_notifications(
         .await
         {
             Ok((response, invite_notifications)) => {
-                let push_rules = push_rules_from_account_data(&response.account_data);
-                let account_dnd = dnd_settings_from_account_data(&response.account_data);
+                let account_did = state_store.read().active_account_did().unwrap_or_default();
+                let push_rules = push_rules_from_account_data(&account_did, &response.account_data);
+                let account_dnd =
+                    dnd_settings_from_account_data(&account_did, &response.account_data);
                 let mut raw_notifications = raw_notifications_from_sources(
                     Some(&response.notifications),
                     &response.account_data,
@@ -315,8 +317,9 @@ fn accept_invite_notification(
         .await
         {
             Ok((Ok(sync), invite_notifications)) => {
-                let push_rules = push_rules_from_account_data(&sync.account_data);
-                let account_dnd = dnd_settings_from_account_data(&sync.account_data);
+                let account_did = state_store.read().active_account_did().unwrap_or_default();
+                let push_rules = push_rules_from_account_data(&account_did, &sync.account_data);
+                let account_dnd = dnd_settings_from_account_data(&account_did, &sync.account_data);
                 let mut hidden_realms = joined_realm_ids(&sync);
                 hidden_realms.insert(accepted_realm.clone());
                 let mut realm_title_hints = BTreeMap::new();

@@ -242,7 +242,7 @@ pub(super) struct ConnectContext {
     pub(super) personal_handles: Signal<Vec<String>>,
     pub(super) personal_handles_status: Signal<String>,
     /// A4a: shared UI theme signal so `/sync` can hydrate the theme
-    /// from the remote `client.ui` account-data payload right after
+    /// from the remote `ak.client.ui_state` account-data payload right after
     /// session bootstrap. Stub field — wire-up is tracked under A4a.
     pub(super) theme: Signal<String>,
     /// SyncEngine generation counter. Bumped when `connect()` detects
@@ -1369,31 +1369,36 @@ pub(super) fn connect(base: String, actor: String, device: String, ctx: ConnectC
                                 else {
                                     continue;
                                 };
-                                // A4a — hydrate `client.ui` theme from
+                                // A4a — hydrate `ak.client.ui_state` theme from
                                 // the remote payload. Cross-device wins:
                                 // when remote carries a valid theme that
                                 // differs from the local cached value
                                 // we update the UI Signal +
                                 // LocalConfigStore synchronously.
-                                if data_type == "client.ui" {
-                                    if let Some(content) = entry.get("content") {
-                                        let local_theme = theme();
-                                        if let Some(remote_theme) =
-                                            crate::account_data::merge_client_ui_theme(
-                                                &local_theme,
-                                                content,
-                                            )
-                                        {
-                                            theme.set(remote_theme.clone());
-                                            store.save_private_data(
-                                                &account_did(),
-                                                "theme",
-                                                remote_theme,
-                                            );
-                                        }
-                                        if let Some(avatar_blob_ref) =
+                                if data_type == "ak.client.ui_state" {
+                                    match crate::account_data::decrypt_account_data_entry(
+                                        &account_did(),
+                                        data_type,
+                                        entry,
+                                    ) {
+                                        Ok(content) => {
+                                            let local_theme = theme();
+                                            if let Some(remote_theme) =
+                                                crate::account_data::merge_client_ui_theme(
+                                                    &local_theme,
+                                                    &content,
+                                                )
+                                            {
+                                                theme.set(remote_theme.clone());
+                                                store.save_private_data(
+                                                    &account_did(),
+                                                    "theme",
+                                                    remote_theme,
+                                                );
+                                            }
+                                            if let Some(avatar_blob_ref) =
                                             crate::account_data::avatar_blob_ref_from_client_ui(
-                                                content,
+                                                &content,
                                             )
                                         {
                                             store.save_private_data(
@@ -1401,13 +1406,17 @@ pub(super) fn connect(base: String, actor: String, device: String, ctx: ConnectC
                                                 "avatar_blob_ref",
                                                 avatar_blob_ref,
                                             );
-                                        } else if crate::account_data::avatar_blob_ref_tombstoned_from_client_ui(content) {
+                                        } else if crate::account_data::avatar_blob_ref_tombstoned_from_client_ui(&content) {
                                             store.save_private_data(
                                                 &account_did(),
                                                 "avatar_blob_ref",
                                                 "",
                                             );
                                         }
+                                        }
+                                        Err(error) => tracing::warn!(
+                                            "ignoring undecryptable ak.client.ui_state: {error}"
+                                        ),
                                     }
                                     continue;
                                 }

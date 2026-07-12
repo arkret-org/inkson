@@ -1,7 +1,7 @@
-//! `client.ui` account-data payload helpers (theme, sidebar collapsed,
+//! `ak.client.ui_state` account-data payload helpers (theme, sidebar collapsed,
 //! per-Realm view, avatar blob ref cache).
 //!
-//! Spec: `discovery/client-preferences.md` §2 — the `client.ui`
+//! Spec: `discovery/client-preferences.md` §2 — the `ak.client.ui_state`
 //! account-data key carries cross-device UI preferences. Inkson persists
 //! theme + sidebar state locally and best-effort syncs them across
 //! devices via `ak.account_data.set`.
@@ -11,14 +11,14 @@ use std::collections::BTreeMap;
 use serde_json::Value;
 
 // ─────────────────────────────────────────────────────────────────────────
-// A4a — `client.ui` payload (theme, sidebar collapsed, per-Realm view).
-// Spec: `discovery/client-preferences.md` §2 — the `client.ui`
+// A4a — `ak.client.ui_state` payload (theme, sidebar collapsed, per-Realm view).
+// Spec: `discovery/client-preferences.md` §2 — the `ak.client.ui_state`
 // account-data key carries cross-device UI preferences. Inkson persists
 // theme + sidebar state locally and best-effort syncs them across
 // devices via `ak.account_data.set`.
 // ─────────────────────────────────────────────────────────────────────────
 
-/// Build the canonical `content` body for the `client.ui` account-data
+/// Build the canonical `content` body for the `ak.client.ui_state` account-data
 /// entry. Mirrors the shape clients on other platforms agree on so a
 /// device that joins later sees the same field names.
 ///
@@ -63,9 +63,9 @@ pub fn build_client_ui_body(
     Value::Object(map)
 }
 
-/// Extract `avatar_blob_ref` from a `client.ui` payload. Returns `None`
+/// Extract `avatar_blob_ref` from a `ak.client.ui_state` payload. Returns `None`
 /// when the field is missing, empty, or not a string (older clients
-/// wrote `client.ui` without this field; treat that as "no override").
+/// wrote `ak.client.ui_state` without this field; treat that as "no override").
 pub fn avatar_blob_ref_from_client_ui(value: &Value) -> Option<String> {
     value
         .get("avatar_blob_ref")
@@ -76,7 +76,7 @@ pub fn avatar_blob_ref_from_client_ui(value: &Value) -> Option<String> {
         .map(|value| value.to_string())
 }
 
-/// True when a remote `client.ui` payload explicitly tombstones the avatar
+/// True when a remote `ak.client.ui_state` payload explicitly tombstones the avatar
 /// cache with `avatar_blob_ref: ""`. Missing/non-string fields mean "no
 /// opinion" so older clients do not clear a newer local value by accident.
 pub fn avatar_blob_ref_tombstoned_from_client_ui(value: &Value) -> bool {
@@ -87,7 +87,7 @@ pub fn avatar_blob_ref_tombstoned_from_client_ui(value: &Value) -> bool {
         == Some("")
 }
 
-/// Theme preference recovered from a `client.ui` account-data payload.
+/// Theme preference recovered from a `ak.client.ui_state` account-data payload.
 ///
 /// Returns one of `"light" | "night" | "system"` when the remote payload
 /// carries a valid `theme` field, otherwise `None`. Invalid / unknown
@@ -102,7 +102,7 @@ pub fn theme_from_client_ui(value: &Value) -> Option<String> {
         .map(ToOwned::to_owned)
 }
 
-/// Merge a remote `client.ui` theme into the local cached theme. Local
+/// Merge a remote `ak.client.ui_state` theme into the local cached theme. Local
 /// state stays authoritative when the remote payload doesn't carry a
 /// valid `theme` field — that means the entry was written by an older
 /// client that only synced `sidebar_collapsed`.
