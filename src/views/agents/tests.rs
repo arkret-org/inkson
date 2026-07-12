@@ -469,6 +469,15 @@ mod personal_agent_tests {
             event.payload["approval_evidence"]["request_canonical_digest"],
             expected_pairing_digest.as_str()
         );
+        assert_eq!(
+            event.payload["approval_evidence"]["pairing_request_id"],
+            request.pairing_request_id
+        );
+        assert_eq!(
+            event.payload["approval_evidence"]["kind"],
+            "pairing_request"
+        );
+        assert!(event.payload["approval_evidence"].get("ref").is_none());
     }
 
     #[test]

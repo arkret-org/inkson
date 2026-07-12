@@ -507,9 +507,10 @@ pub fn build_agent_key_authorize_event_for_pairing(
         // by revocation (key-management.md §3.6.1).
         expires_at: None,
         approval_evidence: AgentKeyApprovalEvidence {
-            kind: AgentKeyApprovalEvidenceKind::ApprovalEvent,
-            r#ref: request.pairing_request_id.clone(),
+            kind: AgentKeyApprovalEvidenceKind::PairingRequest,
+            r#ref: None,
             request_canonical_digest: Some(Hash::new(pairing_digest.as_str().to_owned())?),
+            pairing_request_id: Some(request.pairing_request_id.clone()),
             approved_by: Some(controller.clone()),
         },
         revocation_check_ref: None,
