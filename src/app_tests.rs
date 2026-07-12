@@ -716,7 +716,9 @@ fn auth_surface_routes_authenticated_login_to_app_shell() {
 #[test]
 fn post_login_navigation_preserves_authenticated_deep_links() {
     assert!(should_redirect_to_dashboard_after_login(&Route::Login));
-    assert!(should_redirect_to_dashboard_after_login(&Route::AuthCallback));
+    assert!(should_redirect_to_dashboard_after_login(
+        &Route::AuthCallback
+    ));
     assert!(!should_redirect_to_dashboard_after_login(
         &Route::NotificationsSettings
     ));

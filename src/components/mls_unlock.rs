@@ -54,6 +54,7 @@ pub fn MlsUnlockPrompt(
     device_id: Signal<String>,
     needs_mls_unlock: Signal<bool>,
     restore_payload_cache: Signal<Option<serde_json::Value>>,
+    sync_generation: Signal<u64>,
 ) -> Element {
     // A4 — base_url / state_store from session context instead of props.
     let session = crate::app::SessionContext::get();
@@ -116,6 +117,7 @@ pub fn MlsUnlockPrompt(
         let mut state_store = state_store;
         let needs_mls_unlock = needs_mls_unlock;
         let restore_payload_cache = restore_payload_cache;
+        let sync_generation = sync_generation;
         busy.set(true);
         status.set(crate::i18n::tr("mls_unlock.status.fetching"));
         spawn(async move {
@@ -232,6 +234,11 @@ pub fn MlsUnlockPrompt(
                         );
                         try_set_signal(passphrase, String::new());
                         try_set_status(status, restored_status);
+                        // Account-data received before the account secret was
+                        // restored was intentionally ignored fail-closed. Start
+                        // a fresh sync generation so those encrypted settings
+                        // are fetched and decrypted with the recovered secret.
+                        try_set_signal(sync_generation, sync_generation() + 1);
                         crate::runtime_helpers::sleep_for(std::time::Duration::from_millis(750))
                             .await;
                         try_set_signal(needs_mls_unlock, false);
