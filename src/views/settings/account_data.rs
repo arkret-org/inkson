@@ -199,7 +199,15 @@ pub(super) fn push_presence_visibility_account_data(
     api_token: String,
     state_store: SyncSignal<LocalStateStore>,
 ) {
-    let body = build_presence_visibility_body(state_store.read().presence_visibility());
+    let plaintext = build_presence_visibility_body(state_store.read().presence_visibility());
+    let body = match encrypted_account_data_value(PRESENCE_VISIBILITY_ACCOUNT_DATA_KEY, &plaintext)
+    {
+        Ok(body) => body,
+        Err(error) => {
+            tracing::warn!(%error, "ak.presence.visibility encryption failed");
+            return;
+        }
+    };
     spawn(async move {
         match with_event_submitter(&base_url, api_token, |sub| async move {
             crate::transport::account::set_account_data(

@@ -2273,11 +2273,13 @@ fn apply_account_data(
         }
         // ak.account.blocklist — personal block list.
         if data_type == "ak.presence.visibility" {
-            let Some(visibility) = entry
-                .get("content")
-                .and_then(|content| content.get("presence_visibility"))
-                .and_then(Value::as_str)
-                .and_then(crate::state::PresenceVisibility::try_from_wire)
+            let Some(visibility) =
+                crate::account_data::decrypt_account_data_entry(account_did, data_type, entry)
+                    .ok()
+                    .as_ref()
+                    .and_then(|content| content.get("presence_visibility"))
+                    .and_then(Value::as_str)
+                    .and_then(crate::state::PresenceVisibility::try_from_wire)
             else {
                 tracing::warn!(
                     "sync engine: ignoring malformed ak.presence.visibility account_data"

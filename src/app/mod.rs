@@ -935,6 +935,8 @@ fn AppBootstrap() -> Element {
     let mut callback_bootstrap_pending = bootstrap_pending;
     let mut login_session_boot_state = session_boot_state;
     let mut callback_session_boot_state = session_boot_state;
+    let login_redirect_to_dashboard = should_redirect_to_dashboard_after_login(&route);
+    let callback_redirect_to_dashboard = login_redirect_to_dashboard;
     let auth_shell_node = rsx! {
             main {
                 class: auth_class,
@@ -960,7 +962,9 @@ fn AppBootstrap() -> Element {
                                 on_login: move |_| {
                                     callback_bootstrap_pending.set(true);
                                     callback_session_boot_state.set(SessionBootState::Checking);
-                                    let _ = callback_navigator.push(Route::Dashboard);
+                                    if callback_redirect_to_dashboard {
+                                        let _ = callback_navigator.push(Route::Dashboard);
+                                    }
                                 },
                             }
                         },
@@ -999,7 +1003,9 @@ fn AppBootstrap() -> Element {
                                 on_login: move |_| {
                                     login_bootstrap_pending.set(true);
                                     login_session_boot_state.set(SessionBootState::Checking);
-                                    let _ = login_navigator.push(Route::Dashboard);
+                                    if login_redirect_to_dashboard {
+                                        let _ = login_navigator.push(Route::Dashboard);
+                                    }
                                 },
                             }
                         },

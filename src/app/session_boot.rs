@@ -132,6 +132,10 @@ pub(super) fn auth_surface_for_route(
     }
 }
 
+pub(super) fn should_redirect_to_dashboard_after_login(route: &Route) -> bool {
+    matches!(route, Route::Login | Route::AuthCallback)
+}
+
 pub(super) fn initial_session_credential_from_state(
     local_state: &ClientLocalState,
     config: &ClientConfig,

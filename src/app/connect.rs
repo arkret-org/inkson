@@ -1421,8 +1421,14 @@ pub(super) fn connect(base: String, actor: String, device: String, ctx: ConnectC
                                     continue;
                                 }
                                 if data_type == "ak.presence.visibility" {
-                                    let Some(visibility) = entry
-                                        .get("content")
+                                    let Some(visibility) =
+                                        crate::account_data::decrypt_account_data_entry(
+                                            &account_did(),
+                                            data_type,
+                                            entry,
+                                        )
+                                        .ok()
+                                        .as_ref()
                                         .and_then(|content| content.get("presence_visibility"))
                                         .and_then(serde_json::Value::as_str)
                                         .and_then(crate::state::PresenceVisibility::try_from_wire)
