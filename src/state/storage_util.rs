@@ -281,6 +281,39 @@ pub(crate) fn store_dpop_device_key_in_secure_store(
     )
 }
 
+pub(crate) fn load_session_grant_from_secure_store(
+    secure_store: &dyn crate::secure_key_store::SecureKeyStore,
+) -> Result<Option<PersistedSessionGrant>, crate::secure_key_store::SecureKeyStoreError> {
+    let key = crate::secure_key_store::account_scoped_device_key(
+        LocalStateStore::SECURE_SESSION_GRANT_KEY,
+    );
+    let Some(json) = secure_store.get_secret(&key)? else {
+        return Ok(None);
+    };
+    serde_json::from_str(&json).map(Some).map_err(|error| {
+        crate::secure_key_store::SecureKeyStoreError::Backend(format!(
+            "parse session grant: {error}"
+        ))
+    })
+}
+
+pub(crate) fn store_session_grant_in_secure_store(
+    secure_store: &dyn crate::secure_key_store::SecureKeyStore,
+    grant: &PersistedSessionGrant,
+) -> Result<(), crate::secure_key_store::SecureKeyStoreError> {
+    let json = serde_json::to_string(grant).map_err(|error| {
+        crate::secure_key_store::SecureKeyStoreError::Backend(format!(
+            "serialize session grant: {error}"
+        ))
+    })?;
+    secure_store.store_secret(
+        &crate::secure_key_store::account_scoped_device_key(
+            LocalStateStore::SECURE_SESSION_GRANT_KEY,
+        ),
+        &json,
+    )
+}
+
 pub(crate) fn plaintext_identity_seed_fallback_allowed() -> bool {
     #[cfg(target_arch = "wasm32")]
     {

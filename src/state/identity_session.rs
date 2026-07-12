@@ -133,6 +133,22 @@ impl LocalStateStore {
 
     /// Persist (or clear via `None`) the coauth `session_grant`.
     pub fn set_session_grant(&mut self, grant: Option<PersistedSessionGrant>) {
+        #[cfg(not(test))]
+        {
+            let secure_store = crate::secure_key_store::default_secure_key_store("inkson");
+            let result = match grant.as_ref() {
+                Some(grant) => store_session_grant_in_secure_store(secure_store.as_ref(), grant),
+                None => {
+                    secure_store.delete_secret(&crate::secure_key_store::account_scoped_device_key(
+                        Self::SECURE_SESSION_GRANT_KEY,
+                    ))
+                }
+            };
+            if let Err(error) = result {
+                tracing::error!(?error, "secure session grant persist failed");
+                return;
+            }
+        }
         self.ensure_cached_loaded();
         self.cached.session_grant = grant;
         let _ = self.flush();
@@ -155,6 +171,14 @@ impl LocalStateStore {
                 tracing::debug!(
                     ?error,
                     "secure_key_store DPoP key delete on logout failed (likely already missing)",
+                );
+            }
+            if let Err(error) = secure_store.delete_secret(
+                &crate::secure_key_store::account_scoped_device_key(Self::SECURE_SESSION_GRANT_KEY),
+            ) {
+                tracing::debug!(
+                    ?error,
+                    "secure_key_store session grant delete on logout failed (likely already missing)",
                 );
             }
         }

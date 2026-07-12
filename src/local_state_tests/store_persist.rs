@@ -565,6 +565,30 @@ fn clear_account_scoped_preserves_device_level_and_session_grant_state() {
 }
 
 #[test]
+fn production_persist_policy_strips_session_credentials_from_account_state() {
+    let mut state = ClientLocalState::default();
+    state.sync_cursor = Some("ak:cursor:safe".to_owned());
+    state.session_grant = Some(PersistedSessionGrant {
+        grant_jwt: "secret.grant.jwt".to_owned(),
+        session_private_key_pem: "secret-session-private-key".to_owned(),
+        grant_id: "grant-id".to_owned(),
+        audience: "https://principal.example/api".to_owned(),
+        principal_id: "did:web:alice.example".to_owned(),
+        device_id: "ak:device:01904100-0000-7000-8000-000000000001".to_owned(),
+        principal_server_url: "https://principal.example".to_owned(),
+        grant_expires_at: None,
+        stored_at: chrono::Utc::now(),
+    });
+
+    let persisted = e2ee_safe_persist_state_with_policy(&state, true);
+    let json = serde_json::to_string(&persisted).unwrap();
+    assert!(persisted.session_grant.is_none());
+    assert_eq!(persisted.sync_cursor.as_deref(), Some("ak:cursor:safe"));
+    assert!(!json.contains("secret.grant.jwt"));
+    assert!(!json.contains("secret-session-private-key"));
+}
+
+#[test]
 fn switch_active_account_isolates_accounts_per_did() {
     let path = temp_state_path("adopt-account-scope");
     let mut store = LocalStateStore::with_path(path);

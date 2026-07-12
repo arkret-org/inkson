@@ -305,6 +305,8 @@ impl LocalStateStore {
 
     const SECURE_DPOP_DEVICE_KEY: &'static str = "auth.dpop.device_key.v1";
 
+    const SECURE_SESSION_GRANT_KEY: &'static str = "auth.session_grant.v1";
+
     pub(crate) fn enqueue_local_projection_command(
         &mut self,
         operation_id: impl Into<String>,
@@ -616,7 +618,33 @@ impl LocalStateStore {
     /// root index, then reads that entry. `None` when the entry is
     /// absent.
     fn read_persisted_state(&self) -> Option<ClientLocalState> {
-        self.read_account_state(&self.effective_account_key())
+        let mut state = self
+            .read_account_state(&self.effective_account_key())
+            .unwrap_or_default();
+        #[cfg(not(test))]
+        {
+            let secure_store = crate::secure_key_store::default_secure_key_store("inkson");
+            let secure_grant = load_session_grant_from_secure_store(secure_store.as_ref())
+                .map_err(|error| {
+                    tracing::warn!(?error, "secure session grant restore failed");
+                    error
+                })
+                .ok()
+                .flatten();
+            if let Some(grant) = secure_grant {
+                state.session_grant = Some(grant);
+            } else if let Some(legacy_grant) = state.session_grant.as_ref() {
+                // One-way migration from pre-secure-store account JSON. The
+                // next flush strips the legacy plaintext copy.
+                if let Err(error) =
+                    store_session_grant_in_secure_store(secure_store.as_ref(), legacy_grant)
+                {
+                    tracing::error!(?error, "legacy session grant secure-store migration failed");
+                    state.session_grant = None;
+                }
+            }
+        }
+        Some(state)
     }
 
     #[cfg(not(target_arch = "wasm32"))]
@@ -791,7 +819,19 @@ fn sanitize_did_for_filename(did: &str) -> String {
 }
 
 fn e2ee_safe_persist_state(state: &ClientLocalState) -> ClientLocalState {
+    e2ee_safe_persist_state_with_policy(state, !cfg!(test))
+}
+
+fn e2ee_safe_persist_state_with_policy(
+    state: &ClientLocalState,
+    strip_credentials: bool,
+) -> ClientLocalState {
     let mut stripped = state.clone();
+    // Credentials and private signing material are secure-store-only. Keep
+    // them in the live cache, never in cursor/projection/account JSON.
+    if strip_credentials {
+        stripped.session_grant = None;
+    }
     stripped.history_secrets.clear();
     stripped.mls_private_plaintext.clear();
     stripped.mls_decrypted_plaintext.clear();
