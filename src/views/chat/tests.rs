@@ -2447,6 +2447,38 @@ fn agent_metadata_from_mentions_recovers_selector_audit_metadata() {
 }
 
 #[test]
+fn owned_agent_ids_only_select_current_controllers_agents() {
+    let controller = "did:web:example.com:users:alice";
+    let own_agent = arkret_sdk::Mention::new(
+        arkret_sdk::Did::new("did:web:agents.example:summary".to_owned()).unwrap(),
+    )
+    .with_agent_selector_metadata(
+        arkret_sdk::Did::new(controller.to_owned()).unwrap(),
+        arkret_sdk::Handle::parse("alice:example.com").unwrap(),
+        "summary",
+    );
+    let other_agent = arkret_sdk::Mention::new(
+        arkret_sdk::Did::new("did:web:agents.example:review".to_owned()).unwrap(),
+    )
+    .with_agent_selector_metadata(
+        arkret_sdk::Did::new("did:web:example.com:users:bob".to_owned()).unwrap(),
+        arkret_sdk::Handle::parse("bob:example.com").unwrap(),
+        "review",
+    );
+
+    let ids = owned_agent_ids_from_mentions(
+        &[
+            MentionNode::mention(own_agent.clone()),
+            MentionNode::mention(other_agent),
+            MentionNode::mention(own_agent),
+        ],
+        controller,
+    );
+
+    assert_eq!(ids, vec!["did:web:agents.example:summary"]);
+}
+
+#[test]
 fn participation_visibility_uses_most_specific_effective_scope() {
     use arkret_sdk::models::{
         AgentParticipation, AgentParticipationEntry, AgentParticipationScope,

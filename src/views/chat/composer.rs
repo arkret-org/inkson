@@ -41,10 +41,14 @@ pub(super) fn ChatComposer(controller: ChatController, context: ChatComposerCont
         mut frontier_state,
     } = context;
     let base_url = crate::app::SessionContext::base_url_string();
+    let navigator = use_navigator();
     let mut state_store = crate::app::SessionContext::get().state_store;
     let messages_snapshot = (controller.messages)();
     let messages_for_composer_lookup = &messages_snapshot;
     let selected_channel_value = (controller.selected_channel)();
+    let selected_channel_is_circle_scoped = selected_channel_info
+        .as_ref()
+        .is_some_and(|channel| channel.scope_circle.is_some());
     let channels = controller.channels;
     let selected_channel = controller.selected_channel;
     let mut reply_to_message = controller.reply_to_message;
@@ -910,6 +914,7 @@ pub(super) fn ChatComposer(controller: ChatController, context: ChatComposerCont
                             let realm = selected_realm_id.clone();
                             let actor = account_did.clone();
                             let own_controller_handle = own_controller_handle.clone();
+                            let navigator = navigator.clone();
                             move |_| {
                                 let own_controller_handle = own_controller_handle.clone();
                                 let body = chat_draft().trim().to_owned();
@@ -925,7 +930,6 @@ pub(super) fn ChatComposer(controller: ChatController, context: ChatComposerCont
                                     &mention_picker_state.read().inserted,
                                     &actor,
                                 );
-                                let local_id = new_chat_message_id();
                                 let channel = channels()
                                     .iter()
                                     .find(|candidate| candidate.strand_id == selected_channel())
@@ -934,6 +938,72 @@ pub(super) fn ChatComposer(controller: ChatController, context: ChatComposerCont
                                     status_msg.set("select a discussion first".to_owned());
                                     return;
                                 };
+                                let targets_owned_agent = !selected_channel_is_circle_scoped
+                                    && (!owned_agent_ids_from_mentions(&mentions, &actor).is_empty()
+                                        || parse_agent_selector_mention_tokens(&body)
+                                            .iter()
+                                            .any(|token| token.controller_handle == "me"));
+                                if targets_owned_agent {
+                                    status_msg.set("Opening private AI sidecar thread…".to_owned());
+                                    let base = base.clone();
+                                    let api_token = token();
+                                    let realm = realm.clone();
+                                    let actor = actor.clone();
+                                    let strand_id = channel.strand_id.clone();
+                                    let body_for_resolution = body.clone();
+                                    let own_controller_handle = own_controller_handle.clone();
+                                    let wait_for = active_sync_token(sync_cursor());
+                                    let mut resolved_mentions = mentions;
+                                    let navigator = navigator.clone();
+                                    spawn(async move {
+                                        for mention in resolve_agent_selector_mentions(
+                                            &base,
+                                            api_token.clone(),
+                                            wait_for,
+                                            &body_for_resolution,
+                                            &realm,
+                                            &actor,
+                                            own_controller_handle.as_deref(),
+                                        )
+                                        .await
+                                        {
+                                            push_unique_mention_node(
+                                                &mut resolved_mentions,
+                                                mention,
+                                            );
+                                        }
+                                        match ensure_owned_agent_sidecar(
+                                            &base,
+                                            api_token,
+                                            &actor,
+                                            &realm,
+                                            &strand_id,
+                                            &resolved_mentions,
+                                        )
+                                        .await
+                                        {
+                                            Ok(Some(sidecar)) => {
+                                                status_msg.set(
+                                                    "Private AI sidecar thread ready; send remains in the private composer."
+                                                        .to_owned(),
+                                                );
+                                                let _ = navigator.push(Route::DirectConversation {
+                                                    realm_id: realm,
+                                                    strand_id: sidecar.private_strand_id.to_string(),
+                                                });
+                                            }
+                                            Ok(None) => status_msg.set(
+                                                "Could not resolve an owned agent for the private sidecar."
+                                                    .to_owned(),
+                                            ),
+                                            Err(error) => status_msg.set(format!(
+                                                "Could not open private AI sidecar: {error:#}"
+                                            )),
+                                        }
+                                    });
+                                    return;
+                                }
+                                let local_id = new_chat_message_id();
                                 messages.write().push(ChatMessage {
                                     realm_id: realm.clone(),
                                     id: local_id.clone(),
@@ -1147,6 +1217,7 @@ pub(super) fn ChatComposer(controller: ChatController, context: ChatComposerCont
                             let own_controller_handle = own_controller_handle.clone();
                             let selected_strand = selected_channel_value.clone();
                             let pending_mls_binding = selected_realm_pending_mls_binding;
+                            let navigator = navigator.clone();
                             move |_| {
                                 let own_controller_handle = own_controller_handle.clone();
                                 if pending_mls_binding {
@@ -1173,6 +1244,71 @@ pub(super) fn ChatComposer(controller: ChatController, context: ChatComposerCont
                                 } else {
                                     selected_strand.clone()
                                 };
+                                let targets_owned_agent = !selected_channel_is_circle_scoped
+                                    && (!owned_agent_ids_from_mentions(&mentions, &actor).is_empty()
+                                        || parse_agent_selector_mention_tokens(&body)
+                                            .iter()
+                                            .any(|token| token.controller_handle == "me"));
+                                if targets_owned_agent {
+                                    status_msg.set("Opening private AI sidecar thread…".to_owned());
+                                    let base = base.clone();
+                                    let api_token = token();
+                                    let wait_for = active_sync_token(sync_cursor());
+                                    let realm_for_sidecar = realm.clone();
+                                    let actor_for_sidecar = actor.clone();
+                                    let strand_for_sidecar = strand_id.clone();
+                                    let body_for_resolution = body.clone();
+                                    let own_controller_handle = own_controller_handle.clone();
+                                    let mut resolved_mentions = mentions;
+                                    let navigator = navigator.clone();
+                                    spawn(async move {
+                                        for mention in resolve_agent_selector_mentions(
+                                            &base,
+                                            api_token.clone(),
+                                            wait_for,
+                                            &body_for_resolution,
+                                            &realm_for_sidecar,
+                                            &actor_for_sidecar,
+                                            own_controller_handle.as_deref(),
+                                        )
+                                        .await
+                                        {
+                                            push_unique_mention_node(
+                                                &mut resolved_mentions,
+                                                mention,
+                                            );
+                                        }
+                                        match ensure_owned_agent_sidecar(
+                                            &base,
+                                            api_token,
+                                            &actor_for_sidecar,
+                                            &realm_for_sidecar,
+                                            &strand_for_sidecar,
+                                            &resolved_mentions,
+                                        )
+                                        .await
+                                        {
+                                            Ok(Some(sidecar)) => {
+                                                status_msg.set(
+                                                    "Private AI sidecar thread ready; send remains in the private composer."
+                                                        .to_owned(),
+                                                );
+                                                let _ = navigator.push(Route::DirectConversation {
+                                                    realm_id: realm_for_sidecar,
+                                                    strand_id: sidecar.private_strand_id.to_string(),
+                                                });
+                                            }
+                                            Ok(None) => status_msg.set(
+                                                "Could not resolve an owned agent for the private sidecar."
+                                                    .to_owned(),
+                                            ),
+                                            Err(error) => status_msg.set(format!(
+                                                "Could not open private AI sidecar: {error:#}"
+                                            )),
+                                        }
+                                    });
+                                    return;
+                                }
                                 // P2: preserve the composer's reply target on the
                                 // encrypted path (it was silently dropped before).
                                 let reply_to = reply_to_message()

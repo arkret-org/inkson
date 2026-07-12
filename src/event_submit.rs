@@ -11,9 +11,10 @@ use std::time::Duration;
 
 #[cfg(test)]
 use arkret_sdk::ErrorEnvelope;
+use garth::outbound::BoxOutboundFuture;
 use garth::{
     OutboundEngine, OutboundEngineOutcome, OutboundPostAcceptHook, OutboundSubmitOutcome,
-    OutboundSubmitter, outbound::BoxOutboundFuture,
+    OutboundSubmitter,
 };
 #[cfg(test)]
 use reqwest::StatusCode;
@@ -898,7 +899,15 @@ impl EventSubmitter {
         &self,
         body: &arkret_sdk::models::AgentKeyPairRequestBody,
     ) -> anyhow::Result<arkret_sdk::models::AgentKeyPairOutcome> {
-        self.http
+        let principal_server_url = self.http.base_url().as_str();
+        let authority =
+            crate::identity::account_auth::AuthorityResolver::discover(principal_server_url)
+                .await?;
+        let gate_account_base = url::Url::parse(&authority.gate_account_base)?;
+        let authority_origin = gate_account_base.origin().ascii_serialization();
+        let authority_http =
+            arkret_sdk::http_client::Client::new(url::Url::parse(&authority_origin)?)?;
+        authority_http
             .agent_key_pair(body)
             .await
             .map_err(anyhow::Error::from)

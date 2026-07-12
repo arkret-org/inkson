@@ -144,6 +144,57 @@ async fn resolve_agent_selector_mentions(
     mentions
 }
 
+fn owned_agent_ids_from_mentions(mentions: &[MentionNode], controller_id: &str) -> Vec<String> {
+    let mut agent_ids = mentions
+        .iter()
+        .filter_map(MentionNode::as_mention)
+        .filter(|mention| {
+            mention
+                .controller_subject_id
+                .as_ref()
+                .is_some_and(|controller| controller.as_str() == controller_id)
+        })
+        .map(|mention| mention.subject_id.as_str().to_owned())
+        .collect::<Vec<_>>();
+    agent_ids.sort_unstable();
+    agent_ids.dedup();
+    agent_ids
+}
+
+async fn ensure_owned_agent_sidecar(
+    base_url: &str,
+    api_token: String,
+    controller_id: &str,
+    realm_id: &str,
+    strand_id: &str,
+    mentions: &[MentionNode],
+) -> anyhow::Result<Option<arkret_sdk::AgentSidecarThreadEnsureOutcome>> {
+    let addressed_agent_ids = owned_agent_ids_from_mentions(mentions, controller_id)
+        .into_iter()
+        .map(arkret_sdk::Did::new)
+        .collect::<Result<Vec<_>, _>>()?;
+    if addressed_agent_ids.is_empty() {
+        return Ok(None);
+    }
+    let request = arkret_sdk::AgentSidecarThreadEnsureRequestBody {
+        controller_id: arkret_sdk::Did::new(controller_id.to_owned())?,
+        addressed_agent_ids,
+        context_ref: arkret_sdk::AgentSidecarContextRef::strand(
+            arkret_sdk::RealmId::new(realm_id.to_owned())?,
+            arkret_sdk::StrandId::new(strand_id.to_owned())?,
+        ),
+    };
+    let outcome =
+        crate::transport::auth::with_authed_sdk_client(base_url, api_token, |http| async move {
+            http.agent_sidecar_thread_ensure(&request)
+                .await
+                .map_err(anyhow::Error::from)
+        })
+        .await
+        .map_err(|error| anyhow::anyhow!(error.display()))?;
+    Ok(Some(outcome))
+}
+
 fn composer_mention_nodes(
     body: &str,
     picker: &[crate::messaging::mentions::MentionCandidate],
