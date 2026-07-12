@@ -236,8 +236,11 @@ pub fn MlsUnlockPrompt(
                         try_set_status(status, restored_status);
                         // Account-data received before the account secret was
                         // restored was intentionally ignored fail-closed. Start
-                        // a fresh sync generation so those encrypted settings
+                        // a full sync generation so those encrypted settings
                         // are fetched and decrypted with the recovered secret.
+                        if let Ok(mut store) = state_store.try_write() {
+                            store.clear_sync_cursor();
+                        }
                         try_set_signal(sync_generation, sync_generation() + 1);
                         crate::runtime_helpers::sleep_for(std::time::Duration::from_millis(750))
                             .await;

@@ -2306,7 +2306,7 @@ pub(super) fn CardDetail(controller: KanbanController, context: CardDetailContex
                                                                                     },
                                                                                     span { class: "{dot_class}", title: "{dot_title}", "aria-label": "{dot_title}" }
                                                                                     ActorIdentityLabel {
-                                                                                        label: identity_label,
+                                                                                        label: identity_label.clone(),
                                                                                         title: Some(did.clone()),
                                                                                         class: Some("card-detail-actor-did".to_owned()),
                                                                                         test_id: Some("card-detail-member".to_owned()),

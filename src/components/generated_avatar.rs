@@ -68,7 +68,7 @@ pub fn GeneratedAvatar(props: GeneratedAvatarProps) -> Element {
             svg {
                 view_box: "0 0 5 5",
                 "aria-hidden": "true",
-                focusable: "false",
+                "focusable": "false",
                 for (x, y) in cells {
                     rect {
                         x: "{x}",
