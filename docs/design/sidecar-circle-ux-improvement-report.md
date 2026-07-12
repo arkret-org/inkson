@@ -68,11 +68,12 @@ flowchart LR
 现有代码行为：
 
 - `src/app/mod.rs` 渲染自己的 Agent 列表并在点击时调用 ensure。
-- `src/views/chat/composer.rs` 拦截面向自有 Agent 的 mention，保留草稿并切换到私有 composer，避免把消息提交到当前 Realm。
+- `src/views/chat/composer.rs` 拦截面向自有 Agent 的 mention，阻止消息提交到当前 Realm 并导航到私有会话。但草稿目前是单个非持久 `Signal<String>`，`ChatPanel` 重挂后私密 composer 为空——**草稿并不会实际迁移**，用户需要重新输入（§6.1 的“草稿迁移确认”因此是新建能力，不是对既有行为的加固）。
 - `src/app/route_surface.rs` 将 `Route::DirectConversation` 映射到通用 `ChatPanel`。
 - `direct_mode` 会隐藏左侧 Strand 列表和新建 Strand 弹窗。
 - 右侧 Members/Settings、watch level、presence 等仍沿用普通讨论界面；Members 面板默认打开。
-- E2E mock 已覆盖 ensure 返回 `private_circle_id`、`private_strand_id` 和 `private_relation_id`，导航测试覆盖点击 Agent 后进入 `/direct/...`。
+- E2E mock 已覆盖 ensure 返回 `private_circle_id`、`private_strand_id` 和 `private_relation_id`，但**不返回** `pending_member_reconciliations`，现有 mock 无法用于验证 pending 分支。
+- 现有导航测试（`inkson.strands.workspace-nav.spec.ts`）覆盖的是点击**联系人**的 Agent 走预置 `direct_conversation` 进入 `/direct/...`；自有 Agent 仅断言了可见性。**“点击自有 Agent → sidecar ensure → `/direct/...`” 的核心链路尚无 E2E 覆盖**。
 
 ### 3.2 已存在的 Circle 基础能力
 
@@ -380,15 +381,15 @@ Inkson、Soland 与 Savfox 应使用同一个 `trace_id`/`correlation_id` 串联
 
 ### 9.3 普通 Circle 创建与管理
 
-实现前需要核对 v1 规范是否已经为以下用户动作提供完整标准操作与强类型：
+v1 规范（`circle.md`、`service-http-binding.md`）已经为大部分用户动作注册了标准操作，剩余工作主要在 SDK 强类型与 Inkson 接线，而不是规范空白：
 
-- create
-- update display metadata
-- member invite/join/leave/ban
-- archive/restore/tombstone
-- MLS membership reconcile/scope rotate
+- create / update display metadata：已有 `ak.circle.create`、`ak.circle.update`。
+- 成员状态：已有 `ak.circle.member.state`，复用 `membership_state` 枚举 **invite/join/knock/leave/ban**（注意包含 `knock`，UI 设计需覆盖）。
+- archive/restore/tombstone：已有 `ak.circle.archive`、`ak.circle.restore`、`ak.circle.tombstone`。
+- MLS scope rotate：`POST /_arkret/self/circles/{circle_id}/scope-rotate` binding 已注册，但在 MLS 级联端到端打通前返回 `unsupported_feature`（501）；UI 接入前需确认服务端成熟度。
+- 规范中**没有**名为 “reconcile” 的 Circle 标准操作：`circle.md` §11.1 要求 membership 变化由 reducer 主动 fan-out `ak.circle.member.state`，不得依赖被动 reconcile。“reconciliation” 一词仅出现在 sidecar ensure 响应的 `pending_member_reconciliations` 字段语义中，不应被引申为一个可调用的普通 Circle 操作。
 
-缺失项应先进入规范和 SDK。Sidecar ensure 的 capability carve-out 不得复用于普通 Circle 创建。
+实现前仍需核对 `arkret-rust-sdk` 是否已为上述操作提供强类型；缺失的是类型与接线时先补 SDK，规范层面确有空白时才回到 `arkret-spec`。Sidecar ensure 的 capability carve-out 不得复用于普通 Circle 创建。
 
 ## 10. 分阶段实施计划
 
@@ -454,7 +455,8 @@ Inkson、Soland 与 Savfox 应使用同一个 `trace_id`/`correlation_id` 串联
 ### 11.3 Debug 与测试
 
 - 每次 Sidecar 用户动作都有单一 trace ID，三端日志可关联。
-- E2E 覆盖 ensure 成功、reconciliation pending、KeyPackage 缺失、Agent offline、通知失败、Agent 回复成功和回复已提交但客户端未投影。
+- E2E 覆盖“点击自有 Agent → ensure → `/direct/...`”完整链路（当前测试只覆盖联系人 Agent 的预置会话导航，未经过 ensure）。
+- E2E 覆盖 ensure 成功、reconciliation pending（需先让 mock 支持返回 `pending_member_reconciliations`）、KeyPackage 缺失、Agent offline、通知失败、Agent 回复成功和回复已提交但客户端未投影。
 - 日志脱敏测试确认不包含 token、密钥材料或消息明文。
 - invariant 测试向普通 Circle response 注入 Sidecar profile，Inkson 必须 fail closed 且不渲染。
 
