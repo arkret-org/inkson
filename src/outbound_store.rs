@@ -4,7 +4,8 @@
 //! `FileStore`; web clients persist the same SDK `SendQueueSnapshot` shape in
 //! origin storage until the IndexedDB contract adapter replaces this fallback.
 
-use garth::{OutboundQueueStore, outbound::BoxOutboundFuture};
+use garth::OutboundQueueStore;
+use garth::outbound::BoxOutboundFuture;
 
 #[cfg(not(target_arch = "wasm32"))]
 static NATIVE_OUTBOUND_STORES: std::sync::OnceLock<

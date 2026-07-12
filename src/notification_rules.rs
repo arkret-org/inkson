@@ -160,19 +160,14 @@ pub fn parse_dnd_settings(value: &Value) -> Option<DndSettings> {
     serde_json::from_value(body).ok()
 }
 
-pub fn push_rules_from_account_data(
-    actor_id: &str,
-    entries: &[Value],
-) -> Option<PushRulesConfig> {
-    encrypted_account_data_content(actor_id, entries, "ak.push_rules").and_then(|value| {
-        parse_push_rules(&value)
-    })
+pub fn push_rules_from_account_data(actor_id: &str, entries: &[Value]) -> Option<PushRulesConfig> {
+    encrypted_account_data_content(actor_id, entries, "ak.push_rules")
+        .and_then(|value| parse_push_rules(&value))
 }
 
 pub fn dnd_settings_from_account_data(actor_id: &str, entries: &[Value]) -> Option<DndSettings> {
-    encrypted_account_data_content(actor_id, entries, "ak.dnd_schedule").and_then(|value| {
-        parse_dnd_settings(&value)
-    })
+    encrypted_account_data_content(actor_id, entries, "ak.dnd_schedule")
+        .and_then(|value| parse_dnd_settings(&value))
 }
 
 fn encrypted_account_data_content(

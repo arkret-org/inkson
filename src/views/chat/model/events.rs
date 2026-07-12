@@ -659,13 +659,7 @@ fn chat_messages_from_event_list_with_sidecar(
     state_store: Option<&LocalStateStore>,
     decrypt_identity: Option<(&str, &str)>,
 ) -> Vec<ChatMessage> {
-    fold_event_list_into_chat_messages(
-        Vec::new(),
-        realm_id,
-        events,
-        state_store,
-        decrypt_identity,
-    )
+    fold_event_list_into_chat_messages(Vec::new(), realm_id, events, state_store, decrypt_identity)
 }
 
 fn fold_event_list_into_chat_messages(

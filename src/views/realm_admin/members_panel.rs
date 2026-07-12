@@ -2037,7 +2037,6 @@ pub(crate) fn realm_key_request_answer_dedup_key(
 /// this device to deliver history-key shares in `realm_id`
 /// (`ak.realm_key.share.source_authorization_ref`,
 /// encryption-and-audit.md §2.3.5(c)).
-///
 fn history_share_policy_allows_verified_member_device(event: &Value) -> bool {
     let payload = event.get("payload").unwrap_or(event);
     let direct = payload.get("allowed_key_sources").and_then(Value::as_array);
