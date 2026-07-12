@@ -264,7 +264,7 @@ pub fn requested_scope_for_presets(
         .map(|action| AgentKeyScopeResource {
             kind: AgentKeyScopeResourceKind::Operation,
             realm_id: None,
-            r#ref: None,
+            resource_ref: None,
             operation: Some(action.clone()),
             service_id: None,
         })
@@ -508,7 +508,7 @@ pub fn build_agent_key_authorize_event_for_pairing(
         expires_at: None,
         approval_evidence: AgentKeyApprovalEvidence {
             kind: AgentKeyApprovalEvidenceKind::PairingRequest,
-            r#ref: None,
+            evidence_ref: None,
             request_canonical_digest: Some(Hash::new(pairing_digest.as_str().to_owned())?),
             pairing_request_id: Some(request.pairing_request_id.clone()),
             approved_by: Some(controller.clone()),

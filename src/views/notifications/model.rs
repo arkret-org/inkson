@@ -361,7 +361,7 @@ fn read_cursor_covers_notification_at(
                 realm_id,
                 strand_id,
                 &marker.body.read_scope.kind,
-                marker.body.read_scope.object_ref.as_deref(),
+                marker.body.read_scope.container_ref.as_deref(),
             )
             && read_cursor_position_covers_event(
                 source_event_id,
@@ -383,7 +383,7 @@ fn read_scope_covers_notification(
         "strand" => {
             let notification_strand = strand_id
                 .map(ToOwned::to_owned)
-                .or_else(|| crate::state::read_scope_for_cursor(realm_id, None).object_ref);
+                .or_else(|| crate::state::read_scope_for_cursor(realm_id, None).container_ref);
             scope_ref == notification_strand.as_deref()
         }
         _ => false,

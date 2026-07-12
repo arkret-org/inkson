@@ -477,7 +477,11 @@ mod personal_agent_tests {
             event.payload["approval_evidence"]["kind"],
             "pairing_request"
         );
-        assert!(event.payload["approval_evidence"].get("ref").is_none());
+        assert!(
+            event.payload["approval_evidence"]
+                .get("evidence_ref")
+                .is_none()
+        );
     }
 
     #[test]

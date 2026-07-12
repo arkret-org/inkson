@@ -320,7 +320,7 @@ fn local_state_store_persists_private_read_cursors() {
                 "realm_id": "ak:realm:demo",
                 "read_scope": {
                     "kind": "strand",
-                    "ref": "ak:strand:demo",
+                    "container_ref": "ak:strand:demo",
                     "track_name": "discussion"
                 },
                 "position": {
@@ -356,7 +356,7 @@ fn local_state_store_ingests_read_cursor_update_to_device() {
             "realm_id": "ak:realm:01904100-0000-7000-8000-000000000002",
             "read_scope": {
                 "kind": "strand",
-                "ref": "ak:strand:01904100-0000-7000-8000-000000000003",
+                "container_ref": "ak:strand:01904100-0000-7000-8000-000000000003",
                 "track_name": "discussion"
             },
             "position": {

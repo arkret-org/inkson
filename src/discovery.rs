@@ -120,8 +120,8 @@ pub struct ReadMarker {
 #[serde(deny_unknown_fields)]
 pub struct ReadMarkerScope {
     pub kind: String,
-    #[serde(rename = "ref", default, skip_serializing_if = "Option::is_none")]
-    pub object_ref: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub container_ref: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub track_name: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -218,7 +218,7 @@ fn read_marker_scope_key(scope: &ReadMarkerScope) -> String {
     format!(
         "{}\n{}\n{}",
         scope.kind.as_str(),
-        scope.object_ref.as_deref().unwrap_or(""),
+        scope.container_ref.as_deref().unwrap_or(""),
         scope
             .track_name
             .as_deref()
@@ -439,7 +439,7 @@ mod tests {
     fn strand_discussion_scope() -> ReadMarkerScope {
         ReadMarkerScope {
             kind: "strand".to_owned(),
-            object_ref: Some("ak:strand:test".to_owned()),
+            container_ref: Some("ak:strand:test".to_owned()),
             track_name: Some("discussion".to_owned()),
             track_scope: None,
         }
