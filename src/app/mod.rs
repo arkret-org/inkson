@@ -1450,7 +1450,6 @@ fn AppBootstrap() -> Element {
                     device_id,
                     needs_mls_unlock,
                     restore_payload_cache: mls_restore_payload_cache,
-                    sync_generation,
                 }
             }
             // Task X3 — one-time account-secret BACKUP prompt (mirror of the

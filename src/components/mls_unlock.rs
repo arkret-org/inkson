@@ -54,7 +54,6 @@ pub fn MlsUnlockPrompt(
     device_id: Signal<String>,
     needs_mls_unlock: Signal<bool>,
     restore_payload_cache: Signal<Option<serde_json::Value>>,
-    sync_generation: Signal<u64>,
 ) -> Element {
     // A4 — base_url / state_store from session context instead of props.
     let session = crate::app::SessionContext::get();
@@ -117,7 +116,6 @@ pub fn MlsUnlockPrompt(
         let mut state_store = state_store;
         let needs_mls_unlock = needs_mls_unlock;
         let restore_payload_cache = restore_payload_cache;
-        let sync_generation = sync_generation;
         busy.set(true);
         status.set(crate::i18n::tr("mls_unlock.status.fetching"));
         spawn(async move {
@@ -143,11 +141,16 @@ pub fn MlsUnlockPrompt(
                         .await?;
                     let active_policy =
                         crate::recovery_strand::fetch_active_recovery_policy(&api).await?;
-                    Ok::<_, anyhow::Error>((payload, active_policy))
+                    let account_snapshot = crate::client_core::account_subscribe_snapshot(
+                        &api.sdk_http_client()?,
+                        None,
+                    )
+                    .await?;
+                    Ok::<_, anyhow::Error>((payload, active_policy, account_snapshot.account_data))
                 }))
                 .await;
             let result = match payload_result {
-                Ok((payload, active_policy)) => {
+                Ok((payload, active_policy, account_data)) => {
                     let history_count =
                         crate::mls::account_recovery::select_mls_history_backups(&payload).len();
                     try_set_signal(restore_payload_cache, Some(payload.clone()));
@@ -194,6 +197,13 @@ pub fn MlsUnlockPrompt(
                                         )
                                 })
                                 .map_err(ApiCallError::Failed);
+                            if restore_result.is_ok() {
+                                crate::sync_engine::apply_account_data_entries(
+                                    &mut store,
+                                    &account_data,
+                                    &actor,
+                                );
+                            }
                             tracing::warn!(
                                 target: "mls_unlock",
                                 success = restore_result.is_ok(),
@@ -234,14 +244,6 @@ pub fn MlsUnlockPrompt(
                         );
                         try_set_signal(passphrase, String::new());
                         try_set_status(status, restored_status);
-                        // Account-data received before the account secret was
-                        // restored was intentionally ignored fail-closed. Start
-                        // a full sync generation so those encrypted settings
-                        // are fetched and decrypted with the recovered secret.
-                        if let Ok(mut store) = state_store.try_write() {
-                            store.clear_sync_cursor();
-                        }
-                        try_set_signal(sync_generation, sync_generation() + 1);
                         crate::runtime_helpers::sleep_for(std::time::Duration::from_millis(750))
                             .await;
                         try_set_signal(needs_mls_unlock, false);

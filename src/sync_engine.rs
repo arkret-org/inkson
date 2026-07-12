@@ -2237,8 +2237,16 @@ fn apply_account_data(
     response: &ClientSyncOutcome,
     account_did: &str,
 ) -> Option<String> {
+    apply_account_data_entries(store, &response.account_data, account_did)
+}
+
+pub(crate) fn apply_account_data_entries(
+    store: &mut LocalStateStore,
+    entries: &[Value],
+    account_did: &str,
+) -> Option<String> {
     let mut synced_theme = None;
-    for entry in &response.account_data {
+    for entry in entries {
         let Some(data_type) = entry.get("data_type").and_then(Value::as_str) else {
             continue;
         };
