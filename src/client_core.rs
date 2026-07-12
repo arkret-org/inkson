@@ -73,24 +73,7 @@ impl LocalStateBackend for OwnedLocalStateBackend {
         &self,
         scope: &garth::CursorScope,
     ) -> arkret_sdk::Result<Option<garth::OpaqueCursor>> {
-        match scope {
-            garth::CursorScope::Account { .. } => self.with_store(|store| {
-                store
-                    .sync_cursor()
-                    .filter(|cursor| !cursor.trim().is_empty())
-            }),
-            garth::CursorScope::RealmEvents { realm_id, .. } => {
-                self.with_store(|store| store.realm_events_cursor(realm_id.as_str()))
-            }
-            garth::CursorScope::DeviceMessages {
-                service_id,
-                actor_id,
-                device_id,
-            } => {
-                let key = device_message_cursor_key(service_id.as_ref(), actor_id, device_id)?;
-                self.with_store(|store| store.device_message_cursor(&key))
-            }
-        }
+        self.with_store(|store| store.load_client_cursor(scope))?
     }
 
     fn save_cursor(
@@ -98,41 +81,11 @@ impl LocalStateBackend for OwnedLocalStateBackend {
         scope: &garth::CursorScope,
         cursor: garth::OpaqueCursor,
     ) -> arkret_sdk::Result<()> {
-        match scope {
-            garth::CursorScope::Account { .. } => {
-                self.with_store_mut(|store| store.save_sync_cursor(cursor))
-            }
-            garth::CursorScope::RealmEvents { realm_id, .. } => self.with_store_mut(|store| {
-                store.save_realm_events_cursor(realm_id.as_str(), Some(cursor));
-            }),
-            garth::CursorScope::DeviceMessages {
-                service_id,
-                actor_id,
-                device_id,
-            } => {
-                let key = device_message_cursor_key(service_id.as_ref(), actor_id, device_id)?;
-                self.with_store_mut(|store| store.save_device_message_cursor(key, Some(cursor)))
-            }
-        }
+        self.with_store_mut(|store| store.save_client_cursor(scope, cursor))?
     }
 
     fn clear_cursor(&self, scope: &garth::CursorScope) -> arkret_sdk::Result<()> {
-        match scope {
-            garth::CursorScope::Account { .. } => {
-                self.with_store_mut(crate::state::LocalStateStore::clear_sync_cursor)
-            }
-            garth::CursorScope::RealmEvents { realm_id, .. } => self.with_store_mut(|store| {
-                store.save_realm_events_cursor(realm_id.as_str(), None);
-            }),
-            garth::CursorScope::DeviceMessages {
-                service_id,
-                actor_id,
-                device_id,
-            } => {
-                let key = device_message_cursor_key(service_id.as_ref(), actor_id, device_id)?;
-                self.with_store_mut(|store| store.save_device_message_cursor(key, None))
-            }
-        }
+        self.with_store_mut(|store| store.clear_client_cursor(scope))?
     }
 
     fn event_seen(&self, event_id: &arkret_sdk::EventId) -> arkret_sdk::Result<bool> {
@@ -693,6 +646,139 @@ mod tests {
                 .unwrap()
                 .is_none()
         );
+    }
+
+    #[tokio::test]
+    async fn projector_failure_does_not_advance_inkson_cursor_or_dedupe() {
+        use std::collections::VecDeque;
+        use std::sync::{Arc, Mutex};
+
+        use garth::{BoxRealmStreamFuture, ClientEvent, ClientProjector, RealmEventsDriver};
+
+        struct Frames(VecDeque<arkret_sdk::Result<arkret_sdk::EventsSubscribeFrame>>);
+
+        impl RealmEventsFrameSource for Frames {
+            fn next_frame<'a>(
+                &'a mut self,
+            ) -> BoxRealmStreamFuture<'a, Option<arkret_sdk::EventsSubscribeFrame>> {
+                let frame = self.0.pop_front();
+                Box::pin(async move { frame.transpose() })
+            }
+        }
+
+        struct Transport(Vec<arkret_sdk::EventsSubscribeFrame>);
+
+        impl RealmEventsTransport for Transport {
+            type Source = Frames;
+
+            fn open_realm_events<'a>(
+                &'a self,
+                _realm_id: &'a arkret_sdk::RealmId,
+                _after: Option<&'a str>,
+            ) -> BoxRealmStreamFuture<'a, Self::Source> {
+                let frames = self.0.clone().into_iter().map(Ok).collect();
+                Box::pin(async move { Ok(Frames(frames)) })
+            }
+        }
+
+        struct Projector {
+            fail: bool,
+            calls: Arc<Mutex<usize>>,
+        }
+
+        impl ClientProjector for Projector {
+            async fn project(&self, _batch: Vec<ClientEvent>) -> arkret_sdk::Result<()> {
+                *self.calls.lock().unwrap() += 1;
+                if self.fail {
+                    Err(arkret_sdk::Error::Protocol(
+                        "injected Inkson projection failure".to_owned(),
+                    ))
+                } else {
+                    Ok(())
+                }
+            }
+        }
+
+        let path = std::env::temp_dir().join(format!(
+            "inkson-projector-failure-drill-{}.json",
+            crate::operation::uuid_v7()
+        ));
+        let adapter = super::InksonLocalStateStoreAdapter::new(
+            crate::state::LocalStateStore::with_path(path.clone()),
+        );
+        let realm_id =
+            arkret_sdk::RealmId::new("ak:realm:01904100-0000-7000-8000-000000000001").unwrap();
+        let event = arkret_sdk::Event::new(
+            arkret_sdk::events::kinds::MESSAGE_CREATE,
+            realm_id.clone(),
+            arkret_sdk::Did::new("did:webvh:z6mkfixture:alice.example").unwrap(),
+            1,
+            arkret_sdk::Hlc::new("01970e589d21-0004-a13f9c2e").unwrap(),
+            serde_json::json!({
+                "content": {"kind": "ak.content.text", "body": "hello"},
+                "strand_id": "ak:strand:01904100-0000-7000-8000-000000000002",
+                "track_name": "discussion"
+            }),
+        )
+        .unwrap();
+        let event_id = event.event_id.clone();
+        let frames = vec![
+            arkret_sdk::EventsSubscribeFrame {
+                kind: arkret_sdk::EventsSubscribeFrameKind::Event,
+                realm_id: Some(realm_id.clone()),
+                cursor: Some(arkret_sdk::identifiers::Cursor::new("ak:cursor:projected").unwrap()),
+                payload: serde_json::to_value(event).unwrap(),
+                reconnect_after_ms: None,
+            },
+            arkret_sdk::EventsSubscribeFrame {
+                kind: arkret_sdk::EventsSubscribeFrameKind::Unauthorized,
+                realm_id: Some(realm_id.clone()),
+                cursor: None,
+                payload: serde_json::json!({"reason": "stop fixture"}),
+                reconnect_after_ms: None,
+            },
+        ];
+        let driver = RealmEventsDriver::new(adapter.clone(), adapter.clone());
+        let calls = Arc::new(Mutex::new(0));
+
+        assert!(
+            driver
+                .run_stream(
+                    &Transport(frames.clone()),
+                    realm_id.clone(),
+                    &Projector {
+                        fail: true,
+                        calls: Arc::clone(&calls),
+                    },
+                )
+                .await
+                .is_err()
+        );
+        let scope = garth::CursorScope::RealmEvents {
+            service_id: None,
+            realm_id: realm_id.clone(),
+        };
+        assert!(adapter.load(scope.clone()).await.unwrap().is_none());
+        assert!(!adapter.seen(event_id.clone()).await.unwrap());
+
+        driver
+            .run_stream(
+                &Transport(frames),
+                realm_id,
+                &Projector {
+                    fail: false,
+                    calls: Arc::clone(&calls),
+                },
+            )
+            .await
+            .unwrap();
+        assert_eq!(
+            adapter.load(scope).await.unwrap().as_deref(),
+            Some("ak:cursor:projected")
+        );
+        assert!(adapter.seen(event_id).await.unwrap());
+        assert_eq!(*calls.lock().unwrap(), 2);
+        let _ = std::fs::remove_file(path);
     }
 
     /// F-11: the shared garth `MemorySecureKeyStore` round-trips binary secrets

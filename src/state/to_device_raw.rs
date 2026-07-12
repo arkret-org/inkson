@@ -1,8 +1,77 @@
 use super::*;
 
-const CLIENT_CORE_SEEN_EVENT_IDS_MAX: usize = 4096;
-
 impl LocalStateStore {
+    pub fn load_client_cursor(
+        &self,
+        scope: &garth::CursorScope,
+    ) -> arkret_sdk::Result<Option<garth::OpaqueCursor>> {
+        Ok(match scope {
+            garth::CursorScope::Account { .. } => self
+                .sync_cursor()
+                .filter(|cursor| !cursor.trim().is_empty()),
+            garth::CursorScope::RealmEvents { realm_id, .. } => {
+                self.realm_events_cursor(realm_id.as_str())
+            }
+            garth::CursorScope::DeviceMessages {
+                service_id,
+                actor_id,
+                device_id,
+            } => self.device_message_cursor(&crate::client_core::device_message_cursor_key(
+                service_id.as_ref(),
+                actor_id,
+                device_id,
+            )?),
+        })
+    }
+
+    pub fn save_client_cursor(
+        &mut self,
+        scope: &garth::CursorScope,
+        cursor: garth::OpaqueCursor,
+    ) -> arkret_sdk::Result<()> {
+        match scope {
+            garth::CursorScope::Account { .. } => self.save_sync_cursor(cursor),
+            garth::CursorScope::RealmEvents { realm_id, .. } => {
+                self.save_realm_events_cursor(realm_id.as_str(), Some(cursor));
+            }
+            garth::CursorScope::DeviceMessages {
+                service_id,
+                actor_id,
+                device_id,
+            } => self.save_device_message_cursor(
+                crate::client_core::device_message_cursor_key(
+                    service_id.as_ref(),
+                    actor_id,
+                    device_id,
+                )?,
+                Some(cursor),
+            ),
+        }
+        Ok(())
+    }
+
+    pub fn clear_client_cursor(&mut self, scope: &garth::CursorScope) -> arkret_sdk::Result<()> {
+        match scope {
+            garth::CursorScope::Account { .. } => self.clear_sync_cursor(),
+            garth::CursorScope::RealmEvents { realm_id, .. } => {
+                self.save_realm_events_cursor(realm_id.as_str(), None);
+            }
+            garth::CursorScope::DeviceMessages {
+                service_id,
+                actor_id,
+                device_id,
+            } => self.save_device_message_cursor(
+                crate::client_core::device_message_cursor_key(
+                    service_id.as_ref(),
+                    actor_id,
+                    device_id,
+                )?,
+                None,
+            ),
+        }
+        Ok(())
+    }
+
     pub fn sync_cursor(&self) -> Option<String> {
         self.load().sync_cursor
     }
@@ -58,26 +127,24 @@ impl LocalStateStore {
     }
 
     pub fn client_core_event_seen(&self, event_id: &str) -> bool {
-        self.load()
-            .client_core_seen_event_ids
-            .iter()
-            .any(|seen| seen == event_id)
+        garth::BoundedSeenWindow::from_entries(
+            self.load().client_core_seen_event_ids,
+            garth::DEFAULT_SEEN_EVENTS_CAPACITY,
+        )
+        .contains(event_id)
     }
 
     pub fn remember_client_core_event(&mut self, event_id: impl Into<String>) {
         self.ensure_cached_loaded();
         let event_id = event_id.into();
-        if self
-            .cached
-            .client_core_seen_event_ids
-            .iter()
-            .any(|seen| seen == &event_id)
-        {
+        let mut window = garth::BoundedSeenWindow::from_entries(
+            std::mem::take(&mut self.cached.client_core_seen_event_ids),
+            garth::DEFAULT_SEEN_EVENTS_CAPACITY,
+        );
+        let inserted = window.remember(event_id);
+        self.cached.client_core_seen_event_ids = window.into_entries();
+        if !inserted {
             return;
-        }
-        self.cached.client_core_seen_event_ids.push_back(event_id);
-        while self.cached.client_core_seen_event_ids.len() > CLIENT_CORE_SEEN_EVENT_IDS_MAX {
-            self.cached.client_core_seen_event_ids.pop_front();
         }
         let _ = self.flush();
     }

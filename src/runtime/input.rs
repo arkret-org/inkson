@@ -1,4 +1,6 @@
 use std::rc::Rc;
+#[cfg(not(target_arch = "wasm32"))]
+use std::sync::Arc;
 
 use crate::state::LocalStateStore;
 
@@ -55,16 +57,40 @@ impl<T> ValueCell<T> {
     }
 }
 
+#[cfg(not(target_arch = "wasm32"))]
+type ReadStore = dyn Fn(&mut dyn FnMut(&LocalStateStore)) + Send + Sync;
+#[cfg(target_arch = "wasm32")]
 type ReadStore = dyn Fn(&mut dyn FnMut(&LocalStateStore));
+#[cfg(not(target_arch = "wasm32"))]
+type WriteStore = dyn Fn(&mut dyn FnMut(&mut LocalStateStore)) + Send + Sync;
+#[cfg(target_arch = "wasm32")]
 type WriteStore = dyn Fn(&mut dyn FnMut(&mut LocalStateStore));
 
 #[derive(Clone)]
 pub struct StateStoreHandle {
+    #[cfg(not(target_arch = "wasm32"))]
+    read: Arc<ReadStore>,
+    #[cfg(target_arch = "wasm32")]
     read: Rc<ReadStore>,
+    #[cfg(not(target_arch = "wasm32"))]
+    write: Arc<WriteStore>,
+    #[cfg(target_arch = "wasm32")]
     write: Rc<WriteStore>,
 }
 
 impl StateStoreHandle {
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn new(
+        read: impl Fn(&mut dyn FnMut(&LocalStateStore)) + Send + Sync + 'static,
+        write: impl Fn(&mut dyn FnMut(&mut LocalStateStore)) + Send + Sync + 'static,
+    ) -> Self {
+        Self {
+            read: Arc::new(read),
+            write: Arc::new(write),
+        }
+    }
+
+    #[cfg(target_arch = "wasm32")]
     pub fn new(
         read: impl Fn(&mut dyn FnMut(&LocalStateStore)) + 'static,
         write: impl Fn(&mut dyn FnMut(&mut LocalStateStore)) + 'static,

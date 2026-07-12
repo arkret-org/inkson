@@ -25,7 +25,7 @@ pub(crate) fn value_cell<T: Clone + 'static>(
     )
 }
 
-pub(super) fn state_store_handle(
+pub(crate) fn state_store_handle(
     store: SyncSignal<LocalStateStore>,
 ) -> crate::runtime::input::StateStoreHandle {
     crate::runtime::input::StateStoreHandle::new(
@@ -52,27 +52,7 @@ impl LocalStateBackend for SignalLocalStateBackend {
         &self,
         scope: &garth::CursorScope,
     ) -> arkret_sdk::Result<Option<garth::OpaqueCursor>> {
-        let store = self.store.read();
-        Ok(match scope {
-            garth::CursorScope::Account { .. } => store
-                .sync_cursor()
-                .filter(|cursor| !cursor.trim().is_empty()),
-            garth::CursorScope::RealmEvents { realm_id, .. } => {
-                store.realm_events_cursor(realm_id.as_str())
-            }
-            garth::CursorScope::DeviceMessages {
-                service_id,
-                actor_id,
-                device_id,
-            } => {
-                let key = crate::client_core::device_message_cursor_key(
-                    service_id.as_ref(),
-                    actor_id,
-                    device_id,
-                )?;
-                store.device_message_cursor(&key)
-            }
-        })
+        self.store.read().load_client_cursor(scope)
     }
 
     fn save_cursor(
@@ -81,50 +61,12 @@ impl LocalStateBackend for SignalLocalStateBackend {
         cursor: garth::OpaqueCursor,
     ) -> arkret_sdk::Result<()> {
         let mut signal = self.store;
-        let mut store = signal.write();
-        match scope {
-            garth::CursorScope::Account { .. } => store.save_sync_cursor(cursor),
-            garth::CursorScope::RealmEvents { realm_id, .. } => {
-                store.save_realm_events_cursor(realm_id.as_str(), Some(cursor));
-            }
-            garth::CursorScope::DeviceMessages {
-                service_id,
-                actor_id,
-                device_id,
-            } => {
-                let key = crate::client_core::device_message_cursor_key(
-                    service_id.as_ref(),
-                    actor_id,
-                    device_id,
-                )?;
-                store.save_device_message_cursor(key, Some(cursor));
-            }
-        }
-        Ok(())
+        signal.write().save_client_cursor(scope, cursor)
     }
 
     fn clear_cursor(&self, scope: &garth::CursorScope) -> arkret_sdk::Result<()> {
         let mut signal = self.store;
-        let mut store = signal.write();
-        match scope {
-            garth::CursorScope::Account { .. } => store.clear_sync_cursor(),
-            garth::CursorScope::RealmEvents { realm_id, .. } => {
-                store.save_realm_events_cursor(realm_id.as_str(), None);
-            }
-            garth::CursorScope::DeviceMessages {
-                service_id,
-                actor_id,
-                device_id,
-            } => {
-                let key = crate::client_core::device_message_cursor_key(
-                    service_id.as_ref(),
-                    actor_id,
-                    device_id,
-                )?;
-                store.save_device_message_cursor(key, None);
-            }
-        }
-        Ok(())
+        signal.write().clear_client_cursor(scope)
     }
 
     fn event_seen(&self, event_id: &arkret_sdk::EventId) -> arkret_sdk::Result<bool> {

@@ -853,6 +853,18 @@ async fn run_iteration(
                 tracing::debug!(?error, "sync engine deferred durable outbound drain");
             }
         }
+        match submitter
+            .drain_mls_outbound(ctx.account_did.trim(), ctx.state_store.clone())
+            .await
+        {
+            Ok(completed) if completed > 0 => {
+                tracing::debug!(completed, "sync engine drained MLS post-accept events");
+            }
+            Ok(_) => {}
+            Err(error) => {
+                tracing::debug!(?error, "sync engine deferred MLS post-accept drain");
+            }
+        }
     }
 
     match crate::client_core::account_subscribe_snapshot_outcome(&sdk_http, cursor.as_deref()).await

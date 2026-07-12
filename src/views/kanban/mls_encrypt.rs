@@ -360,8 +360,23 @@ pub(super) fn dispatch_card_detail_update(
             }
         }
         if let Some(commit_op) = mls_commit_op {
+            let snapshot_for_submit = mls_new_snapshot.clone();
+            let realm_for_submit = realm_id.clone();
+            let post_accept_store = crate::app::runtime_adapter::state_store_handle(state_store);
             let commit_result = with_authed_api(&base_url, api_token.clone(), |api| async move {
-                api.event_submitter()?.submit_sdk_event(&commit_op).await
+                match snapshot_for_submit {
+                    Some(snapshot) => {
+                        api.event_submitter()?
+                            .submit_mls_event_with_snapshot(
+                                &commit_op,
+                                realm_for_submit,
+                                snapshot,
+                                post_accept_store,
+                            )
+                            .await
+                    }
+                    None => api.event_submitter()?.submit_sdk_event(&commit_op).await,
+                }
             })
             .await;
             match commit_result {
@@ -373,10 +388,7 @@ pub(super) fn dispatch_card_detail_update(
                     // and the snapshot would stay at the pre-commit epoch, so
                     // the next write retries at the correct `expected_prev_epoch`
                     // instead of skewing forever.
-                    if let Some(snapshot) = mls_new_snapshot {
-                        state_store
-                            .write()
-                            .save_mls_snapshot(realm_id.clone(), snapshot);
+                    if mls_new_snapshot.is_some() {
                         // §7.10 continuous backup: the accepted commit advanced
                         // the epoch, so re-upload this Realm's mls_history
                         // series tail (debounced; no-op until the 24-word

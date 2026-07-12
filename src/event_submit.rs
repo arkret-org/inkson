@@ -12,8 +12,8 @@ use std::time::Duration;
 #[cfg(test)]
 use arkret_sdk::ErrorEnvelope;
 use garth::{
-    OutboundEngine, OutboundEngineOutcome, OutboundSubmitOutcome, OutboundSubmitter,
-    outbound::BoxOutboundFuture,
+    OutboundEngine, OutboundEngineOutcome, OutboundPostAcceptHook, OutboundSubmitOutcome,
+    OutboundSubmitter, outbound::BoxOutboundFuture,
 };
 #[cfg(test)]
 use reqwest::StatusCode;
@@ -49,6 +49,71 @@ pub(crate) struct DurablyQueuedError {
     pub(crate) event_id: String,
 }
 
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
+struct QueuedSdkEvent {
+    event: arkret_sdk::Event,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    post_accept: Option<PostAcceptAction>,
+}
+
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
+enum PostAcceptAction {
+    MlsSnapshot {
+        realm_id: String,
+        snapshot: crate::mls::persistence::MlsSnapshotEnvelope,
+    },
+}
+
+fn decode_queued_sdk_event(content: Value) -> arkret_sdk::Result<QueuedSdkEvent> {
+    match serde_json::from_value::<QueuedSdkEvent>(content.clone()) {
+        Ok(queued) => Ok(queued),
+        Err(_) => serde_json::from_value(content)
+            .map(|event| QueuedSdkEvent {
+                event,
+                post_accept: None,
+            })
+            .map_err(|error| {
+                arkret_sdk::Error::Protocol(format!("decode queued Inkson SDK event: {error}"))
+            }),
+    }
+}
+
+#[derive(Clone, Default)]
+struct InksonPostAcceptHook {
+    state_store: Option<crate::runtime::input::StateStoreHandle>,
+}
+
+impl OutboundPostAcceptHook for InksonPostAcceptHook {
+    fn post_accept<'a>(
+        &'a self,
+        item: &'a arkret_sdk::sync_client::SendQueueItem,
+        _event_id: &'a arkret_sdk::EventId,
+        _duplicate: bool,
+    ) -> BoxOutboundFuture<'a, ()> {
+        Box::pin(async move {
+            let queued = decode_queued_sdk_event(item.content.clone())?;
+            let Some(action) = queued.post_accept else {
+                return Ok(());
+            };
+            let store = self.state_store.as_ref().ok_or_else(|| {
+                arkret_sdk::Error::Protocol(
+                    "queued post-accept action has no host state-store adapter".to_owned(),
+                )
+            })?;
+            match action {
+                PostAcceptAction::MlsSnapshot { realm_id, snapshot } => store.write(|store| {
+                    store.save_mls_snapshot(realm_id, snapshot);
+                    store.flush().map_err(|error| {
+                        arkret_sdk::Error::Protocol(format!(
+                            "persist MLS post-accept snapshot: {error}"
+                        ))
+                    })
+                }),
+            }
+        })
+    }
+}
+
 pub(crate) fn is_durably_queued_error(error: &anyhow::Error) -> bool {
     error.downcast_ref::<DurablyQueuedError>().is_some()
 }
@@ -70,10 +135,7 @@ impl OutboundSubmitter for EventOutboundSubmitter<'_> {
         item: arkret_sdk::sync_client::SendQueueItem,
     ) -> BoxOutboundFuture<'a, OutboundSubmitOutcome> {
         Box::pin(async move {
-            let event: arkret_sdk::Event =
-                serde_json::from_value(item.content).map_err(|error| {
-                    arkret_sdk::Error::Protocol(format!("decode queued Inkson SDK event: {error}"))
-                })?;
+            let event = decode_queued_sdk_event(item.content)?.event;
             match self.owner.submit_sdk_event_direct(&event).await {
                 Ok(result) => {
                     let event_id =
@@ -147,6 +209,23 @@ fn completed_outbound_result(item: &arkret_sdk::sync_client::SendQueueItem) -> S
     }
 }
 
+fn outbound_store_scope(event: &arkret_sdk::Event, durable_post_accept: bool) -> String {
+    let actor = event.actor_id.as_str();
+    if durable_post_accept {
+        format!("{actor}\u{1f}mls-durable-post-accept")
+    } else if event.kind.as_str().starts_with("ak.mls.") {
+        // Legacy MLS callers still persist their snapshot after this method
+        // returns. Keep them host-only until they adopt the durable action.
+        format!("{actor}\u{1f}mls-host-only")
+    } else {
+        actor.to_owned()
+    }
+}
+
+fn durable_mls_store_scope(actor_id: &str) -> String {
+    format!("{actor_id}\u{1f}mls-durable-post-accept")
+}
+
 impl EventSubmitter {
     pub fn new(http: arkret_sdk::http_client::Client) -> Self {
         Self {
@@ -181,6 +260,45 @@ impl EventSubmitter {
                     completed = completed.saturating_add(1);
                 }
                 OutboundEngineOutcome::Rejected(_) | OutboundEngineOutcome::Terminal(_) => {
+                    completed = completed.saturating_add(1);
+                }
+                OutboundEngineOutcome::Idle | OutboundEngineOutcome::RetryAt { .. } => {
+                    return Ok(completed);
+                }
+            }
+        }
+    }
+
+    /// Resume MLS commits that carry their encrypted post-accept snapshot.
+    /// The hook commits the snapshot before Garth marks the item sent; hook
+    /// failure leaves the event retryable, so a later duplicate response can
+    /// finish the same idempotent action.
+    pub(crate) async fn drain_mls_outbound(
+        &self,
+        actor_id: &str,
+        state_store: crate::runtime::input::StateStoreHandle,
+    ) -> anyhow::Result<usize> {
+        let outbound = OutboundEngine::new(crate::outbound_store::InksonOutboundStore::open(
+            &durable_mls_store_scope(actor_id),
+        )?);
+        let results = OutboundAttemptResults::default();
+        let submitter = EventOutboundSubmitter {
+            owner: self,
+            results: &results,
+        };
+        let hook = InksonPostAcceptHook {
+            state_store: Some(state_store),
+        };
+        let mut completed = 0usize;
+        loop {
+            match outbound
+                .submit_next_with_hook(&submitter, &hook, chrono::Utc::now())
+                .await?
+            {
+                OutboundEngineOutcome::Accepted(_)
+                | OutboundEngineOutcome::Duplicate(_)
+                | OutboundEngineOutcome::Rejected(_)
+                | OutboundEngineOutcome::Terminal(_) => {
                     completed = completed.saturating_add(1);
                 }
                 OutboundEngineOutcome::Idle | OutboundEngineOutcome::RetryAt { .. } => {
@@ -429,9 +547,34 @@ impl EventSubmitter {
         &self,
         event: &arkret_sdk::Event,
     ) -> anyhow::Result<SubmitEventResult> {
+        self.submit_sdk_event_queued(event, None, None).await
+    }
+
+    pub(crate) async fn submit_mls_event_with_snapshot(
+        &self,
+        event: &arkret_sdk::Event,
+        realm_id: String,
+        snapshot: crate::mls::persistence::MlsSnapshotEnvelope,
+        state_store: crate::runtime::input::StateStoreHandle,
+    ) -> anyhow::Result<SubmitEventResult> {
+        self.submit_sdk_event_queued(
+            event,
+            Some(PostAcceptAction::MlsSnapshot { realm_id, snapshot }),
+            Some(state_store),
+        )
+        .await
+    }
+
+    async fn submit_sdk_event_queued(
+        &self,
+        event: &arkret_sdk::Event,
+        post_accept: Option<PostAcceptAction>,
+        state_store: Option<crate::runtime::input::StateStoreHandle>,
+    ) -> anyhow::Result<SubmitEventResult> {
         let transaction_id = event.event_id.to_string();
+        let durable_post_accept = post_accept.is_some();
         let outbound = OutboundEngine::new(crate::outbound_store::InksonOutboundStore::open(
-            event.actor_id.as_str(),
+            &outbound_store_scope(event, durable_post_accept),
         )?);
         outbound
             .enqueue(
@@ -440,7 +583,10 @@ impl EventSubmitter {
                 arkret_sdk::sync_client::SendQueueItemKind::Custom {
                     kind: event.kind.to_string(),
                 },
-                serde_json::to_value(event)?,
+                serde_json::to_value(QueuedSdkEvent {
+                    event: event.clone(),
+                    post_accept,
+                })?,
                 Vec::new(),
             )
             .await?;
@@ -450,8 +596,12 @@ impl EventSubmitter {
             owner: self,
             results: &results,
         };
+        let hook = InksonPostAcceptHook { state_store };
         loop {
-            match outbound.submit_next(&submitter, chrono::Utc::now()).await? {
+            match outbound
+                .submit_next_with_hook(&submitter, &hook, chrono::Utc::now())
+                .await?
+            {
                 OutboundEngineOutcome::Accepted(item) | OutboundEngineOutcome::Duplicate(item)
                     if item.transaction_id == transaction_id =>
                 {
@@ -1008,6 +1158,86 @@ mod tests {
             "proofs": []
         }))
         .unwrap()
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    #[tokio::test]
+    async fn mls_post_accept_hook_persists_snapshot_idempotently() {
+        use std::sync::{Arc, Mutex};
+
+        use garth::OutboundPostAcceptHook;
+
+        let path = std::env::temp_dir().join(format!(
+            "inkson-mls-post-accept-{}-{}.json",
+            std::process::id(),
+            chrono::Utc::now().timestamp_nanos_opt().unwrap_or_default()
+        ));
+        let store = Arc::new(Mutex::new(crate::state::LocalStateStore::with_path(&path)));
+        let read_store = Arc::clone(&store);
+        let write_store = Arc::clone(&store);
+        let handle = crate::runtime::input::StateStoreHandle::new(
+            move |read| read(&read_store.lock().unwrap()),
+            move |write| write(&mut write_store.lock().unwrap()),
+        );
+        let hook = InksonPostAcceptHook {
+            state_store: Some(handle),
+        };
+        let realm_id = "ak:realm:01904100-0000-7000-8000-000000000001";
+        let event = sdk_event_with_kind(
+            "ak:event:01904100-0000-7000-8000-000000000001",
+            realm_id,
+            "ak.mls.commit",
+            "did:web:alice.example",
+        );
+        let snapshot = crate::mls::persistence::MlsSnapshotEnvelope {
+            realm_id: realm_id.to_owned(),
+            group_id: "010203".to_owned(),
+            epoch: 7,
+            salt_hex: "00".repeat(16),
+            ciphertext_hex: "11".repeat(32),
+            mac_hex: "22".repeat(12),
+            recorded_at: chrono::Utc::now(),
+            epoch_started_at: chrono::Utc::now(),
+            app_messages_observed: 1,
+            aead_version: crate::mls::persistence::AEAD_VERSION_CHACHA20_POLY1305,
+        };
+        let content = serde_json::to_value(QueuedSdkEvent {
+            event,
+            post_accept: Some(PostAcceptAction::MlsSnapshot {
+                realm_id: realm_id.to_owned(),
+                snapshot,
+            }),
+        })
+        .unwrap();
+        let realm = arkret_sdk::RealmId::new(realm_id).unwrap();
+        let mut queue = arkret_sdk::sync_client::SendQueue::new();
+        let item = queue
+            .enqueue(
+                Some("txn-mls-hook".to_owned()),
+                realm,
+                arkret_sdk::sync_client::SendQueueItemKind::Custom {
+                    kind: "ak.mls.commit".to_owned(),
+                },
+                content,
+                Vec::new(),
+            )
+            .unwrap();
+        let event_id =
+            arkret_sdk::EventId::new("ak:event:01904100-0000-7000-8000-000000000001").unwrap();
+
+        hook.post_accept(&item, &event_id, false).await.unwrap();
+        hook.post_accept(&item, &event_id, true).await.unwrap();
+        assert_eq!(
+            store
+                .lock()
+                .unwrap()
+                .mls_snapshot_for(realm_id)
+                .unwrap()
+                .epoch,
+            7
+        );
+        drop(store);
+        let _ = std::fs::remove_file(path);
     }
 
     #[test]

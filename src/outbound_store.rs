@@ -6,6 +6,11 @@
 
 use garth::{OutboundQueueStore, outbound::BoxOutboundFuture};
 
+#[cfg(not(target_arch = "wasm32"))]
+static NATIVE_OUTBOUND_STORES: std::sync::OnceLock<
+    std::sync::Mutex<std::collections::BTreeMap<std::path::PathBuf, garth::FileStore>>,
+> = std::sync::OnceLock::new();
+
 #[derive(Clone)]
 pub(crate) struct InksonOutboundStore {
     #[cfg(not(target_arch = "wasm32"))]
@@ -22,9 +27,20 @@ impl InksonOutboundStore {
             let path = crate::state::app_data_dir()
                 .join("outbound")
                 .join(format!("{scope}.json"));
-            return Ok(Self {
-                inner: garth::FileStore::open(path)?,
-            });
+            let stores = NATIVE_OUTBOUND_STORES
+                .get_or_init(|| std::sync::Mutex::new(std::collections::BTreeMap::new()));
+            let mut stores = stores.lock().map_err(|error| {
+                arkret_sdk::Error::Protocol(format!("native outbound store registry: {error}"))
+            })?;
+            let inner = match stores.get(&path) {
+                Some(store) => store.clone(),
+                None => {
+                    let store = garth::FileStore::open(&path)?;
+                    stores.insert(path, store.clone());
+                    store
+                }
+            };
+            return Ok(Self { inner });
         }
         #[cfg(target_arch = "wasm32")]
         {
