@@ -80,6 +80,12 @@ pub enum Route {
     #[route("/realms/:realm_id/members", RealmMembersPage)]
     RealmMembers { realm_id: String },
 
+    #[route("/realms/:realm_id/circles", CirclesPage)]
+    Circles { realm_id: String },
+
+    #[route("/realms/:realm_id/circles/:circle_id", CircleDetailPage)]
+    CircleDetail { realm_id: String, circle_id: String },
+
     #[route("/realms/:realm_id/settings", RealmAdminPage)]
     RealmAdmin { realm_id: String },
 
@@ -197,6 +203,18 @@ fn RealmMembersPage(realm_id: String) -> Element {
 }
 
 #[component]
+fn CirclesPage(realm_id: String) -> Element {
+    let _ = realm_id;
+    rsx! {}
+}
+
+#[component]
+fn CircleDetailPage(realm_id: String, circle_id: String) -> Element {
+    let _ = (realm_id, circle_id);
+    rsx! {}
+}
+
+#[component]
 fn SettingsSectionPage(section: String, filter: String) -> Element {
     let _ = (section, filter);
     rsx! {}
@@ -287,6 +305,7 @@ impl Route {
             | Route::Audit
             | Route::Developer => AppView::Settings,
             Route::VerifyDevice => AppView::VerifyDevice,
+            Route::Circles { .. } | Route::CircleDetail { .. } => AppView::Circles,
             Route::RealmMembers { .. }
             | Route::RealmAdmin { .. }
             | Route::RealmAdminSection { .. } => AppView::RealmAdmin,
@@ -315,6 +334,8 @@ impl Route {
             | Route::KanbanBoardTask { realm_id, .. }
             | Route::KanbanTask { realm_id, .. }
             | Route::RealmMembers { realm_id }
+            | Route::Circles { realm_id }
+            | Route::CircleDetail { realm_id, .. }
             | Route::RealmAdmin { realm_id }
             | Route::RealmAdminSection { realm_id, .. } => Some(realm_id.as_str()),
             _ => None,
@@ -370,6 +391,9 @@ impl From<AppView> for Route {
             AppView::SettingsRecovery => Route::SettingsRecovery,
             AppView::VerifyDevice => Route::VerifyDevice,
             AppView::RealmAdmin => Route::RealmAdmin {
+                realm_id: String::new(),
+            },
+            AppView::Circles => Route::Circles {
                 realm_id: String::new(),
             },
             AppView::Kanban => Route::Kanban,

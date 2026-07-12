@@ -3,6 +3,7 @@ import {
   registerStrandsBeforeEach,
   latestTestId,
   dismissBlockingRecoveryModal,
+  gotoAndDismissRecovery,
   openServerSwitcher,
   refreshServer,
   openSettings,
@@ -10,6 +11,28 @@ import {
 } from "./strandsHarness";
 
 registerStrandsBeforeEach();
+
+test("ordinary Circle list fails closed when the response contains a Sidecar profile", async ({ page }) => {
+  await gotoAndDismissRecovery(page, "/realms/ak:realm:0196419b-0000-7000-8000-000000000000/circles");
+  const panel = page.getByTestId("circles-panel");
+  await expect(panel).toBeVisible();
+  await expect(panel.getByTestId("circle-list-item")).toHaveCount(1);
+  await expect(panel).toContainText("Demo Circle");
+  await expect(panel).not.toContainText("Alice AI Sidecar");
+});
+
+test("Circle creation establishes initial membership and opens the detail view", async ({ page }) => {
+  await gotoAndDismissRecovery(page, "/realms/ak:realm:0196419b-0000-7000-8000-000000000000/circles");
+  const panel = page.getByTestId("circles-panel");
+  await panel.getByTestId("circle-create-open").click();
+  await page.getByTestId("circle-create-title").fill("Incident Response");
+  await page.getByTestId("circle-create-submit").click();
+
+  await expect(page).toHaveURL(/\/realms\/.*\/circles\/ak:circle:/);
+  await expect(panel.getByTestId("circle-detail")).toContainText("Incident Response");
+  await expect(panel.getByTestId("circle-detail")).toContainText("1 active members");
+  await expect(panel.getByTestId("circle-detail")).toContainText("Member");
+});
 
 test("workspace sidebar separates contact-based direct chats", async ({ page }) => {
   const shell = latestTestId(page, "client-shell");

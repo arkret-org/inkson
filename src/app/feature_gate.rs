@@ -94,6 +94,7 @@ pub(super) fn route_label(route: &Route) -> &'static str {
         Route::NotificationsSettings => "Notifications",
         Route::VerifyDevice => "Verify Device",
         Route::RealmMembers { .. } => "Members",
+        Route::Circles { .. } | Route::CircleDetail { .. } => "Circles",
         Route::RealmAdmin { .. } => "Realm Settings",
         Route::RealmAdminSection { section, .. } => match section.as_str() {
             "profile" => "Profile",

@@ -3,7 +3,7 @@ use inkson::account_data::{
     AccountDataKey, ContactRemark, RealmRemark, contact_remark_account_data_key,
     realm_remark_account_data_key,
 };
-use inkson::api_error::{ArkretApiError, decode_arkret_error, is_auth_expired_error};
+use inkson::api_error::{TransportClientError, decode_arkret_error, is_auth_expired_error};
 use inkson::config::{ClientConfig, LocalConfigStore};
 use inkson::models::ServerDescriptionExt;
 use inkson::operation::OperationBuilder;
@@ -854,7 +854,7 @@ fn inkson_e2ee_workflow_matches_protocol_mls_envelope_behavior() {
 /// wipes the user's persisted session and forces a fresh sign-in.
 #[test]
 fn bare_401_does_not_count_as_session_loss() {
-    let bare: anyhow::Error = ArkretApiError {
+    let bare: anyhow::Error = TransportClientError {
         status: StatusCode::UNAUTHORIZED,
         error: decode_arkret_error(StatusCode::UNAUTHORIZED, b""),
     }
@@ -869,7 +869,7 @@ fn bare_401_does_not_count_as_session_loss() {
     for code in ["auth_expired", "unauthenticated", "soft_logged_out"] {
         let body =
             format!(r#"{{"ok":false,"error":{{"code":"{code}","message":"unknown token"}}}}"#);
-        let envelope: anyhow::Error = ArkretApiError {
+        let envelope: anyhow::Error = TransportClientError {
             status: StatusCode::UNAUTHORIZED,
             error: decode_arkret_error(StatusCode::UNAUTHORIZED, body.as_bytes()),
         }
@@ -880,7 +880,7 @@ fn bare_401_does_not_count_as_session_loss() {
         );
     }
 
-    let unrelated: anyhow::Error = ArkretApiError {
+    let unrelated: anyhow::Error = TransportClientError {
         status: StatusCode::UNAUTHORIZED,
         error: decode_arkret_error(
             StatusCode::UNAUTHORIZED,

@@ -94,6 +94,10 @@ pub(super) fn RouteSurface(state: RouteSurfaceState) -> Element {
         new_space_context_node,
     } = navigation;
     let navigator = use_navigator();
+    let routed_circle_id = match &content_route {
+        Route::CircleDetail { circle_id, .. } => Some(circle_id.clone()),
+        _ => None,
+    };
 
     rsx! {
                 div { class: "workspace-body",
@@ -314,6 +318,23 @@ pub(super) fn RouteSurface(state: RouteSurfaceState) -> Element {
                             }
                         } else {
                             rsx! { ProfileGateNotice { profile: "e2ee_client" } }
+                        }
+                    },
+                    Route::Circles { realm_id } | Route::CircleDetail { realm_id, .. } => {
+                        if selected_realm_id() != *realm_id {
+                            selected_realm_id.set(realm_id.clone());
+                        }
+                        if full_ready {
+                            rsx! {
+                                crate::views::circles::CirclesPanel {
+                                    realm_id: realm_id.clone(),
+                                    selected_circle_id: routed_circle_id.clone(),
+                                    account_did: account_did(),
+                                    token,
+                                }
+                            }
+                        } else {
+                            rsx! { ProfileGateNotice { profile: "full_client" } }
                         }
                     },
                     Route::RealmMembers { .. } => {

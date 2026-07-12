@@ -7,8 +7,10 @@ use serde_json::{Value, json};
 
 use crate::api_error::is_space_membership_denied_error;
 use crate::audit::build_audit_ryw_receipt;
+use crate::circle::{CircleScope, CircleSummary};
 use crate::components::{
-    ActorIdentityLabel, HelpTip, SecurityStateBadge, SelfAttributionBadge, UiIcon,
+    ActorIdentityLabel, CircleScopePicker, HelpTip, SecurityStateBadge, SelfAttributionBadge,
+    UiIcon,
 };
 use crate::hlc::{Hlc, observe_seq};
 use crate::models::SubmitEventResult;
@@ -455,6 +457,56 @@ pub fn ChatPanel(
         mut track_filter,
         mut left_panel_open,
     } = controller;
+    let mut eligible_circle_scopes = use_signal(Vec::<CircleSummary>::new);
+    let mut new_channel_scope = use_signal(CircleScope::default);
+    {
+        let base = base_url.clone();
+        let realm = selected_realm_id.clone();
+        use_effect(move || {
+            let credential = token();
+            let base = base.clone();
+            let realm = realm.clone();
+            spawn(async move {
+                let outcome =
+                    crate::transport::auth::with_authed_api(&base, credential, |api| async move {
+                        api.http()
+                            .circle_list(&realm)
+                            .await
+                            .map_err(anyhow::Error::from)
+                    })
+                    .await;
+                match outcome {
+                    Ok(list) => {
+                        let summaries = crate::circle::ordinary_circle_views(list)
+                            .into_iter()
+                            .filter(|circle| {
+                                circle.state == arkret_sdk::CircleState::Active
+                                    && circle.viewer_membership
+                                        == Some(arkret_sdk::CircleMembership::Join)
+                                    && circle.pending_mls_removals.is_empty()
+                            })
+                            .map(|circle| CircleSummary {
+                                id: circle.circle_id.to_string(),
+                                realm_id: circle.realm_id.to_string(),
+                                title: circle.title,
+                                short_name: circle.display.short_name,
+                                color_token: format!("{:?}", circle.display.color_token),
+                                symbol: format!("{:?}", circle.display.symbol),
+                                member_count: circle.member_count.unwrap_or(0),
+                                state: circle.state,
+                                viewer_is_member: true,
+                            })
+                            .collect();
+                        eligible_circle_scopes.set(summaries);
+                    }
+                    Err(error) => tracing::warn!(
+                        error = %error.display(),
+                        "Circle scope picker load failed"
+                    ),
+                }
+            });
+        });
+    }
     let blocked_did_set: std::collections::BTreeSet<String> = state_store
         .read()
         .client_blocklist()
@@ -912,6 +964,12 @@ pub fn ChatPanel(
                                 placeholder: "Short purpose or context",
                                 oninput: move |event: FormEvent| new_channel_topic.set(event.value()),
                             }
+                            CircleScopePicker {
+                                selected: new_channel_scope(),
+                                circles: eligible_circle_scopes(),
+                                test_id: Some("new-channel-circle-scope".to_owned()),
+                                onchange: move |scope| new_channel_scope.set(scope),
+                            }
                             label { class: "discussion-checkbox-row",
                                 Checkbox {
                                     "data-testid": "new-channel-create-card",
@@ -944,6 +1002,21 @@ pub fn ChatPanel(
                                         let category = "general".to_owned();
                                         let summary = new_channel_topic().trim().to_owned();
                                         let create_card = new_channel_create_card();
+                                        let selected_scope_circle = match new_channel_scope() {
+                                            CircleScope::Realm => None,
+                                            CircleScope::Circle {
+                                                circle_id,
+                                                title,
+                                                member_count,
+                                            } => Some(StrandScopeCircle {
+                                                circle_id,
+                                                title,
+                                                member_count,
+                                            }),
+                                        };
+                                        let selected_scope_circle_id = selected_scope_circle
+                                            .as_ref()
+                                            .map(|scope| scope.circle_id.clone());
                                         let strand_id = format!("ak:strand:{}", uuid_v7());
                                         let rank = format!("r{}", chrono::Utc::now().timestamp_millis());
                                         let op = match ak_ops::discussion_strand_create(
@@ -975,6 +1048,9 @@ pub fn ChatPanel(
                                                 op.payload["object"]["rank"] = json!(rank.clone());
                                                 if !summary.is_empty() {
                                                     op.payload["object"]["summary"] = json!(summary.clone());
+                                                }
+                                                if let Some(circle_id) = selected_scope_circle_id.as_deref() {
+                                                    op.payload["object"]["scope_circle_id"] = json!(circle_id);
                                                 }
                                                 if !create_card
                                                     && let Some(tracks) = op.payload["object"]["tracks"].as_object_mut()
@@ -1014,13 +1090,7 @@ pub fn ChatPanel(
                                                                 unread: 0,
                                                                 is_default: false,
                                                                 security_encrypted: None,
-                                                                // P3B.2.3 — the new-Strand form
-                                                                // currently creates Realm-scoped
-                                                                // Strands only; Circle scope
-                                                                // selection arrives once the
-                                                                // CircleScopePicker is mounted
-                                                                // on this form.
-                                                                scope_circle: None,
+                                                                scope_circle: selected_scope_circle.clone(),
                                                             });
                                                             controller.select_channel(strand_id.clone());
                                                             frontier_state.set(submitted.event_id.clone());
@@ -1048,6 +1118,7 @@ pub fn ChatPanel(
                                                             new_channel_name.set(String::new());
                                                             new_channel_topic.set(String::new());
                                                             new_channel_create_card.set(false);
+                                                            new_channel_scope.set(CircleScope::Realm);
                                                             create_dialog_open.set(false);
                                                         }
                                                         Err(error) => status_msg.set(format!("Strand create failed: {error}")),

@@ -321,6 +321,9 @@ export function registerStrandsBeforeEach() {
             },
           ]
         : undefined,
+      includeSidecarInCircleList: testInfo.title.startsWith(
+        "ordinary Circle list",
+      ),
     });
     if (testInfo.title.startsWith("login page")) {
       return;

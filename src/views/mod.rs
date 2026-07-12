@@ -39,6 +39,7 @@ pub mod audit;
 pub mod call;
 pub mod call_signals;
 pub mod chat;
+pub mod circles;
 pub mod contacts;
 pub mod dashboard;
 /// T7.1 — Developer Tools / Diagnostics aggregator. Hosts the
@@ -93,6 +94,7 @@ pub enum AppView {
     Settings,
     VerifyDevice,
     RealmAdmin,
+    Circles,
     Kanban,
     /// Realm management list (`/realms/manage`). Distinct from `Kanban` so the
     /// management surface round-trips 1:1 with its route

@@ -27,6 +27,30 @@
 use arkret_sdk::ERROR_CODE_DELIVERY_BINDING_HANDED_OVER;
 use serde::{Deserialize, Serialize};
 
+/// Keep ordinary Circle surfaces closed to every profile-specific Circle.
+/// A missing profile is the v1 ordinary Circle shape; known or unknown
+/// profile refs require a dedicated surface before they may be rendered.
+pub fn is_ordinary_circle_profile(profile_ref: Option<&str>) -> bool {
+    profile_ref.is_none()
+}
+
+pub fn ordinary_circle_views(list: arkret_sdk::CircleList) -> Vec<arkret_sdk::CircleView> {
+    list.circles
+        .into_iter()
+        .filter(|circle| {
+            let ordinary = is_ordinary_circle_profile(circle.profile_ref.as_deref());
+            if !ordinary {
+                tracing::warn!(
+                    circle_id = %circle.circle_id,
+                    profile_ref = circle.profile_ref.as_deref().unwrap_or("unknown"),
+                    "profile-specific Circle omitted from ordinary Circle surface"
+                );
+            }
+            ordinary
+        })
+        .collect()
+}
+
 /// The scope a composer / Strand-create form is actively writing into.
 ///
 /// Realm scope is the default; Circle scope flags a AKP-0007
@@ -275,6 +299,17 @@ pub enum ScopeMatch {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn ordinary_circle_filter_fails_closed_for_sidecar_and_unknown_profiles() {
+        assert!(is_ordinary_circle_profile(None));
+        assert!(!is_ordinary_circle_profile(Some(
+            arkret_sdk::PROFILE_AGENT_SIDECAR_THREAD
+        )));
+        assert!(!is_ordinary_circle_profile(Some(
+            "ak.profile.future_private_circle.v1"
+        )));
+    }
 
     #[test]
     fn realm_scope_default_label_is_realm() {

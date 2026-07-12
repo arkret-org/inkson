@@ -167,6 +167,7 @@ const APP_OVERRIDES: &str = concat!(
     include_str!("../styles/app_overrides/account-trigger-menu.css"),
     include_str!("../styles/app_overrides/members-agents-admin.css"),
     include_str!("../styles/app_overrides/sidecar-shell.css"),
+    include_str!("../styles/app_overrides/circle-workspace.css"),
 );
 
 /// C3: yoface shared-component design tokens. The first layer is shadcn
@@ -2894,6 +2895,23 @@ fn AppBootstrap() -> Element {
                                             }
                                         }
                                         if item_node.kind == RealmTreeNodeKind::Realm {
+                                            Link {
+                                                class: "sidebar-row-menu-item",
+                                                role: "menuitem",
+                                                "data-testid": "realm-tree-row-circles-action",
+                                                title: "Circles",
+                                                "aria-label": "Circles",
+                                                to: Route::Circles { realm_id: target_realm_id.clone() },
+                                                onclick: {
+                                                    let home_realm_id = target_realm_id.clone();
+                                                    move |_| {
+                                                        selected_realm_id.set(home_realm_id.clone());
+                                                        sidebar_row_menu_open.set(None);
+                                                    }
+                                                },
+                                                UiIcon { name: "users" }
+                                                span { "Circles" }
+                                            }
                                             button {
                                                 class: "sidebar-row-menu-item danger",
                                                 r#type: "button",

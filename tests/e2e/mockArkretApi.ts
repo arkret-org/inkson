@@ -67,6 +67,7 @@ type MockArkretApiOptions = {
   includeLowFloorRealm?: boolean;
   personalAgentPairingExpiresAt?: string;
   sidecarPendingMemberReconciliations?: Array<Record<string, unknown>>;
+  includeSidecarInCircleList?: boolean;
 };
 
 type MockAccountDevice = {
@@ -231,6 +232,7 @@ export async function mockArkretApi(
   const includeDemoRealms = options.includeDemoRealms ?? true;
   const sidecarPendingMemberReconciliations =
     options.sidecarPendingMemberReconciliations ?? [];
+  const includeSidecarInCircleList = options.includeSidecarInCircleList ?? false;
   const includeLowFloorRealm = options.includeLowFloorRealm ?? false;
   const personalAgentPairingExpiresAt =
     options.personalAgentPairingExpiresAt ?? "2099-07-06T00:10:00Z";
@@ -256,25 +258,57 @@ export async function mockArkretApi(
   const circleStates = new Map<string, MockCircleState>([
     [DEMO_CIRCLE, "active"],
   ]);
+  const circleMetadata = new Map<string, { title: string; summary?: string; encryption_profile: string }>([
+    [
+      DEMO_CIRCLE,
+      {
+        title: "Demo Circle",
+        summary: "Mock Circle for lifecycle operations",
+        encryption_profile: "mls_rfc9420",
+      },
+    ],
+  ]);
+  const circleMembers = new Map<string, string[]>([[DEMO_CIRCLE, [accountPrincipalId]]]);
+  let circleCounter = 2;
   const circleView = (circleId = DEMO_CIRCLE) => ({
     circle_id: circleId,
     realm_id: DEMO_REALM,
-    title: "Demo Circle",
-    summary: "Mock Circle for lifecycle operations",
+    title: circleMetadata.get(circleId)?.title ?? "Demo Circle",
+    summary: circleMetadata.get(circleId)?.summary,
+    display: {
+      short_name: "Demo",
+      color_token: "slate",
+      symbol: { glyph: "ring" },
+    },
     directory_visibility: "realm_members",
     join_rule: "invite",
     history_visibility: "joined",
-    content_encryption_floor: "mls_rfc9420",
-    metadata_encryption_floor: "mls_rfc9420",
-    encryption_profile: "mls_rfc9420",
-    mls_group_ref: "mls:demo-circle",
+    content_encryption_floor: "e2ee_required",
+    metadata_encryption_floor: "e2ee_required",
+    encryption_profile:
+      circleMetadata.get(circleId)?.encryption_profile ?? "mls_rfc9420",
+    mls_group_ref: "ak:mls:mls_rfc9420:demo-circle",
     pending_mls_removals: [],
     state: circleStates.get(circleId) ?? "active",
-    members: [accountPrincipalId],
+    member_count: circleMembers.get(circleId)?.length ?? 0,
+    viewer_membership: circleMembers.get(circleId)?.includes(accountPrincipalId)
+      ? "join"
+      : undefined,
+    members: circleMembers.get(circleId) ?? [],
     created_by: accountPrincipalId,
     created_at: "2026-06-23T00:00:00Z",
     updated_by: accountPrincipalId,
     updated_at: "2026-06-23T00:00:00Z",
+  });
+  const sidecarCircleView = () => ({
+    ...circleView("ak:circle:0196419b-0000-7000-8000-00000000c1c2"),
+    profile_ref: "ak.profile.agent_sidecar_thread.v1",
+    title: "Alice AI Sidecar",
+    display: {
+      short_name: "AI-ALICE",
+      color_token: "slate",
+      symbol: { glyph: "spark" },
+    },
   });
   let recoveryPolicy: Record<string, unknown> | null = null;
   const keyBackups = new Map<string, Record<string, unknown>>();
@@ -761,7 +795,75 @@ export async function mockArkretApi(
       const realmId = url.searchParams.get("realm_id") ?? DEMO_REALM;
       return json(route, {
         realm_id: realmId,
-        circles: realmId === DEMO_REALM ? [circleView()] : [],
+        circles:
+          realmId === DEMO_REALM
+            ? [
+                ...[...circleStates.keys()]
+                  .filter((circleId) => circleStates.get(circleId) !== "tombstoned")
+                  .map((circleId) => circleView(circleId)),
+                ...(includeSidecarInCircleList ? [sidecarCircleView()] : []),
+              ]
+            : [],
+      });
+    }
+
+    if (
+      url.pathname === "/_arkret/self/circles" &&
+      route.request().method() === "POST"
+    ) {
+      const request = route.request().postDataJSON() as {
+        title: string;
+        summary?: string;
+        encryption_profile?: string;
+      };
+      const circleId = `ak:circle:0196419b-0000-7000-8000-${String(circleCounter).padStart(12, "0")}`;
+      circleCounter += 1;
+      circleStates.set(circleId, "active");
+      circleMetadata.set(circleId, {
+        title: request.title,
+        summary: request.summary,
+        encryption_profile: request.encryption_profile ?? "mls_rfc9420",
+      });
+      circleMembers.set(circleId, []);
+      return json(route, circleView(circleId));
+    }
+
+    const circleMemberCollection = url.pathname.match(
+      /^\/_arkret\/self\/circles\/([^/]+)\/members$/,
+    );
+    if (circleMemberCollection && route.request().method() === "POST") {
+      const circleId = circleMemberCollection[1];
+      const request = route.request().postDataJSON() as {
+        actor_id: string;
+        membership?: string;
+      };
+      const membership = request.membership ?? "join";
+      const members = new Set(circleMembers.get(circleId) ?? []);
+      if (membership === "join") {
+        members.add(request.actor_id);
+      } else if (membership === "leave" || membership === "ban") {
+        members.delete(request.actor_id);
+      }
+      circleMembers.set(circleId, [...members]);
+      return json(route, {
+        circle_id: circleId,
+        actor_id: request.actor_id,
+        membership,
+      });
+    }
+
+    const circleMemberResource = url.pathname.match(
+      /^\/_arkret\/self\/circles\/([^/]+)\/members\/(.+)$/,
+    );
+    if (circleMemberResource && route.request().method() === "DELETE") {
+      const [, circleId, actorId] = circleMemberResource;
+      const members = new Set(circleMembers.get(circleId) ?? []);
+      members.delete(decodeURIComponent(actorId));
+      circleMembers.set(circleId, [...members]);
+      return json(route, {
+        circle_id: circleId,
+        actor_id: decodeURIComponent(actorId),
+        membership: "leave",
       });
     }
 
