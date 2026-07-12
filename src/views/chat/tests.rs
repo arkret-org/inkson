@@ -1105,6 +1105,168 @@ fn chat_messages_fold_projection_reaction_target_ref_over_envelope_message_id() 
 }
 
 #[test]
+fn chat_messages_fold_canonical_create_with_streamed_reaction_envelope() {
+    let mut events = vec![
+        json!({
+            "event_id": "ak:event:01904100-0000-7000-8000-000000000101",
+            "kind": "ak.message.create",
+            "realm_id": "ak:realm:01904100-0000-7000-8000-000000000001",
+            "actor_id": "did:web:alice.example",
+            "actor_seq": 1,
+            "created_at": "2026-07-08T01:44:39Z",
+            "hlc": "01970e589d21-0004-a13f9c2e",
+            "prev_refs": [],
+            "refs": [],
+            "payload": {
+                "content": {"kind": "ak.content.text", "body": "canonical hello"},
+                "message_id": "ak:message:01904100-0000-7000-8000-000000000201",
+                "strand_id": "ak:strand:01904100-0000-7000-8000-000000000301",
+                "track_name": "discussion"
+            }
+        }),
+        json!({
+            "event_id": "ak:event:01904100-0000-7000-8000-000000000102",
+            "kind": "ak.reaction.add",
+            "realm_id": "ak:realm:01904100-0000-7000-8000-000000000001",
+            "actor_id": "did:web:bob.example",
+            "actor_seq": 2,
+            "created_at": "2026-07-08T01:44:43Z",
+            "hlc": "01970e589d22-0004-a13f9c2e",
+            "prev_refs": [],
+            "refs": [],
+            "payload": {
+                "key": "👍",
+                "target_ref": "ak:message:01904100-0000-7000-8000-000000000201"
+            }
+        }),
+    ];
+    sign_chat_fixtures(&mut events);
+
+    let records =
+        message_operations_from_events("ak:realm:01904100-0000-7000-8000-000000000001", &events);
+    let state = ClientLocalState {
+        raw_operations: records,
+        ..ClientLocalState::default()
+    };
+    let messages = chat_messages_from_local_state_with_sidecar(&state, None, None);
+
+    assert_eq!(messages.len(), 1);
+    assert_eq!(
+        messages[0].protocol_message_id.as_deref(),
+        Some("ak:message:01904100-0000-7000-8000-000000000201")
+    );
+    assert_eq!(
+        messages[0].reactions,
+        vec![("👍".to_owned(), vec!["did:web:bob.example".to_owned()])]
+    );
+}
+
+#[test]
+fn durable_reaction_folds_onto_controller_only_create() {
+    let realm_id = "ak:realm:01904100-0000-7000-8000-000000000001";
+    let message_id = "ak:message:01904100-0000-7000-8000-000000000201";
+    let mut events = vec![
+        json!({
+            "event_id": "ak:event:01904100-0000-7000-8000-000000000101",
+            "kind": "ak.message.create",
+            "realm_id": realm_id,
+            "actor_id": "did:web:alice.example",
+            "actor_seq": 1,
+            "created_at": "2026-07-08T01:44:39Z",
+            "hlc": "01970e589d21-0004-a13f9c2e",
+            "prev_refs": [],
+            "refs": [],
+            "payload": {
+                "content": {"kind": "ak.content.text", "body": "optimistic first"},
+                "message_id": message_id,
+                "strand_id": "ak:strand:01904100-0000-7000-8000-000000000301",
+                "track_name": "discussion"
+            }
+        }),
+        json!({
+            "event_id": "ak:event:01904100-0000-7000-8000-000000000102",
+            "kind": "ak.reaction.add",
+            "realm_id": realm_id,
+            "actor_id": "did:web:bob.example",
+            "actor_seq": 2,
+            "created_at": "2026-07-08T01:44:43Z",
+            "hlc": "01970e589d22-0004-a13f9c2e",
+            "prev_refs": [],
+            "refs": [],
+            "payload": {"key": "👍", "target_ref": message_id}
+        }),
+    ];
+    sign_chat_fixtures(&mut events);
+
+    let seed = chat_messages_from_events_with_sidecar(realm_id, &events[..1], None, None);
+    let reaction_records = message_operations_from_events(realm_id, &events[1..]);
+    let state = ClientLocalState {
+        raw_operations: reaction_records,
+        ..ClientLocalState::default()
+    };
+
+    let messages =
+        fold_local_state_into_chat_messages_with_sidecar(seed, &state, None, None);
+
+    assert_eq!(messages.len(), 1);
+    assert_eq!(
+        messages[0].reactions,
+        vec![("👍".to_owned(), vec!["did:web:bob.example".to_owned()])]
+    );
+}
+
+#[test]
+fn durable_redaction_folds_onto_controller_only_create() {
+    let realm_id = "ak:realm:01904100-0000-7000-8000-000000000001";
+    let message_id = "ak:message:01904100-0000-7000-8000-000000000201";
+    let seed = vec![ChatMessage {
+        id: "ak:event:01904100-0000-7000-8000-000000000101".to_owned(),
+        protocol_message_id: Some(message_id.to_owned()),
+        realm_id: realm_id.to_owned(),
+        strand_id: "ak:strand:01904100-0000-7000-8000-000000000301".to_owned(),
+        sender: "did:web:alice.example".to_owned(),
+        body: "sensitive body".to_owned(),
+        timestamp: "10:00".to_owned(),
+        created_at: None,
+        pending: false,
+        failed: false,
+        error: None,
+        executed_by: None,
+        edited: false,
+        redacted: false,
+        revisions: Vec::new(),
+        reply_to: None,
+        reactions: Vec::new(),
+        mentions: Vec::new(),
+        crypto_state: MessageCryptoState::Plaintext,
+    }];
+    let mut redactions = vec![json!({
+        "event_id": "ak:event:01904100-0000-7000-8000-000000000102",
+        "kind": "ak.message.redact",
+        "realm_id": realm_id,
+        "actor_id": "did:web:alice.example",
+        "actor_seq": 2,
+        "created_at": "2026-07-08T01:44:43Z",
+        "hlc": "01970e589d22-0004-a13f9c2e",
+        "prev_refs": [],
+        "refs": [],
+        "payload": {"message_id": message_id, "reason": "user requested tombstone"}
+    })];
+    sign_chat_fixtures(&mut redactions);
+    let state = ClientLocalState {
+        raw_operations: message_operations_from_events(realm_id, &redactions),
+        ..ClientLocalState::default()
+    };
+
+    let messages =
+        fold_local_state_into_chat_messages_with_sidecar(seed, &state, None, None);
+
+    assert_eq!(messages.len(), 1);
+    assert!(messages[0].redacted);
+    assert!(messages[0].body.is_empty());
+}
+
+#[test]
 fn chat_messages_fold_revision_chain_into_latest_message() {
     let mut events = vec![
         json!({

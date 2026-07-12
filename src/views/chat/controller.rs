@@ -634,14 +634,19 @@ impl ChatController {
             };
             match result {
                 Ok(submitted) => {
-                    let tombstone = local_redaction_tombstone_for_message(
-                        &message,
-                        chrono::Utc::now(),
-                        Some(&submitted.event_id),
-                    );
-                    state_store
-                        .write()
-                        .upsert_raw_operation(message.id, Some(realm_id), tombstone);
+                    // Keep the create record and append the canonical lifecycle
+                    // control. Replacing the create with an unsigned synthetic
+                    // tombstone made the strict projector drop the only row.
+                    // The submitted operation itself contains the target and
+                    // is folded immediately; the realm stream later upserts the
+                    // same event id with its server-signed envelope.
+                    if let Ok(payload) = serde_json::to_value(&operation) {
+                        state_store.write().upsert_raw_operation(
+                            submitted.event_id.clone(),
+                            Some(realm_id),
+                            payload,
+                        );
+                    }
                     frontier_state.set(submitted.event_id);
                     mark_message_command_succeeded(&mut messages, &message_id);
                     status_msg.set("Message removed".to_owned());

@@ -63,6 +63,10 @@ pub(super) fn ChatTimeline(controller: ChatController, context: ChatTimelineCont
         sync_cursor,
         frontier_state,
     };
+    // The parent folds durable lifecycle controls onto optimistic controller
+    // rows before filtering this snapshot. Reading controller.messages here
+    // would discard remote reactions/revisions that arrived before the
+    // sender's canonical create was persisted locally.
     let all_messages_snapshot = (controller.messages)();
     let messages_for_reply_lookup = &all_messages_snapshot;
     let pinned_target_set: std::collections::HashSet<String> = (controller.shared_pins)()
@@ -603,19 +607,44 @@ pub(super) fn ChatTimeline(controller: ChatController, context: ChatTimelineCont
                                         }
                                     }
                                 }
-                                if msg.redacted {
-                                    div { class: "msg-content redacted", "data-testid": "chat-redacted-tombstone", "[Message redacted]" }
-                                } else if blocked_did_set.contains(&msg.sender)
+                                {
+                                    let sender_blocked = blocked_did_set.contains(&msg.sender)
+                                        && !blocked_show_anyway.read().contains(&msg.id);
+                                    let content_class = if msg.redacted {
+                                        "msg-content redacted"
+                                    } else if sender_blocked {
+                                        "msg-content muted"
+                                    } else {
+                                        "msg-content"
+                                    };
+                                    let content_test_id = if msg.redacted {
+                                        "chat-redacted-tombstone"
+                                    } else if sender_blocked {
+                                        "message-blocked-row"
+                                    } else {
+                                        "event-body"
+                                    };
+                                    rsx! {
+                                        // Keep one stable content node across lifecycle folds.
+                                        // Replacing the entire conditional node could leave the
+                                        // live body mounted when a remote redaction arrived.
+                                        div {
+                                            class: "{content_class}",
+                                            "data-testid": "{content_test_id}",
+                                            if msg.redacted {
+                                                "[Message redacted]"
+                                            } else if sender_blocked {
+                                                {crate::i18n::tr("message.blocked_user")}
+                                            } else {
+                                                {render_message_body(&msg.body, &msg.mentions, &base_url)}
+                                            }
+                                        }
+                                    }
+                                }
+                                if !msg.redacted
+                                    && blocked_did_set.contains(&msg.sender)
                                     && !blocked_show_anyway.read().contains(&msg.id)
                                 {
-                                    // A5 — sender is on the personal
-                                    // blocklist; show a placeholder
-                                    // body + a "Show anyway" reveal.
-                                    div {
-                                        class: "msg-content muted",
-                                        "data-testid": "message-blocked-row",
-                                        {crate::i18n::tr("message.blocked_user")}
-                                    }
                                     Button {
                                         variant: ButtonVariant::Secondary,
                                         "data-testid": "message-blocked-show-anyway",
@@ -625,16 +654,18 @@ pub(super) fn ChatTimeline(controller: ChatController, context: ChatTimelineCont
                                         },
                                         {crate::i18n::tr("message.show_anyway")}
                                     }
-                                } else {
-                                    div { class: "msg-content", "data-testid": "event-body",
-                                        {render_message_body(&msg.body, &msg.mentions, &base_url)}
-                                    }
                                 }
-                                if !msg.reactions.is_empty() {
-                                    div { class: "actions chat-chip-row", "data-testid": "chat-reactions",
-                                        for (emoji, senders) in &msg.reactions {
-                                            span { class: "badge", "{emoji} {senders.len()}" }
-                                        }
+                                // Keep a stable keyed-row child for reaction-only
+                                // async updates. Dioxus can otherwise retain the
+                                // already-mounted message body while skipping
+                                // insertion of this formerly-absent conditional
+                                // node when a remote reaction arrives.
+                                div {
+                                    class: "actions chat-chip-row",
+                                    "data-testid": "chat-reactions",
+                                    hidden: msg.reactions.is_empty(),
+                                    for (emoji, senders) in &msg.reactions {
+                                        span { class: "badge", "{emoji} {senders.len()}" }
                                     }
                                 }
                                 if msg.failed {

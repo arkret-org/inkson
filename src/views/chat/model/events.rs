@@ -659,7 +659,22 @@ fn chat_messages_from_event_list_with_sidecar(
     state_store: Option<&LocalStateStore>,
     decrypt_identity: Option<(&str, &str)>,
 ) -> Vec<ChatMessage> {
-    let mut messages = Vec::new();
+    fold_event_list_into_chat_messages(
+        Vec::new(),
+        realm_id,
+        events,
+        state_store,
+        decrypt_identity,
+    )
+}
+
+fn fold_event_list_into_chat_messages(
+    mut messages: Vec<ChatMessage>,
+    realm_id: &str,
+    events: &[Value],
+    state_store: Option<&LocalStateStore>,
+    decrypt_identity: Option<(&str, &str)>,
+) -> Vec<ChatMessage> {
     let mut pending_revisions = Vec::<(String, ChatMessage)>::new();
     for event in events {
         let candidates = message_candidates(event);
@@ -1891,6 +1906,36 @@ pub(crate) fn chat_messages_from_local_state_with_sidecar(
         })
         .collect::<Vec<_>>();
     chat_messages_from_event_list_with_sidecar("", &events, state_store, decrypt_identity)
+}
+
+/// Fold durable lifecycle events onto an existing optimistic projection.
+///
+/// A sender can have its local `ChatMessage` before the canonical create event
+/// reaches `raw_operations`, while remote reaction/revision/redaction controls
+/// are already durable. Seeding the fold lets those controls resolve their
+/// protocol target immediately; later canonical creates still dedupe through
+/// the normal create merge path.
+pub(crate) fn fold_local_state_into_chat_messages_with_sidecar(
+    seed: Vec<ChatMessage>,
+    state: &ClientLocalState,
+    state_store: Option<&LocalStateStore>,
+    decrypt_identity: Option<(&str, &str)>,
+) -> Vec<ChatMessage> {
+    let events = state
+        .raw_operations
+        .iter()
+        .map(|record| {
+            let mut payload = record.payload.clone();
+            if payload.get("realm_id").is_none()
+                && let Some(realm_id) = record.realm_id.as_deref()
+                && let Some(object) = payload.as_object_mut()
+            {
+                object.insert("realm_id".to_owned(), Value::String(realm_id.to_owned()));
+            }
+            payload
+        })
+        .collect::<Vec<_>>();
+    fold_event_list_into_chat_messages(seed, "", &events, state_store, decrypt_identity)
 }
 
 pub(crate) fn poll_cards_from_local_state(

@@ -246,11 +246,10 @@ impl RealmEventsTraceContext {
     fn from_after(after: Option<&str>) -> Self {
         Self {
             after: after.map(str::to_owned),
-            // Every bounded long-poll reconnect asks the server to replay the
-            // gap after our durable cursor before switching back to live
-            // delivery. `catchup=false` with an `after` cursor can lose an
-            // event that lands between response close and the next receiver.
-            catchup: true,
+            // The initial cursorless request starts at the live tail. A
+            // bounded reconnect asks the server to replay the gap after the
+            // durable cursor before switching back to live delivery.
+            catchup: after.is_some(),
         }
     }
 }
@@ -274,9 +273,9 @@ impl InksonRealmEventsTransport {
         Self { http }
     }
 
-    /// Build the subscribe options with the request-aware trace context: a
-    /// initial and resumed subscribes are catch-up requests: the latter closes
-    /// the response-boundary gap after the durable cursor. The `catchup` flag
+    /// Build subscribe options with request-aware trace context. The initial
+    /// cursorless subscribe starts at the live tail; only a resumed subscribe
+    /// is a bounded catch-up that closes the response-boundary gap. The flag
     /// seeds the SDK frame stream's internal `StreamTraceValidator`, so
     /// every frame this adapter yields has already passed the full §1.1 trace
     /// state machine — there is no shape-only parsing bypass.
@@ -290,10 +289,9 @@ impl InksonRealmEventsTransport {
     ) {
         let trace_context = RealmEventsTraceContext::from_after(after);
         let mut options = arkret_sdk::http_client::EventsSubscribeOptions::new()
-            .realm(realm_id.as_str().to_owned())
-            .catchup(trace_context.catchup);
+            .realm(realm_id.as_str().to_owned());
         if let Some(after) = trace_context.after.as_deref() {
-            options = options.after(after.to_owned());
+            options = options.after(after.to_owned()).catchup(true);
         }
         (options, trace_context)
     }
@@ -479,12 +477,12 @@ mod tests {
         let (initial, initial_context) = transport.subscribe_request(&realm_id, None);
         assert_eq!(initial.realms, vec![realm_id.as_str().to_owned()]);
         assert_eq!(initial.after, None);
-        assert_eq!(initial.catchup, Some(true));
+        assert_eq!(initial.catchup, None);
         assert_eq!(
             initial_context,
             super::RealmEventsTraceContext {
                 after: None,
-                catchup: true,
+                catchup: false,
             }
         );
 

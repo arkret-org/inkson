@@ -361,7 +361,32 @@ pub fn ChatPanel(
     let selected_realm_pending_mls_binding = state_store
         .read()
         .realm_has_pending_mls_binding(&selected_realm_id);
-    let all_messages_snapshot = messages();
+    // Fold the durable lifecycle log directly onto the controller's
+    // optimistic rows. A sender's create can still be controller-only when a
+    // remote reaction arrives, so projecting raw operations in isolation
+    // would discard that control event for lack of a target message.
+    let all_messages_snapshot = {
+        let store = state_store.read();
+        let snapshot = store.load();
+        let decrypt_identity = Some((account_did.as_str(), device_id.as_str()));
+        let mut folded = fold_local_state_into_chat_messages_with_sidecar(
+            messages(),
+            &snapshot,
+            Some(&store),
+            decrypt_identity,
+        );
+        // Account sync also carries the server-folded timeline (notably a
+        // revise event rewritten into a redacted create tombstone). Merge that
+        // authoritative lifecycle view after the append-only local controls so
+        // representation collisions cannot leave an older revision visible.
+        let server_folded = chat_messages_from_sync_realms_with_sidecar(
+            &snapshot.realm_tree_projections,
+            Some(&store),
+            decrypt_identity,
+        );
+        merge_chat_messages(&mut folded, server_folded);
+        folded
+    };
     let visible_messages = all_messages_snapshot
         .iter()
         .filter(|msg| {
@@ -370,6 +395,31 @@ pub fn ChatPanel(
         })
         .cloned()
         .collect::<Vec<_>>();
+    // Dioxus may retain the child timeline across context-backed signal updates.  Key the
+    // projection boundary by the actual visible message state so reaction/revision/redaction
+    // folds cannot leave a memoized child rendering an older snapshot.
+    let timeline_projection_key = {
+        use std::hash::{Hash, Hasher};
+
+        let mut projection = std::collections::hash_map::DefaultHasher::new();
+        selected_realm_id.hash(&mut projection);
+        realm_live_epoch().hash(&mut projection);
+        for message in &visible_messages {
+            message.id.hash(&mut projection);
+            message.protocol_message_id.hash(&mut projection);
+            message.strand_id.hash(&mut projection);
+            message.realm_id.hash(&mut projection);
+            message.body.hash(&mut projection);
+            message.timestamp.hash(&mut projection);
+            message.reply_to.hash(&mut projection);
+            message.reactions.hash(&mut projection);
+            message.edited.hash(&mut projection);
+            message.redacted.hash(&mut projection);
+            message.pending.hash(&mut projection);
+            message.failed.hash(&mut projection);
+        }
+        format!("{:016x}", projection.finish())
+    };
     let visible_moderation_appeal_prompts = moderation_appeal_prompts()
         .into_iter()
         .filter(|prompt| {
@@ -1194,6 +1244,7 @@ pub fn ChatPanel(
                 }
 
                 ChatTimeline {
+                    key: "{timeline_projection_key}",
                     controller,
                     context: ChatTimelineContext {
                         embedded,
