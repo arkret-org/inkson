@@ -456,6 +456,15 @@ mod personal_agent_tests {
         assert_eq!(event.payload["agent_id"], agent);
         assert_eq!(event.payload["verification_method"], verification_method);
         assert_eq!(event.payload["public_key_digest"], runtime_digest.as_str());
+        event.payload["issued_at"]
+            .as_str()
+            .unwrap()
+            .parse::<chrono::DateTime<chrono::Utc>>()
+            .unwrap();
+        // Longevity-safe default: the authorize payload declares no
+        // expires_at; the authorization is revocation-governed
+        // (key-management.md §3.6.1).
+        assert!(event.payload.get("expires_at").is_none());
         assert_eq!(
             event.payload["approval_evidence"]["request_canonical_digest"],
             expected_pairing_digest.as_str()

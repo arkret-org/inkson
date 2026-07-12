@@ -12,7 +12,7 @@ use arkret_sdk::{
     AgentKeyAuthorizePayloadRuntimeAttestation, AgentKeyPairRequestBody,
     AgentKeyRuntimeAttestationKind, AgentPairingBootstrap, Did, Hash, PublicKey, RealmId,
 };
-use chrono::{Duration, Utc};
+use chrono::Utc;
 use serde::Deserialize;
 use serde_json::{Value, json};
 
@@ -483,7 +483,6 @@ pub fn build_agent_key_authorize_event_for_pairing(
         service_id,
     )?;
     let issued_at = Utc::now();
-    let expires_at = issued_at + Duration::days(30);
     let runtime_attestation = request.runtime_attestation.as_ref().and_then(|value| {
         (value.get("kind").and_then(Value::as_str) == Some("self_asserted")).then(|| {
             AgentKeyAuthorizePayloadRuntimeAttestation {
@@ -504,7 +503,9 @@ pub fn build_agent_key_authorize_event_for_pairing(
         agent_key_scope: requested_scope,
         audience: vec![service_id.to_owned()],
         issued_at,
-        expires_at,
+        // Longevity-safe default: no expiry, the authorization is governed
+        // by revocation (key-management.md §3.6.1).
+        expires_at: None,
         approval_evidence: AgentKeyApprovalEvidence {
             kind: AgentKeyApprovalEvidenceKind::ApprovalEvent,
             r#ref: request.pairing_request_id.clone(),

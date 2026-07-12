@@ -1179,6 +1179,6 @@ pub use arkret_sdk::models::{MediaIceConfigOutcome, MediaIceConfigRequestBody};
 // fields, non-spec `todos`, wrong outcome shapes) and were removed. The
 // agent surface now uses the SDK's authoritative types
 // (`arkret_sdk::AgentProvisionOutcome` / `AgentList` / `AgentView` /
-// `AgentRotateKeyOutcome` / `AgentGrantAttachOutcome` /
+// `AgentGrantAttachOutcome` /
 // `AgentSidecarThreadEnsureOutcome` / ...) directly in `views::agents`
 // (via `with_authed_sdk_client`).

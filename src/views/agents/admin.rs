@@ -104,6 +104,12 @@ fn grant_matches_content_preset(grant: &Value, preset: AgentGrantPreset) -> bool
         })
 }
 
+fn requested_scope_matches_content_preset(key_state: &Value, preset: AgentGrantPreset) -> bool {
+    key_state
+        .get("requested_scope")
+        .is_some_and(|scope| grant_matches_content_preset(scope, preset))
+}
+
 fn requested_scope_matches_service_preset(
     key_state: &Value,
     preset: AgentServiceScopePreset,
@@ -179,6 +185,35 @@ mod directory_refresh_tests {
         assert_eq!(rows[0].status, "active");
         assert_eq!(rows[0].grants[0]["grant_id"], "ak:grant:test");
         assert_eq!(rows[0].key_state["pairing_request_id"], "pair-1");
+    }
+
+    #[test]
+    fn requested_scope_restores_configured_content_capabilities() {
+        let key_state = json!({
+            "requested_scope": {
+                "actions": [
+                    "ak.event.read",
+                    "ak.message.create",
+                    "ak.reaction.add",
+                    "ak.self.events.stream.subscribe",
+                ],
+                "resources": [],
+                "constraints": [],
+            },
+        });
+
+        assert!(requested_scope_matches_content_preset(
+            &key_state,
+            AgentGrantPreset::Read,
+        ));
+        assert!(requested_scope_matches_content_preset(
+            &key_state,
+            AgentGrantPreset::ReplyAsAgent,
+        ));
+        assert!(!requested_scope_matches_content_preset(
+            &key_state,
+            AgentGrantPreset::ActOnBehalf,
+        ));
     }
 }
 
@@ -542,11 +577,16 @@ pub fn PersonalAgentAdminPanel(token: Signal<String>) -> Element {
         || is_pairing_request_expired(&selected_pairing_expires_at, &now_rfc3339);
     let selected_has_pairing_handle =
         !selected_pairing_request_id.is_empty() && !selected_pairing_code.is_empty();
-    let selected_should_show_pairing_card = matches!(
+    // Runtime replacement re-pairing (`ak.self.agent.command.renew_pairing`
+    // on an active/paused agent): the existing key keeps working until the
+    // new pairing completes, then is superseded.
+    let selected_is_replaceable = matches!(selected_status.as_str(), "active" | "paused");
+    let selected_should_show_pairing_card = (matches!(
         selected_status.as_str(),
         "pending_runtime_key" | "pairing_expired"
     ) && (selected_has_pairing_handle
-        || selected_pairing_is_expired);
+        || selected_pairing_is_expired))
+        || (selected_is_replaceable && selected_has_pairing_handle);
     let selected_created_at = selected_agent
         .as_ref()
         .map(|agent| agent_field(agent, "created_at"))
@@ -556,12 +596,17 @@ pub fn PersonalAgentAdminPanel(token: Signal<String>) -> Element {
         .map(|agent| agent_field(agent, "updated_at"))
         .unwrap_or_default();
     let selected_grants_snapshot = selected_grants();
+    let selected_has_requested_scope = selected_key_state_value.get("requested_scope").is_some();
     let selected_content_capabilities = AgentGrantPreset::ALL.map(|preset| {
         (
             preset,
-            selected_grants_snapshot
-                .iter()
-                .any(|grant| grant_matches_content_preset(grant, preset)),
+            if selected_has_requested_scope {
+                requested_scope_matches_content_preset(&selected_key_state_value, preset)
+            } else {
+                selected_grants_snapshot
+                    .iter()
+                    .any(|grant| grant_matches_content_preset(grant, preset))
+            },
         )
     });
     let selected_service_capabilities = AgentServiceScopePreset::ALL.map(|preset| {
@@ -1175,7 +1220,10 @@ pub fn PersonalAgentAdminPanel(token: Signal<String>) -> Element {
                         div { class: "agent-admin-section", "data-testid": "agent-admin-capabilities",
                             div { class: "agent-admin-section-head",
                                 strong { "Content capabilities" }
-                                span { class: "muted", "Current effective grants" }
+                                span { class: "muted", "Configured when this agent was created" }
+                            }
+                            div { class: "muted",
+                                "Actual access is the intersection of this ceiling with Realm membership, participation, and effective grants."
                             }
                             div { class: "agent-admin-preset-list", "data-testid": "agent-admin-content-capability-list",
                                 for (preset, is_on) in selected_content_capabilities {
@@ -1276,6 +1324,85 @@ pub fn PersonalAgentAdminPanel(token: Signal<String>) -> Element {
                                 }
                             }
                             div { class: "actions",
+                                    if selected_is_replaceable {
+                                        Button {
+                                            variant: ButtonVariant::Secondary,
+                                            "data-testid": "agent-admin-replace-runtime-button",
+                                            onclick: {
+                                                // `ak.self.agent.command.renew_pairing` on an
+                                                // active/paused agent: runtime replacement
+                                                // re-pairing. Status, keys and grants stay
+                                                // untouched until the new runtime pairs; the
+                                                // old key is then revoked
+                                                // (reason=superseded_by_repairing).
+                                                let base = base_url.clone();
+                                                let replace_agent_id = selected_id_now.clone();
+                                                move |_| {
+                                                    let base = base.clone();
+                                                    let api_token = token();
+                                                    let replaced_agent_id = replace_agent_id.clone();
+                                                    spawn(async move {
+                                                        let renew_id = replaced_agent_id.clone();
+                                                        let outcome = match with_authed_sdk_client(
+                                                            &base,
+                                                            api_token.clone(),
+                                                            move |http| {
+                                                                let renew_id = renew_id.clone();
+                                                                async move {
+                                                                    http.agent_renew_pairing(
+                                                                        &renew_id,
+                                                                        &arkret_sdk::models::AgentRenewPairingRequestBody::default(),
+                                                                    )
+                                                                    .await
+                                                                    .map_err(anyhow::Error::from)
+                                                                }
+                                                            },
+                                                        )
+                                                        .await
+                                                        {
+                                                            Ok(outcome) => outcome,
+                                                            Err(err) => {
+                                                                last_op_status.set(format!(
+                                                                    "Replace runtime failed: {}",
+                                                                    err.display()
+                                                                ));
+                                                                return;
+                                                            }
+                                                        };
+                                                        let expires_at = outcome
+                                                            .expires_at
+                                                            .to_rfc3339_opts(chrono::SecondsFormat::Millis, true);
+                                                        // Patch pairing fields only; the agent
+                                                        // status is intentionally untouched
+                                                        // (replacement is not a state
+                                                        // transition).
+                                                        agents.with_mut(|rows| {
+                                                            for row in rows.iter_mut() {
+                                                                if agent_id(row) != replaced_agent_id.as_str() {
+                                                                    continue;
+                                                                }
+                                                                if let Some(key_state) = row.key_state.as_object_mut() {
+                                                                    key_state.insert("pairing_request_id".to_owned(), json!(outcome.pairing_request_id.clone()));
+                                                                    key_state.insert("pairing_code".to_owned(), json!(outcome.pairing_code.clone()));
+                                                                    key_state.insert("pairing_expires_at".to_owned(), json!(expires_at.clone()));
+                                                                } else {
+                                                                    row.key_state = json!({
+                                                                        "pairing_request_id": outcome.pairing_request_id.clone(),
+                                                                        "pairing_code": outcome.pairing_code.clone(),
+                                                                        "pairing_expires_at": expires_at.clone(),
+                                                                    });
+                                                                }
+                                                            }
+                                                        });
+                                                        last_op_status.set(
+                                                            "Replacement pairing ready. The current runtime keeps working until the new one pairs; its key is then revoked.".to_owned(),
+                                                        );
+                                                    });
+                                                }
+                                            },
+                                            "Replace runtime"
+                                        }
+                                    }
                                     if selected_status != "deactivated" {
                                         Button {
                                             variant: ButtonVariant::Destructive,
