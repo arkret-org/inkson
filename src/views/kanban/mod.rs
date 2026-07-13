@@ -39,8 +39,8 @@ use controller::{KanbanCommand, KanbanController, use_kanban_controller};
 use drag_drop_controller::*;
 use due_calendar::*;
 use effects::KanbanEffects;
-pub(crate) use model::strand_update_operations_from_events;
 use model::*;
+pub(crate) use model::{strand_update_operations_from_events, strand_views_from_ops};
 
 #[cfg(test)]
 pub(crate) use crate::state::projection::kanban_ops::kanban_operations_from_events;

@@ -485,6 +485,8 @@ impl EventSubmitter {
                 "events/frontier for actor_id={actor_id} did not return an actor frontier"
             );
         };
+        view.validate()
+            .map_err(|error| anyhow::anyhow!("invalid actor frontier: {error}"))?;
         Ok(view)
     }
 
@@ -975,7 +977,7 @@ fn apply_actor_frontier_to_sdk_event(
     event.actor_seq = frontier.actor_seq.checked_add(1).ok_or_else(|| {
         anyhow::anyhow!("actor frontier sequence overflow for {}", event.actor_id)
     })?;
-    event.prev_refs = vec![frontier.event_id.clone()];
+    event.prev_refs = frontier.event_id.iter().cloned().collect();
     Ok(())
 }
 
@@ -1255,14 +1257,33 @@ mod tests {
         let frontier = arkret_sdk::ActorFrontierView {
             actor_id: arkret_sdk::Did::new("did:web:alice.example").unwrap(),
             actor_seq: 7,
-            event_id: arkret_sdk::EventId::new("ak:event:01904100-0000-7000-8000-000000000002")
-                .unwrap(),
+            event_id: Some(
+                arkret_sdk::EventId::new("ak:event:01904100-0000-7000-8000-000000000002").unwrap(),
+            ),
         };
 
         apply_actor_frontier_to_sdk_event(&mut event, &frontier).unwrap();
 
         assert_eq!(event.actor_seq, 8);
-        assert_eq!(event.prev_refs, vec![frontier.event_id]);
+        assert_eq!(
+            event.prev_refs,
+            frontier.event_id.into_iter().collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn apply_empty_actor_frontier_stamps_genesis_sequence_without_predecessor() {
+        let mut event = sdk_event_without_proof("did:web:alice.example");
+        let frontier = arkret_sdk::ActorFrontierView {
+            actor_id: arkret_sdk::Did::new("did:web:alice.example").unwrap(),
+            actor_seq: 0,
+            event_id: None,
+        };
+
+        apply_actor_frontier_to_sdk_event(&mut event, &frontier).unwrap();
+
+        assert_eq!(event.actor_seq, 1);
+        assert!(event.prev_refs.is_empty());
     }
 
     #[test]
@@ -1271,8 +1292,9 @@ mod tests {
         let frontier = arkret_sdk::ActorFrontierView {
             actor_id: arkret_sdk::Did::new("did:web:bob.example").unwrap(),
             actor_seq: 7,
-            event_id: arkret_sdk::EventId::new("ak:event:01904100-0000-7000-8000-000000000002")
-                .unwrap(),
+            event_id: Some(
+                arkret_sdk::EventId::new("ak:event:01904100-0000-7000-8000-000000000002").unwrap(),
+            ),
         };
 
         let error = apply_actor_frontier_to_sdk_event(&mut event, &frontier)

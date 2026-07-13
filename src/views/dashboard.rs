@@ -6,7 +6,6 @@ use crate::i18n::tr;
 use crate::models::{RealmTreeNode, RealmTreeNodeKind, projection_realm_id_for_known_node};
 use crate::routes::Route;
 use crate::state::ClientLocalState;
-use crate::transport::auth::with_authed_sdk_client;
 use crate::ui::button::{Button, ButtonSize, ButtonVariant};
 use crate::views::helpers::short_protocol_id;
 
@@ -50,10 +49,6 @@ pub fn DashboardPanel(
     let state_store = crate::app::SessionContext::get().state_store;
     let mut protocol_health = use_signal(Vec::<(String, String)>::new);
     let mut health_loading = use_signal(|| false);
-    let mut recent_strands =
-        use_signal(Vec::<crate::state::projection_views::StrandProjectionView>::new);
-    let mut recent_strands_loaded_for = use_signal(String::new);
-    let mut recent_strands_status = use_signal(String::new);
     let mut contacts_summary = use_signal(Option::<DashboardContactsSummary>::default);
     let mut contacts_loaded_for = use_signal(String::new);
     let mut contacts_status = use_signal(String::new);
@@ -110,10 +105,8 @@ pub fn DashboardPanel(
         .cloned()
         .or_else(|| realm_tree_snapshot.first().cloned());
 
-    let notification_summaries = {
-        let snapshot = state_store.read().load();
-        dashboard_notification_summaries(&snapshot)
-    };
+    let local_state_snapshot = state_store.read().load();
+    let notification_summaries = dashboard_notification_summaries(&local_state_snapshot);
     let unread_notifications = notification_summaries
         .iter()
         .filter(|notification| !notification.read)
@@ -162,38 +155,13 @@ pub fn DashboardPanel(
         contacts_summary.set(None);
         contacts_status.set(String::new());
     }
-    if has_session
-        && !active_node_id.trim().is_empty()
-        && !active_projection_realm_id.trim().is_empty()
-        && recent_strands_loaded_for() != active_node_id
-    {
-        recent_strands_loaded_for.set(active_node_id.clone());
-        let base = base_url.clone();
-        let api_token = token();
-        let realm_id = active_projection_realm_id.clone();
-        spawn(async move {
-            match with_authed_sdk_client(&base, api_token, |http| async move {
-                crate::transport::realm_read::list_strand_projections(&http, &realm_id).await
-            })
-            .await
-            {
-                Ok(response) => {
-                    let strand_count = response.items.len();
-                    recent_strands.set(response.items);
-                    recent_strands_status.set(format!(
-                        "{strand_count} strand(s) loaded from Board projection."
-                    ));
-                }
-                Err(err) => {
-                    recent_strands.set(Vec::new());
-                    recent_strands_status
-                        .set(format!("Recent strands unavailable: {}", err.display()));
-                }
-            }
-        });
-    }
-
-    let visible_recent_strands = recent_strands()
+    // The sync-backed operation log is already the authorized source for the
+    // event-sourced Board projection. Reusing it here avoids a second
+    // visibility-sensitive request for a potentially stale selected Realm.
+    let visible_recent_strands = dashboard_recent_strands(
+        &local_state_snapshot.raw_operations,
+        &active_projection_realm_id,
+    )
         .into_iter()
         // R11: the Strand state enum is exactly {active, archived, redacted}
         // (strand.schema.json). "Recent strands" shows only `active`; `archived`
@@ -444,9 +412,6 @@ pub fn DashboardPanel(
                                 }
                             }
                         }
-                        if !recent_strands_status().is_empty() {
-                            div { class: "muted", style: "padding: 0 16px 12px;", "{recent_strands_status}" }
-                        }
                     }
 
                     div { class: "surface pad", "data-testid": "activity-feed",
@@ -672,6 +637,19 @@ fn dashboard_notification_summaries(
     notifications
 }
 
+fn dashboard_recent_strands(
+    raw_operations: &[crate::state::RawOperationRecord],
+    realm_id: &str,
+) -> Vec<crate::state::projection_views::StrandProjectionView> {
+    if realm_id.trim().is_empty() {
+        return Vec::new();
+    }
+    crate::views::kanban::strand_views_from_ops(raw_operations)
+        .into_iter()
+        .filter(|strand| strand.realm_id == realm_id)
+        .collect()
+}
+
 fn dashboard_contacts_summary(
     contacts: &[crate::models::ContactListRow],
 ) -> DashboardContactsSummary {
@@ -776,11 +754,14 @@ fn projection_collection_empty_help_label(
 
 #[cfg(test)]
 mod tests {
+    use serde_json::json;
+
     use super::{
-        contact_summary_delta, dashboard_contacts_summary, projection_collection_label,
-        projection_kind_label, recent_projection_collection_label,
+        contact_summary_delta, dashboard_contacts_summary, dashboard_recent_strands,
+        projection_collection_label, projection_kind_label, recent_projection_collection_label,
     };
     use crate::models::{ContactListRow, DirectConversationSummary, RealmTreeNodeKind};
+    use crate::state::RawOperationRecord;
 
     #[test]
     fn projection_labels_follow_realm_space_kind() {
@@ -840,5 +821,38 @@ mod tests {
         assert_eq!(summary.pending(), 1);
         assert_eq!(summary.direct_ready, 2);
         assert_eq!(contact_summary_delta(&summary), "Pending 1 · Direct 2");
+    }
+
+    #[test]
+    fn recent_strands_use_only_sync_backed_operations_for_active_realm() {
+        let operation = |id: &str, realm_id: &str| RawOperationRecord {
+            operation_id: format!("operation-{id}"),
+            realm_id: Some(realm_id.to_owned()),
+            received_at: chrono::DateTime::parse_from_rfc3339("2026-07-13T00:00:00Z")
+                .unwrap()
+                .with_timezone(&chrono::Utc),
+            payload: json!({
+                "kind": "ak.strand.create",
+                "realm_id": realm_id,
+                "payload": {
+                    "object": {
+                        "id": id,
+                        "realm_id": realm_id,
+                        "metadata": { "title": id }
+                    }
+                }
+            }),
+        };
+        let realm_a = "ak:realm:01904100-0000-7000-8000-000000000001";
+        let realm_b = "ak:realm:01904100-0000-7000-8000-000000000002";
+        let operations = vec![
+            operation("ak:strand:01904100-0000-7000-8000-000000000011", realm_a),
+            operation("ak:strand:01904100-0000-7000-8000-000000000012", realm_b),
+        ];
+
+        let strands = dashboard_recent_strands(&operations, realm_a);
+
+        assert_eq!(strands.len(), 1);
+        assert_eq!(strands[0].realm_id, realm_a);
     }
 }

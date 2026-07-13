@@ -18,9 +18,7 @@ use serde_json::{Value, json};
 
 use crate::models::{AuthzCheckOutcome, GrantList};
 use crate::operation::trim_realm_id;
-use crate::state::projection_views::{
-    CollectionProjectionView, LifecycleProjectionView, StrandProjectionView,
-};
+use crate::state::projection_views::CollectionProjectionView;
 
 /// Read the current notary cell value for a Realm (admin-only).
 /// Returns the raw JSON shape the server publishes — typically
@@ -105,18 +103,6 @@ pub async fn collection_projection(
         .await
         .map_err(anyhow::Error::from)?;
     Ok(view.into())
-}
-
-pub async fn list_strand_projections(
-    http: &arkret_sdk::http_client::Client,
-    realm_id: &str,
-) -> anyhow::Result<LifecycleProjectionView<StrandProjectionView>> {
-    let realm_id = trim_realm_id(realm_id);
-    let list: arkret_sdk::ProjectionStrandList = http
-        .realm_strands(&realm_id)
-        .await
-        .map_err(anyhow::Error::from)?;
-    Ok(list.into())
 }
 
 /// Read the verified Realm ↔ organization relationships projection
