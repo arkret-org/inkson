@@ -34,8 +34,6 @@ use crate::ui::switch::Switch;
 use crate::ui::textarea::Textarea;
 use crate::views::helpers::short_protocol_id;
 
-const AGENT_STATUS_POLL_INTERVAL: Duration = Duration::from_secs(3);
-
 fn agent_field(agent: &AgentView, key: &str) -> String {
     agent
         .agent
@@ -417,11 +415,31 @@ pub fn PersonalAgentAdminPanel(token: Signal<String>) -> Element {
     let mut deactivate_dialog_open = use_signal(|| false);
     let mut last_op_status = use_signal(String::new);
     let mut copied_pairing_url = use_signal(String::new);
+    let state_store = crate::app::SessionContext::get().state_store;
+    let approval_projection_version = use_memo(move || {
+        let mut ids = state_store
+            .read()
+            .notification_projection()
+            .into_iter()
+            .filter(|value| {
+                value.get("type").and_then(Value::as_str) == Some("agent")
+                    && value.pointer("/data/kind").and_then(Value::as_str)
+                        == Some("agent_runtime_approval")
+            })
+            .map(|value| value.to_string())
+            .collect::<Vec<_>>();
+        ids.sort();
+        ids
+    });
 
     {
         let base = base_url.clone();
         use_effect(move || {
+            let _ = approval_projection_version();
             let api_token = token();
+            if api_token.trim().is_empty() {
+                return;
+            }
             spawn_refresh_agents(
                 base.clone(),
                 api_token,
@@ -429,49 +447,6 @@ pub fn PersonalAgentAdminPanel(token: Signal<String>) -> Element {
                 list_status,
                 agent_list_refresh_epoch,
             );
-        });
-    }
-
-    {
-        let base = base_url.clone();
-        use_future(move || {
-            let base = base.clone();
-            async move {
-                loop {
-                    crate::runtime_helpers::sleep_for(AGENT_STATUS_POLL_INTERVAL).await;
-                    if !agents
-                        .read()
-                        .iter()
-                        .any(|agent| agent.status == "pending_runtime_key")
-                    {
-                        continue;
-                    }
-                    let api_token = token();
-                    if api_token.trim().is_empty() {
-                        continue;
-                    }
-                    match with_authed_sdk_client(&base, api_token, |http| async move {
-                        http.agent_list().await.map_err(anyhow::Error::from)
-                    })
-                    .await
-                    {
-                        Ok(resp) => {
-                            let rows = resp
-                                .agents
-                                .into_iter()
-                                .filter_map(agent_view_from_directory_row)
-                                .collect();
-                            agents.with_mut(|current| replace_agent_directory(current, rows));
-                        }
-                        Err(err) => {
-                            tracing::warn!(
-                                error = %err.display(),
-                                "personal agent status polling failed"
-                            );
-                        }
-                    }
-                }
-            }
         });
     }
 

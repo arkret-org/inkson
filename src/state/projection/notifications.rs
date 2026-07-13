@@ -10,6 +10,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
+use arkret_sdk::NotificationContainer;
 use serde_json::{Value, json};
 
 pub(crate) fn is_notification_account_data(value: &Value) -> bool {
@@ -17,31 +18,28 @@ pub(crate) fn is_notification_account_data(value: &Value) -> bool {
 }
 
 pub(crate) fn raw_notifications_from_sources(
-    notification_response: Option<&Value>,
+    notification_response: Option<&NotificationContainer>,
     account_data: &[Value],
 ) -> Vec<Value> {
-    notification_response
-        .and_then(notification_items_from_value)
-        .unwrap_or_else(|| {
-            account_data
-                .iter()
-                .filter(|value| is_notification_account_data(value))
-                .cloned()
-                .collect::<Vec<_>>()
-        })
+    let mut items = account_data
+        .iter()
+        .filter(|value| is_notification_account_data(value))
+        .cloned()
+        .collect::<Vec<_>>();
+    if let Some(notification_response) = notification_response {
+        items.extend(notification_items_from_value(notification_response));
+    }
+    items
 }
 
-pub(crate) fn notification_items_from_value(value: &Value) -> Option<Vec<Value>> {
-    if value.is_null() {
-        return None;
-    }
-    if let Some(items) = value.get("items").and_then(Value::as_array) {
-        return Some(items.clone());
-    }
-    if let Some(events) = value.get("events").and_then(Value::as_array) {
-        return Some(events.clone());
-    }
-    value.as_array().cloned()
+pub(crate) fn notification_items_from_value(
+    value: &NotificationContainer,
+) -> Vec<Value> {
+    value
+        .items
+        .iter()
+        .filter_map(|item| serde_json::to_value(item).ok())
+        .collect()
 }
 
 pub(crate) fn append_invite_notifications(

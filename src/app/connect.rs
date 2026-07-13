@@ -1333,18 +1333,22 @@ pub(super) fn connect(base: String, actor: String, device: String, ctx: ConnectC
                                 })
                                 .cloned()
                                 .collect::<Vec<_>>();
-                            let should_save_notification_projection = projection_from_sync
-                                .is_some()
-                                || !account_notification_projection.is_empty()
-                                || invite_notifications.is_some();
-                            let mut notification_projection =
-                                projection_from_sync.unwrap_or_else(|| {
-                                    if account_notification_projection.is_empty() {
-                                        store.notification_projection()
-                                    } else {
-                                        account_notification_projection
-                                    }
-                                });
+                            let mut notification_projection = if account_notification_projection
+                                .is_empty()
+                            {
+                                store.notification_projection()
+                            } else {
+                                account_notification_projection
+                            };
+                            notification_projection.retain(|value| {
+                                value.get("type").and_then(serde_json::Value::as_str)
+                                    != Some("agent")
+                                    || value
+                                        .pointer("/data/kind")
+                                        .and_then(serde_json::Value::as_str)
+                                        != Some("agent_runtime_approval")
+                            });
+                            notification_projection.extend(projection_from_sync);
                             if let Some(invites) = invite_notifications {
                                 crate::state::projection::notifications::merge_invite_notifications(
                                     &mut notification_projection,
@@ -1352,9 +1356,7 @@ pub(super) fn connect(base: String, actor: String, device: String, ctx: ConnectC
                                     &server_set,
                                 );
                             }
-                            if should_save_notification_projection {
-                                store.save_notification_projection(notification_projection);
-                            }
+                            store.save_notification_projection(notification_projection);
                             store.save_presence_projection(sync.presence.clone());
                             store.ingest_to_device_messages(&sync.to_device);
                             // `/account/subscribe` carries the actor's complete

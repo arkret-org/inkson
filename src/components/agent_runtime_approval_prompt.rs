@@ -13,10 +13,13 @@ use crate::views::agents::{
 };
 use crate::views::helpers::short_protocol_id;
 
-const APPROVAL_POLL_INTERVAL: Duration = Duration::from_millis(5_000);
+const APPROVAL_FALLBACK_POLL_INTERVAL: Duration = Duration::from_secs(30);
+const APPROVAL_FALLBACK_MAX_INTERVAL: Duration = Duration::from_secs(60);
+const APPROVAL_NOTIFICATION_FEATURE: &str = "ak.feature.agent_runtime_approval_notifications.v1";
 
 #[derive(Clone, Debug, PartialEq)]
 struct PendingAgentRuntimeApproval {
+    notification_id: String,
     request_key: String,
     agent_id: String,
     display_name: String,
@@ -28,6 +31,7 @@ struct PendingAgentRuntimeApproval {
     public_key_fingerprint: String,
     key_state: Value,
     request_json: String,
+    replacement: bool,
 }
 
 #[component]
@@ -38,6 +42,54 @@ pub fn AgentRuntimeApprovalPrompt(token: Signal<String>, account_did: Signal<Str
     let mut handled = use_signal(HashSet::<String>::new);
     let mut status = use_signal(String::new);
     let mut approving = use_signal(|| false);
+    let state_store = crate::app::SessionContext::get().state_store;
+
+    {
+        let base_url = base_url;
+        let token = token;
+        use_effect(move || {
+            let projection = state_store.read().notification_projection();
+            let open = projection
+                .iter()
+                .filter_map(agent_runtime_approval_notification)
+                .collect::<Vec<_>>();
+            if pending.read().as_ref().is_some_and(|request| {
+                !open
+                    .iter()
+                    .any(|notification| notification.notification_id == request.notification_id)
+            }) {
+                pending.set(None);
+                approving.set(false);
+            }
+            if pending.read().is_some() {
+                return;
+            }
+            let Some(notification) = open
+                .into_iter()
+                .find(|notification| !handled.read().contains(&notification.approval_request_id))
+            else {
+                return;
+            };
+            let base = base_url();
+            let api_token = token();
+            if api_token.trim().is_empty() {
+                return;
+            }
+            spawn(async move {
+                match fetch_agent_runtime_approval(&base, api_token, notification).await {
+                    Ok(Some(request)) => {
+                        status.set(String::new());
+                        pending.set(Some(request));
+                    }
+                    Ok(None) => {}
+                    Err(error) => tracing::warn!(
+                        error = %error.display(),
+                        "agent runtime approval notification refresh failed"
+                    ),
+                }
+            });
+        });
+    }
 
     {
         let base_url = base_url;
@@ -46,35 +98,55 @@ pub fn AgentRuntimeApprovalPrompt(token: Signal<String>, account_did: Signal<Str
             loop {
                 let has_prompt = pending.read().is_some();
                 if has_prompt {
-                    crate::runtime_helpers::sleep_for(APPROVAL_POLL_INTERVAL).await;
+                    if pending.read().as_ref().is_some_and(approval_has_expired) {
+                        pending.set(None);
+                        approving.set(false);
+                        status.set(String::new());
+                    }
+                    crate::runtime_helpers::sleep_for(APPROVAL_FALLBACK_POLL_INTERVAL).await;
+                    continue;
+                }
+
+                if !fallback_poll_environment_ready() {
+                    crate::runtime_helpers::sleep_for(APPROVAL_FALLBACK_POLL_INTERVAL).await;
                     continue;
                 }
 
                 let api_token = token();
                 if api_token.trim().is_empty() {
-                    crate::runtime_helpers::sleep_for(APPROVAL_POLL_INTERVAL).await;
+                    crate::runtime_helpers::sleep_for(APPROVAL_FALLBACK_POLL_INTERVAL).await;
                     continue;
                 }
 
                 let base = base_url();
+                match server_supports_approval_notifications(&base, api_token.clone()).await {
+                    Ok(true) | Err(_) => {
+                        crate::runtime_helpers::sleep_for(APPROVAL_FALLBACK_POLL_INTERVAL).await;
+                        continue;
+                    }
+                    Ok(false) => {}
+                }
                 let handled_keys = handled.read().clone();
-                match fetch_pending_agent_runtime_approval(&base, api_token, handled_keys).await {
+                let failed = match fetch_pending_agent_runtime_approval(&base, api_token, handled_keys).await {
                     Ok(Some(request)) => {
                         status.set(String::new());
                         pending.set(Some(request));
+                        false
                     }
                     Ok(None) => {
                         status.set(String::new());
+                        false
                     }
                     Err(err) => {
                         tracing::warn!(
                             error = %err.display(),
                             "agent runtime approval polling failed"
                         );
+                        true
                     }
-                }
+                };
 
-                crate::runtime_helpers::sleep_for(APPROVAL_POLL_INTERVAL).await;
+                crate::runtime_helpers::sleep_for(approval_fallback_delay(failed)).await;
             }
         });
     }
@@ -125,6 +197,9 @@ pub fn AgentRuntimeApprovalPrompt(token: Signal<String>, account_did: Signal<Str
                     p { class: "muted",
                         "An agent runtime is asking to finish pairing. Approve only if you started this request and the code matches the runtime screen."
                     }
+                    if request.replacement {
+                        p { class: "warning", "This replaces a runtime key on an active or paused Agent." }
+                    }
                     div {
                         class: "device-pair-approval-device",
                         "data-testid": "agent-runtime-approval-agent",
@@ -163,6 +238,47 @@ pub fn AgentRuntimeApprovalPrompt(token: Signal<String>, account_did: Signal<Str
                     }
                 }
                 div { class: "modal-foot actions",
+                    Button {
+                        variant: ButtonVariant::Secondary,
+                        "data-testid": "agent-runtime-approval-reject-rotate",
+                        disabled: busy,
+                        onclick: {
+                            let reject_agent_id = request.agent_id.clone();
+                            move |_| {
+                                let base = base_url();
+                                let api_token = token();
+                                let agent_id = reject_agent_id.clone();
+                                approving.set(true);
+                                status.set("Rejecting request and rotating the pairing code...".to_owned());
+                                spawn(async move {
+                                    let result = with_authed_sdk_client(&base, api_token, move |http| {
+                                        let agent_id = agent_id.clone();
+                                        async move {
+                                            http.agent_renew_pairing(
+                                                &agent_id,
+                                                &arkret_sdk::models::AgentRenewPairingRequestBody::default(),
+                                            )
+                                            .await
+                                            .map_err(anyhow::Error::from)
+                                        }
+                                    })
+                                    .await;
+                                    approving.set(false);
+                                    match result {
+                                        Ok(_) => {
+                                            pending.set(None);
+                                            status.set("Request rejected and pairing code rotated.".to_owned());
+                                        }
+                                        Err(error) => status.set(format!(
+                                            "Could not rotate the pairing code. {}",
+                                            error.display()
+                                        )),
+                                    }
+                                });
+                            }
+                        },
+                        "Reject and rotate code"
+                    }
                     Button {
                         variant: ButtonVariant::Secondary,
                         "data-testid": "agent-runtime-approval-dismiss",
@@ -270,6 +386,68 @@ pub fn AgentRuntimeApprovalPrompt(token: Signal<String>, account_did: Signal<Str
     }
 }
 
+#[derive(Clone, Debug)]
+struct AgentRuntimeApprovalNotification {
+    notification_id: String,
+    approval_request_id: String,
+    agent_id: String,
+}
+
+fn agent_runtime_approval_notification(value: &Value) -> Option<AgentRuntimeApprovalNotification> {
+    if value.get("type").and_then(Value::as_str) != Some("agent")
+        || value.pointer("/data/kind").and_then(Value::as_str) != Some("agent_runtime_approval")
+    {
+        return None;
+    }
+    let expires_at = value.pointer("/data/expires_at")?.as_str()?.to_owned();
+    if timestamp_has_expired(&expires_at) {
+        return None;
+    }
+    Some(AgentRuntimeApprovalNotification {
+        notification_id: value.get("id")?.as_str()?.to_owned(),
+        approval_request_id: value
+            .pointer("/data/approval_request_id")?
+            .as_str()?
+            .to_owned(),
+        agent_id: value.pointer("/data/agent_id")?.as_str()?.to_owned(),
+    })
+}
+
+async fn server_supports_approval_notifications(
+    base_url: &str,
+    token: String,
+) -> Result<bool, crate::transport::auth::ApiCallError> {
+    with_authed_api(base_url, token, |api| async move {
+        let description = api.describe_cached().await?;
+        Ok(description
+            .supported_features
+            .iter()
+            .any(|feature| feature == APPROVAL_NOTIFICATION_FEATURE))
+    })
+    .await
+}
+
+async fn fetch_agent_runtime_approval(
+    base_url: &str,
+    token: String,
+    notification: AgentRuntimeApprovalNotification,
+) -> Result<Option<PendingAgentRuntimeApproval>, crate::transport::auth::ApiCallError> {
+    with_authed_sdk_client(base_url, token, move |http| async move {
+        let view = http.agent_get(&notification.agent_id).await?;
+        let Some(mut request) = pending_runtime_approval_from_view(&view) else {
+            return Ok(None);
+        };
+        if request.agent_id != notification.agent_id
+            || request.request_key != notification.approval_request_id
+        {
+            return Ok(None);
+        }
+        request.notification_id = notification.notification_id;
+        Ok(Some(request))
+    })
+    .await
+}
+
 async fn fetch_pending_agent_runtime_approval(
     base_url: &str,
     token: String,
@@ -278,9 +456,6 @@ async fn fetch_pending_agent_runtime_approval(
     with_authed_sdk_client(base_url, token, move |http| async move {
         let list = http.agent_list().await?;
         for row in list.agents {
-            if row.status != arkret_sdk::models::AgentStatus::PendingRuntimeKey {
-                continue;
-            }
             let agent_id = row.agent_id.as_str();
             if agent_id.trim().is_empty() {
                 continue;
@@ -302,7 +477,10 @@ async fn fetch_pending_agent_runtime_approval(
 fn pending_runtime_approval_from_view(
     view: &arkret_sdk::AgentView,
 ) -> Option<PendingAgentRuntimeApproval> {
-    if view.status != "pending_runtime_key" {
+    if !matches!(
+        view.status.as_str(),
+        "pending_runtime_key" | "active" | "paused"
+    ) {
         return None;
     }
     let request_value = view.key_state.get("pending_runtime_key_request")?.clone();
@@ -311,6 +489,12 @@ fn pending_runtime_approval_from_view(
     }
     let request_json = serde_json::to_string(&request_value).ok()?;
     let summary = summarize_runtime_key_approval_request(&request_json).ok()?;
+    if timestamp_has_expired(&summary.proof_expires_at)
+        || key_state_str(&view.key_state, "pairing_expires_at")
+            .is_some_and(|expires_at| timestamp_has_expired(&expires_at))
+    {
+        return None;
+    }
     let agent_id = agent_field(view, "agent_id")
         .filter(|value| !value.trim().is_empty())
         .unwrap_or_else(|| summary.agent_id.clone());
@@ -321,6 +505,7 @@ fn pending_runtime_approval_from_view(
     let request_key = key_state_str(&view.key_state, "approval_request_id")
         .or_else(|| Some(summary.pairing_request_id.clone()))?;
     Some(PendingAgentRuntimeApproval {
+        notification_id: String::new(),
         request_key,
         agent_id,
         display_name: agent_field(view, "display_name").unwrap_or_default(),
@@ -333,6 +518,7 @@ fn pending_runtime_approval_from_view(
         public_key_fingerprint: summary.public_key_fingerprint,
         key_state: view.key_state.clone(),
         request_json,
+        replacement: matches!(view.status.as_str(), "active" | "paused"),
     })
 }
 
@@ -349,4 +535,41 @@ fn key_state_str(key_state: &Value, key: &str) -> Option<String> {
         .and_then(Value::as_str)
         .filter(|value| !value.trim().is_empty())
         .map(str::to_owned)
+}
+
+fn approval_has_expired(request: &PendingAgentRuntimeApproval) -> bool {
+    timestamp_has_expired(&request.proof_expires_at)
+}
+
+fn timestamp_has_expired(value: &str) -> bool {
+    chrono::DateTime::parse_from_rfc3339(value)
+        .map(|value| value.with_timezone(&chrono::Utc) <= chrono::Utc::now())
+        .unwrap_or(true)
+}
+
+fn approval_fallback_delay(failed: bool) -> Duration {
+    if !failed {
+        return APPROVAL_FALLBACK_POLL_INTERVAL;
+    }
+    let jitter = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|duration| duration.subsec_nanos() as u64 % 6)
+        .unwrap_or_default();
+    APPROVAL_FALLBACK_MAX_INTERVAL.saturating_sub(Duration::from_secs(jitter))
+}
+
+fn fallback_poll_environment_ready() -> bool {
+    #[cfg(target_arch = "wasm32")]
+    {
+        return web_sys::window()
+            .map(|window| {
+                window.navigator().on_line()
+                    && window.document().is_none_or(|document| !document.hidden())
+            })
+            .unwrap_or(true);
+    }
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        true
+    }
 }

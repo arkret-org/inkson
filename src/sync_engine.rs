@@ -1499,7 +1499,7 @@ pub fn apply_response(
             );
 
             synced_theme = apply_account_data(store, response, &account_did);
-            apply_notification_projection(store, response, invite_notifications);
+            apply_notification_projection(store, response, is_full_sync, invite_notifications);
             store.save_presence_projection(response.presence.clone());
             store.ingest_to_device_messages(&response.to_device);
             if cursor_can_advance {
@@ -2207,12 +2207,9 @@ fn invalidate_cache_for_revocation_events(
 fn apply_notification_projection(
     store: &mut LocalStateStore,
     response: &ClientSyncOutcome,
+    is_full_sync: bool,
     invite_notifications: Option<Vec<Value>>,
 ) {
-    let projection_from_sync =
-        crate::state::projection::notifications::notification_items_from_value(
-            &response.notifications,
-        );
     let account_notification_projection = response
         .account_data
         .iter()
@@ -2221,16 +2218,39 @@ fn apply_notification_projection(
         })
         .cloned()
         .collect::<Vec<_>>();
-    let should_save_notification_projection = projection_from_sync.is_some()
+    let should_save_notification_projection = !response.notifications.items.is_empty()
+        || is_full_sync
         || !account_notification_projection.is_empty()
         || invite_notifications.is_some();
-    let mut notification_projection = projection_from_sync.unwrap_or_else(|| {
-        if account_notification_projection.is_empty() {
-            store.notification_projection()
-        } else {
-            account_notification_projection
+    let mut notification_projection = if account_notification_projection.is_empty() {
+        store.notification_projection()
+    } else {
+        account_notification_projection
+    };
+    if is_full_sync {
+        notification_projection.retain(|value| !is_agent_runtime_approval_delta(value));
+    }
+    for delta in &response.notifications.items {
+        let id = delta.id.as_str();
+        match delta.action {
+            arkret_sdk::NotificationDeltaAction::Add
+            | arkret_sdk::NotificationDeltaAction::Update => {
+                let value = serde_json::to_value(delta).unwrap_or(Value::Null);
+                if let Some(existing) = notification_projection
+                    .iter_mut()
+                    .find(|candidate| candidate.get("id").and_then(Value::as_str) == Some(id))
+                {
+                    *existing = value;
+                } else {
+                    notification_projection.push(value);
+                }
+            }
+            arkret_sdk::NotificationDeltaAction::Remove => {
+                notification_projection
+                    .retain(|candidate| candidate.get("id").and_then(Value::as_str) != Some(id));
+            }
         }
-    });
+    }
     if let Some(invites) = invite_notifications {
         let joined_realms = response.realms.keys().cloned().collect::<BTreeSet<_>>();
         crate::state::projection::notifications::merge_invite_notifications(
@@ -2242,6 +2262,11 @@ fn apply_notification_projection(
     if should_save_notification_projection {
         store.save_notification_projection(notification_projection);
     }
+}
+
+fn is_agent_runtime_approval_delta(value: &Value) -> bool {
+    value.get("type").and_then(Value::as_str) == Some("agent")
+        && value.pointer("/data/kind").and_then(Value::as_str) == Some("agent_runtime_approval")
 }
 
 fn apply_account_data(
@@ -2400,7 +2425,7 @@ mod tests {
             account_data: Vec::new(),
             device_lists: json!({}),
             presence: Vec::new(),
-            notifications: serde_json::Value::Null,
+            notifications: Default::default(),
             partial: false,
         }
     }
@@ -2927,6 +2952,7 @@ mod tests {
         apply_notification_projection(
             &mut store,
             &response,
+            false,
             Some(vec![json!({
                 "invite_id": "ak:invite:0196419b-0000-7000-8000-000000000010",
                 "realm_id": "ak:realm:0196419b-0000-7000-8000-000000000011",
