@@ -585,6 +585,40 @@ fn target_notary_value(
     notary
         .validate()
         .map_err(|error| format!("invalid MLS governance proof notary value: {error}"))?;
+    let genesis_events = bundle
+        .frontier_events
+        .iter()
+        .filter(|event| event.kind.as_str() == arkret_sdk::events::kinds::REALM_CREATE)
+        .collect::<Vec<_>>();
+    if genesis_events.len() > 1 {
+        return Err("MLS governance proof contains multiple Realm genesis Events".to_owned());
+    }
+    if let Some(genesis) = genesis_events.first() {
+        let genesis_notary = genesis
+            .payload
+            .get("object")
+            .and_then(|object| object.get("notary"))
+            .cloned()
+            .ok_or_else(|| {
+                "MLS governance Realm genesis Event omits payload.object.notary".to_owned()
+            })?;
+        let genesis_notary = serde_json::from_value::<arkret_sdk::NotaryValue>(genesis_notary)
+            .map_err(|error| format!("decode MLS governance genesis notary: {error}"))?;
+        genesis_notary
+            .validate()
+            .map_err(|error| format!("invalid MLS governance genesis notary: {error}"))?;
+        if genesis_notary != notary {
+            return Err(
+                "MLS governance proof notary cell differs from the signed Realm genesis Event"
+                    .to_owned(),
+            );
+        }
+    } else if matches!(
+        bundle.effective_scope,
+        arkret_sdk::models::EffectiveScope::Realm { .. }
+    ) {
+        return Err("Realm-scoped MLS governance proof omits its genesis Event".to_owned());
+    }
     Ok(notary)
 }
 

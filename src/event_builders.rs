@@ -144,6 +144,7 @@ pub(crate) fn parse_realm_bootstrap_members(
 pub fn build_realm_bootstrap_events(
     realm_id: &str,
     actor_id: &str,
+    notary_did: &str,
     title: &str,
     summary: Option<&str>,
     discoverability: &str,
@@ -181,6 +182,7 @@ pub fn build_realm_bootstrap_events(
     events.push(build_realm_create_event(
         realm_id,
         actor_id,
+        notary_did,
         title,
         summary,
         discoverability,
@@ -286,6 +288,7 @@ pub(crate) fn recommended_history_sharing_policy_for_visibility(
 pub fn build_realm_create_event(
     realm_id: &str,
     actor_id: &str,
+    notary_did: &str,
     title: &str,
     summary: Option<&str>,
     discoverability: &str,
@@ -313,7 +316,7 @@ pub fn build_realm_create_event(
     let envelope_realm_id = trim_realm_id(realm_id);
     let cell = space_cell("ak.component.realm.create.v1", &envelope_realm_id);
     let created_at_for_object = event_timestamp();
-    let notary = realm_genesis_notary(notary_profile, actor_id)?;
+    let notary = realm_genesis_notary(notary_profile, notary_did)?;
     let mut object = json!({
         "id": realm_object_id,
         "schema": "ak.schema.realm.v1",
@@ -457,25 +460,27 @@ pub fn recommended_realm_policy_components_for_profile(
 /// Build the genesis notary cell value via the SDK-authoritative
 /// [`arkret_sdk::NotaryValue`] type (no hand-rolled JSON — zero schema drift),
 /// then serialize it to the wire `notary` object.
-fn realm_genesis_notary(notary_profile: &str, actor_id: &str) -> anyhow::Result<Value> {
-    let actor_did = arkret_sdk::Did::new(actor_id.to_owned())
-        .map_err(|e| anyhow::anyhow!("realm notary actor DID `{actor_id}` invalid: {e}"))?;
+fn realm_genesis_notary(notary_profile: &str, notary_did: &str) -> anyhow::Result<Value> {
+    let notary_did = arkret_sdk::Did::new(notary_did.to_owned())
+        .map_err(|e| anyhow::anyhow!("Realm notary DID `{notary_did}` invalid: {e}"))?;
     let notary = match notary_profile {
         "threshold" => {
             // Single-operator genesis committee: 1-of-1. `2*1 > 1` so the
             // forensic-attribution mode is `quorum_intersection`.
             arkret_sdk::NotaryValue::Threshold {
                 threshold: 1,
-                members: vec![actor_did],
+                members: vec![notary_did.clone()],
                 forensic_attribution: arkret_sdk::ForensicAttribution::QuorumIntersection,
             }
         }
         "open_set" => arkret_sdk::NotaryValue::OpenSet {
-            members: vec![actor_did],
+            members: vec![notary_did.clone()],
         },
         "mixed" => arkret_sdk::NotaryValue::Mixed {
-            did: actor_did,
-            recovery_members: vec![parse_derived_did(&derived_recovery_member_did(actor_id))?],
+            did: notary_did.clone(),
+            recovery_members: vec![parse_derived_did(&derived_recovery_member_did(
+                notary_did.as_str(),
+            ))?],
         },
         _ => {
             // `controller_organization` / `recovery_controller_organizations`
@@ -488,9 +493,9 @@ fn realm_genesis_notary(notary_profile: &str, actor_id: &str) -> anyhow::Result<
             // single_did allOf; decisions/0003 §7 — personal Realms fall back to
             // per-user recovery) rather than fabricate a malformed
             // `did:webvh:<host>` (no SCID) identifier.
-            match inferred_controller_organization_did(actor_id) {
+            match inferred_controller_organization_did(notary_did.as_str()) {
                 Some(controller) => arkret_sdk::NotaryValue::single_did_with_org(
-                    actor_did,
+                    notary_did.clone(),
                     vec![parse_derived_did(&derived_recovery_member_did(
                         &controller,
                     ))?],
@@ -499,7 +504,7 @@ fn realm_genesis_notary(notary_profile: &str, actor_id: &str) -> anyhow::Result<
                         &derived_recovery_controller_organization_did(&controller),
                     )?],
                 ),
-                None => arkret_sdk::NotaryValue::single_did(actor_did),
+                None => arkret_sdk::NotaryValue::single_did(notary_did),
             }
         }
     };

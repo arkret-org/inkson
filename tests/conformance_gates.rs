@@ -120,6 +120,7 @@ fn test_signing_key() -> &'static SigningKey {
 const TEST_REALM_ID: &str = "ak:realm:0196419b-0000-7000-8000-000000000001";
 const TEST_SPACE_ID: &str = "ak:space:0196419b-0000-7000-8000-000000000002";
 const TEST_ACTOR_ID: &str = "did:web:alice.example";
+const TEST_SERVICE_ID: &str = "did:web:server.example";
 const TEST_INVITEE_DID: &str = "did:web:bob.example";
 const TEST_ANCHOR_REF: &str =
     "ak:seal:sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
@@ -262,6 +263,7 @@ fn build_realm_create_event_matches_event_schema() {
     let mut envelope = event_builders::build_realm_create_event(
         TEST_REALM_ID,
         TEST_ACTOR_ID,
+        TEST_SERVICE_ID,
         "Engineering",
         Some("Roadmap work"),
         "listed",
@@ -417,6 +419,7 @@ fn build_member_state_event_matches_event_schema() {
     let events = event_builders::build_realm_bootstrap_events(
         TEST_REALM_ID,
         TEST_ACTOR_ID,
+        TEST_SERVICE_ID,
         "Engineering",
         None,
         "listed",

@@ -235,6 +235,7 @@ fn space_bootstrap_events_use_canonical_create_and_facet_kinds() {
     let events = build_realm_bootstrap_events(
         "ak:realm:0196419b-0000-7000-8000-000000000001",
         "did:web:alice.example",
+        "did:web:server.example",
         "Engineering",
         Some("Roadmap work"),
         "listed",
@@ -386,6 +387,7 @@ fn plaintext_realm_create_does_not_claim_e2ee_floors() {
     let envelope = build_realm_create_event(
         "ak:realm:0196419b-0000-7000-8000-000000000001",
         "did:web:alice.example",
+        "did:web:server.example",
         "Public updates",
         None,
         "listed",
@@ -413,6 +415,7 @@ fn realm_bootstrap_rejects_prejoin_history_with_strict_mls_scheme() {
     let err = build_realm_bootstrap_events(
         "ak:realm:0196419b-0000-7000-8000-000000000011",
         "did:web:alice.example",
+        "did:web:server.example",
         "Strict history",
         None,
         "listed",
@@ -442,6 +445,7 @@ fn realm_bootstrap_allows_joined_history_with_strict_mls_scheme() {
     let events = build_realm_bootstrap_events(
         "ak:realm:0196419b-0000-7000-8000-000000000012",
         "did:web:alice.example",
+        "did:web:server.example",
         "Strict history",
         None,
         "listed",
@@ -501,6 +505,7 @@ fn bootstrap_envelopes_have_no_sdk_digest_drift() {
     let events = build_realm_bootstrap_events(
         "ak:realm:0196419b-0000-7000-8000-000000000001",
         "did:web:alice.example",
+        "did:web:server.example",
         "Engineering",
         None,
         "listed",
@@ -544,6 +549,7 @@ fn realm_bootstrap_rejects_handle_seed_without_directory_evidence() {
     let err = build_realm_bootstrap_events(
         "ak:realm:0196419b-0000-7000-8000-000000000001",
         "did:web:alice.example",
+        "did:web:server.example",
         "Engineering",
         None,
         "listed",
@@ -668,6 +674,7 @@ fn realm_bootstrap_payloads_match_spec_schema() {
     let events = build_realm_bootstrap_events(
         "ak:realm:0196419b-0000-7000-8000-000000000001",
         "did:web:alice.example",
+        "did:web:server.example",
         "Engineering",
         Some("Roadmap work"),
         "listed",

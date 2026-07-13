@@ -324,6 +324,10 @@ impl EventSubmitter {
             .await
     }
 
+    pub(crate) async fn service_id(&self) -> anyhow::Result<String> {
+        Ok(self.describe_cached().await?.service_id.to_string())
+    }
+
     /// Mint a DataEvent `seal_ref` head from the membership-gated Realm Seal
     /// view. Only the CBA data-plane stamping path uses this.
     pub(crate) async fn current_seal_for(&self, realm_id: &str) -> anyhow::Result<String> {

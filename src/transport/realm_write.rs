@@ -76,9 +76,11 @@ pub async fn create_realm(
 
     let realm_id = format!("ak:realm:{}", uuid_v7());
     let join_rule = canonical_space_join_rule_v1(join_rule);
+    let notary_did = submitter.service_id().await?;
     let mut events = build_realm_bootstrap_events(
         &realm_id,
         actor_id,
+        &notary_did,
         title,
         summary,
         discoverability,
