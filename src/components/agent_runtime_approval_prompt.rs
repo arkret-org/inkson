@@ -486,63 +486,57 @@ fn pending_runtime_approval_from_view(
     view: &arkret_sdk::AgentView,
 ) -> Option<PendingAgentRuntimeApproval> {
     if !matches!(
-        view.status.as_str(),
-        "pending_runtime_key" | "active" | "paused"
+        view.status,
+        arkret_sdk::AgentStatus::PendingRuntimeKey
+            | arkret_sdk::AgentStatus::Active
+            | arkret_sdk::AgentStatus::Paused
     ) {
         return None;
     }
-    let request_value = view.key_state.get("pending_runtime_key_request")?.clone();
+    let key_state = view.key_state.as_ref()?;
+    let request_value = key_state.pending_runtime_key_request.clone()?;
     if request_value.is_null() {
         return None;
     }
     let request_json = serde_json::to_string(&request_value).ok()?;
     let summary = summarize_runtime_key_approval_request(&request_json).ok()?;
     if timestamp_has_expired(&summary.proof_expires_at)
-        || key_state_str(&view.key_state, "pairing_expires_at")
-            .is_some_and(|expires_at| timestamp_has_expired(&expires_at))
+        || key_state
+            .pairing_expires_at
+            .is_some_and(|expires_at| timestamp_has_expired(&expires_at.to_rfc3339()))
     {
         return None;
     }
-    let agent_id = agent_field(view, "agent_id")
-        .filter(|value| !value.trim().is_empty())
-        .unwrap_or_else(|| summary.agent_id.clone());
+    let agent_id = view.agent.agent_id.to_string();
     if agent_id != summary.agent_id {
         return None;
     }
-    let pairing_code = key_state_str(&view.key_state, "pairing_code")?;
-    let request_key = key_state_str(&view.key_state, "approval_request_id")
-        .or_else(|| Some(summary.pairing_request_id.clone()))?;
+    let pairing_code = key_state.pairing_code.clone()?;
+    let request_key = key_state
+        .approval_request_id
+        .clone()
+        .unwrap_or_else(|| summary.pairing_request_id.clone());
     Some(PendingAgentRuntimeApproval {
         notification_id: String::new(),
         request_key,
         agent_id,
-        display_name: agent_field(view, "display_name").unwrap_or_default(),
-        agent_slug: agent_field(view, "slug").unwrap_or_default(),
+        display_name: view.agent.display_name.clone().unwrap_or_default(),
+        agent_slug: view.agent.slug.clone(),
         pairing_code,
-        approval_requested_at: key_state_str(&view.key_state, "approval_requested_at")
+        approval_requested_at: key_state
+            .approval_requested_at
+            .map(|value| value.to_rfc3339())
             .unwrap_or_default(),
         proof_expires_at: summary.proof_expires_at,
         verification_method: summary.verification_method,
         public_key_fingerprint: summary.public_key_fingerprint,
-        key_state: view.key_state.clone(),
+        key_state: serde_json::to_value(key_state).ok()?,
         request_json,
-        replacement: matches!(view.status.as_str(), "active" | "paused"),
+        replacement: matches!(
+            view.status,
+            arkret_sdk::AgentStatus::Active | arkret_sdk::AgentStatus::Paused
+        ),
     })
-}
-
-fn agent_field(view: &arkret_sdk::AgentView, key: &str) -> Option<String> {
-    view.agent
-        .get(key)
-        .and_then(Value::as_str)
-        .map(str::to_owned)
-}
-
-fn key_state_str(key_state: &Value, key: &str) -> Option<String> {
-    key_state
-        .get(key)
-        .and_then(Value::as_str)
-        .filter(|value| !value.trim().is_empty())
-        .map(str::to_owned)
 }
 
 fn approval_has_expired(request: &PendingAgentRuntimeApproval) -> bool {

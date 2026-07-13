@@ -361,7 +361,7 @@ pub struct RuntimeKeyApprovalRequest {
     pub public_key: Value,
     pub proof_of_possession: Value,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub runtime_attestation: Option<Value>,
+    pub runtime_attestation: Option<AgentKeyAuthorizePayloadRuntimeAttestation>,
 }
 
 impl RuntimeKeyApprovalRequest {
@@ -490,17 +490,7 @@ pub fn build_agent_key_authorize_event_for_pairing(
         service_id,
     )?;
     let issued_at = Utc::now();
-    let runtime_attestation = request.runtime_attestation.as_ref().and_then(|value| {
-        (value.get("kind").and_then(Value::as_str) == Some("self_asserted")).then(|| {
-            AgentKeyAuthorizePayloadRuntimeAttestation {
-                kind: AgentKeyRuntimeAttestationKind::SelfAsserted,
-                software: None,
-                version: None,
-                attestation_digest: None,
-                evidence_ref: None,
-            }
-        })
-    });
+    let runtime_attestation = request.runtime_attestation.clone();
     let supersedes = match key_state.get("active_authorizations") {
         Some(Value::Array(authorizations)) => authorizations
             .iter()
@@ -761,13 +751,12 @@ pub(crate) fn agent_view_from_directory_row(row: AgentProjection) -> Option<Agen
     if row.agent_id.as_str().trim().is_empty() {
         return None;
     }
-    let status = agent_status_wire(row.status).to_owned();
-    let agent = serde_json::to_value(&row).ok()?;
+    let status = row.status;
     Some(AgentView {
-        agent,
+        agent: row,
         status,
         grants: Vec::new(),
-        key_state: Value::Null,
+        key_state: None,
     })
 }
 

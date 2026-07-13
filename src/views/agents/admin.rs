@@ -8,8 +8,8 @@
 use std::time::Duration;
 
 use arkret_sdk::models::{
-    AgentDeactivateRequestBody, AgentPauseRequestBody, AgentProvisionRequestBody,
-    AgentResumeRequestBody, AgentView,
+    AgentDeactivateRequestBody, AgentKeyScope, AgentLifecycleState, AgentPauseRequestBody,
+    AgentProjection, AgentProvisionRequestBody, AgentResumeRequestBody, AgentStatus, AgentView,
 };
 use dioxus::prelude::*;
 use dioxus_primitives::checkbox::CheckboxState;
@@ -19,6 +19,7 @@ use yoface::utils::dom::copy_text_to_clipboard;
 
 use super::model::{
     AgentGrantPreset, AgentServiceScopePreset, agent_state_badge_class, agent_state_label,
+    agent_status_wire,
     agent_view_from_directory_row, build_agent_pairing_deep_link,
     build_agent_pairing_handoff_token, is_pairing_request_expired, render_agent_pairing_qr_svg,
     requested_scope_for_presets,
@@ -35,12 +36,31 @@ use crate::ui::textarea::Textarea;
 use crate::views::helpers::short_protocol_id;
 
 fn agent_field(agent: &AgentView, key: &str) -> String {
-    agent
-        .agent
-        .get(key)
-        .and_then(Value::as_str)
-        .unwrap_or_default()
-        .to_owned()
+    match key {
+        "agent_id" => agent.agent.agent_id.to_string(),
+        "display_name" => agent.agent.display_name.clone().unwrap_or_default(),
+        "slug" => agent.agent.slug.clone(),
+        "avatar_blob_ref" => agent
+            .agent
+            .avatar_blob_ref
+            .as_ref()
+            .map(|value| value.as_str().to_owned())
+            .unwrap_or_default(),
+        "status" => agent_status_wire(agent.status).to_owned(),
+        "created_at" => agent
+            .agent
+            .created_at
+            .as_ref()
+            .map(chrono::DateTime::to_rfc3339)
+            .unwrap_or_default(),
+        "updated_at" => agent
+            .agent
+            .updated_at
+            .as_ref()
+            .map(chrono::DateTime::to_rfc3339)
+            .unwrap_or_default(),
+        _ => String::new(),
+    }
 }
 
 fn agent_id(agent: &AgentView) -> String {
@@ -60,66 +80,40 @@ fn agent_slug_label(agent: &AgentView) -> String {
     }
 }
 
-fn value_actions(value: &Value) -> Vec<&str> {
-    value
-        .get("actions")
-        .or_else(|| value.get("grant").and_then(|grant| grant.get("actions")))
-        .and_then(Value::as_array)
-        .into_iter()
-        .flatten()
-        .filter_map(Value::as_str)
-        .collect()
-}
-
-fn grant_matches_content_preset(grant: &Value, preset: AgentGrantPreset) -> bool {
-    let actions = value_actions(grant);
+fn requested_scope_matches_content_preset(
+    scope: Option<&AgentKeyScope>,
+    preset: AgentGrantPreset,
+) -> bool {
+    let Some(scope) = scope else {
+        return false;
+    };
     if !preset
         .actions()
         .iter()
-        .all(|action| actions.contains(action))
+        .all(|action| scope.actions.iter().any(|candidate| candidate == action))
     {
         return false;
     }
     if preset != AgentGrantPreset::ActOnBehalf {
         return true;
     }
-    grant
-        .get("constraints")
-        .or_else(|| {
-            grant
-                .get("grant")
-                .and_then(|value| value.get("constraints"))
-        })
-        .and_then(Value::as_array)
-        .into_iter()
-        .flatten()
-        .any(|constraint| {
-            constraint
-                .get("controller_approval_required")
-                .or_else(|| constraint.get("approval_required"))
-                .and_then(Value::as_bool)
-                .unwrap_or(false)
-        })
-}
-
-fn requested_scope_matches_content_preset(key_state: &Value, preset: AgentGrantPreset) -> bool {
-    key_state
-        .get("requested_scope")
-        .is_some_and(|scope| grant_matches_content_preset(scope, preset))
+    scope.constraints.iter().any(|constraint| {
+        constraint.controller_approval_required == Some(true)
+            || constraint.approval_required == Some(true)
+    })
 }
 
 fn requested_scope_matches_service_preset(
-    key_state: &Value,
+    scope: Option<&AgentKeyScope>,
     preset: AgentServiceScopePreset,
 ) -> bool {
-    let actions = key_state
-        .get("requested_scope")
-        .map(value_actions)
-        .unwrap_or_default();
+    let Some(scope) = scope else {
+        return false;
+    };
     preset
         .actions()
         .iter()
-        .all(|action| actions.contains(action))
+        .all(|action| scope.actions.iter().any(|candidate| candidate == action))
 }
 
 fn upsert_agent_view(rows: &mut Vec<AgentView>, view: AgentView) {
@@ -158,71 +152,73 @@ mod directory_refresh_tests {
     #[test]
     fn directory_refresh_updates_status_without_dropping_loaded_details() {
         let mut rows = vec![AgentView {
-            agent: json!({
-                "agent_id": "did:web:agents.example:summary",
-                "slug": "summary",
-                "status": "pending_runtime_key",
-            }),
-            status: "pending_runtime_key".to_owned(),
-            grants: vec![json!({ "grant_id": "ak:grant:test" })],
-            key_state: json!({ "pairing_request_id": "pair-1", "pairing_code": "246810" }),
+            agent: test_agent_projection(AgentStatus::PendingRuntimeKey),
+            status: AgentStatus::PendingRuntimeKey,
+            grants: vec![serde_json::from_value(json!({ "grant_id": "ak:grant:test" })).unwrap()],
+            key_state: None,
         }];
         let directory_rows = vec![AgentView {
-            agent: json!({
-                "agent_id": "did:web:agents.example:summary",
-                "slug": "summary",
-                "status": "active",
-            }),
-            status: "active".to_owned(),
+            agent: test_agent_projection(AgentStatus::Active),
+            status: AgentStatus::Active,
             grants: Vec::new(),
-            key_state: Value::Null,
+            key_state: None,
         }];
 
         replace_agent_directory(&mut rows, directory_rows);
 
-        assert_eq!(rows[0].status, "active");
-        assert_eq!(rows[0].grants[0]["grant_id"], "ak:grant:test");
-        assert_eq!(rows[0].key_state["pairing_request_id"], "pair-1");
+        assert_eq!(rows[0].status, AgentStatus::Active);
+        assert_eq!(rows[0].grants[0].grant_id.as_str(), "ak:grant:test");
+    }
+
+    fn test_agent_projection(status: AgentStatus) -> AgentProjection {
+        AgentProjection {
+            agent_id: arkret_sdk::Did::new("did:web:agents.example:summary").unwrap(),
+            display_name: None,
+            slug: "summary".to_owned(),
+            avatar_blob_ref: None,
+            status,
+            created_at: None,
+            updated_at: None,
+        }
     }
 
     #[test]
     fn requested_scope_restores_configured_content_capabilities() {
-        let key_state = json!({
-            "requested_scope": {
-                "actions": [
-                    "ak.event.read",
-                    "ak.message.create",
-                    "ak.reaction.add",
-                    "ak.self.events.stream.subscribe",
-                ],
-                "resources": [],
-                "constraints": [],
-            },
-        });
+        let scope = requested_scope_for_presets(
+            &[AgentGrantPreset::Read, AgentGrantPreset::ReplyAsAgent],
+            &[AgentServiceScopePreset::SubscribeEvents],
+        )
+        .unwrap();
 
         assert!(requested_scope_matches_content_preset(
-            &key_state,
+            Some(&scope),
             AgentGrantPreset::Read,
         ));
         assert!(requested_scope_matches_content_preset(
-            &key_state,
+            Some(&scope),
             AgentGrantPreset::ReplyAsAgent,
         ));
         assert!(!requested_scope_matches_content_preset(
-            &key_state,
+            Some(&scope),
             AgentGrantPreset::ActOnBehalf,
         ));
     }
 }
 
-fn update_agent_status(rows: &mut [AgentView], id: &str, status: &str) {
+fn update_agent_status(rows: &mut [AgentView], id: &str, status: AgentStatus) {
     for row in rows.iter_mut() {
         if agent_id(row) == id {
-            row.status = status.to_owned();
-            if let Some(object) = row.agent.as_object_mut() {
-                object.insert("status".to_owned(), json!(status));
-            }
+            row.status = status;
+            row.agent.status = status;
         }
+    }
+}
+
+fn agent_status_from_lifecycle(status: AgentLifecycleState) -> AgentStatus {
+    match status {
+        AgentLifecycleState::Active => AgentStatus::Active,
+        AgentLifecycleState::Paused => AgentStatus::Paused,
+        AgentLifecycleState::Deactivated => AgentStatus::Deactivated,
     }
 }
 
@@ -303,7 +299,6 @@ fn spawn_load_agent_details(
     api_token: String,
     id: String,
     mut agents: Signal<Vec<AgentView>>,
-    mut selected_grants: Signal<Vec<Value>>,
     mut last_op_status: Signal<String>,
 ) {
     spawn(async move {
@@ -317,7 +312,6 @@ fn spawn_load_agent_details(
         .await
         {
             Ok(view) => {
-                selected_grants.set(view.grants.clone());
                 agents.with_mut(|rows| upsert_agent_view(rows, view));
             }
             Err(err) => {
@@ -371,12 +365,13 @@ fn spawn_set_agent_enabled(
         };
         match result {
             Ok(outcome) => {
-                let status = outcome.status.as_wire_str().to_owned();
+                let status = agent_status_from_lifecycle(outcome.status);
+                let status_wire = agent_status_wire(status);
                 agents.with_mut(|rows| update_agent_status(rows, &id_for_status, &status));
                 last_op_status.set(if enabled {
-                    format!("Resumed. Status: {status}.")
+                    format!("Resumed. Status: {status_wire}.")
                 } else {
-                    format!("Paused. Status: {status}.")
+                    format!("Paused. Status: {status_wire}.")
                 });
             }
             Err(err) => last_op_status.set(format!(
@@ -409,7 +404,6 @@ pub fn PersonalAgentAdminPanel(token: Signal<String>) -> Element {
     let mut provision_presets =
         use_signal(|| vec![AgentGrantPreset::Read, AgentGrantPreset::ReplyAsAgent]);
     let mut provision_service_scopes = use_signal(|| AgentServiceScopePreset::DEFAULTS.to_vec());
-    let mut selected_grants = use_signal(Vec::<Value>::new);
     let mut agent_list_refresh_epoch = use_signal(|| 0_u64);
     let mut deactivate_confirm = use_signal(String::new);
     let mut deactivate_dialog_open = use_signal(|| false);
@@ -457,19 +451,21 @@ pub fn PersonalAgentAdminPanel(token: Signal<String>) -> Element {
             let next = {
                 let rows = agents.read();
                 if rows.iter().any(|agent| {
-                    agent_id(agent) == current && agent_matches_filter(&agent.status, &filter)
+                    agent_id(agent) == current
+                        && agent_matches_filter(agent_status_wire(agent.status), &filter)
                 }) {
                     current.clone()
                 } else {
                     rows.iter()
-                        .find(|agent| agent_matches_filter(&agent.status, &filter))
+                        .find(|agent| {
+                            agent_matches_filter(agent_status_wire(agent.status), &filter)
+                        })
                         .map(agent_id)
                         .unwrap_or_default()
                 }
             };
             if next != current {
                 selected_agent_id.set(next);
-                selected_grants.set(Vec::new());
             }
         });
     }
@@ -479,7 +475,6 @@ pub fn PersonalAgentAdminPanel(token: Signal<String>) -> Element {
         use_effect(move || {
             let id = selected_agent_id();
             if id.is_empty() {
-                selected_grants.set(Vec::new());
                 return;
             }
             spawn_load_agent_details(
@@ -487,7 +482,6 @@ pub fn PersonalAgentAdminPanel(token: Signal<String>) -> Element {
                 token(),
                 id,
                 agents,
-                selected_grants,
                 last_op_status,
             );
         });
@@ -501,17 +495,19 @@ pub fn PersonalAgentAdminPanel(token: Signal<String>) -> Element {
             .iter()
             .find(|agent| {
                 agent_id(agent) == selected_id_now
-                    && agent_matches_filter(&agent.status, &active_agent_filter)
+                    && agent_matches_filter(agent_status_wire(agent.status), &active_agent_filter)
             })
             .cloned();
         let visible_agents = rows
             .iter()
-            .filter(|agent| agent_matches_filter(&agent.status, &active_agent_filter))
+            .filter(|agent| {
+                agent_matches_filter(agent_status_wire(agent.status), &active_agent_filter)
+            })
             .cloned()
             .collect::<Vec<_>>();
         let has_any_agents = rows
             .iter()
-            .any(|agent| agent_matches_filter(&agent.status, "all"));
+            .any(|agent| agent_matches_filter(agent_status_wire(agent.status), "all"));
         (selected_agent, visible_agents, has_any_agents)
     };
     let last_op_status_message = last_op_status();
@@ -526,27 +522,24 @@ pub fn PersonalAgentAdminPanel(token: Signal<String>) -> Element {
         .unwrap_or_default();
     let selected_status = selected_agent
         .as_ref()
-        .map(|agent| agent.status.clone())
+        .map(|agent| agent_status_wire(agent.status).to_owned())
         .unwrap_or_default();
-    let selected_key_state_value = selected_agent
+    let selected_key_state = selected_agent
         .as_ref()
-        .map(|agent| agent.key_state.clone())
-        .unwrap_or(Value::Null);
-    let selected_pairing_request_id = selected_key_state_value
-        .get("pairing_request_id")
-        .and_then(Value::as_str)
+        .and_then(|agent| agent.key_state.as_ref());
+    let selected_pairing_request_id = selected_key_state
+        .and_then(|key_state| key_state.pairing_request_id.as_deref())
         .unwrap_or_default()
         .to_owned();
-    let selected_pairing_code = selected_key_state_value
-        .get("pairing_code")
-        .and_then(Value::as_str)
+    let selected_pairing_code = selected_key_state
+        .and_then(|key_state| key_state.pairing_code.as_deref())
         .unwrap_or_default()
         .to_owned();
-    let selected_pairing_expires_at = selected_key_state_value
-        .get("pairing_expires_at")
-        .and_then(Value::as_str)
+    let selected_pairing_expires_at = selected_key_state
+        .and_then(|key_state| key_state.pairing_expires_at.as_ref())
+        .map(chrono::DateTime::to_rfc3339)
         .unwrap_or_default()
-        .to_owned();
+        ;
     let now_rfc3339 = crate::clock::now_rfc3339_secs();
     let selected_pairing_is_expired = selected_status == "pairing_expired"
         || is_pairing_request_expired(&selected_pairing_expires_at, &now_rfc3339);
@@ -570,24 +563,17 @@ pub fn PersonalAgentAdminPanel(token: Signal<String>) -> Element {
         .as_ref()
         .map(|agent| agent_field(agent, "updated_at"))
         .unwrap_or_default();
-    let selected_grants_snapshot = selected_grants();
-    let selected_has_requested_scope = selected_key_state_value.get("requested_scope").is_some();
+    let selected_scope = selected_key_state.and_then(|key_state| key_state.requested_scope.as_ref());
     let selected_content_capabilities = AgentGrantPreset::ALL.map(|preset| {
         (
             preset,
-            if selected_has_requested_scope {
-                requested_scope_matches_content_preset(&selected_key_state_value, preset)
-            } else {
-                selected_grants_snapshot
-                    .iter()
-                    .any(|grant| grant_matches_content_preset(grant, preset))
-            },
+            requested_scope_matches_content_preset(selected_scope, preset),
         )
     });
     let selected_service_capabilities = AgentServiceScopePreset::ALL.map(|preset| {
         (
             preset,
-            requested_scope_matches_service_preset(&selected_key_state_value, preset),
+            requested_scope_matches_service_preset(selected_scope, preset),
         )
     });
 
@@ -692,7 +678,7 @@ pub fn PersonalAgentAdminPanel(token: Signal<String>) -> Element {
                             {
                                 let id = agent_id(agent);
                                 let slug_label = agent_slug_label(agent);
-                                let status = agent.status.clone();
+                                let status = agent_status_wire(agent.status);
                                 let id_label = short_protocol_id(&id);
                                 let is_selected = !is_create_mode && selected_id_now == id;
                                 let row_class = if is_selected {
@@ -864,15 +850,14 @@ pub fn PersonalAgentAdminPanel(token: Signal<String>) -> Element {
                                                         return;
                                                     }
                                                 };
-                                                let avatar_blob_ref_value =
-                                                    new_agent_avatar_blob_ref();
+                                                let avatar_blob_ref = arkret_sdk::BlobRef::new(
+                                                    new_agent_avatar_blob_ref(),
+                                                )
+                                                .ok();
                                                 let body = AgentProvisionRequestBody {
                                                     display_name: None,
                                                     slug: slug_value.clone(),
-                                                    avatar_blob_ref: arkret_sdk::BlobRef::new(
-                                                        avatar_blob_ref_value.clone(),
-                                                    )
-                                                    .ok(),
+                                                    avatar_blob_ref: avatar_blob_ref.clone(),
                                                     requested_scope: Some(requested_scope.clone()),
                                                     accountability: Value::Null,
                                                     pairing_ttl_ms: None,
@@ -901,27 +886,19 @@ pub fn PersonalAgentAdminPanel(token: Signal<String>) -> Element {
                                                     };
                                                     let created_agent_id =
                                                         outcome.agent_id.to_string();
-                                                    let expires_at = outcome
-                                                        .expires_at
-                                                        .to_rfc3339_opts(chrono::SecondsFormat::Millis, true);
-                                                    let agent_object = json!({
-                                                        "agent_id": created_agent_id,
-                                                        "slug": slug_value,
-                                                        "avatar_blob_ref": avatar_blob_ref_value,
-                                                        "status": "pending_runtime_key",
-                                                    });
-                                                    let key_state = json!({
-                                                        "status": "pending_runtime_key",
-                                                        "pairing_request_id": outcome.pairing_request_id,
-                                                        "pairing_code": outcome.pairing_code,
-                                                        "pairing_expires_at": expires_at,
-                                                        "requested_scope": requested_scope,
-                                                    });
                                                     let agent_view = AgentView {
-                                                        agent: agent_object,
-                                                        status: "pending_runtime_key".to_owned(),
+                                                        agent: AgentProjection {
+                                                            agent_id: outcome.agent_id,
+                                                            display_name: None,
+                                                            slug: slug_value,
+                                                            avatar_blob_ref,
+                                                            status: AgentStatus::PendingRuntimeKey,
+                                                            created_at: None,
+                                                            updated_at: None,
+                                                        },
+                                                        status: AgentStatus::PendingRuntimeKey,
                                                         grants: Vec::new(),
-                                                        key_state,
+                                                        key_state: None,
                                                     };
                                                     let created_id = agent_id(&agent_view);
                                                     agent_list_refresh_epoch.set(
@@ -930,7 +907,6 @@ pub fn PersonalAgentAdminPanel(token: Signal<String>) -> Element {
                                                     );
                                                     agents.with_mut(|rows| upsert_agent_view(rows, agent_view));
                                                     selected_agent_id.set(created_id.clone());
-                                                    selected_grants.set(Vec::new());
                                                     create_mode.set(false);
                                                     new_agent_avatar_blob_ref.set(String::new());
 
