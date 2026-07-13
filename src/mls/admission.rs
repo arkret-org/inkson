@@ -358,6 +358,9 @@ pub(crate) fn build_mls_welcome_payload_value(
         device_authorize_event_id: claim.device_authorize_event_id.clone(),
     };
     let commit_ref = commit_event.event_id.as_str().to_owned();
+    let expires_at =
+        chrono::DateTime::<chrono::Utc>::from_timestamp(claim.expires_at.timestamp(), 0)
+            .unwrap_or(chrono::DateTime::<chrono::Utc>::UNIX_EPOCH);
     Ok(json!({
         "mls_group_id": welcome.group_id,
         "epoch": welcome.epoch,
@@ -372,7 +375,7 @@ pub(crate) fn build_mls_welcome_payload_value(
         "ciphertext": welcome.welcome,
         "commit_ref": commit_ref,
         "governance_binding": governance_binding,
-        "expires_at": claim.expires_at,
+        "expires_at": expires_at,
     }))
 }
 
