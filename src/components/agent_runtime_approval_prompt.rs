@@ -351,8 +351,10 @@ pub fn AgentRuntimeApprovalPrompt(token: Signal<String>, account_did: Signal<Str
                                                 &key_state,
                                                 &body,
                                             )?;
+                                        let pair_request =
+                                            body.into_pair_request(authorize_event.clone());
                                         api.event_submitter()?.agent_key_pair_with_authorize_event(
-                                            body,
+                                            pair_request,
                                             &authorize_event,
                                         )
                                         .await

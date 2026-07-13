@@ -921,7 +921,7 @@ impl EventSubmitter {
         authorize_event: &arkret_sdk::Event,
     ) -> anyhow::Result<arkret_sdk::models::AgentKeyPairOutcome> {
         let (signed, _) = self.prepare_sdk_event_for_submit(authorize_event).await?;
-        body.authorize_event = serde_json::to_value(signed)?;
+        body.authorize_event = signed;
         self.agent_key_pair(&body).await
     }
 }

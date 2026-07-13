@@ -10,7 +10,8 @@ use arkret_sdk::models::{
 use arkret_sdk::{
     AgentKeyApprovalEvidence, AgentKeyApprovalEvidenceKind, AgentKeyAuthorizePayload,
     AgentKeyAuthorizePayloadRuntimeAttestation, AgentKeyPairRequestBody,
-    AgentKeyRuntimeAttestationKind, AgentPairingBootstrap, Did, Hash, PublicKey, RealmId,
+    AgentKeyRuntimeAttestationKind, AgentKeySupersession, AgentPairingBootstrap, Did, Event,
+    EventId, Hash, PublicKey, RealmId,
 };
 use chrono::Utc;
 use serde::Deserialize;
@@ -364,7 +365,7 @@ pub struct RuntimeKeyApprovalRequest {
 }
 
 impl RuntimeKeyApprovalRequest {
-    pub fn into_pair_request(self) -> AgentKeyPairRequestBody {
+    pub fn into_pair_request(self, authorize_event: Event) -> AgentKeyPairRequestBody {
         AgentKeyPairRequestBody {
             pairing_request_id: self.pairing_request_id,
             agent_id: self.agent_id,
@@ -372,14 +373,14 @@ impl RuntimeKeyApprovalRequest {
             public_key: self.public_key,
             proof_of_possession: self.proof_of_possession,
             runtime_attestation: self.runtime_attestation,
-            authorize_event: Value::Null,
+            authorize_event,
         }
     }
 }
 
-pub fn parse_runtime_key_approval_request(raw: &str) -> anyhow::Result<AgentKeyPairRequestBody> {
+pub fn parse_runtime_key_approval_request(raw: &str) -> anyhow::Result<RuntimeKeyApprovalRequest> {
     let request: RuntimeKeyApprovalRequest = serde_json::from_str(raw.trim())?;
-    Ok(request.into_pair_request())
+    Ok(request)
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -452,9 +453,15 @@ pub fn build_agent_key_authorize_event_for_pairing(
     controller_id: &str,
     service_id: &str,
     key_state: &Value,
-    request: &AgentKeyPairRequestBody,
+    request: &RuntimeKeyApprovalRequest,
 ) -> anyhow::Result<arkret_sdk::Event> {
     let controller = Did::new(controller_id.trim().to_owned())?;
+    if key_state_str(key_state, "controller_id")? != controller.as_str() {
+        anyhow::bail!("agent key_state.controller_id does not match the signed-in controller");
+    }
+    if request.agent_id.as_str() != key_state_str(key_state, "agent_id")? {
+        anyhow::bail!("runtime request agent_id does not match this agent key state");
+    }
     if request.pairing_request_id != key_state_str(key_state, "pairing_request_id")? {
         anyhow::bail!("runtime request pairing_request_id does not match this agent");
     }
@@ -494,6 +501,32 @@ pub fn build_agent_key_authorize_event_for_pairing(
             }
         })
     });
+    let supersedes = match key_state.get("active_authorizations") {
+        Some(Value::Array(authorizations)) => authorizations
+            .iter()
+            .filter(|authorization| {
+                authorization.get("key_id").and_then(Value::as_str)
+                    != Some(request.verification_method.as_str())
+            })
+            .map(|authorization| {
+                Ok(AgentKeySupersession {
+                    key_id: key_state_str(authorization, "key_id")?.to_owned(),
+                    authorized_event_ref: EventId::new(
+                        key_state_str(authorization, "authorized_event_ref")?.to_owned(),
+                    )?,
+                })
+            })
+            .collect::<anyhow::Result<Vec<_>>>()?,
+        Some(_) => anyhow::bail!("agent key_state.active_authorizations must be an array"),
+        None if matches!(
+            key_state.get("status").and_then(Value::as_str),
+            Some("active" | "paused")
+        ) =>
+        {
+            anyhow::bail!("active agent key_state must expose authoritative active_authorizations")
+        }
+        None => Vec::new(),
+    };
     let payload = AgentKeyAuthorizePayload {
         agent_id: request.agent_id.clone(),
         key_id: request.verification_method.clone(),
@@ -513,13 +546,22 @@ pub fn build_agent_key_authorize_event_for_pairing(
             pairing_request_id: Some(request.pairing_request_id.clone()),
             approved_by: Some(controller.clone()),
         },
+        supersedes,
         revocation_check_ref: None,
         runtime_attestation,
     };
-    let realm_id = RealmId::new(arkret_sdk::principal_control_realm_id(&controller))?;
+    let realm_id = RealmId::new(key_state_str(key_state, "principal_control_realm_id")?)?;
+    let authorization_ref = key_state_str(key_state, "controller_authorization_ref")?;
     let hlc = arkret_sdk::Hlc::new(crate::hlc::Hlc::now("inkson").encode())?;
-    let mut event =
-        arkret_sdk::agent::build_agent_key_authorize_event(&payload, realm_id, controller, 1, hlc)?;
+    let mut event = arkret_sdk::agent::build_agent_key_authorize_event(
+        &payload,
+        realm_id,
+        request.agent_id.clone(),
+        controller,
+        authorization_ref,
+        1,
+        hlc,
+    )?;
     event.unsigned.insert(
         "pairing_request_id".to_owned(),
         json!(request.pairing_request_id),
