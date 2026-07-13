@@ -1,11 +1,11 @@
-//! Core store persistence: cursors, projections, drafts, notifications,
+//! Core store persistence: cursors, projections, notifications,
 //! watch levels, read cursors, push registration, OIDC / DPoP secure storage,
 //! and account-scope lifecycle.
 
 use super::*;
 
 #[test]
-fn local_state_store_tracks_cursor_operations_projections_and_drafts() {
+fn local_state_store_tracks_cursor_operations_and_projections() {
     let path = temp_state_path("tracks");
     let mut store = LocalStateStore::with_path(path);
     store.save_sync_cursor("sx:next");
@@ -15,7 +15,6 @@ fn local_state_store_tracks_cursor_operations_projections_and_drafts() {
         serde_json::json!({"type": "ak.message.create"}),
     );
     store.save_realm_tree_projection("ak:realm:demo", serde_json::json!({"name": "Demo"}));
-    store.save_draft("ak:realm:demo", "hello");
 
     let state = store.load();
     assert_eq!(state.sync_cursor.as_deref(), Some("sx:next"));
@@ -27,10 +26,6 @@ fn local_state_store_tracks_cursor_operations_projections_and_drafts() {
         state.realm_tree_projections["ak:realm:demo"]["name"],
         "Demo"
     );
-    assert_eq!(store.draft_for("ak:realm:demo"), "hello");
-
-    store.save_draft("ak:realm:demo", " ");
-    assert!(store.draft_for("ak:realm:demo").is_empty());
 }
 
 #[test]
@@ -233,12 +228,10 @@ fn local_state_store_persists_to_disk_between_instances() {
     let path = temp_state_path("persisted");
     let mut writer = LocalStateStore::with_path(path.clone());
     writer.save_sync_cursor("sx:persisted");
-    writer.save_draft("ak:realm:persisted", "draft survives restart");
 
     let reader = LocalStateStore::with_path(path);
     let state = reader.load();
     assert_eq!(state.sync_cursor.as_deref(), Some("sx:persisted"));
-    assert_eq!(state.drafts["ak:realm:persisted"], "draft survives restart");
 }
 
 #[test]
@@ -501,13 +494,8 @@ fn clear_account_scoped_preserves_device_level_and_session_grant_state() {
     // Account-scoped projections.
     store.save_sync_cursor("sx:before");
     store.save_realm_tree_projection("ak:space:a", serde_json::json!({}));
-    store.save_draft("ak:space:a", "draft");
     store.save_private_data("did:web:tester.example", "theme", "night");
     store.ensure_cached_loaded();
-    store.cached.draft_account_data.insert(
-        "ak.draft.v1:test".to_owned(),
-        serde_json::json!({ "kind": "message" }),
-    );
     store.cached.saved_account_data.insert(
         "ak.saved.v1:test".to_owned(),
         serde_json::json!({ "kind": "saved_item" }),
@@ -539,11 +527,6 @@ fn clear_account_scoped_preserves_device_level_and_session_grant_state() {
     assert!(
         state.realm_tree_projections.is_empty(),
         "projections should be wiped"
-    );
-    assert!(state.drafts.is_empty(), "drafts should be wiped");
-    assert!(
-        state.draft_account_data.is_empty(),
-        "draft account_data staging should be wiped"
     );
     assert!(
         state.saved_account_data.is_empty(),

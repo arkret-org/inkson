@@ -60,12 +60,16 @@ fn mls_snapshot_drop_clears_persisted_record() {
 }
 
 #[test]
-fn logout_session_clear_preserves_account_e2ee_state() {
+fn logout_session_clear_shreds_memory_and_preserves_encrypted_e2ee_state() {
     use crate::mls::persistence::encrypt_state;
+    use crate::secure_key_store::{MemorySecureKeyStore, SecureKeyStore};
 
     let path = temp_state_path("logout-preserves-mls");
     let realm = "ak:realm:logout-preserves";
     let actor = "did:web:alice.example";
+    let strand = "ak:strand:0196419b-0000-7000-8000-000000000002";
+    let digest = "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+    let secure = MemorySecureKeyStore::new();
     let grant = PersistedSessionGrant {
         grant_jwt: "alice.grant".to_owned(),
         session_private_key_pem: "pem".to_owned(),
@@ -90,12 +94,39 @@ fn logout_session_clear_preserves_account_e2ee_state() {
             realm,
             encrypt_state(realm, "abcd", 1, b"state", "secret", b"salt"),
         );
+        store.save_private_plaintext(realm, strand, "body", "author secret");
+        store.advance_mls_receive_chain(
+            realm,
+            encrypt_state(realm, "abcd", 2, b"advanced", "secret", b"salt"),
+            digest,
+            b"remote secret",
+        );
+        store
+            .persist_e2ee_plaintext_cache_with_secure_store(&secure)
+            .unwrap();
         store.save_realm_tree_projection(realm, serde_json::json!({"title": "Project"}));
-        store.save_draft(realm, "draft");
         store.set_session_grant(Some(grant));
         store.set_dpop_device_key(Some(dpop));
 
         store.clear_session_scoped_for_logout();
+        assert!(store.private_plaintext_for(realm, strand, "body").is_none());
+        assert!(store.mls_decrypted_plaintext_for(realm, digest).is_none());
+
+        let cache_key = crate::secure_key_store::e2ee_plaintext_cache_store_key(actor);
+        assert!(secure.get_secret(&cache_key).unwrap().is_some());
+        store
+            .hydrate_e2ee_plaintext_cache_with_secure_store(&secure)
+            .unwrap();
+        assert_eq!(
+            store
+                .private_plaintext_for(realm, strand, "body")
+                .as_deref(),
+            Some("author secret")
+        );
+        assert_eq!(
+            store.mls_decrypted_plaintext_for(realm, digest).as_deref(),
+            Some(&b"remote secret"[..])
+        );
     }
 
     let reader = LocalStateStore::with_path(path);
@@ -109,9 +140,5 @@ fn logout_session_clear_preserves_account_e2ee_state() {
     assert!(
         reader.load().realm_tree_projections.get(realm).is_some(),
         "logout must preserve the account's own projection cache"
-    );
-    assert_eq!(
-        reader.load().drafts.get(realm).map(String::as_str),
-        Some("draft")
     );
 }

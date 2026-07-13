@@ -247,7 +247,6 @@ fn retain_realm_tree_projections_prunes_per_realm_caches() {
     // Seed three realms with overlapping per-realm caches.
     for id in ["ak:realm:keep", "ak:realm:drop-a", "ak:realm:drop-b"] {
         store.save_realm_tree_projection(id, serde_json::json!({"name": id}));
-        store.save_draft(id, "draft");
         store.set_realm_seal_view(id, LocalSealView::default());
         store.set_realm_muted(id, true);
     }
@@ -275,8 +274,6 @@ fn retain_realm_tree_projections_prunes_per_realm_caches() {
     let state = store.load();
     assert_eq!(state.realm_tree_projections.len(), 1);
     assert!(state.realm_tree_projections.contains_key("ak:realm:keep"));
-    assert!(!state.drafts.contains_key("ak:realm:drop-a"));
-    assert!(state.drafts.contains_key("ak:realm:keep"));
     assert!(!state.seal_views.contains_key("ak:realm:drop-a"));
     assert!(state.seal_views.contains_key("ak:realm:keep"));
     assert!(!state.realm_watch_levels.contains_key("ak:realm:drop-b"));
@@ -313,7 +310,6 @@ fn forget_realm_tree_projection_clears_a_single_space() {
     let mut store = LocalStateStore::with_path(path);
     for id in ["ak:space:gone", "ak:space:stay"] {
         store.save_realm_tree_projection(id, serde_json::json!({}));
-        store.save_draft(id, "draft");
         store.set_realm_seal_view(id, LocalSealView::default());
     }
 
@@ -322,6 +318,4 @@ fn forget_realm_tree_projection_clears_a_single_space() {
     let state = store.load();
     assert!(!state.realm_tree_projections.contains_key("ak:space:gone"));
     assert!(state.realm_tree_projections.contains_key("ak:space:stay"));
-    assert!(!state.drafts.contains_key("ak:space:gone"));
-    assert!(state.drafts.contains_key("ak:space:stay"));
 }

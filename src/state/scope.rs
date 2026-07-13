@@ -156,6 +156,7 @@ impl LocalStateStore {
             ..ClientLocalState::default()
         };
         let _ = self.flush();
+        self.persist_e2ee_plaintext_cache_if_ready();
     }
 
     /// Make `actor` the active account, loading its own per-account entry.
@@ -196,6 +197,7 @@ impl LocalStateStore {
         });
         // Load the target account's own entry (default for a brand-new account).
         self.cached = self.read_account_state(actor).unwrap_or_default();
+        self.hydrate_e2ee_plaintext_cache_if_ready();
         // Flush `cached` under the now-active account's key.
         let _ = self.flush();
         true
@@ -311,6 +313,7 @@ impl LocalStateStore {
         // overlay so a stale cursor never leaks across account scope changes.
         self.cached = ClientLocalState::default();
         let _ = self.flush();
+        self.persist_e2ee_plaintext_cache_if_ready();
     }
 
     /// G3.Y0 — read the persisted device DPoP key, if any.
@@ -408,31 +411,6 @@ impl LocalStateStore {
         {
             let _ = self.flush();
         }
-    }
-
-    pub fn save_draft(&mut self, draft_scope_id: impl Into<String>, draft: impl Into<String>) {
-        self.ensure_cached_loaded();
-        let draft_scope_id = draft_scope_id.into();
-        let draft = draft.into();
-        if draft.trim().is_empty() {
-            if self.cached.drafts.remove(&draft_scope_id).is_none() {
-                return; // nothing to clear — skip flush
-            }
-        } else {
-            if self.cached.drafts.get(&draft_scope_id) == Some(&draft) {
-                return; // draft unchanged — skip flush
-            }
-            self.cached.drafts.insert(draft_scope_id, draft);
-        }
-        let _ = self.flush();
-    }
-
-    pub fn draft_for(&self, draft_scope_id: &str) -> String {
-        self.cached
-            .drafts
-            .get(draft_scope_id)
-            .cloned()
-            .unwrap_or_default()
     }
 
     pub fn preserve_encrypted_message(

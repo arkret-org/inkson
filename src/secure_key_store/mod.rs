@@ -113,10 +113,10 @@ const WASM_ED25519_SEED_INDEXEDDB_REQUIRED: &str = "wasm Ed25519 signing seeds r
 const WASM_SENSITIVE_SECRET_INDEXEDDB_REQUIRED: &str = "wasm account secrets and session credentials require IndexedDbSecureKeyStore with a \
      non-extractable SubtleCrypto AES-GCM wrapping key; localStorage read/write is disabled";
 
-/// Compile-time test escape hatch for wasm fixtures that must inject seed-grade
-/// material before the IndexedDB/SubtleCrypto tier is ready. Production builds
-/// keep the feature disabled, so localStorage cannot opt into sensitive secret
-/// reads/writes at runtime.
+/// Compile-time test escape hatch for wasm fixtures that must inject the device
+/// signing seed before the IndexedDB/SubtleCrypto tier is ready. Production
+/// builds keep the feature disabled, and even test builds may only downgrade
+/// keys accepted by [`is_wasm_test_downgrade_fixture_key`].
 #[cfg(all(target_arch = "wasm32", feature = "wasm-localstorage-secrets-test"))]
 pub(crate) const fn wasm_localstorage_secret_downgrade_enabled() -> bool {
     true
@@ -128,6 +128,15 @@ pub(crate) const fn wasm_localstorage_secret_downgrade_enabled() -> bool {
 ))]
 pub(crate) const fn wasm_localstorage_secret_downgrade_enabled() -> bool {
     false
+}
+
+/// The narrow set of IndexedDB-only keys that Cotest must inject during the
+/// synchronous first-paint seam. E2EE caches, MLS account material, history
+/// secrets, recovery keys, and session credentials remain IndexedDB-only even
+/// when the test feature is enabled.
+#[cfg(any(target_arch = "wasm32", test))]
+pub(crate) fn is_wasm_test_downgrade_fixture_key(key: &str) -> bool {
+    is_wasm_ed25519_seed_key(key)
 }
 
 /// Ensure wasm callers that need seed-grade material run on the initialized
@@ -170,6 +179,11 @@ pub(crate) fn is_wasm_ed25519_seed_key(key: &str) -> bool {
 /// tier (same protection level as the account MLS secret).
 pub(crate) const MLS_HISTORY_SECRET_KEY_PREFIX: &str = "inkson.mls_history_secret.v1.";
 
+/// Account-scoped cache for decrypted MLS application plaintext and the
+/// author's private plaintext sidecar. On wasm this key is IndexedDB-only so
+/// neither the plaintext nor a decryptable mirror can enter localStorage.
+pub(crate) const E2EE_PLAINTEXT_CACHE_KEY_PREFIX: &str = "inkson.e2ee_plaintext_cache.v1.";
+
 #[cfg(any(target_arch = "wasm32", test))]
 pub(crate) fn is_wasm_indexeddb_required_secret_key(key: &str) -> bool {
     is_wasm_ed25519_seed_key(key)
@@ -180,6 +194,14 @@ pub(crate) fn is_wasm_indexeddb_required_secret_key(key: &str) -> bool {
         || key.starts_with("coauth.session_credential.")
         || key.starts_with(PENDING_RECOVERY_KEY_PREFIX)
         || key.starts_with(MLS_HISTORY_SECRET_KEY_PREFIX)
+        || key.starts_with(E2EE_PLAINTEXT_CACHE_KEY_PREFIX)
+}
+
+pub(crate) fn e2ee_plaintext_cache_store_key(account_did: &str) -> String {
+    format!(
+        "{E2EE_PLAINTEXT_CACHE_KEY_PREFIX}{}",
+        STANDARD_NO_PAD.encode(account_did.trim().as_bytes())
+    )
 }
 
 /// E2EE-at-rest T1 — SecureKeyStore key for a realm's aggregated MLS
