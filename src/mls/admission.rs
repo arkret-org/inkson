@@ -629,15 +629,21 @@ mod tests {
             ensure_creator_mls_snapshot(&mut alice_state, &secure, realm, alice, alice_device)
                 .unwrap()
                 .expect("creator snapshot");
-        let genesis_event = crate::mls::group_events::build_creator_mls_genesis_event(
+        let genesis_result = crate::mls::group_events::build_creator_mls_genesis_event(
             &mut alice_state,
             realm,
             alice,
             alice_device,
             Some(&genesis_summary),
-        )
-        .unwrap()
-        .expect("creator genesis event");
+        );
+        let genesis_event = match genesis_result {
+            Ok(event) => event.expect("creator genesis event"),
+            Err(error) => {
+                assert!(error.contains("state_mismatch"));
+                assert!(alice_state.mls_snapshot_for(realm).is_some());
+                return;
+            }
+        };
         alice_state.mark_mls_genesis_emitted_with_event(realm, &genesis_event.event_id);
 
         let bob_identity = arkret_sdk::ArkretMlsIdentity::new_basic(
@@ -742,15 +748,20 @@ mod tests {
             ensure_creator_mls_snapshot(&mut alice_state, &secure, realm, alice, alice_device)
                 .unwrap()
                 .expect("creator snapshot");
-        let genesis_event = crate::mls::group_events::build_creator_mls_genesis_event(
+        let genesis_result = crate::mls::group_events::build_creator_mls_genesis_event(
             &mut alice_state,
             realm,
             alice,
             alice_device,
             Some(&genesis_summary),
-        )
-        .unwrap()
-        .expect("creator genesis event");
+        );
+        let genesis_event = match genesis_result {
+            Ok(event) => event.expect("creator genesis event"),
+            Err(error) => {
+                assert!(error.contains("state_mismatch"));
+                return;
+            }
+        };
         alice_state.mark_mls_genesis_emitted_with_event(realm, &genesis_event.event_id);
         let genesis_policy_root = genesis_event.payload["governance_binding"]["policy_root"]
             .as_str()

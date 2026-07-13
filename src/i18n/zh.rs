@@ -114,30 +114,22 @@ fn add_r3_error_keys_zh(dict: &mut TranslationDict) {
         "Recovery 挑战证明验证失败。请重新采集证明后再试。",
     );
 
-    // R3.3 (AKP-0011) — shareable object links (English dict). Error copy in
-    // this dict follows the existing Chinese-first convention for `error.*`;
-    // the dedicated zh dict carries the Chinese UI strings.
-    dict.set("object_link.share", "Share link");
-    dict.set("object_link.share_realm", "Share this Realm");
-    dict.set("object_link.share_strand", "Share this Strand");
-    dict.set("object_link.share_message", "Share this Message");
-    dict.set("object_link.copy_https", "Copy link");
-    dict.set("object_link.copy_app", "Copy \"open in app\" link");
-    dict.set("object_link.copied", "Link copied");
-    dict.set("object_link.open", "Open shared link");
+    // R3.3 (AKP-0011) — shareable object links.
+    dict.set("object_link.share", "分享链接");
+    dict.set("object_link.share_realm", "分享此 Realm");
+    dict.set("object_link.share_strand", "分享此 Strand");
+    dict.set("object_link.share_message", "分享此消息");
+    dict.set("object_link.copy_https", "复制链接");
+    dict.set("object_link.copy_app", "复制“在应用中打开”链接");
+    dict.set("object_link.copied", "链接已复制");
+    dict.set("object_link.open", "打开分享链接");
     dict.set(
         "object_link.open_placeholder",
-        "Paste a web+arkret: or https share link",
+        "粘贴 web+arkret: 或 https 分享链接",
     );
-    dict.set("object_link.opening", "Opening link\u{2026}");
-    dict.set(
-        "object_link.error.unavailable",
-        "This link is unavailable or has expired.",
-    );
-    dict.set(
-        "object_link.error.invalid",
-        "That link format was not recognized.",
-    );
+    dict.set("object_link.opening", "正在打开链接…");
+    dict.set("object_link.error.unavailable", "此链接不可用或已过期。");
+    dict.set("object_link.error.invalid", "无法识别此链接格式。");
 }
 
 /// Build Chinese translation dictionary.
@@ -166,6 +158,29 @@ pub fn chinese_translations() -> TranslationDict {
     dict.set("contacts.empty", "暂无联系人");
     dict.set("contacts.sign_in", "登录后加载联系人");
 
+    dict.set("directory.title", "目录");
+    dict.set("directory.search", "搜索");
+    dict.set("directory.search_placeholder", "搜索目录…");
+    dict.set("directory.load_more", "加载更多");
+    dict.set("directory.tab.realms", "领域");
+    dict.set("directory.tab.organizations", "组织");
+    dict.set("directory.tab.actors", "用户");
+    dict.set("directory.tab.objects", "对象");
+    dict.set("directory.tab.applets", "应用");
+    dict.set("directory.applet.ping", "连通性");
+    dict.set("directory.applet.metadata", "元数据");
+    dict.set("notifications.title", "通知");
+    dict.set("notifications.empty", "暂无通知");
+    dict.set("notifications.mark_read", "标记为已读");
+    dict.set("notifications.archive", "归档");
+    dict.set("settings.title", "设置");
+    dict.set("settings.language", "语言");
+    dict.set("settings.theme", "主题");
+    dict.set("settings.system", "跟随系统");
+    dict.set("settings.light", "浅色");
+    dict.set("settings.dark", "深色");
+    dict.set("settings.proof_mode.production", "生产模式");
+
     dict.set("login.server", "服务器");
     dict.set("login.connection_test", "连接测试");
     dict.set("login.server_url", "服务器地址");
@@ -190,6 +205,46 @@ pub fn chinese_translations() -> TranslationDict {
     );
 
     dict.set("message.redacted", "[消息已撤回]");
+    dict.set("invite.terminal.claimed", "邀请已被领取");
+    dict.set("invite.terminal.send_failed", "邀请发送失败");
+    dict.set(
+        "invite.terminal.invalidated_by_rate_limit",
+        "邀请因频率限制而失效",
+    );
+    dict.set(
+        "invite.terminal.revoked_by_capability_loss",
+        "邀请因授权失效而撤销",
+    );
+    dict.set(
+        "invite.terminal.revoked_by_inviter_left",
+        "邀请者离开后邀请已撤销",
+    );
+    dict.set("mls_backup.button_confirm_saved", "我已安全保存");
+    dict.set("mls_backup.button_regenerate", "重新生成");
+    dict.set("mls_backup.confirm_key_label", "确认恢复密钥");
+    dict.set("mls_backup.confirm_key_placeholder", "再次输入恢复密钥");
+    dict.set(
+        "mls_backup.confirm_key_hint",
+        "请再次输入以确认恢复密钥已正确保存。",
+    );
+    dict.set(
+        "mls_backup.status.confirm_mismatch",
+        "两次输入的恢复密钥不一致",
+    );
+    dict.set("moderation.appeal.state.none", "尚未申诉");
+    dict.set("moderation.appeal.state.submitted", "已提交");
+    dict.set("moderation.appeal.state.under_review", "审核中");
+    dict.set("moderation.appeal.state.decided", "已裁定");
+    dict.set("moderation.appeal.state.closed", "已关闭");
+    dict.set("blob.error.legal_hold_active", "此文件处于法律保留状态");
+    dict.set("blob.error.not_authorised", "无权访问此文件");
+    dict.set(
+        "blob.error.plaintext_not_authorised",
+        "无权访问此文件的明文内容",
+    );
+    dict.set("blob.error.redacted", "此文件已被移除");
+    dict.set("oob.code.invalid_or_expired", "验证码无效或已过期");
+    dict.set("realm.destroyed.banner", "此 Realm 已销毁");
 
     dict.set("common.loading", "加载中...");
     dict.set("common.error", "错误");

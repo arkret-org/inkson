@@ -31,7 +31,7 @@ use crate::state::{LocalSealView, LocalStateStore, MoveSubmissionState};
 /// The structured MLS payload + the canonical AAD it was bound to.
 pub(crate) type LocalEncryptedMessage = (
     arkret_sdk::EncryptedPayload,
-    arkret_sdk::EncryptedEnvelopeAadV1,
+    arkret_sdk::EncryptedEnvelopeAad,
 );
 
 /// Result of the local MLS encrypt step.
@@ -70,7 +70,10 @@ pub(crate) fn run_local_mls_encrypt(
 ) -> LocalMlsEncryptResult {
     let empty = (None, Vec::new(), None, None, None);
     let secure_store = crate::secure_key_store::default_secure_key_store("inkson");
-    let aad = arkret_sdk::EncryptedEnvelopeAadV1::hidden(realm_id, "ak.message.create");
+    let Ok(aad_realm_id) = arkret_sdk::RealmId::new(realm_id.to_owned()) else {
+        return empty;
+    };
+    let aad = arkret_sdk::EncryptedEnvelopeAad::hidden(aad_realm_id, "ak.message.create");
     let Ok(aad_value) = serde_json::to_value(&aad) else {
         return empty;
     };
@@ -262,17 +265,13 @@ pub(crate) fn build_secure_send(
                     .map_err(|err| format!("stored MLS genesis policy_root invalid: {err:?}"))?,
                 None => mls_policy_root(seal_view, realm_id, &local_schedule_hash)?,
             };
-            let governance_binding = arkret_sdk::MlsGovernanceBindingPayload::realm(
+            let _ = (
                 realm_id_typed,
-                real_commit_envelope.group_id.clone(),
-                prev_epoch,
-                mls_commit_epoch,
-                mls_membership_frontier(&base_group_state_ref)?,
                 policy_root,
-                arkret_sdk::MLS_GOVERNANCE_BINDING_FULL_PROFILE,
-                arkret_sdk::CORE_REDUCER_PROFILE,
-            )
-            .map_err(|err| format!("MLS governance binding failed: {err}"))?;
+                mls_membership_frontier(&base_group_state_ref)?,
+            );
+            let governance_binding =
+                crate::mls::group_events::verified_governance_binding_unavailable()?;
             let mls_commit_payload = arkret_sdk::MlsCommitPayload::new(
                 real_commit_envelope.group_id.clone(),
                 prev_epoch,

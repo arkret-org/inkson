@@ -30,6 +30,18 @@
 //! token, backs off on retryable restore failures, or exits after terminal
 //! invalidation. This keeps refresh policy in one place without turning
 //! auth failures into a spawn/exit/render loop.
+//!
+//! This host loop deliberately does not call `garth::SubscriptionEngine::run_account` yet.
+//! That runner projects normalized `ClientEvent` batches and checkpoints immediately after the
+//! projector returns, but inkson must atomically persist the raw account response (realm
+//! projections, Seal views, account data, notifications, to-device inbox, and cursor) and then run
+//! authenticated per-iteration work (invite refresh, sender-key prefetch, device-message ack,
+//! Circle rotation, and idle MLS self-update). `apply_response` performs the durable state + cursor
+//! write in one `LocalStateStore::batch`, and withholds the cursor when a limited or incomplete
+//! to-device batch cannot be durably accepted. Moving this loop to garth is only safe after garth
+//! exposes a raw response/iteration hook whose successful completion controls checkpointing;
+//! adapting the current normalized projector API would either discard required response fields or
+//! advance the cursor too early.
 
 #[cfg(test)]
 use std::cell::RefCell;

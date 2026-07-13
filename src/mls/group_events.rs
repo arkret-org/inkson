@@ -14,6 +14,20 @@ use serde_json::{Value, json};
 use crate::operation::{trim_realm_id, uuid_v7};
 use crate::state::{LocalSealView, LocalStateStore};
 
+/// Full-profile binding production is intentionally blocked until sync can
+/// supply an independently verifiable accepted-Seal proof bundle and the SDK
+/// can recompute all filtered governance roots from it. Callers must surface
+/// this as `decryption_pending`/`state_mismatch`; fabricating capability or
+/// discussion roots from `state_root` would violate §2.5.1.
+pub(crate) fn verified_governance_binding_unavailable()
+-> Result<arkret_sdk::MlsGovernanceBindingPayload, String> {
+    Err(
+        "full-profile MLS governance binding requires a verified accepted-Seal proof bundle; \
+         operation remains decryption_pending (state_mismatch)"
+            .to_owned(),
+    )
+}
+
 /// Restrict a state/seal ref to the canonical `sha256:` digest grammar used
 /// by this MLS surface (`arkret_sdk::Hash::new` also accepts blake3, which is
 /// not a state/seal ref here). Single source — the secure-send path re-exports
@@ -293,6 +307,7 @@ pub(crate) fn build_creator_mls_genesis_event_for_effective_scope(
         .map_err(|err| format!("invalid MLS genesis Realm id: {err:?}"))?;
     let membership_frontier = mls_membership_frontier_from_seal_view(&seal_view, &event_id_typed);
     let policy_root = mls_policy_root_from_seal_view(&seal_view, realm_id)?;
+    let governance_binding = verified_governance_binding_unavailable()?;
     // Lock the genesis `policy_root` so every later `ak.mls.commit` reuses these
     // exact bytes instead of recomputing from the moving Seal `state_root`
     // (which drifts the moment the creator does any non-policy work before
@@ -303,34 +318,7 @@ pub(crate) fn build_creator_mls_genesis_event_for_effective_scope(
         circle,
         policy_root.as_str(),
     );
-    let governance_binding = match circle {
-        Some(circle_id) => {
-            let typed_circle_id = arkret_sdk::CircleId::new(circle_id.to_owned())
-                .map_err(|err| format!("invalid MLS genesis Circle id: {err:?}"))?;
-            arkret_sdk::MlsGovernanceBindingPayload::circle(
-                typed_realm_id,
-                typed_circle_id,
-                summary.group_id.clone(),
-                0,
-                0,
-                membership_frontier,
-                policy_root,
-                arkret_sdk::MLS_GOVERNANCE_BINDING_FULL_PROFILE,
-                arkret_sdk::CORE_REDUCER_PROFILE,
-            )
-        }
-        None => arkret_sdk::MlsGovernanceBindingPayload::realm(
-            typed_realm_id,
-            summary.group_id.clone(),
-            0,
-            0,
-            membership_frontier,
-            policy_root,
-            arkret_sdk::MLS_GOVERNANCE_BINDING_FULL_PROFILE,
-            arkret_sdk::CORE_REDUCER_PROFILE,
-        ),
-    }
-    .map_err(|err| format!("MLS genesis governance binding failed: {err}"))?;
+    let _ = (typed_realm_id, membership_frontier);
     let payload = crate::mls::runtime::build_mls_genesis_payload(
         summary,
         actor_id,
@@ -467,34 +455,8 @@ fn mls_commit_event_from_store_for_effective_scope_with_membership_frontier(
         .map(Ok)
         .unwrap_or_else(|| mls_self_update_membership_frontier(&base_group_state_ref))?;
     let policy_root = mls_commit_policy_root(state_store, &seal_view, realm_id, circle)?;
-    let governance_binding = match circle {
-        Some(circle_id) => {
-            let typed_circle_id = arkret_sdk::CircleId::new(circle_id.to_owned())
-                .map_err(|err| format!("invalid MLS commit Circle id: {err:?}"))?;
-            arkret_sdk::MlsGovernanceBindingPayload::circle(
-                typed_realm_id,
-                typed_circle_id,
-                commit_envelope.group_id.clone(),
-                prev_epoch,
-                commit_envelope.epoch,
-                membership_frontier,
-                policy_root,
-                arkret_sdk::MLS_GOVERNANCE_BINDING_FULL_PROFILE,
-                arkret_sdk::CORE_REDUCER_PROFILE,
-            )
-        }
-        None => arkret_sdk::MlsGovernanceBindingPayload::realm(
-            typed_realm_id,
-            commit_envelope.group_id.clone(),
-            prev_epoch,
-            commit_envelope.epoch,
-            membership_frontier,
-            policy_root,
-            arkret_sdk::MLS_GOVERNANCE_BINDING_FULL_PROFILE,
-            arkret_sdk::CORE_REDUCER_PROFILE,
-        ),
-    }
-    .map_err(|err| format!("MLS governance binding failed: {err}"))?;
+    let _ = (typed_realm_id, membership_frontier, policy_root);
+    let governance_binding = verified_governance_binding_unavailable()?;
     let payload = arkret_sdk::MlsCommitPayload::new(
         commit_envelope.group_id.clone(),
         prev_epoch,

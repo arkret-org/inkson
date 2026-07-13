@@ -385,10 +385,10 @@ async fn rotate_session_grant(
         .session_signing_key_pkcs8_pem()
         .map_err(|error| anyhow::anyhow!("export device session key: {error}"))?;
     Ok(PersistedSessionGrant {
-        grant_jwt: handle.access_token,
+        grant_jwt: handle.access_token.clone(),
         session_private_key_pem: session_private_key_pem.to_string(),
         grant_id: state.grant_id.as_str().to_owned(),
-        audience: state.audience,
+        audience: state.audience.clone(),
         principal_id: grant.principal_id.clone(),
         device_id: grant.device_id.clone(),
         principal_server_url: grant.principal_server_url.clone(),
@@ -645,9 +645,10 @@ mod tests {
     #[test]
     fn decision_due_when_grant_within_rotation_skew() {
         // ②(A+②): "Due" is driven by the grant's own expiry (rotation), not a
-        // separate session-token expiry. Grant within the 30-min skew → rotate.
+        // separate session-token expiry. Grant within the shared 60-second
+        // skew rotates.
         let mut store = isolated_store("due");
-        store.set_session_grant(Some(grant_with_expiry(600)));
+        store.set_session_grant(Some(grant_with_expiry(30)));
         assert_eq!(refresh_decision(&store), RefreshDecision::Due);
     }
 

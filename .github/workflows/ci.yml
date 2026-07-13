@@ -10,7 +10,7 @@ permissions:
 
 env:
   CARGO_TERM_COLOR: always
-  DIOXUS_CLI_VERSION: "0.7.5"
+  DIOXUS_CLI_VERSION: "0.7.9"
 
 jobs:
   rust-and-web:
@@ -112,6 +112,14 @@ jobs:
       - name: Web build
         working-directory: inkson
         run: dx build --platform web
+
+      - name: Install Playwright browser
+        working-directory: inkson
+        run: npx playwright install --with-deps chromium
+
+      - name: Browser end-to-end tests
+        working-directory: inkson
+        run: npm run e2e
 
       - name: Start web preview for Lighthouse
         working-directory: inkson

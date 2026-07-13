@@ -1104,11 +1104,19 @@ pub fn build_signed_device_verification_proof(
     let verification_method = format!("{}#inkson-device", from_device);
     let signer = arkret_sdk::signatures::proof::Ed25519DetachedJwsSigner::new(
         signing_key.clone(),
-        verification_method,
+        verification_method.clone(),
     );
-    let proof = signer
-        .build_proof(&canonical, None, None)
-        .map_err(|error| anyhow::anyhow!("sign device verification proof: {error}"))?;
+    let payload_digest = arkret_sdk::Hash::new(arkret_sdk::canonical::sha256_digest(&canonical))
+        .map_err(|error| anyhow::anyhow!("hash device verification proof: {error}"))?;
+    let proof = arkret_sdk::signatures::proof::build_proof_envelope(
+        arkret_sdk::signatures::proof::detached_jws_kind(),
+        "EdDSA",
+        verification_method,
+        payload_digest,
+        None,
+        None,
+        signer.sign_detached_jws(&canonical),
+    );
     Ok(json!({
         "device_envelope": body,
         "signature": serde_json::to_value(&proof)

@@ -558,7 +558,7 @@ fn malformed_welcome_is_counted_not_swallowed() {
 
 #[cfg(not(target_arch = "wasm32"))]
 #[test]
-fn welcome_apply_uses_key_package_identity_state() {
+fn welcome_without_verified_seal_proof_does_not_persist_snapshot() {
     let mut state = temp_state_store("welcome-keypackage-state");
     let store = MemorySecureKeyStore::new();
     let realm = "ak:realm:01904100-0000-7000-8000-0000000000c1";
@@ -604,9 +604,18 @@ fn welcome_apply_uses_key_package_identity_state() {
     )
     .unwrap();
 
-    assert_eq!(outcome.applied, 1);
-    assert_eq!(outcome.failed, 0);
-    assert!(state.mls_snapshot_for(realm).is_some());
+    assert_eq!(outcome.applied, 0);
+    assert_eq!(outcome.failed, 1);
+    assert!(
+        outcome
+            .first_error
+            .as_deref()
+            .is_some_and(|reason| reason.contains("decryption_pending"))
+    );
+    assert!(
+        state.mls_snapshot_for(realm).is_none(),
+        "an unverified Welcome must never persist joined MLS state"
+    );
     // The KeyPackage identity state (init private key) is RETAINED after a
     // Welcome applies — NOT consumed. Invitees publish reusable `last_resort`
     // KeyPackages, whose init key must survive across Welcomes; deleting it here
@@ -1014,7 +1023,7 @@ fn tier3_history_decrypt_reads_provider_exporter_aead_content() {
     // Provider encrypts content via exporter-aead, binding the shared
     // `history_content_aad_bytes(realm, epoch)` AAD (constraint ①), and exports
     // the epoch's history secret.
-    let aad_bytes = history_content_aad_bytes(realm, epoch);
+    let aad_bytes = history_content_aad_bytes(realm, epoch).unwrap();
     let plaintext = br#"{"body":"pre-join history"}"#;
     let nonce_and_ct = alice_group
         .encrypt_content_exporter_aead(realm, &aad_bytes, plaintext)
@@ -1097,7 +1106,7 @@ fn tier3_history_decrypt_works_without_local_snapshot() {
     let mut alice_group = alice.create_group(realm.as_bytes()).unwrap();
     let epoch = alice_group.epoch();
 
-    let aad_bytes = history_content_aad_bytes(realm, epoch);
+    let aad_bytes = history_content_aad_bytes(realm, epoch).unwrap();
     let plaintext = br#"{"body":"no-snapshot history"}"#;
     let nonce_and_ct = alice_group
         .encrypt_content_exporter_aead(realm, &aad_bytes, plaintext)

@@ -39,40 +39,12 @@ pub fn sha256_hex(bytes: impl AsRef<[u8]>) -> String {
     sdk_sha256_hex(bytes.as_ref())
 }
 
-/// YOU-05-007: the crate's single lowercase-hex encoder — fixed width per
-/// byte, no separator, matching the SDK's `canonical::sha256_digest` hex
-/// tail style. Previously copied verbatim in `cross_signing`,
-/// `crypto_boundary` and `mls::persistence`.
 pub fn hex_encode(bytes: &[u8]) -> String {
-    const HEX: &[u8; 16] = b"0123456789abcdef";
-    let mut out = String::with_capacity(bytes.len() * 2);
-    for &byte in bytes {
-        out.push(HEX[(byte >> 4) as usize] as char);
-        out.push(HEX[(byte & 0x0f) as usize] as char);
-    }
-    out
+    hex::encode(bytes)
 }
 
 pub fn hex_decode(value: &str) -> Option<Vec<u8>> {
-    if !value.len().is_multiple_of(2) {
-        return None;
-    }
-    let mut out = Vec::with_capacity(value.len() / 2);
-    for chunk in value.as_bytes().chunks(2) {
-        let hi = hex_nibble(chunk[0])?;
-        let lo = hex_nibble(chunk[1])?;
-        out.push((hi << 4) | lo);
-    }
-    Some(out)
-}
-
-fn hex_nibble(byte: u8) -> Option<u8> {
-    match byte {
-        b'0'..=b'9' => Some(byte - b'0'),
-        b'a'..=b'f' => Some(byte - b'a' + 10),
-        b'A'..=b'F' => Some(byte - b'A' + 10),
-        _ => None,
-    }
+    hex::decode(value).ok()
 }
 
 /// Helper: digest of a canonical operation/event body for proof binding.

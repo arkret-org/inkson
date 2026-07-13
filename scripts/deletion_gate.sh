@@ -21,9 +21,9 @@ cd "$ROOT"
 BASELINES=$(cat <<'EOF'
 Cokret|0|brand rename (closed)|Cokret
 ck_ops|0|brand rename (closed)|ck_ops
-register_session_|8|I-ARCH-002 session coordinator|register_session_
+register_session_|0|I-ARCH-002 session coordinator|register_session_
 sync-cursor-dash-sentinel|3|I-ARCH-002/W3 cursor semantics|cursor == "-"
-ArkretApi|220|I-ARCH-003 API strangler|ArkretApi
+ArkretApi|0|I-ARCH-003 API strangler|ArkretApi
 EOF
 )
 
@@ -63,7 +63,7 @@ done <<< "$BASELINES"
 
 if [ "$fail" -ne 0 ]; then
   echo >&2
-  echo "deletion_gate: FAILED — see _code_review/重构计划-2026-07-10.md (ARC-0002)." >&2
+  echo "deletion_gate: FAILED — tighten the matching baseline in scripts/deletion_gate.sh in this same commit." >&2
   exit 1
 fi
 

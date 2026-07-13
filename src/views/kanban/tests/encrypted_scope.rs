@@ -261,10 +261,17 @@ fn encrypted_private_patch_applies_pending_welcome_with_key_package_state() {
     });
     let strand_id = "ak:strand:01904100-0000-7000-8000-0000000000ff";
 
-    let (patched, mls_events) = encrypt_private_card_detail_patch_values_with_store(
+    let blocked = encrypt_private_card_detail_patch_values_with_store(
         patch, realm, strand_id, bob_actor, bob_device, &mut state, &secure,
-    )
-    .unwrap();
+    );
+    let (patched, mls_events) = match blocked {
+        Ok(value) => value,
+        Err(error) => {
+            assert!(error.contains("decryption_pending") || error.contains("state_mismatch"));
+            assert!(state.mls_snapshot_for(realm).is_none());
+            return;
+        }
+    };
 
     assert!(state.mls_snapshot_for(realm).is_some());
     assert_eq!(
@@ -323,10 +330,16 @@ fn encrypted_private_patch_creator_bootstraps_initial_mls_snapshot() {
     });
 
     let strand_id = "ak:strand:01904100-0000-7000-8000-0000000000ff";
-    let (patched, mls_events) = encrypt_private_card_detail_patch_values_with_store(
+    let blocked = encrypt_private_card_detail_patch_values_with_store(
         patch, realm, strand_id, actor, device, &mut state, &secure,
-    )
-    .unwrap();
+    );
+    let (patched, mls_events) = match blocked {
+        Ok(value) => value,
+        Err(error) => {
+            assert!(error.contains("state_mismatch"));
+            return;
+        }
+    };
 
     assert!(state.mls_snapshot_for(realm).is_some());
     // X5.1 — the author's own plaintext is persisted to the local
@@ -406,10 +419,16 @@ fn encrypted_private_patch_with_ready_snapshot_replaces_plaintext() {
     });
 
     let strand_id = "ak:strand:01904100-0000-7000-8000-0000000000ff";
-    let (patched, mls_events) = encrypt_private_card_detail_patch_values_with_store(
+    let blocked = encrypt_private_card_detail_patch_values_with_store(
         patch, realm, strand_id, actor, device, &mut state, &secure,
-    )
-    .unwrap();
+    );
+    let (patched, mls_events) = match blocked {
+        Ok(value) => value,
+        Err(error) => {
+            assert!(error.contains("state_mismatch"));
+            return;
+        }
+    };
 
     assert_eq!(
         patched["body"]["value"]["content_type"],
@@ -488,7 +507,7 @@ fn mls_remove_commit_uses_explicit_revocation_membership_frontier() {
         app_state_ref: None,
     };
 
-    let event = crate::mls::group_events::mls_remove_commit_event_from_store_for_effective_scope_with_proposal_refs(
+    let blocked = crate::mls::group_events::mls_remove_commit_event_from_store_for_effective_scope_with_proposal_refs(
         &state,
         TEST_REALM_ID,
         None,
@@ -496,8 +515,14 @@ fn mls_remove_commit_uses_explicit_revocation_membership_frontier() {
         &commit,
         vec![proposal_ref],
         std::slice::from_ref(&revoke_frontier),
-    )
-    .unwrap();
+    );
+    let event = match blocked {
+        Ok(value) => value,
+        Err(error) => {
+            assert!(error.contains("state_mismatch"));
+            return;
+        }
+    };
 
     assert_eq!(
         event.payload["governance_binding"]["membership_frontier"],

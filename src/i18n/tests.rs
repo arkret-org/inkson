@@ -121,17 +121,16 @@ fn locale_formatters_are_stable() {
 }
 
 #[test]
-fn translation_completeness_reports_missing_keys() {
+fn chinese_translation_is_complete() {
     let en = english_translations();
     let zh = chinese_translations();
     let report = translation_completeness(&en, &zh);
     assert_eq!(report.locale, Locale::Zh);
     assert_eq!(report.total_keys, en.strings.len());
-    assert!(report.missing_count() > 0);
     assert!(
-        report
-            .missing_keys
-            .contains(&"directory.applet.metadata".to_owned())
+        report.is_complete(),
+        "missing keys: {:?}",
+        report.missing_keys
     );
 
     let complete = translation_completeness(&en, &en);

@@ -97,6 +97,7 @@ mobile-ios = []
 # left disabled (default) so untrusted message bodies cannot inject
 # arbitrary tags via `dangerous_inner_html`.
 anyhow = {workspace = true}
+hex = "0.4.3"
 argon2 = {workspace = true}
 base64 = {workspace = true}
 bip39 = {workspace = true}

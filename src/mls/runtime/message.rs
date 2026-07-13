@@ -45,14 +45,14 @@ struct WelcomeMessageEntry {
 /// constraint ①: the epoch MUST be encoded so a key from epoch N can only open
 /// content authored at epoch N). MUST be reconstructed byte-identically on both
 /// ends — the SDK binds it verbatim into the AEAD AAD.
-pub fn history_content_aad_bytes(realm_id: &str, epoch: u64) -> Vec<u8> {
+pub fn history_content_aad_bytes(realm_id: &str, epoch: u64) -> anyhow::Result<Vec<u8>> {
     let aad = serde_json::json!({
         "purpose": "ak.realm_key.history_content.v1",
         "realm_id": realm_id.trim(),
         "epoch": epoch,
     });
     arkret_sdk::canonical::canonical_json_bytes(&aad)
-        .unwrap_or_else(|_| format!("{}|{epoch}", realm_id.trim()).into_bytes())
+        .map_err(|err| anyhow::anyhow!("history content AAD canonicalization failed: {err:?}"))
 }
 
 /// True when `realm_id` declares the §2.10 `mls-exporter-aead-v1` content scheme
@@ -125,7 +125,7 @@ pub fn decrypt_application_payload(
                     &secret,
                     realm_id,
                     &nonce_and_ct,
-                    &history_content_aad_bytes(realm_id, payload.epoch),
+                    &history_content_aad_bytes(realm_id, payload.epoch).ok()?,
                 )
             {
                 return Some(plaintext);
@@ -142,8 +142,8 @@ pub fn decrypt_application_payload(
     // §5.6 MUST: persist the advanced receive chain. A failure to export /
     // serialize the post-decrypt state is NOT a soft failure we may swallow
     // silently — without the write-back the consumed message key would make
-    // this very plaintext unrecoverable after restart — so fall back to
-    // returning the plaintext only after latching a loud error.
+    // this very plaintext unrecoverable after restart. Latch a loud error and
+    // fail closed without exposing or caching the plaintext.
     let advanced = export_receive_chain_envelope(&group, realm_id, &secret, &snapshot);
     match advanced {
         Ok(envelope) => {
@@ -156,6 +156,7 @@ pub fn decrypt_application_payload(
                 "MLS receive-chain write-back failed after successful decrypt \
                  (spec §5.6 violation risk: message may be unreadable after restart)",
             );
+            return None;
         }
     }
     Some(plaintext)
@@ -228,7 +229,7 @@ fn try_history_decrypt_standalone(
                 .filter(|(epoch, _)| *epoch != payload.epoch),
         );
     for (epoch, secret) in candidates {
-        let aad_bytes = history_content_aad_bytes(realm_id, epoch);
+        let aad_bytes = history_content_aad_bytes(realm_id, epoch).ok()?;
         if let Ok(plaintext) = arkret_sdk::mls::decrypt_content_exporter_aead_standalone(
             &secret,
             realm_id,
@@ -939,24 +940,18 @@ fn verify_welcome_claim_envelope_signer(welcome_value: &serde_json::Value) -> Re
 /// `ArkretMlsGroup::verify_current_governance_binding`. Any field mismatch or
 /// missing MLS binding extension returns `Err` and rejects the Welcome.
 ///
-/// Returns `Ok(None)` when the reduced Welcome contains no `governance_binding`;
-/// there is no declaration to compare, and Seal inclusion is covered by server
-/// admission plus the claim-envelope gate. Returns `Ok(Some(policy_root))` when
-/// the binding is present and verified so the caller can record genesis
-/// `policy_root`.
-///
-/// Boundary (full spec requirement at line 438): this sync receive path does not
-/// inject the Arkret Seal view, so it cannot yet replay a Control Move inclusion
-/// proof anchoring `policy_root` and `state_root` to an accepted Seal. This gate
-/// guarantees "embedded MLS binding equals the server declaration"; inclusion
-/// proof closure waits for the Seal view injection noted below.
+/// A missing binding, missing full-profile roots, or absence of a locally
+/// verifiable accepted-Seal proof bundle is a hard `state_mismatch`. The caller
+/// records the Welcome as failed/decryption-pending and MUST NOT persist the
+/// joined snapshot. Server admission and claim signatures are defense in depth,
+/// not substitutes for the independent proof required by §2.5.1.
 fn verify_welcome_governance_binding(
     group: &arkret_sdk::ArkretMlsGroup,
     welcome_value: &serde_json::Value,
 ) -> Result<Option<String>, String> {
-    let Some(binding) = welcome_value.get("governance_binding") else {
-        return Ok(None);
-    };
+    let binding = welcome_value.get("governance_binding").ok_or_else(|| {
+        "governance_binding missing; epoch remains decryption_pending (state_mismatch)".to_owned()
+    })?;
 
     let mls_group_id = binding
         .get("mls_group_id")
@@ -975,18 +970,33 @@ fn verify_welcome_governance_binding(
         .and_then(serde_json::Value::as_str)
         .ok_or_else(|| "governance_binding.policy_root missing".to_owned())?
         .to_owned();
-    // binding_profile / reducer_profile default to spec constants and can be
-    // overridden by the Welcome declaration.
     let binding_profile = binding
         .get("binding_profile")
         .and_then(serde_json::Value::as_str)
-        .unwrap_or(arkret_sdk::MLS_GOVERNANCE_BINDING_FULL_PROFILE)
+        .ok_or_else(|| "governance_binding.binding_profile missing".to_owned())?
         .to_owned();
     let reducer_profile = binding
         .get("reducer_profile")
         .and_then(serde_json::Value::as_str)
-        .unwrap_or(arkret_sdk::CORE_REDUCER_PROFILE)
+        .ok_or_else(|| "governance_binding.reducer_profile missing".to_owned())?
         .to_owned();
+
+    if binding_profile == arkret_sdk::MLS_GOVERNANCE_BINDING_FULL_PROFILE {
+        for required_root in ["capability_root", "discussion_metadata_digest"] {
+            let value = binding
+                .get(required_root)
+                .and_then(serde_json::Value::as_str)
+                .ok_or_else(|| {
+                    format!(
+                        "full-profile governance_binding.{required_root} missing; epoch remains \
+                         decryption_pending (state_mismatch)"
+                    )
+                })?;
+            arkret_sdk::Hash::new(value.to_owned()).map_err(|err| {
+                format!("governance_binding.{required_root} invalid hash: {err:?}")
+            })?;
+        }
+    }
 
     let policy_root_hash = arkret_sdk::Hash::new(policy_root_str.clone())
         .map_err(|err| format!("governance_binding.policy_root invalid hash: {err:?}"))?;
@@ -1007,15 +1017,16 @@ fn verify_welcome_governance_binding(
         .verify_current_governance_binding(&expected)
         .map_err(|err| format!("governance_binding independent verification failed: {err}"))?;
 
-    // TODO(YGN-SEC-01, encryption-and-audit.md:438): full closure still needs a
-    // Control Move inclusion-proof check that anchors the declared policy_root /
-    // state_root to a Arkret Seal view accepted by this device. Failure should
-    // mark the epoch decryption_pending / state_mismatch. The current sync
-    // receive path does not inject a Seal view, so this layer relies on
-    // claim-envelope gate (1) plus the server admission admin gate until Seal
-    // view injection lands.
-
-    Ok(Some(policy_root_str))
+    // The current sync model exposes only frontier/state-root summaries. It
+    // does not carry a signed accepted Seal, Control-Move inclusion branch, or
+    // the joined control-cell multiproof needed to independently recompute the
+    // policy/capability/discussion roots. Comparing server-declared roots would
+    // merely restate the assertion, so fail closed until that proof bundle is
+    // available to this verifier.
+    Err(format!(
+        "governance_binding policy_root {policy_root_str} has no locally verifiable accepted-Seal \
+         inclusion proof; epoch remains decryption_pending (state_mismatch)"
+    ))
 }
 
 pub fn apply_welcome_messages_with_device_snapshot(
@@ -1273,8 +1284,10 @@ pub fn encrypt_values_with_device_snapshot(
     // actually rides; it MUST match the decrypt-side `history_content_aad_bytes`.
     let use_exporter_aead = realm_content_scheme_is_exporter_aead(state_store, realm_id);
     let mut encrypted_values = Vec::with_capacity(plaintext_values.len());
-    let exporter_aad =
-        use_exporter_aead.then(|| history_content_aad_bytes(realm_id, group.epoch()));
+    let exporter_aad = use_exporter_aead
+        .then(|| history_content_aad_bytes(realm_id, group.epoch()))
+        .transpose()
+        .map_err(|err| MlsRuntimeError::Serialize(err.to_string()))?;
     for plaintext in plaintext_values {
         let encrypted = if let Some(aad_bytes) = exporter_aad.as_deref() {
             group.encrypt_payload_exporter_aead(content_type, realm_id, aad_bytes, None, plaintext)
@@ -1352,7 +1365,7 @@ pub fn encrypt_values_with_device_snapshot(
 /// wire shape via [`arkret_sdk::EncryptedEnvelopeV1::from_payload`] once it
 /// knows the accepted group-state reference for this epoch (genesis, latest
 /// winning commit, or a forced commit returned by this helper). `aad` MUST be
-/// the canonical `EncryptedEnvelopeAadV1` value, so the digest verification
+/// the canonical `EncryptedEnvelopeAad` value, so the digest verification
 /// round-trips.
 type DeviceSnapshotEncryption = (
     arkret_sdk::Hash,
@@ -1410,7 +1423,8 @@ pub fn encrypt_message_with_device_snapshot(
     // decrypt-side `try_history_decrypt_standalone`.
     let use_exporter_aead = realm_content_scheme_is_exporter_aead(state_store, realm_id);
     let encrypted = if use_exporter_aead {
-        let aad_bytes = history_content_aad_bytes(realm_id, group.epoch());
+        let aad_bytes = history_content_aad_bytes(realm_id, group.epoch())
+            .map_err(|err| MlsRuntimeError::Serialize(err.to_string()))?;
         group.encrypt_payload_exporter_aead(
             content_type,
             realm_id,

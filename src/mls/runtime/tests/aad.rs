@@ -24,8 +24,9 @@ fn minimal_metadata_aad_enforcement_is_fail_closed() {
 fn aad_visibility_inferred_from_canonical_aad_shape() {
     use arkret_sdk::AadVisibility;
     // hidden() omits both event-id fields ⇒ Hidden.
-    let hidden = serde_json::to_value(arkret_sdk::EncryptedEnvelopeAadV1::hidden(
-        "ak:realm:r",
+    let hidden = serde_json::to_value(arkret_sdk::EncryptedEnvelopeAad::hidden(
+        arkret_sdk::RealmId::new("ak:realm:0196419b-0000-7000-8000-000000000001".to_owned())
+            .unwrap(),
         "ak.message.create",
     ))
     .unwrap();

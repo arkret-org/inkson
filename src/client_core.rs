@@ -571,7 +571,7 @@ mod tests {
 
         let request = request_rx.recv_timeout(Duration::from_secs(2)).unwrap();
         assert!(request.starts_with("GET /_arkret/self/events/subscribe?"));
-        assert!(request.contains("catchup=true"));
+        assert!(!request.contains("catchup="));
         assert!(
             request
                 .to_ascii_lowercase()

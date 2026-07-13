@@ -16,6 +16,8 @@ fn genesis_governance_binding(group_id: &str) -> arkret_sdk::MlsGovernanceBindin
         "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
     )
     .unwrap();
+    let capability_root = policy_root.clone();
+    let discussion_metadata_digest = policy_root.clone();
     // Genesis installs epoch 0 (governance binding epoch 0 -> 0).
     arkret_sdk::MlsGovernanceBindingPayload::realm(
         realm_id,
@@ -24,6 +26,8 @@ fn genesis_governance_binding(group_id: &str) -> arkret_sdk::MlsGovernanceBindin
         0,
         frontier,
         policy_root,
+        capability_root,
+        discussion_metadata_digest,
         arkret_sdk::MLS_GOVERNANCE_BINDING_FULL_PROFILE,
         arkret_sdk::CORE_REDUCER_PROFILE,
     )

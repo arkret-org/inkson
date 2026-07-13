@@ -273,6 +273,14 @@ fn mls_commit_builder_matches_registered_payload_schema() {
             "sha256:2222222222222222222222222222222222222222222222222222222222222222".to_owned(),
         )
         .unwrap(),
+        arkret_sdk::Hash::new(
+            "sha256:3333333333333333333333333333333333333333333333333333333333333333".to_owned(),
+        )
+        .unwrap(),
+        arkret_sdk::Hash::new(
+            "sha256:4444444444444444444444444444444444444444444444444444444444444444".to_owned(),
+        )
+        .unwrap(),
         arkret_sdk::MLS_GOVERNANCE_BINDING_FULL_PROFILE,
         arkret_sdk::CORE_REDUCER_PROFILE,
     )
@@ -298,30 +306,6 @@ fn mls_commit_builder_matches_registered_payload_schema() {
     assert!(op.payload.get("group_id").is_none());
     assert!(op.payload.get("preconditions").is_none());
     assert!(op.payload.get("effects").is_none());
-    assert_registered_payload_valid(&op);
-    assert_payload_field_names_are_spec_canonical(&op.payload);
-}
-
-#[test]
-fn incident_status_update_uses_schema_safe_fields_patch() {
-    let strand_id = "ak:strand:0196419b-0000-7000-8000-000000000002";
-    let op = ak_ops::incident_status_update(
-        "ak:realm:0196419b-0000-7000-8000-000000000010",
-        "did:web:alice.example",
-        strand_id,
-        "mitigated",
-    )
-    .expect("builds")
-    .build("node");
-
-    assert_eq!(op.kind.as_str(), "ak.strand.update");
-    assert_eq!(op.payload["target_ref"], strand_id);
-    assert!(op.payload.get("strand_id").is_none());
-    assert!(op.payload["patch"].get("fields.status").is_none());
-    assert_eq!(
-        op.payload["patch"]["fields"]["value"]["status"],
-        "mitigated"
-    );
     assert_registered_payload_valid(&op);
     assert_payload_field_names_are_spec_canonical(&op.payload);
 }

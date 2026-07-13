@@ -170,7 +170,9 @@ pub fn encrypt_reaction_with_device_snapshot(
     // a JSON object whose `key` is the real emoji / short tag.
     let plaintext = serde_json::to_vec(&serde_json::json!({ "key": canonical_emoji }))
         .map_err(|err| MlsRuntimeError::Serialize(err.to_string()))?;
-    let aad = arkret_sdk::EncryptedEnvelopeAadV1::hidden(realm_id, "ak.reaction.add");
+    let aad_realm_id = arkret_sdk::RealmId::new(realm_id.to_owned())
+        .map_err(|err| MlsRuntimeError::Serialize(format!("invalid AAD realm id: {err}")))?;
+    let aad = arkret_sdk::EncryptedEnvelopeAad::hidden(aad_realm_id, "ak.reaction.add");
     let aad_value =
         serde_json::to_value(&aad).map_err(|err| MlsRuntimeError::Serialize(err.to_string()))?;
     let encrypted_payload = group

@@ -127,7 +127,8 @@ impl<'a> BlobEndpoints<'a> {
         let options = arkret_sdk::http_client::BlobDownloadOptions::new()
             .purpose(purpose.to_owned())
             .max_bytes(max_bytes);
-        self.transport
+        let bytes = self
+            .transport
             .http()
             .blob_download_bytes_with_options(
                 &blob_ref,
@@ -135,7 +136,9 @@ impl<'a> BlobEndpoints<'a> {
                 &self.transport.context().request_options(),
             )
             .await
-            .map_err(anyhow::Error::from)
+            .map_err(anyhow::Error::from)?;
+        verify_content_addressed_blob_bytes(blob_ref.as_str(), &bytes)?;
+        Ok(bytes)
     }
 
     pub async fn resumable_upload_base_url(&self) -> Option<url::Url> {
@@ -186,6 +189,15 @@ impl<'a> BlobEndpoints<'a> {
     }
 }
 
+fn verify_content_addressed_blob_bytes(blob_ref: &str, bytes: &[u8]) -> anyhow::Result<()> {
+    if let Some(expected_sha256) = blob_ref.strip_prefix("ak:blob:sha256:")
+        && !crate::media::hash_matches(expected_sha256, bytes)
+    {
+        anyhow::bail!("blob content digest does not match content-addressed blob_ref");
+    }
+    Ok(())
+}
+
 fn snapshot_validation_error(error: arkret_sdk::SnapshotValidationError) -> anyhow::Error {
     anyhow::anyhow!("{}: {}", error.code.as_str(), error.message)
 }
@@ -218,5 +230,13 @@ mod tests {
                     .contains("snapshot chunk size_bytes exceeds this platform")
             );
         }
+    }
+
+    #[test]
+    fn content_addressed_download_rejects_digest_mismatch() {
+        let bytes = b"authenticated attachment";
+        let blob_ref = format!("ak:blob:sha256:{}", crate::canonical::sha256_hex(bytes));
+        assert!(verify_content_addressed_blob_bytes(&blob_ref, bytes).is_ok());
+        assert!(verify_content_addressed_blob_bytes(&blob_ref, b"tampered").is_err());
     }
 }

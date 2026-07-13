@@ -1032,6 +1032,24 @@ mod tests {
             plaintext_visible_services_payload.as_ref(),
         )
         .unwrap();
+        let discussion_metadata_digest =
+            derive_media_decrypt_metadata_digest(&MediaDecryptPolicyValue {
+                media_service_decrypts,
+                plaintext_visible_services: plaintext_visible_services_payload
+                    .as_ref()
+                    .map(|payload| {
+                        payload
+                            .services
+                            .iter()
+                            .map(|service| MediaPlaintextService {
+                                service_id: service.service_id.clone(),
+                            })
+                            .collect()
+                    })
+                    .unwrap_or_default(),
+            })
+            .unwrap();
+        let capability_root = arkret_sdk::Hash::new(format!("sha256:{}", "00".repeat(32))).unwrap();
         let governance_binding = MlsGovernanceBindingPayload::realm(
             RealmId::new("ak:realm:01904100-0000-7000-8000-9b64700c6ee8".to_owned()).unwrap(),
             "Z3JvdXA",
@@ -1044,27 +1062,12 @@ mod tests {
                 .unwrap(),
             ],
             policy_root,
+            capability_root,
+            discussion_metadata_digest,
             arkret_sdk::MLS_GOVERNANCE_BINDING_FULL_PROFILE,
             "ak.reducer.realm.v1",
         )
         .unwrap();
-        let governance_binding = if let Some(payload) = plaintext_visible_services_payload.as_ref()
-        {
-            let digest = derive_media_decrypt_metadata_digest(&MediaDecryptPolicyValue {
-                media_service_decrypts,
-                plaintext_visible_services: payload
-                    .services
-                    .iter()
-                    .map(|service| MediaPlaintextService {
-                        service_id: service.service_id.clone(),
-                    })
-                    .collect(),
-            })
-            .unwrap();
-            governance_binding.with_discussion_metadata_digest(digest)
-        } else {
-            governance_binding
-        };
         MediaGovernanceEvidence {
             governance_binding,
             media_service_payload,
