@@ -230,12 +230,35 @@ fn wasm_indexeddb_required_key_classifier_covers_high_value_secrets() {
     assert!(is_wasm_indexeddb_required_secret_key(
         "inkson.recovery.pending_key.v1.account-digest"
     ));
+    assert!(is_wasm_indexeddb_required_secret_key(
+        "inkson.e2ee_plaintext_cache.v1.account-digest"
+    ));
 
     assert!(!is_wasm_indexeddb_required_secret_key(
         "push.fcm.registration_token.device-a"
     ));
     assert!(!is_wasm_indexeddb_required_secret_key(
         "oidc.nonce.scaffold"
+    ));
+}
+
+#[test]
+fn wasm_test_downgrade_is_limited_to_device_signing_seed_fixtures() {
+    assert!(is_wasm_test_downgrade_fixture_key(SIGNING_SEED_KEY));
+    assert!(is_wasm_test_downgrade_fixture_key(
+        "device.ed25519.signing_seed.v1.account-digest"
+    ));
+    assert!(!is_wasm_test_downgrade_fixture_key(
+        "inkson.e2ee_plaintext_cache.v1.account-digest"
+    ));
+    assert!(!is_wasm_test_downgrade_fixture_key(
+        "inkson.mls_history_secret.v1.realm-digest"
+    ));
+    assert!(!is_wasm_test_downgrade_fixture_key(
+        "inkson.mls_snapshot.account_secret.v1.did:example:alice"
+    ));
+    assert!(!is_wasm_test_downgrade_fixture_key(
+        "coauth.session_credential.did:example:alice"
     ));
 }
 
@@ -606,4 +629,17 @@ fn history_secret_store_key_is_classified_indexeddb_only() {
     // Stable across calls (no nonce / randomness in the key derivation).
     assert_eq!(key, mls_history_secret_store_key("ak:realm:abc123"));
     assert_ne!(key, mls_history_secret_store_key("ak:realm:other"));
+}
+
+#[test]
+fn e2ee_plaintext_cache_key_is_account_scoped_and_indexeddb_only() {
+    let alice = e2ee_plaintext_cache_store_key("did:web:alice.example");
+    let bob = e2ee_plaintext_cache_store_key("did:web:bob.example");
+    assert!(alice.starts_with(E2EE_PLAINTEXT_CACHE_KEY_PREFIX));
+    assert!(is_wasm_indexeddb_required_secret_key(&alice));
+    assert_ne!(alice, bob);
+    assert_eq!(
+        alice,
+        e2ee_plaintext_cache_store_key("did:web:alice.example")
+    );
 }

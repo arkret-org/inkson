@@ -47,6 +47,54 @@ pub(super) fn SecureStoreEffects(state: SecureStoreEffectState) -> Element {
                         secure_store.as_ref(),
                     );
                     tracing::debug!(target: "secure_store", "secure store upgrade: Ok(Some) — IndexedDb tier installed");
+                    let hydrated = state_store_for_secure_upgrade
+                        .write()
+                        .hydrate_e2ee_plaintext_cache_with_secure_store(secure_store.as_ref());
+                    if let Err(error) = hydrated {
+                        tracing::warn!(?error, "IndexedDB E2EE plaintext cache hydration failed",);
+                    } else {
+                        let secure_write = state_store_for_secure_upgrade
+                            .read()
+                            .e2ee_plaintext_cache_secure_write();
+                        match secure_write {
+                            Ok(Some((key, Some(json)))) => {
+                                match secure_store.store_secret_durable(&key, &json).await {
+                                    Ok(()) => {
+                                        // Clear pre-decrypt recovery checkpoints only
+                                        // after the combined snapshot + plaintext entry
+                                        // has durably committed.
+                                        if let Err(error) = state_store_for_secure_upgrade
+                                            .write()
+                                            .clear_mls_receive_recovery_snapshots()
+                                        {
+                                            tracing::warn!(
+                                                ?error,
+                                                "MLS receive recovery checkpoint cleanup failed",
+                                            );
+                                        }
+                                    }
+                                    Err(error) => {
+                                        tracing::warn!(
+                                            ?error,
+                                            "IndexedDB E2EE state durable bootstrap persist failed",
+                                        );
+                                    }
+                                }
+                            }
+                            Ok(Some((key, None))) => {
+                                if let Err(error) = secure_store.delete_secret(&key) {
+                                    tracing::warn!(
+                                        ?error,
+                                        "empty IndexedDB E2EE state cleanup failed",
+                                    );
+                                }
+                            }
+                            Ok(None) => {}
+                            Err(error) => {
+                                tracing::warn!(?error, "IndexedDB E2EE state encode failed");
+                            }
+                        }
+                    }
                     let loaded_config = config_store_for_secure_upgrade
                         .read()
                         .load_with_secure_store(secure_store.as_ref());

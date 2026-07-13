@@ -164,7 +164,6 @@ impl LocalStateStore {
     fn forget_realm_tree_projection_inner(&mut self, projection_id: &str) {
         self.cached.realm_tree_projections.remove(projection_id);
         self.cached.realm_lifecycle_state.remove(projection_id);
-        self.cached.drafts.remove(projection_id);
         self.cached.seal_views.remove(projection_id);
         self.cached.realm_remarks.remove(projection_id);
         self.cached.mls_snapshots.remove(projection_id);

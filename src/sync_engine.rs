@@ -1438,6 +1438,13 @@ pub fn apply_response(
         }
     });
 
+    if response_revokes_local_device(response, &account_did, &ctx.device_id) {
+        state_store.write(|store| store.clear_device_scoped());
+        ctx.session
+            .invalidate("this device was revoked by an accepted control event");
+        return;
+    }
+
     state_store.write(|store| {
         // Perf (P0): a single sync response can touch the cursor, dozens of
         // realm-tree projections, seal views, member identity events and account
@@ -1744,6 +1751,32 @@ fn sync_realm_state_events(body: &Value) -> Vec<Value> {
         .and_then(Value::as_array)
         .cloned()
         .unwrap_or_default()
+}
+
+fn response_revokes_local_device(
+    response: &ClientSyncOutcome,
+    account_did: &str,
+    device_id: &str,
+) -> bool {
+    let account_did = account_did.trim();
+    let device_id = device_id.trim();
+    if account_did.is_empty() || device_id.is_empty() {
+        return false;
+    }
+    response.realms.values().any(|body| {
+        sync_realm_state_events(body).iter().any(|event| {
+            let kind = event
+                .get("kind")
+                .and_then(Value::as_str)
+                .unwrap_or_default();
+            let Some(payload) = event.get("payload") else {
+                return false;
+            };
+            kind == "ak.device.revoke"
+                && payload.get("principal_id").and_then(Value::as_str) == Some(account_did)
+                && payload.get("device_id").and_then(Value::as_str) == Some(device_id)
+        })
+    })
 }
 
 fn ingest_kanban_state_events_from_projection(
@@ -2992,7 +3025,6 @@ mod tests {
             }),
         );
         store.save_realm_tree_projection("ak:space:b", json!({"summary": {"title": "B"}}));
-        store.save_draft("ak:space:b", "draft-b");
 
         let mut response = empty_response("sx:42");
         response
@@ -3012,7 +3044,6 @@ mod tests {
         assert!(state.realm_tree_projections.contains_key("ak:realm:a"));
         assert!(state.realm_tree_projections.contains_key("ak:space:child"));
         assert!(!state.realm_tree_projections.contains_key("ak:space:b"));
-        assert!(!state.drafts.contains_key("ak:space:b"));
     }
 
     #[test]
@@ -3020,7 +3051,6 @@ mod tests {
         let mut store = temp_store("left");
         store.save_realm_tree_projection("ak:space:a", json!({"name": "A"}));
         store.save_realm_tree_projection("ak:space:b", json!({"name": "B"}));
-        store.save_draft("ak:space:b", "draft-b");
 
         let mut response = empty_response("sx:43");
         // Fixture typo fix: the forgotten projection id must match the
@@ -3037,7 +3067,6 @@ mod tests {
         let state = store.load();
         assert!(state.realm_tree_projections.contains_key("ak:space:a"));
         assert!(!state.realm_tree_projections.contains_key("ak:space:b"));
-        assert!(!state.drafts.contains_key("ak:space:b"));
     }
 
     // ── Y2 invalidation hook ──────────────────────────────────────────
@@ -3089,6 +3118,64 @@ mod tests {
         });
         invalidate_cache_for_revocation_events(&mut cache, &body);
         assert!(cache.get(&did, chrono::Utc::now()).is_none());
+    }
+
+    #[test]
+    fn accepted_device_revoke_targets_current_local_device() {
+        let actor = "did:web:alice.example";
+        let device = "ak:device:0196419b-0000-7000-8000-000000000001";
+        let mut response = empty_response("ak:cursor:device-revoke");
+        response.realms.insert(
+            "ak:realm:0196419b-0000-7000-8000-000000000002".to_owned(),
+            json!({
+                "state": { "events": [{
+                    "event_id": "ak:event:0196419b-0000-7000-8000-000000000003",
+                    "kind": "ak.device.revoke",
+                    "payload": {
+                        "principal_id": actor,
+                        "device_id": device,
+                        "revoked_by": "ak:device:0196419b-0000-7000-8000-000000000004",
+                        "revoked_at": "2026-07-14T02:00:00Z",
+                        "reason": "device_loss"
+                    }
+                }]}
+            }),
+        );
+
+        assert!(response_revokes_local_device(&response, actor, device));
+        assert!(!response_revokes_local_device(
+            &response,
+            actor,
+            "ak:device:0196419b-0000-7000-8000-0000000000ff"
+        ));
+        assert!(!response_revokes_local_device(
+            &response,
+            "did:web:mallory.example",
+            device
+        ));
+    }
+
+    #[test]
+    fn malformed_or_non_state_device_revoke_does_not_trigger_local_wipe() {
+        let actor = "did:web:alice.example";
+        let device = "ak:device:0196419b-0000-7000-8000-000000000001";
+        let mut response = empty_response("ak:cursor:malformed-device-revoke");
+        response.realms.insert(
+            "ak:realm:0196419b-0000-7000-8000-000000000002".to_owned(),
+            json!({
+                "state": { "events": [{
+                    "kind": "ak.device.revoke",
+                    "principal_id": actor,
+                    "device_id": device
+                }]},
+                "timeline": { "events": [{
+                    "kind": "ak.device.revoke",
+                    "payload": { "principal_id": actor, "device_id": device }
+                }]}
+            }),
+        );
+
+        assert!(!response_revokes_local_device(&response, actor, device));
     }
 
     #[test]

@@ -776,7 +776,11 @@ pub fn mls_welcome_message_matches_realm(message: &serde_json::Value, realm_id: 
     let expected_group_id = mls_group_id_for_realm(realm_id);
     message
         .get("content")
-        .and_then(|content| content.get("group_id"))
+        .and_then(|content| {
+            content
+                .get("group_id")
+                .or_else(|| content.get("mls_group_id"))
+        })
         .and_then(serde_json::Value::as_str)
         == Some(expected_group_id.as_str())
 }
@@ -815,7 +819,7 @@ pub fn local_mls_welcome_hint_for_realm(messages: &[serde_json::Value], realm_id
     format!("{}:{}", hints.len(), hints.join(","))
 }
 
-fn durable_welcome_payload_reject_reason(value: &serde_json::Value) -> Option<&'static str> {
+fn durable_welcome_payload_reject_reason(value: &serde_json::Value) -> Option<String> {
     let looks_like_durable_payload = value.get("claim_ref").is_some()
         || value.get("claim_id").is_some()
         || value.get("keypackage_digest").is_some()
@@ -823,8 +827,47 @@ fn durable_welcome_payload_reject_reason(value: &serde_json::Value) -> Option<&'
     if !looks_like_durable_payload {
         return None;
     }
-    let _ = serde_json::from_value::<arkret_sdk::MlsWelcomePayload>(value.clone());
-    Some(arkret_sdk::error::REASON_KEYPACKAGE_WELCOME_ENVELOPE_MISMATCH)
+    serde_json::from_value::<arkret_sdk::MlsWelcomePayload>(value.clone())
+        .err()
+        .map(|error| {
+            format!(
+                "{}: {error}",
+                arkret_sdk::error::REASON_KEYPACKAGE_WELCOME_ENVELOPE_MISMATCH
+            )
+        })
+}
+
+fn decode_welcome_envelope(
+    value: &serde_json::Value,
+) -> Result<arkret_sdk::MlsWelcomeEnvelope, String> {
+    if value.get("mls_group_id").is_none() {
+        return serde_json::from_value(value.clone())
+            .map_err(|error| format!("welcome envelope parse: {error}"));
+    }
+    let durable: arkret_sdk::MlsWelcomePayload = serde_json::from_value(value.clone())
+        .map_err(|error| format!("durable Welcome payload parse: {error}"))?;
+    let ciphertext = durable
+        .ciphertext
+        .ok_or_else(|| "durable Welcome payload has no inline ciphertext".to_owned())?;
+    let welcome_bytes = arkret_sdk::base64url_decode(ciphertext.as_bytes())
+        .map_err(|error| format!("durable Welcome ciphertext decode: {error}"))?;
+    let welcome_hash = arkret_sdk::Hash::new(arkret_sdk::canonical::sha256_digest(&welcome_bytes))
+        .map_err(|error| format!("durable Welcome digest: {error}"))?;
+    if welcome_hash != durable.claim_envelope.welcome_digest {
+        return Err(
+            "durable Welcome ciphertext differs from claim_envelope.welcome_digest".to_owned(),
+        );
+    }
+    Ok(arkret_sdk::MlsWelcomeEnvelope {
+        group_id: durable.mls_group_id,
+        epoch: durable.epoch,
+        recipient_principal_id: durable.recipient_principal_id,
+        recipient_device_id: arkret_sdk::DeviceId::new(durable.recipient_device_id)
+            .map_err(|error| format!("durable Welcome recipient device id: {error}"))?,
+        welcome: ciphertext,
+        welcome_hash,
+        ratchet_tree: None,
+    })
 }
 
 /// YGN-SEC-01 gate (1): before accepting an inbound Welcome, independently
@@ -946,87 +989,47 @@ fn verify_welcome_claim_envelope_signer(welcome_value: &serde_json::Value) -> Re
 /// joined snapshot. Server admission and claim signatures are defense in depth,
 /// not substitutes for the independent proof required by §2.5.1.
 fn verify_welcome_governance_binding(
+    state_store: &crate::state::LocalStateStore,
+    realm_id: &str,
     group: &arkret_sdk::ArkretMlsGroup,
     welcome_value: &serde_json::Value,
 ) -> Result<Option<String>, String> {
-    let binding = welcome_value.get("governance_binding").ok_or_else(|| {
+    let binding_value = welcome_value.get("governance_binding").ok_or_else(|| {
         "governance_binding missing; epoch remains decryption_pending (state_mismatch)".to_owned()
     })?;
-
-    let mls_group_id = binding
-        .get("mls_group_id")
-        .and_then(serde_json::Value::as_str)
-        .ok_or_else(|| "governance_binding.mls_group_id missing".to_owned())?;
-    let previous_epoch = binding
-        .get("previous_epoch")
-        .and_then(serde_json::Value::as_u64)
-        .ok_or_else(|| "governance_binding.previous_epoch missing".to_owned())?;
-    let next_epoch = binding
-        .get("next_epoch")
-        .and_then(serde_json::Value::as_u64)
-        .ok_or_else(|| "governance_binding.next_epoch missing".to_owned())?;
-    let policy_root_str = binding
-        .get("policy_root")
-        .and_then(serde_json::Value::as_str)
-        .ok_or_else(|| "governance_binding.policy_root missing".to_owned())?
-        .to_owned();
-    let binding_profile = binding
-        .get("binding_profile")
-        .and_then(serde_json::Value::as_str)
-        .ok_or_else(|| "governance_binding.binding_profile missing".to_owned())?
-        .to_owned();
-    let reducer_profile = binding
-        .get("reducer_profile")
-        .and_then(serde_json::Value::as_str)
-        .ok_or_else(|| "governance_binding.reducer_profile missing".to_owned())?
-        .to_owned();
-
-    if binding_profile == arkret_sdk::MLS_GOVERNANCE_BINDING_FULL_PROFILE {
-        for required_root in ["capability_root", "discussion_metadata_digest"] {
-            let value = binding
-                .get(required_root)
-                .and_then(serde_json::Value::as_str)
-                .ok_or_else(|| {
-                    format!(
-                        "full-profile governance_binding.{required_root} missing; epoch remains \
-                         decryption_pending (state_mismatch)"
-                    )
-                })?;
-            arkret_sdk::Hash::new(value.to_owned()).map_err(|err| {
-                format!("governance_binding.{required_root} invalid hash: {err:?}")
-            })?;
-        }
+    let binding: arkret_sdk::MlsGovernanceBindingPayload =
+        serde_json::from_value(binding_value.clone())
+            .map_err(|error| format!("governance_binding decode: {error}"))?;
+    binding
+        .validate()
+        .map_err(|error| format!("governance_binding validation: {error}"))?;
+    if binding.realm_id().as_str() != realm_id {
+        return Err("governance_binding Realm differs from the receiving Realm".to_owned());
     }
-
-    let policy_root_hash = arkret_sdk::Hash::new(policy_root_str.clone())
-        .map_err(|err| format!("governance_binding.policy_root invalid hash: {err:?}"))?;
-
-    let mut expected = arkret_sdk::MlsGovernanceBindingValidationContext::for_commit(
-        mls_group_id,
-        previous_epoch,
-        next_epoch,
-        &binding_profile,
-        &reducer_profile,
-    );
-    expected.policy_root = Some(&policy_root_hash);
-
-    // Compare the MLS group's embedded governance-binding extension with the
-    // expected declaration above. Missing binding, profile, epoch or policy_root
-    // mismatch returns Err.
-    group
-        .verify_current_governance_binding(&expected)
-        .map_err(|err| format!("governance_binding independent verification failed: {err}"))?;
-
-    // The current sync model exposes only frontier/state-root summaries. It
-    // does not carry a signed accepted Seal, Control-Move inclusion branch, or
-    // the joined control-cell multiproof needed to independently recompute the
-    // policy/capability/discussion roots. Comparing server-declared roots would
-    // merely restate the assertion, so fail closed until that proof bundle is
-    // available to this verifier.
-    Err(format!(
-        "governance_binding policy_root {policy_root_str} has no locally verifiable accepted-Seal \
-         inclusion proof; epoch remains decryption_pending (state_mismatch)"
-    ))
+    let current = group
+        .current_governance_binding()
+        .map_err(|error| format!("read MLS GroupContext governance_binding: {error}"))?;
+    if current.as_ref() != Some(&binding) {
+        return Err(
+            "MLS GroupContext governance_binding differs from the durable Welcome payload"
+                .to_owned(),
+        );
+    }
+    let request = crate::mls::governance_proof::proof_request(
+        realm_id,
+        binding.circle_id().map(|circle_id| circle_id.as_str()),
+        binding.mls_group_id(),
+        binding.previous_epoch(),
+        binding.next_epoch(),
+    )?;
+    let verified = crate::mls::governance_proof::cached_verified_binding(state_store, &request)?;
+    if verified != binding {
+        return Err(
+            "durable Welcome governance_binding differs from the locally verified Seal proof"
+                .to_owned(),
+        );
+    }
+    Ok(Some(binding.policy_root().to_string()))
 }
 
 pub fn apply_welcome_messages_with_device_snapshot(
@@ -1079,11 +1082,10 @@ pub fn apply_welcome_messages_with_device_snapshot(
         // object. It independently verifies this governance_binding against the
         // MLS GroupContext; keep the raw JSON for that check.
         let welcome_value_for_governance = welcome_value.clone();
-        let welcome = match serde_json::from_value::<arkret_sdk::MlsWelcomeEnvelope>(welcome_value)
-        {
+        let welcome = match decode_welcome_envelope(&welcome_value) {
             Ok(welcome) => welcome,
             Err(err) => {
-                outcome.record_failure(format!("welcome envelope parse: {err}"));
+                outcome.record_failure(err);
                 continue;
             }
         };
@@ -1157,14 +1159,18 @@ pub fn apply_welcome_messages_with_device_snapshot(
         // profile/epoch/policy_root mismatch rejects the Welcome before
         // snapshot persistence. The declared policy_root feeds the genesis
         // record below.
-        let welcome_policy_root =
-            match verify_welcome_governance_binding(&group, &welcome_value_for_governance) {
-                Ok(policy_root) => policy_root,
-                Err(reason) => {
-                    outcome.record_failure(format!("welcome governance_binding authz: {reason}"));
-                    continue;
-                }
-            };
+        let welcome_policy_root = match verify_welcome_governance_binding(
+            state_store,
+            realm_id,
+            &group,
+            &welcome_value_for_governance,
+        ) {
+            Ok(policy_root) => policy_root,
+            Err(reason) => {
+                outcome.record_failure(format!("welcome governance_binding authz: {reason}"));
+                continue;
+            }
+        };
         let post_state = match group.export_state_record() {
             Ok(post_state) => post_state,
             Err(err) => {
@@ -1267,11 +1273,11 @@ pub fn encrypt_values_with_device_snapshot(
         state_store.realm_has_pending_mls_binding(realm_id),
     );
     let commit_envelope = if should_commit {
-        Some(
-            group
-                .self_update_commit()
-                .map_err(|err| MlsRuntimeError::Commit(err.to_string()))?,
-        )
+        Some(self_update_with_verified_governance_binding(
+            state_store,
+            realm_id,
+            &mut group,
+        )?)
     } else {
         None
     };
@@ -1409,11 +1415,11 @@ pub fn encrypt_message_with_device_snapshot(
         state_store.realm_has_pending_mls_binding(realm_id),
     );
     let commit_envelope = if should_commit {
-        Some(
-            group
-                .self_update_commit()
-                .map_err(|err| MlsRuntimeError::Commit(err.to_string()))?,
-        )
+        Some(self_update_with_verified_governance_binding(
+            state_store,
+            realm_id,
+            &mut group,
+        )?)
     } else {
         None
     };
@@ -1484,6 +1490,26 @@ pub fn encrypt_message_with_device_snapshot(
         .with_app_messages_observed(snapshot.app_messages_observed.saturating_add(1));
     state_store.save_mls_snapshot(realm_id.to_owned(), new_envelope);
     Ok((schedule_hash, member_dids, encrypted, None, None))
+}
+
+fn self_update_with_verified_governance_binding(
+    state_store: &crate::state::LocalStateStore,
+    realm_id: &str,
+    group: &mut arkret_sdk::ArkretMlsGroup,
+) -> Result<arkret_sdk::MlsCommitEnvelope, MlsRuntimeError> {
+    let request = crate::mls::governance_proof::proof_request(
+        realm_id,
+        None,
+        group.group_id(),
+        group.epoch(),
+        group.epoch().saturating_add(1),
+    )
+    .map_err(MlsRuntimeError::Commit)?;
+    let binding = crate::mls::governance_proof::cached_verified_binding(state_store, &request)
+        .map_err(MlsRuntimeError::Commit)?;
+    group
+        .update_governance_binding(&binding)
+        .map_err(|error| MlsRuntimeError::Commit(error.to_string()))
 }
 
 /// SEC-08 — fail-closed committer-side assertion that a `minimal_metadata_realm`

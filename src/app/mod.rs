@@ -3630,10 +3630,12 @@ fn AppBootstrap() -> Element {
                                                 // local retry cannot resurrect the session if the
                                                 // server-side logout call later fails or is
                                                 // cancelled. Keep the account entry itself:
-                                                // projections, MLS snapshots, plaintext sidecars,
-                                                // and the durable device identity are account
-                                                // state, not grant-binding state. The next
-                                                // interactive sign-in rotates the grant-binding
+                                                // projections, encrypted MLS checkpoints, and the
+                                                // durable device identity are account state, not
+                                                // grant-binding state. In-memory plaintext sidecars
+                                                // are cleared here and can only be restored from the
+                                                // encrypted checkpoint after the next sign-in. The
+                                                // next interactive sign-in rotates the grant-binding
                                                 // seed before issuing the new session grant.
                                                 state_store
                                                     .write()

@@ -63,6 +63,10 @@ pub use seal_view::*;
 
 mod mls_sidecar;
 
+mod mls_governance;
+
+mod e2ee_secure_cache;
+
 mod move_tracking;
 
 // YOU-07-001: storage / path / at-rest-crypto utility free functions moved out
@@ -388,6 +392,7 @@ impl LocalStateStore {
         self.cached = state;
         self.loaded.store(true, Ordering::Relaxed);
         let _ = self.flush();
+        self.persist_e2ee_plaintext_cache_if_ready();
     }
 
     pub fn flush(&self) -> anyhow::Result<()> {

@@ -36,6 +36,7 @@ fn creator_snapshot_bootstrap_makes_space_encryptable() {
     let device = "ak:device:01904100-0000-7000-8000-000000000001";
     let realm = "ak:realm:01904100-0000-7000-8000-000000000001";
 
+    super::seed_genesis_governance_proof(&mut state, realm);
     let summary = ensure_creator_mls_snapshot(&mut state, &secure, realm, actor, device).unwrap();
 
     let summary = summary.expect("missing creator snapshot should be created");
@@ -96,6 +97,7 @@ fn authoring_exporter_aead_content_retains_history_secret() {
     let history_key = crate::secure_key_store::mls_history_secret_store_key(realm);
     let _ = history_store.delete_secret(&history_key);
 
+    super::seed_genesis_governance_proof(&mut state, realm);
     ensure_creator_mls_snapshot(&mut state, &secure, realm, actor, device)
         .unwrap()
         .expect("creator snapshot");
@@ -310,6 +312,7 @@ fn author_own_ciphertext_stays_soft_failure_without_state_regression() {
     let device = "ak:device:01904100-0000-7000-8000-0000000000d1";
     let realm = "ak:realm:01904100-0000-7000-8000-0000000000d2";
 
+    super::seed_genesis_governance_proof(&mut state, realm);
     ensure_creator_mls_snapshot(&mut state, &secure, realm, actor, device).unwrap();
     let (_, _, encrypted_values, ..) = encrypt_values_with_device_snapshot(
         &mut state,
@@ -470,6 +473,7 @@ fn encrypt_does_not_persist_snapshot_until_caller_saves_on_accept() {
     assert!(state.realm_projection_is_minimal_metadata(realm));
 
     // Genesis installs the epoch-0 snapshot.
+    super::seed_genesis_governance_proof(&mut state, realm);
     ensure_creator_mls_snapshot(&mut state, &secure, realm, actor, device)
         .unwrap()
         .expect("creator snapshot created");
@@ -477,6 +481,7 @@ fn encrypt_does_not_persist_snapshot_until_caller_saves_on_accept() {
     let mut overdue = state.mls_snapshot_for(realm).unwrap();
     overdue.epoch_started_at = chrono::Utc::now() - chrono::Duration::hours(2);
     state.save_mls_snapshot(realm, overdue);
+    super::seed_next_governance_proof(&mut state, realm);
 
     // An overdue minimal-metadata epoch forces a post-commit envelope at
     // epoch+1 WITHOUT touching the persisted snapshot.

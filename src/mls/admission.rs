@@ -335,7 +335,7 @@ pub(crate) fn build_mls_welcome_payload_value(
         requester_device_id: None,
         nonce: claim_nonce.trim().to_owned(),
         welcome_digest: welcome.welcome_hash.clone(),
-        created_at: crate::clock::now_utc(),
+        created_at: crate::clock::now_utc_secs(),
         signature: arkret_sdk::KeyOperationSignature {
             kid: String::new(),
             alg: Some("EdDSA".to_owned()),
@@ -383,7 +383,10 @@ fn sign_welcome_claim_envelope(
     sender_device_id: &str,
     envelope: &mut arkret_sdk::MlsWelcomeClaimEnvelope,
 ) -> Result<(), String> {
-    if let Some(publish) = load_latest_cross_signing_publish(state_store, actor_id)? {
+    let active_device_signer = crate::event_signer::active_signer();
+    if active_device_signer.is_none()
+        && let Some(publish) = load_latest_cross_signing_publish(state_store, actor_id)?
+    {
         envelope.ssk_generation = Some(publish.generation);
         envelope.requester_device_id = None;
         envelope.signature.kid = publish.self_signing_key.key.kid.clone();
@@ -408,7 +411,7 @@ fn sign_welcome_claim_envelope(
     }
     envelope.ssk_generation = None;
     envelope.requester_device_id = Some(sender_device_id.to_owned());
-    let signer = match crate::event_signer::active_signer() {
+    let signer = match active_device_signer {
         Some(signer) => signer,
         None => crate::event_signer::bootstrap_default_signer("inkson")
             .map_err(|err| format!("MLS Welcome device signer bootstrap: {err}"))?,
@@ -623,8 +626,25 @@ mod tests {
         let alice_device = "ak:device:01904100-0000-7000-8000-0000000000a1";
         let bob = "did:web:bob.example";
         let bob_device = "ak:device:01904100-0000-7000-8000-0000000000b1";
+        let _signer_guard = ActiveSignerGuard::install([12u8; 32], alice);
+        let signer = crate::event_signer::build_ed25519_signer([12u8; 32], alice);
+        crate::identity::device_directory::seed_positive_for_test(
+            alice,
+            alice_device,
+            arkret_sdk::signatures::PublicKeyMaterial::Ed25519Multibase {
+                value: signer.public_key_multibase().unwrap(),
+            },
+        );
 
         let publish = install_cross_signing(&mut alice_state, &secure, alice, alice_device);
+        crate::mls::governance_proof::seed_test_governance_proof(
+            &mut alice_state,
+            realm,
+            None,
+            arkret_sdk::base64url_encode(realm.as_bytes()),
+            0,
+            0,
+        );
         let genesis_summary =
             ensure_creator_mls_snapshot(&mut alice_state, &secure, realm, alice, alice_device)
                 .unwrap()
@@ -645,6 +665,22 @@ mod tests {
             }
         };
         alice_state.mark_mls_genesis_emitted_with_event(realm, &genesis_event.event_id);
+        crate::mls::governance_proof::seed_test_governance_proof(
+            &mut alice_state,
+            realm,
+            None,
+            genesis_summary.group_id.clone(),
+            0,
+            1,
+        );
+        crate::mls::governance_proof::seed_test_governance_proof(
+            &mut bob_state,
+            realm,
+            None,
+            genesis_summary.group_id.clone(),
+            0,
+            1,
+        );
 
         let bob_identity = arkret_sdk::ArkretMlsIdentity::new_basic(
             arkret_sdk::Did::new(bob.to_owned()).unwrap(),
@@ -704,7 +740,7 @@ mod tests {
         let messages = json!({
             "messages": [{
                 "kind": "ak.mls.welcome",
-                "content": serde_json::to_value(&admission.welcome_envelope).unwrap(),
+                "content": admission.welcome.payload.clone(),
                 "unsigned": {
                     "key_package_id": claim.keypackage_ref,
                 },
@@ -744,6 +780,14 @@ mod tests {
         let bob_device = "ak:device:01904100-0000-7000-8000-0000000000b1";
 
         let publish = install_cross_signing(&mut alice_state, &secure, alice, alice_device);
+        crate::mls::governance_proof::seed_test_governance_proof(
+            &mut alice_state,
+            realm,
+            None,
+            arkret_sdk::base64url_encode(realm.as_bytes()),
+            0,
+            0,
+        );
         let genesis_summary =
             ensure_creator_mls_snapshot(&mut alice_state, &secure, realm, alice, alice_device)
                 .unwrap()
@@ -776,6 +820,14 @@ mod tests {
                 .to_owned(),
         );
         alice_state.set_realm_seal_view(realm, advanced);
+        crate::mls::governance_proof::seed_test_governance_proof(
+            &mut alice_state,
+            realm,
+            None,
+            genesis_summary.group_id.clone(),
+            0,
+            1,
+        );
 
         let bob_identity = arkret_sdk::ArkretMlsIdentity::new_basic(
             arkret_sdk::Did::new(bob.to_owned()).unwrap(),

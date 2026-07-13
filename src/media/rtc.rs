@@ -364,10 +364,6 @@ impl MediaGovernanceEvidence {
         let authorized = plaintext_payload.services.iter().any(|service| {
             service.service_id == service_id
                 && service
-                    .purposes
-                    .iter()
-                    .any(|purpose| purpose == "media_plaintext")
-                && service
                     .data_classes
                     .iter()
                     .any(|class| matches!(class, PlaintextDataClassKind::MediaPlaintext))
@@ -387,13 +383,9 @@ impl MediaGovernanceEvidence {
                 .iter()
                 .filter(|service| {
                     service
-                        .purposes
+                        .data_classes
                         .iter()
-                        .any(|purpose| purpose == "media_plaintext")
-                        && service
-                            .data_classes
-                            .iter()
-                            .any(|class| matches!(class, PlaintextDataClassKind::MediaPlaintext))
+                        .any(|class| matches!(class, PlaintextDataClassKind::MediaPlaintext))
                 })
                 .map(|service| MediaPlaintextService {
                     service_id: service.service_id.clone(),
@@ -974,6 +966,22 @@ mod tests {
     }
 
     #[test]
+    fn media_plaintext_authorization_ignores_free_text_purpose() {
+        let request = governed_join_request(Some(media_governance_evidence(true, true)));
+        let purposes = &request
+            .governance_evidence
+            .as_ref()
+            .unwrap()
+            .plaintext_visible_services_payload
+            .as_ref()
+            .unwrap()
+            .services[0]
+            .purposes;
+        assert_eq!(purposes, &["video_transcoding"]);
+        assert!(request.verify_governance_evidence().is_ok());
+    }
+
+    #[test]
     fn opaque_media_service_accepts_binding_coverage_without_plaintext_grant() {
         let request = governed_join_request(Some(media_governance_evidence(false, false)));
         assert!(request.verify_governance_evidence().is_ok());
@@ -1021,7 +1029,7 @@ mod tests {
                 Did::new("did:web:media.example".to_owned()).unwrap(),
                 "media_service",
                 vec![PlaintextDataClassKind::MediaPlaintext],
-                vec!["media_plaintext".to_owned()],
+                vec!["video_transcoding".to_owned()],
                 arkret_sdk::PlaintextServiceVisibility::PrivatePlaintext,
             )])
         });

@@ -894,6 +894,77 @@ pub(super) fn RealmsSection(
                                                             &encryption_profile,
                                                         ) {
                                                             let secure = crate::secure_key_store::default_secure_key_store("inkson");
+                                                            let seal_view = match submitter
+                                                                .events_frontier_realm_seal_view(&realm_id)
+                                                                .await
+                                                            {
+                                                                Ok(view) => view,
+                                                                Err(err) => {
+                                                                    let message = format!(
+                                                                        "created {}; refreshing the accepted Seal view before MLS setup failed: {err}",
+                                                                        realm_id
+                                                                    );
+                                                                    realm_create_busy.set(false);
+                                                                    realm_state.set(message.clone());
+                                                                    crate::components::feedback::toast_error(
+                                                                        "feedback.realm_create_failed",
+                                                                        vec![],
+                                                                        Some(message),
+                                                                    );
+                                                                    return;
+                                                                }
+                                                            };
+                                                            state_store.write().set_realm_seal_view(
+                                                                realm_id.clone(),
+                                                                crate::state::LocalSealView {
+                                                                    frontier: vec![seal_view.seal_id.to_string()],
+                                                                    state_root: Some(seal_view.state_root.to_string()),
+                                                                    ..Default::default()
+                                                                },
+                                                            );
+                                                            let genesis_proof_request = match crate::mls::governance_proof::proof_request(
+                                                                &realm_id,
+                                                                None,
+                                                                arkret_sdk::base64url_encode(realm_id.as_bytes()),
+                                                                0,
+                                                                0,
+                                                            ) {
+                                                                Ok(request) => request,
+                                                                Err(err) => {
+                                                                    let message = format!(
+                                                                        "created {}; preparing the MLS governance proof request failed: {err}",
+                                                                        realm_id
+                                                                    );
+                                                                    realm_create_busy.set(false);
+                                                                    realm_state.set(message.clone());
+                                                                    crate::components::feedback::toast_error(
+                                                                        "feedback.realm_create_failed",
+                                                                        vec![],
+                                                                        Some(message),
+                                                                    );
+                                                                    return;
+                                                                }
+                                                            };
+                                                            if let Err(err) = crate::mls::governance_proof::fetch_verify_and_cache_proof(
+                                                                &api,
+                                                                state_store,
+                                                                &genesis_proof_request,
+                                                            )
+                                                            .await
+                                                            {
+                                                                let message = format!(
+                                                                    "created {}; verifying the accepted governance proof before MLS setup failed: {err}",
+                                                                    realm_id
+                                                                );
+                                                                realm_create_busy.set(false);
+                                                                realm_state.set(message.clone());
+                                                                crate::components::feedback::toast_error(
+                                                                    "feedback.realm_create_failed",
+                                                                    vec![],
+                                                                    Some(message),
+                                                                );
+                                                                return;
+                                                            }
                                                             let (snapshot, creator_genesis_summary) = {
                                                                 let mut store = state_store.write();
                                                                 match crate::mls::runtime::ensure_creator_mls_snapshot(

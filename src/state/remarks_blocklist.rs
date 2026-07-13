@@ -226,6 +226,15 @@ impl LocalStateStore {
         if self.cached.seal_views.get(&realm_id) == Some(&view) {
             return; // seal view unchanged — skip flush
         }
+        let accepted_heads = view
+            .frontier
+            .iter()
+            .map(String::as_str)
+            .collect::<BTreeSet<_>>();
+        self.cached.mls_governance_proofs.retain(|_, entry| {
+            entry.request.realm_id.as_str() != realm_id
+                || accepted_heads.contains(entry.accepted_seal_id.as_str())
+        });
         self.cached.seal_views.insert(realm_id, view);
         let _ = self.flush();
     }

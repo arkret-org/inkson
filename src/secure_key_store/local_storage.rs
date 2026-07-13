@@ -9,7 +9,7 @@ use garth::{SecretBytes, SecureKeyStoreBackendInfo};
 use super::{
     SecureKeyStore, SecureKeyStoreError, WASM_ED25519_SEED_INDEXEDDB_REQUIRED,
     WASM_SENSITIVE_SECRET_INDEXEDDB_REQUIRED, is_wasm_ed25519_seed_key,
-    is_wasm_indexeddb_required_secret_key, unwrap_secret,
+    is_wasm_indexeddb_required_secret_key, is_wasm_test_downgrade_fixture_key, unwrap_secret,
     wasm_localstorage_secret_downgrade_enabled, wrap_secret,
 };
 
@@ -119,7 +119,8 @@ impl std::fmt::Debug for LocalStorageSecureKeyStore {
 impl SecureKeyStore for LocalStorageSecureKeyStore {
     fn store_secret_bytes(&self, key: &str, value: &[u8]) -> Result<(), SecureKeyStoreError> {
         if is_wasm_indexeddb_required_secret_key(key)
-            && !wasm_localstorage_secret_downgrade_enabled()
+            && !(wasm_localstorage_secret_downgrade_enabled()
+                && is_wasm_test_downgrade_fixture_key(key))
         {
             return Err(SecureKeyStoreError::Unsupported(
                 if is_wasm_ed25519_seed_key(key) {
@@ -145,7 +146,8 @@ impl SecureKeyStore for LocalStorageSecureKeyStore {
 
     fn get_secret_bytes(&self, key: &str) -> Result<Option<SecretBytes>, SecureKeyStoreError> {
         if is_wasm_indexeddb_required_secret_key(key)
-            && !wasm_localstorage_secret_downgrade_enabled()
+            && !(wasm_localstorage_secret_downgrade_enabled()
+                && is_wasm_test_downgrade_fixture_key(key))
         {
             return Err(SecureKeyStoreError::Unsupported(
                 if is_wasm_ed25519_seed_key(key) {

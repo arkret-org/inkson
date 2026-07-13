@@ -1781,6 +1781,7 @@ pub(crate) async fn submit_mls_admission_for_invitee(
             .unwrap_or_else(|| "no MLS KeyPackage was available for the invitee".to_owned());
         anyhow::anyhow!("{reason}")
     })?;
+    ensure_mls_governance_proof_for_next_commit(api, state_store, &realm_id).await?;
     // History sharing (encryption-and-audit.md): retain the CURRENT (pre-commit)
     // epoch's `history_secret` BEFORE building the admission commit. The commit
     // advances the group epoch (N → N+1) and OpenMLS can only export the epoch
@@ -2978,6 +2979,7 @@ pub(crate) async fn submit_mls_admission_for_invitees(
         })?;
         claims.push((claim, claim_nonce));
     }
+    ensure_mls_governance_proof_for_next_commit(api, state_store, &realm_id).await?;
     let admission = {
         let store = state_store.read();
         crate::mls::admission::build_realm_mls_admission_events_from_claims(
@@ -3077,6 +3079,12 @@ async fn ensure_mls_genesis_frontier_for_invite(
             "local epoch-0 MLS snapshot is not available; create or restore this device's MLS state before inviting into an encrypted Realm"
         )
     })?;
+    let genesis_request =
+        crate::mls::governance_proof::proof_request(realm_id, None, summary.group_id.clone(), 0, 0)
+            .map_err(anyhow::Error::msg)?;
+    crate::mls::governance_proof::fetch_verify_and_cache_proof(api, state_store, &genesis_request)
+        .await
+        .map_err(anyhow::Error::msg)?;
     let genesis_event = {
         let mut store = state_store.write();
         crate::mls::group_events::build_creator_mls_genesis_event(
@@ -3124,6 +3132,31 @@ async fn ensure_mls_genesis_frontier_for_invite(
             Err(err)
         }
     }
+}
+
+async fn ensure_mls_governance_proof_for_next_commit(
+    api: &crate::transport::TransportClient,
+    state_store: SyncSignal<LocalStateStore>,
+    realm_id: &str,
+) -> anyhow::Result<()> {
+    let request = {
+        let store = state_store.read();
+        let snapshot = store.mls_snapshot_for(realm_id).ok_or_else(|| {
+            anyhow::anyhow!("local MLS snapshot is unavailable for governance proof request")
+        })?;
+        crate::mls::governance_proof::proof_request(
+            realm_id,
+            None,
+            snapshot.group_id,
+            snapshot.epoch,
+            snapshot.epoch.saturating_add(1),
+        )
+        .map_err(anyhow::Error::msg)?
+    };
+    crate::mls::governance_proof::fetch_verify_and_cache_proof(api, state_store, &request)
+        .await
+        .map(|_| ())
+        .map_err(anyhow::Error::msg)
 }
 
 #[component]

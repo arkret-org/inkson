@@ -568,6 +568,20 @@ pub struct SnapshotSyncStatus {
     pub degraded_reason: Option<String>,
 }
 
+/// A full-profile MLS governance proof that was cryptographically verified
+/// before it entered local state. The original bundle is retained as JSON so
+/// a Welcome receiver can re-run verification without trusting a derived root
+/// cache, while the typed binding and Seal ids keep lookup/invalidation exact.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CachedMlsGovernanceProof {
+    pub request: arkret_sdk::MlsGovernanceProofRequest,
+    pub governance_binding: arkret_sdk::MlsGovernanceBindingPayload,
+    pub trust_anchor_seal_id: arkret_sdk::SealId,
+    pub accepted_seal_id: arkret_sdk::SealId,
+    pub bundle: Value,
+    pub verified_at: DateTime<Utc>,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ClientLocalState {
     pub sync_cursor: Option<String>,
@@ -588,15 +602,10 @@ pub struct ClientLocalState {
     pub realm_tree_projections: BTreeMap<String, Value>,
     #[serde(default)]
     pub snapshot_sync: BTreeMap<String, SnapshotSyncStatus>,
-    /// Principal-private draft account-data values, keyed by
-    /// `ak.draft.v1:<kind>:<target_key>:<slot_key>`.
-    #[serde(default)]
-    pub draft_account_data: BTreeMap<String, Value>,
     /// Principal-private saved-item account-data values, keyed by
     /// `ak.saved.v1:<collection_key>:<target_key>`.
     #[serde(default)]
     pub saved_account_data: BTreeMap<String, Value>,
-    pub drafts: BTreeMap<String, String>,
     pub pending_encrypted_messages: BTreeMap<String, EncryptedPayload>,
     #[serde(default)]
     pub notification_projection: Vec<Value>,
@@ -710,6 +719,14 @@ pub struct ClientLocalState {
     /// rather than rejoining via Welcome from scratch.
     #[serde(default)]
     pub mls_snapshots: BTreeMap<String, crate::mls::persistence::MlsSnapshotEnvelope>,
+    /// Pre-decrypt MLS checkpoints retained until the combined secure entry
+    /// (advanced snapshot + decrypted plaintext cache) is durably confirmed.
+    /// These envelopes are already device-secret-encrypted; keeping the oldest
+    /// in-flight checkpoint in account state lets startup roll back and decrypt
+    /// again if the IndexedDB put was interrupted by page exit.
+    #[serde(default)]
+    pub mls_receive_recovery_snapshots:
+        BTreeMap<String, crate::mls::persistence::MlsSnapshotEnvelope>,
     /// Realms whose `ak.mls.genesis` event has already been submitted to
     /// soland. Tracked per-Realm so genesis is emitted exactly once for a
     /// locally-created creator group (the server also rejects a duplicate
@@ -735,6 +752,15 @@ pub struct ClientLocalState {
     /// commit instead of recomputing from a moving root.
     #[serde(default)]
     pub mls_genesis_policy_root: BTreeMap<String, String>,
+    /// Bounded cache of complete, locally verified MLS governance proof
+    /// bundles. Keys are canonical request digests; values expire quickly and
+    /// are invalidated when sync observes a different accepted Seal head.
+    #[serde(default)]
+    pub mls_governance_proofs: BTreeMap<String, CachedMlsGovernanceProof>,
+    /// First-use pins for Realm governance proof chains. A different anchor is
+    /// never accepted implicitly; explicit recovery/re-pin UI is required.
+    #[serde(default)]
+    pub mls_governance_trust_anchors: BTreeMap<String, arkret_sdk::SealId>,
     /// X5.1 — local-only plaintext sidecar for the author's own encrypted
     /// private strand fields. Keyed `realm_id -> strand_id -> field_path ->
     /// plaintext` where `field_path` is the dotted private patch path
@@ -754,10 +780,11 @@ pub struct ClientLocalState {
     /// plaintext sidecar.
     ///
     /// CRITICAL: this MUST NEVER leave the device or enter plaintext durable
-    /// account-state storage. It is written only by
-    /// [`LocalStateStore::save_private_plaintext`], kept as an in-memory cache
-    /// for the current process, and exported only through the dedicated
-    /// encrypted sidecar-backup path.
+    /// account-state storage. It is written by
+    /// [`LocalStateStore::save_private_plaintext`], persisted only through the
+    /// account-scoped hardened secure-store cache, and exported only through
+    /// the dedicated encrypted sidecar-backup path. When hardened storage is
+    /// unavailable it remains memory-only.
     #[serde(default, skip_serializing)]
     pub mls_private_plaintext: BTreeMap<String, BTreeMap<String, BTreeMap<String, String>>>,
     /// YOU-02-004 — local-only decrypted-plaintext cache for REMOTE members'
@@ -774,8 +801,10 @@ pub struct ClientLocalState {
     /// Like [`Self::mls_private_plaintext`] (the author-side sidecar) this
     /// MUST NEVER leave the device; eviction is deliberate non-behavior —
     /// once the ratchet has advanced past a message, the cache entry is the
-    /// only remaining way to render it during this process lifetime. It is not
-    /// serialized into plaintext account-state storage.
+    /// only remaining way to render it after the ratchet advances. It is
+    /// persisted only through the account-scoped hardened secure-store cache
+    /// and is never serialized into plaintext account-state storage. When
+    /// hardened storage is unavailable it remains memory-only.
     #[serde(default, skip_serializing)]
     pub mls_decrypted_plaintext: BTreeMap<String, BTreeMap<String, String>>,
     /// Per-(realm, epoch) MLS `history_secret`s installed from an inbound
@@ -1068,9 +1097,7 @@ impl Default for ClientLocalState {
             realm_lifecycle_state: BTreeMap::new(),
             realm_tree_projections: BTreeMap::new(),
             snapshot_sync: BTreeMap::new(),
-            draft_account_data: BTreeMap::new(),
             saved_account_data: BTreeMap::new(),
-            drafts: BTreeMap::new(),
             pending_encrypted_messages: BTreeMap::new(),
             notification_projection: Vec::new(),
             presence_projection: Vec::new(),
@@ -1097,8 +1124,11 @@ impl Default for ClientLocalState {
             session_grant: None,
             telemetry_log: Vec::new(),
             mls_snapshots: BTreeMap::new(),
+            mls_receive_recovery_snapshots: BTreeMap::new(),
             mls_genesis_emitted: BTreeSet::new(),
             mls_genesis_policy_root: BTreeMap::new(),
+            mls_governance_proofs: BTreeMap::new(),
+            mls_governance_trust_anchors: BTreeMap::new(),
             mls_private_plaintext: BTreeMap::new(),
             mls_decrypted_plaintext: BTreeMap::new(),
             history_secrets: BTreeMap::new(),
@@ -1133,6 +1163,8 @@ pub(crate) struct MlsReceiveOverlay {
     /// writers clear/absorb the entry so it can never shadow a newer
     /// send-path snapshot.
     pub(crate) snapshots: BTreeMap<String, crate::mls::persistence::MlsSnapshotEnvelope>,
+    /// Oldest pre-decrypt checkpoint for each realm touched by this overlay.
+    pub(crate) recovery_snapshots: BTreeMap<String, crate::mls::persistence::MlsSnapshotEnvelope>,
     /// Decrypted-plaintext cache entries pending absorption into
     /// `ClientLocalState::mls_decrypted_plaintext`
     /// (`realm_id -> payload_digest -> base64url(plaintext)`).
@@ -1141,7 +1173,9 @@ pub(crate) struct MlsReceiveOverlay {
 
 impl MlsReceiveOverlay {
     pub(crate) fn is_empty(&self) -> bool {
-        self.snapshots.is_empty() && self.plaintexts.is_empty()
+        self.snapshots.is_empty()
+            && self.recovery_snapshots.is_empty()
+            && self.plaintexts.is_empty()
     }
 
     /// Merge this overlay over a `ClientLocalState` (overlay wins — see the
@@ -1151,6 +1185,12 @@ impl MlsReceiveOverlay {
             state
                 .mls_snapshots
                 .insert(realm_id.clone(), envelope.clone());
+        }
+        for (realm_id, envelope) in &self.recovery_snapshots {
+            state
+                .mls_receive_recovery_snapshots
+                .entry(realm_id.clone())
+                .or_insert_with(|| envelope.clone());
         }
         for (realm_id, entries) in &self.plaintexts {
             let slot = state

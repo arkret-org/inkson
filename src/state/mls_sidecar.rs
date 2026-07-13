@@ -30,6 +30,7 @@ impl LocalStateStore {
         let key = mls_effective_scope_snapshot_key(&realm_id, circle_id);
         self.cached.mls_snapshots.insert(key, envelope);
         let _ = self.flush();
+        self.persist_e2ee_plaintext_cache_if_ready();
     }
 
     /// Look up the latest MLS snapshot envelope for a Realm, if any.
@@ -140,11 +141,17 @@ impl LocalStateStore {
         self.absorb_mls_receive_overlay();
         let key = mls_effective_scope_snapshot_key(realm_id, circle_id);
         let dropped_snapshot = self.cached.mls_snapshots.remove(&key).is_some();
+        let dropped_recovery = self
+            .cached
+            .mls_receive_recovery_snapshots
+            .remove(&key)
+            .is_some();
         // The decrypted-plaintext cache is keyed to ciphertext minted under
         // the dropped group state; it stays readable history (same lifetime
         // policy as the author sidecar) and is NOT wiped here.
-        if dropped_snapshot {
+        if dropped_snapshot || dropped_recovery {
             let _ = self.flush();
+            self.persist_e2ee_plaintext_cache_if_ready();
         }
     }
 
@@ -213,6 +220,7 @@ impl LocalStateStore {
         );
         if changed {
             let _ = self.flush();
+            self.persist_e2ee_plaintext_cache_if_ready();
         }
         changed
     }
@@ -258,6 +266,7 @@ impl LocalStateStore {
         }
         if changed {
             let _ = self.flush();
+            self.persist_e2ee_plaintext_cache_if_ready();
         }
         changed
     }
@@ -276,8 +285,15 @@ impl LocalStateStore {
     ) {
         use base64::Engine as _;
         let encoded = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(plaintext);
+        let previous_snapshot = self.mls_snapshot_for(realm_id);
         {
             let mut overlay = self.lock_mls_receive_overlay();
+            if let Some(previous_snapshot) = previous_snapshot {
+                overlay
+                    .recovery_snapshots
+                    .entry(realm_id.to_owned())
+                    .or_insert(previous_snapshot);
+            }
             overlay.snapshots.insert(realm_id.to_owned(), envelope);
             overlay
                 .plaintexts
@@ -290,6 +306,7 @@ impl LocalStateStore {
         // overlay still holds the advancement in memory so the session
         // itself never regresses.
         let _ = self.flush();
+        self.persist_e2ee_plaintext_cache_if_ready();
     }
 
     /// True once a `ak.mls.genesis` event has been submitted for this Realm.
@@ -429,6 +446,7 @@ impl LocalStateStore {
         }
         if changed {
             let _ = self.flush();
+            self.persist_e2ee_plaintext_cache_if_ready();
         }
     }
 
@@ -524,6 +542,7 @@ impl LocalStateStore {
         }
         if changed {
             let _ = self.flush();
+            self.persist_e2ee_plaintext_cache_if_ready();
         }
     }
 

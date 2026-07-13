@@ -61,8 +61,19 @@ pub fn force_epoch_rotation_commit_for_effective_scope(
     let epoch_floor = super::seal_view_epoch_floor(state_store, realm_id);
     let mut group = crate::mls::persistence::restore_envelope(&snapshot, &secret, epoch_floor)
         .map_err(|err| MlsRuntimeError::SnapshotRestore(err.to_string()))?;
+    let proof_request = crate::mls::governance_proof::proof_request(
+        realm_id,
+        circle,
+        group.group_id(),
+        group.epoch(),
+        group.epoch().saturating_add(1),
+    )
+    .map_err(MlsRuntimeError::Commit)?;
+    let governance_binding =
+        crate::mls::governance_proof::cached_verified_binding(state_store, &proof_request)
+            .map_err(MlsRuntimeError::Commit)?;
     let commit_envelope = group
-        .self_update_commit()
+        .update_governance_binding(&governance_binding)
         .map_err(|err| MlsRuntimeError::Commit(err.to_string()))?;
     let post_state = group
         .export_state_record()
@@ -114,8 +125,19 @@ pub fn build_mls_remove_commit_for_effective_scope(
     let epoch_floor = super::seal_view_epoch_floor(state_store, realm_id);
     let mut group = crate::mls::persistence::restore_envelope(&snapshot, &secret, epoch_floor)
         .map_err(|err| MlsRuntimeError::SnapshotRestore(err.to_string()))?;
+    let proof_request = crate::mls::governance_proof::proof_request(
+        realm_id,
+        circle,
+        group.group_id(),
+        group.epoch(),
+        group.epoch().saturating_add(1),
+    )
+    .map_err(MlsRuntimeError::Commit)?;
+    let governance_binding =
+        crate::mls::governance_proof::cached_verified_binding(state_store, &proof_request)
+            .map_err(MlsRuntimeError::Commit)?;
     let remove = group
-        .remove_member_by_principal(&target)
+        .remove_member_by_principal_with_governance_binding(&target, &governance_binding)
         .map_err(|err| MlsRuntimeError::Commit(err.to_string()))?;
     let post_state = group
         .export_state_record()
@@ -186,8 +208,19 @@ pub fn build_add_member_commit_for_effective_scope(
     let epoch_floor = super::seal_view_epoch_floor(state_store, realm_id);
     let mut group = crate::mls::persistence::restore_envelope(&snapshot, &secret, epoch_floor)
         .map_err(|err| MlsRuntimeError::SnapshotRestore(err.to_string()))?;
+    let proof_request = crate::mls::governance_proof::proof_request(
+        realm_id,
+        circle,
+        group.group_id(),
+        group.epoch(),
+        group.epoch().saturating_add(1),
+    )
+    .map_err(MlsRuntimeError::Commit)?;
+    let governance_binding =
+        crate::mls::governance_proof::cached_verified_binding(state_store, &proof_request)
+            .map_err(MlsRuntimeError::Commit)?;
     let add = group
-        .add_member(member_key_package)
+        .add_member_with_governance_binding(member_key_package, &governance_binding)
         .map_err(|err| MlsRuntimeError::Commit(err.to_string()))?;
     let post_state = group
         .export_state_record()
@@ -240,8 +273,19 @@ pub fn build_add_members_commit_for_effective_scope(
     let epoch_floor = super::seal_view_epoch_floor(state_store, realm_id);
     let mut group = crate::mls::persistence::restore_envelope(&snapshot, &secret, epoch_floor)
         .map_err(|err| MlsRuntimeError::SnapshotRestore(err.to_string()))?;
+    let proof_request = crate::mls::governance_proof::proof_request(
+        realm_id,
+        circle,
+        group.group_id(),
+        group.epoch(),
+        group.epoch().saturating_add(1),
+    )
+    .map_err(MlsRuntimeError::Commit)?;
+    let governance_binding =
+        crate::mls::governance_proof::cached_verified_binding(state_store, &proof_request)
+            .map_err(MlsRuntimeError::Commit)?;
     let add = group
-        .add_members(member_key_packages)
+        .add_members_with_governance_binding(member_key_packages, &governance_binding)
         .map_err(|err| MlsRuntimeError::Commit(err.to_string()))?;
     let post_state = group
         .export_state_record()

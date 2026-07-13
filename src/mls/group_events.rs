@@ -14,20 +14,6 @@ use serde_json::{Value, json};
 use crate::operation::{trim_realm_id, uuid_v7};
 use crate::state::{LocalSealView, LocalStateStore};
 
-/// Full-profile binding production is intentionally blocked until sync can
-/// supply an independently verifiable accepted-Seal proof bundle and the SDK
-/// can recompute all filtered governance roots from it. Callers must surface
-/// this as `decryption_pending`/`state_mismatch`; fabricating capability or
-/// discussion roots from `state_root` would violate §2.5.1.
-pub(crate) fn verified_governance_binding_unavailable()
--> Result<arkret_sdk::MlsGovernanceBindingPayload, String> {
-    Err(
-        "full-profile MLS governance binding requires a verified accepted-Seal proof bundle; \
-         operation remains decryption_pending (state_mismatch)"
-            .to_owned(),
-    )
-}
-
 /// Restrict a state/seal ref to the canonical `sha256:` digest grammar used
 /// by this MLS surface (`arkret_sdk::Hash::new` also accepts blake3, which is
 /// not a state/seal ref here). Single source — the secure-send path re-exports
@@ -303,11 +289,15 @@ pub(crate) fn build_creator_mls_genesis_event_for_effective_scope(
     let event_id = format!("ak:event:{}", uuid_v7());
     let event_id_typed = arkret_sdk::EventId::new(event_id.clone())
         .map_err(|err| format!("invalid MLS genesis event id: {err:?}"))?;
-    let typed_realm_id = arkret_sdk::RealmId::new(trim_realm_id(realm_id))
-        .map_err(|err| format!("invalid MLS genesis Realm id: {err:?}"))?;
-    let membership_frontier = mls_membership_frontier_from_seal_view(&seal_view, &event_id_typed);
-    let policy_root = mls_policy_root_from_seal_view(&seal_view, realm_id)?;
-    let governance_binding = verified_governance_binding_unavailable()?;
+    let request = crate::mls::governance_proof::proof_request(
+        realm_id,
+        circle,
+        summary.group_id.clone(),
+        0,
+        0,
+    )?;
+    let governance_binding =
+        crate::mls::governance_proof::cached_verified_binding(state_store, &request)?;
     // Lock the genesis `policy_root` so every later `ak.mls.commit` reuses these
     // exact bytes instead of recomputing from the moving Seal `state_root`
     // (which drifts the moment the creator does any non-policy work before
@@ -316,9 +306,9 @@ pub(crate) fn build_creator_mls_genesis_event_for_effective_scope(
     state_store.record_genesis_policy_root_for_effective_scope(
         realm_id,
         circle,
-        policy_root.as_str(),
+        governance_binding.policy_root().as_str(),
     );
-    let _ = (typed_realm_id, membership_frontier);
+    let _ = seal_view;
     let payload = crate::mls::runtime::build_mls_genesis_payload(
         summary,
         actor_id,
@@ -448,15 +438,36 @@ fn mls_commit_event_from_store_for_effective_scope_with_membership_frontier(
     let event_id = format!("ak:event:{}", uuid_v7());
     let event_id_typed = arkret_sdk::EventId::new(event_id.clone())
         .map_err(|err| format!("invalid MLS commit event id: {err:?}"))?;
-    let typed_realm_id = arkret_sdk::RealmId::new(trim_realm_id(realm_id))
-        .map_err(|err| format!("invalid MLS commit Realm id: {err:?}"))?;
     let base_group_state_ref = mls_base_epoch_ref_for_scope(&seal_view, realm_id, circle);
-    let membership_frontier = explicit_membership_frontier
-        .map(Ok)
-        .unwrap_or_else(|| mls_self_update_membership_frontier(&base_group_state_ref))?;
-    let policy_root = mls_commit_policy_root(state_store, &seal_view, realm_id, circle)?;
-    let _ = (typed_realm_id, membership_frontier, policy_root);
-    let governance_binding = verified_governance_binding_unavailable()?;
+    let explicit_membership_frontier = explicit_membership_frontier.map(|explicit| {
+        explicit
+            .into_iter()
+            .collect::<std::collections::BTreeSet<_>>()
+    });
+    if let Some(requested) = explicit_membership_frontier.as_ref() {
+        if requested.is_empty() {
+            return Err("MLS Remove governance frontier must not be empty".to_owned());
+        }
+    }
+    let request = crate::mls::governance_proof::proof_request(
+        realm_id,
+        circle,
+        commit_envelope.group_id.clone(),
+        prev_epoch,
+        commit_envelope.epoch,
+    )?;
+    let governance_binding =
+        crate::mls::governance_proof::cached_verified_binding(state_store, &request)?;
+    if let Some(requested) = explicit_membership_frontier
+        && requested
+            .iter()
+            .any(|event_id| !governance_binding.membership_frontier().contains(event_id))
+    {
+        return Err(
+            "verified MLS governance binding does not cover the required revocation frontier"
+                .to_owned(),
+        );
+    }
     let payload = arkret_sdk::MlsCommitPayload::new(
         commit_envelope.group_id.clone(),
         prev_epoch,

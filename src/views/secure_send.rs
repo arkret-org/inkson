@@ -25,7 +25,7 @@
 use dioxus::prelude::*;
 use serde_json::json;
 
-use crate::operation::{OperationBuilder, sdk_event_local_operation_id, trim_realm_id, uuid_v7};
+use crate::operation::{OperationBuilder, sdk_event_local_operation_id, uuid_v7};
 use crate::state::{LocalSealView, LocalStateStore, MoveSubmissionState};
 
 /// The structured MLS payload + the canonical AAD it was bound to.
@@ -232,7 +232,7 @@ pub(crate) fn build_secure_send(
     let Some((encrypted_payload, envelope_aad)) = encrypted_message else {
         return Err("Send Secure could not produce an MLS encrypted payload".to_owned());
     };
-    let Some(local_schedule_hash) = local_schedule_hash else {
+    let Some(_local_schedule_hash) = local_schedule_hash else {
         return Err("Send Secure could not derive the MLS key schedule hash".to_owned());
     };
     if local_member_dids.is_empty() {
@@ -250,28 +250,17 @@ pub(crate) fn build_secure_send(
             let commit_event_id = format!("ak:event:{}", uuid_v7());
             let commit_event_id_typed = arkret_sdk::EventId::new(commit_event_id.clone())
                 .map_err(|err| format!("MLS commit event id invalid: {err:?}"))?;
-            let realm_id_typed = arkret_sdk::RealmId::new(trim_realm_id(realm_id))
-                .map_err(|err| format!("MLS commit Realm id invalid: {err:?}"))?;
-            // Reuse the genesis-locked `policy_root` (soland carries it forward
-            // unchanged and rejects a drifted binding with
-            // `governance_binding_mismatch`); only fall back to the Seal-derived
-            // root for groups created before it was tracked. See
-            // `mls_encrypt::kanban_mls_commit_policy_root`.
-            let policy_root = match state_store
-                .read()
-                .genesis_policy_root_for_effective_scope(realm_id, None)
-            {
-                Some(stored) => arkret_sdk::Hash::new(stored)
-                    .map_err(|err| format!("stored MLS genesis policy_root invalid: {err:?}"))?,
-                None => mls_policy_root(seal_view, realm_id, &local_schedule_hash)?,
-            };
-            let _ = (
-                realm_id_typed,
-                policy_root,
-                mls_membership_frontier(&base_group_state_ref)?,
-            );
-            let governance_binding =
-                crate::mls::group_events::verified_governance_binding_unavailable()?;
+            let proof_request = crate::mls::governance_proof::proof_request(
+                realm_id,
+                None,
+                real_commit_envelope.group_id.clone(),
+                prev_epoch,
+                mls_commit_epoch,
+            )?;
+            let governance_binding = crate::mls::governance_proof::cached_verified_binding(
+                &state_store.read(),
+                &proof_request,
+            )?;
             let mls_commit_payload = arkret_sdk::MlsCommitPayload::new(
                 real_commit_envelope.group_id.clone(),
                 prev_epoch,
