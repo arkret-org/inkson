@@ -625,7 +625,7 @@ fn inkson_accepts_v1_sync_buckets_and_subscribe_ndjson_contract() {
             "content": {"global": {"enabled": true}}
         }],
         "device_lists": {"changed": [], "left": []},
-        "notifications": {"rooms": {"ak:realm:joined": {"count": 1}}},
+        "notifications": {"items": []},
         "presence": [{"actor_id": "did:web:alice.example"}]
     }))
     .unwrap();
@@ -634,7 +634,7 @@ fn inkson_accepts_v1_sync_buckets_and_subscribe_ndjson_contract() {
     assert_eq!(sync.left_realms, vec!["ak:realm:left".to_owned()]);
     assert_eq!(sync.to_device.len(), 1);
     assert_eq!(sync.account_data.len(), 1);
-    assert_eq!(sync.notifications["rooms"]["ak:realm:joined"]["count"], 1);
+    assert!(sync.notifications.items.is_empty());
     assert_eq!(sync.presence[0]["actor_id"], "did:web:alice.example");
     assert!(sync.presence[0].get("sender").is_none());
 

@@ -10,8 +10,7 @@ use arkret_sdk::models::{
 use arkret_sdk::{
     AgentKeyApprovalEvidence, AgentKeyApprovalEvidenceKind, AgentKeyAuthorizePayload,
     AgentKeyAuthorizePayloadRuntimeAttestation, AgentKeyPairRequestBody,
-    AgentKeyRuntimeAttestationKind, AgentKeySupersession, AgentPairingBootstrap, Did, Event,
-    EventId, Hash, PublicKey, RealmId,
+    AgentKeySupersession, AgentPairingBootstrap, Did, Event, EventId, Hash, PublicKey, RealmId,
 };
 use chrono::Utc;
 use serde::Deserialize;

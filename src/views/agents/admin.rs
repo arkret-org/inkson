@@ -14,7 +14,7 @@ use arkret_sdk::models::{
 use dioxus::prelude::*;
 use dioxus_primitives::checkbox::CheckboxState;
 use dioxus_router::hooks::{use_navigator, use_route};
-use serde_json::{Value, json};
+use serde_json::Value;
 use yoface::utils::dom::copy_text_to_clipboard;
 
 use super::model::{
@@ -154,7 +154,10 @@ mod directory_refresh_tests {
         let mut rows = vec![AgentView {
             agent: test_agent_projection(AgentStatus::PendingRuntimeKey),
             status: AgentStatus::PendingRuntimeKey,
-            grants: vec![serde_json::from_value(json!({ "grant_id": "ak:grant:test" })).unwrap()],
+            grants: vec![serde_json::from_value(serde_json::json!({
+                "grant_id": "ak:grant:test"
+            }))
+            .unwrap()],
             key_state: None,
         }];
         let directory_rows = vec![AgentView {
@@ -884,8 +887,6 @@ pub fn PersonalAgentAdminPanel(token: Signal<String>) -> Element {
                                                             return;
                                                         }
                                                     };
-                                                    let created_agent_id =
-                                                        outcome.agent_id.to_string();
                                                     let agent_view = AgentView {
                                                         agent: AgentProjection {
                                                             agent_id: outcome.agent_id,
