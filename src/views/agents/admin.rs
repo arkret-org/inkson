@@ -367,7 +367,7 @@ fn spawn_set_agent_enabled(
             Ok(outcome) => {
                 let status = agent_status_from_lifecycle(outcome.status);
                 let status_wire = agent_status_wire(status);
-                agents.with_mut(|rows| update_agent_status(rows, &id_for_status, &status));
+                agents.with_mut(|rows| update_agent_status(rows, &id_for_status, status));
                 last_op_status.set(if enabled {
                     format!("Resumed. Status: {status_wire}.")
                 } else {
@@ -1117,9 +1117,6 @@ pub fn PersonalAgentAdminPanel(token: Signal<String>) -> Element {
                                                                         return;
                                                                     }
                                                                 };
-                                                                let expires_at = outcome
-                                                                    .expires_at
-                                                                    .to_rfc3339_opts(chrono::SecondsFormat::Millis, true);
                                                                 // Patch the row locally so the pairing
                                                                 // card re-renders immediately; the
                                                                 // detail effect refetch reconciles with
@@ -1129,22 +1126,13 @@ pub fn PersonalAgentAdminPanel(token: Signal<String>) -> Element {
                                                                         if agent_id(row) != renewed_agent_id.as_str() {
                                                                             continue;
                                                                         }
-                                                                        row.status = "pending_runtime_key".to_owned();
-                                                                        if let Some(object) = row.agent.as_object_mut() {
-                                                                            object.insert("status".to_owned(), json!("pending_runtime_key"));
-                                                                        }
-                                                                        if let Some(key_state) = row.key_state.as_object_mut() {
-                                                                            key_state.insert("status".to_owned(), json!("pending_runtime_key"));
-                                                                            key_state.insert("pairing_request_id".to_owned(), json!(outcome.pairing_request_id.clone()));
-                                                                            key_state.insert("pairing_code".to_owned(), json!(outcome.pairing_code.clone()));
-                                                                            key_state.insert("pairing_expires_at".to_owned(), json!(expires_at.clone()));
-                                                                        } else {
-                                                                            row.key_state = json!({
-                                                                                "status": "pending_runtime_key",
-                                                                                "pairing_request_id": outcome.pairing_request_id.clone(),
-                                                                                "pairing_code": outcome.pairing_code.clone(),
-                                                                                "pairing_expires_at": expires_at.clone(),
-                                                                            });
+                                                                        row.status = AgentStatus::PendingRuntimeKey;
+                                                                        row.agent.status = AgentStatus::PendingRuntimeKey;
+                                                                        if let Some(key_state) = row.key_state.as_mut() {
+                                                                            key_state.status = AgentStatus::PendingRuntimeKey;
+                                                                            key_state.pairing_request_id = Some(outcome.pairing_request_id.clone());
+                                                                            key_state.pairing_code = outcome.pairing_code.clone();
+                                                                            key_state.pairing_expires_at = Some(outcome.expires_at);
                                                                         }
                                                                     }
                                                                 });
@@ -1320,9 +1308,6 @@ pub fn PersonalAgentAdminPanel(token: Signal<String>) -> Element {
                                                                 return;
                                                             }
                                                         };
-                                                        let expires_at = outcome
-                                                            .expires_at
-                                                            .to_rfc3339_opts(chrono::SecondsFormat::Millis, true);
                                                         // Patch pairing fields only; the agent
                                                         // status is intentionally untouched
                                                         // (replacement is not a state
@@ -1332,16 +1317,10 @@ pub fn PersonalAgentAdminPanel(token: Signal<String>) -> Element {
                                                                 if agent_id(row) != replaced_agent_id.as_str() {
                                                                     continue;
                                                                 }
-                                                                if let Some(key_state) = row.key_state.as_object_mut() {
-                                                                    key_state.insert("pairing_request_id".to_owned(), json!(outcome.pairing_request_id.clone()));
-                                                                    key_state.insert("pairing_code".to_owned(), json!(outcome.pairing_code.clone()));
-                                                                    key_state.insert("pairing_expires_at".to_owned(), json!(expires_at.clone()));
-                                                                } else {
-                                                                    row.key_state = json!({
-                                                                        "pairing_request_id": outcome.pairing_request_id.clone(),
-                                                                        "pairing_code": outcome.pairing_code.clone(),
-                                                                        "pairing_expires_at": expires_at.clone(),
-                                                                    });
+                                                                if let Some(key_state) = row.key_state.as_mut() {
+                                                                    key_state.pairing_request_id = Some(outcome.pairing_request_id.clone());
+                                                                    key_state.pairing_code = outcome.pairing_code.clone();
+                                                                    key_state.pairing_expires_at = Some(outcome.expires_at);
                                                                 }
                                                             }
                                                         });
@@ -1430,9 +1409,9 @@ pub fn PersonalAgentAdminPanel(token: Signal<String>) -> Element {
                                                         .await
                                                         {
                                                             Ok(r) => {
-                                                                let status = r.status.as_wire_str().to_owned();
+                                                                let status = agent_status_from_lifecycle(r.status);
                                                                 agents.with_mut(|rows| {
-                                                                    update_agent_status(rows, &id_for_status, &status)
+                                                                    update_agent_status(rows, &id_for_status, status)
                                                                 });
                                                                 last_op_status.set("Agent deactivated permanently.".to_owned());
                                                                 deactivate_dialog_open.set(false);
