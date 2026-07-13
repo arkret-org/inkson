@@ -1333,13 +1333,12 @@ pub(super) fn connect(base: String, actor: String, device: String, ctx: ConnectC
                                 })
                                 .cloned()
                                 .collect::<Vec<_>>();
-                            let mut notification_projection = if account_notification_projection
-                                .is_empty()
-                            {
-                                store.notification_projection()
-                            } else {
-                                account_notification_projection
-                            };
+                            let mut notification_projection =
+                                if account_notification_projection.is_empty() {
+                                    store.notification_projection()
+                                } else {
+                                    account_notification_projection
+                                };
                             notification_projection.retain(|value| {
                                 value.get("type").and_then(serde_json::Value::as_str)
                                     != Some("agent")

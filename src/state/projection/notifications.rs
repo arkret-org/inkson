@@ -32,9 +32,7 @@ pub(crate) fn raw_notifications_from_sources(
     items
 }
 
-pub(crate) fn notification_items_from_value(
-    value: &NotificationContainer,
-) -> Vec<Value> {
+pub(crate) fn notification_items_from_value(value: &NotificationContainer) -> Vec<Value> {
     value
         .items
         .iter()

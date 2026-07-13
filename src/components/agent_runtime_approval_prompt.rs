@@ -127,7 +127,13 @@ pub fn AgentRuntimeApprovalPrompt(token: Signal<String>, account_did: Signal<Str
                     Ok(false) => {}
                 }
                 let handled_keys = handled.read().clone();
-                let failed = match fetch_pending_agent_runtime_approval(&base, api_token, handled_keys).await {
+                let failed = match fetch_pending_agent_runtime_approval(
+                    &base,
+                    api_token,
+                    handled_keys,
+                )
+                .await
+                {
                     Ok(Some(request)) => {
                         status.set(String::new());
                         pending.set(Some(request));
