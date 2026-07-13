@@ -641,6 +641,12 @@ pub(crate) async fn bootstrap_mls_welcome_for_realm(
     // and showed empty/locked encrypted Realms.
     let messages_value =
         serde_json::to_value(&messages).map_err(|error| format!("device messages: {error}"))?;
+    let api = crate::transport::auth::authed_api(&base_url, session_credential.clone())
+        .map_err(|error| format!("MLS governance proof client: {error}"))?;
+    for request in crate::mls::governance_proof::welcome_proof_requests(&messages_value)? {
+        crate::mls::governance_proof::fetch_verify_and_cache_proof(&api, state_store, &request)
+            .await?;
+    }
     let secure_store = crate::secure_key_store::default_secure_key_store("inkson");
     let welcome_outcome = {
         let mut store = state_store.write();

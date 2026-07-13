@@ -42,6 +42,7 @@ fn build_mls_genesis_payload_has_required_fields() {
     let device = "ak:device:01904100-0000-7000-8000-000000000001";
     let realm = "ak:realm:01904100-0000-7000-8000-000000000001";
 
+    super::seed_genesis_governance_proof(&mut state, realm);
     let summary = ensure_creator_mls_snapshot(&mut state, &secure, realm, actor, device)
         .unwrap()
         .expect("creator snapshot should be created");
@@ -103,6 +104,7 @@ fn existing_epoch_zero_snapshot_restores_genesis_summary() {
     let device = "ak:device:01904100-0000-7000-8000-000000000001";
     let realm = "ak:realm:01904100-0000-7000-8000-000000000001";
 
+    super::seed_genesis_governance_proof(&mut state, realm);
     let fresh = ensure_creator_mls_snapshot(&mut state, &secure, realm, actor, device)
         .unwrap()
         .expect("creator snapshot should be created");

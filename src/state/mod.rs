@@ -63,6 +63,8 @@ pub use seal_view::*;
 
 mod mls_sidecar;
 
+mod mls_governance;
+
 mod e2ee_secure_cache;
 
 mod move_tracking;

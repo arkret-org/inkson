@@ -568,6 +568,20 @@ pub struct SnapshotSyncStatus {
     pub degraded_reason: Option<String>,
 }
 
+/// A full-profile MLS governance proof that was cryptographically verified
+/// before it entered local state. The original bundle is retained as JSON so
+/// a Welcome receiver can re-run verification without trusting a derived root
+/// cache, while the typed binding and Seal ids keep lookup/invalidation exact.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CachedMlsGovernanceProof {
+    pub request: arkret_sdk::MlsGovernanceProofRequest,
+    pub governance_binding: arkret_sdk::MlsGovernanceBindingPayload,
+    pub trust_anchor_seal_id: arkret_sdk::SealId,
+    pub accepted_seal_id: arkret_sdk::SealId,
+    pub bundle: Value,
+    pub verified_at: DateTime<Utc>,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ClientLocalState {
     pub sync_cursor: Option<String>,
@@ -738,6 +752,15 @@ pub struct ClientLocalState {
     /// commit instead of recomputing from a moving root.
     #[serde(default)]
     pub mls_genesis_policy_root: BTreeMap<String, String>,
+    /// Bounded cache of complete, locally verified MLS governance proof
+    /// bundles. Keys are canonical request digests; values expire quickly and
+    /// are invalidated when sync observes a different accepted Seal head.
+    #[serde(default)]
+    pub mls_governance_proofs: BTreeMap<String, CachedMlsGovernanceProof>,
+    /// First-use pins for Realm governance proof chains. A different anchor is
+    /// never accepted implicitly; explicit recovery/re-pin UI is required.
+    #[serde(default)]
+    pub mls_governance_trust_anchors: BTreeMap<String, arkret_sdk::SealId>,
     /// X5.1 — local-only plaintext sidecar for the author's own encrypted
     /// private strand fields. Keyed `realm_id -> strand_id -> field_path ->
     /// plaintext` where `field_path` is the dotted private patch path
@@ -1104,6 +1127,8 @@ impl Default for ClientLocalState {
             mls_receive_recovery_snapshots: BTreeMap::new(),
             mls_genesis_emitted: BTreeSet::new(),
             mls_genesis_policy_root: BTreeMap::new(),
+            mls_governance_proofs: BTreeMap::new(),
+            mls_governance_trust_anchors: BTreeMap::new(),
             mls_private_plaintext: BTreeMap::new(),
             mls_decrypted_plaintext: BTreeMap::new(),
             history_secrets: BTreeMap::new(),

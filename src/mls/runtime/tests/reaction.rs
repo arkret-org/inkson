@@ -72,6 +72,7 @@ fn minimal_metadata_reaction_forces_commit_when_epoch_overdue() {
     );
     assert!(state.realm_projection_is_minimal_metadata(realm));
 
+    super::seed_genesis_governance_proof(&mut state, realm);
     ensure_creator_mls_snapshot(&mut state, &secure, realm, actor, device).unwrap();
     let base_epoch = state.mls_snapshot_for(realm).unwrap().epoch;
 
@@ -79,6 +80,7 @@ fn minimal_metadata_reaction_forces_commit_when_epoch_overdue() {
     let mut overdue = state.mls_snapshot_for(realm).unwrap();
     overdue.epoch_started_at = chrono::Utc::now() - chrono::Duration::hours(2);
     state.save_mls_snapshot(realm, overdue);
+    super::seed_next_governance_proof(&mut state, realm);
 
     let sealed =
         encrypt_reaction_with_device_snapshot(&mut state, &secure, realm, actor, device, "👍")
@@ -105,6 +107,7 @@ fn non_minimal_reaction_never_forces_commit_and_persists_in_place() {
     let device = "ak:device:01904100-0000-7000-8000-000000000001";
     let realm = "ak:realm:01904100-0000-7000-8000-000000000003";
 
+    super::seed_genesis_governance_proof(&mut state, realm);
     ensure_creator_mls_snapshot(&mut state, &secure, realm, actor, device).unwrap();
     let base_epoch = state.mls_snapshot_for(realm).unwrap().epoch;
     let mut overdue = state.mls_snapshot_for(realm).unwrap();

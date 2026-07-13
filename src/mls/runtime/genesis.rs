@@ -75,8 +75,14 @@ pub fn ensure_creator_mls_snapshot_for_effective_scope(
     let identity = arkret_sdk::ArkretMlsIdentity::new_basic(principal_did, device_id_typed)
         .map_err(|err| MlsRuntimeError::Identity(format!("{err:?}")))?;
     let group_seed = circle.unwrap_or(realm);
+    let group_id = arkret_sdk::base64url_encode(group_seed.as_bytes());
+    let proof_request = crate::mls::governance_proof::proof_request(realm, circle, group_id, 0, 0)
+        .map_err(MlsRuntimeError::Genesis)?;
+    let governance_binding =
+        crate::mls::governance_proof::cached_verified_binding(state_store, &proof_request)
+            .map_err(MlsRuntimeError::Genesis)?;
     let group = identity
-        .create_group(group_seed.as_bytes())
+        .create_group_with_governance_binding(group_seed.as_bytes(), &governance_binding)
         .map_err(|err| MlsRuntimeError::Genesis(format!("create group: {err}")))?;
     let ratchet_tree = group
         .ratchet_tree()
