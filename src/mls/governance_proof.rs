@@ -139,7 +139,7 @@ pub(crate) async fn fetch_verify_and_cache_proof(
     );
     let http = reqwest::Client::new();
     let mut resolver = StaticProofDidResolver::default();
-    for did in proof_signer_dids(&bundle)? {
+    for did in authority_proof_signer_dids(&bundle)? {
         if !authority.ensure_actor_document(&http, &did).await {
             return Err(format!(
                 "authority DID resolution failed for MLS governance proof signer {did}"
@@ -149,6 +149,22 @@ pub(crate) async fn fetch_verify_and_cache_proof(
             format!("authority DID document unavailable for MLS governance proof signer {did}")
         })?;
         resolver.documents.insert(did.as_str().to_owned(), document);
+    }
+    for (actor, device) in event_device_proof_pairs(&bundle)? {
+        let key = crate::identity::device_directory::resolve_device_signing_key(
+            api, &authority, &actor, &device,
+        )
+        .await
+        .map_err(|error| {
+            format!(
+                "resolve MLS governance frontier Event device key for {actor}#{device}: {error}"
+            )
+        })?;
+        if key.is_none() {
+            return Err(format!(
+                "authoritative device key unavailable for MLS governance frontier Event signer {actor}#{device}"
+            ));
+        }
     }
     verify_proof_bundle(request, &bundle, &trusted_anchor, &resolver)?;
     let mut store = state_store.write();
@@ -188,7 +204,7 @@ fn bundle_intersects_local_seal_view(
     })
 }
 
-pub(crate) fn proof_signer_dids(
+pub(crate) fn authority_proof_signer_dids(
     bundle: &arkret_sdk::MlsGovernanceProofBundle,
 ) -> Result<BTreeSet<arkret_sdk::Did>, String> {
     let mut signers = BTreeSet::new();
@@ -219,13 +235,59 @@ pub(crate) fn proof_signer_dids(
     }
     for event in &bundle.frontier_events {
         for proof in &event.proofs {
-            signers.insert(
-                verification_method_did(&proof.verification_method)
-                    .map_err(|error| format!("invalid Event verification method: {error}"))?,
-            );
+            if event_device_proof_pair(event, proof)?.is_none() {
+                signers.insert(
+                    verification_method_did(&proof.verification_method)
+                        .map_err(|error| format!("invalid Event verification method: {error}"))?,
+                );
+            }
         }
     }
     Ok(signers)
+}
+
+fn event_device_proof_pairs(
+    bundle: &arkret_sdk::MlsGovernanceProofBundle,
+) -> Result<BTreeSet<(String, String)>, String> {
+    let mut pairs = BTreeSet::new();
+    for event in &bundle.frontier_events {
+        for proof in &event.proofs {
+            if let Some(pair) = event_device_proof_pair(event, proof)? {
+                pairs.insert(pair);
+            }
+        }
+    }
+    Ok(pairs)
+}
+
+fn event_device_proof_pair(
+    event: &arkret_sdk::Event,
+    proof: &arkret_sdk::Proof,
+) -> Result<Option<(String, String)>, String> {
+    if event.executed_by.is_some() {
+        return Ok(None);
+    }
+    let signer = verification_method_did(&proof.verification_method)
+        .map_err(|error| format!("invalid Event verification method: {error}"))?;
+    if signer != event.actor_id {
+        return Err(format!(
+            "MLS governance frontier Event signer {signer} does not match actor {}",
+            event.actor_id
+        ));
+    }
+    let Some(fragment) = proof
+        .verification_method
+        .split_once('#')
+        .map(|(_, fragment)| fragment)
+        .map(|fragment| fragment.split_once('?').map_or(fragment, |(head, _)| head))
+        .filter(|fragment| !fragment.is_empty())
+    else {
+        return Ok(None);
+    };
+    if arkret_sdk::DeviceId::new(fragment.to_owned()).is_err() {
+        return Ok(None);
+    }
+    Ok(Some((signer.as_str().to_owned(), fragment.to_owned())))
 }
 
 pub(crate) fn verify_proof_bundle<R>(
@@ -251,12 +313,56 @@ where
                 ));
             }
             for proof in &event.proofs {
-                let verified =
-                    arkret_sdk::verify_event_proof_with_did_resolver(event, proof, resolver)?;
-                if !verified.valid {
-                    return Err(arkret_sdk::Error::Protocol(
-                        "MLS governance frontier Event proof is invalid".to_owned(),
-                    ));
+                if let Some((actor, device)) = event_device_proof_pair(event, proof)
+                    .map_err(arkret_sdk::Error::Protocol)?
+                {
+                    let key = match crate::identity::device_directory::cached_device_signing_key(
+                        &actor, &device,
+                    ) {
+                        crate::identity::device_directory::CacheLookup::Hit(key) => key,
+                        crate::identity::device_directory::CacheLookup::NegativeHit => {
+                            return Err(arkret_sdk::Error::Protocol(format!(
+                                "MLS governance frontier Event device key is revoked or unavailable for {actor}#{device}"
+                            )));
+                        }
+                        crate::identity::device_directory::CacheLookup::Miss => {
+                            return Err(arkret_sdk::Error::Protocol(format!(
+                                "MLS governance frontier Event device key was not prefetched for {actor}#{device}"
+                            )));
+                        }
+                    };
+                    let mut envelope = serde_json::to_value(event).map_err(|error| {
+                        arkret_sdk::Error::Protocol(format!(
+                            "serialize MLS governance frontier Event: {error}"
+                        ))
+                    })?;
+                    if let Some(object) = envelope.as_object_mut() {
+                        object.remove("proofs");
+                        object.remove("unsigned");
+                    }
+                    let proof_value = serde_json::to_value(proof).map_err(|error| {
+                        arkret_sdk::Error::Protocol(format!(
+                            "serialize MLS governance frontier Event proof: {error}"
+                        ))
+                    })?;
+                    if !crate::identity::device_directory::verify_proof_value(
+                        &envelope,
+                        &proof_value,
+                        &actor,
+                        &key,
+                    ) {
+                        return Err(arkret_sdk::Error::Protocol(
+                            "MLS governance frontier Event device proof is invalid".to_owned(),
+                        ));
+                    }
+                } else {
+                    let verified =
+                        arkret_sdk::verify_event_proof_with_did_resolver(event, proof, resolver)?;
+                    if !verified.valid {
+                        return Err(arkret_sdk::Error::Protocol(
+                            "MLS governance frontier Event proof is invalid".to_owned(),
+                        ));
+                    }
                 }
             }
             Ok(())
@@ -388,6 +494,78 @@ fn verify_request_binding(
         return Err("MLS governance proof binding differs from the exact request".to_owned());
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn frontier_event(actor: &str) -> arkret_sdk::Event {
+        arkret_sdk::Event::new(
+            "ak.member.state",
+            arkret_sdk::RealmId::new("ak:realm:01904100-0000-7000-8000-000000000001".to_owned())
+                .unwrap(),
+            arkret_sdk::Did::new(actor.to_owned()).unwrap(),
+            1,
+            arkret_sdk::Hlc::new("01970e589d21-0001-a13f9c2e".to_owned()).unwrap(),
+            serde_json::json!({}),
+        )
+        .unwrap()
+    }
+
+    fn proof(verification_method: &str) -> arkret_sdk::Proof {
+        arkret_sdk::Proof {
+            kind: "detached_jws".to_owned(),
+            alg: "EdDSA".to_owned(),
+            verification_method: verification_method.to_owned(),
+            event_digest: arkret_sdk::Hash::new(
+                "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+                    .to_owned(),
+            )
+            .unwrap(),
+            created_at: chrono::Utc::now(),
+            domain: None,
+            audience: None,
+            jws: "test".to_owned(),
+        }
+    }
+
+    #[test]
+    fn frontier_device_proof_uses_device_directory_pair() {
+        let actor = "did:webvh:zfixture:alice.example";
+        let device = "ak:device:01904100-0000-7000-8000-0000000000a1";
+        let event = frontier_event(actor);
+
+        assert_eq!(
+            event_device_proof_pair(&event, &proof(&format!("{actor}#{device}"))).unwrap(),
+            Some((actor.to_owned(), device.to_owned()))
+        );
+    }
+
+    #[test]
+    fn frontier_root_key_proof_stays_on_did_authority_path() {
+        let actor = "did:webvh:zfixture:alice.example";
+        let event = frontier_event(actor);
+
+        assert_eq!(
+            event_device_proof_pair(&event, &proof(&format!("{actor}#root-key"))).unwrap(),
+            None
+        );
+    }
+
+    #[test]
+    fn frontier_device_proof_rejects_controller_mismatch() {
+        let event = frontier_event("did:webvh:zfixture:alice.example");
+        let error = event_device_proof_pair(
+            &event,
+            &proof(
+                "did:webvh:zfixture:mallory.example#ak:device:01904100-0000-7000-8000-0000000000a1",
+            ),
+        )
+        .expect_err("controller mismatch must fail");
+
+        assert!(error.contains("does not match actor"), "{error}");
+    }
 }
 
 fn target_notary_value(

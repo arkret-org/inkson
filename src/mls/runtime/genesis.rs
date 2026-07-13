@@ -162,12 +162,28 @@ pub fn initial_mls_snapshot_summary_from_existing_for_effective_scope(
     // a Seal-view floor would be meaningless; floor 0 is intentional.
     let group = crate::mls::persistence::restore_envelope(&snapshot, &secret, 0)
         .map_err(|err| MlsRuntimeError::Genesis(format!("restore epoch-0 snapshot: {err}")))?;
+    let group_id = group.group_id();
+    let proof_request =
+        crate::mls::governance_proof::proof_request(realm, circle, group_id.clone(), 0, 0)
+            .map_err(MlsRuntimeError::Genesis)?;
+    let expected_binding =
+        crate::mls::governance_proof::cached_verified_binding(state_store, &proof_request)
+            .map_err(MlsRuntimeError::Genesis)?;
+    let current_binding = group.current_governance_binding().map_err(|err| {
+        MlsRuntimeError::Genesis(format!("read epoch-0 governance binding: {err}"))
+    })?;
+    if current_binding.as_ref() != Some(&expected_binding) {
+        return Err(MlsRuntimeError::Genesis(
+            "epoch-0 snapshot governance binding differs from the verified Genesis Seal proof; recreate local MLS state"
+                .to_owned(),
+        ));
+    }
     let ratchet_tree = group
         .ratchet_tree()
         .map_err(|err| MlsRuntimeError::Genesis(format!("export ratchet tree: {err}")))?;
     Ok(Some(InitialMlsSnapshotSummary {
         realm_id: realm.to_owned(),
-        group_id: group.group_id(),
+        group_id,
         epoch: group.epoch(),
         ratchet_tree,
         schedule_hash: group.schedule_hash().to_string(),

@@ -643,7 +643,24 @@ pub(crate) async fn bootstrap_mls_welcome_for_realm(
         serde_json::to_value(&messages).map_err(|error| format!("device messages: {error}"))?;
     let api = crate::transport::auth::authed_api(&base_url, session_credential.clone())
         .map_err(|error| format!("MLS governance proof client: {error}"))?;
-    for request in crate::mls::governance_proof::welcome_proof_requests(&messages_value)? {
+    let proof_requests = crate::mls::governance_proof::welcome_proof_requests(&messages_value)?;
+    if !proof_requests.is_empty() {
+        let seal_view = api
+            .event_submitter()
+            .map_err(|error| format!("MLS governance proof frontier client: {error}"))?
+            .events_frontier_realm_seal_view(&realm_id)
+            .await
+            .map_err(|error| format!("refresh accepted Seal view before Welcome proof: {error}"))?;
+        state_store.write().set_realm_seal_view(
+            realm_id.clone(),
+            crate::state::LocalSealView {
+                frontier: vec![seal_view.seal_id.to_string()],
+                state_root: Some(seal_view.state_root.to_string()),
+                ..Default::default()
+            },
+        );
+    }
+    for request in proof_requests {
         crate::mls::governance_proof::fetch_verify_and_cache_proof(&api, state_store, &request)
             .await?;
     }
