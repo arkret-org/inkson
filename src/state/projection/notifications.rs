@@ -21,15 +21,14 @@ pub(crate) fn raw_notifications_from_sources(
     notification_response: Option<&NotificationContainer>,
     account_data: &[Value],
 ) -> Vec<Value> {
-    let mut items = account_data
-        .iter()
-        .filter(|value| is_notification_account_data(value))
-        .cloned()
-        .collect::<Vec<_>>();
-    if let Some(notification_response) = notification_response {
-        items.extend(notification_items_from_value(notification_response));
+    match notification_response {
+        Some(notification_response) => notification_items_from_value(notification_response),
+        None => account_data
+            .iter()
+            .filter(|value| is_notification_account_data(value))
+            .cloned()
+            .collect(),
     }
-    items
 }
 
 pub(crate) fn notification_items_from_value(value: &NotificationContainer) -> Vec<Value> {

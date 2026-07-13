@@ -9,15 +9,11 @@ async fn publish_mls_key_package_fails_closed_without_active_signer() {
     let record = arkret_sdk::MlsKeyPackageRecord {
         keypackage_id: "ak:mls:kp:01904100-0000-7000-8000-000000000001".to_owned(),
         principal_id: arkret_sdk::Did::new("did:web:alice.example").unwrap(),
-        device_id: arkret_sdk::DeviceId::new(
-            "ak:device:01904100-0000-7000-8000-000000000001",
-        )
-        .unwrap(),
+        device_id: arkret_sdk::DeviceId::new("ak:device:01904100-0000-7000-8000-000000000001")
+            .unwrap(),
         key_package: "AAAA".to_owned(),
         keypackage_ref: arkret_sdk::Hash::new(format!("sha256:{}", "1".repeat(64))).unwrap(),
-        cipher_suites: vec![
-            "MLS_128_DHKEMX25519_AES128GCM_SHA256_Ed25519".to_owned(),
-        ],
+        cipher_suites: vec!["MLS_128_DHKEMX25519_AES128GCM_SHA256_Ed25519".to_owned()],
         capabilities: Vec::new(),
         state: arkret_sdk::MlsKeyPackageState::Published,
         claim_id: None,
