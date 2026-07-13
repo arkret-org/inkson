@@ -41,6 +41,11 @@ pub(super) fn SecureStoreEffects(state: SecureStoreEffectState) -> Element {
             tracing::debug!(target: "secure_store", "initializing IndexedDB secure store");
             match crate::secure_key_store::initialize_wasm_secure_key_store_async("inkson").await {
                 Ok(Some(secure_store)) => {
+                    #[cfg(feature = "wasm-localstorage-secrets-test")]
+                    apply_test_session_grant_expiry_override(
+                        &mut state_store_for_secure_upgrade,
+                        secure_store.as_ref(),
+                    );
                     tracing::debug!(target: "secure_store", "secure store upgrade: Ok(Some) — IndexedDb tier installed");
                     let loaded_config = config_store_for_secure_upgrade
                         .read()
@@ -237,4 +242,75 @@ pub(super) fn SecureStoreEffects(state: SecureStoreEffectState) -> Element {
         });
     }
     rsx! {}
+}
+
+#[cfg(all(target_arch = "wasm32", feature = "wasm-localstorage-secrets-test"))]
+const TEST_SESSION_GRANT_EXPIRY_OVERRIDE_KEY: &str = "inkson.test.session_grant_expiry_override.v1";
+
+#[cfg(all(target_arch = "wasm32", feature = "wasm-localstorage-secrets-test"))]
+fn apply_test_session_grant_expiry_override(
+    state_store: &mut SyncSignal<LocalStateStore>,
+    secure_store: &dyn crate::secure_key_store::SecureKeyStore,
+) {
+    let Some(window) = web_sys::window() else {
+        return;
+    };
+    let Some(storage) = window.local_storage().ok().flatten() else {
+        return;
+    };
+    let Some(raw) = storage
+        .get_item(TEST_SESSION_GRANT_EXPIRY_OVERRIDE_KEY)
+        .ok()
+        .flatten()
+    else {
+        return;
+    };
+    let _ = storage.remove_item(TEST_SESSION_GRANT_EXPIRY_OVERRIDE_KEY);
+
+    let parsed: serde_json::Value = match serde_json::from_str(&raw) {
+        Ok(parsed) => parsed,
+        Err(error) => {
+            tracing::warn!(?error, "invalid test session-grant expiry override");
+            return;
+        }
+    };
+    let expected_grant_jwt = parsed
+        .get("expected_grant_jwt")
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or_default();
+    let seconds_from_now = parsed
+        .get("seconds_from_now")
+        .and_then(serde_json::Value::as_i64)
+        .unwrap_or_default();
+    let result_key = parsed
+        .get("result_key")
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or_default();
+
+    let applied = (|| {
+        if expected_grant_jwt.is_empty() || seconds_from_now <= 0 {
+            return false;
+        }
+        let Ok(Some(mut grant)) = crate::state::load_session_grant_from_secure_store(secure_store)
+        else {
+            return false;
+        };
+        if grant.grant_jwt != expected_grant_jwt {
+            return false;
+        }
+        let now = chrono::Utc::now();
+        grant.grant_expires_at = Some(now + chrono::Duration::seconds(seconds_from_now));
+        grant.stored_at = now;
+        if crate::state::store_session_grant_in_secure_store(secure_store, &grant).is_err() {
+            return false;
+        }
+        state_store.write().set_session_grant(Some(grant));
+        true
+    })();
+
+    if !result_key.is_empty()
+        && let Ok(Some(session_storage)) = window.session_storage()
+    {
+        let _ = session_storage.set_item(result_key, if applied { "1" } else { "0" });
+    }
 }
