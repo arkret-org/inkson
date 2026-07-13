@@ -6,21 +6,28 @@
 
 #[tokio::test]
 async fn publish_mls_key_package_fails_closed_without_active_signer() {
-    // Build a syntactically-valid MlsKeyPackageRecord via JSON so
-    // we don't need to import every field type. The prod path
-    // bails before reading any field, but we still want the
-    // argument well-formed so a future refactor that touches the
-    // record before bailing surfaces here.
-    let record: arkret_sdk::MlsKeyPackageRecord = serde_json::from_value(serde_json::json!({
-        "keypackage_id": "ak:mls:kp:01904100-0000-7000-8000-000000000001",
-        "principal_id": "did:web:alice.example",
-        "device_id": "ak:device:01904100-0000-7000-8000-000000000001",
-        "key_package": "AAAA",
-        "keypackage_ref": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
-        "cipher_suites": ["MLS_128_DHKEMX25519_AES128GCM_SHA256_Ed25519"],
-        "created_at": "2026-01-01T00:00:00Z",
-    }))
-    .expect("MlsKeyPackageRecord fixture must deserialize");
+    let record = arkret_sdk::MlsKeyPackageRecord {
+        keypackage_id: "ak:mls:kp:01904100-0000-7000-8000-000000000001".to_owned(),
+        principal_id: arkret_sdk::Did::new("did:web:alice.example").unwrap(),
+        device_id: arkret_sdk::DeviceId::new(
+            "ak:device:01904100-0000-7000-8000-000000000001",
+        )
+        .unwrap(),
+        key_package: "AAAA".to_owned(),
+        keypackage_ref: arkret_sdk::Hash::new(format!("sha256:{}", "1".repeat(64))).unwrap(),
+        cipher_suites: vec![
+            "MLS_128_DHKEMX25519_AES128GCM_SHA256_Ed25519".to_owned(),
+        ],
+        capabilities: Vec::new(),
+        state: arkret_sdk::MlsKeyPackageState::Published,
+        claim_id: None,
+        created_at: chrono::DateTime::parse_from_rfc3339("2026-01-01T00:00:00Z")
+            .unwrap()
+            .with_timezone(&chrono::Utc),
+        expires_at: None,
+        device_signature: None,
+        last_resort: false,
+    };
 
     let transport = crate::transport::TransportClient::new(
         "http://127.0.0.1:8787",

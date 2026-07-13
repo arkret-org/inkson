@@ -421,6 +421,11 @@ mod personal_agent_tests {
         let verification_method = "did:web:agents.example:summary#runtime-key-1";
         let scope = requested_scope_for_presets(&[], &AgentServiceScopePreset::DEFAULTS).unwrap();
         let key_state = serde_json::json!({
+            "agent_id": agent,
+            "controller_id": controller,
+            "principal_control_realm_id": "ak:realm:01964137-0000-7000-8000-000000000005",
+            "controller_authorization_ref": "ak:event:01964137-0000-7000-8000-000000000006",
+            "status": "pending_runtime_key",
             "pairing_request_id": "agent_pairing_request:01999999-0000-7000-8000-00000000feed",
             "pairing_code": "12345678",
             "pairing_expires_at": "2026-07-06T00:15:00.000Z",

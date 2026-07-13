@@ -9,8 +9,9 @@ use arkret_sdk::models::{
 };
 use arkret_sdk::{
     AgentKeyApprovalEvidence, AgentKeyApprovalEvidenceKind, AgentKeyAuthorizePayload,
-    AgentKeyAuthorizePayloadRuntimeAttestation, AgentKeyPairRequestBody,
-    AgentKeySupersession, AgentPairingBootstrap, Did, Event, EventId, Hash, PublicKey, RealmId,
+    AgentKeyAuthorizePayloadRuntimeAttestation, AgentKeyPairRequestBody, AgentKeySupersession,
+    AgentPairingBootstrap, Did, Event, EventId, GrantConstraint, GrantConstraintEffect,
+    GrantConstraintSubtype, GrantConstraintType, Hash, PublicKey, RealmId,
 };
 use chrono::Utc;
 use serde::Deserialize;
@@ -270,16 +271,14 @@ pub fn requested_scope_for_presets(
         })
         .collect();
     let constraints = if content_presets.contains(&AgentGrantPreset::ActOnBehalf) {
-        vec![
-            serde_json::from_value(json!({
-                "constraint_type": "claim_based",
-                "effect": "require_review",
-                "subtype": "accountability",
-                "applies_to_actions": ["ak.message.create"],
-                "controller_approval_required": true,
-            }))
-            .expect("the static act-on-behalf constraint must match the SDK wire type"),
-        ]
+        let mut constraint = GrantConstraint::new(
+            GrantConstraintType::ClaimBased,
+            GrantConstraintEffect::RequireReview,
+        );
+        constraint.subtype = Some(GrantConstraintSubtype::Accountability);
+        constraint.applies_to_actions = vec!["ak.message.create".to_owned()];
+        constraint.controller_approval_required = Some(true);
+        vec![constraint]
     } else {
         Vec::new()
     };

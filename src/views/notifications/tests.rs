@@ -455,14 +455,17 @@ mod tests {
         let server_empty = arkret_sdk::NotificationContainer::default();
         assert!(raw_notifications_from_sources(Some(&server_empty), &account_data).is_empty());
 
-        let subscribe_delta: arkret_sdk::NotificationContainer = serde_json::from_value(json!({
-            "items": [{
-                "id": "ak:notification:01964137-0000-7000-8000-000000000004",
-                "type": "agent",
-                "action": "remove"
-            }]
-        }))
-        .unwrap();
+        let subscribe_delta = arkret_sdk::NotificationContainer {
+            items: vec![arkret_sdk::NotificationDelta {
+                id: arkret_sdk::NotificationId::new(
+                    "ak:notification:01964137-0000-7000-8000-000000000004",
+                )
+                .unwrap(),
+                notification_type: arkret_sdk::NotificationType::Agent,
+                action: arkret_sdk::NotificationDeltaAction::Remove,
+                data: None,
+            }],
+        };
         let from_subscribe = raw_notifications_from_sources(Some(&subscribe_delta), &account_data);
         assert_eq!(from_subscribe.len(), 1);
         assert_eq!(

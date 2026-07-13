@@ -19,8 +19,7 @@ use yoface::utils::dom::copy_text_to_clipboard;
 
 use super::model::{
     AgentGrantPreset, AgentServiceScopePreset, agent_state_badge_class, agent_state_label,
-    agent_status_wire,
-    agent_view_from_directory_row, build_agent_pairing_deep_link,
+    agent_status_wire, agent_view_from_directory_row, build_agent_pairing_deep_link,
     build_agent_pairing_handoff_token, is_pairing_request_expired, render_agent_pairing_qr_svg,
     requested_scope_for_presets,
 };
@@ -154,10 +153,13 @@ mod directory_refresh_tests {
         let mut rows = vec![AgentView {
             agent: test_agent_projection(AgentStatus::PendingRuntimeKey),
             status: AgentStatus::PendingRuntimeKey,
-            grants: vec![serde_json::from_value(serde_json::json!({
-                "grant_id": "ak:grant:test"
-            }))
-            .unwrap()],
+            grants: vec![arkret_sdk::GrantSnapshot {
+                grant_id: arkret_sdk::GrantId::new("ak:grant:01964137-0000-7000-8000-000000000010")
+                    .unwrap(),
+                status: None,
+                grant_digest: None,
+                expires_at: None,
+            }],
             key_state: None,
         }];
         let directory_rows = vec![AgentView {
@@ -170,7 +172,10 @@ mod directory_refresh_tests {
         replace_agent_directory(&mut rows, directory_rows);
 
         assert_eq!(rows[0].status, AgentStatus::Active);
-        assert_eq!(rows[0].grants[0].grant_id.as_str(), "ak:grant:test");
+        assert_eq!(
+            rows[0].grants[0].grant_id.as_str(),
+            "ak:grant:01964137-0000-7000-8000-000000000010"
+        );
     }
 
     fn test_agent_projection(status: AgentStatus) -> AgentProjection {
@@ -480,13 +485,7 @@ pub fn PersonalAgentAdminPanel(token: Signal<String>) -> Element {
             if id.is_empty() {
                 return;
             }
-            spawn_load_agent_details(
-                base.clone(),
-                token(),
-                id,
-                agents,
-                last_op_status,
-            );
+            spawn_load_agent_details(base.clone(), token(), id, agents, last_op_status);
         });
     }
 
@@ -541,8 +540,7 @@ pub fn PersonalAgentAdminPanel(token: Signal<String>) -> Element {
     let selected_pairing_expires_at = selected_key_state
         .and_then(|key_state| key_state.pairing_expires_at.as_ref())
         .map(chrono::DateTime::to_rfc3339)
-        .unwrap_or_default()
-        ;
+        .unwrap_or_default();
     let now_rfc3339 = crate::clock::now_rfc3339_secs();
     let selected_pairing_is_expired = selected_status == "pairing_expired"
         || is_pairing_request_expired(&selected_pairing_expires_at, &now_rfc3339);
@@ -566,7 +564,8 @@ pub fn PersonalAgentAdminPanel(token: Signal<String>) -> Element {
         .as_ref()
         .map(|agent| agent_field(agent, "updated_at"))
         .unwrap_or_default();
-    let selected_scope = selected_key_state.and_then(|key_state| key_state.requested_scope.as_ref());
+    let selected_scope =
+        selected_key_state.and_then(|key_state| key_state.requested_scope.as_ref());
     let selected_content_capabilities = AgentGrantPreset::ALL.map(|preset| {
         (
             preset,
