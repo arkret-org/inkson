@@ -11,7 +11,7 @@
 //!
 //! - `CrossSigningPublish` / `SubordinateSignedKey`: spec §5.1 wire envelope.
 //! - `DeviceTrustBinding`: spec §5.2 `ak.device.authorize.cross_signing_binding` field.
-//! - `CrossSigningResetContent`: spec §14.1 reset envelope.
+//! - `CrossSigningResetPayload`: spec §14.1 reset envelope.
 //! - `DeviceManager::record_cross_signing_publish` / `record_cross_signing_reset` /
 //!   `evaluate_trust_chain`: local state machine.
 //!
@@ -173,7 +173,7 @@ impl CrossSigningSetupPlan {
         // The reset write is represented by the prelude; the main setup
         // strand follows immediately after.
         let mut steps = vec![CrossSigningSetupStep::SignSubordinateBindings];
-        // The reset event itself is modeled by SDK CrossSigningResetContent,
+        // The reset event itself is modeled by SDK CrossSigningResetPayload,
         // not as a step here — UI surfaces it separately so the reset proof
         // can be selected (DID control / recovery / quorum / trusted service).
         steps.extend([
