@@ -1,3 +1,5 @@
+use base64::Engine as _;
+use base64::engine::general_purpose::URL_SAFE_NO_PAD as B64;
 use serde_json::Value;
 
 use super::{
@@ -13,6 +15,81 @@ pub fn validate_key_backup_put_request(backup_id: &str, body: &Value) -> Result<
         return Err(format!(
             "backup_id path/body mismatch: path={backup_id} body={body_backup_id}"
         ));
+    }
+    Ok(())
+}
+
+/// Verify that a decrypted v1 keybag is byte-for-byte bound to the public
+/// envelope metadata and to the managed-principal canonical set in HPKE AAD.
+pub fn validate_key_backup_plaintext_binding(
+    body: &Value,
+    plaintext: &Value,
+) -> Result<(), String> {
+    if plaintext.get("schema").and_then(Value::as_str)
+        != Some(crate::key_backup::KEY_BACKUP_PLAINTEXT_SCHEMA)
+    {
+        return Err("key-backup plaintext schema mismatch".to_owned());
+    }
+    for field in ["backup_id", "backup_class", "series_id", "series_seq"] {
+        if body.get(field) != plaintext.get(field) {
+            return Err(format!(
+                "key-backup plaintext {field} does not match its envelope"
+            ));
+        }
+    }
+    let public_items = body
+        .get("contents")
+        .and_then(Value::as_array)
+        .ok_or_else(|| "key-backup envelope contents must be an array".to_owned())?;
+    let plaintext_items = plaintext
+        .get("items")
+        .and_then(Value::as_array)
+        .ok_or_else(|| "key-backup plaintext items must be an array".to_owned())?;
+    if public_items.len() != plaintext_items.len() {
+        return Err("key-backup public/plaintext item counts differ".to_owned());
+    }
+    for (public, secret) in public_items.iter().zip(plaintext_items) {
+        for field in [
+            "item_type",
+            "realm_id",
+            "managed_principal_binding",
+            "mls_group_id",
+            "epoch",
+        ] {
+            if public.get(field) != secret.get(field) {
+                return Err(format!(
+                    "key-backup plaintext item {field} does not match public contents"
+                ));
+            }
+        }
+        let secret_b64u = secret
+            .get("secret_b64u")
+            .and_then(Value::as_str)
+            .ok_or_else(|| "key-backup plaintext secret_b64u is missing".to_owned())?;
+        B64.decode(secret_b64u.as_bytes())
+            .map_err(|error| format!("key-backup plaintext secret_b64u is invalid: {error}"))?;
+    }
+    let canonical_bindings = |items: &[Value]| -> Result<Vec<Value>, String> {
+        items
+            .iter()
+            .filter_map(|item| item.get("managed_principal_binding").cloned())
+            .map(|binding| {
+                let canonical = crate::canonical::canonical_json_bytes(&binding)
+                    .map_err(|error| format!("canonicalize managed principal binding: {error}"))?;
+                Ok((canonical, binding))
+            })
+            .collect::<Result<std::collections::BTreeMap<_, _>, String>>()
+            .map(|bindings| bindings.into_values().collect())
+    };
+    let public_bindings = canonical_bindings(public_items)?;
+    let plaintext_bindings = canonical_bindings(plaintext_items)?;
+    let aad_bindings = body
+        .pointer("/domain_separation/aead_aad/managed_principal_bindings")
+        .and_then(Value::as_array)
+        .cloned()
+        .unwrap_or_default();
+    if public_bindings != plaintext_bindings || public_bindings != aad_bindings {
+        return Err("key-backup public/plaintext/AAD managed binding sets differ".to_owned());
     }
     Ok(())
 }
@@ -317,6 +394,28 @@ fn validate_domain_separation(body: &Value, class: BackupClass) -> Result<(), St
         .unwrap_or_default();
     if aad.get("item_types").and_then(Value::as_array) != Some(&expected_item_types) {
         return Err("domain_separation.aead_aad.item_types mismatch".to_owned());
+    }
+    let expected_managed_bindings = body
+        .get("contents")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(|item| item.get("managed_principal_binding").cloned())
+        .map(|binding| {
+            let canonical = crate::canonical::canonical_json_bytes(&binding)
+                .map_err(|error| format!("canonicalize managed principal binding: {error}"))?;
+            Ok((canonical, binding))
+        })
+        .collect::<Result<std::collections::BTreeMap<_, _>, String>>()?
+        .into_values()
+        .collect::<Vec<_>>();
+    let actual_managed_bindings = aad
+        .get("managed_principal_bindings")
+        .and_then(Value::as_array)
+        .cloned()
+        .unwrap_or_default();
+    if actual_managed_bindings != expected_managed_bindings {
+        return Err("domain_separation.aead_aad.managed_principal_bindings mismatch".to_owned());
     }
     Ok(())
 }

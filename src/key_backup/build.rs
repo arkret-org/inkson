@@ -301,7 +301,80 @@ pub fn build_recovery_public_key_backup_body(
     // currently accepted recovery policy and rejects on mismatch.
     recovery_policy_ref: Option<(&str, u64)>,
 ) -> anyhow::Result<Value> {
-    let content = backup_content_object(item)?;
+    build_recovery_public_key_backup_body_in_series(
+        backup_id,
+        actor_id,
+        device_id,
+        recovery_public_key,
+        recovery_key_ref,
+        class,
+        subdomain,
+        item,
+        plaintext,
+        recovery_policy_ref,
+        None,
+        None,
+    )
+}
+
+/// Variant of [`build_recovery_public_key_backup_body`] that lets a caller
+/// preselect the genesis `series_id`. This is required when the encrypted
+/// plaintext keybag itself commits to the same series identity.
+#[allow(clippy::too_many_arguments)]
+pub fn build_recovery_public_key_backup_body_in_series(
+    backup_id: &str,
+    actor_id: &str,
+    device_id: &str,
+    recovery_public_key: &[u8],
+    recovery_key_ref: &str,
+    class: KeyBackupClass,
+    subdomain: &str,
+    item: &KeyBackupContentItem,
+    plaintext: &[u8],
+    recovery_policy_ref: Option<(&str, u64)>,
+    series_id: Option<&str>,
+    previous_series_tail: Option<&Value>,
+) -> anyhow::Result<Value> {
+    build_recovery_public_key_backup_body_for_items_in_series(
+        backup_id,
+        actor_id,
+        device_id,
+        recovery_public_key,
+        recovery_key_ref,
+        class,
+        subdomain,
+        std::slice::from_ref(item),
+        plaintext,
+        recovery_policy_ref,
+        series_id,
+        previous_series_tail,
+    )
+}
+
+/// Multi-item HPKE envelope variant used by a controller-owned active series
+/// whose tail folds every currently managed Agent PCR binding.
+#[allow(clippy::too_many_arguments)]
+pub fn build_recovery_public_key_backup_body_for_items_in_series(
+    backup_id: &str,
+    actor_id: &str,
+    device_id: &str,
+    recovery_public_key: &[u8],
+    recovery_key_ref: &str,
+    class: KeyBackupClass,
+    subdomain: &str,
+    items: &[KeyBackupContentItem],
+    plaintext: &[u8],
+    recovery_policy_ref: Option<(&str, u64)>,
+    series_id: Option<&str>,
+    previous_series_tail: Option<&Value>,
+) -> anyhow::Result<Value> {
+    if items.is_empty() {
+        anyhow::bail!("recovery_public_key backup requires at least one content item");
+    }
+    let contents = items
+        .iter()
+        .map(backup_content_object)
+        .collect::<anyhow::Result<Vec<_>>>()?;
     let mut body = json!({
         "backup_id": backup_id,
         "actor_id": actor_id,
@@ -318,7 +391,7 @@ pub fn build_recovery_public_key_backup_body(
                 "enc": "",
             }
         },
-        "contents": [content],
+        "contents": contents,
         "ciphertext": "",
         "ciphertext_digest": "",
     });
@@ -336,6 +409,12 @@ pub fn build_recovery_public_key_backup_body(
         );
     }
     attach_key_backup_genesis_series(&mut body);
+    if let Some(series_id) = series_id {
+        body["series_id"] = Value::String(series_id.to_owned());
+    }
+    if previous_series_tail.is_some() {
+        crate::mls::account_recovery::apply_next_series(previous_series_tail, &mut body)?;
+    }
     attach_key_backup_domain_separation(&mut body, class, subdomain);
 
     let aad_aad = body

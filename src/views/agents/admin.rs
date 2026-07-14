@@ -9,7 +9,8 @@ use std::time::Duration;
 
 use arkret_sdk::models::{
     AgentDeactivateRequestBody, AgentKeyScope, AgentLifecycleState, AgentPauseRequestBody,
-    AgentProjection, AgentProvisionRequestBody, AgentResumeRequestBody, AgentStatus, AgentView,
+    AgentPcrRecoveryState, AgentProjection, AgentProvisionRequestBody, AgentResumeRequestBody,
+    AgentStatus, AgentView, KeyState,
 };
 use dioxus::prelude::*;
 use dioxus_primitives::checkbox::CheckboxState;
@@ -25,7 +26,7 @@ use super::model::{
 };
 use crate::components::UiIcon;
 use crate::routes::Route;
-use crate::transport::auth::with_authed_sdk_client;
+use crate::transport::auth::{with_authed_api, with_authed_sdk_client};
 use crate::ui::button::{Button, ButtonSize, ButtonVariant};
 use crate::ui::checkbox::Checkbox;
 use crate::ui::dialog::Dialog;
@@ -113,6 +114,10 @@ fn requested_scope_matches_service_preset(
         .actions()
         .iter()
         .all(|action| scope.actions.iter().any(|candidate| candidate == action))
+}
+
+fn pairing_material_can_be_exposed(pcr_recovery: Option<&AgentPcrRecoveryState>) -> bool {
+    pcr_recovery.is_some_and(AgentPcrRecoveryState::is_ready)
 }
 
 fn upsert_agent_view(rows: &mut Vec<AgentView>, view: AgentView) {
@@ -210,6 +215,14 @@ mod directory_refresh_tests {
             Some(&scope),
             AgentGrantPreset::ActOnBehalf,
         ));
+    }
+
+    #[test]
+    fn pending_agent_pcr_does_not_expose_runtime_pairing_material() {
+        assert!(!pairing_material_can_be_exposed(Some(
+            &AgentPcrRecoveryState::Pending
+        )));
+        assert!(!pairing_material_can_be_exposed(None));
     }
 }
 
@@ -529,6 +542,16 @@ pub fn PersonalAgentAdminPanel(token: Signal<String>) -> Element {
     let selected_key_state = selected_agent
         .as_ref()
         .and_then(|agent| agent.key_state.as_ref());
+    let selected_pcr_recovery_ready = pairing_material_can_be_exposed(
+        selected_key_state.map(|key_state| &key_state.pcr_recovery),
+    );
+    let selected_pcr_bootstrap_target = selected_key_state.map(|key_state: &KeyState| {
+        (
+            key_state.agent_id.clone(),
+            key_state.principal_control_realm_id.clone(),
+            key_state.controller_authorization_ref.clone(),
+        )
+    });
     let selected_pairing_request_id = selected_key_state
         .and_then(|key_state| key_state.pairing_request_id.as_deref())
         .unwrap_or_default()
@@ -885,6 +908,37 @@ pub fn PersonalAgentAdminPanel(token: Signal<String>) -> Element {
                                                             return;
                                                         }
                                                     };
+                                                    let bootstrap_outcome = outcome.clone();
+                                                    if let Err(err) = with_authed_api(
+                                                        &base,
+                                                        api_token.clone(),
+                                                        move |api| async move {
+                                                            super::bootstrap::bootstrap_provisioned_agent(
+                                                                &api,
+                                                                state_store,
+                                                                &bootstrap_outcome.agent_id,
+                                                                &bootstrap_outcome.principal_control_realm_id,
+                                                                &bootstrap_outcome.controller_authorization_ref,
+                                                                None,
+                                                            )
+                                                            .await
+                                                        },
+                                                    )
+                                                    .await
+                                                    {
+                                                        last_op_status.set(format!(
+                                                            "Agent allocated, but PCR recovery setup failed: {}",
+                                                            err.display()
+                                                        ));
+                                                        spawn_refresh_agents(
+                                                            base.clone(),
+                                                            api_token,
+                                                            agents,
+                                                            list_status,
+                                                            agent_list_refresh_epoch,
+                                                        );
+                                                        return;
+                                                    }
                                                     let agent_view = AgentView {
                                                         agent: AgentProjection {
                                                             agent_id: outcome.agent_id,
@@ -910,7 +964,7 @@ pub fn PersonalAgentAdminPanel(token: Signal<String>) -> Element {
                                                     new_agent_avatar_blob_ref.set(String::new());
 
                                                     last_op_status.set(format!(
-                                                        "Created {}. Add it to a Realm to enable data access.",
+                                                        "Created {} with recoverable Agent PCR. Add it to a Realm to enable data access.",
                                                         short_protocol_id(&created_id)
                                                     ));
                                                 });
@@ -982,9 +1036,22 @@ pub fn PersonalAgentAdminPanel(token: Signal<String>) -> Element {
                                 };
                                 let pairing_url_was_copied = copied_pairing_url() == deep_link;
                                 let pairing_qr_svg = render_agent_pairing_qr_svg(&deep_link);
-                                let pairing_badge = if selected_pairing_is_expired { "badge red" } else { "badge amber" };
-                                let pairing_label = if selected_pairing_is_expired { "Expired" } else { "Awaiting runtime" };
+                                let pairing_badge = if !selected_pcr_recovery_ready {
+                                    "badge amber"
+                                } else if selected_pairing_is_expired {
+                                    "badge red"
+                                } else {
+                                    "badge amber"
+                                };
+                                let pairing_label = if !selected_pcr_recovery_ready {
+                                    "Recovery setup"
+                                } else if selected_pairing_is_expired {
+                                    "Expired"
+                                } else {
+                                    "Awaiting runtime"
+                                };
                                 let replacement_agent_slug = selected_slug.clone();
+                                let pcr_bootstrap_target = selected_pcr_bootstrap_target.clone();
                                 rsx! {
                                     div {
                                         class: "agent-admin-section agent-admin-pairing-card",
@@ -993,7 +1060,7 @@ pub fn PersonalAgentAdminPanel(token: Signal<String>) -> Element {
                                             strong { "Connect an agent runtime" }
                                             div { class: "agent-admin-pairing-head-actions",
                                                 span { class: "{pairing_badge}", "{pairing_label}" }
-                                                if !selected_pairing_is_expired {
+                                                if selected_pcr_recovery_ready && !selected_pairing_is_expired {
                                                     Button {
                                                         variant: ButtonVariant::Secondary,
                                                         size: ButtonSize::Sm,
@@ -1035,14 +1102,82 @@ pub fn PersonalAgentAdminPanel(token: Signal<String>) -> Element {
                                                 }
                                             }
                                         }
-                                        if selected_pairing_is_expired {
+                                        if !selected_pcr_recovery_ready {
+                                            div {
+                                                class: "agent-admin-status",
+                                                "data-testid": "agent-admin-pcr-recovery-pending",
+                                                "Runtime pairing stays hidden until this device creates the Agent PCR MLS state and publishes its controller-owned recovery backup."
+                                            }
+                                            div { class: "actions",
+                                                Button {
+                                                    variant: ButtonVariant::Primary,
+                                                    "data-testid": "agent-admin-finish-pcr-recovery-button",
+                                                    disabled: pcr_bootstrap_target.is_none(),
+                                                    onclick: {
+                                                        let base = base_url.clone();
+                                                        let target = pcr_bootstrap_target.clone();
+                                                        move |_| {
+                                                            let Some((agent_id, realm_id, authorization_ref)) = target.clone() else {
+                                                                last_op_status.set(
+                                                                    "Agent PCR binding is unavailable; refresh the Agent details and retry."
+                                                                        .to_owned(),
+                                                                );
+                                                                return;
+                                                            };
+                                                            let base = base.clone();
+                                                            let api_token = token();
+                                                            spawn(async move {
+                                                                let bootstrap_agent_id = agent_id.clone();
+                                                                let result = with_authed_api(
+                                                                    &base,
+                                                                    api_token.clone(),
+                                                                    move |api| async move {
+                                                                        super::bootstrap::bootstrap_provisioned_agent(
+                                                                            &api,
+                                                                            state_store,
+                                                                            &bootstrap_agent_id,
+                                                                            &realm_id,
+                                                                            &authorization_ref,
+                                                                            None,
+                                                                        )
+                                                                        .await
+                                                                    },
+                                                                )
+                                                                .await;
+                                                                match result {
+                                                                    Ok(()) => {
+                                                                        last_op_status.set(
+                                                                            "Agent PCR recovery is ready. Runtime pairing is now available."
+                                                                                .to_owned(),
+                                                                        );
+                                                                        spawn_load_agent_details(
+                                                                            base,
+                                                                            api_token,
+                                                                            agent_id.to_string(),
+                                                                            agents,
+                                                                            last_op_status,
+                                                                        );
+                                                                    }
+                                                                    Err(err) => last_op_status.set(format!(
+                                                                        "Agent PCR recovery setup failed: {}",
+                                                                        err.display()
+                                                                    )),
+                                                                }
+                                                            });
+                                                        }
+                                                    },
+                                                    "Finish recovery setup"
+                                                }
+                                            }
+                                        }
+                                        if selected_pcr_recovery_ready && selected_pairing_is_expired {
                                             div {
                                                 class: "agent-admin-status error",
                                                 "data-testid": "agent-admin-pairing-expired-message",
                                                 "This pairing request expired. The expired code and link can never be used again; pair again to issue a fresh code and QR for this agent."
                                             }
                                         }
-                                        if !selected_pairing_is_expired {
+                                        if selected_pcr_recovery_ready && !selected_pairing_is_expired {
                                             div { class: "agent-admin-pairing-panel",
                                                 div { class: "agent-admin-pairing-qr-pane",
                                                     strong { class: "agent-admin-pairing-pane-label", "QR" }
@@ -1070,7 +1205,7 @@ pub fn PersonalAgentAdminPanel(token: Signal<String>) -> Element {
                                                 }
                                             }
                                         }
-                                        if selected_pairing_is_expired {
+                                        if selected_pcr_recovery_ready && selected_pairing_is_expired {
                                             div { class: "actions",
                                                 Button {
                                                     variant: ButtonVariant::Primary,

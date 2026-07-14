@@ -405,6 +405,84 @@ pub fn build_realm_create_event(
     Ok(event)
 }
 
+/// Build the create-locked Principal Control Realm genesis for a managed
+/// Native Personal Agent. The control facts belong to `agent_id`; the active
+/// controller only executes the Event under the DID delegation returned by
+/// provisioning.
+pub fn build_managed_agent_pcr_create_event(
+    realm_id: &str,
+    agent_id: &str,
+    controller_id: &str,
+    controller_authorization_ref: &str,
+    trust_domain: &str,
+) -> anyhow::Result<arkret_sdk::Event> {
+    let mut event = build_realm_create_event(
+        realm_id,
+        agent_id,
+        agent_id,
+        "Managed Agent Principal Control Realm",
+        Some("Controller-managed E2EE continuity for a Native Personal Agent"),
+        "invite_only",
+        "invite",
+        "restricted",
+        "mls_rfc9420",
+        "high_assurance",
+        "restricted",
+        "single_did",
+        "sha256",
+        trust_domain,
+        &[],
+        None,
+        Some("mls-rfc9420"),
+    )?;
+
+    let patch_object = |object: &mut Value| {
+        object["schema_refs"] = json!([
+            "ak.schema.realm.v1",
+            "ak.profile.principal_control_realm.v1"
+        ]);
+        object["fields"] = json!({"purpose": "principal_control"});
+        object["content_encryption_floor"] = Value::String("e2ee_required".to_owned());
+        object["metadata_encryption_floor"] = Value::String("e2ee_required".to_owned());
+        object["plaintext_visible_services"] = json!([]);
+        object["history_sharing_policy"] = json!({
+            "version": 1,
+            "default_key_share": "deny",
+            "pre_join_history": "deny",
+            "allowed_key_sources": ["key_backup"],
+            "allowed_receiver_states": ["active_member"],
+            "audit": {
+                "share_audit_event_required": true,
+                "access_audit_required": true
+            }
+        });
+        object["notary"] = json!({
+            "type": "single_did",
+            "did": agent_id,
+            "recovery_members": [controller_id],
+            "controller_organization": controller_id,
+            "recovery_controller_organizations": [controller_id]
+        });
+    };
+    let payload_object = event
+        .payload
+        .get_mut("object")
+        .ok_or_else(|| anyhow::anyhow!("managed Agent PCR create payload omits object"))?;
+    patch_object(payload_object);
+    let effect_object = event
+        .effects
+        .first_mut()
+        .and_then(|effect| effect.op.value.as_mut())
+        .ok_or_else(|| anyhow::anyhow!("managed Agent PCR create effect omits Realm object"))?;
+    patch_object(effect_object);
+    event.executed_by = Some(
+        arkret_sdk::Did::new(controller_id.to_owned())
+            .map_err(|error| anyhow::anyhow!("invalid managed Agent controller DID: {error}"))?,
+    );
+    event.authorization_ref = Some(controller_authorization_ref.to_owned());
+    Ok(event)
+}
+
 pub fn encryption_profile_uses_recommended_floor(profile: &str) -> bool {
     profile
         .trim()
@@ -1154,6 +1232,48 @@ pub fn ensure_device_verification_proof_is_signed(proof: &Value) -> anyhow::Resu
 #[cfg(test)]
 mod notary_derivation_tests {
     use super::*;
+
+    #[test]
+    fn managed_agent_pcr_genesis_keeps_subject_and_executor_distinct() {
+        let event = build_managed_agent_pcr_create_event(
+            "ak:realm:01964137-0000-7000-8000-000000000099",
+            "did:web:agent.example",
+            "did:web:alice.example",
+            "did:web:agent.example#managed-controller",
+            "ak:trust_domain:did.web.example",
+        )
+        .unwrap();
+
+        assert_eq!(event.actor_id.as_str(), "did:web:agent.example");
+        assert_eq!(
+            event.executed_by.as_ref().map(arkret_sdk::Did::as_str),
+            Some("did:web:alice.example")
+        );
+        assert_eq!(
+            event.authorization_ref.as_deref(),
+            Some("did:web:agent.example#managed-controller")
+        );
+        assert_eq!(
+            event.payload["object"]["fields"]["purpose"],
+            "principal_control"
+        );
+        assert_eq!(
+            event.payload["object"]["content_encryption_floor"],
+            "e2ee_required"
+        );
+        assert_eq!(
+            event.payload["object"]["metadata_encryption_floor"],
+            "e2ee_required"
+        );
+        assert_eq!(
+            event.payload["object"]["notary"]["did"],
+            event.actor_id.as_str()
+        );
+        assert_eq!(
+            event.effects[0].op.value.as_ref().unwrap(),
+            &event.payload["object"]
+        );
+    }
 
     #[test]
     fn web_no_history_actor_derives_org_and_recovery_fields() {

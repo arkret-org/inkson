@@ -19,7 +19,7 @@ use super::selection::backup_series_seq;
 /// carry these fields. The caller MUST give the successor envelope a *fresh*
 /// `backup_id` (not the predecessor's) so the predecessor stays persisted as a
 /// distinct chain link and `series_predecessor_not_found` is not triggered.
-pub(super) fn apply_next_series(previous: Option<&Value>, body: &mut Value) -> Result<u64> {
+pub(crate) fn apply_next_series(previous: Option<&Value>, body: &mut Value) -> Result<u64> {
     let Some(prev) = previous else {
         return Ok(body.get("series_seq").and_then(Value::as_u64).unwrap_or(0));
     };

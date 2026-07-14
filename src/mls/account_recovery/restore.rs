@@ -2,6 +2,8 @@
 //! sidecar.
 
 use anyhow::{Result, anyhow};
+use base64::Engine as _;
+use base64::engine::general_purpose::URL_SAFE_NO_PAD as B64;
 use serde_json::{Value, json};
 
 use super::backup_body::{
@@ -16,6 +18,165 @@ use super::selection::{
     select_mls_private_plaintext_backup, select_preferred_mls_account_secret_backup,
 };
 use super::series::verify_series_chain;
+
+fn is_managed_agent_pcr_history_backup(body: &Value) -> bool {
+    body.pointer("/domain_separation/subdomain")
+        .and_then(Value::as_str)
+        == Some("managed_agent_pcr")
+        && body
+            .pointer("/encryption/recipient_method")
+            .and_then(Value::as_str)
+            == Some("recovery_public_key")
+}
+
+fn restore_managed_agent_pcr_history_with_recovery_key(
+    list_payload: &Value,
+    state_store: &mut crate::state::LocalStateStore,
+    secure_store: &dyn crate::secure_key_store::SecureKeyStore,
+    actor_id: &str,
+    device_id: &str,
+    recovery_private_key: &[u8],
+    expected_recovery_policy_ref: (&str, u64),
+) -> Result<usize> {
+    let Some(body) = select_mls_history_backups(list_payload)
+        .into_iter()
+        .filter(is_managed_agent_pcr_history_backup)
+        .max_by_key(|body| {
+            body.get("series_seq")
+                .and_then(Value::as_u64)
+                .unwrap_or_default()
+        })
+    else {
+        return Ok(0);
+    };
+    let policy = body
+        .get("recovery_policy_ref")
+        .ok_or_else(|| anyhow!("managed Agent PCR backup has no recovery_policy_ref"))?;
+    if policy.get("policy_id").and_then(Value::as_str) != Some(expected_recovery_policy_ref.0)
+        || policy.get("policy_version").and_then(Value::as_u64)
+            != Some(expected_recovery_policy_ref.1)
+    {
+        return Err(anyhow!("managed Agent PCR backup recovery policy mismatch"));
+    }
+    let opened =
+        crate::key_backup::open_recovery_public_key_backup_body(recovery_private_key, &body)?;
+    let plaintext: Value = serde_json::from_slice(&opened)
+        .map_err(|error| anyhow!("decode managed Agent PCR plaintext keybag: {error}"))?;
+    crate::key_backup::validate_key_backup_plaintext_binding(&body, &plaintext)
+        .map_err(anyhow::Error::msg)?;
+
+    struct RestoredState {
+        realm_id: String,
+        group_id: String,
+        epoch: u64,
+        owner_id: String,
+        state_bytes: Vec<u8>,
+        salt: [u8; 16],
+    }
+    let mut decoded = Vec::new();
+    for item in plaintext
+        .get("items")
+        .and_then(Value::as_array)
+        .ok_or_else(|| anyhow!("managed Agent PCR plaintext items are missing"))?
+    {
+        if item.get("item_type").and_then(Value::as_str) != Some("mls_group_state") {
+            continue;
+        }
+        let realm_id = item
+            .get("realm_id")
+            .and_then(Value::as_str)
+            .ok_or_else(|| anyhow!("managed recovery MLS item has no realm_id"))?
+            .to_owned();
+        let group_id = item
+            .get("mls_group_id")
+            .and_then(Value::as_str)
+            .ok_or_else(|| anyhow!("managed recovery MLS item has no mls_group_id"))?
+            .to_owned();
+        let epoch = item
+            .get("epoch")
+            .and_then(Value::as_u64)
+            .ok_or_else(|| anyhow!("managed recovery MLS item has no epoch"))?;
+        let state_bytes = B64
+            .decode(
+                item.get("secret_b64u")
+                    .and_then(Value::as_str)
+                    .ok_or_else(|| anyhow!("managed recovery MLS item has no secret_b64u"))?
+                    .as_bytes(),
+            )
+            .map_err(|error| anyhow!("decode managed recovery MLS state: {error}"))?;
+        let record =
+            crate::mls::persistence::MlsSnapshotEnvelope::restore_state_record(&state_bytes)
+                .map_err(|error| anyhow!("validate managed recovery MLS state record: {error}"))?;
+        if record.group_id != group_id || record.epoch != epoch {
+            return Err(anyhow!(
+                "managed recovery MLS state record metadata does not match its keybag item"
+            ));
+        }
+        let owner_id = if let Some(binding) = item.get("managed_principal_binding") {
+            if binding.get("controller_id").and_then(Value::as_str) != Some(actor_id)
+                || binding
+                    .get("principal_control_realm_id")
+                    .and_then(Value::as_str)
+                    != Some(realm_id.as_str())
+            {
+                return Err(anyhow!(
+                    "managed recovery binding does not match controller or PCR"
+                ));
+            }
+            binding
+                .get("managed_principal_id")
+                .and_then(Value::as_str)
+                .ok_or_else(|| anyhow!("managed recovery binding has no principal id"))?
+                .to_owned()
+        } else {
+            actor_id.to_owned()
+        };
+        let epoch_floor = crate::mls::runtime::mls_restore_epoch_floor(state_store, &realm_id);
+        if epoch < epoch_floor {
+            return Err(anyhow!(
+                "managed recovery MLS epoch {epoch} is below local floor {epoch_floor} for {realm_id}"
+            ));
+        }
+        let mut salt = [0_u8; 16];
+        getrandom::fill(&mut salt)
+            .map_err(|error| anyhow!("generate managed recovery snapshot salt: {error}"))?;
+        decoded.push(RestoredState {
+            realm_id,
+            group_id,
+            epoch,
+            owner_id,
+            state_bytes,
+            salt,
+        });
+    }
+    if decoded.is_empty() {
+        return Err(anyhow!(
+            "managed Agent PCR recovery keybag contains no MLS group state"
+        ));
+    }
+    for state in &decoded {
+        let secret = crate::mls::runtime::load_or_create_device_snapshot_secret(
+            secure_store,
+            &state.owner_id,
+            device_id,
+        )
+        .map_err(|error| anyhow!("prepare restored MLS snapshot secret: {error}"))?;
+        if state.owner_id != actor_id {
+            crate::mls::runtime::mark_account_mls_secret_verified(secure_store, &state.owner_id)
+                .map_err(|error| anyhow!("mark restored managed MLS secret verified: {error}"))?;
+        }
+        let snapshot = crate::mls::persistence::encrypt_state(
+            &state.realm_id,
+            &state.group_id,
+            state.epoch,
+            &state.state_bytes,
+            &secret,
+            &state.salt,
+        );
+        state_store.save_mls_snapshot(state.realm_id.clone(), snapshot);
+    }
+    Ok(decoded.len())
+}
 
 fn mls_history_backup_needs_restore(
     body: &Value,
@@ -430,6 +591,15 @@ pub fn restore_mls_history_with_recovery_key_from_payload(
     crate::mls::runtime::mark_account_mls_secret_verified(secure_store, actor_id)
         .map_err(|err| anyhow!("mark restored account MLS secret verified: {err}"))?;
     report.account_secret_imported = true;
+    report.restored += restore_managed_agent_pcr_history_with_recovery_key(
+        list_payload,
+        state_store,
+        secure_store,
+        actor_id,
+        device_id,
+        recovery_private_key,
+        expected_recovery_policy_ref,
+    )?;
 
     restore_history_and_sidecar(
         list_payload,
@@ -477,7 +647,10 @@ fn restore_history_and_sidecar(
     device_id: &str,
     report: &mut RestoreReport,
 ) {
-    for body in select_mls_history_backups(list_payload) {
+    for body in select_mls_history_backups(list_payload)
+        .into_iter()
+        .filter(|body| !is_managed_agent_pcr_history_backup(body))
+    {
         match crate::mls::runtime::restore_mls_history_backup_with_device_snapshot(
             state_store,
             secure_store,

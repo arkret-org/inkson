@@ -1,4 +1,4 @@
-use arkret_sdk::models::KeyBackupContentItem;
+use arkret_sdk::models::{KeyBackupContentItem, ManagedFrontierRef, ManagedPrincipalBinding};
 use ed25519_dalek::SigningKey;
 use serde_json::{Value, json};
 
@@ -40,6 +40,57 @@ fn build_recovery_vault_backup_body(
             ..Default::default()
         },
     )
+}
+
+#[test]
+fn managed_agent_pcr_binding_is_bound_into_hpke_aad() {
+    let controller = arkret_sdk::Did::new(ACTOR).unwrap();
+    let binding = ManagedPrincipalBinding {
+        managed_principal_id: arkret_sdk::Did::new("did:web:agent.example").unwrap(),
+        controller_id: controller,
+        principal_control_realm_id: arkret_sdk::RealmId::new(
+            "ak:realm:01964137-0000-7000-8000-000000000099",
+        )
+        .unwrap(),
+        authorization_ref: "did:web:agent.example#managed-controller".to_owned(),
+        managed_frontier_ref: ManagedFrontierRef {
+            frontier_digest: arkret_sdk::Hash::new(
+                "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            )
+            .unwrap(),
+            seal_ref: "ak:seal:01964137-0000-7000-8000-000000000098".to_owned(),
+            mls_epoch: 0,
+        },
+    };
+    let (_, recovery_public_key) = crate::hpke_backup::derive_recovery_keypair_from_entropy(
+        &[9_u8; crate::recovery_crypto::RECOVERY_KEY_BYTES],
+    )
+    .unwrap();
+    let body = build_recovery_public_key_backup_body(
+        BACKUP_ID,
+        ACTOR,
+        DEVICE,
+        &recovery_public_key,
+        "did:web:alice.example#recovery",
+        KeyBackupClass::MlsHistory,
+        "managed_agent_pcr",
+        &KeyBackupContentItem {
+            item_type: "mls_group_state".to_owned(),
+            realm_id: Some(binding.principal_control_realm_id.clone()),
+            managed_principal_binding: Some(binding.clone()),
+            mls_group_id: Some("YWdlbnQtcGNy".to_owned()),
+            epoch: Some(0),
+            ..Default::default()
+        },
+        b"encrypted local MLS snapshot",
+        Some(("ak:policy:01964137-0000-7000-8000-000000000077", 1)),
+    )
+    .unwrap();
+
+    assert_eq!(
+        body["domain_separation"]["aead_aad"]["managed_principal_bindings"],
+        json!([binding])
+    );
 }
 
 #[test]

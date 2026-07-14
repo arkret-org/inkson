@@ -8,8 +8,9 @@ use crate::transport::auth::{with_authed_api, with_authed_sdk_client};
 use crate::ui::button::{Button, ButtonVariant};
 use crate::ui::dialog::Dialog;
 use crate::views::agents::{
-    build_agent_key_authorize_event_for_pairing, parse_runtime_key_approval_request,
-    runtime_key_pairing_error_message, summarize_runtime_key_approval_request,
+    bootstrap_provisioned_agent, build_agent_key_authorize_event_for_pairing,
+    parse_runtime_key_approval_request, runtime_key_pairing_error_message,
+    summarize_runtime_key_approval_request,
 };
 use crate::views::helpers::short_protocol_id;
 
@@ -342,6 +343,29 @@ pub fn AgentRuntimeApprovalPrompt(token: Signal<String>, account_did: Signal<Str
                                     let key_state = key_state.clone();
                                     let controller = controller.clone();
                                     async move {
+                                        let bootstrap_key_state: arkret_sdk::models::KeyState =
+                                            serde_json::from_value(key_state.clone()).map_err(
+                                                |error| {
+                                                    anyhow::anyhow!(
+                                                        "Agent key state is invalid: {error}"
+                                                    )
+                                                },
+                                            )?;
+                                        let previous_seal_id = match &bootstrap_key_state
+                                            .pcr_recovery
+                                        {
+                                            arkret_sdk::models::AgentPcrRecoveryState::Ready {
+                                                managed_frontier_ref,
+                                                ..
+                                            }
+                                            | arkret_sdk::models::AgentPcrRecoveryState::Stale {
+                                                managed_frontier_ref,
+                                                ..
+                                            } => Some(managed_frontier_ref.seal_ref.clone()),
+                                            arkret_sdk::models::AgentPcrRecoveryState::Pending => {
+                                                None
+                                            }
+                                        };
                                         let service_id =
                                             api.describe_cached().await?.service_id.to_string();
                                         let authorize_event =
@@ -353,25 +377,48 @@ pub fn AgentRuntimeApprovalPrompt(token: Signal<String>, account_did: Signal<Str
                                             )?;
                                         let pair_request =
                                             body.into_pair_request(authorize_event.clone());
-                                        api.event_submitter()?.agent_key_pair_with_authorize_event(
-                                            pair_request,
-                                            &authorize_event,
+                                        let outcome = api
+                                            .event_submitter()?
+                                            .agent_key_pair_with_authorize_event(
+                                                pair_request,
+                                                &authorize_event,
+                                            )
+                                            .await?;
+                                        let recovery_refresh_error = bootstrap_provisioned_agent(
+                                            &api,
+                                            state_store,
+                                            &bootstrap_key_state.agent_id,
+                                            &bootstrap_key_state.principal_control_realm_id,
+                                            &bootstrap_key_state.controller_authorization_ref,
+                                            previous_seal_id.as_deref(),
                                         )
                                         .await
+                                        .err()
+                                        .map(|error| error.to_string());
+                                        Ok::<_, anyhow::Error>((outcome, recovery_refresh_error))
                                     }
                                 })
                                 .await;
                                 approving.set(false);
                                 match result {
-                                    Ok(outcome) => {
+                                    Ok((outcome, recovery_refresh_error)) => {
                                         handled.write().insert(request_key);
                                         pending.set(None);
-                                        status.set(format!(
-                                            "Runtime key approved: {}.",
-                                            short_protocol_id(
-                                                outcome.authorized_event_ref.as_str(),
+                                        status.set(if let Some(error) = recovery_refresh_error {
+                                            format!(
+                                                "Runtime key approved: {}. Agent PCR recovery refresh failed: {error}",
+                                                short_protocol_id(
+                                                    outcome.authorized_event_ref.as_str(),
+                                                )
                                             )
-                                        ));
+                                        } else {
+                                            format!(
+                                                "Runtime key approved: {}. Agent PCR recovery is current.",
+                                                short_protocol_id(
+                                                    outcome.authorized_event_ref.as_str(),
+                                                )
+                                            )
+                                        });
                                     }
                                     Err(err) => {
                                         status.set(format!(

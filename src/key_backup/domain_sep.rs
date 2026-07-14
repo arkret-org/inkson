@@ -1,3 +1,5 @@
+use std::collections::BTreeMap;
+
 use serde_json::{Value, json};
 
 use super::{BackupClass, KEY_BACKUP_SCHEMA, key_backup_hkdf_info};
@@ -39,7 +41,20 @@ pub fn attach_key_backup_domain_separation(body: &mut Value, class: BackupClass,
         .and_then(|encryption| encryption.get("recipient_method"))
         .cloned()
         .unwrap_or(Value::Null);
-    body["domain_separation"] = json!({
+    let managed_principal_bindings = body
+        .get("contents")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(|item| item.get("managed_principal_binding").cloned())
+        .map(|binding| {
+            let canonical = crate::canonical::canonical_json_bytes(&binding).unwrap_or_default();
+            (canonical, binding)
+        })
+        .collect::<BTreeMap<_, _>>()
+        .into_values()
+        .collect::<Vec<_>>();
+    let mut domain_separation = json!({
         "hkdf_info": key_backup_hkdf_info(class, subdomain),
         "subdomain": subdomain,
         "aead_aad": {
@@ -54,6 +69,11 @@ pub fn attach_key_backup_domain_separation(body: &mut Value, class: BackupClass,
             "recipient_key_ref": recipient_key_ref,
         }
     });
+    if !managed_principal_bindings.is_empty() {
+        domain_separation["aead_aad"]["managed_principal_bindings"] =
+            Value::Array(managed_principal_bindings);
+    }
+    body["domain_separation"] = domain_separation;
 }
 
 pub fn attach_key_backup_genesis_series(body: &mut Value) {
