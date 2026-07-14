@@ -304,7 +304,7 @@ fn build_managed_pcr_backup_body(
         device_id,
         recovery_public_key,
         &recovery_key_ref,
-        crate::key_backup::KeyBackupClass::MlsHistory,
+        crate::key_backup::BackupClass::MlsHistory,
         "managed_agent_pcr",
         &contents,
         &plaintext_bytes,

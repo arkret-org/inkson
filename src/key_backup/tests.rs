@@ -72,7 +72,7 @@ fn managed_agent_pcr_binding_is_bound_into_hpke_aad() {
         DEVICE,
         &recovery_public_key,
         "did:web:alice.example#recovery",
-        KeyBackupClass::MlsHistory,
+        BackupClass::MlsHistory,
         "managed_agent_pcr",
         &KeyBackupContentItem {
             item_type: "mls_group_state".to_owned(),
