@@ -60,7 +60,7 @@ use std::sync::{LazyLock, RwLock};
 
 use arkret_sdk::signatures::PublicKeyMaterial;
 use arkret_sdk::{
-    CrossSigningPublishContent, DeviceId, DeviceTrustBinding, DeviceTrustState, Did, DidDocument,
+    CrossSigningPublish, DeviceId, DeviceTrustBinding, DeviceTrustState, Did, DidDocument,
     QueryDeviceCrossSigningBinding, resolve_verification_method_key_from_document,
 };
 
@@ -271,12 +271,12 @@ fn directory_record<'a>(
 
 /// Convert the directory `cross_signing[principal]` publish payload (the
 /// `cross-signing-publish.schema.json` counterpart [`arkret_sdk::CrossSigningPublish`])
-/// into the SDK chain-verifier input type [`CrossSigningPublishContent`]. The
+/// into the SDK chain-verifier input type [`CrossSigningPublish`]. The
 /// two are field-for-field 1:1 (soland produces one from the other by the same
 /// round-trip), so a JSON round-trip is lossless; a shape mismatch fails closed.
 fn publish_content_from_directory(
     publish: &arkret_sdk::CrossSigningPublish,
-) -> Option<CrossSigningPublishContent> {
+) -> Option<CrossSigningPublish> {
     let value = serde_json::to_value(publish).ok()?;
     serde_json::from_value(value).ok()
 }
@@ -304,7 +304,7 @@ fn trust_binding_from_directory(binding: &QueryDeviceCrossSigningBinding) -> Dev
 /// key material on success, `None` on any mismatch / lookup failure.
 fn anchor_psk_against_did(
     did_document: &DidDocument,
-    publish: &CrossSigningPublishContent,
+    publish: &CrossSigningPublish,
 ) -> Option<PublicKeyMaterial> {
     let resolved = resolve_verification_method_key_from_document(
         did_document,
@@ -903,9 +903,8 @@ mod tests {
     // `signed_chain_fixture` construction (sdk devices/tests.rs §550+).
 
     use arkret_sdk::{
-        CrossSigningBinding, CrossSigningKeyRecord,
-        CrossSigningPublishContent as SdkPublishContent, SignedCrossSigningKey, TypedTrustDomainId,
-        base64url_encode,
+        CrossSigningPublish as SdkPublishContent, KeyFormat, NonEmptyString, PublishedKey,
+        SubordinateSignedKey, SubordinateSignedKeyBinding, TypedTrustDomainId, base64url_encode,
     };
     use ed25519_dalek::Signer;
 
@@ -973,51 +972,46 @@ mod tests {
         let mut content = SdkPublishContent {
             principal_id: actor.clone(),
             trust_domain: TypedTrustDomainId::new(TIER2_TRUST_DOMAIN).unwrap(),
-            principal_signing_key: CrossSigningKeyRecord {
-                kid: psk_kid.clone(),
-                alg: "EdDSA".to_owned(),
-                public_key: psk_multibase.clone(),
-                key_format: "multibase".to_owned(),
+            principal_signing_key: PublishedKey {
+                kid: NonEmptyString::new(psk_kid.clone()).unwrap(),
+                alg: NonEmptyString::new("EdDSA").unwrap(),
+                public_key: NonEmptyString::new(psk_multibase.clone()).unwrap(),
+                key_format: KeyFormat::Multibase,
             },
-            self_signing_key: SignedCrossSigningKey {
-                key: CrossSigningKeyRecord {
-                    kid: ssk_kid.clone(),
-                    alg: "EdDSA".to_owned(),
-                    public_key: ssk_multibase.clone(),
-                    key_format: "multibase".to_owned(),
-                },
-                binding: CrossSigningBinding {
-                    verification_method: psk_kid.clone(),
-                    alg: "EdDSA".to_owned(),
-                    signature: String::new(),
+            self_signing_key: SubordinateSignedKey {
+                kid: NonEmptyString::new(ssk_kid.clone()).unwrap(),
+                alg: NonEmptyString::new("EdDSA").unwrap(),
+                public_key: NonEmptyString::new(ssk_multibase.clone()).unwrap(),
+                key_format: KeyFormat::Multibase,
+                binding: SubordinateSignedKeyBinding {
+                    verification_method: NonEmptyString::new(psk_kid.clone()).unwrap(),
+                    alg: NonEmptyString::new("EdDSA").unwrap(),
+                    signature: NonEmptyString::new("pending").unwrap(),
                 },
             },
-            user_signing_key: SignedCrossSigningKey {
-                key: CrossSigningKeyRecord {
-                    kid: usk_kid,
-                    alg: "EdDSA".to_owned(),
-                    // Distinct from SSK (publish validation requires it).
-                    public_key: format!("{ssk_multibase}USK"),
-                    key_format: "multibase".to_owned(),
-                },
-                binding: CrossSigningBinding {
-                    verification_method: psk_kid.clone(),
-                    alg: "EdDSA".to_owned(),
-                    signature: "unused".to_owned(),
+            user_signing_key: SubordinateSignedKey {
+                kid: NonEmptyString::new(usk_kid).unwrap(),
+                alg: NonEmptyString::new("EdDSA").unwrap(),
+                // Distinct from SSK (publish validation requires it).
+                public_key: NonEmptyString::new(format!("{ssk_multibase}USK")).unwrap(),
+                key_format: KeyFormat::Multibase,
+                binding: SubordinateSignedKeyBinding {
+                    verification_method: NonEmptyString::new(psk_kid.clone()).unwrap(),
+                    alg: NonEmptyString::new("EdDSA").unwrap(),
+                    signature: NonEmptyString::new("unused").unwrap(),
                 },
             },
             expected_previous_generation: publish_gen.saturating_sub(1),
-            generation: publish_gen,
+            generation: std::num::NonZeroU64::new(publish_gen).unwrap(),
             issued_at: chrono::Utc::now(),
         };
         let ssk_input = content.self_signing_binding_input().unwrap();
         content.self_signing_key.binding.signature =
-            base64url_encode(psk.sign(&ssk_input).to_bytes());
+            NonEmptyString::new(base64url_encode(psk.sign(&ssk_input).to_bytes())).unwrap();
 
         // Serialize the SDK content into the artifact `CrossSigningPublish` the
         // directory carries (1:1 field shape).
-        let publish: arkret_sdk::CrossSigningPublish =
-            serde_json::from_value(serde_json::to_value(&content).unwrap()).unwrap();
+        let publish = content;
 
         // SSK signs the device binding over the bare multibase device key
         // (§8.3 step 5: the same key the directory exposes).

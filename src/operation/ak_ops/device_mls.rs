@@ -25,13 +25,15 @@ pub fn device_revoke(
     let payload = arkret_sdk::DeviceRevokePayload {
         principal_id: arkret_sdk::Did::new(actor.to_owned())
             .map_err(|err| anyhow::anyhow!("invalid principal DID {actor:?}: {err}"))?,
-        device_id: target_device_id.to_owned(),
+        device_id: arkret_sdk::DeviceId::new(target_device_id.to_owned())
+            .map_err(|err| anyhow::anyhow!("invalid target device id: {err}"))?,
         revoked_by: arkret_sdk::DeviceOrPrincipalRef::DeviceId(
             arkret_sdk::DeviceId::new(revoked_by_device_id.to_owned())
                 .map_err(|err| anyhow::anyhow!("invalid revoking device id: {err}"))?,
         ),
         revoked_at: crate::clock::now_utc_secs(),
-        reason: reason.to_owned(),
+        reason: arkret_sdk::DeviceRevocationReason::new(reason.to_owned())
+            .map_err(|err| anyhow::anyhow!("invalid device revocation reason: {err}"))?,
         proof: None,
     };
     let body = serde_json::to_value(payload)

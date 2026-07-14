@@ -173,7 +173,7 @@ pub fn VerifyDevicePanel(
     let persisted_publish_label = state_store
         .read()
         .load_private_data(&account_did, "cross_signing.publish.latest")
-        .and_then(|json| serde_json::from_str::<arkret_sdk::CrossSigningPublishContent>(&json).ok())
+        .and_then(|json| serde_json::from_str::<arkret_sdk::CrossSigningPublish>(&json).ok())
         .map(|p| {
             format!(
                 "Last cross-signing publish for {} (generation {})",

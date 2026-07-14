@@ -445,20 +445,16 @@ fn sign_welcome_claim_envelope(
     if active_device_signer.is_none()
         && let Some(publish) = load_latest_cross_signing_publish(state_store, actor_id)?
     {
-        envelope.trust_binding = arkret_sdk::MlsRequesterTrustBinding::SskGeneration(
-            std::num::NonZeroU64::new(publish.generation)
-                .ok_or_else(|| "cross-signing generation must be positive".to_owned())?,
-        );
-        envelope.signature.kid =
-            arkret_sdk::NonEmptyString::new(publish.self_signing_key.key.kid.clone())
-                .map_err(|err| format!("MLS Welcome self-signing kid: {err}"))?;
+        envelope.trust_binding =
+            arkret_sdk::MlsRequesterTrustBinding::SskGeneration(publish.generation);
+        envelope.signature.kid = publish.self_signing_key.kid.clone();
         let signing_bytes = envelope
             .canonical_signing_bytes()
             .map_err(|err| format!("MLS Welcome claim canonical bytes: {err}"))?;
         let signing_key = load_signing_key(
             secure_store,
             actor_id,
-            publish.generation,
+            publish.generation.get(),
             CrossSigningKeyRole::SelfSigning,
         )
         .map_err(|err| format!("load self-signing key: {err}"))?
@@ -498,7 +494,7 @@ fn sign_welcome_claim_envelope(
 fn load_latest_cross_signing_publish(
     state_store: &LocalStateStore,
     actor_id: &str,
-) -> Result<Option<arkret_sdk::CrossSigningPublishContent>, String> {
+) -> Result<Option<arkret_sdk::CrossSigningPublish>, String> {
     let Some(raw) = state_store.load_private_data(actor_id, CROSS_SIGNING_PUBLISH_LATEST_KEY)
     else {
         return Ok(None);
@@ -543,7 +539,7 @@ mod tests {
         secure: &MemorySecureKeyStore,
         actor: &str,
         device: &str,
-    ) -> arkret_sdk::CrossSigningPublishContent {
+    ) -> arkret_sdk::CrossSigningPublish {
         let plan = CrossSigningSetupPlan::build_initial(actor, device);
         let principal = arkret_sdk::Did::new(actor.to_owned()).unwrap();
         let trust_domain =
@@ -776,7 +772,7 @@ mod tests {
             &bob_private_state,
         )
         .unwrap();
-        let claim = claim_from_key_package(&bob_key_package, publish.generation);
+        let claim = claim_from_key_package(&bob_key_package, publish.generation.get());
 
         let admission = build_realm_mls_admission_events_from_claim(
             &alice_state,
@@ -923,7 +919,7 @@ mod tests {
             &bob_private_state,
         )
         .unwrap();
-        let claim = claim_from_key_package(&bob_key_package, publish.generation);
+        let claim = claim_from_key_package(&bob_key_package, publish.generation.get());
 
         let admission = build_realm_mls_admission_events_from_claim(
             &alice_state,

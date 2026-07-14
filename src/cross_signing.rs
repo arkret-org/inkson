@@ -9,8 +9,7 @@
 //! **auditable step plan** — it does not perform side effects. The executor
 //! consumes the steps in order. Corresponding SDK primitives:
 //!
-//! - `CrossSigningPublishContent` / `SignedCrossSigningKey` / `CrossSigningBinding`: spec §5.1 wire
-//!   envelope.
+//! - `CrossSigningPublish` / `SubordinateSignedKey`: spec §5.1 wire envelope.
 //! - `DeviceTrustBinding`: spec §5.2 `ak.device.authorize.cross_signing_binding` field.
 //! - `CrossSigningResetContent`: spec §14.1 reset envelope.
 //! - `DeviceManager::record_cross_signing_publish` / `record_cross_signing_reset` /
@@ -21,8 +20,8 @@
 
 use anyhow::Context;
 use arkret_sdk::{
-    CrossSigningBinding, CrossSigningKeyRecord, CrossSigningPublishContent, Did,
-    SignedCrossSigningKey, TypedTrustDomainId,
+    CrossSigningPublish, Did, KeyFormat, NonEmptyString, PublishedKey, SubordinateSignedKey,
+    SubordinateSignedKeyBinding, TypedTrustDomainId,
 };
 use base64::Engine as _;
 use base64::engine::general_purpose::STANDARD_NO_PAD as B64;
@@ -252,7 +251,7 @@ impl CrossSigningTrustState {
 
 /// Executor for [`CrossSigningSetupPlan`]. Generates the three keypairs
 /// locally, computes the PSK-signed bindings for SSK / USK, and assembles
-/// the [`CrossSigningPublishContent`] body the caller must submit as a
+/// the [`CrossSigningPublish`] body the caller must submit as a
 /// `ak.cross_signing.publish` operation.
 ///
 /// What this executor **does** (per spec §5.1):
@@ -262,9 +261,8 @@ impl CrossSigningTrustState {
 ///   * Computes `canonical_cross_signing_binding_input` bytes for SSK and USK via the SDK's helper,
 ///     then signs them with the PSK private key. Signatures are emitted base64-encoded (the SDK's
 ///     declared encoding for the `binding.signature` field).
-///   * Assembles a full `CrossSigningPublishContent`, runs the SDK's `validate_structure()` so the
-///     publish event body MUST round-trip through SDK validation before the API call is even
-///     constructed.
+///   * Assembles a full `CrossSigningPublish`, runs the SDK's `validate_structure()` so the publish
+///     event body MUST round-trip through SDK validation before the API call is even constructed.
 ///
 /// What this executor deliberately does **not** do:
 ///   * Persist the generated private keys to disk. The caller decides whether to push them through
@@ -296,7 +294,7 @@ pub struct CrossSigningSetupOutput {
     pub user_signing_key: SigningKey,
     /// The fully validated publish content the caller submits as
     /// `ak.cross_signing.publish`.
-    pub publish_content: CrossSigningPublishContent,
+    pub publish_content: CrossSigningPublish,
 }
 
 /// One of the three cross-signing private keys; used as the namespace
@@ -352,7 +350,7 @@ impl CrossSigningSetupOutput {
         store: &dyn SecureKeyStore,
         principal_did: &str,
     ) -> Result<(), SecureKeyStoreError> {
-        let generation = self.publish_content.generation;
+        let generation = self.publish_content.generation.get();
         // Hold each hex-encoded private seed in a `Zeroizing<String>` so the
         // plaintext key material is wiped from the heap once it has been handed
         // to the secure store, rather than lingering in a freed `String`.
@@ -479,91 +477,73 @@ impl CrossSigningExecutor {
             self.plan.new_generation
         );
 
-        let psk_record = CrossSigningKeyRecord {
-            kid: psk_kid.clone(),
-            alg: "EdDSA".to_owned(),
-            public_key: encode_ed25519_did_key_multibase(&psk.verifying_key()),
-            key_format: "multibase".to_owned(),
-        };
-        let ssk_record = CrossSigningKeyRecord {
-            kid: ssk_kid,
-            alg: "EdDSA".to_owned(),
-            public_key: encode_ed25519_did_key_multibase(&ssk.verifying_key()),
-            key_format: "multibase".to_owned(),
-        };
-        let usk_record = CrossSigningKeyRecord {
-            kid: usk_kid,
-            alg: "EdDSA".to_owned(),
-            public_key: encode_ed25519_did_key_multibase(&usk.verifying_key()),
-            key_format: "multibase".to_owned(),
+        let psk_record = PublishedKey {
+            kid: NonEmptyString::new(psk_kid.clone())?,
+            alg: NonEmptyString::new("EdDSA")?,
+            public_key: NonEmptyString::new(encode_ed25519_did_key_multibase(
+                &psk.verifying_key(),
+            ))?,
+            key_format: KeyFormat::Multibase,
         };
 
         // Sign the SSK and USK bindings with PSK. We assemble a draft
         // publish so the SDK's canonical-binding helpers produce the exact
         // bytes the server will compare against.
-        let draft = CrossSigningPublishContent {
+        let generation = std::num::NonZeroU64::new(self.plan.new_generation)
+            .context("cross-signing generation must be non-zero")?;
+        let mut publish_content = CrossSigningPublish {
             principal_id: self.principal_did.clone(),
             // Round 4 — REQUIRED trust domain mixed into the canonical
             // bind input; threaded from the caller's describe response.
             trust_domain: self.trust_domain.clone(),
             principal_signing_key: psk_record.clone(),
-            self_signing_key: SignedCrossSigningKey {
-                key: ssk_record.clone(),
-                binding: CrossSigningBinding {
-                    verification_method: psk_kid.clone(),
-                    alg: "EdDSA".to_owned(),
-                    signature: String::new(),
+            self_signing_key: SubordinateSignedKey {
+                kid: NonEmptyString::new(ssk_kid)?,
+                alg: NonEmptyString::new("EdDSA")?,
+                public_key: NonEmptyString::new(encode_ed25519_did_key_multibase(
+                    &ssk.verifying_key(),
+                ))?,
+                key_format: KeyFormat::Multibase,
+                binding: SubordinateSignedKeyBinding {
+                    verification_method: NonEmptyString::new(psk_kid.clone())?,
+                    alg: NonEmptyString::new("EdDSA")?,
+                    signature: NonEmptyString::new("pending")?,
                 },
             },
-            user_signing_key: SignedCrossSigningKey {
-                key: usk_record.clone(),
-                binding: CrossSigningBinding {
-                    verification_method: psk_kid.clone(),
-                    alg: "EdDSA".to_owned(),
-                    signature: String::new(),
+            user_signing_key: SubordinateSignedKey {
+                kid: NonEmptyString::new(usk_kid)?,
+                alg: NonEmptyString::new("EdDSA")?,
+                public_key: NonEmptyString::new(encode_ed25519_did_key_multibase(
+                    &usk.verifying_key(),
+                ))?,
+                key_format: KeyFormat::Multibase,
+                binding: SubordinateSignedKeyBinding {
+                    verification_method: NonEmptyString::new(psk_kid)?,
+                    alg: NonEmptyString::new("EdDSA")?,
+                    signature: NonEmptyString::new("pending")?,
                 },
             },
             // Round 4 — CAS guard: prior accepted generation (0 on the
             // very first publish). `previous_generation` is `None` for
             // `InitialSetup` and `Some(prev)` for `Reset`.
             expected_previous_generation: self.plan.previous_generation.unwrap_or(0),
-            generation: self.plan.new_generation,
+            generation,
             issued_at: canonical_utc_now(),
         };
-        let ssk_input = draft
+        let ssk_input = publish_content
             .self_signing_binding_input()
             .map_err(|e| anyhow::anyhow!("self_signing_binding_input: {e:?}"))?;
-        let usk_input = draft
+        let usk_input = publish_content
             .user_signing_binding_input()
             .map_err(|e| anyhow::anyhow!("user_signing_binding_input: {e:?}"))?;
 
         let ssk_sig = psk.sign(&ssk_input);
         let usk_sig = psk.sign(&usk_input);
 
-        let publish_content = CrossSigningPublishContent {
-            principal_id: draft.principal_id,
-            trust_domain: draft.trust_domain,
-            principal_signing_key: draft.principal_signing_key,
-            self_signing_key: SignedCrossSigningKey {
-                key: draft.self_signing_key.key,
-                binding: CrossSigningBinding {
-                    verification_method: psk_kid.clone(),
-                    alg: "EdDSA".to_owned(),
-                    signature: B64.encode(ssk_sig.to_bytes()),
-                },
-            },
-            user_signing_key: SignedCrossSigningKey {
-                key: draft.user_signing_key.key,
-                binding: CrossSigningBinding {
-                    verification_method: psk_kid,
-                    alg: "EdDSA".to_owned(),
-                    signature: B64.encode(usk_sig.to_bytes()),
-                },
-            },
-            expected_previous_generation: draft.expected_previous_generation,
-            generation: draft.generation,
-            issued_at: draft.issued_at,
-        };
+        publish_content.self_signing_key.binding.signature =
+            NonEmptyString::new(B64.encode(ssk_sig.to_bytes()))?;
+        publish_content.user_signing_key.binding.signature =
+            NonEmptyString::new(B64.encode(usk_sig.to_bytes()))?;
 
         publish_content
             .validate_structure()
@@ -653,9 +633,9 @@ mod tests {
         // cryptographically using the PSK's verifying key — this is the
         // exact computation the server will run to accept the publish.
         let pub_content = &out.publish_content;
-        assert_eq!(pub_content.generation, 1);
+        assert_eq!(pub_content.generation.get(), 1);
         assert_eq!(
-            pub_content.principal_signing_key.public_key,
+            pub_content.principal_signing_key.public_key.as_str(),
             encode_ed25519_did_key_multibase(&out.principal_signing_key.verifying_key())
         );
 
@@ -725,7 +705,7 @@ mod tests {
         out.persist_private_keys(&store, principal.as_str())
             .unwrap();
 
-        let generation = out.publish_content.generation;
+        let generation = out.publish_content.generation.get();
         let psk = load_signing_key(
             &store,
             principal.as_str(),
