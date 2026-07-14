@@ -927,7 +927,7 @@ fn build_member_state_event(
 
 /// Build a generic `ak.member.state` event on `ak.component.member.state.v1`,
 /// modeling a single FSM transition (e.g. `join → leave` kick, `join → ban`
-/// member ban, `null → join` invite-accept). `reason` shows up in the audit
+/// member ban, `leave → join` direct admission). `reason` shows up in the audit
 /// trail.
 pub fn build_member_state_transition_event(
     realm_id: &str,
@@ -1001,9 +1001,10 @@ fn build_member_state_transition_event_with_binding(
     } else {
         vec![head_eq_precondition(&cell, Value::Null)?]
     };
-    let from_value = from_state
-        .map(|s| Value::String(s.to_owned()))
-        .unwrap_or(Value::Null);
+    // Realm membership's normative initial state is `leave`. The CAS
+    // precondition above still uses JSON null for an absent materialized cell,
+    // while the FSM effect starts from its logical initial state.
+    let from_value = Value::String(from_state.unwrap_or("leave").to_owned());
     let effects = vec![transition_effect(
         &cell,
         from_value,

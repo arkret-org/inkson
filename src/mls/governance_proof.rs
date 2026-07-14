@@ -64,11 +64,34 @@ pub(crate) async fn fetch_proof_bundle(
     api: &crate::transport::TransportClient,
     request: &arkret_sdk::MlsGovernanceProofRequest,
 ) -> Result<arkret_sdk::MlsGovernanceProofBundle, String> {
-    api.sdk_http_client()
-        .map_err(|error| format!("build MLS governance proof client: {error}"))?
-        .mls_governance_proof(request)
-        .await
-        .map_err(|error| format!("fetch MLS governance proof: {error}"))
+    const MAX_PROJECTION_ATTEMPTS: u32 = 8;
+
+    let http = api
+        .sdk_http_client()
+        .map_err(|error| format!("build MLS governance proof client: {error}"))?;
+    for attempt in 0..MAX_PROJECTION_ATTEMPTS {
+        match http.mls_governance_proof(request).await {
+            Ok(bundle) => return Ok(bundle),
+            Err(error)
+                if attempt + 1 < MAX_PROJECTION_ATTEMPTS
+                    && governance_projection_pending(&error) =>
+            {
+                let delay_ms = (100_u64 << attempt).min(1_000);
+                crate::runtime_helpers::sleep_for(std::time::Duration::from_millis(delay_ms)).await;
+            }
+            Err(error) => return Err(format!("fetch MLS governance proof: {error}")),
+        }
+    }
+    unreachable!("bounded governance proof retry loop always returns")
+}
+
+fn governance_projection_pending(error: &arkret_sdk::Error) -> bool {
+    matches!(
+        error,
+        arkret_sdk::Error::Api { status: 409, error }
+            if error.code() == "state_mismatch"
+                && error.message().to_ascii_lowercase().contains("bottom")
+    )
 }
 
 pub(crate) fn welcome_proof_requests(
@@ -609,6 +632,30 @@ mod tests {
         .expect_err("controller mismatch must fail");
 
         assert!(error.contains("does not match actor"), "{error}");
+    }
+
+    #[test]
+    fn only_bottom_projection_conflicts_are_retryable() {
+        let pending = arkret_sdk::Error::Api {
+            status: 409,
+            error: Box::new(arkret_sdk::ErrorEnvelope::new(
+                "state_mismatch",
+                "member cell is still Bottom",
+            )),
+        };
+        let policy_denial = arkret_sdk::Error::Api {
+            status: 409,
+            error: Box::new(arkret_sdk::ErrorEnvelope::new(
+                "state_mismatch",
+                "governance policy digest differs",
+            )),
+        };
+
+        assert!(governance_projection_pending(&pending));
+        assert!(!governance_projection_pending(&policy_denial));
+        assert!(!governance_projection_pending(
+            &arkret_sdk::Error::Protocol("member cell is still Bottom".to_owned(),)
+        ));
     }
 }
 

@@ -871,13 +871,22 @@ pub(crate) fn verify_chat_envelope_proof(event: &Value) -> ChatProofVerdict {
     if actor.is_empty() {
         return ChatProofVerdict::Rejected;
     }
-    if !persistent_proof_controllers_match_actor(envelope, actor) {
+    // AKP-0008 / AKP-0009: delegated and Applet-originated envelopes keep the
+    // accountable principal in actor_id while the runtime that actually
+    // signed the envelope is named by executed_by. Native envelopes omit
+    // executed_by and therefore continue to require an actor-controlled key.
+    let proof_controller = envelope
+        .get("executed_by")
+        .and_then(Value::as_str)
+        .filter(|controller| !controller.trim().is_empty())
+        .unwrap_or(actor);
+    if !persistent_proof_controllers_match(envelope, proof_controller) {
         return ChatProofVerdict::Rejected;
     }
-    let Some(device) = persistent_proof_sender_device(envelope, actor) else {
+    let Some(device) = persistent_proof_sender_device(envelope, proof_controller) else {
         return ChatProofVerdict::Unresolved;
     };
-    match crate::identity::device_directory::cached_device_signing_key(actor, device) {
+    match crate::identity::device_directory::cached_device_signing_key(proof_controller, device) {
         crate::identity::device_directory::CacheLookup::Hit(key) => {
             if crate::identity::device_directory::verify_persistent_envelope_proofs(envelope, &key)
             {
@@ -956,7 +965,7 @@ fn verify_minimal_metadata_chat_author(
         .get("actor_id")
         .and_then(Value::as_str)
         .unwrap_or_default();
-    if actor.is_empty() || !persistent_proof_controllers_match_actor(envelope, actor) {
+    if actor.is_empty() || !persistent_proof_controllers_match(envelope, actor) {
         return ChatProofVerdict::Rejected;
     }
     // The envelope's encrypted-content coordinates are the trust-anchor
@@ -1101,7 +1110,7 @@ fn verification_method_device_fragment<'a>(
     (controller == actor && fragment.starts_with("ak:device:")).then_some(fragment)
 }
 
-fn persistent_proof_controllers_match_actor(envelope: &Value, actor: &str) -> bool {
+fn persistent_proof_controllers_match(envelope: &Value, expected_controller: &str) -> bool {
     let Some(proofs) = envelope.get("proofs").and_then(Value::as_array) else {
         return false;
     };
@@ -1111,7 +1120,9 @@ fn persistent_proof_controllers_match_actor(envelope: &Value, actor: &str) -> bo
     proofs
         .iter()
         .filter_map(|proof| proof.get("verification_method").and_then(Value::as_str))
-        .any(|verification_method| verification_method_controller(verification_method) == actor)
+        .any(|verification_method| {
+            verification_method_controller(verification_method) == expected_controller
+        })
 }
 
 /// X9 — build a `ChatMessage` from a synced/projected event, preferring the

@@ -1,5 +1,3 @@
-use serde_json::json;
-
 use crate::secure_key_store::SecureKeyStore;
 use crate::state::LocalStateStore;
 
@@ -54,9 +52,10 @@ fn build_circle_remove_proposal_event(
     let target_principal = arkret_sdk::Did::new(target_principal_id.to_owned())
         .map_err(|err| format!("invalid remove target principal id: {err:?}"))?;
     let proposal_payload = arkret_sdk::MlsProposalPayload {
-        mls_group_id: proposal.group_id.clone(),
+        mls_group_id: arkret_sdk::MlsGroupId::new(proposal.group_id.clone())
+            .map_err(|err| format!("invalid MLS group id: {err}"))?,
         base_epoch: proposal.epoch,
-        proposal_type: json!(proposal.proposal_type),
+        proposal_type: arkret_sdk::MlsProposalType::Remove,
         proposal_message_ref: None,
         proposal_digest: Some(proposal.proposal_digest.clone()),
         target_principal_id: Some(target_principal),
