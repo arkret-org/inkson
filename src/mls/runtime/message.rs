@@ -928,28 +928,18 @@ fn verify_welcome_claim_envelope_signer(welcome_value: &serde_json::Value) -> Re
 
     // ssk_generation branch: this sync receive path cannot reliably resolve the
     // SSK public key, so reject fail-closed.
-    if envelope.ssk_generation.is_some() {
-        return Err(
-            "claim_envelope is self-signing-key signed (ssk_generation present); the \
-             cross-signing SSK public key cannot be resolved on the synchronous receive \
-             path, so this Welcome is rejected fail-closed (YGN-SEC-01)"
-                .to_owned(),
-        );
-    }
-
-    // Device branch: resolve the (actor, device) signing key through the
-    // device_directory sync cache.
-    let Some(requester_device_id) = envelope
-        .requester_device_id
-        .as_deref()
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-    else {
-        return Err(
-            "claim_envelope carries neither ssk_generation nor requester_device_id; \
-             no resolvable signer (YGN-SEC-01)"
-                .to_owned(),
-        );
+    let requester_device_id = match &envelope.trust_binding {
+        arkret_sdk::MlsRequesterTrustBinding::SskGeneration(_) => {
+            return Err(
+                "claim_envelope is self-signing-key signed (ssk_generation present); the \
+                 cross-signing SSK public key cannot be resolved on the synchronous receive \
+                 path, so this Welcome is rejected fail-closed (YGN-SEC-01)"
+                    .to_owned(),
+            );
+        }
+        arkret_sdk::MlsRequesterTrustBinding::RequesterDeviceId(device_id) => {
+            device_id.as_str()
+        }
     };
     let requester_did = envelope.requester_did.as_str();
     let verifying_key = match crate::identity::device_directory::cached_device_signing_key(
