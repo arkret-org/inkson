@@ -9,6 +9,8 @@
 //! `service_id` for registration / discovery) as `target_ref` so
 //! soland's `target-ref-required` envelope-shape check passes.
 
+use serde_json::json;
+
 use super::OperationBuilder;
 
 /// `ak.applet.discovery` — the network discovery surface that lists
@@ -76,9 +78,9 @@ pub fn applet_bridge_error(
         applet_id: parse_applet_identifier(applet_id).map_err(anyhow::Error::msg)?,
         realm_id: arkret_sdk::RealmId::new(realm_id.to_owned())
             .map_err(|err| anyhow::anyhow!("invalid realm id {realm_id:?}: {err}"))?,
-        failed_transaction_ref: arkret_sdk::ObjectRef::new(failed_transaction_ref.to_owned())?,
+        failed_transaction_ref: failed_transaction_ref.to_owned(),
         error_class: error_class.to_owned(),
-        error_code: arkret_sdk::NonEmptyString::new(error_code)?,
+        error_code: arkret_sdk::NonEmptyString::new(error_code).map_err(anyhow::Error::msg)?,
         retriable,
         visibility_scope,
         external_ref: None,

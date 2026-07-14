@@ -142,13 +142,7 @@ pub fn seal_history_secrets(
     let sender_device_signature: arkret_sdk::SignatureMaterial =
         serde_json::from_value(sender_device_signature)
             .map_err(|err| format!("invalid RRK sender device signature: {err}"))?;
-    let scope = rrk_key_scope(
-        realm_id.clone(),
-        from_epoch,
-        to_epoch,
-        policy_digest,
-        None,
-    );
+    let scope = rrk_key_scope(realm_id.clone(), from_epoch, to_epoch, policy_digest, None);
     seal_history_secrets_to_recovery_recipient(
         recovery_key,
         history_secrets,

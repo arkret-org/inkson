@@ -63,9 +63,11 @@ pub fn build_principal_signing_proof(
         arkret_sdk::RecoveryPrincipalSigningProof {
             kind: arkret_sdk::RecoveryPrincipalSigningProofKind::PrincipalSigning,
             challenge: challenge.to_owned(),
-            verification_method: arkret_sdk::DidUrl::new(verification_method.to_owned())?,
-            alg: arkret_sdk::NonEmptyString::new("EdDSA")?,
-            signature: arkret_sdk::Base64UrlString::new(B64.encode(signature.to_bytes()))?,
+            verification_method: arkret_sdk::DidUrl::new(verification_method.to_owned())
+                .map_err(anyhow::Error::msg)?,
+            alg: arkret_sdk::NonEmptyString::new("EdDSA").map_err(anyhow::Error::msg)?,
+            signature: arkret_sdk::Base64UrlString::new(B64.encode(signature.to_bytes()))
+                .map_err(anyhow::Error::msg)?,
         },
     ))
 }
@@ -146,12 +148,14 @@ mod tests {
     fn proof_signature_verifies_against_transcript() {
         let session = sample_session();
         let signing_key = SigningKey::from_bytes(&[51u8; 32]);
-        let proof = serde_json::to_value(build_principal_signing_proof(
-            &session,
-            "did:key:z6MkPrincipalFixture#key",
-            &signing_key,
+        let proof = serde_json::to_value(
+            build_principal_signing_proof(
+                &session,
+                "did:key:z6MkPrincipalFixture#key",
+                &signing_key,
+            )
+            .unwrap(),
         )
-        .unwrap())
         .unwrap();
         assert_eq!(proof["kind"], "principal_signing");
         assert_eq!(proof["alg"], "EdDSA");

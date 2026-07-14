@@ -100,7 +100,7 @@ pub async fn submit_realm_key_request(
     let device_id = arkret_sdk::DeviceId::new(device_id.trim().to_owned())?;
     let payload = arkret_sdk::RealmKeyRequestPayload {
         key_scope: arkret_sdk::RealmKeyRequestScope {
-            effective_scope: arkret_sdk::EffectiveScope::Realm {
+            effective_scope: arkret_sdk::models::EffectiveScope::Realm {
                 realm_id: realm_id.clone(),
             },
             policy_digest: None,
@@ -113,11 +113,12 @@ pub async fn submit_realm_key_request(
         recipient_device_id: device_id.clone(),
         recipient_hpke_public_key: arkret_sdk::NonEmptyString::new(
             recipient_hpke_public_key.trim(),
-        )?,
+        )
+        .map_err(anyhow::Error::msg)?,
         requested_source_class: arkret_sdk::HistoryKeySource::VerifiedMemberDevice,
-        target_source_ref: arkret_sdk::RealmKeySourceRef::Device(
-            arkret_sdk::DeviceId::new(provider_device_ref.trim().to_owned())?,
-        ),
+        target_source_ref: arkret_sdk::RealmKeySourceRef::Device(arkret_sdk::DeviceId::new(
+            provider_device_ref.trim().to_owned(),
+        )?),
         // The principal that owns `target_source_ref` (the provider device the
         // requester picked as its history source). Required by the SDK request
         // schema so the relay can route to the provider's to-device queue.

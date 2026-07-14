@@ -147,9 +147,7 @@ pub async fn update_profile(
     patch
         .validate()
         .map_err(|err| anyhow::anyhow!("invalid profile patch: {err}"))?;
-    let body = arkret_sdk::models::AccountUpdateProfileRequestBody {
-        patch,
-    };
+    let body = arkret_sdk::models::AccountUpdateProfileRequestBody { patch };
     http.account_update_profile(&body)
         .await
         .map_err(anyhow::Error::from)

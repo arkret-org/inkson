@@ -58,10 +58,9 @@ pub(crate) fn build_realm_mls_admission_events_from_claim(
         .get("governance_binding")
         .cloned()
         .ok_or_else(|| "MLS commit event missing governance_binding".to_owned())?;
-    let governance_binding = serde_json::from_value::<arkret_sdk::MlsGovernanceBindingPayload>(
-        governance_binding,
-    )
-    .map_err(|err| format!("MLS commit governance_binding is invalid: {err}"))?;
+    let governance_binding =
+        serde_json::from_value::<arkret_sdk::MlsGovernanceBindingPayload>(governance_binding)
+            .map_err(|err| format!("MLS commit governance_binding is invalid: {err}"))?;
     let welcome_payload = build_mls_welcome_payload_value(
         state_store,
         secure_store,
@@ -132,10 +131,9 @@ pub(crate) fn build_realm_mls_admission_events_from_claims(
         .get("governance_binding")
         .cloned()
         .ok_or_else(|| "MLS commit event missing governance_binding".to_owned())?;
-    let governance_binding = serde_json::from_value::<arkret_sdk::MlsGovernanceBindingPayload>(
-        governance_binding,
-    )
-    .map_err(|err| format!("MLS commit governance_binding is invalid: {err}"))?;
+    let governance_binding =
+        serde_json::from_value::<arkret_sdk::MlsGovernanceBindingPayload>(governance_binding)
+            .map_err(|err| format!("MLS commit governance_binding is invalid: {err}"))?;
     if add.welcomes.len() != claims.len() {
         return Err("MLS batch add returned a mismatched Welcome count".to_owned());
     }
@@ -212,7 +210,7 @@ pub(crate) fn build_realm_key_share_event(
     let policy_digest = arkret_sdk::Hash::new(policy_digest.trim().to_owned())
         .map_err(|err| format!("invalid realm_key.share policy_digest: {err:?}"))?;
     let key_scope = arkret_sdk::RealmKeyScope {
-        effective_scope: arkret_sdk::EffectiveScope::Realm {
+        effective_scope: arkret_sdk::models::EffectiveScope::Realm {
             realm_id: arkret_sdk::RealmId::new(trim_realm_id(realm_id))
                 .map_err(|err| format!("invalid realm_key.share Realm id: {err:?}"))?,
         },
@@ -387,9 +385,7 @@ pub(crate) fn build_mls_welcome_payload_value(
         claim.ssk_generation.and_then(std::num::NonZeroU64::new),
         claim.device_authorize_event_id.as_deref(),
     ) {
-        (Some(generation), None) => {
-            arkret_sdk::MlsClaimTrustBinding::SskGeneration(generation)
-        }
+        (Some(generation), None) => arkret_sdk::MlsClaimTrustBinding::SskGeneration(generation),
         (None, Some(event_id)) => arkret_sdk::MlsClaimTrustBinding::DeviceAuthorizeEventId(
             arkret_sdk::NonEmptyString::new(event_id)
                 .map_err(|err| format!("invalid device authorization event id: {err}"))?,
@@ -453,10 +449,9 @@ fn sign_welcome_claim_envelope(
             std::num::NonZeroU64::new(publish.generation)
                 .ok_or_else(|| "cross-signing generation must be positive".to_owned())?,
         );
-        envelope.signature.kid = arkret_sdk::NonEmptyString::new(
-            publish.self_signing_key.key.kid.clone(),
-        )
-        .map_err(|err| format!("MLS Welcome self-signing kid: {err}"))?;
+        envelope.signature.kid =
+            arkret_sdk::NonEmptyString::new(publish.self_signing_key.key.kid.clone())
+                .map_err(|err| format!("MLS Welcome self-signing kid: {err}"))?;
         let signing_bytes = envelope
             .canonical_signing_bytes()
             .map_err(|err| format!("MLS Welcome claim canonical bytes: {err}"))?;
@@ -469,10 +464,9 @@ fn sign_welcome_claim_envelope(
         .map_err(|err| format!("load self-signing key: {err}"))?
         .ok_or_else(|| "self-signing key is not available on this device".to_owned())?;
         let signature = signing_key.sign(&signing_bytes);
-        envelope.signature.sig = arkret_sdk::Base64UrlString::new(
-            URL_SAFE_NO_PAD.encode(signature.to_bytes()),
-        )
-        .map_err(|err| format!("MLS Welcome self-signing signature: {err}"))?;
+        envelope.signature.sig =
+            arkret_sdk::Base64UrlString::new(URL_SAFE_NO_PAD.encode(signature.to_bytes()))
+                .map_err(|err| format!("MLS Welcome self-signing signature: {err}"))?;
         return Ok(());
     }
     let sender_device_id = sender_device_id.trim();

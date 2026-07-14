@@ -22,8 +22,8 @@ pub use members_panel::RealmMembersPanel;
 pub(crate) use members_panel::{
     mls_admission_candidate_realms_for_actor, parse_realm_key_request_envelope,
     pending_history_request_dedup_key, realm_key_request_answer_dedup_key,
-    reconcile_mls_admissions_for_realm, request_history_keys_for_realm, share_history_to_requester,
-    submit_mls_admission_for_invitees,
+    realm_key_source_ref_str, reconcile_mls_admissions_for_realm, request_history_keys_for_realm,
+    share_history_to_requester, submit_mls_admission_for_invitees,
 };
 pub use organization::{RealmOrganizationPanel, ServerAdminSignal, is_server_admin};
 

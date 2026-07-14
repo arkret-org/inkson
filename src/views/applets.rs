@@ -45,9 +45,7 @@ use crate::views::helpers::short_protocol_id;
 
 /// Parse an inline package into the SDK's closed `AppletPackage` wire type.
 /// The v1 install surface accepts a complete signed package, not a manifest URL.
-pub fn applet_package_from_manifest(
-    kind: &ManifestInputKind,
-) -> Option<arkret_sdk::AppletPackage> {
+pub fn applet_package_from_manifest(kind: &ManifestInputKind) -> Option<arkret_sdk::AppletPackage> {
     match kind {
         ManifestInputKind::Json(raw) => serde_json::from_str(raw).ok(),
         ManifestInputKind::Url(_) | ManifestInputKind::Invalid => None,

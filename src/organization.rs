@@ -271,13 +271,14 @@ pub fn sign_organization_statement(
         authorization: RealmOrganizationAuthorization {
             issuer: organization_id,
             issuer_role: RealmOrganizationIssuerRole::OrganizationDid,
-            verification_method: arkret_sdk::DidUrl::new(input.verification_method.clone())?,
+            verification_method: arkret_sdk::DidUrl::new(input.verification_method.clone())
+                .map_err(anyhow::Error::msg)?,
             delegation_ref: None,
             executed_by: None,
             signed_at: input.issued_at,
             // Placeholder; the signer rewrites this with the detached signature.
             proof: SignatureMaterial::NonEmptyString(
-                arkret_sdk::NonEmptyString::new("placeholder")?,
+                arkret_sdk::NonEmptyString::new("placeholder").map_err(anyhow::Error::msg)?,
             ),
         },
     };

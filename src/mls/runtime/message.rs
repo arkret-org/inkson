@@ -943,9 +943,7 @@ fn verify_welcome_claim_envelope_signer(welcome_value: &serde_json::Value) -> Re
                     .to_owned(),
             );
         }
-        arkret_sdk::MlsRequesterTrustBinding::RequesterDeviceId(device_id) => {
-            device_id.as_str()
-        }
+        arkret_sdk::MlsRequesterTrustBinding::RequesterDeviceId(device_id) => device_id.as_str(),
     };
     let requester_did = envelope.requester_did.as_str();
     let verifying_key = match crate::identity::device_directory::cached_device_signing_key(

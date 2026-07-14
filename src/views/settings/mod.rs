@@ -1691,13 +1691,15 @@ pub fn SettingsPanel(
                                                 sender_actor_id: arkret_sdk::Did::new(actor.trim().to_owned())?,
                                                 device_id: arkret_sdk::DeviceId::new(device.trim().to_owned())?,
                                                 ciphertext: arkret_sdk::MimiCiphertext {
-                                                    content_type: arkret_sdk::NonEmptyString::new("application/json")?,
+                                                    content_type: arkret_sdk::NonEmptyString::new("application/json")
+                                                        .map_err(anyhow::Error::msg)?,
                                                     ciphertext_digest: arkret_sdk::Hash::new(
                                                         arkret_sdk::canonical::sha256_digest(plaintext),
                                                     )?,
                                                     payload: arkret_sdk::Base64UrlString::new(
                                                         base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(plaintext),
-                                                    )?,
+                                                    )
+                                                    .map_err(anyhow::Error::msg)?,
                                                 },
                                                 mls_group_id: None,
                                                 epoch: None,
@@ -1751,7 +1753,8 @@ pub fn SettingsPanel(
                                             let request = arkret_sdk::MimiProxyDownloadRequestBody {
                                                 asset_ref: arkret_sdk::NonEmptyString::new(
                                                     "ak:blob:sha256:01015dc8af66d01f557ea63f13538f1964848840a350c5311d1efc8ad138bb91",
-                                                )?,
+                                                )
+                                                .map_err(anyhow::Error::msg)?,
                                                 requester: arkret_sdk::Did::new(actor.trim().to_owned())?,
                                                 strand_id: None,
                                                 ohttp_context: None,

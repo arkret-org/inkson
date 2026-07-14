@@ -406,14 +406,15 @@ pub fn summarize_runtime_key_approval_request(
         .to_owned();
     let proof_expires_at = request
         .proof_of_possession
+        .as_map()
         .get("expires_at")
         .and_then(Value::as_str)
         .unwrap_or_default()
         .to_owned();
     Ok(RuntimeKeyApprovalSummary {
-        pairing_request_id: request.pairing_request_id,
+        pairing_request_id: request.pairing_request_id.as_str().to_owned(),
         agent_id: request.agent_id.to_string(),
-        verification_method: request.verification_method,
+        verification_method: request.verification_method.as_str().to_owned(),
         public_key_fingerprint,
         proof_expires_at,
     })
@@ -467,7 +468,7 @@ pub fn build_agent_key_authorize_event_for_pairing(
     if request.agent_id.as_str() != key_state_str(key_state, "agent_id")? {
         anyhow::bail!("runtime request agent_id does not match this agent key state");
     }
-    if request.pairing_request_id != key_state_str(key_state, "pairing_request_id")? {
+    if request.pairing_request_id.as_str() != key_state_str(key_state, "pairing_request_id")? {
         anyhow::bail!("runtime request pairing_request_id does not match this agent");
     }
     let pairing_code = key_state_str(key_state, "pairing_code")?;
@@ -489,7 +490,7 @@ pub fn build_agent_key_authorize_event_for_pairing(
         &request.agent_id,
         &request.verification_method,
         &runtime_public_key_digest,
-        &request.pairing_request_id,
+        request.pairing_request_id.as_str(),
         pairing_code,
         pairing_expires_at,
         service_id,
@@ -538,7 +539,7 @@ pub fn build_agent_key_authorize_event_for_pairing(
             kind: AgentKeyApprovalEvidenceKind::PairingRequest,
             evidence_ref: None,
             request_canonical_digest: Some(Hash::new(pairing_digest.as_str().to_owned())?),
-            pairing_request_id: Some(request.pairing_request_id.clone()),
+            pairing_request_id: Some(request.pairing_request_id.as_str().to_owned()),
             approved_by: Some(controller.clone()),
         },
         supersedes,

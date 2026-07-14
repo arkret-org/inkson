@@ -416,7 +416,11 @@ pub(super) fn MlsRuntimeEffects(state: MlsRuntimeEffectState) -> Element {
                     .filter_map(crate::views::realm_admin::parse_realm_key_request_envelope)
                     .filter(|request| {
                         request.payload.target_principal_id.as_str().trim() == actor.trim()
-                            && request.payload.target_source_ref.trim() == device.trim()
+                            && crate::views::realm_admin::realm_key_source_ref_str(
+                                &request.payload.target_source_ref,
+                            )
+                            .trim()
+                                == device.trim()
                             && !answer_backoff.is_cooling(
                                 &crate::views::realm_admin::realm_key_request_answer_dedup_key(
                                     request,

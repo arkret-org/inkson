@@ -1911,14 +1911,21 @@ fn realm_key_request_payload_candidate(value: &Value) -> Option<&Value> {
 pub(crate) fn realm_key_request_scope_realm_id(
     request: &arkret_sdk::RealmKeyRequestPayload,
 ) -> Option<String> {
-    request
-        .key_scope
-        .effective_scope
-        .get("realm_id")
-        .and_then(Value::as_str)
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .map(ToOwned::to_owned)
+    Some(
+        request
+            .key_scope
+            .effective_scope
+            .realm_id()
+            .as_str()
+            .to_owned(),
+    )
+}
+
+pub(crate) fn realm_key_source_ref_str(source_ref: &arkret_sdk::RealmKeySourceRef) -> &str {
+    match source_ref {
+        arkret_sdk::RealmKeySourceRef::Device(device_id) => device_id.as_str(),
+        arkret_sdk::RealmKeySourceRef::Service(service_id) => service_id.as_str(),
+    }
 }
 
 fn realm_key_request_envelope_request_id(envelope: &Value) -> Option<String> {
@@ -2025,9 +2032,9 @@ pub(crate) fn realm_key_request_answer_dedup_key(
         "scope:{}|target:{}|{}|recipient:{}|{}|range:{}..{}|hpke:{}",
         envelope.realm_id.trim(),
         request.target_principal_id.as_str().trim(),
-        request.target_source_ref.trim(),
+        realm_key_source_ref_str(&request.target_source_ref).trim(),
         request.recipient_principal_id.as_str().trim(),
-        request.recipient_device_id.trim(),
+        request.recipient_device_id.as_str().trim(),
         request.key_scope.from_epoch,
         request.key_scope.to_epoch,
         request.recipient_hpke_public_key.trim()
@@ -2140,7 +2147,7 @@ pub(crate) async fn share_history_to_requester(
         return Ok(false);
     }
     if request.target_principal_id.as_str().trim() != actor_id.trim()
-        || request.target_source_ref.trim() != device_id.trim()
+        || realm_key_source_ref_str(&request.target_source_ref).trim() != device_id.trim()
     {
         return Ok(false);
     }
@@ -2231,7 +2238,7 @@ pub(crate) async fn share_history_to_requester(
         &actor_id,
         &device_id,
         request.recipient_principal_id.as_str(),
-        &request.recipient_device_id,
+        request.recipient_device_id.as_str(),
         min_epoch,
         max_epoch,
         policy_digest,

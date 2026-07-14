@@ -115,29 +115,36 @@ pub fn parse_pending_pairing_requests(inbox: &[Value]) -> Vec<PendingPairingRequ
 pub fn pairing_request_body(
     payload: &Value,
 ) -> anyhow::Result<arkret_sdk::AccountDevicePairRequestBody> {
-    let pairing_code = arkret_sdk::NonEmptyString::new(payload
-        .get("pairing_code")
-        .and_then(Value::as_str)
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .ok_or_else(|| anyhow::anyhow!("pairing payload is missing pairing_code"))?)?;
+    let pairing_code = arkret_sdk::NonEmptyString::new(
+        payload
+            .get("pairing_code")
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .ok_or_else(|| anyhow::anyhow!("pairing payload is missing pairing_code"))?,
+    )
+    .map_err(anyhow::Error::msg)?;
     let new_device_pubkey = match payload.get("new_device_pubkey") {
         Some(value @ Value::Object(_)) => serde_json::from_value(value.clone())?,
         _ => anyhow::bail!("pairing payload is missing new_device_pubkey"),
     };
-    let challenge_signature = arkret_sdk::Base64UrlString::new(payload
-        .get("challenge_signature")
-        .and_then(Value::as_str)
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .ok_or_else(|| anyhow::anyhow!("pairing payload is missing challenge_signature"))?)?;
+    let challenge_signature = arkret_sdk::Base64UrlString::new(
+        payload
+            .get("challenge_signature")
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .ok_or_else(|| anyhow::anyhow!("pairing payload is missing challenge_signature"))?,
+    )
+    .map_err(anyhow::Error::msg)?;
     let display_name = payload
         .get("display_name")
         .and_then(Value::as_str)
         .map(str::trim)
         .filter(|value| !value.is_empty())
         .map(arkret_sdk::NonEmptyString::new)
-        .transpose()?;
+        .transpose()
+        .map_err(anyhow::Error::msg)?;
     let device_metadata = payload
         .get("device_metadata")
         .map(|value| serde_json::from_value(value.clone()))

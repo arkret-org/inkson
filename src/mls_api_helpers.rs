@@ -38,9 +38,11 @@ pub(crate) fn sign_keypackage_upload_batch_with_signer(
         .sign_raw(&input)
         .map_err(|err| anyhow::anyhow!("keypackages/upload device_signature sign failed: {err}"))?;
     Ok(arkret_sdk::KeyOperationSignature {
-        kid: arkret_sdk::NonEmptyString::new(signer.verification_method())?,
-        alg: Some(arkret_sdk::NonEmptyString::new(signer.algorithm())?),
-        sig: arkret_sdk::Base64UrlString::new(URL_SAFE_NO_PAD.encode(sig))?,
+        kid: arkret_sdk::NonEmptyString::new(signer.verification_method())
+            .map_err(anyhow::Error::msg)?,
+        alg: Some(arkret_sdk::NonEmptyString::new(signer.algorithm()).map_err(anyhow::Error::msg)?),
+        sig: arkret_sdk::Base64UrlString::new(URL_SAFE_NO_PAD.encode(sig))
+            .map_err(anyhow::Error::msg)?,
     })
 }
 
@@ -69,7 +71,8 @@ pub(crate) fn mls_key_package_record_upload_entry(
         keypackage_id: record.keypackage_id.clone(),
         keypackage_ref: record.keypackage_ref.as_str().to_owned(),
         keypackage_digest: record.keypackage_ref.clone(),
-        key_package: arkret_sdk::Base64UrlString::new(record.key_package.clone())?,
+        key_package: arkret_sdk::Base64UrlString::new(record.key_package.clone())
+            .map_err(anyhow::Error::msg)?,
         cipher_suites: record.cipher_suites.clone(),
         capabilities: record.capabilities.clone(),
         expires_at: record
