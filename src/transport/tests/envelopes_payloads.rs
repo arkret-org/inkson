@@ -492,14 +492,12 @@ fn default_history_sharing_policy_matches_prejoin_visibility() {
 /// canonical digest whether hashed by inkson's local builder or after a
 /// round-trip through the authoritative `arkret_sdk::Event` wire model.
 ///
-/// The bug this guards: genesis preconditions assert `head_eq null` (an
-/// empty cell) and member transitions move `from: null → join`, both of
-/// which carry an EXPLICIT wire `null`. An earlier `Option<Value>` field on
-/// the SDK `Predicate` / `LatticeOp` collapsed that `null` to `None` on
-/// deserialize and dropped it on re-serialize, so the SDK digest no longer
-/// matched the locally-signed one — the SDK submit path failed closed
-/// with "event digest drift between inkson builder and SDK Event" and the
-/// Realm could never be created.
+/// The bug this guards: genesis preconditions assert `head_eq null` for an
+/// absent materialized cell. An earlier `Option<Value>` field on the SDK
+/// `Predicate` collapsed that explicit `null` to `None` on deserialize and
+/// dropped it on re-serialize, so the SDK digest no longer matched the
+/// locally-signed one. Membership effects themselves start from the
+/// normative logical FSM initial state `leave`.
 #[test]
 fn bootstrap_envelopes_have_no_sdk_digest_drift() {
     let events = build_realm_bootstrap_events(
@@ -517,8 +515,9 @@ fn bootstrap_envelopes_have_no_sdk_digest_drift() {
         "single_did",
         "sha256",
         "ak:trust_domain:server.example",
-        // an invitee exercises the `ak.member.state` `from: null → invite`
-        // transition (LatticeOp.from carries an explicit null). Bootstrap
+        // an invitee exercises the `ak.member.state` `leave → invite`
+        // transition. Its CAS precondition still carries explicit null for
+        // the absent materialized cell. Bootstrap
         // accepts only authoritative DID input; handle strings require
         // Directory-resolved invite/address evidence.
         &["did:webvh:z2dmjBobScidVnosYTzHAMbzYDRZkVrD32ea9Sr2XNs8NkgMB5mn:bob.example".to_owned()],
@@ -527,6 +526,14 @@ fn bootstrap_envelopes_have_no_sdk_digest_drift() {
         None,
     )
     .unwrap();
+
+    let invite = events
+        .iter()
+        .find(|event| event.kind.as_str() == "ak.member.state")
+        .expect("bootstrap invite event");
+    assert_eq!(invite.preconditions[0].predicate.value, Some(json!(null)));
+    assert_eq!(invite.effects[0].op.from, Some(json!("leave")));
+    assert_eq!(invite.effects[0].op.to, Some(json!("invite")));
 
     for event in events {
         let kind = event.kind.as_str().to_owned();

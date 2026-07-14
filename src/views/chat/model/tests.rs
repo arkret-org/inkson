@@ -195,6 +195,41 @@ mod device_identity_proof_tests {
         );
         assert!(chat_message_from_event("ak:realm:r", &envelope).is_none());
     }
+
+    #[test]
+    fn applet_executor_proof_is_unresolved_instead_of_rejected() {
+        let actor = "did:web:ghost.example:external-user";
+        let executor = "did:web:applet.example";
+        let mut envelope = json!({
+            "kind": "ak.message.create",
+            "realm_id": "ak:realm:r",
+            "actor_id": actor,
+            "executed_by": executor,
+            "created_at": "2026-06-16T00:00:00Z",
+            "message_id": "ak:msg:applet",
+            "strand_id": "ak:strand:general",
+            "content": { "body": "hello through an applet" }
+        });
+        let canonical_bytes = crate::canonical::canonical_json_bytes(&envelope).unwrap();
+        let event_digest = crate::canonical::sha256_digest(&canonical_bytes);
+        envelope["proofs"] = json!([{
+            "kind": "detached_jws",
+            "alg": "EdDSA",
+            "verification_method": format!("{executor}#applet-service-key"),
+            "event_digest": event_digest,
+            "created_at": "2026-06-16T00:00:00Z",
+            "jws": "fixture"
+        }]);
+
+        assert_eq!(
+            verify_chat_envelope_proof(&envelope),
+            ChatProofVerdict::Unresolved
+        );
+        let message = chat_message_from_event("ak:realm:r", &envelope)
+            .expect("an unresolved Applet executor remains visible and flagged");
+        assert_eq!(message.sender, actor);
+        assert_eq!(message.crypto_state, MessageCryptoState::NeedsVerification);
+    }
 }
 
 #[cfg(test)]
