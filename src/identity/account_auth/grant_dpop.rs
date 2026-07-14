@@ -459,7 +459,7 @@ pub fn dpop_device_key_record_from_seed(
 fn jwk_thumbprint_ed25519(
     verifying_key: &ed25519_dalek::VerifyingKey,
 ) -> Result<String, AuthDpopError> {
-    let jwk = arkret_sdk::dpop::DpopJwk::from_ed25519_verifying_key(verifying_key);
+    let jwk = arkret_sdk::signatures::JsonWebKey::from_ed25519_verifying_key(verifying_key);
     arkret_sdk::dpop::dpop_jwk_thumbprint(&jwk)
         .map_err(|error| AuthDpopError::Mint(error.to_string()))
 }
