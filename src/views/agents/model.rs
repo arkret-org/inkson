@@ -271,6 +271,7 @@ pub fn requested_scope_for_presets(
             kind: AgentKeyScopeResourceKind::Operation,
             realm_id: None,
             resource_ref: None,
+            schema_ref: None,
             operation: Some(action),
             service_id: None,
         })

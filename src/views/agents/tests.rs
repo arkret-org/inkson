@@ -262,6 +262,8 @@ mod personal_agent_tests {
             .unwrap(),
             controller_authorization_ref: "ak:event:01964137-0000-7000-8000-000000000006"
                 .to_owned(),
+            requested_scope_digest: arkret_sdk::Hash::new(format!("sha256:{}", "1".repeat(64)))
+                .unwrap(),
             pcr_recovery: arkret_sdk::AgentProvisionPcrRecovery::default(),
             pairing_request_id: "0197-req".to_owned(),
             pairing_code: Some("123456".to_owned()),
@@ -305,6 +307,8 @@ mod personal_agent_tests {
             .unwrap(),
             controller_authorization_ref: "ak:event:01964137-0000-7000-8000-000000000006"
                 .to_owned(),
+            requested_scope_digest: arkret_sdk::Hash::new(format!("sha256:{}", "1".repeat(64)))
+                .unwrap(),
             pcr_recovery: arkret_sdk::AgentProvisionPcrRecovery::default(),
             pairing_request_id: "0197-req".to_owned(),
             pairing_code: Some("123456".to_owned()),

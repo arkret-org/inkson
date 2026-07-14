@@ -2102,6 +2102,15 @@ export async function mockArkretApi(
         );
       }
       const agentId = `did:web:agents.example:${slug}`;
+      const principalControlRealmId =
+        "ak:realm:01964137-0000-7000-8000-000000000005";
+      const controllerAuthorizationRef = `${agentId}#managed-controller`;
+      const requestedScopeDigest = canonicalSha256({
+        agent_id: agentId,
+        controller_id: accountPrincipalId,
+        kind: "ak.agent.requested_scope_commitment.v1",
+        requested_scope: body.requested_scope,
+      });
       const agent = {
         agent_id: agentId,
         ...(typeof body.display_name === "string"
@@ -2118,17 +2127,27 @@ export async function mockArkretApi(
         controller_id: accountPrincipalId,
       };
       const keyState = {
+        agent_id: agentId,
+        controller_id: accountPrincipalId,
+        principal_control_realm_id: principalControlRealmId,
+        controller_authorization_ref: controllerAuthorizationRef,
         status: "pending_runtime_key",
+        pcr_recovery: { status: "pending" },
         pairing_request_id: `pair-${personalAgentCounter}`,
         pairing_code: "246810",
         pairing_expires_at: personalAgentPairingExpiresAt,
         requested_scope: body.requested_scope,
+        requested_scope_digest: requestedScopeDigest,
       };
       personalAgents.set(agentId, agent);
       personalAgentKeyStates.set(agentId, keyState);
       personalAgentGrants.set(agentId, []);
       return json(route, {
         agent_id: agentId,
+        principal_control_realm_id: principalControlRealmId,
+        controller_authorization_ref: controllerAuthorizationRef,
+        requested_scope_digest: requestedScopeDigest,
+        pcr_recovery: { status: "pending" },
         pairing_request_id: keyState.pairing_request_id,
         pairing_code: keyState.pairing_code,
         expires_at: keyState.pairing_expires_at,
@@ -2167,11 +2186,11 @@ export async function mockArkretApi(
       personalAgentCounter += 1;
       const renewedExpiresAt = "2099-07-06T00:20:00Z";
       const keyState = {
+        ...(personalAgentKeyStates.get(agentId) ?? {}),
         status: "pending_runtime_key",
         pairing_request_id: `pair-renew-${personalAgentCounter}`,
         pairing_code: "135791",
         pairing_expires_at: renewedExpiresAt,
-        requested_scope: (personalAgentKeyStates.get(agentId) ?? {}).requested_scope,
       };
       personalAgents.set(agentId, {
         ...agent,
@@ -2181,6 +2200,11 @@ export async function mockArkretApi(
       personalAgentKeyStates.set(agentId, keyState);
       return json(route, {
         agent_id: agentId,
+        principal_control_realm_id: keyState.principal_control_realm_id,
+        controller_authorization_ref: keyState.controller_authorization_ref,
+        requested_scope_digest: keyState.requested_scope_digest,
+        pcr_recovery: keyState.pcr_recovery,
+        pairing_mode: "bootstrap",
         pairing_request_id: keyState.pairing_request_id,
         pairing_code: keyState.pairing_code,
         expires_at: keyState.pairing_expires_at,
