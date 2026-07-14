@@ -73,10 +73,7 @@ pub(super) fn ChatTimeline(controller: ChatController, context: ChatTimelineCont
         .iter()
         .map(|pin| pin.target_ref.clone())
         .collect();
-    let outbox_message_id_set: std::collections::HashSet<String> = (controller.outbox)()
-        .iter()
-        .map(|queued| queued.message_id.clone())
-        .collect();
+    let queued_outbound_message_ids = (controller.queued_outbound_message_ids)();
     let private_saved_target_set = (controller.private_saved_targets)();
     let ChatController {
         messages: _,
@@ -137,8 +134,12 @@ pub(super) fn ChatTimeline(controller: ChatController, context: ChatTimelineCont
                                 || pinned_target_set.contains(&msg.id);
                             let message_is_saved_private =
                                 private_saved_target_set.contains(&message_target_ref);
-                            let message_is_queued_offline =
-                                outbox_message_id_set.contains(&msg.id);
+                            let message_is_queued_offline = msg
+                                .protocol_message_id
+                                .as_ref()
+                                .is_some_and(|message_id| {
+                                    queued_outbound_message_ids.contains(message_id)
+                                });
                             let sender_is_own =
                                 is_own_message_sender(&msg.sender, &account_did);
                             // Deep-link focus target (design/route-view-ia.md §3.2).

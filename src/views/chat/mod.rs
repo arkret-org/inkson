@@ -423,9 +423,8 @@ pub fn ChatPanel(
         mut strand_watch_level,
         mut watch_level_menu_open,
         mut status_msg,
-        outbox: chat_outbox,
+        queued_outbound_message_ids,
         is_online,
-        outbox_flushing: _,
         reply_to_message: _,
         editing_message: _,
         edit_draft: _,
@@ -1397,11 +1396,10 @@ pub fn ChatPanel(
                     }
                 }
 
-                // Offline outbox banner. Visible while the browser is offline
-                // or the queue is non-empty so the user knows sends are parked
-                // and will flush on reconnect (sync/offline-conflict).
+                // Offline queue banner. Visible while the browser is offline or
+                // Garth still has pending chat events for this actor.
                 {
-                    let queued_count = chat_outbox().len();
+                    let queued_count = queued_outbound_message_ids().len();
                     let online = is_online();
                     rsx! {
                         if !online || queued_count > 0 {

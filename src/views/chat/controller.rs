@@ -148,9 +148,8 @@ pub(super) struct ChatController {
     pub strand_watch_level: Signal<WatchLevel>,
     pub watch_level_menu_open: Signal<bool>,
     pub status_msg: Signal<String>,
-    pub outbox: Signal<Vec<OutboxMessage>>,
+    pub queued_outbound_message_ids: Signal<std::collections::BTreeSet<String>>,
     pub is_online: Signal<bool>,
-    pub outbox_flushing: Signal<bool>,
     pub reply_to_message: Signal<Option<String>>,
     pub editing_message: Signal<Option<String>>,
     pub edit_draft: Signal<String>,
@@ -873,7 +872,7 @@ fn mark_message_command_failed(
 pub(super) fn use_chat_controller(
     selected_realm_id: &str,
     initial_strand_id: &str,
-    account_did: &str,
+    _account_did: &str,
 ) -> ChatController {
     let initial_default_channel = (!selected_realm_id.trim().is_empty())
         .then(|| discussion_channel_for_strand(selected_realm_id, initial_strand_id));
@@ -885,8 +884,6 @@ pub(super) fn use_chat_controller(
         .clone()
         .into_iter()
         .collect::<Vec<_>>();
-    let account_for_outbox = account_did.to_owned();
-
     ChatController {
         channels: use_signal(move || initial_channels),
         selected_channel: use_signal(move || initial_selected_channel),
@@ -909,9 +906,8 @@ pub(super) fn use_chat_controller(
         strand_watch_level: use_signal(|| WatchLevel::All),
         watch_level_menu_open: use_signal(|| false),
         status_msg: use_signal(String::new),
-        outbox: use_signal(move || load_outbox(&account_for_outbox)),
+        queued_outbound_message_ids: use_signal(std::collections::BTreeSet::<String>::new),
         is_online: use_signal(navigator_online),
-        outbox_flushing: use_signal(|| false),
         reply_to_message: use_signal(|| None),
         editing_message: use_signal(|| None),
         edit_draft: use_signal(String::new),

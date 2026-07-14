@@ -37,10 +37,8 @@ pub(super) fn ChatEffects(
     let typing_next_expires_at_ms = controller.typing_next_expires_at_ms;
     let mut presence_announce_key_seen = controller.presence_announce_key_seen;
     let mut presence_heartbeat_tick = controller.presence_heartbeat_tick;
-    let mut chat_outbox = controller.outbox;
-    let mut outbox_flushing = controller.outbox_flushing;
-    let mut status_msg = controller.status_msg;
-    let mut messages = controller.messages;
+    let mut queued_outbound_message_ids = controller.queued_outbound_message_ids;
+    let messages = controller.messages;
     let mut owned_agent_sync_key_seen = controller.owned_agent_sync_key_seen;
     let mut agent_participation_sync_key_seen = controller.agent_participation_sync_key_seen;
     let presence_states = controller.presence_states;
@@ -126,13 +124,25 @@ pub(super) fn ChatEffects(
         });
     }
 
-    use_future(move || async move {
-        loop {
-            let online = navigator_online();
-            if *is_online.peek() != online {
-                event_sink.emit(ChatProjectionEvent::Connectivity(online));
+    let account_for_connectivity = account_did.clone();
+    use_future(move || {
+        let account_for_connectivity = account_for_connectivity.clone();
+        async move {
+            loop {
+                let online = navigator_online();
+                if *is_online.peek() != online {
+                    event_sink.emit(ChatProjectionEvent::Connectivity(online));
+                }
+                if let Ok(next) = crate::event_submit::pending_chat_outbound_message_ids(
+                    &account_for_connectivity,
+                )
+                .await
+                    && *queued_outbound_message_ids.peek() != next
+                {
+                    queued_outbound_message_ids.set(next);
+                }
+                crate::runtime_helpers::sleep_for(std::time::Duration::from_millis(2_500)).await;
             }
-            crate::runtime_helpers::sleep_for(std::time::Duration::from_millis(2_500)).await;
         }
     });
 
@@ -301,116 +311,6 @@ pub(super) fn ChatEffects(
         });
     }
 
-    // Reconnect drain: when connectivity returns and the outbox is non-empty,
-    // resubmit each parked message through the normal `ak.message.create`
-    // path, then clear it from the queue. Entries reuse their stable local
-    // id so the reducer collapses the replay with the optimistic row.
-    {
-        let base_for_flush = base_url.clone();
-        let service_for_flush = plaintext_service_id.clone();
-        let account_for_flush = account_did.clone();
-        use_effect(move || {
-            let online = is_online();
-            let pending = chat_outbox.read().clone();
-            if !online || pending.is_empty() || *outbox_flushing.peek() {
-                return;
-            }
-            outbox_flushing.set(true);
-            let base = base_for_flush.clone();
-            let service_id = service_for_flush.clone();
-            let account_did = account_for_flush.clone();
-            let api_token = token();
-            let wait_for = active_sync_token(sync_cursor());
-            spawn(async move {
-                for entry in pending {
-                    let projection = state_store
-                        .read()
-                        .load()
-                        .realm_tree_projections
-                        .get(&entry.realm_id)
-                        .cloned();
-                    let plaintext_services =
-                        plaintext_services_for_policy(projection.as_ref(), &service_id);
-                    let mut mentions = entry.mentions.clone();
-                    for mention in resolve_agent_selector_mentions(
-                        &base,
-                        api_token.clone(),
-                        wait_for.clone(),
-                        &entry.body,
-                        &entry.realm_id,
-                        &account_did,
-                        entry.own_controller_handle.as_deref(),
-                    )
-                    .await
-                    {
-                        push_unique_mention_node(&mut mentions, mention);
-                    }
-                    if let Some(found) = messages
-                        .write()
-                        .iter_mut()
-                        .find(|candidate| candidate.id == entry.message_id)
-                    {
-                        found.mentions = mentions.clone();
-                    }
-                    let mut op = match chat_message_create_operation(
-                        &entry.realm_id,
-                        &account_did,
-                        &entry.strand_id,
-                        &entry.channel_kind,
-                        &entry.message_id,
-                        &entry.body,
-                        &mentions,
-                        entry.reply_to.as_deref(),
-                    ) {
-                        Ok(op) => op,
-                        Err(error) => {
-                            status_msg.set(format!("outbox flush failed: {error:#}"));
-                            continue;
-                        }
-                    };
-                    apply_mention_sidecar_hashes(&mut op, &entry.realm_id, &mentions);
-                    match submit_chat_operation_with_auth_refresh(
-                        &base,
-                        &account_did,
-                        &entry.realm_id,
-                        api_token.clone(),
-                        wait_for.clone(),
-                        &plaintext_services,
-                        &op,
-                    )
-                    .await
-                    {
-                        Ok(resp) => {
-                            if let Some(found) = messages
-                                .write()
-                                .iter_mut()
-                                .find(|candidate| candidate.id == entry.message_id)
-                            {
-                                found.id = resp.event_id.clone();
-                                found.pending = false;
-                                found.failed = false;
-                                found.error = None;
-                            }
-                            frontier_state.set(resp.event_id.clone());
-                            chat_outbox
-                                .write()
-                                .retain(|queued| queued.message_id != entry.message_id);
-                            let remaining = chat_outbox.read().clone();
-                            save_outbox(&account_did, &remaining);
-                            status_msg.set(crate::i18n::tr("chat.outbox.flushed"));
-                        }
-                        Err(error) => {
-                            // Leave the entry queued for the next reconnect
-                            // tick; surface the failure but don't drop the
-                            // message.
-                            status_msg.set(format!("outbox flush retry pending: {error:#}"));
-                        }
-                    }
-                }
-                outbox_flushing.set(false);
-            });
-        });
-    }
     {
         let base = base_url.clone();
         let realm = selected_realm_id.clone();

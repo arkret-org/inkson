@@ -315,34 +315,6 @@ fn AppBootstrap() -> Element {
         crate::runtime::services::RuntimeServices::new(state_adapter, session_coordinator.clone())
     });
 
-    // Dev-only (wasm + `wasm-localstorage-secrets-test`) real-grant injection
-    // for the cotest joint e2e harness. Runs once, synchronously, ahead of the
-    // bootstrap `connect()` below so the first `/_arkret/self/*` request already
-    // carries a valid grant + DPoP proof. Not compiled into production builds.
-    #[cfg(all(target_arch = "wasm32", feature = "wasm-localstorage-secrets-test"))]
-    {
-        let mut state_store = state_store;
-        let mut token = token;
-        use_hook(move || {
-            if let Some(grant_jwt) = inject_test_session_grant(
-                &mut state_store,
-                config_store,
-                &base_url(),
-                &account_did(),
-                &device_id(),
-            ) {
-                token.set(grant_jwt);
-            } else if let Some(credential) = inject_test_session_credential(
-                config_store,
-                &base_url(),
-                &account_did(),
-                &device_id(),
-            ) {
-                token.set(credential);
-            }
-        });
-    }
-
     let navigator = use_navigator();
     let route = use_route::<Route>();
     let mut view = use_signal(|| route.to_view());

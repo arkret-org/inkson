@@ -769,6 +769,19 @@ pub(super) fn MlsRuntimeEffects(state: MlsRuntimeEffectState) -> Element {
                     |api| async move {
                         let payload =
                             crate::mls::account_recovery::fetch_mls_restore_payload(&api).await?;
+                        let history_payload_for_local_restore = if has_local_account_secret {
+                            Some(
+                                crate::mls::account_recovery::fetch_mls_history_restore_payload_with_unlock_proof(
+                                    &api,
+                                    &payload,
+                                    &actor_for_sidecar_restore,
+                                    &device_for_sidecar_restore,
+                                )
+                                .await?,
+                            )
+                        } else {
+                            None
+                        };
                         let sidecar_body_for_local_restore = if has_local_account_secret {
                             crate::mls::account_recovery::fetch_mls_private_plaintext_backup_body(
                                 &api,
@@ -781,12 +794,20 @@ pub(super) fn MlsRuntimeEffects(state: MlsRuntimeEffectState) -> Element {
                         } else {
                             None
                         };
-                        Ok((payload, sidecar_body_for_local_restore))
+                        Ok((
+                            payload,
+                            history_payload_for_local_restore,
+                            sidecar_body_for_local_restore,
+                        ))
                     },
                 )
                 .await
                 {
-                    Ok((payload, sidecar_body_for_local_restore)) => {
+                    Ok((
+                        payload,
+                        history_payload_for_local_restore,
+                        sidecar_body_for_local_restore,
+                    )) => {
                         if seen_bootstrap_key_for_probe().as_deref() != Some(bootstrap_key.as_str())
                         {
                             return;
@@ -812,20 +833,24 @@ pub(super) fn MlsRuntimeEffects(state: MlsRuntimeEffectState) -> Element {
                                     backup_id,
                                 );
                             }
-                            let report = crate::mls::account_recovery::restore_mls_history_with_local_secret_from_payload(
-                                &payload,
-                                &mut store,
-                                secure_store.as_ref(),
-                                &detect_actor,
-                                &detect_device,
-                            );
-                            if report.failed > 0 {
-                                tracing::warn!(
-                                    failed = report.failed,
-                                    restored = report.restored,
-                                    first_error = ?report.first_error,
-                                    "mls history restore from local secret failed"
+                            if let Some(history_payload) =
+                                history_payload_for_local_restore.as_ref()
+                            {
+                                let report = crate::mls::account_recovery::restore_mls_history_with_local_secret_from_payload(
+                                    history_payload,
+                                    &mut store,
+                                    secure_store.as_ref(),
+                                    &detect_actor,
+                                    &detect_device,
                                 );
+                                if report.failed > 0 {
+                                    tracing::warn!(
+                                        failed = report.failed,
+                                        restored = report.restored,
+                                        first_error = ?report.first_error,
+                                        "mls history restore from local secret failed"
+                                    );
+                                }
                             }
                             if let Some(sidecar_body) = sidecar_body_for_local_restore.as_ref() {
                                 let sidecar_payload =
@@ -850,7 +875,7 @@ pub(super) fn MlsRuntimeEffects(state: MlsRuntimeEffectState) -> Element {
                         let should_unlock = {
                             let store = state_store_for_probe.read();
                             crate::mls::account_recovery::mls_restore_prompt_required(
-                                &payload,
+                                history_payload_for_local_restore.as_ref().unwrap_or(&payload),
                                 &store,
                                 secure_store.as_ref(),
                                 &detect_actor,
