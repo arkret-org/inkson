@@ -196,16 +196,15 @@ pub(super) fn inject_test_session_credential(
 /// ②(A+②) model). Returns the injected grant JWT so the caller can seed the
 /// in-memory `token` signal before the bootstrap `connect()` reads it.
 ///
-/// Timing: this MUST run before the bootstrap `connect()` block reads `token`
-/// and `state_store` (the DPoP key + persisted grant) so the very first
-/// `/_arkret/self/*` request carries a valid grant + DPoP proof. It is
-/// driven from a `use_hook` placed ahead of that block so it executes once,
-/// synchronously, on first render.
+/// Timing: this MUST run after the IndexedDB/SubtleCrypto store is installed,
+/// but before `secure_store_bootstrap_ready` lets the bootstrap `connect()`
+/// block read `token` and `state_store`. Session and DPoP material must never
+/// be downgraded into the synchronous localStorage fallback, even in tests.
 ///
-/// On success it (1) writes the DPoP device key to the secure store through the
-/// compile-time test localStorage tier, with a thumbprint that equals the
-/// grant's `cnf.jkt` because both derive from the same seed, and (2) persists a
-/// `PersistedSessionGrant` whose
+/// On success it (1) writes the DPoP device key to the initialized IndexedDB
+/// secure store, with a thumbprint that equals the grant's `cnf.jkt` because
+/// both derive from the same seed, and (2) persists a `PersistedSessionGrant`
+/// whose
 /// `principal_server_url` is the active server so the bootstrap does not treat
 /// it as stale.
 #[cfg(all(target_arch = "wasm32", feature = "wasm-localstorage-secrets-test"))]
@@ -215,6 +214,7 @@ pub(super) fn inject_test_session_grant(
     server_url: &str,
     account_did: &str,
     device_id: &str,
+    secure_store: &dyn crate::secure_key_store::SecureKeyStore,
 ) -> Option<String> {
     let raw = match web_sys::window()
         .and_then(|window| window.local_storage().ok().flatten())
@@ -229,9 +229,35 @@ pub(super) fn inject_test_session_grant(
             return None;
         }
     };
-    let parsed: Value = serde_json::from_str(&raw).ok()?;
-    let grant_jwt = parsed.get("grant_jwt")?.as_str()?.to_owned();
-    let dpop_seed_b64url = parsed.get("dpop_seed_b64url")?.as_str()?.to_owned();
+    let parsed: Value = match serde_json::from_str(&raw) {
+        Ok(parsed) => parsed,
+        Err(error) => {
+            tracing::warn!(
+                ?error,
+                fixture_len = raw.len(),
+                "test session injection skipped: invalid JSON fixture"
+            );
+            return None;
+        }
+    };
+    let Some(grant_jwt) = parsed
+        .get("grant_jwt")
+        .and_then(Value::as_str)
+        .map(str::to_owned)
+    else {
+        tracing::warn!("test session injection skipped: grant_jwt is missing or not a string");
+        return None;
+    };
+    let Some(dpop_seed_b64url) = parsed
+        .get("dpop_seed_b64url")
+        .and_then(Value::as_str)
+        .map(str::to_owned)
+    else {
+        tracing::warn!(
+            "test session injection skipped: dpop_seed_b64url is missing or not a string"
+        );
+        return None;
+    };
     if grant_jwt.trim().is_empty() || dpop_seed_b64url.trim().is_empty() {
         tracing::warn!(
             target: "mls_admission",
@@ -259,10 +285,9 @@ pub(super) fn inject_test_session_grant(
             return None;
         }
     };
-    let secure_store = crate::secure_key_store::default_secure_key_store("inkson");
     if let Err(error) = state_store
         .write()
-        .set_dpop_device_key_with_secure_store(Some(record), secure_store.as_ref())
+        .set_dpop_device_key_with_secure_store(Some(record), secure_store)
     {
         tracing::warn!(?error, "test session injection: DPoP key persist failed");
         return None;
@@ -275,10 +300,9 @@ pub(super) fn inject_test_session_grant(
     // signs events / KeyPackages / MLS) is activated SEPARATELY from the account
     // signing seed and bound to the injected device id, so the two lifecycles
     // stay decoupled just as they do in production.
-    if let Err(error) = crate::secure_key_store::store_grant_binding_seed_b64url(
-        secure_store.as_ref(),
-        &dpop_seed_b64url,
-    ) {
+    if let Err(error) =
+        crate::secure_key_store::store_grant_binding_seed_b64url(secure_store, &dpop_seed_b64url)
+    {
         tracing::warn!(
             ?error,
             "test session injection: grant-binding key persist failed"

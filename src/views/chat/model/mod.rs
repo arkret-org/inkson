@@ -8,10 +8,10 @@
 pub(crate) use super::*;
 
 mod agents;
+mod connectivity;
 mod events;
 mod mentions;
 mod operations;
-mod outbox;
 mod participants;
 mod strands;
 mod types;
@@ -20,10 +20,10 @@ mod types;
 // each other through their `use super::*;`, and (b) `chat/mod.rs`'s
 // `use model::*;` keeps resolving every name unchanged.
 pub(crate) use agents::*;
+pub(crate) use connectivity::*;
 pub(crate) use events::*;
 pub(crate) use mentions::*;
 pub(crate) use operations::*;
-pub(crate) use outbox::*;
 pub(crate) use participants::*;
 pub(crate) use strands::*;
 pub(crate) use types::*;

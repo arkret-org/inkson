@@ -229,9 +229,9 @@ async fn fetch_owned_agent_rows(
             continue;
         };
         // Deactivated agents are terminal; pairing_expired agents never bound
-        // a runtime key and can never join a Realm. Pending agents stay: Realm
-        // grants may be attached before pairing completes
-        // (effective_after_first_authorized_key).
+        // a runtime key and can never join a Realm. Pending agents stay because
+        // Realm membership/grants are independent from key pairing, although
+        // the agent cannot act until it has an authorized runtime key.
         if matches!(row.status.as_str(), "deactivated" | "pairing_expired") {
             continue;
         }
@@ -2039,27 +2039,41 @@ pub(crate) fn realm_key_request_answer_dedup_key(
 /// (`ak.realm_key.share.source_authorization_ref`,
 /// encryption-and-audit.md §2.3.5(c)).
 fn history_share_policy_allows_verified_member_device(event: &Value) -> bool {
-    let payload = event.get("payload").unwrap_or(event);
-    let direct = payload.get("allowed_key_sources").and_then(Value::as_array);
-    let from_effect = payload
-        .get("effects")
-        .and_then(Value::as_array)
-        .into_iter()
-        .flatten()
-        .find_map(|effect| {
-            effect
-                .get("op")
-                .and_then(|op| op.get("value"))
-                .and_then(|value| value.get("allowed_key_sources"))
-                .and_then(Value::as_array)
-        });
-    direct.or(from_effect).is_some_and(|sources| {
-        sources.iter().any(|source| {
-            source
-                .as_str()
-                .is_some_and(|source| source.trim() == "verified_member_device")
+    fn sources_allow_member_device(sources: Option<&Value>) -> bool {
+        sources.and_then(Value::as_array).is_some_and(|sources| {
+            sources.iter().any(|source| {
+                source
+                    .as_str()
+                    .is_some_and(|source| source.trim() == "verified_member_device")
+            })
         })
-    })
+    }
+
+    fn effects_allow_member_device(owner: &Value) -> bool {
+        owner
+            .get("effects")
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+            .any(|effect| {
+                sources_allow_member_device(
+                    effect
+                        .get("op")
+                        .and_then(|op| op.get("value"))
+                        .and_then(|value| value.get("allowed_key_sources")),
+                )
+            })
+    }
+
+    let payload = event.get("payload").unwrap_or(event);
+    sources_allow_member_device(payload.get("allowed_key_sources"))
+        || sources_allow_member_device(
+            payload
+                .get("value")
+                .and_then(|value| value.get("allowed_key_sources")),
+        )
+        || effects_allow_member_device(payload)
+        || effects_allow_member_device(event)
 }
 
 /// Resolve the latest projected `ak.realm.history_sharing_policy` Control Move
@@ -2078,6 +2092,10 @@ pub(crate) fn realm_history_share_source_authorization_ref(
         .get("state")?
         .get("events")?
         .as_array()?;
+    history_share_source_authorization_ref_from_events(events)
+}
+
+fn history_share_source_authorization_ref_from_events(events: &[Value]) -> Option<String> {
     events.iter().rev().find_map(|event| {
         let kind = event
             .get("kind")
@@ -2104,10 +2122,9 @@ pub(crate) fn realm_history_share_source_authorization_ref(
 ///
 /// Returns `Ok(true)` when a share was built and submitted, `Ok(false)` when
 /// the provider holds no history secret to share (it will be retried once the
-/// provider has retained one), or when the share cannot yet name its
-/// `source_authorization_ref` (same retry semantics). `request` is the inbound
-/// `ak.realm_key.request` to-device envelope; `realm_id`/`actor_id`/`device_id`
-/// are the provider's.
+/// provider has retained one), or when the share cannot name its
+/// `source_authorization_ref`. `request` is the inbound `ak.realm_key.request`
+/// to-device envelope; `realm_id`/`actor_id`/`device_id` are the provider's.
 pub(crate) async fn share_history_to_requester(
     api: &crate::transport::TransportClient,
     mut state_store: SyncSignal<LocalStateStore>,
@@ -2140,7 +2157,7 @@ pub(crate) async fn share_history_to_requester(
             &device_id,
         );
     }
-    let (all, policy_digest, source_authorization_ref) = {
+    let (all, policy_digest, local_source_authorization_ref) = {
         let store = state_store.read();
         let source_authorization_ref =
             realm_history_share_source_authorization_ref(&store, &realm_id);
@@ -2168,9 +2185,20 @@ pub(crate) async fn share_history_to_requester(
     if all.is_empty() {
         return Ok(false);
     }
+    // Incremental sync payloads can omit an unchanged Control Move. Resolve a
+    // security-critical authorization reference from the authoritative,
+    // fully-paginated event log when the local projection no longer carries
+    // it; never invent a reference or weaken the receiver/server checks.
+    let source_authorization_ref = match local_source_authorization_ref {
+        Some(event_id) => Some(event_id),
+        None => {
+            let backfill = api.event_submitter()?.backfill(&realm_id).await?;
+            history_share_source_authorization_ref_from_events(&backfill.event_values())
+        }
+    };
     // §2.3.5(c): every ak.realm_key.share must name the authorizing Control
-    // Move. Without it the answer fails closed; the request stays in the
-    // inbox and is retried once the projection carries the policy event ref.
+    // Move. Without it the answer fails closed and the request stays in the
+    // inbox for a later policy/projection update.
     let Some(source_authorization_ref) = source_authorization_ref else {
         tracing::warn!(
             realm = %short_protocol_id(&realm_id),
@@ -4753,6 +4781,30 @@ mod tests {
         );
 
         assert!(realm_history_share_source_authorization_ref(&store, realm).is_none());
+    }
+
+    #[test]
+    fn history_share_authorization_ref_accepts_normative_backfill_event_shape() {
+        let event_id = "ak:event:01904100-0000-7000-8000-000000000103";
+        let events = vec![json!({
+            "event_id": event_id,
+            "kind": "ak.realm.history_sharing_policy",
+            "effects": [{
+                "op": {"kind": "set", "value": {
+                    "allowed_key_sources": ["verified_member_device"],
+                    "allowed_receiver_states": ["active_member"]
+                }}
+            }],
+            "payload": {"value": {
+                "allowed_key_sources": ["verified_member_device"],
+                "allowed_receiver_states": ["active_member"]
+            }}
+        })];
+
+        assert_eq!(
+            history_share_source_authorization_ref_from_events(&events).as_deref(),
+            Some(event_id)
+        );
     }
 
     fn dummy_mls_snapshot(realm_id: &str) -> crate::mls::persistence::MlsSnapshotEnvelope {

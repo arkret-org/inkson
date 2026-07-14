@@ -281,6 +281,61 @@ pub async fn fetch_mls_restore_payload_with_unlock_proof(
     Ok(full_payload)
 }
 
+/// Hydrate only the active MLS-history series tails needed by the silent
+/// already-unlocked-device restore path.
+///
+/// The list endpoint intentionally returns metadata-only summaries. Passing
+/// those summaries to the envelope decoder produces a misleading missing-AEAD
+/// error. This helper replaces eligible history summaries with full envelopes
+/// obtained through the standard unlock-proof endpoint while leaving account
+/// recovery metadata available for prompt selection. Private-plaintext
+/// sidecars are omitted because their caller fetches the selected tail through
+/// its own bounded unlock path.
+pub async fn fetch_mls_history_restore_payload_with_unlock_proof(
+    api: &crate::transport::TransportClient,
+    list_payload: &Value,
+    actor_id: &str,
+    device_id: &str,
+) -> Result<Value> {
+    let mls_history_tails = mls_history_series_tail_ids(list_payload);
+    let mut backups = Vec::new();
+    for entry in list_payload
+        .get("backups")
+        .and_then(Value::as_array)
+        .cloned()
+        .unwrap_or_default()
+    {
+        if is_mls_private_plaintext_backup(&entry) {
+            continue;
+        }
+        if !is_mls_history_backup(&entry) {
+            backups.push(entry);
+            continue;
+        }
+        let backup_id = entry
+            .get("backup_id")
+            .and_then(Value::as_str)
+            .ok_or_else(|| anyhow!("mls_history backup metadata is missing backup_id"))?;
+        if !mls_history_tails.contains(backup_id) {
+            continue;
+        }
+        if entry.get("ciphertext").and_then(Value::as_str).is_some() {
+            backups.push(entry);
+            continue;
+        }
+        let full = crate::key_backup::fetch_key_backup_with_active_unlock_proof(
+            api, &entry, actor_id, device_id,
+        )
+        .await
+        .map_err(|err| anyhow!("fetch MLS history backup {backup_id} with unlock proof: {err}"))?;
+        backups.push(full);
+    }
+
+    let mut payload = list_payload.clone();
+    payload["backups"] = Value::Array(backups);
+    Ok(payload)
+}
+
 /// Restore MLS account secret + history from an already-fetched
 /// `list_key_backups` payload.
 ///

@@ -104,8 +104,9 @@ mod personal_agent_tests {
     }
 
     #[test]
-    fn requested_scope_uses_selected_actions_without_realm() {
+    fn requested_scope_is_global_ceiling_without_realm_grants() {
         assert!(requested_scope_for_presets(&[], &[]).is_none());
+        assert!(requested_scope_for_presets(&[AgentGrantPreset::Read], &[]).is_none());
 
         let scope = requested_scope_for_presets(
             &[AgentGrantPreset::Read, AgentGrantPreset::ReplyAsAgent],
@@ -127,18 +128,6 @@ mod personal_agent_tests {
         assert_eq!(
             wire["resources"],
             serde_json::json!([
-                {
-                    "kind": "operation",
-                    "operation": "ak.event.read"
-                },
-                {
-                    "kind": "operation",
-                    "operation": "ak.message.create"
-                },
-                {
-                    "kind": "operation",
-                    "operation": "ak.reaction.add"
-                },
                 {
                     "kind": "operation",
                     "operation": "ak.self.events.stream.subscribe"
@@ -210,7 +199,7 @@ mod personal_agent_tests {
     }
 
     #[test]
-    fn expand_preset_grant_emits_registered_actions_and_inactive_flag() {
+    fn expand_preset_grant_emits_registered_actions() {
         let grant = expand_preset_grant(
             AgentGrantPreset::ReplyAsAgent,
             "did:web:agents.example:summary",
@@ -224,7 +213,6 @@ mod personal_agent_tests {
         assert_eq!(grant["subject"], "did:web:agents.example:summary");
         assert_eq!(grant["resources"][0]["kind"], "realm");
         assert_eq!(grant["resources"][0]["realm_id"], "ak:realm:01");
-        assert_eq!(grant["effective_after_first_authorized_key"], true);
         assert_eq!(grant["expires_at"], "2026-06-26T00:00:00Z");
         // Non-aob presets carry no controller-approval constraint.
         assert!(grant.get("constraints").is_none());

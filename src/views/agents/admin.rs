@@ -564,8 +564,7 @@ pub fn PersonalAgentAdminPanel(token: Signal<String>) -> Element {
         .as_ref()
         .map(|agent| agent_field(agent, "updated_at"))
         .unwrap_or_default();
-    let selected_scope =
-        selected_key_state.and_then(|key_state| key_state.requested_scope.as_ref());
+    let selected_scope = selected_key_state.map(|key_state| &key_state.requested_scope);
     let selected_content_capabilities = AgentGrantPreset::ALL.map(|preset| {
         (
             preset,
@@ -750,10 +749,10 @@ pub fn PersonalAgentAdminPanel(token: Signal<String>) -> Element {
                                         new_agent_avatar_blob_ref.set(String::new());
                                     },
                                 }
-                                div { class: "muted", "Service scope lets the runtime call subscribe, scan, submit, and resource endpoints. Realm membership and participation controls decide whether payloads can be read or messages can be created." }
+                                div { class: "muted", "These settings are the Agent's maximum permissions. Joining a Realm can only grant a subset; anything disabled here stays unavailable in every Realm." }
                                 div { class: "agent-admin-section-head",
                                     strong { "Content capabilities" }
-                                    span { class: "muted", "Available after Realm membership allows them" }
+                                    span { class: "muted", "Global maximum; Realm grants can only narrow it" }
                                 }
                                 div { class: "agent-admin-preset-list",
                                     for preset in AgentGrantPreset::ALL {
@@ -789,7 +788,7 @@ pub fn PersonalAgentAdminPanel(token: Signal<String>) -> Element {
                                 }
                                 div { class: "agent-admin-section-head",
                                     strong { "Runtime service surface" }
-                                    span { class: "muted", "Endpoint operations for the agent key" }
+                                    span { class: "muted", "Maximum endpoint operations for the agent key" }
                                 }
                                 div { class: "agent-admin-preset-list", "data-testid": "agent-admin-service-scope-list",
                                     for preset in AgentServiceScopePreset::ALL {
@@ -860,7 +859,7 @@ pub fn PersonalAgentAdminPanel(token: Signal<String>) -> Element {
                                                     display_name: None,
                                                     slug: slug_value.clone(),
                                                     avatar_blob_ref: avatar_blob_ref.clone(),
-                                                    requested_scope: Some(requested_scope.clone()),
+                                                    requested_scope: requested_scope.clone(),
                                                     accountability: Value::Null,
                                                     pairing_ttl_ms: None,
                                                 };

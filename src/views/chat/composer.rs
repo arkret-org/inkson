@@ -1073,9 +1073,8 @@ pub(super) fn ChatComposer(controller: ChatController, context: ChatComposerCont
                                 // Continue into the ordinary submit path while
                                 // offline: EventSubmitter persists the stable SDK
                                 // Event in Garth before its first network attempt.
-                                // The old chat-specific localStorage outbox is now
-                                // read-only compatibility for entries created by
-                                // earlier releases.
+                                // Queue status and replay both come from that one
+                                // durable source.
                                 let offline_now = !is_online() || !navigator_online();
                                 if offline_now {
                                     if *is_online.peek() {

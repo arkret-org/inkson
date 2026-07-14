@@ -241,32 +241,37 @@ pub fn service_actions_for_presets(presets: &[AgentServiceScopePreset]) -> Vec<S
 
 /// Build the `requested_scope` (`AgentKeyScope`, the spec object
 /// `{actions, resources, constraints}`) for the provision call from the
-/// selected content presets and runtime service surface. Personal agents are
-/// account-global: this key scope is not Realm-bound, and effective data
-/// authority is still intersected with Realm membership plus participation
-/// and capability gates. The schema requires `resources` to be non-empty, so
-/// each selected action is mirrored as an explicit `operation` selector.
+/// selected content presets and runtime service surface. This scope is the
+/// Agent's global hard ceiling, not a Realm grant: later Realm grants and
+/// participation can only narrow the listed actions. Service actions carry
+/// operation selectors; content resources are supplied only by later grants.
 pub fn requested_scope_for_presets(
     content_presets: &[AgentGrantPreset],
     service_presets: &[AgentServiceScopePreset],
 ) -> Option<AgentKeyScope> {
-    let mut actions: Vec<String> = Vec::new();
-    for action in content_actions_for_presets(content_presets) {
-        push_unique_action(&mut actions, &action);
+    let content_actions = content_actions_for_presets(content_presets);
+    let service_actions = service_actions_for_presets(service_presets);
+    if service_actions.is_empty() {
+        return None;
     }
-    for action in service_actions_for_presets(service_presets) {
-        push_unique_action(&mut actions, &action);
+    let mut actions: Vec<String> = Vec::new();
+    for action in &content_actions {
+        push_unique_action(&mut actions, action);
+    }
+    for action in &service_actions {
+        push_unique_action(&mut actions, action);
     }
     if actions.is_empty() {
         return None;
     }
-    let resources = actions
-        .iter()
+
+    let resources = service_actions
+        .into_iter()
         .map(|action| AgentKeyScopeResource {
             kind: AgentKeyScopeResourceKind::Operation,
             realm_id: None,
             resource_ref: None,
-            operation: Some(action.clone()),
+            operation: Some(action),
             service_id: None,
         })
         .collect();
@@ -560,9 +565,8 @@ pub fn build_agent_key_authorize_event_for_pairing(
 /// Expand one preset into a canonical `ak.capability.grant` object for
 /// `ak.self.agent.grant.command.attach`. The agent principal id is the
 /// grant `subject`; `realm_id` scopes it; `expires_at` (RFC3339 Z)
-/// bounds the TTL. The grant carries
-/// `effective_after_first_authorized_key=true` (§4.3.2) so it is durable
-/// but inactive until pairing completes.
+/// bounds the TTL. This is a separate Realm-scoped grant and is never
+/// materialized by provisioning.
 ///
 /// `act_on_behalf` additionally attaches a `claim_based` /
 /// `accountability` constraint (`controller_approval_required=true`) per
@@ -591,7 +595,6 @@ pub fn expand_preset_grant(
         "resources": resources,
         "subject": agent_id,
         "expires_at": expires_at,
-        "effective_after_first_authorized_key": true,
     });
     if preset == AgentGrantPreset::ActOnBehalf {
         grant["constraints"] = json!([

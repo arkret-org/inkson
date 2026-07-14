@@ -42,10 +42,31 @@ pub(super) fn SecureStoreEffects(state: SecureStoreEffectState) -> Element {
             match crate::secure_key_store::initialize_wasm_secure_key_store_async("inkson").await {
                 Ok(Some(secure_store)) => {
                     #[cfg(feature = "wasm-localstorage-secrets-test")]
-                    apply_test_session_grant_expiry_override(
-                        &mut state_store_for_secure_upgrade,
-                        secure_store.as_ref(),
-                    );
+                    {
+                        let injected = inject_test_session_grant(
+                            &mut state_store_for_secure_upgrade,
+                            config_store_for_secure_upgrade,
+                            &base_url_for_secure_upgrade(),
+                            &account_did_for_secure_upgrade(),
+                            &device_id_for_secure_upgrade(),
+                            secure_store.as_ref(),
+                        )
+                        .or_else(|| {
+                            inject_test_session_credential(
+                                config_store_for_secure_upgrade,
+                                &base_url_for_secure_upgrade(),
+                                &account_did_for_secure_upgrade(),
+                                &device_id_for_secure_upgrade(),
+                            )
+                        });
+                        if let Some(credential) = injected {
+                            token_for_secure_upgrade.set(credential);
+                        }
+                        apply_test_session_grant_expiry_override(
+                            &mut state_store_for_secure_upgrade,
+                            secure_store.as_ref(),
+                        );
+                    }
                     tracing::debug!(target: "secure_store", "secure store upgrade: Ok(Some) — IndexedDb tier installed");
                     let hydrated = state_store_for_secure_upgrade
                         .write()

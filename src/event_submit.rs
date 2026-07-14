@@ -197,6 +197,58 @@ fn outbound_retry_delay(error: &anyhow::Error) -> Option<Duration> {
     })
 }
 
+fn actor_frontier_refresh_error(actor_id: &str, error: anyhow::Error) -> anyhow::Error {
+    error.context(format!(
+        "refresh actor frontier for {actor_id} before submit"
+    ))
+}
+
+fn pending_chat_message_ids_from_snapshot(
+    snapshot: &arkret_sdk::sync_client::SendQueueSnapshot,
+) -> std::collections::BTreeSet<String> {
+    use arkret_sdk::sync_client::SendQueueStatus;
+
+    snapshot
+        .items
+        .iter()
+        .filter(|item| {
+            matches!(
+                item.status,
+                SendQueueStatus::Queued | SendQueueStatus::Sending | SendQueueStatus::Failed
+            )
+        })
+        .filter(|item| {
+            matches!(
+                &item.kind,
+                arkret_sdk::sync_client::SendQueueItemKind::Custom { kind }
+                    if kind == "ak.message.create"
+            )
+        })
+        .filter_map(|item| decode_queued_sdk_event(item.content.clone()).ok())
+        .filter_map(|queued| {
+            queued
+                .event
+                .payload
+                .get("message_id")
+                .and_then(Value::as_str)
+                .map(str::trim)
+                .filter(|message_id| !message_id.is_empty())
+                .map(ToOwned::to_owned)
+        })
+        .collect()
+}
+
+/// Project pending chat message ids directly from the one durable Garth queue.
+/// The chat UI uses this snapshot instead of maintaining a second plaintext
+/// outbox with separate replay semantics.
+pub(crate) async fn pending_chat_outbound_message_ids(
+    actor_id: &str,
+) -> anyhow::Result<std::collections::BTreeSet<String>> {
+    let outbound = OutboundEngine::new(crate::outbound_store::InksonOutboundStore::open(actor_id)?);
+    let snapshot = outbound.snapshot().await?;
+    Ok(pending_chat_message_ids_from_snapshot(&snapshot))
+}
+
 fn completed_outbound_result(item: &arkret_sdk::sync_client::SendQueueItem) -> SubmitEventResult {
     SubmitEventResult {
         event_id: item
@@ -777,10 +829,7 @@ impl EventSubmitter {
                 );
                 Ok(())
             }
-            Err(error) => Err(anyhow::anyhow!(
-                "refresh actor frontier for {} before submit: {error}",
-                actor_id
-            )),
+            Err(error) => Err(actor_frontier_refresh_error(&actor_id, error)),
         }
     }
 
@@ -1134,6 +1183,90 @@ mod tests {
     use serde_json::json;
 
     use super::*;
+
+    #[test]
+    fn frontier_context_preserves_retryable_transport_error() {
+        let error = actor_frontier_refresh_error(
+            "did:web:alice.example",
+            arkret_sdk::Error::Http("browser offline".to_owned()).into(),
+        );
+
+        assert_eq!(outbound_retry_delay(&error), Some(Duration::from_secs(1)));
+        assert!(format!("{error:#}").contains("browser offline"));
+    }
+
+    #[test]
+    fn pending_chat_projection_ignores_sent_items() {
+        let realm =
+            arkret_sdk::RealmId::new("ak:realm:01904100-0000-7000-8000-000000000001".to_owned())
+                .unwrap();
+        let actor = "did:web:alice.example";
+        let mut queue = arkret_sdk::sync_client::SendQueue::new();
+        let pending = sdk_event_with_kind(
+            "ak:event:01904100-0000-7000-8000-000000000001",
+            realm.as_str(),
+            "ak.message.create",
+            actor,
+        );
+        let mut pending = pending;
+        pending.payload = json!({
+            "message_id": "ak:message:01904100-0000-7000-8000-000000000001"
+        });
+        queue
+            .enqueue(
+                Some(pending.event_id.to_string()),
+                realm.clone(),
+                arkret_sdk::sync_client::SendQueueItemKind::Custom {
+                    kind: "ak.message.create".to_owned(),
+                },
+                serde_json::to_value(QueuedSdkEvent {
+                    event: pending,
+                    post_accept: None,
+                })
+                .unwrap(),
+                Vec::new(),
+            )
+            .unwrap();
+
+        let sent = sdk_event_with_kind(
+            "ak:event:01904100-0000-7000-8000-000000000002",
+            realm.as_str(),
+            "ak.message.create",
+            actor,
+        );
+        let sent_transaction = sent.event_id.to_string();
+        queue
+            .enqueue(
+                Some(sent_transaction.clone()),
+                realm.clone(),
+                arkret_sdk::sync_client::SendQueueItemKind::Custom {
+                    kind: "ak.message.create".to_owned(),
+                },
+                serde_json::to_value(QueuedSdkEvent {
+                    event: sent,
+                    post_accept: None,
+                })
+                .unwrap(),
+                Vec::new(),
+            )
+            .unwrap();
+        queue
+            .mark_sent(
+                &sent_transaction,
+                arkret_sdk::EventId::new(
+                    "ak:event:01904100-0000-7000-8000-000000000099".to_owned(),
+                )
+                .unwrap(),
+            )
+            .unwrap();
+
+        assert_eq!(
+            pending_chat_message_ids_from_snapshot(&queue.snapshot()),
+            std::collections::BTreeSet::from([
+                "ak:message:01904100-0000-7000-8000-000000000001".to_owned()
+            ])
+        );
+    }
 
     fn sdk_event_without_proof(actor_id: &str) -> arkret_sdk::Event {
         serde_json::from_value(json!({
