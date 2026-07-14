@@ -34,6 +34,10 @@ use crate::identity::did_key::encode_ed25519_did_key_multibase;
 use crate::operation::OperationBuilder;
 use crate::secure_key_store::{SecureKeyStore, SecureKeyStoreError};
 
+fn non_empty(value: impl Into<String>) -> anyhow::Result<NonEmptyString> {
+    NonEmptyString::new(value).map_err(anyhow::Error::msg)
+}
+
 /// One step of a complete cross-signing setup. Each variant maps to a specific
 /// action or canonical event in the spec.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -478,11 +482,9 @@ impl CrossSigningExecutor {
         );
 
         let psk_record = PublishedKey {
-            kid: NonEmptyString::new(psk_kid.clone())?,
-            alg: NonEmptyString::new("EdDSA")?,
-            public_key: NonEmptyString::new(encode_ed25519_did_key_multibase(
-                &psk.verifying_key(),
-            ))?,
+            kid: non_empty(psk_kid.clone())?,
+            alg: non_empty("EdDSA")?,
+            public_key: non_empty(encode_ed25519_did_key_multibase(&psk.verifying_key()))?,
             key_format: KeyFormat::Multibase,
         };
 
@@ -498,29 +500,25 @@ impl CrossSigningExecutor {
             trust_domain: self.trust_domain.clone(),
             principal_signing_key: psk_record.clone(),
             self_signing_key: SubordinateSignedKey {
-                kid: NonEmptyString::new(ssk_kid)?,
-                alg: NonEmptyString::new("EdDSA")?,
-                public_key: NonEmptyString::new(encode_ed25519_did_key_multibase(
-                    &ssk.verifying_key(),
-                ))?,
+                kid: non_empty(ssk_kid)?,
+                alg: non_empty("EdDSA")?,
+                public_key: non_empty(encode_ed25519_did_key_multibase(&ssk.verifying_key()))?,
                 key_format: KeyFormat::Multibase,
                 binding: SubordinateSignedKeyBinding {
-                    verification_method: NonEmptyString::new(psk_kid.clone())?,
-                    alg: NonEmptyString::new("EdDSA")?,
-                    signature: NonEmptyString::new("pending")?,
+                    verification_method: non_empty(psk_kid.clone())?,
+                    alg: non_empty("EdDSA")?,
+                    signature: non_empty("pending")?,
                 },
             },
             user_signing_key: SubordinateSignedKey {
-                kid: NonEmptyString::new(usk_kid)?,
-                alg: NonEmptyString::new("EdDSA")?,
-                public_key: NonEmptyString::new(encode_ed25519_did_key_multibase(
-                    &usk.verifying_key(),
-                ))?,
+                kid: non_empty(usk_kid)?,
+                alg: non_empty("EdDSA")?,
+                public_key: non_empty(encode_ed25519_did_key_multibase(&usk.verifying_key()))?,
                 key_format: KeyFormat::Multibase,
                 binding: SubordinateSignedKeyBinding {
-                    verification_method: NonEmptyString::new(psk_kid)?,
-                    alg: NonEmptyString::new("EdDSA")?,
-                    signature: NonEmptyString::new("pending")?,
+                    verification_method: non_empty(psk_kid)?,
+                    alg: non_empty("EdDSA")?,
+                    signature: non_empty("pending")?,
                 },
             },
             // Round 4 — CAS guard: prior accepted generation (0 on the
@@ -541,9 +539,9 @@ impl CrossSigningExecutor {
         let usk_sig = psk.sign(&usk_input);
 
         publish_content.self_signing_key.binding.signature =
-            NonEmptyString::new(B64.encode(ssk_sig.to_bytes()))?;
+            non_empty(B64.encode(ssk_sig.to_bytes()))?;
         publish_content.user_signing_key.binding.signature =
-            NonEmptyString::new(B64.encode(usk_sig.to_bytes()))?;
+            non_empty(B64.encode(usk_sig.to_bytes()))?;
 
         publish_content
             .validate_structure()
@@ -642,7 +640,7 @@ mod tests {
         let psk_verifying = out.principal_signing_key.verifying_key();
         let ssk_input = pub_content.self_signing_binding_input().unwrap();
         let ssk_sig_bytes = B64
-            .decode(&pub_content.self_signing_key.binding.signature)
+            .decode(pub_content.self_signing_key.binding.signature.as_str())
             .expect("ssk signature base64");
         let ssk_sig = Signature::from_slice(&ssk_sig_bytes).expect("ssk signature 64 bytes");
         psk_verifying
@@ -651,7 +649,7 @@ mod tests {
 
         let usk_input = pub_content.user_signing_binding_input().unwrap();
         let usk_sig_bytes = B64
-            .decode(&pub_content.user_signing_key.binding.signature)
+            .decode(pub_content.user_signing_key.binding.signature.as_str())
             .expect("usk signature base64");
         let usk_sig = Signature::from_slice(&usk_sig_bytes).expect("usk signature 64 bytes");
         psk_verifying

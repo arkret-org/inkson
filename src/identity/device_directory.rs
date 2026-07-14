@@ -316,7 +316,7 @@ fn anchor_psk_against_did(
     // anchoring §8.3 step 1 mandates — we do NOT trust the publish's own
     // assertion of the PSK key; only the DID control set decides.
     let published = PublicKeyMaterial::Ed25519Multibase {
-        value: publish.principal_signing_key.public_key.clone(),
+        value: publish.principal_signing_key.public_key.to_string(),
     };
     if resolved.public_key.ed25519_bytes().ok()? != published.ed25519_bytes().ok()? {
         return None;
@@ -440,7 +440,7 @@ fn service_attested_accepted_key(
         return None;
     }
     let binding = record.enrollment_authority_binding.as_ref()?;
-    if binding.kind != arkret_sdk::DeviceEnrollmentAuthorityBinding::KIND_SERVICE_ATTESTED {
+    if binding.kind != arkret_sdk::DeviceEnrollmentAuthorityBindingKind::ServiceAttested {
         return None;
     }
     if binding.authorization_ref.trim().is_empty() {
