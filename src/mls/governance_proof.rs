@@ -117,8 +117,6 @@ pub(crate) async fn fetch_verify_and_cache_proof(
     mut state_store: dioxus::prelude::SyncSignal<crate::state::LocalStateStore>,
     request: &arkret_sdk::MlsGovernanceProofRequest,
 ) -> Result<arkret_sdk::MlsGovernanceBindingPayload, String> {
-    use crate::identity::device_directory::DidAnchor as _;
-
     let bundle = fetch_proof_bundle(api, request).await?;
     let existing_pin = state_store
         .read()
@@ -155,17 +153,9 @@ pub(crate) async fn fetch_verify_and_cache_proof(
         crate::identity::did_resolver::DeploymentProfile::PersonalNode,
         crate::identity::did_resolver::DidResolutionCache::default(),
     );
-    let http = reqwest::Client::new();
     let mut resolver = StaticProofDidResolver::default();
     for did in authority_proof_signer_dids(&bundle)? {
-        if !authority.ensure_actor_document(&http, &did).await {
-            return Err(format!(
-                "authority DID resolution failed for MLS governance proof signer {did}"
-            ));
-        }
-        let document = authority.resolve_did_document(&did).ok_or_else(|| {
-            format!("authority DID document unavailable for MLS governance proof signer {did}")
-        })?;
+        let document = resolve_proof_signer_document(api, &did).await?;
         resolver.documents.insert(did.as_str().to_owned(), document);
     }
     for (actor, device) in event_device_proof_pairs(&bundle)? {
@@ -191,6 +181,39 @@ pub(crate) async fn fetch_verify_and_cache_proof(
     }
     store.cache_verified_mls_governance_proof(request.clone(), &bundle)?;
     Ok(bundle.governance_binding)
+}
+
+async fn resolve_proof_signer_document(
+    api: &crate::transport::TransportClient,
+    did: &arkret_sdk::Did,
+) -> Result<arkret_sdk::DidDocument, String> {
+    let http = api
+        .sdk_http_client()
+        .map_err(|error| format!("build MLS governance proof DID client: {error}"))?;
+    let outcome = crate::transport::account::identity_resolve(&http, did.as_str())
+        .await
+        .map_err(|error| {
+            format!(
+                "authority DID resolution failed for MLS governance proof signer {did}: {error}"
+            )
+        })?;
+    if outcome.did_document.did != *did {
+        return Err(format!(
+            "authority DID resolution returned {} for MLS governance proof signer {did}",
+            outcome.did_document.did
+        ));
+    }
+    let document: arkret_sdk::DidDocument = serde_json::from_value(outcome.did_document.document)
+        .map_err(|error| {
+        format!("decode authority DID document for MLS governance proof signer {did}: {error}")
+    })?;
+    if document.id != *did {
+        return Err(format!(
+            "authority DID document id {} does not match MLS governance proof signer {did}",
+            document.id
+        ));
+    }
+    Ok(document)
 }
 
 fn bundle_intersects_local_seal_view(
