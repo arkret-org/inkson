@@ -20,7 +20,7 @@ fn keypackage_upload_device_signature_is_raw_signature_tuple() {
     .expect("KeyPackage upload signature builds");
 
     assert_eq!(signature.alg.as_deref(), Some("EdDSA"));
-    assert_eq!(signature.kid, "did:web:alice.example#device");
+    assert_eq!(signature.kid.as_str(), "did:web:alice.example#device");
     let sig = signature.sig.as_str();
     assert_eq!(sig.len(), 86);
     assert!(!sig.contains('='));

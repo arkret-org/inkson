@@ -1494,7 +1494,7 @@ mod tests {
             next_cursor: None,
             prev_cursor: None,
             has_more: false,
-            range_completeness: Value::Null,
+            range_completeness: None,
         };
 
         assert_eq!(

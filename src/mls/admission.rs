@@ -577,9 +577,13 @@ mod tests {
             device_authorize_event_id: None,
             expires_at: crate::clock::now_utc() + chrono::Duration::hours(1),
             device_signature: arkret_sdk::KeyOperationSignature {
-                kid: format!("{}#device", record.principal_id.as_str()),
-                alg: Some("EdDSA".to_owned()),
-                sig: "test-signature".to_owned(),
+                kid: arkret_sdk::NonEmptyString::new(format!(
+                    "{}#device",
+                    record.principal_id.as_str()
+                ))
+                .unwrap(),
+                alg: Some(arkret_sdk::NonEmptyString::new("EdDSA").unwrap()),
+                sig: arkret_sdk::Base64UrlString::new("c2ln").unwrap(),
             },
             revocation_status: None,
             last_resort: None,
@@ -622,9 +626,9 @@ mod tests {
             .unwrap(),
             created_at: crate::clock::now_utc(),
             signature: arkret_sdk::KeyOperationSignature {
-                kid: String::new(),
-                alg: Some("EdDSA".to_owned()),
-                sig: String::new(),
+                kid: arkret_sdk::NonEmptyString::new("placeholder-kid").unwrap(),
+                alg: Some(arkret_sdk::NonEmptyString::new("EdDSA").unwrap()),
+                sig: arkret_sdk::Base64UrlString::new("c2ln").unwrap(),
             },
         };
 
@@ -637,7 +641,7 @@ mod tests {
                 .map(arkret_sdk::DeviceId::as_str),
             Some(device)
         );
-        assert_eq!(envelope.signature.kid, expected_kid);
+        assert_eq!(envelope.signature.kid.as_str(), expected_kid);
         assert!(!envelope.signature.sig.is_empty());
         assert!(!envelope.signature.sig.contains(['+', '/', '=']));
         assert!(

@@ -482,7 +482,7 @@ mod personal_agent_tests {
         );
         assert_eq!(
             event.payload["approval_evidence"]["pairing_request_id"],
-            request.pairing_request_id
+            request.pairing_request_id.as_str()
         );
         assert_eq!(
             event.payload["approval_evidence"]["kind"],

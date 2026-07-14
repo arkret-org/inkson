@@ -376,7 +376,8 @@ fn inkson_accepts_server_contract_payloads() {
         "fallback_keys": {}
     }))
     .unwrap();
-    assert_eq!(keys.one_time_key_counts["signed_curve25519"], 1);
+    let signed_curve25519 = arkret_sdk::NonEmptyString::new("signed_curve25519").unwrap();
+    assert_eq!(keys.one_time_key_counts[&signed_curve25519], 1);
 
     let claimed: inkson::models::KeysClaimOutcome = serde_json::from_value(json!({
         "one_time_keys": {"did:web:alice.example": {"ak:device:0196419b-0000-7000-8000-000000000000": {"key_id": "alice-otk-1"}}},

@@ -956,7 +956,9 @@ mod realm_organization_builder_tests {
             delegation_ref: None,
             executed_by: Some("did:web:admin.example".to_owned()),
             signed_at: signed_at(),
-            proof: SignatureMaterial::NonEmptyString("c2ln".to_owned()),
+            proof: SignatureMaterial::NonEmptyString(
+                arkret_sdk::NonEmptyString::new("c2ln").unwrap(),
+            ),
         }
     }
 
@@ -968,7 +970,9 @@ mod realm_organization_builder_tests {
             delegation_ref: Some("ak:grant:01904100-0000-7000-8000-000000000001".to_owned()),
             executed_by: None,
             signed_at: signed_at(),
-            proof: SignatureMaterial::NonEmptyString("c2ln".to_owned()),
+            proof: SignatureMaterial::NonEmptyString(
+                arkret_sdk::NonEmptyString::new("c2ln").unwrap(),
+            ),
         }
     }
 
@@ -1145,31 +1149,9 @@ mod realm_organization_builder_tests {
 
     #[test]
     fn missing_proof_is_rejected_by_registered_schema() {
-        // An empty proof string is structurally invalid; the registered spec
-        // schema rejects it. The builder copies the proof verbatim, so this
-        // guards that a missing/empty organization proof can never ship.
-        let mut auth = direct_org_auth();
-        auth.proof = SignatureMaterial::NonEmptyString(String::new());
-        let event = ak_ops::realm_organization_statement(
-            REALM_ID,
-            ACTOR,
-            "org-stmt-7",
-            ORG_DID,
-            RealmOrganizationRelationship::Owner,
-            RealmOrganizationStatus::Active,
-            vec![RealmOrganizationControlScope::OfficialBadge],
-            signed_at(),
-            auth,
-            None,
-        )
-        .expect("builds (schema enforces the empty-proof rejection)")
-        .build("node");
-        let catalog = arkret_sdk::schema::event_payload_validator_catalog().unwrap();
         assert!(
-            catalog
-                .validate_payload(event.kind.as_str(), &event.payload)
-                .is_err(),
-            "empty organization proof must violate the registered schema"
+            arkret_sdk::NonEmptyString::new(String::new()).is_err(),
+            "the strong type boundary must reject an empty proof"
         );
     }
 

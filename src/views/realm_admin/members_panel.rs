@@ -5678,7 +5678,9 @@ mod tests {
         let realm = "ak:realm:abc";
         let request = arkret_sdk::RealmKeyRequestPayload {
             key_scope: arkret_sdk::RealmKeyRequestScope {
-                effective_scope: json!({ "kind": "realm", "realm_id": realm }),
+                effective_scope: arkret_sdk::models::EffectiveScope::Realm {
+                    realm_id: arkret_sdk::RealmId::new(realm).unwrap(),
+                },
                 policy_digest: None,
                 membership_frontier_digest: None,
                 from_epoch: 0,
@@ -5686,10 +5688,15 @@ mod tests {
                 history_visibility: None,
             },
             recipient_principal_id: arkret_sdk::Did::new(SELF_DID.to_owned()).unwrap(),
-            recipient_device_id: "ak:device:self".to_owned(),
-            recipient_hpke_public_key: "Ikuf_h0tiOTpwnUEEZZeY4p_OIaixaYHYcT6GnmJOmE".to_owned(),
+            recipient_device_id: arkret_sdk::DeviceId::new("ak:device:self").unwrap(),
+            recipient_hpke_public_key: arkret_sdk::NonEmptyString::new(
+                "Ikuf_h0tiOTpwnUEEZZeY4p_OIaixaYHYcT6GnmJOmE",
+            )
+            .unwrap(),
             requested_source_class: arkret_sdk::HistoryKeySource::VerifiedMemberDevice,
-            target_source_ref: PROVIDER_DEVICE.to_owned(),
+            target_source_ref: arkret_sdk::RealmKeySourceRef::Device(
+                arkret_sdk::DeviceId::new(PROVIDER_DEVICE).unwrap(),
+            ),
             target_principal_id: arkret_sdk::Did::new(PROVIDER_DID.to_owned()).unwrap(),
             created_at: chrono::DateTime::parse_from_rfc3339("2026-06-30T01:31:33Z")
                 .unwrap()
@@ -5710,7 +5717,10 @@ mod tests {
             parsed.request_id.as_deref(),
             Some("sha256:5e54ee81d9debde1e0a09f20e0c7bc282f511e5ccb6c1e41d75f07018db835e9")
         );
-        assert_eq!(parsed.payload.target_source_ref, PROVIDER_DEVICE);
+        assert_eq!(
+            realm_key_source_ref_str(&parsed.payload.target_source_ref),
+            PROVIDER_DEVICE
+        );
     }
 
     #[test]
@@ -5718,7 +5728,9 @@ mod tests {
         let realm = "ak:realm:abc";
         let request = arkret_sdk::RealmKeyRequestPayload {
             key_scope: arkret_sdk::RealmKeyRequestScope {
-                effective_scope: json!({ "kind": "realm", "realm_id": realm }),
+                effective_scope: arkret_sdk::models::EffectiveScope::Realm {
+                    realm_id: arkret_sdk::RealmId::new(realm).unwrap(),
+                },
                 policy_digest: None,
                 membership_frontier_digest: None,
                 from_epoch: 0,
@@ -5726,10 +5738,15 @@ mod tests {
                 history_visibility: None,
             },
             recipient_principal_id: arkret_sdk::Did::new(SELF_DID.to_owned()).unwrap(),
-            recipient_device_id: "ak:device:self".to_owned(),
-            recipient_hpke_public_key: "Ikuf_h0tiOTpwnUEEZZeY4p_OIaixaYHYcT6GnmJOmE".to_owned(),
+            recipient_device_id: arkret_sdk::DeviceId::new("ak:device:self").unwrap(),
+            recipient_hpke_public_key: arkret_sdk::NonEmptyString::new(
+                "Ikuf_h0tiOTpwnUEEZZeY4p_OIaixaYHYcT6GnmJOmE",
+            )
+            .unwrap(),
             requested_source_class: arkret_sdk::HistoryKeySource::VerifiedMemberDevice,
-            target_source_ref: PROVIDER_DEVICE.to_owned(),
+            target_source_ref: arkret_sdk::RealmKeySourceRef::Device(
+                arkret_sdk::DeviceId::new(PROVIDER_DEVICE).unwrap(),
+            ),
             target_principal_id: arkret_sdk::Did::new(PROVIDER_DID.to_owned()).unwrap(),
             created_at: chrono::DateTime::parse_from_rfc3339("2026-06-30T01:31:33Z")
                 .unwrap()
@@ -5754,7 +5771,9 @@ mod tests {
         let realm = "ak:realm:abc";
         let request = arkret_sdk::RealmKeyRequestPayload {
             key_scope: arkret_sdk::RealmKeyRequestScope {
-                effective_scope: json!({ "kind": "realm", "realm_id": realm }),
+                effective_scope: arkret_sdk::models::EffectiveScope::Realm {
+                    realm_id: arkret_sdk::RealmId::new(realm).unwrap(),
+                },
                 policy_digest: None,
                 membership_frontier_digest: None,
                 from_epoch: 1,
@@ -5762,10 +5781,15 @@ mod tests {
                 history_visibility: None,
             },
             recipient_principal_id: arkret_sdk::Did::new(SELF_DID.to_owned()).unwrap(),
-            recipient_device_id: "ak:device:self".to_owned(),
-            recipient_hpke_public_key: "Ikuf_h0tiOTpwnUEEZZeY4p_OIaixaYHYcT6GnmJOmE".to_owned(),
+            recipient_device_id: arkret_sdk::DeviceId::new("ak:device:self").unwrap(),
+            recipient_hpke_public_key: arkret_sdk::NonEmptyString::new(
+                "Ikuf_h0tiOTpwnUEEZZeY4p_OIaixaYHYcT6GnmJOmE",
+            )
+            .unwrap(),
             requested_source_class: arkret_sdk::HistoryKeySource::VerifiedMemberDevice,
-            target_source_ref: PROVIDER_DEVICE.to_owned(),
+            target_source_ref: arkret_sdk::RealmKeySourceRef::Device(
+                arkret_sdk::DeviceId::new(PROVIDER_DEVICE).unwrap(),
+            ),
             target_principal_id: arkret_sdk::Did::new(PROVIDER_DID.to_owned()).unwrap(),
             created_at: chrono::DateTime::parse_from_rfc3339("2026-06-30T01:31:33Z")
                 .unwrap()
@@ -5788,7 +5812,9 @@ mod tests {
     fn rejects_realm_key_request_when_envelope_realm_mismatches_payload() {
         let request = arkret_sdk::RealmKeyRequestPayload {
             key_scope: arkret_sdk::RealmKeyRequestScope {
-                effective_scope: json!({ "kind": "realm", "realm_id": "ak:realm:abc" }),
+                effective_scope: arkret_sdk::models::EffectiveScope::Realm {
+                    realm_id: arkret_sdk::RealmId::new("ak:realm:abc").unwrap(),
+                },
                 policy_digest: None,
                 membership_frontier_digest: None,
                 from_epoch: 0,
@@ -5796,10 +5822,15 @@ mod tests {
                 history_visibility: None,
             },
             recipient_principal_id: arkret_sdk::Did::new(SELF_DID.to_owned()).unwrap(),
-            recipient_device_id: "ak:device:self".to_owned(),
-            recipient_hpke_public_key: "Ikuf_h0tiOTpwnUEEZZeY4p_OIaixaYHYcT6GnmJOmE".to_owned(),
+            recipient_device_id: arkret_sdk::DeviceId::new("ak:device:self").unwrap(),
+            recipient_hpke_public_key: arkret_sdk::NonEmptyString::new(
+                "Ikuf_h0tiOTpwnUEEZZeY4p_OIaixaYHYcT6GnmJOmE",
+            )
+            .unwrap(),
             requested_source_class: arkret_sdk::HistoryKeySource::VerifiedMemberDevice,
-            target_source_ref: PROVIDER_DEVICE.to_owned(),
+            target_source_ref: arkret_sdk::RealmKeySourceRef::Device(
+                arkret_sdk::DeviceId::new(PROVIDER_DEVICE).unwrap(),
+            ),
             target_principal_id: arkret_sdk::Did::new(PROVIDER_DID.to_owned()).unwrap(),
             created_at: chrono::DateTime::parse_from_rfc3339("2026-06-30T01:31:33Z")
                 .unwrap()

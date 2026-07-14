@@ -1031,10 +1031,13 @@ mod tests {
         )
         .unwrap();
         let binding = QueryDeviceCrossSigningBinding {
-            verification_method: ssk_kid,
-            alg: Some("EdDSA".to_owned()),
+            verification_method: arkret_sdk::DidUrl::new(ssk_kid).unwrap(),
+            alg: Some(arkret_sdk::NonEmptyString::new("EdDSA").unwrap()),
             ssk_generation: binding_gen,
-            signature: base64url_encode(ssk.sign(&device_input).to_bytes()),
+            signature: arkret_sdk::Base64UrlString::new(base64url_encode(
+                ssk.sign(&device_input).to_bytes(),
+            ))
+            .unwrap(),
         };
 
         Tier2Fixture {
@@ -1121,9 +1124,9 @@ mod tests {
     #[test]
     fn tier2_tampered_device_binding_rejected() {
         let mut fx = build_tier2_fixture(TIER2_ACTOR, TIER2_DEVICE, 11, 22, 33, 1, 1);
-        let mut raw = arkret_sdk::base64url_decode(&fx.binding.signature).unwrap();
+        let mut raw = arkret_sdk::base64url_decode(fx.binding.signature.as_str()).unwrap();
         raw[0] ^= 0xff;
-        fx.binding.signature = base64url_encode(&raw);
+        fx.binding.signature = arkret_sdk::Base64UrlString::new(base64url_encode(&raw)).unwrap();
         assert_eq!(
             verify_tier2_chain(
                 &fx.document,

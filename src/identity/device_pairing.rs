@@ -243,11 +243,11 @@ mod tests {
             .pop()
             .unwrap();
         let body = pairing_request_body(&row.request_payload).expect("body");
-        assert_eq!(body.pairing_code, "384921");
-        assert_eq!(body.challenge_signature, "challenge-signature");
+        assert_eq!(body.pairing_code.as_str(), "384921");
+        assert_eq!(body.challenge_signature.as_str(), "challenge-signature");
         assert_eq!(body.display_name.as_deref(), Some("New browser"));
         assert_eq!(
-            body.new_device_pubkey["kid"],
+            body.new_device_pubkey.kid.as_str(),
             "ak:device:01904100-0000-7000-8000-000000000001"
         );
     }

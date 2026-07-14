@@ -61,8 +61,5 @@ fn mls_key_package_upload_entry_carries_digest_and_ref() {
         record.keypackage_ref.as_str()
     );
     assert_eq!(entry.keypackage_ref, record.keypackage_ref.as_str());
-    assert_eq!(
-        entry.key_package.as_str(),
-        Some(record.key_package.as_str())
-    );
+    assert_eq!(entry.key_package.as_str(), record.key_package.as_str());
 }

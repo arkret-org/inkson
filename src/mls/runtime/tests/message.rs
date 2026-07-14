@@ -1231,11 +1231,14 @@ fn realm_key_share_sender_signature_round_trips() {
 
     // A real signature object was attached, and it verifies.
     assert!(
-        payload
-            .sender_device_signature
-            .get("signature")
-            .and_then(serde_json::Value::as_str)
-            .is_some(),
+        matches!(
+            &payload.sender_device_signature,
+            arkret_sdk::SignatureMaterial::Variant1(signature)
+                if signature
+                    .get("signature")
+                    .and_then(serde_json::Value::as_str)
+                    .is_some()
+        ),
         "an active signer must attach a real sender_device_signature"
     );
     // SEC-02: with no cached directory record (None sender principal → Miss),
@@ -1244,11 +1247,11 @@ fn realm_key_share_sender_signature_round_trips() {
 
     // Tamper with the covered body → signature must no longer verify.
     let mut tampered = payload.clone();
-    tampered.ciphertext = Some("dGFtcGVyZWQ".to_owned());
+    tampered.ciphertext = Some(arkret_sdk::NonEmptyString::new("dGFtcGVyZWQ").unwrap());
     assert!(!verify_realm_key_share_sender_signature(&tampered, None));
 
     // An empty signature object is tolerated on the Miss path (HPKE seal gates).
     let mut unsigned = payload.clone();
-    unsigned.sender_device_signature = json!({});
+    unsigned.sender_device_signature = arkret_sdk::SignatureMaterial::Variant1(Default::default());
     assert!(verify_realm_key_share_sender_signature(&unsigned, None));
 }
