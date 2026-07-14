@@ -1145,8 +1145,14 @@ pub fn build_device_message_envelope(
         .with_timezone(&chrono::Utc);
 
     let target = arkret_sdk::models::DeviceMessageTarget {
-        kind: kind.to_owned(),
-        content,
+        kind: arkret_sdk::ProtocolKind::new(kind)
+            .map_err(|err| anyhow::anyhow!("invalid device-message kind: {err}"))?,
+        content: content
+            .as_object()
+            .ok_or_else(|| anyhow::anyhow!("device-message content must be an object"))?
+            .clone()
+            .into_iter()
+            .collect(),
         expires_at,
     };
     let mut by_device = BTreeMap::new();
