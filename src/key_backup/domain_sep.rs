@@ -1,12 +1,8 @@
 use serde_json::{Value, json};
 
-use super::{KEY_BACKUP_SCHEMA, KeyBackupClass, key_backup_hkdf_info};
+use super::{BackupClass, KEY_BACKUP_SCHEMA, key_backup_hkdf_info};
 
-pub fn attach_key_backup_domain_separation(
-    body: &mut Value,
-    class: KeyBackupClass,
-    subdomain: &str,
-) {
+pub fn attach_key_backup_domain_separation(body: &mut Value, class: BackupClass, subdomain: &str) {
     let item_types = body
         .get("contents")
         .and_then(Value::as_array)

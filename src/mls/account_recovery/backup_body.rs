@@ -6,7 +6,7 @@ use serde_json::Value;
 
 use super::selection::mls_account_secret_backup_version;
 use crate::key_backup::{
-    KeyBackupClass, build_passphrase_kdf_backup_body, open_passphrase_kdf_backup_body,
+    BackupClass, build_passphrase_kdf_backup_body, open_passphrase_kdf_backup_body,
 };
 use crate::recovery_crypto::VaultKek;
 
@@ -93,7 +93,7 @@ pub fn build_mls_account_secret_backup_body_with_kek_and_version(
         device_id,
         kek,
         account_secret.as_bytes(),
-        KeyBackupClass::SecretStorage,
+        BackupClass::SecretStorage,
         "recovery_vault",
         &KeyBackupContentItem {
             item_type: MLS_ACCOUNT_SECRET_ITEM_TYPE.to_owned(),
@@ -173,7 +173,7 @@ pub fn build_mls_private_plaintext_backup_body_with_kek(
         device_id,
         kek,
         sidecar_json,
-        KeyBackupClass::SecretStorage,
+        BackupClass::SecretStorage,
         "recovery_vault",
         &KeyBackupContentItem {
             item_type: MLS_PRIVATE_PLAINTEXT_ITEM_TYPE.to_owned(),
@@ -236,7 +236,7 @@ pub fn build_mls_account_secret_recovery_public_key_backup(
         device_id,
         recovery_public_key,
         recovery_key_ref,
-        crate::key_backup::KeyBackupClass::SecretStorage,
+        crate::key_backup::BackupClass::SecretStorage,
         "recovery_vault",
         &KeyBackupContentItem {
             item_type: MLS_ACCOUNT_SECRET_ITEM_TYPE.to_owned(),

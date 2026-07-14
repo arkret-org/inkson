@@ -17,7 +17,7 @@ pub const KEY_BACKUP_PLAINTEXT_SCHEMA: &str = "ak.schema.key_backup_plaintext.v1
 pub const KEY_BACKUP_ACTIVE_SERIES_SCHEMA: &str = "ak.schema.key_backup_active_series.v1";
 pub const DEFAULT_SSK_GENERATION: u64 = 1;
 
-pub use arkret_sdk::BackupClass as KeyBackupClass;
+pub use arkret_sdk::BackupClass;
 
 /// Envelope fields the backup `auth_data.signature` MUST cover (key-management.md
 /// §7.4.1 / §7.6 + the `ak.schema.key_backup.v1` `signed_fields.allOf`). Optional
@@ -58,7 +58,7 @@ const KEY_BACKUP_SIGNED_FIELDS_MANDATORY: &[&str] = &[
     "ciphertext_digest",
 ];
 
-pub fn key_backup_hkdf_info(class: KeyBackupClass, subdomain: &str) -> String {
+pub fn key_backup_hkdf_info(class: BackupClass, subdomain: &str) -> String {
     class.hkdf_info(subdomain)
 }
 

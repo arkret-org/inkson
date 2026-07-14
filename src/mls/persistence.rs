@@ -374,7 +374,7 @@ impl MlsSnapshotEnvelope {
         crate::key_backup::attach_key_backup_genesis_series(&mut body);
         crate::key_backup::attach_key_backup_domain_separation(
             &mut body,
-            crate::key_backup::KeyBackupClass::MlsHistory,
+            crate::key_backup::BackupClass::MlsHistory,
             "mls_snapshot",
         );
         // Phase 2: sign with the active device signer. `to_key_backup_body`
@@ -637,7 +637,7 @@ mod tests {
         );
         crate::key_backup::validate_key_backup_envelope(
             &body,
-            Some(crate::key_backup::KeyBackupClass::MlsHistory),
+            Some(crate::key_backup::BackupClass::MlsHistory),
         )
         .expect("MLS history backup envelope should validate");
         assert!(body.get("envelope_meta").is_none());

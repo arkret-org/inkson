@@ -5,7 +5,7 @@ use chrono::SecondsFormat;
 use serde_json::{Value, json};
 
 use super::{
-    KeyBackupClass, attach_key_backup_domain_separation, attach_key_backup_genesis_series,
+    BackupClass, attach_key_backup_domain_separation, attach_key_backup_genesis_series,
     is_protocol_device_id, sign_key_backup_with_active_device,
 };
 use crate::recovery_crypto::{
@@ -35,7 +35,7 @@ pub fn build_passphrase_kdf_backup_body(
     device_id: &str,
     root: &VaultKek,
     plaintext: &[u8],
-    class: KeyBackupClass,
+    class: BackupClass,
     subdomain: &str,
     item: &KeyBackupContentItem,
 ) -> anyhow::Result<Value> {
@@ -229,7 +229,7 @@ pub fn build_did_recovery_backup_body(
         device_id,
         recovery_public_key,
         recovery_key_ref,
-        KeyBackupClass::DidRecovery,
+        BackupClass::DidRecovery,
         "recovery_policy",
         &KeyBackupContentItem {
             item_type: "recovery_key_share".to_owned(),
@@ -291,7 +291,7 @@ pub fn build_recovery_public_key_backup_body(
     device_id: &str,
     recovery_public_key: &[u8],
     recovery_key_ref: &str,
-    class: KeyBackupClass,
+    class: BackupClass,
     subdomain: &str,
     item: &KeyBackupContentItem,
     plaintext: &[u8],

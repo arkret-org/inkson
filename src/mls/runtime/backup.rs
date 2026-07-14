@@ -44,7 +44,7 @@ pub fn decode_mls_history_backup_envelope(
 ) -> Result<crate::mls::persistence::MlsSnapshotEnvelope, MlsRuntimeError> {
     crate::key_backup::validate_key_backup_envelope(
         body,
-        Some(crate::key_backup::KeyBackupClass::MlsHistory),
+        Some(crate::key_backup::BackupClass::MlsHistory),
     )
     .map_err(MlsRuntimeError::BackupDecode)?;
     let ciphertext = body

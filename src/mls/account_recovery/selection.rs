@@ -13,7 +13,7 @@ use super::backup_body::{
 pub fn select_mls_private_plaintext_backup(list_payload: &Value) -> Option<Value> {
     let active_series = active_series_id_for_backup_class(
         list_payload,
-        crate::key_backup::KeyBackupClass::SecretStorage.as_str(),
+        crate::key_backup::BackupClass::SecretStorage.as_str(),
     );
     iter_backup_bodies(list_payload)
         .filter(|body| is_mls_private_plaintext_backup(body))
@@ -109,7 +109,7 @@ pub fn mls_account_secret_backup_version(body: &Value) -> u32 {
 pub fn select_mls_account_secret_backup(list_payload: &Value) -> Option<Value> {
     let active_series = active_series_id_for_backup_class(
         list_payload,
-        crate::key_backup::KeyBackupClass::SecretStorage.as_str(),
+        crate::key_backup::BackupClass::SecretStorage.as_str(),
     );
     iter_backup_bodies(list_payload)
         .filter(|body| is_passphrase_account_secret_backup(body))
@@ -135,7 +135,7 @@ pub fn select_mls_account_secret_backup(list_payload: &Value) -> Option<Value> {
 pub fn select_mls_account_secret_recovery_public_key_backup(list_payload: &Value) -> Option<Value> {
     let active_series = active_series_id_for_backup_class(
         list_payload,
-        crate::key_backup::KeyBackupClass::SecretStorage.as_str(),
+        crate::key_backup::BackupClass::SecretStorage.as_str(),
     );
     iter_backup_bodies(list_payload)
         .filter(|body| is_recovery_public_key_account_secret_backup(body))
@@ -165,12 +165,12 @@ pub fn select_preferred_mls_account_secret_backup(list_payload: &Value) -> Optio
 pub fn select_mls_history_backups(list_payload: &Value) -> Vec<Value> {
     let active_series = active_series_id_for_backup_class(
         list_payload,
-        crate::key_backup::KeyBackupClass::MlsHistory.as_str(),
+        crate::key_backup::BackupClass::MlsHistory.as_str(),
     );
     iter_backup_bodies(list_payload)
         .filter(|body| {
             body.get("backup_class").and_then(Value::as_str)
-                == Some(crate::key_backup::KeyBackupClass::MlsHistory.as_str())
+                == Some(crate::key_backup::BackupClass::MlsHistory.as_str())
         })
         .filter(|body| matches_active_series(body, active_series))
         .cloned()
@@ -182,7 +182,7 @@ pub fn select_mls_history_backups(list_payload: &Value) -> Vec<Value> {
 pub(super) fn all_mls_account_secret_backups(list_payload: &Value) -> Vec<Value> {
     let active_series = active_series_id_for_backup_class(
         list_payload,
-        crate::key_backup::KeyBackupClass::SecretStorage.as_str(),
+        crate::key_backup::BackupClass::SecretStorage.as_str(),
     );
     iter_backup_bodies(list_payload)
         .filter(|body| is_mls_account_secret_backup(body))
@@ -209,7 +209,7 @@ pub(super) fn backup_series_id(body: &Value) -> &str {
 
 pub(super) fn is_mls_history_backup(body: &Value) -> bool {
     body.get("backup_class").and_then(Value::as_str)
-        == Some(crate::key_backup::KeyBackupClass::MlsHistory.as_str())
+        == Some(crate::key_backup::BackupClass::MlsHistory.as_str())
 }
 
 /// Series-tail `backup_id`s among the `mls_history` backups in `list_payload`.
@@ -223,7 +223,7 @@ pub(super) fn is_mls_history_backup(body: &Value) -> bool {
 pub fn mls_history_series_tail_ids(list_payload: &Value) -> std::collections::BTreeSet<String> {
     let active_series = active_series_id_for_backup_class(
         list_payload,
-        crate::key_backup::KeyBackupClass::MlsHistory.as_str(),
+        crate::key_backup::BackupClass::MlsHistory.as_str(),
     );
     let mut tails: std::collections::BTreeMap<String, &Value> = std::collections::BTreeMap::new();
     for body in iter_backup_bodies(list_payload)
@@ -265,7 +265,7 @@ pub fn mls_history_series_tail_ids(list_payload: &Value) -> std::collections::BT
 pub fn select_mls_history_tail_for_realm(list_payload: &Value, realm_id: &str) -> Option<Value> {
     let active_series = active_series_id_for_backup_class(
         list_payload,
-        crate::key_backup::KeyBackupClass::MlsHistory.as_str(),
+        crate::key_backup::BackupClass::MlsHistory.as_str(),
     );
     iter_backup_bodies(list_payload)
         .filter(|body| is_mls_history_backup(body))

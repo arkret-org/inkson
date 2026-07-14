@@ -21,7 +21,7 @@ use super::selection::{
 };
 use super::series::{apply_next_series, series_supersedes_digest, verify_series_chain};
 use super::upload::select_superseded_backup_ids;
-use crate::key_backup::{KeyBackupClass, validate_key_backup_envelope};
+use crate::key_backup::{BackupClass, validate_key_backup_envelope};
 use crate::recovery_crypto::derive_vault_kek;
 use crate::secure_key_store::MemorySecureKeyStore;
 
@@ -195,7 +195,7 @@ fn real_encrypt_build_validate_decrypt_round_trips_end_to_end() {
 
     // 2. The body validates under the exact validator soland-mirroring clients run (the same one
     //    `mls_history` backups must pass).
-    validate_key_backup_envelope(&body, Some(KeyBackupClass::SecretStorage)).expect(
+    validate_key_backup_envelope(&body, Some(BackupClass::SecretStorage)).expect(
         "mls_account_secret backup must validate as a secret_storage envelope (base64url-clean)",
     );
 
@@ -230,7 +230,7 @@ fn round_trips_even_when_random_bytes_would_need_url_safe_alphabet() {
             );
         }
 
-        validate_key_backup_envelope(&body, Some(KeyBackupClass::SecretStorage))
+        validate_key_backup_envelope(&body, Some(BackupClass::SecretStorage))
             .unwrap_or_else(|err| panic!("iteration {i}: envelope must validate: {err}"));
 
         let recovered = decrypt_mls_account_secret_backup(PASSPHRASE, &body).unwrap();
@@ -786,7 +786,7 @@ fn mls_history_successor_chains_onto_previous_tail() {
          on mismatch)"
     );
     // Still a valid mls_history envelope after the successor mutation.
-    validate_key_backup_envelope(&successor, Some(KeyBackupClass::MlsHistory)).unwrap();
+    validate_key_backup_envelope(&successor, Some(BackupClass::MlsHistory)).unwrap();
 }
 
 #[test]
@@ -1041,7 +1041,7 @@ fn sidecar_backup_has_expected_identifiers_and_no_plaintext_leak() {
 #[test]
 fn sidecar_backup_validates_as_secret_storage_envelope() {
     let (_json, body) = wrap_sidecar();
-    validate_key_backup_envelope(&body, Some(KeyBackupClass::SecretStorage)).expect(
+    validate_key_backup_envelope(&body, Some(BackupClass::SecretStorage)).expect(
         "mls_private_plaintext backup must validate as a secret_storage envelope (base64url-clean)",
     );
 }

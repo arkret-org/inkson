@@ -1,7 +1,7 @@
 use serde_json::Value;
 
 use super::{
-    KEY_BACKUP_SCHEMA, KeyBackupClass, is_base64url_token, is_protocol_backup_id,
+    BackupClass, KEY_BACKUP_SCHEMA, is_base64url_token, is_protocol_backup_id,
     is_protocol_backup_series_id, is_protocol_device_id, is_sha_digest, key_backup_hkdf_info,
     required_str, required_u64,
 };
@@ -19,7 +19,7 @@ pub fn validate_key_backup_put_request(backup_id: &str, body: &Value) -> Result<
 
 pub fn validate_key_backup_envelope(
     body: &Value,
-    expected_class: Option<KeyBackupClass>,
+    expected_class: Option<BackupClass>,
 ) -> Result<(), String> {
     let backup_id = required_str(body, "backup_id")?;
     if !is_protocol_backup_id(backup_id) {
@@ -36,7 +36,7 @@ pub fn validate_key_backup_envelope(
     if !actor_id.starts_with("did:") {
         return Err("actor_id must be a DID".to_owned());
     }
-    let class = KeyBackupClass::try_from(required_str(body, "backup_class")?)?;
+    let class = BackupClass::try_from(required_str(body, "backup_class")?)?;
     if let Some(expected) = expected_class
         && expected != class
     {
@@ -62,7 +62,7 @@ pub fn validate_key_backup_envelope(
 
     validate_contents(body, class)?;
     validate_encryption(body, class)?;
-    if class == KeyBackupClass::MlsHistory {
+    if class == BackupClass::MlsHistory {
         validate_mls_history_opaque_only(body)?;
     }
     validate_domain_separation(body, class)?;
@@ -78,7 +78,7 @@ pub fn validate_key_backup_envelope(
     Ok(())
 }
 
-fn validate_contents(body: &Value, class: KeyBackupClass) -> Result<(), String> {
+fn validate_contents(body: &Value, class: BackupClass) -> Result<(), String> {
     let contents = body
         .get("contents")
         .and_then(Value::as_array)
@@ -98,7 +98,7 @@ fn validate_contents(body: &Value, class: KeyBackupClass) -> Result<(), String> 
     Ok(())
 }
 
-fn validate_encryption(body: &Value, class: KeyBackupClass) -> Result<(), String> {
+fn validate_encryption(body: &Value, class: BackupClass) -> Result<(), String> {
     let encryption = body
         .get("encryption")
         .ok_or_else(|| "encryption is required".to_owned())?;
@@ -130,13 +130,13 @@ fn validate_encryption(body: &Value, class: KeyBackupClass) -> Result<(), String
             // in the recovery policy proof layer. passphrase_kdf alone is
             // forbidden because a single passphrase must not control DID
             // recovery.
-            if class == KeyBackupClass::DidRecovery {
+            if class == BackupClass::DidRecovery {
                 return Err(
                     "did_recovery backups must not use passphrase_kdf alone; use recovery_public_key or satisfy threshold/hardware factors in the recovery policy proof layer"
                         .to_owned(),
                 );
             }
-            if class == KeyBackupClass::MlsHistory {
+            if class == BackupClass::MlsHistory {
                 return Err(
                     "mls_history backups must use secret_storage_key or recovery_public_key"
                         .to_owned(),
@@ -169,10 +169,7 @@ fn validate_encryption(body: &Value, class: KeyBackupClass) -> Result<(), String
             // secret_storage key; recovered after the secret_storage root is
             // unlocked. recipient_key_ref names that key id (NOT a device id),
             // and no passphrase KDF travels on the wire.
-            if !matches!(
-                class,
-                KeyBackupClass::MlsHistory | KeyBackupClass::SecretStorage
-            ) {
+            if !matches!(class, BackupClass::MlsHistory | BackupClass::SecretStorage) {
                 return Err(
                     "secret_storage_key is only valid for mls_history or secret_storage backups"
                         .to_owned(),
@@ -253,7 +250,7 @@ fn validate_kdf(kdf: &Value, mixed_secret_storage: bool) -> Result<(), String> {
     Ok(())
 }
 
-fn validate_domain_separation(body: &Value, class: KeyBackupClass) -> Result<(), String> {
+fn validate_domain_separation(body: &Value, class: BackupClass) -> Result<(), String> {
     let domain = body
         .get("domain_separation")
         .ok_or_else(|| "domain_separation metadata is required".to_owned())?;
@@ -367,10 +364,10 @@ fn validate_mls_history_opaque_only(body: &Value) -> Result<(), String> {
     scan(body, "")
 }
 
-fn item_type_allowed_for_class(class: KeyBackupClass, item_type: &str) -> bool {
+fn item_type_allowed_for_class(class: BackupClass, item_type: &str) -> bool {
     match class {
-        KeyBackupClass::DidRecovery => matches!(item_type, "recovery_key_share"),
-        KeyBackupClass::SecretStorage => matches!(
+        BackupClass::DidRecovery => matches!(item_type, "recovery_key_share"),
+        BackupClass::SecretStorage => matches!(
             item_type,
             "self_signing_key"
                 | "user_signing_key"
@@ -380,7 +377,7 @@ fn item_type_allowed_for_class(class: KeyBackupClass, item_type: &str) -> bool {
                 | "mls_group_secrets_backup_key"
                 | "private_account_state"
         ),
-        KeyBackupClass::MlsHistory => matches!(
+        BackupClass::MlsHistory => matches!(
             item_type,
             "mls_group_state" | "mls_epoch_secret" | "pending_welcome"
         ),
