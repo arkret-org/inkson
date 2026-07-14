@@ -1,0 +1,573 @@
+//! Durable account-main-state persistence engine (E2EE-local-state phase 2).
+//!
+//! On wasm the per-account `ClientLocalState` blob moved off `localStorage`
+//! into the IndexedDB + non-extractable SubtleCrypto encrypted entries store
+//! (the same `inkson.secret.inkson`/`entries` store the seed-grade secrets
+//! use). The semantic key is unchanged (`inkson.local_state.v1.account.<did>`),
+//! but the physical backend is now the hardened secure store, so the account
+//! blob is ciphertext at rest instead of near-plaintext localStorage JSON.
+//!
+//! Two target-agnostic pieces live here so they can be unit-tested natively:
+//!
+//!   * [`merge_persisted_into_live`] — the boot-time reconciliation between the
+//!     previous session's stored blob and any live in-memory writes made before
+//!     the IndexedDB tier finished initialising. Live values win; stored values
+//!     fill gaps ("现场优先、已存补缺").
+//!   * [`AccountPersistQueueState`] — the per-account single-writer commit-queue
+//!     state machine. Each enqueue freezes the target account key and takes a
+//!     monotonic sequence number; a single drain per account coalesces to the
+//!     latest not-yet-started snapshot so an older async write can never land on
+//!     top of a newer one.
+//!
+//! The wasm driver ([`enqueue_account_state_persist`]) wires the state machine
+//! to `spawn_local` + `SecureKeyStore::store_secret_durable`. Native builds keep
+//! the synchronous atomic-file backend in `state/mod.rs` unchanged.
+
+// The merge + queue logic is a target-agnostic core: it drives persistence on
+// wasm and is exercised by the native unit tests below. On a native non-test
+// build it is compiled but unused, so silence dead-code there instead of
+// scattering per-item gates.
+#![cfg_attr(not(any(target_arch = "wasm32", test)), allow(dead_code))]
+
+use serde_json::Value;
+
+use super::ClientLocalState;
+
+/// Recursively merge `stored` UNDER `live`: object keys are unioned (recursing
+/// into shared keys), a `null`/absent live value adopts the stored value, and a
+/// present live scalar or array wins outright.
+///
+/// This is deliberately map-oriented: `ClientLocalState` is overwhelmingly a bag
+/// of `BTreeMap`/`Vec` projections, so unioning object keys recovers every
+/// stored-only realm/cursor/snapshot entry the live blob has not re-observed
+/// yet, while the live session's own writes stay authoritative. The only lossy
+/// case is a scalar both sessions set to *different non-null* values inside the
+/// narrow pre-init window; there live wins (this session's intent) and the
+/// stored value re-materialises on the next sync. That window is only reachable
+/// when a real main-state write happened before the IndexedDB tier initialised,
+/// which the bootstrap ordering makes vanishingly rare.
+fn json_merge_live_priority(live: Value, stored: Value) -> Value {
+    match (live, stored) {
+        (Value::Object(mut live_map), Value::Object(stored_map)) => {
+            for (key, stored_value) in stored_map {
+                match live_map.remove(&key) {
+                    Some(live_value) => {
+                        live_map.insert(key, json_merge_live_priority(live_value, stored_value));
+                    }
+                    None => {
+                        live_map.insert(key, stored_value);
+                    }
+                }
+            }
+            Value::Object(live_map)
+        }
+        // A live `null` means "the live session never set this"; adopt stored.
+        (Value::Null, stored) => stored,
+        // Any other present live value (scalar or array) is authoritative.
+        (live, _) => live,
+    }
+}
+
+/// Reconcile a freshly-loaded `stored` blob (previous session, from the durable
+/// backend) with the `live` in-memory state accumulated before the durable tier
+/// was ready.
+///
+/// Fast paths keep the common cases exact:
+///   * `live` is structurally default → adopt `stored` wholesale (the ordinary
+///     reload: nothing wrote main state before hydration).
+///   * `stored` is default → keep `live` (an empty durable tier catches the
+///     writes made before it initialised — "空安全库也会接住现场值").
+///
+/// Otherwise both are non-default (a real live write raced hydration) and the
+/// field-wise [`json_merge_live_priority`] union runs.
+///
+/// The three memory-only sidecars (`mls_private_plaintext`,
+/// `mls_decrypted_plaintext`, `history_secrets`) are `#[serde(skip_serializing)]`
+/// and never appear in a stored blob, so they are lifted out of `live` before
+/// the JSON round-trip and restored afterwards — the JSON merge would otherwise
+/// deserialize them back to empty and drop the live plaintext caches.
+pub(super) fn merge_persisted_into_live(
+    live: ClientLocalState,
+    stored: ClientLocalState,
+) -> ClientLocalState {
+    let default_state = ClientLocalState::default();
+    if live == default_state {
+        return stored;
+    }
+    if stored == default_state {
+        return live;
+    }
+    // Preserve the memory-only sidecars from the live state; a JSON round-trip
+    // drops them (they are skip_serializing) and stored never carries them.
+    let live_private_plaintext = live.mls_private_plaintext.clone();
+    let live_decrypted_plaintext = live.mls_decrypted_plaintext.clone();
+    let live_history_secrets = live.history_secrets.clone();
+
+    let merged_value = match (
+        serde_json::to_value(&live),
+        serde_json::to_value(&stored),
+    ) {
+        (Ok(live_value), Ok(stored_value)) => json_merge_live_priority(live_value, stored_value),
+        _ => {
+            // Serialization cannot realistically fail for these types; if it
+            // somehow did, keep the live session's state rather than risk
+            // adopting a partial merge.
+            return live;
+        }
+    };
+    let mut merged: ClientLocalState = match serde_json::from_value(merged_value) {
+        Ok(merged) => merged,
+        Err(_) => return live,
+    };
+    merged.mls_private_plaintext = live_private_plaintext;
+    merged.mls_decrypted_plaintext = live_decrypted_plaintext;
+    merged.history_secrets = live_history_secrets;
+    merged
+}
+
+/// One queued account-state write: the JSON payload to persist and the
+/// monotonic sequence number stamped when it was enqueued.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(super) struct PendingAccountWrite {
+    pub(super) seq: u64,
+    pub(super) json: String,
+}
+
+/// Result of [`AccountPersistQueueState::enqueue`]: whether the caller must
+/// launch a fresh drain task for this account key, or an existing drain is
+/// already running and will pick the write up.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum EnqueueOutcome {
+    StartDrain,
+    AlreadyDraining,
+}
+
+/// Per-account single-writer commit-queue state machine.
+///
+/// Invariants:
+///   * At most one entry is pending per account key — a newer enqueue replaces
+///     an older not-yet-started snapshot (coalescing to the latest tail).
+///   * At most one drain runs per account key (`draining` set membership).
+///   * `enqueue` and `take_next` are the only mutators of `draining`, and both
+///     run under the same external lock in the wasm driver, so there is no
+///     lost-wakeup window: a write enqueued while a drain is finishing is either
+///     seen by that drain's next `take_next` (pending inserted before the
+///     drain's lock) or starts a new drain (drain cleared `draining` first).
+#[derive(Debug, Default)]
+pub(super) struct AccountPersistQueueState {
+    pending: std::collections::HashMap<String, PendingAccountWrite>,
+    committed_seq: std::collections::HashMap<String, u64>,
+    draining: std::collections::HashSet<String>,
+    next_seq: u64,
+}
+
+impl AccountPersistQueueState {
+    /// Stamp `json` with the next sequence number as the latest pending write
+    /// for `account_key`, superseding any earlier not-yet-started snapshot.
+    pub(super) fn enqueue(&mut self, account_key: String, json: String) -> EnqueueOutcome {
+        let seq = self.next_seq;
+        self.next_seq = self.next_seq.wrapping_add(1);
+        self.pending
+            .insert(account_key.clone(), PendingAccountWrite { seq, json });
+        if self.draining.contains(&account_key) {
+            EnqueueOutcome::AlreadyDraining
+        } else {
+            self.draining.insert(account_key);
+            EnqueueOutcome::StartDrain
+        }
+    }
+
+    /// Pull the latest pending write for `account_key`. Returns `None` and
+    /// atomically clears the drain flag when nothing is pending, ending the
+    /// drain loop.
+    pub(super) fn take_next(&mut self, account_key: &str) -> Option<PendingAccountWrite> {
+        match self.pending.remove(account_key) {
+            Some(write) => Some(write),
+            None => {
+                self.draining.remove(account_key);
+                None
+            }
+        }
+    }
+
+    /// Record that `seq` durably committed for `account_key` (monotonic; a
+    /// late-completing lower sequence never lowers the high-water mark).
+    pub(super) fn record_committed(&mut self, account_key: &str, seq: u64) {
+        let entry = self
+            .committed_seq
+            .entry(account_key.to_owned())
+            .or_insert(0);
+        if seq > *entry {
+            *entry = seq;
+        }
+    }
+
+    /// The latest not-yet-drained snapshot JSON for `account_key`, if any.
+    /// Read-your-writes: a synchronous read must see the newest enqueued blob
+    /// even before the async drain has committed it to the durable backend's
+    /// in-memory cache. `pending` holds at most the coalesced latest per key, so
+    /// this is exactly the value a subsequent read should observe.
+    pub(super) fn peek(&self, account_key: &str) -> Option<String> {
+        self.pending.get(account_key).map(|write| write.json.clone())
+    }
+
+    /// Highest durably-committed sequence for `account_key` (0 when none).
+    /// The waitable durable barrier (phase 2, later) reads this to know when a
+    /// remote-dependency snapshot has truly landed.
+    #[cfg_attr(not(test), allow(dead_code))]
+    pub(super) fn committed_seq(&self, account_key: &str) -> u64 {
+        self.committed_seq.get(account_key).copied().unwrap_or(0)
+    }
+}
+
+// ── wasm driver ──────────────────────────────────────────────────────────
+
+#[cfg(target_arch = "wasm32")]
+mod wasm_driver {
+    use std::sync::{Mutex, OnceLock};
+
+    use super::{AccountPersistQueueState, EnqueueOutcome, PendingAccountWrite};
+
+    fn queue() -> &'static Mutex<AccountPersistQueueState> {
+        static QUEUE: OnceLock<Mutex<AccountPersistQueueState>> = OnceLock::new();
+        QUEUE.get_or_init(|| Mutex::new(AccountPersistQueueState::default()))
+    }
+
+    fn lock() -> std::sync::MutexGuard<'static, AccountPersistQueueState> {
+        queue().lock().unwrap_or_else(|poisoned| poisoned.into_inner())
+    }
+
+    /// Enqueue a durable persist of the account-state `json` under the frozen
+    /// `account_key`. No-op before the IndexedDB tier is ready (fail closed:
+    /// the value stays in the live `cached` state and is flushed by the boot
+    /// hydration once the tier initialises). Coalesces to the latest snapshot
+    /// per account and runs exactly one drain per account key.
+    pub(crate) fn enqueue_account_state_persist(account_key: String, json: String) {
+        if !crate::secure_key_store::wasm_secure_store_ready() {
+            return;
+        }
+        let outcome = lock().enqueue(account_key.clone(), json);
+        if matches!(outcome, EnqueueOutcome::StartDrain) {
+            wasm_bindgen_futures::spawn_local(drain_account(account_key));
+        }
+    }
+
+    /// The latest enqueued-but-not-yet-committed account-state JSON for
+    /// `account_key`, if a durable write is still in the queue. `read_account_state`
+    /// consults this before the durable backend cache so a synchronous read
+    /// observes this session's most recent flush (read-your-writes) even while
+    /// the async drain is still in flight.
+    pub(crate) fn pending_account_state_json(account_key: &str) -> Option<String> {
+        lock().peek(account_key)
+    }
+
+    async fn drain_account(account_key: String) {
+        loop {
+            let next = { lock().take_next(&account_key) };
+            let Some(PendingAccountWrite { seq, json }) = next else {
+                break;
+            };
+            let store = crate::secure_key_store::default_secure_key_store("inkson");
+            match store.store_secret_durable(&account_key, &json).await {
+                Ok(()) => {
+                    lock().record_committed(&account_key, seq);
+                }
+                Err(error) => {
+                    // The snapshot was removed from the queue but `cached` still
+                    // holds it, so the next flush re-enqueues the latest state.
+                    // Mirrors the fire-and-forget failure mode of the secure
+                    // store's own sync writes.
+                    tracing::warn!(
+                        ?error,
+                        account_key = %account_key,
+                        "account state durable IndexedDB persist failed (will retry on next flush)"
+                    );
+                }
+            }
+        }
+    }
+}
+
+#[cfg(target_arch = "wasm32")]
+pub(crate) use wasm_driver::{enqueue_account_state_persist, pending_account_state_json};
+
+// ── wasm boot-time migration + hydration ─────────────────────────────────
+
+#[cfg(target_arch = "wasm32")]
+mod wasm_bootstrap {
+    use std::sync::atomic::Ordering;
+
+    use super::super::{
+        ANONYMOUS_ACCOUNT_NAMESPACE, LocalStateStore, account_state_key, browser_storage,
+    };
+    use super::{ClientLocalState, merge_persisted_into_live};
+    use crate::secure_key_store::SecureKeyStore;
+
+    /// One-time migration of legacy near-plaintext `localStorage` account blobs
+    /// into the IndexedDB encrypted entries store. For each raw account key:
+    /// only when the IndexedDB entry is absent read the legacy value, durably
+    /// write it, read it back to confirm, and only then delete the legacy copy.
+    /// A malformed legacy blob is preserved under a `.corrupt` secure entry and
+    /// removed from localStorage. Never writes a v2 key and never raises the DB
+    /// version — it reuses the existing `entries` store.
+    pub(crate) async fn migrate_localstorage_account_blobs(
+        account_keys: Vec<String>,
+        secure_store: &dyn SecureKeyStore,
+    ) {
+        let Some(storage) = browser_storage() else {
+            return;
+        };
+        for key in account_keys {
+            // Only migrate when the durable tier does not already hold the key —
+            // never let a stale localStorage copy overwrite a newer IndexedDB one.
+            match secure_store.get_secret(&key) {
+                Ok(Some(_)) => continue,
+                Ok(None) => {}
+                Err(_) => continue,
+            }
+            let Some(legacy) = storage.get_item(&key).ok().flatten() else {
+                continue;
+            };
+            if legacy.trim().is_empty() {
+                let _ = storage.remove_item(&key);
+                continue;
+            }
+            if serde_json::from_str::<ClientLocalState>(&legacy).is_err() {
+                // Preserve for inspection under a still-IndexedDB-only sibling
+                // entry, then clear the unreadable localStorage residue.
+                let _ = secure_store.store_secret(&format!("{key}.corrupt"), &legacy);
+                let _ = storage.remove_item(&key);
+                tracing::warn!(
+                    account_key = %key,
+                    "legacy account blob was unreadable; preserved a copy and cleared localStorage",
+                );
+                continue;
+            }
+            if let Err(error) = secure_store.store_secret_durable(&key, &legacy).await {
+                tracing::warn!(?error, account_key = %key, "account blob migration durable write failed; keeping legacy copy");
+                continue;
+            }
+            // Read-back verify before deleting the only remaining source copy.
+            match secure_store.get_secret(&key) {
+                Ok(Some(readback)) if readback == legacy => {
+                    let _ = storage.remove_item(&key);
+                    let _ = storage.remove_item(&format!("{key}.corrupt"));
+                    tracing::debug!(account_key = %key, "migrated legacy account blob to IndexedDB");
+                }
+                _ => {
+                    tracing::warn!(account_key = %key, "account blob migration read-back mismatch; keeping legacy copy");
+                }
+            }
+        }
+    }
+
+    impl LocalStateStore {
+        /// The raw storage keys whose legacy localStorage blobs must be migrated:
+        /// the effective active account (or the anonymous sentinel), every known
+        /// account, and the anonymous namespace. Deduplicated, order-stable.
+        pub(crate) fn legacy_account_blob_keys(&self) -> Vec<String> {
+            let root = self.read_root();
+            let mut dids: Vec<String> = Vec::new();
+            dids.push(
+                root.active_did
+                    .clone()
+                    .unwrap_or_else(|| ANONYMOUS_ACCOUNT_NAMESPACE.to_owned()),
+            );
+            for did in root.known_dids {
+                dids.push(did);
+            }
+            dids.push(ANONYMOUS_ACCOUNT_NAMESPACE.to_owned());
+            let mut seen = std::collections::HashSet::new();
+            dids.into_iter()
+                .filter(|did| seen.insert(did.clone()))
+                .map(|did| account_state_key(&did))
+                .collect()
+        }
+
+        /// Hydrate the active account's main state from the (now-migrated)
+        /// IndexedDB entry into `cached`, reconciling with any live writes made
+        /// before the durable tier was ready (live wins, stored fills gaps). Must
+        /// run before `secure_store_bootstrap_ready` is published so the account
+        /// state is authoritative before session/connect starts. Persists the
+        /// merged result so IndexedDB reflects any pre-init live writes.
+        pub(crate) fn hydrate_active_account_state_from_secure_store(&mut self) {
+            let effective_did = self.effective_account_key();
+            let Some(stored) = self.read_account_state(&effective_did) else {
+                // No durable entry yet; keep the live state and mark loaded so the
+                // first flush persists it under the active account key.
+                self.loaded.store(true, Ordering::Relaxed);
+                let _ = self.flush();
+                return;
+            };
+            let live = std::mem::replace(&mut self.cached, ClientLocalState::default());
+            self.cached = merge_persisted_into_live(live, stored);
+            self.loaded.store(true, Ordering::Relaxed);
+            let _ = self.flush();
+        }
+    }
+}
+
+#[cfg(target_arch = "wasm32")]
+pub(crate) use wasm_bootstrap::migrate_localstorage_account_blobs;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn state_with_cursor(cursor: &str) -> ClientLocalState {
+        ClientLocalState {
+            sync_cursor: Some(cursor.to_owned()),
+            ..ClientLocalState::default()
+        }
+    }
+
+    #[test]
+    fn merge_adopts_stored_when_live_is_default() {
+        let stored = state_with_cursor("sx:stored");
+        let merged = merge_persisted_into_live(ClientLocalState::default(), stored.clone());
+        assert_eq!(merged, stored);
+    }
+
+    #[test]
+    fn merge_keeps_live_when_stored_is_default() {
+        let live = state_with_cursor("sx:live");
+        let merged = merge_persisted_into_live(live.clone(), ClientLocalState::default());
+        assert_eq!(merged, live);
+    }
+
+    #[test]
+    fn merge_prefers_live_scalar_but_unions_stored_only_map_entries() {
+        let mut live = state_with_cursor("sx:live");
+        live.realm_tree_projections
+            .insert("ak:realm:a".to_owned(), serde_json::json!({"name": "A-live"}));
+
+        let mut stored = state_with_cursor("sx:stored");
+        // Same-key projection: live must win.
+        stored
+            .realm_tree_projections
+            .insert("ak:realm:a".to_owned(), serde_json::json!({"name": "A-stored"}));
+        // Stored-only projection: must be recovered into the merge.
+        stored
+            .realm_tree_projections
+            .insert("ak:realm:b".to_owned(), serde_json::json!({"name": "B-stored"}));
+        // Stored-only cursor entry: must be recovered.
+        stored
+            .realm_events_cursors
+            .insert("ak:realm:b".to_owned(), "cursor-b".to_owned());
+
+        let merged = merge_persisted_into_live(live, stored);
+
+        // Live wins the scalar and the shared projection key.
+        assert_eq!(merged.sync_cursor.as_deref(), Some("sx:live"));
+        assert_eq!(
+            merged.realm_tree_projections["ak:realm:a"]["name"],
+            "A-live"
+        );
+        // Stored-only entries are recovered.
+        assert_eq!(
+            merged.realm_tree_projections["ak:realm:b"]["name"],
+            "B-stored"
+        );
+        assert_eq!(
+            merged.realm_events_cursors.get("ak:realm:b").map(String::as_str),
+            Some("cursor-b")
+        );
+    }
+
+    #[test]
+    fn merge_preserves_live_memory_only_plaintext_sidecars() {
+        let mut live = state_with_cursor("sx:live");
+        live.mls_decrypted_plaintext
+            .entry("ak:realm:a".to_owned())
+            .or_default()
+            .insert("digest-1".to_owned(), "plaintext-1".to_owned());
+
+        let stored = state_with_cursor("sx:stored");
+        let merged = merge_persisted_into_live(live, stored);
+
+        // The skip_serializing sidecar survived the JSON round-trip merge.
+        assert_eq!(
+            merged.mls_decrypted_plaintext["ak:realm:a"]["digest-1"],
+            "plaintext-1"
+        );
+    }
+
+    #[test]
+    fn queue_coalesces_to_latest_pending_snapshot() {
+        let mut queue = AccountPersistQueueState::default();
+        let key = "acct".to_owned();
+
+        assert_eq!(
+            queue.enqueue(key.clone(), "v1".to_owned()),
+            EnqueueOutcome::StartDrain
+        );
+        // Two more writes arrive before the drain starts consuming.
+        assert_eq!(
+            queue.enqueue(key.clone(), "v2".to_owned()),
+            EnqueueOutcome::AlreadyDraining
+        );
+        assert_eq!(
+            queue.enqueue(key.clone(), "v3".to_owned()),
+            EnqueueOutcome::AlreadyDraining
+        );
+
+        // Read-your-writes: peek observes the latest pending snapshot before it
+        // is drained to the durable backend.
+        assert_eq!(queue.peek(&key).as_deref(), Some("v3"));
+
+        // The drain sees only the latest snapshot, with the latest sequence.
+        let taken = queue.take_next(&key).expect("pending write");
+        assert_eq!(taken.json, "v3");
+        assert_eq!(taken.seq, 2);
+        // Once drained, nothing is pending to observe.
+        assert!(queue.peek(&key).is_none());
+        // Nothing else pending → drain ends and clears its flag.
+        assert!(queue.take_next(&key).is_none());
+    }
+
+    #[test]
+    fn queue_reports_start_drain_again_after_drain_drains_dry() {
+        let mut queue = AccountPersistQueueState::default();
+        let key = "acct".to_owned();
+
+        assert_eq!(
+            queue.enqueue(key.clone(), "v1".to_owned()),
+            EnqueueOutcome::StartDrain
+        );
+        assert_eq!(queue.take_next(&key).map(|w| w.json), Some("v1".to_owned()));
+        assert!(queue.take_next(&key).is_none());
+
+        // A write after the drain drained dry must start a fresh drain.
+        assert_eq!(
+            queue.enqueue(key.clone(), "v2".to_owned()),
+            EnqueueOutcome::StartDrain
+        );
+    }
+
+    #[test]
+    fn queue_isolates_accounts_and_tracks_committed_high_water_mark() {
+        let mut queue = AccountPersistQueueState::default();
+        let a = "acct-a".to_owned();
+        let b = "acct-b".to_owned();
+
+        assert_eq!(
+            queue.enqueue(a.clone(), "a1".to_owned()),
+            EnqueueOutcome::StartDrain
+        );
+        // A different account starts its own independent drain.
+        assert_eq!(
+            queue.enqueue(b.clone(), "b1".to_owned()),
+            EnqueueOutcome::StartDrain
+        );
+
+        let a_write = queue.take_next(&a).expect("a pending");
+        queue.record_committed(&a, a_write.seq);
+        assert_eq!(queue.committed_seq(&a), a_write.seq);
+        // Account b's commit is independent of a's.
+        assert_eq!(queue.committed_seq(&b), 0);
+
+        // A late lower sequence never lowers the high-water mark.
+        queue.record_committed(&a, 0);
+        assert_eq!(queue.committed_seq(&a), a_write.seq);
+    }
+}

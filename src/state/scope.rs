@@ -186,6 +186,9 @@ impl LocalStateStore {
         // Persist the outgoing account's entry before swapping so nothing is
         // lost. The outgoing entry is selected by the CURRENT (pre-switch)
         // `active_did`, so flush while that still points at the old account.
+        // Phase 2 (wasm): flush freezes the durable write under the OUTGOING
+        // account key before the root index switches, so the incoming account's
+        // single-writer queue never inherits the leaving account's queued state.
         let _ = self.flush();
         *self.lock_mls_receive_overlay() = MlsReceiveOverlay::default();
         // E7: reset the account-scoped cursor overlay alongside the receive

@@ -184,6 +184,16 @@ pub(crate) const MLS_HISTORY_SECRET_KEY_PREFIX: &str = "inkson.mls_history_secre
 /// neither the plaintext nor a decryptable mirror can enter localStorage.
 pub(crate) const E2EE_PLAINTEXT_CACHE_KEY_PREFIX: &str = "inkson.e2ee_plaintext_cache.v1.";
 
+/// Per-account main `ClientLocalState` blob. Historically this lived in
+/// near-plaintext `localStorage`; phase 2 of the E2EE-local-state work moved it
+/// into the IndexedDB + non-extractable SubtleCrypto encrypted entries store.
+/// The semantic key is unchanged (`inkson.local_state.v1.account.<did>`), but
+/// classifying the prefix as IndexedDB-only makes the localStorage secure tier
+/// refuse it — so it fails closed before the wrapping key is ready and is never
+/// mirrored back to localStorage.
+#[cfg(any(target_arch = "wasm32", test))]
+pub(crate) const ACCOUNT_LOCAL_STATE_KEY_PREFIX: &str = "inkson.local_state.v1.account.";
+
 #[cfg(any(target_arch = "wasm32", test))]
 pub(crate) fn is_wasm_indexeddb_required_secret_key(key: &str) -> bool {
     is_wasm_ed25519_seed_key(key)
@@ -195,6 +205,7 @@ pub(crate) fn is_wasm_indexeddb_required_secret_key(key: &str) -> bool {
         || key.starts_with(PENDING_RECOVERY_KEY_PREFIX)
         || key.starts_with(MLS_HISTORY_SECRET_KEY_PREFIX)
         || key.starts_with(E2EE_PLAINTEXT_CACHE_KEY_PREFIX)
+        || key.starts_with(ACCOUNT_LOCAL_STATE_KEY_PREFIX)
 }
 
 pub(crate) fn e2ee_plaintext_cache_store_key(account_did: &str) -> String {

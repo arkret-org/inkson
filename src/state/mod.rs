@@ -67,6 +67,10 @@ mod mls_governance;
 
 mod e2ee_secure_cache;
 
+mod account_persist;
+#[cfg(target_arch = "wasm32")]
+pub(crate) use account_persist::migrate_localstorage_account_blobs;
+
 mod move_tracking;
 
 // YOU-07-001: storage / path / at-rest-crypto utility free functions moved out
@@ -676,15 +680,32 @@ impl LocalStateStore {
     #[cfg(target_arch = "wasm32")]
     fn read_account_state(&self, did: &str) -> Option<ClientLocalState> {
         let key = account_state_key(did);
-        let json = browser_storage().and_then(|storage| storage.get_item(&key).ok().flatten())?;
+        // Read-your-writes: a durable write still in the single-writer queue is
+        // the newest snapshot for this key; observe it before the backend cache
+        // so a flush-then-read in the same tick never reads a stale value.
+        let json = if let Some(pending) = account_persist::pending_account_state_json(&key) {
+            pending
+        } else {
+            let store = crate::secure_key_store::default_secure_key_store("inkson");
+            // Before the IndexedDB tier is ready the localStorage secure tier
+            // refuses this IndexedDB-only key (`Unsupported`), treated as absent —
+            // fail closed rather than reading a weaker copy. After boot the
+            // decrypted entry is served synchronously from the in-memory cache.
+            match store.get_secret(&key) {
+                Ok(Some(json)) => json,
+                Ok(None) | Err(_) => return None,
+            }
+        };
         match serde_json::from_str::<ClientLocalState>(&json) {
             Ok(state) => Some(state),
             Err(error) => {
-                if let Some(storage) = browser_storage() {
-                    let _ = storage.set_item(&format!("{key}.corrupt"), &json);
-                }
+                // Preserve the undecodable blob under a sibling secure entry
+                // (still IndexedDB-only) before returning defaults, so a later
+                // flush cannot silently overwrite the only copy.
+                let store = crate::secure_key_store::default_secure_key_store("inkson");
+                let _ = store.store_secret(&format!("{key}.corrupt"), &json);
                 let message = format!(
-                    "account state in localStorage was unreadable ({error}); preserved a copy and started from defaults"
+                    "account state entry was unreadable ({error}); preserved a copy and started from defaults"
                 );
                 tracing::error!(%error, "corrupt account state preserved, not silently reset");
                 *self.lock_persist_health() = Some(message);
@@ -715,18 +736,17 @@ impl LocalStateStore {
 
     #[cfg(target_arch = "wasm32")]
     fn write_account_state(&self, did: &str, state: &ClientLocalState) -> anyhow::Result<()> {
-        let Some(storage) = browser_storage() else {
-            return Ok(());
-        };
         // E2EE-at-rest: never persist raw history key material or decrypted MLS
-        // plaintext in the account-state blob.
+        // plaintext in the account-state blob — those live in their own hardened
+        // secure entries (`e2ee_plaintext_cache` / `mls_history_secret`).
         let to_persist = e2ee_safe_persist_state(state);
-        storage
-            .set_item(
-                &account_state_key(did),
-                &serde_json::to_string(&to_persist)?,
-            )
-            .map_err(|error| anyhow::anyhow!("localStorage write failed: {error:?}"))?;
+        let json = serde_json::to_string(&to_persist)?;
+        // Route the blob through the durable single-writer queue into the
+        // IndexedDB encrypted entries store. Before the IndexedDB tier is ready
+        // this is a no-op (fail closed): the value stays in `cached` and the boot
+        // hydration flushes it once the tier initialises. The account key is
+        // frozen here so a later account switch cannot misroute this write.
+        account_persist::enqueue_account_state_persist(account_state_key(did), json);
         Ok(())
     }
 
@@ -741,8 +761,13 @@ impl LocalStateStore {
         }
         #[cfg(target_arch = "wasm32")]
         {
+            let key = account_state_key(did);
+            let store = crate::secure_key_store::default_secure_key_store("inkson");
+            let _ = store.delete_secret(&key);
+            let _ = store.delete_secret(&format!("{key}.corrupt"));
+            // Also drop any legacy localStorage copy left by a pre-migration
+            // install so the account leaves no readable residue behind.
             if let Some(storage) = browser_storage() {
-                let key = account_state_key(did);
                 let _ = storage.remove_item(&key);
                 let _ = storage.remove_item(&format!("{key}.corrupt"));
             }

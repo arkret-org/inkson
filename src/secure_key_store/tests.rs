@@ -233,6 +233,14 @@ fn wasm_indexeddb_required_key_classifier_covers_high_value_secrets() {
     assert!(is_wasm_indexeddb_required_secret_key(
         "inkson.e2ee_plaintext_cache.v1.account-digest"
     ));
+    // The per-account main state blob moved into the IndexedDB entries store;
+    // both a real DID key and the anonymous namespace must be IndexedDB-only.
+    assert!(is_wasm_indexeddb_required_secret_key(
+        "inkson.local_state.v1.account.did:example:alice"
+    ));
+    assert!(is_wasm_indexeddb_required_secret_key(
+        "inkson.local_state.v1.account.anonymous"
+    ));
 
     assert!(!is_wasm_indexeddb_required_secret_key(
         "push.fcm.registration_token.device-a"
