@@ -124,10 +124,28 @@ pub(crate) async fn fetch_verify_and_cache_proof(
         .read()
         .trusted_mls_governance_anchor(request.realm_id.as_str());
     if existing_pin.is_none() && !bundle_intersects_local_seal_view(&state_store.read(), &bundle) {
-        return Err(
-            "MLS governance proof cannot bootstrap trust: its Seal path does not intersect the locally observed Seal head or state_root"
-                .to_owned(),
-        );
+        let observed = api
+            .event_submitter()
+            .map_err(|error| format!("MLS governance proof frontier client: {error}"))?
+            .events_frontier_realm_seal_view(request.realm_id.as_str())
+            .await
+            .map_err(|error| {
+                format!("refresh accepted Seal view before governance trust bootstrap: {error}")
+            })?;
+        let observed_view = crate::state::LocalSealView {
+            frontier: vec![observed.seal_id.to_string()],
+            state_root: Some(observed.state_root.to_string()),
+            ..Default::default()
+        };
+        if !bundle_intersects_seal_view(&observed_view, &bundle) {
+            return Err(format!(
+                "MLS governance proof cannot bootstrap trust: its Seal path does not intersect the freshly observed Seal head {} or state_root {}",
+                observed.seal_id, observed.state_root
+            ));
+        }
+        state_store
+            .write()
+            .set_realm_seal_view(request.realm_id.as_str(), observed_view);
     }
     let trusted_anchor = existing_pin
         .clone()
@@ -180,6 +198,13 @@ fn bundle_intersects_local_seal_view(
     bundle: &arkret_sdk::MlsGovernanceProofBundle,
 ) -> bool {
     let view = state_store.seal_view_for_realm(bundle.realm_id.as_str());
+    bundle_intersects_seal_view(&view, bundle)
+}
+
+fn bundle_intersects_seal_view(
+    view: &crate::state::LocalSealView,
+    bundle: &arkret_sdk::MlsGovernanceProofBundle,
+) -> bool {
     let local_heads = view
         .frontier
         .iter()
@@ -331,15 +356,11 @@ where
                             )));
                         }
                     };
-                    let mut envelope = serde_json::to_value(event).map_err(|error| {
+                    let envelope = event.digest_payload().map_err(|error| {
                         arkret_sdk::Error::Protocol(format!(
-                            "serialize MLS governance frontier Event: {error}"
+                            "materialize signed MLS governance frontier Event transcript: {error}"
                         ))
                     })?;
-                    if let Some(object) = envelope.as_object_mut() {
-                        object.remove("proofs");
-                        object.remove("unsigned");
-                    }
                     let proof_value = serde_json::to_value(proof).map_err(|error| {
                         arkret_sdk::Error::Protocol(format!(
                             "serialize MLS governance frontier Event proof: {error}"

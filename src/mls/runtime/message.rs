@@ -819,7 +819,7 @@ pub fn local_mls_welcome_hint_for_realm(messages: &[serde_json::Value], realm_id
     format!("{}:{}", hints.len(), hints.join(","))
 }
 
-fn durable_welcome_payload_reject_reason(value: &serde_json::Value) -> Option<String> {
+pub(super) fn durable_welcome_payload_reject_reason(value: &serde_json::Value) -> Option<String> {
     let looks_like_durable_payload = value.get("claim_ref").is_some()
         || value.get("claim_id").is_some()
         || value.get("keypackage_digest").is_some()
@@ -835,6 +835,27 @@ fn durable_welcome_payload_reject_reason(value: &serde_json::Value) -> Option<St
                 arkret_sdk::error::REASON_KEYPACKAGE_WELCOME_ENVELOPE_MISMATCH
             )
         })
+}
+
+pub(super) fn durable_welcome_wire_payload(value: &serde_json::Value) -> serde_json::Value {
+    let mut wire_payload = value.clone();
+    if let Some(object) = wire_payload.as_object_mut() {
+        for field in [
+            "event_id",
+            "sender",
+            "hlc",
+            "executed_by",
+            "authorization_ref",
+            "seal_ref",
+            "seal_basis",
+            "preconditions",
+            "effects",
+            "accepted_event_id",
+        ] {
+            object.remove(field);
+        }
+    }
+    wire_payload
 }
 
 fn decode_welcome_envelope(
@@ -1059,7 +1080,7 @@ pub fn apply_welcome_messages_with_device_snapshot(
     // success without failing the whole boot.
     let mut outcome = WelcomeApplyOutcome::default();
     for welcome_entry in welcome_entries {
-        let welcome_value = welcome_entry.content;
+        let welcome_value = durable_welcome_wire_payload(&welcome_entry.content);
         if let Some(reason) = durable_welcome_payload_reject_reason(&welcome_value) {
             outcome.record_failure(format!("welcome claim envelope: {reason}"));
             continue;

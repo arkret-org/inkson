@@ -689,6 +689,47 @@ fn durable_welcome_payload_without_claim_envelope_fails_closed() {
 }
 
 #[test]
+fn durable_welcome_projection_context_is_removed_without_hiding_unknown_payload_fields() {
+    let projected = json!({
+        "keypackage_ref": "sha256:2222222222222222222222222222222222222222222222222222222222222222",
+        "event_id": "ak:event:01904100-0000-7000-8000-000000000001",
+        "sender": "did:web:alice.example",
+        "hlc": "019041000000-0001-00000001",
+        "executed_by": "did:key:z6MkExecutor",
+        "authorization_ref": "ak:event:01904100-0000-7000-8000-000000000002",
+        "seal_ref": "ak:seal:sha256:1111111111111111111111111111111111111111111111111111111111111111",
+        "seal_basis": {"state_root": "sha256:3333333333333333333333333333333333333333333333333333333333333333"},
+        "preconditions": {"expected_epoch": 0},
+        "effects": {"next_epoch": 1},
+        "accepted_event_id": "ak:event:01904100-0000-7000-8000-000000000001",
+        "unexpected_business_field": true
+    });
+
+    let wire = durable_welcome_wire_payload(&projected);
+    for field in [
+        "event_id",
+        "sender",
+        "hlc",
+        "executed_by",
+        "authorization_ref",
+        "seal_ref",
+        "seal_basis",
+        "preconditions",
+        "effects",
+        "accepted_event_id",
+    ] {
+        assert!(
+            wire.get(field).is_none(),
+            "projection field {field} remained"
+        );
+    }
+    assert_eq!(wire.get("unexpected_business_field"), Some(&json!(true)));
+
+    let reason = durable_welcome_payload_reject_reason(&wire).expect("incomplete payload rejects");
+    assert!(reason.contains("unknown field `unexpected_business_field`"));
+}
+
+#[test]
 fn local_welcome_hint_filters_by_realm_group_id() {
     let realm = "ak:realm:01904100-0000-7000-8000-000000000001";
     let other_realm = "ak:realm:01904100-0000-7000-8000-000000000002";

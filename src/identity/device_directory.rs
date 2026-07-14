@@ -653,10 +653,10 @@ pub fn verify_ephemeral_envelope_proof_at(
 }
 
 /// Verify a persistent Event envelope's `proofs` (array). The envelope passes
-/// if at least one proof entry verifies under `public_key` after the whole
-/// `proofs` (and `unsigned`) field is stripped for canonicalization — matching
-/// the sender's `sign_envelope` which strips `proofs` + `unsigned` before
-/// hashing.
+/// if at least one proof entry verifies under `public_key` after producer-owned
+/// fields are reduced to the SDK Event digest transcript. Besides `proofs` and
+/// `unsigned`, reducer-stamped projection context must be excluded because it
+/// is attached only after the producer signs.
 ///
 /// Returns `false` (fail-closed) when the envelope carries no `actor_id` or an
 /// empty / absent `proofs` array.
@@ -676,6 +676,9 @@ pub fn verify_persistent_envelope_proofs(
     if let Some(object) = without_proofs.as_object_mut() {
         object.remove("proofs");
         object.remove("unsigned");
+        for field in arkret_sdk::Event::REDUCER_STAMPED_TOP_LEVEL_FIELDS {
+            object.remove(field);
+        }
     }
     proofs
         .iter()
@@ -1263,5 +1266,41 @@ mod tests {
             documents: HashMap::new(),
         };
         assert!(without.resolve_did_document(&fx.actor).is_none());
+    }
+
+    #[test]
+    fn persistent_event_proof_ignores_reducer_stamped_projection_context() {
+        let actor = "did:web:projection-context.example";
+        let seed = [77_u8; 32];
+        let signer = crate::event_signer::build_ed25519_signer(seed, actor);
+        let mut event = arkret_sdk::Event::new(
+            "ak.member.state",
+            arkret_sdk::RealmId::new("ak:realm:01904100-0000-7000-8000-000000000001".to_owned())
+                .unwrap(),
+            arkret_sdk::Did::new(actor.to_owned()).unwrap(),
+            1,
+            arkret_sdk::Hlc::new("01970e589d21-0001-a13f9c2e".to_owned()).unwrap(),
+            serde_json::json!({}),
+        )
+        .unwrap();
+        signer
+            .sign_sdk_event_with_context(
+                &mut event,
+                crate::event_signer::EventProofContext::default(),
+            )
+            .unwrap();
+
+        let mut projected = serde_json::to_value(event).unwrap();
+        projected["effective_scope"] = serde_json::json!({
+            "kind": "realm",
+            "realm_id": "ak:realm:01904100-0000-7000-8000-000000000001"
+        });
+        projected["actor_kind"] = serde_json::json!("human");
+        let public_key = public_key_from_directory_value(&test_did_key(77)).unwrap();
+
+        assert!(verify_persistent_envelope_proofs(&projected, &public_key));
+
+        projected["actor_seq"] = serde_json::json!(2);
+        assert!(!verify_persistent_envelope_proofs(&projected, &public_key));
     }
 }
