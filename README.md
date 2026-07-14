@@ -16,7 +16,7 @@ The hook runs `cargo fmt --all -- --check` and `cargo clippy --all-targets
 --no-deps -- -D warnings` on staged Rust changes (matching CI's
 `--all-targets` clippy scope). If `.githooks/pre-commit` is missing on
 a branch, copy it from
-[`arkret-rust-sdk`](https://github.com/arkret/arkret-rust-sdk) and
+[`arkret-rust-sdk`](https://github.com/arkret-org/arkret-rust-sdk) and
 adapt to your local toolchain.
 
 ## Realm vs Space
