@@ -96,10 +96,13 @@ pub async fn submit_realm_key_request(
     from_epoch: u64,
     to_epoch: u64,
 ) -> anyhow::Result<arkret_sdk::EphemeralSubmitOutcome> {
+    let realm_id = arkret_sdk::RealmId::new(crate::operation::trim_realm_id(realm_id))?;
+    let device_id = arkret_sdk::DeviceId::new(device_id.trim().to_owned())?;
     let payload = arkret_sdk::RealmKeyRequestPayload {
         key_scope: arkret_sdk::RealmKeyRequestScope {
-            effective_scope: crate::operation::realm_effective_scope_value(realm_id)
-                .map_err(anyhow::Error::msg)?,
+            effective_scope: arkret_sdk::EffectiveScope::Realm {
+                realm_id: realm_id.clone(),
+            },
             policy_digest: None,
             membership_frontier_digest: None,
             from_epoch,
@@ -107,10 +110,14 @@ pub async fn submit_realm_key_request(
             history_visibility: None,
         },
         recipient_principal_id: arkret_sdk::Did::new(actor_id.trim().to_owned())?,
-        recipient_device_id: device_id.trim().to_owned(),
-        recipient_hpke_public_key: recipient_hpke_public_key.trim().to_owned(),
+        recipient_device_id: device_id.clone(),
+        recipient_hpke_public_key: arkret_sdk::NonEmptyString::new(
+            recipient_hpke_public_key.trim(),
+        )?,
         requested_source_class: arkret_sdk::HistoryKeySource::VerifiedMemberDevice,
-        target_source_ref: provider_device_ref.trim().to_owned(),
+        target_source_ref: arkret_sdk::RealmKeySourceRef::Device(
+            arkret_sdk::DeviceId::new(provider_device_ref.trim().to_owned())?,
+        ),
         // The principal that owns `target_source_ref` (the provider device the
         // requester picked as its history source). Required by the SDK request
         // schema so the relay can route to the provider's to-device queue.
@@ -126,9 +133,9 @@ pub async fn submit_realm_key_request(
         // signal, so it has no `events::kinds` constant; the literal is the
         // wire kind soland's `relay_ephemeral_realm_key_request` matches on.
         kind: "ak.realm_key.request".to_owned(),
-        realm_id: arkret_sdk::RealmId::new(crate::operation::trim_realm_id(realm_id))?,
+        realm_id,
         actor_id: arkret_sdk::Did::new(actor_id.trim().to_owned())?,
-        device_id: Some(arkret_sdk::DeviceId::new(device_id.trim().to_owned())?),
+        device_id: Some(device_id),
         sent_at,
         // Directed relay; soland enforces its own TTL. Stay a full minute
         // under the 5-minute ephemeral ceiling so clock skew / a closed-

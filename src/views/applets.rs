@@ -43,16 +43,14 @@ use crate::ui::dialog::Dialog;
 use crate::ui::textarea::Textarea;
 use crate::views::helpers::short_protocol_id;
 
-/// Build the canonical `applet_package` Value the install preview/commit
-/// surface expects from a manifest input. For inline JSON the parsed object is
-/// the package as-is; for a URL we wrap it in the minimal
-/// `{ manifest_url }` envelope soland resolves server-side. Pure so the
-/// classify→package mapping is unit-tested.
-pub fn applet_package_from_manifest(kind: &ManifestInputKind) -> Option<Value> {
+/// Parse an inline package into the SDK's closed `AppletPackage` wire type.
+/// The v1 install surface accepts a complete signed package, not a manifest URL.
+pub fn applet_package_from_manifest(
+    kind: &ManifestInputKind,
+) -> Option<arkret_sdk::AppletPackage> {
     match kind {
-        ManifestInputKind::Json(raw) => serde_json::from_str::<Value>(raw).ok(),
-        ManifestInputKind::Url(url) => Some(json!({ "manifest_url": url })),
-        ManifestInputKind::Invalid => None,
+        ManifestInputKind::Json(raw) => serde_json::from_str(raw).ok(),
+        ManifestInputKind::Url(_) | ManifestInputKind::Invalid => None,
     }
 }
 
@@ -461,7 +459,7 @@ pub fn AppletsPanel(token: Signal<String>, selected_realm_id: String) -> Element
                                             install_verified.set(false);
                                             install_plan_digest.set(String::new());
                                             install_status
-                                                .set("manifest must be a URL or JSON body".to_owned());
+                                                .set("manifest must be a complete Applet package JSON body".to_owned());
                                             return;
                                         };
                                         let base = base.clone();
@@ -857,14 +855,12 @@ mod tests {
     };
 
     #[test]
-    fn applet_package_maps_json_and_url_kinds() {
+    fn applet_package_rejects_incomplete_json_and_url_kinds() {
         let json = super::ManifestInputKind::Json("{\"package_id\":\"package:demo\"}".to_owned());
-        let pkg = applet_package_from_manifest(&json).unwrap();
-        assert_eq!(pkg["package_id"], "package:demo");
+        assert!(applet_package_from_manifest(&json).is_none());
 
         let url = super::ManifestInputKind::Url("https://x/manifest.json".to_owned());
-        let pkg = applet_package_from_manifest(&url).unwrap();
-        assert_eq!(pkg["manifest_url"], "https://x/manifest.json");
+        assert!(applet_package_from_manifest(&url).is_none());
 
         assert!(applet_package_from_manifest(&super::ManifestInputKind::Invalid).is_none());
     }

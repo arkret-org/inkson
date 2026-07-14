@@ -815,10 +815,10 @@ mod tests {
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(transparent)]
-pub struct SnapshotBootstrapJson(pub Value);
+pub struct SnapshotBootstrapJson(pub arkret_sdk::SnapshotBootstrap);
 
-impl From<Value> for SnapshotBootstrapJson {
-    fn from(value: Value) -> Self {
+impl From<arkret_sdk::SnapshotBootstrap> for SnapshotBootstrapJson {
+    fn from(value: arkret_sdk::SnapshotBootstrap) -> Self {
         Self(value)
     }
 }

@@ -21,6 +21,7 @@ mod sections;
 mod widgets;
 
 use account_data::*;
+use base64::Engine as _;
 use dioxus::prelude::*;
 use dioxus_primitives::checkbox::CheckboxState;
 use dioxus_router::Link;
@@ -1623,7 +1624,14 @@ pub fn SettingsPanel(
                                     spawn(async move {
                                         match with_authed_sdk_client(&base, api_token, |http| async move {
                                             let request = arkret_sdk::MimiIdentifierQueryRequestBody {
-                                                identifiers: vec![json!({"mimi_uri": "mimi://remote.example/alice"})],
+                                                identifiers: vec![arkret_sdk::MimiIdentifier {
+                                                    kind: arkret_sdk::MimiIdentifierKind::MimiUri,
+                                                    identifier_commitment: arkret_sdk::Hash::new(
+                                                        arkret_sdk::canonical::sha256_digest(
+                                                            b"mimi://remote.example/alice",
+                                                        ),
+                                                    )?,
+                                                }],
                                                 requester: None,
                                                 privacy_profile: Some("private_identifier_query".to_owned()),
                                                 proofs: Vec::new(),
@@ -1643,7 +1651,7 @@ pub fn SettingsPanel(
                                                     .first()
                                                     .map(|value| {
                                                         serde_json::to_string(value)
-                                                            .unwrap_or_else(|_| value.to_string())
+                                                            .unwrap_or_else(|_| "invalid-result".to_owned())
                                                     })
                                                     .unwrap_or_else(|| "none".to_owned());
                                                 mimi_receipt.set(format!(
@@ -1678,17 +1686,22 @@ pub fn SettingsPanel(
                                     let device = device_id();
                                     spawn(async move {
                                         match with_authed_sdk_client(&base, api_token, |http| async move {
+                                            let plaintext = br#"{"source_format":"text/markdown;variant=GFM-MIMI","body":"MIMI interop test from inkson","mimi_room_uri":"mimi://mimi.example.com/rooms/01JSMIMI"}"#;
                                             let request = arkret_sdk::MimiSubmitMessageRequestBody {
                                                 sender_actor_id: arkret_sdk::Did::new(actor.trim().to_owned())?,
                                                 device_id: arkret_sdk::DeviceId::new(device.trim().to_owned())?,
-                                                ciphertext: json!({
-                                                    "source_format": "text/markdown;variant=GFM-MIMI",
-                                                    "body": "MIMI interop test from inkson",
-                                                    "mimi_room_uri": "mimi://mimi.example.com/rooms/01JSMIMI"
-                                                }),
+                                                ciphertext: arkret_sdk::MimiCiphertext {
+                                                    content_type: arkret_sdk::NonEmptyString::new("application/json")?,
+                                                    ciphertext_digest: arkret_sdk::Hash::new(
+                                                        arkret_sdk::canonical::sha256_digest(plaintext),
+                                                    )?,
+                                                    payload: arkret_sdk::Base64UrlString::new(
+                                                        base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(plaintext),
+                                                    )?,
+                                                },
                                                 mls_group_id: None,
                                                 epoch: None,
-                                                associated_data: serde_json::Value::Null,
+                                                associated_data: None,
                                             };
                                             http.post::<_, arkret_sdk::MimiSubmitMessageOutcome>(
                                                 "/_arkret/open/mimi/strands/01JSMIMI/messages",
@@ -1736,10 +1749,12 @@ pub fn SettingsPanel(
                                     spawn(async move {
                                         match with_authed_sdk_client(&base, api_token, |http| async move {
                                             let request = arkret_sdk::MimiProxyDownloadRequestBody {
-                                                asset_ref: "ak:blob:sha256:01015dc8af66d01f557ea63f13538f1964848840a350c5311d1efc8ad138bb91".to_owned(),
+                                                asset_ref: arkret_sdk::NonEmptyString::new(
+                                                    "ak:blob:sha256:01015dc8af66d01f557ea63f13538f1964848840a350c5311d1efc8ad138bb91",
+                                                )?,
                                                 requester: arkret_sdk::Did::new(actor.trim().to_owned())?,
                                                 strand_id: None,
-                                                ohttp_context: serde_json::Value::Null,
+                                                ohttp_context: None,
                                                 range: None,
                                             };
                                             http.post::<_, arkret_sdk::MimiProxyDownloadOutcome>(

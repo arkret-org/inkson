@@ -287,10 +287,14 @@ fn publish_content_from_directory(
 /// (the v1 core signature algorithm) when the directory omits it.
 fn trust_binding_from_directory(binding: &QueryDeviceCrossSigningBinding) -> DeviceTrustBinding {
     DeviceTrustBinding {
-        verification_method: binding.verification_method.clone(),
-        alg: binding.alg.clone().unwrap_or_else(|| "EdDSA".to_owned()),
+        verification_method: binding.verification_method.as_str().to_owned(),
+        alg: binding
+            .alg
+            .as_ref()
+            .map(|alg| alg.as_str().to_owned())
+            .unwrap_or_else(|| "EdDSA".to_owned()),
         ssk_generation: binding.ssk_generation,
-        signature: binding.signature.clone(),
+        signature: binding.signature.as_str().to_owned(),
     }
 }
 
@@ -402,6 +406,10 @@ fn tier2_accepted_key(
     // missing either cannot be chain-verified (fail closed).
     let hpke_key = record.hpke_key.as_deref()?;
     let trust_algorithms = record.trust_algorithms.as_deref()?;
+    let trust_algorithms = trust_algorithms
+        .iter()
+        .map(|algorithm| algorithm.as_str().to_owned())
+        .collect::<Vec<_>>();
     match verify_tier2_chain(
         did_document,
         publish,
@@ -410,7 +418,7 @@ fn tier2_accepted_key(
         device,
         &multibase,
         hpke_key,
-        trust_algorithms,
+        &trust_algorithms,
     ) {
         DeviceTrustState::CrossSigned => Some(directory_key),
         _ => None,

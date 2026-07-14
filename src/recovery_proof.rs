@@ -51,21 +51,23 @@ pub fn build_principal_signing_proof(
     session: &Value,
     verification_method: &str,
     signing_key: &SigningKey,
-) -> anyhow::Result<Value> {
+) -> anyhow::Result<arkret_sdk::RecoverySessionProof> {
     let transcript = principal_signing_proof_transcript(session)?;
     let bytes = crate::canonical::canonical_json_bytes(&transcript)?;
     let signature = signing_key.sign(&bytes);
     let challenge = session
         .get("challenge")
-        .cloned()
+        .and_then(Value::as_str)
         .ok_or_else(|| anyhow::anyhow!("recovery session missing `challenge`"))?;
-    Ok(json!({
-        "kind": "principal_signing",
-        "challenge": challenge,
-        "verification_method": verification_method,
-        "alg": "EdDSA",
-        "signature": B64.encode(signature.to_bytes()),
-    }))
+    Ok(arkret_sdk::RecoverySessionProof::PrincipalSigning(
+        arkret_sdk::RecoveryPrincipalSigningProof {
+            kind: arkret_sdk::RecoveryPrincipalSigningProofKind::PrincipalSigning,
+            challenge: challenge.to_owned(),
+            verification_method: arkret_sdk::DidUrl::new(verification_method.to_owned())?,
+            alg: arkret_sdk::NonEmptyString::new("EdDSA")?,
+            signature: arkret_sdk::Base64UrlString::new(B64.encode(signature.to_bytes()))?,
+        },
+    ))
 }
 
 /// Same as [`build_principal_signing_proof`] but signs with the process-wide
@@ -144,11 +146,12 @@ mod tests {
     fn proof_signature_verifies_against_transcript() {
         let session = sample_session();
         let signing_key = SigningKey::from_bytes(&[51u8; 32]);
-        let proof = build_principal_signing_proof(
+        let proof = serde_json::to_value(build_principal_signing_proof(
             &session,
             "did:key:z6MkPrincipalFixture#key",
             &signing_key,
         )
+        .unwrap())
         .unwrap();
         assert_eq!(proof["kind"], "principal_signing");
         assert_eq!(proof["alg"], "EdDSA");

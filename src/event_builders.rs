@@ -99,7 +99,7 @@ pub(crate) struct RealmBootstrapMember {
     // Bootstrap membership accepts only already-authoritative DID input.
     // Handle evidence belongs on signed HandleClaim / Directory resolution
     // paths, not on a locally synthesized membership event.
-    delivery_binding: Option<Value>,
+    delivery_binding: Option<arkret_sdk::MemberDeliveryBinding>,
 }
 
 impl RealmBootstrapMember {
@@ -955,7 +955,7 @@ fn build_member_state_transition_event_with_binding(
     from_state: Option<&str>,
     to_state: &str,
     reason: &str,
-    delivery_binding: Option<Value>,
+    delivery_binding: Option<arkret_sdk::MemberDeliveryBinding>,
 ) -> anyhow::Result<arkret_sdk::Event> {
     use arkret_sdk::models::{DeliveryStatus, MembershipPayload, MembershipPayloadState};
     let realm_id_wire = trim_realm_id(realm_id);

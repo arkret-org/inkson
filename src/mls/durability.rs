@@ -131,14 +131,31 @@ pub fn seal_history_secrets(
     source_authorization_ref: &str,
     sender_device_signature: Value,
 ) -> Result<arkret_sdk::RealmKeySharePayload, String> {
-    let scope = rrk_key_scope(realm_id, from_epoch, to_epoch, policy_digest, None);
+    let realm_id = arkret_sdk::RealmId::new(realm_id.to_owned())
+        .map_err(|err| format!("invalid RRK Realm id: {err:?}"))?;
+    let policy_digest: arkret_sdk::Hash = serde_json::from_value(policy_digest)
+        .map_err(|err| format!("invalid RRK policy digest: {err}"))?;
+    let sender_device_id = arkret_sdk::DeviceId::new(sender_device_id.to_owned())
+        .map_err(|err| format!("invalid RRK sender device id: {err:?}"))?;
+    let source_authorization_ref = arkret_sdk::EventId::new(source_authorization_ref.to_owned())
+        .map_err(|err| format!("invalid RRK source authorization ref: {err:?}"))?;
+    let sender_device_signature: arkret_sdk::SignatureMaterial =
+        serde_json::from_value(sender_device_signature)
+            .map_err(|err| format!("invalid RRK sender device signature: {err}"))?;
+    let scope = rrk_key_scope(
+        realm_id.clone(),
+        from_epoch,
+        to_epoch,
+        policy_digest,
+        None,
+    );
     seal_history_secrets_to_recovery_recipient(
         recovery_key,
         history_secrets,
-        realm_id,
+        &realm_id,
         scope,
-        sender_device_id.to_owned(),
-        source_authorization_ref.to_owned(),
+        sender_device_id,
+        source_authorization_ref,
         sender_device_signature,
         crate::clock::now_utc_secs(),
         None,

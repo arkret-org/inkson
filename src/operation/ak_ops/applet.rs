@@ -9,8 +9,6 @@
 //! `service_id` for registration / discovery) as `target_ref` so
 //! soland's `target-ref-required` envelope-shape check passes.
 
-use serde_json::json;
-
 use super::OperationBuilder;
 
 /// `ak.applet.discovery` — the network discovery surface that lists
@@ -68,15 +66,21 @@ pub fn applet_bridge_error(
     visibility_scope: &str,
     message: &str,
 ) -> anyhow::Result<OperationBuilder> {
+    let visibility_scope = match visibility_scope.trim() {
+        "realm_admins" => arkret_sdk::AppletBridgeVisibilityScope::RealmAdmins,
+        "applet_controller" => arkret_sdk::AppletBridgeVisibilityScope::AppletController,
+        "realm_members" => arkret_sdk::AppletBridgeVisibilityScope::RealmMembers,
+        other => anyhow::bail!("invalid applet bridge visibility_scope {other:?}"),
+    };
     let payload = arkret_sdk::AppletBridgeErrorPayload {
-        applet_id: json!(applet_id),
+        applet_id: parse_applet_identifier(applet_id).map_err(anyhow::Error::msg)?,
         realm_id: arkret_sdk::RealmId::new(realm_id.to_owned())
             .map_err(|err| anyhow::anyhow!("invalid realm id {realm_id:?}: {err}"))?,
-        failed_transaction_ref: json!(failed_transaction_ref),
+        failed_transaction_ref: arkret_sdk::ObjectRef::new(failed_transaction_ref.to_owned())?,
         error_class: error_class.to_owned(),
-        error_code: json!(error_code),
+        error_code: arkret_sdk::NonEmptyString::new(error_code)?,
         retriable,
-        visibility_scope: json!(visibility_scope),
+        visibility_scope,
         external_ref: None,
         message: Some(message.to_owned()),
         retry_after_ms: None,

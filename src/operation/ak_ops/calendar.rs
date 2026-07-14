@@ -12,6 +12,9 @@ pub fn rsvp_set(
     occurrence: Option<&str>,
     comment: Option<Value>,
 ) -> anyhow::Result<OperationBuilder> {
+    let comment = comment
+        .map(serde_json::from_value::<arkret_sdk::RsvpComment>)
+        .transpose()?;
     let payload = arkret_sdk::RsvpSetPayload {
         event_ref: strand_id_value(strand_id)?,
         status: rsvp_status_value(status)?,

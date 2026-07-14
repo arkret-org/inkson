@@ -17,7 +17,7 @@ pub struct SidecarSession {
     pub private_circle_id: String,
     pub private_strand_id: String,
     pub private_relation_id: String,
-    pub pending_member_reconciliations: Vec<serde_json::Value>,
+    pub pending_member_reconciliations: Vec<arkret_sdk::PendingMemberReconciliationItem>,
     pub migrated_draft: String,
     pub opened_at: chrono::DateTime<chrono::Utc>,
 }
@@ -59,7 +59,7 @@ pub struct SidecarSessionContext(pub Signal<Option<SidecarSession>>);
 mod tests {
     use super::*;
 
-    fn session(pending: Vec<serde_json::Value>) -> SidecarSession {
+    fn session(pending: Vec<arkret_sdk::PendingMemberReconciliationItem>) -> SidecarSession {
         SidecarSession {
             trace_id: "019f0000-0000-7000-8000-000000000001".to_owned(),
             controller_id: "did:web:alice.example".to_owned(),
@@ -78,10 +78,10 @@ mod tests {
 
     #[test]
     fn pending_reconciliation_is_not_ready() {
-        let session = session(vec![serde_json::json!({
-            "agent_id": "did:web:agents.example:assistant",
-            "reason": "membership_projection_pending"
-        })]);
+        let session = session(vec![arkret_sdk::PendingMemberReconciliationItem {
+            agent_id: arkret_sdk::Did::new("did:web:agents.example:assistant").unwrap(),
+            reason: arkret_sdk::NonEmptyString::new("membership_projection_pending").unwrap(),
+        }]);
         assert!(!session.membership_ready());
         assert_eq!(session.pending_reconciliation_count(), 1);
         assert!(

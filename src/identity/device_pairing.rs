@@ -115,34 +115,33 @@ pub fn parse_pending_pairing_requests(inbox: &[Value]) -> Vec<PendingPairingRequ
 pub fn pairing_request_body(
     payload: &Value,
 ) -> anyhow::Result<arkret_sdk::AccountDevicePairRequestBody> {
-    let pairing_code = payload
+    let pairing_code = arkret_sdk::NonEmptyString::new(payload
         .get("pairing_code")
         .and_then(Value::as_str)
         .map(str::trim)
         .filter(|value| !value.is_empty())
-        .ok_or_else(|| anyhow::anyhow!("pairing payload is missing pairing_code"))?
-        .to_owned();
+        .ok_or_else(|| anyhow::anyhow!("pairing payload is missing pairing_code"))?)?;
     let new_device_pubkey = match payload.get("new_device_pubkey") {
-        Some(value @ Value::Object(_)) => value.clone(),
+        Some(value @ Value::Object(_)) => serde_json::from_value(value.clone())?,
         _ => anyhow::bail!("pairing payload is missing new_device_pubkey"),
     };
-    let challenge_signature = payload
+    let challenge_signature = arkret_sdk::Base64UrlString::new(payload
         .get("challenge_signature")
         .and_then(Value::as_str)
         .map(str::trim)
         .filter(|value| !value.is_empty())
-        .ok_or_else(|| anyhow::anyhow!("pairing payload is missing challenge_signature"))?
-        .to_owned();
+        .ok_or_else(|| anyhow::anyhow!("pairing payload is missing challenge_signature"))?)?;
     let display_name = payload
         .get("display_name")
         .and_then(Value::as_str)
         .map(str::trim)
         .filter(|value| !value.is_empty())
-        .map(ToOwned::to_owned);
+        .map(arkret_sdk::NonEmptyString::new)
+        .transpose()?;
     let device_metadata = payload
         .get("device_metadata")
-        .cloned()
-        .unwrap_or_else(|| json!({}));
+        .map(|value| serde_json::from_value(value.clone()))
+        .transpose()?;
     Ok(arkret_sdk::AccountDevicePairRequestBody {
         pairing_code,
         new_device_pubkey,

@@ -214,7 +214,7 @@ pub fn realm_organization_statement(
         authorization: RealmOrganizationAuthorization {
             issuer: did_id(&authorization.issuer)?,
             issuer_role: authorization.issuer_role,
-            verification_method: authorization.verification_method,
+            verification_method: arkret_sdk::DidUrl::new(authorization.verification_method)?,
             delegation_ref: authorization.delegation_ref,
             executed_by: authorization
                 .executed_by

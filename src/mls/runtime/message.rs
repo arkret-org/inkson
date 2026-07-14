@@ -434,7 +434,12 @@ pub fn ingest_realm_key_share(
     // only with this device's HPKE private key anyway, but check the routing
     // first). RRK shares (share_class=realm_recovery_key) carry no
     // recipient_device_id and are not consumed here.
-    if payload.recipient_device_id.as_deref().map(str::trim) != Some(device_id.trim()) {
+    if payload
+        .recipient_device_id
+        .as_ref()
+        .map(|device| device.as_str().trim())
+        != Some(device_id.trim())
+    {
         return 0;
     }
     // SEC-02 / device-lifecycle.md §13: sender-device authentication. When the
@@ -556,11 +561,11 @@ pub(crate) fn verify_realm_key_share_sender_signature(
 ) -> bool {
     use ed25519_dalek::{Signature, Verifier as _, VerifyingKey};
 
-    let sig_obj = &payload.sender_device_signature;
-    let is_empty = sig_obj.is_null()
-        || sig_obj
-            .as_object()
-            .is_some_and(|map| map.is_empty() || !map.contains_key("signature"));
+    let sig_obj = match &payload.sender_device_signature {
+        arkret_sdk::SignatureMaterial::Variant1(fields) => fields,
+        arkret_sdk::SignatureMaterial::NonEmptyString(_) => return false,
+    };
+    let is_empty = sig_obj.is_empty() || !sig_obj.contains_key("signature");
 
     // Resolve the sender device's authoritative directory key (sync, cache-only).
     // The caller (`app::history-share` install loop) primes this cache with a
@@ -569,7 +574,7 @@ pub(crate) fn verify_realm_key_share_sender_signature(
     let directory_key = sender_principal_id.map(|principal| {
         match crate::identity::device_directory::cached_device_signing_key(
             principal,
-            payload.sender_device_id.trim(),
+            payload.sender_device_id.as_str(),
         ) {
             crate::identity::device_directory::CacheLookup::Hit(material) => {
                 DirectoryVerdict::Key(material)
@@ -868,8 +873,10 @@ fn decode_welcome_envelope(
     let durable: arkret_sdk::MlsWelcomePayload = serde_json::from_value(value.clone())
         .map_err(|error| format!("durable Welcome payload parse: {error}"))?;
     let ciphertext = durable
-        .ciphertext
-        .ok_or_else(|| "durable Welcome payload has no inline ciphertext".to_owned())?;
+        .carrier
+        .ciphertext()
+        .ok_or_else(|| "durable Welcome payload has no inline ciphertext".to_owned())?
+        .to_owned();
     let welcome_bytes = arkret_sdk::base64url_decode(ciphertext.as_bytes())
         .map_err(|error| format!("durable Welcome ciphertext decode: {error}"))?;
     let welcome_hash = arkret_sdk::Hash::new(arkret_sdk::canonical::sha256_digest(&welcome_bytes))
@@ -880,11 +887,10 @@ fn decode_welcome_envelope(
         );
     }
     Ok(arkret_sdk::MlsWelcomeEnvelope {
-        group_id: durable.mls_group_id,
+        group_id: durable.mls_group_id.as_str().to_owned(),
         epoch: durable.epoch,
         recipient_principal_id: durable.recipient_principal_id,
-        recipient_device_id: arkret_sdk::DeviceId::new(durable.recipient_device_id)
-            .map_err(|error| format!("durable Welcome recipient device id: {error}"))?,
+        recipient_device_id: durable.recipient_device_id,
         welcome: ciphertext,
         welcome_hash,
         ratchet_tree: None,

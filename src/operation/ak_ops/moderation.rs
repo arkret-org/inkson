@@ -43,7 +43,7 @@ pub fn moderation_decision(
 ) -> anyhow::Result<OperationBuilder> {
     let realm = trim_realm_id(realm_id);
     let payload = arkret_sdk::ModerationDecisionPayload {
-        target_ref: Value::String(target_ref.to_owned()),
+        target_ref: arkret_sdk::ObjectRef::new(target_ref.to_owned())?,
         decision: decision.to_owned(),
         issuer: did_id(actor)?,
         request_canonical_digest: decision_request_digest(target_ref)?,
@@ -79,8 +79,8 @@ pub fn moderation_decision_lift(
 ) -> anyhow::Result<OperationBuilder> {
     let realm = trim_realm_id(realm_id);
     let payload = arkret_sdk::ModerationDecisionLiftPayload {
-        target_ref: Value::String(target_ref.to_owned()),
-        decision_ref: Value::String(decision_ref.to_owned()),
+        target_ref: arkret_sdk::ObjectRef::new(target_ref.to_owned())?,
+        decision_ref: arkret_sdk::EventId::new(decision_ref.to_owned())?,
         reason_code: Some(reason_code.to_owned()),
         reason: None,
         effective_at: None,

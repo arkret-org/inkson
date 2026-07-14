@@ -218,9 +218,15 @@ impl From<arkret_sdk::ProjectionItem> for ProjectionItemView {
         Self {
             object: serde_json::to_value(item.object).unwrap_or(Value::Null),
             render: item.render.as_ref().and_then(sdk_wire_string),
-            display: non_null_value(item.display),
-            position: non_null_value(item.position),
-            state: non_null_value(item.state),
+            display: serde_json::to_value(item.display)
+                .ok()
+                .and_then(non_null_value),
+            position: serde_json::to_value(item.position)
+                .ok()
+                .and_then(non_null_value),
+            state: serde_json::to_value(item.state)
+                .ok()
+                .and_then(non_null_value),
         }
     }
 }

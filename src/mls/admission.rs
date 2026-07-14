@@ -212,8 +212,11 @@ pub(crate) fn build_realm_key_share_event(
     let policy_digest = arkret_sdk::Hash::new(policy_digest.trim().to_owned())
         .map_err(|err| format!("invalid realm_key.share policy_digest: {err:?}"))?;
     let key_scope = arkret_sdk::RealmKeyScope {
-        effective_scope: crate::operation::realm_effective_scope_value(realm_id)?,
-        policy_digest: Value::String(policy_digest.as_str().to_owned()),
+        effective_scope: arkret_sdk::EffectiveScope::Realm {
+            realm_id: arkret_sdk::RealmId::new(trim_realm_id(realm_id))
+                .map_err(|err| format!("invalid realm_key.share Realm id: {err:?}"))?,
+        },
+        policy_digest,
         membership_frontier_digest: None,
         from_epoch: Some(from_epoch),
         to_epoch: Some(to_epoch),
@@ -222,11 +225,15 @@ pub(crate) fn build_realm_key_share_event(
     let mut payload = arkret_sdk::RealmKeySharePayload {
         share_class: arkret_sdk::RealmKeyShareClass::MemberDevice,
         recipient_principal_id: recipient_did,
-        recipient_device_id: Some(recipient_device_id.trim().to_owned()),
+        recipient_device_id: Some(
+            arkret_sdk::DeviceId::new(recipient_device_id.trim().to_owned())
+                .map_err(|err| format!("invalid realm_key.share recipient device id: {err:?}"))?,
+        ),
         recipient_verification_method: None,
         recovery_recipient_id: None,
-        sender_device_id: sender_device_id.trim().to_owned(),
-        source_authorization_ref: source_authorization_ref.as_str().to_owned(),
+        sender_device_id: arkret_sdk::DeviceId::new(sender_device_id.trim().to_owned())
+            .map_err(|err| format!("invalid realm_key.share sender device id: {err:?}"))?,
+        source_authorization_ref,
         // Filled below with a real Ed25519 signature over
         // `RealmKeySharePayload::sender_signing_input()` (device-lifecycle.md
         // §13). Initialized empty only while constructing the signing input and
@@ -235,9 +242,12 @@ pub(crate) fn build_realm_key_share_event(
         // + integrity of the shared keys; this detached signature additionally
         // authenticates the *sender device* to the receiver, independent of the
         // durable Event-envelope proof.
-        sender_device_signature: json!({}),
+        sender_device_signature: arkret_sdk::SignatureMaterial::Variant1(BTreeMap::new()),
         key_scope,
-        ciphertext: Some(sealed_ciphertext),
+        ciphertext: Some(
+            arkret_sdk::NonEmptyString::new(sealed_ciphertext)
+                .map_err(|err| format!("invalid realm_key.share ciphertext: {err}"))?,
+        ),
         encrypted_key_ref: None,
         aad_digest: None,
         expires_at: None,
@@ -303,16 +313,22 @@ pub(crate) fn wrap_realm_key_share_payload_event(
 /// or `None` when no raw-capable signer is installed.
 pub(crate) fn sign_realm_key_share_sender_signature(
     payload: &arkret_sdk::RealmKeySharePayload,
-) -> Option<Value> {
+) -> Option<arkret_sdk::SignatureMaterial> {
     let signer = crate::event_signer::active_signer()?;
     let pubkey_multibase = signer.public_key_multibase()?;
     let signing_input = payload.sender_signing_input();
     let signature = signer.sign_raw(&signing_input).ok()?;
-    Some(json!({
-        "alg": "Ed25519",
-        "signature": URL_SAFE_NO_PAD.encode(signature),
-        "signer_public_key_multibase": pubkey_multibase,
-    }))
+    let mut fields = BTreeMap::new();
+    fields.insert("alg".to_owned(), Value::String("Ed25519".to_owned()));
+    fields.insert(
+        "signature".to_owned(),
+        Value::String(URL_SAFE_NO_PAD.encode(signature)),
+    );
+    fields.insert(
+        "signer_public_key_multibase".to_owned(),
+        Value::String(pubkey_multibase),
+    );
+    Some(arkret_sdk::SignatureMaterial::Variant1(fields))
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -350,9 +366,14 @@ pub(crate) fn build_mls_welcome_payload_value(
         welcome_digest: welcome.welcome_hash.clone(),
         created_at: crate::clock::now_utc_secs(),
         signature: arkret_sdk::KeyOperationSignature {
-            kid: String::new(),
-            alg: Some("EdDSA".to_owned()),
-            sig: String::new(),
+            kid: arkret_sdk::NonEmptyString::new("pending")
+                .map_err(|err| format!("MLS Welcome placeholder kid: {err}"))?,
+            alg: Some(
+                arkret_sdk::NonEmptyString::new("EdDSA")
+                    .map_err(|err| format!("MLS Welcome signature algorithm: {err}"))?,
+            ),
+            sig: arkret_sdk::Base64UrlString::new("cGVuZGluZw")
+                .map_err(|err| format!("MLS Welcome placeholder signature: {err}"))?,
         },
     };
     sign_welcome_claim_envelope(
@@ -432,7 +453,10 @@ fn sign_welcome_claim_envelope(
             std::num::NonZeroU64::new(publish.generation)
                 .ok_or_else(|| "cross-signing generation must be positive".to_owned())?,
         );
-        envelope.signature.kid = publish.self_signing_key.key.kid.clone();
+        envelope.signature.kid = arkret_sdk::NonEmptyString::new(
+            publish.self_signing_key.key.kid.clone(),
+        )
+        .map_err(|err| format!("MLS Welcome self-signing kid: {err}"))?;
         let signing_bytes = envelope
             .canonical_signing_bytes()
             .map_err(|err| format!("MLS Welcome claim canonical bytes: {err}"))?;
@@ -445,7 +469,10 @@ fn sign_welcome_claim_envelope(
         .map_err(|err| format!("load self-signing key: {err}"))?
         .ok_or_else(|| "self-signing key is not available on this device".to_owned())?;
         let signature = signing_key.sign(&signing_bytes);
-        envelope.signature.sig = URL_SAFE_NO_PAD.encode(signature.to_bytes());
+        envelope.signature.sig = arkret_sdk::Base64UrlString::new(
+            URL_SAFE_NO_PAD.encode(signature.to_bytes()),
+        )
+        .map_err(|err| format!("MLS Welcome self-signing signature: {err}"))?;
         return Ok(());
     }
     let sender_device_id = sender_device_id.trim();
@@ -461,14 +488,16 @@ fn sign_welcome_claim_envelope(
         None => crate::event_signer::bootstrap_default_signer("inkson")
             .map_err(|err| format!("MLS Welcome device signer bootstrap: {err}"))?,
     };
-    envelope.signature.kid = signer.verification_method().to_owned();
+    envelope.signature.kid = arkret_sdk::NonEmptyString::new(signer.verification_method())
+        .map_err(|err| format!("MLS Welcome device signing kid: {err}"))?;
     let signing_bytes = envelope
         .canonical_signing_bytes()
         .map_err(|err| format!("MLS Welcome claim canonical bytes: {err}"))?;
     let signature = signer
         .sign_raw(&signing_bytes)
         .map_err(|err| format!("MLS Welcome device signature: {err}"))?;
-    envelope.signature.sig = URL_SAFE_NO_PAD.encode(signature);
+    envelope.signature.sig = arkret_sdk::Base64UrlString::new(URL_SAFE_NO_PAD.encode(signature))
+        .map_err(|err| format!("MLS Welcome device signature encoding: {err}"))?;
     Ok(())
 }
 
@@ -918,3 +947,4 @@ mod tests {
         );
     }
 }
+use std::collections::BTreeMap;

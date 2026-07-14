@@ -10,8 +10,9 @@ use arkret_sdk::models::{
 use arkret_sdk::{
     AgentKeyApprovalEvidence, AgentKeyApprovalEvidenceKind, AgentKeyAuthorizePayload,
     AgentKeyAuthorizePayloadRuntimeAttestation, AgentKeyPairRequestBody, AgentKeySupersession,
-    AgentPairingBootstrap, Did, Event, EventId, GrantConstraint, GrantConstraintEffect,
-    GrantConstraintSubtype, GrantConstraintType, Hash, PublicKey, RealmId,
+    AgentPairingBootstrap, Did, DidUrl, Event, EventId, GrantConstraint, GrantConstraintEffect,
+    GrantConstraintSubtype, GrantConstraintType, Hash, NonEmptyJsonObject, NonEmptyString,
+    PublicKey, RealmId,
 };
 use chrono::Utc;
 use serde::Deserialize;
@@ -359,11 +360,11 @@ fn json_invalid_input(error: impl std::fmt::Display) -> serde_json::Error {
 
 #[derive(Clone, Debug, Deserialize)]
 pub struct RuntimeKeyApprovalRequest {
-    pub pairing_request_id: String,
+    pub pairing_request_id: NonEmptyString,
     pub agent_id: Did,
-    pub verification_method: String,
-    pub public_key: Value,
-    pub proof_of_possession: Value,
+    pub verification_method: DidUrl,
+    pub public_key: PublicKey,
+    pub proof_of_possession: NonEmptyJsonObject,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub runtime_attestation: Option<AgentKeyAuthorizePayloadRuntimeAttestation>,
 }
@@ -479,8 +480,8 @@ pub fn build_agent_key_authorize_event_for_pairing(
     )?;
     let runtime_public_key_digest =
         arkret_sdk::agent_runtime_public_key_digest(&request.public_key)?;
-    let runtime_public_key: PublicKey = serde_json::from_value(request.public_key.clone())?;
-    if runtime_public_key.kid != request.verification_method {
+    let runtime_public_key = request.public_key.clone();
+    if runtime_public_key.kid.as_str() != request.verification_method.as_str() {
         anyhow::bail!("runtime request public_key.kid does not match verification_method");
     }
     let pairing_digest = arkret_sdk::agent_key_pairing_request_binding_digest(
@@ -523,8 +524,8 @@ pub fn build_agent_key_authorize_event_for_pairing(
     };
     let payload = AgentKeyAuthorizePayload {
         agent_id: request.agent_id.clone(),
-        key_id: request.verification_method.clone(),
-        verification_method: request.verification_method.clone(),
+        key_id: request.verification_method.as_str().to_owned(),
+        verification_method: request.verification_method.as_str().to_owned(),
         public_key_digest: Some(Hash::new(runtime_public_key_digest.as_str().to_owned())?),
         accountable_principal_id: controller.clone(),
         agent_key_scope: requested_scope,

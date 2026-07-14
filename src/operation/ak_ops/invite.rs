@@ -31,7 +31,9 @@ pub fn invite_create_structured(
         chrono::Utc::now() + chrono::Duration::days(7),
     );
     if let Some(role) = role {
-        payload = payload.with_extension("role", json!(role));
+        payload = payload
+            .with_extension("role", json!(role))
+            .map_err(|err| anyhow::anyhow!("invalid invite extension: {err}"))?;
     }
     let body = payload
         .to_value()
