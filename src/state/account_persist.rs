@@ -180,6 +180,22 @@ impl AccountPersistBarrier {
     }
 }
 
+async fn preserve_corrupt_account_blob_durable(
+    secure_store: &dyn crate::secure_key_store::SecureKeyStore,
+    corrupt_key: &str,
+    legacy: &str,
+) -> Result<(), crate::secure_key_store::SecureKeyStoreError> {
+    secure_store
+        .store_secret_durable(corrupt_key, legacy)
+        .await?;
+    match secure_store.get_secret(corrupt_key)? {
+        Some(readback) if readback == legacy => Ok(()),
+        _ => Err(crate::secure_key_store::SecureKeyStoreError::Backend(
+            "corrupt account blob backup read-back mismatch".to_owned(),
+        )),
+    }
+}
+
 /// Per-account single-writer commit-queue state machine.
 ///
 /// Invariants:
@@ -405,7 +421,11 @@ mod wasm_driver {
     ) -> anyhow::Result<()> {
         let mut changes = changes().subscribe();
         loop {
-            match lock().barrier_status(account_key, seq) {
+            // Do not retain the synchronous queue lock while awaiting the
+            // notifier. The drain must acquire the same lock to publish the
+            // terminal status that wakes this waiter.
+            let status = { lock().barrier_status(account_key, seq) };
+            match status {
                 AccountPersistBarrierStatus::Committed => return Ok(()),
                 AccountPersistBarrierStatus::Failed(error) => {
                     anyhow::bail!("account state durable persist failed: {error}");
@@ -435,7 +455,9 @@ mod wasm_bootstrap {
     use super::super::{
         ANONYMOUS_ACCOUNT_NAMESPACE, LocalStateStore, account_state_key, browser_storage,
     };
-    use super::{ClientLocalState, merge_persisted_into_live};
+    use super::{
+        ClientLocalState, merge_persisted_into_live, preserve_corrupt_account_blob_durable,
+    };
     use crate::secure_key_store::SecureKeyStore;
 
     /// One-time migration of legacy near-plaintext `localStorage` account blobs
@@ -468,13 +490,23 @@ mod wasm_bootstrap {
                 continue;
             }
             if serde_json::from_str::<ClientLocalState>(&legacy).is_err() {
-                // Preserve for inspection under a still-IndexedDB-only sibling
-                // entry, then clear the unreadable localStorage residue.
-                let _ = secure_store.store_secret(&format!("{key}.corrupt"), &legacy);
-                let _ = storage.remove_item(&key);
+                // The malformed value may be the only recoverable evidence.
+                // Commit and read back the encrypted sibling before removing
+                // the legacy source; any failure keeps localStorage intact.
+                let corrupt_key = format!("{key}.corrupt");
+                if let Err(error) =
+                    preserve_corrupt_account_blob_durable(secure_store, &corrupt_key, &legacy).await
+                {
+                    tracing::warn!(?error, account_key = %key, "corrupt account blob backup durable write failed; keeping legacy copy");
+                    continue;
+                }
+                if let Err(error) = storage.remove_item(&key) {
+                    tracing::warn!(?error, account_key = %key, "corrupt account blob backup committed but legacy cleanup failed");
+                    continue;
+                }
                 tracing::warn!(
                     account_key = %key,
-                    "legacy account blob was unreadable; preserved a copy and cleared localStorage",
+                    "legacy account blob was unreadable; durably preserved an encrypted copy and cleared localStorage",
                 );
                 continue;
             }
@@ -764,5 +796,68 @@ mod tests {
             queue.barrier_status(&key, retry.seq),
             AccountPersistBarrierStatus::Committed
         );
+    }
+
+    #[tokio::test]
+    async fn corrupt_blob_backup_requires_durable_readback_match() {
+        use garth::{SecretBytes, SecureKeyStoreBackendInfo};
+
+        use crate::secure_key_store::{MemorySecureKeyStore, SecureKeyStore, SecureKeyStoreError};
+
+        struct MissingReadbackStore;
+
+        impl SecureKeyStore for MissingReadbackStore {
+            fn store_secret_bytes(
+                &self,
+                _key: &str,
+                _value: &[u8],
+            ) -> Result<(), SecureKeyStoreError> {
+                Ok(())
+            }
+
+            fn get_secret_bytes(
+                &self,
+                _key: &str,
+            ) -> Result<Option<SecretBytes>, SecureKeyStoreError> {
+                Ok(None)
+            }
+
+            fn delete_secret(&self, _key: &str) -> Result<(), SecureKeyStoreError> {
+                Ok(())
+            }
+
+            fn list_secret_keys(
+                &self,
+                _prefix: Option<&str>,
+            ) -> Result<Vec<String>, SecureKeyStoreError> {
+                Ok(Vec::new())
+            }
+
+            fn backend_info(&self) -> SecureKeyStoreBackendInfo {
+                SecureKeyStoreBackendInfo {
+                    name: "missing_readback_test",
+                    hardware_backed: false,
+                    exportable: false,
+                }
+            }
+        }
+
+        let committed = MemorySecureKeyStore::new();
+        preserve_corrupt_account_blob_durable(&committed, "account.corrupt", "{broken")
+            .await
+            .expect("committed backup must pass read-back verification");
+        assert_eq!(
+            committed.get_secret("account.corrupt").unwrap().as_deref(),
+            Some("{broken")
+        );
+
+        let error = preserve_corrupt_account_blob_durable(
+            &MissingReadbackStore,
+            "account.corrupt",
+            "{broken",
+        )
+        .await
+        .expect_err("source deletion gate must reject a missing durable read-back");
+        assert!(error.to_string().contains("read-back mismatch"));
     }
 }

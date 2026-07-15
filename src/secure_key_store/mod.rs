@@ -283,31 +283,24 @@ pub(crate) fn load_realm_history_secrets(
     }
 }
 
-/// E2EE-at-rest T1 — persist a realm's aggregated `history_secret`s to the
-/// hardened (IndexedDB-only, no localStorage mirror) SecureKeyStore tier.
-/// Returns `false` before IndexedDB initialization (fail closed) so the caller
-/// keeps the transitional inline copy for a later flush. An empty map deletes
-/// the entry.
-pub(crate) fn persist_realm_history_secrets(
+/// E2EE-at-rest T1 — durably persist a realm's aggregated `history_secret`s to
+/// the hardened SecureKeyStore tier. Callers must not publish dependent state
+/// before this future succeeds.
+pub(crate) async fn persist_realm_history_secrets(
+    store: &dyn SecureKeyStore,
     realm_id: &str,
     by_epoch: &std::collections::BTreeMap<u64, Vec<u8>>,
-) -> bool {
+) -> Result<(), SecureKeyStoreError> {
     #[cfg(target_arch = "wasm32")]
     if !wasm_secure_store_ready() {
-        return false;
+        return Err(SecureKeyStoreError::Unsupported(
+            "history secrets require the initialized IndexedDB secure store",
+        ));
     }
-    let store = default_secure_key_store("inkson");
     let key = mls_history_secret_store_key(realm_id);
-    if by_epoch.is_empty() {
-        return store.delete_secret(&key).is_ok();
-    }
-    match store.store_secret(&key, &encode_history_secrets_json(by_epoch)) {
-        Ok(()) => true,
-        Err(error) => {
-            tracing::warn!(?error, "history secret write to secure store failed");
-            false
-        }
-    }
+    store
+        .store_secret_durable(&key, &encode_history_secrets_json(by_epoch))
+        .await
 }
 
 #[cfg(target_arch = "wasm32")]

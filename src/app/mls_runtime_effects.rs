@@ -478,33 +478,63 @@ pub(super) fn MlsRuntimeEffects(state: MlsRuntimeEffectState) -> Element {
                         .await;
                     }
                     let secure_store = crate::secure_key_store::default_secure_key_store("inkson");
-                    let mut store = share_state_store.write();
                     let mut installed_by_realm = BTreeMap::<String, usize>::new();
                     let mut installed_share_ids = Vec::<String>::new();
                     for (share_realm_id, shares) in &shares_by_realm {
                         for share in shares {
-                            let count = crate::mls::runtime::ingest_realm_key_share(
-                                &mut store,
-                                secure_store.as_ref(),
-                                share_realm_id,
-                                &actor,
-                                &device,
-                                share,
-                            );
-                            if count > 0 {
-                                *installed_by_realm
-                                    .entry(share_realm_id.to_string())
-                                    .or_default() += count;
-                                if let Some(operation_id) =
-                                    crate::mls::runtime::realm_key_share_message_operation_id(share)
-                                {
-                                    installed_share_ids.push(operation_id);
+                            let prepared = {
+                                let store = share_state_store.read();
+                                crate::mls::runtime::ingest_realm_key_share(
+                                    &store,
+                                    secure_store.as_ref(),
+                                    share_realm_id,
+                                    &actor,
+                                    &device,
+                                    share,
+                                )
+                            };
+                            let pending_writes = match prepared {
+                                Ok(pending) => pending,
+                                Err(error) => {
+                                    tracing::warn!(
+                                        error = %error.user_message(),
+                                        realm = %short_protocol_id(share_realm_id),
+                                        "prepare history_secret install failed; keeping to-device message"
+                                    );
+                                    continue;
                                 }
+                            };
+                            let mut committed = 0;
+                            for pending in pending_writes {
+                                if let Err(error) = pending.persist(secure_store.as_ref()).await {
+                                    tracing::warn!(
+                                        %error,
+                                        realm = %short_protocol_id(share_realm_id),
+                                        "durable history_secret install failed; keeping to-device message"
+                                    );
+                                    committed = 0;
+                                    break;
+                                }
+                                committed += pending.new_secret_count();
+                                share_state_store.write().publish_history_secrets(pending);
+                            }
+                            if committed == 0 {
+                                continue;
+                            }
+                            *installed_by_realm
+                                .entry(share_realm_id.to_string())
+                                .or_default() += committed;
+                            if let Some(operation_id) =
+                                crate::mls::runtime::realm_key_share_message_operation_id(share)
+                            {
+                                installed_share_ids.push(operation_id);
                             }
                         }
                     }
                     for operation_id in installed_share_ids {
-                        let _ = store.dismiss_realm_key_share_to_device_message(&operation_id);
+                        let _ = share_state_store
+                            .write()
+                            .dismiss_realm_key_share_to_device_message(&operation_id);
                     }
                     for (share_realm_id, count) in installed_by_realm {
                         tracing::info!(

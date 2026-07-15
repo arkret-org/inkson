@@ -252,26 +252,46 @@ fn try_history_decrypt_standalone(
 /// Persisting into the provider's own `history_secrets` lets a past epoch's key
 /// survive an app restart (OpenMLS could not re-derive it once the group has
 /// advanced past that epoch).
-pub fn derive_and_retain_realm_history_secret(
-    state_store: &mut crate::state::LocalStateStore,
+pub(crate) fn derive_and_retain_realm_history_secret(
+    state_store: &crate::state::LocalStateStore,
     secure_store: &dyn SecureKeyStore,
     realm_id: &str,
     actor_id: &str,
     device_id: &str,
-) -> Option<(u64, zeroize::Zeroizing<Vec<u8>>)> {
-    let snapshot = state_store.mls_snapshot_for(realm_id)?;
-    let secret = load_device_snapshot_secret(secure_store, actor_id, device_id).ok()?;
+) -> Result<
+    Option<(
+        u64,
+        zeroize::Zeroizing<Vec<u8>>,
+        crate::state::PendingHistorySecrets,
+    )>,
+    MlsRuntimeError,
+> {
+    let Some(snapshot) = state_store.mls_snapshot_for(realm_id) else {
+        return Ok(None);
+    };
+    let secret = load_device_snapshot_secret(secure_store, actor_id, device_id)
+        .map_err(MlsRuntimeError::DeviceSecret)?;
     // COR-04: read-only export of the CURRENT epoch's history secret — floor 0 is
     // intentional (no ratchet advance / persist; OpenMLS only exports the epoch the
     // snapshot already holds, so a Seal-view floor would add no safety here).
-    let mut group = crate::mls::persistence::restore_envelope(&snapshot, &secret, 0).ok()?;
+    let mut group = crate::mls::persistence::restore_envelope(&snapshot, &secret, 0)
+        .map_err(|error| MlsRuntimeError::SnapshotRestore(error.to_string()))?;
     let epoch = snapshot.epoch;
-    let history_secret = group.derive_and_retain_history_secret(realm_id).ok()?;
+    let history_secret = group
+        .derive_and_retain_history_secret(realm_id)
+        .map_err(|error| MlsRuntimeError::Encrypt(error.to_string()))?;
     if history_secret.is_empty() {
-        return None;
+        return Ok(None);
     }
-    state_store.save_history_secret(realm_id.to_owned(), epoch, history_secret.to_vec());
-    Some((epoch, history_secret))
+    let pending = state_store
+        .prepare_history_secrets(
+            secure_store,
+            realm_id.to_owned(),
+            [(epoch, history_secret.to_vec())],
+        )
+        .map_err(MlsRuntimeError::DeviceSecret)?
+        .expect("non-empty history secret creates a pending durable write");
+    Ok(Some((epoch, history_secret, pending)))
 }
 
 fn realm_key_share_payload_candidate(value: &serde_json::Value) -> Option<&serde_json::Value> {
@@ -412,14 +432,14 @@ pub fn collect_realm_key_share_messages_for_realm(
 /// no ciphertext). The share `ciphertext` is the
 /// `base64url(eph_pub || ct)` blob produced by
 /// [`crate::mls::secret_share::seal_history_secret_to_device_pubkey`].
-pub fn ingest_realm_key_share(
-    state_store: &mut crate::state::LocalStateStore,
+pub(crate) fn ingest_realm_key_share(
+    state_store: &crate::state::LocalStateStore,
     secure_store: &dyn SecureKeyStore,
     realm_id: &str,
     actor_id: &str,
     device_id: &str,
     share_envelope: &serde_json::Value,
-) -> usize {
+) -> Result<Vec<crate::state::PendingHistorySecrets>, MlsRuntimeError> {
     let content = realm_key_share_payload_value(share_envelope)
         .or_else(|| share_envelope.get("payload"))
         .unwrap_or(share_envelope);
@@ -427,7 +447,7 @@ pub fn ingest_realm_key_share(
         Ok(payload) => payload,
         Err(err) => {
             tracing::debug!(%realm_id, error = %err, "skip malformed ak.realm_key.share");
-            return 0;
+            return Ok(Vec::new());
         }
     };
     // Only consume member_device shares addressed to THIS device (the seal opens
@@ -440,7 +460,7 @@ pub fn ingest_realm_key_share(
         .map(|device| device.as_str().trim())
         != Some(device_id.trim())
     {
-        return 0;
+        return Ok(Vec::new());
     }
     // SEC-02 / device-lifecycle.md §13: sender-device authentication. When the
     // share carries a sender principal, the sender device must sign the share;
@@ -449,24 +469,24 @@ pub fn ingest_realm_key_share(
     let sender_principal_id = realm_key_share_sender_principal_id(share_envelope);
     if !verify_realm_key_share_sender_signature(&payload, sender_principal_id.as_deref()) {
         tracing::debug!(%realm_id, "reject ak.realm_key.share: sender_device_signature failed");
-        return 0;
+        return Ok(Vec::new());
     }
     let Some(sealed) = payload
         .ciphertext
         .as_deref()
         .filter(|c| !c.trim().is_empty())
     else {
-        return 0;
+        return Ok(Vec::new());
     };
     let privkey = match super::load_device_hpke_private_key(secure_store, actor_id, device_id) {
         Ok(Some(privkey)) => privkey,
         Ok(None) => {
             tracing::debug!(%realm_id, "no device HPKE key to open ak.realm_key.share");
-            return 0;
+            return Ok(Vec::new());
         }
         Err(err) => {
             tracing::debug!(%realm_id, error = %err, "load device HPKE key failed");
-            return 0;
+            return Ok(Vec::new());
         }
     };
     let secrets =
@@ -474,18 +494,13 @@ pub fn ingest_realm_key_share(
             Ok(secrets) => secrets,
             Err(err) => {
                 tracing::debug!(%realm_id, error = %err, "open ak.realm_key.share failed");
-                return 0;
+                return Ok(Vec::new());
             }
         };
-    let mut installed = 0_usize;
-    for (epoch, secret) in secrets {
-        if secret.is_empty() {
-            continue;
-        }
-        state_store.save_history_secret(realm_id.to_owned(), epoch, secret);
-        installed += 1;
-    }
-    installed
+    let pending = state_store
+        .prepare_history_secrets(secure_store, realm_id.to_owned(), secrets)
+        .map_err(MlsRuntimeError::DeviceSecret)?;
+    Ok(pending.into_iter().collect())
 }
 
 /// Extract the sender's principal DID from a `ak.realm_key.share` to-device
@@ -1248,7 +1263,7 @@ pub fn apply_welcome_messages_with_device_snapshot(
 }
 
 #[allow(clippy::type_complexity)]
-pub fn encrypt_values_with_device_snapshot(
+pub(crate) fn encrypt_values_with_device_snapshot(
     state_store: &mut crate::state::LocalStateStore,
     secure_store: &dyn SecureKeyStore,
     realm_id: &str,
@@ -1263,6 +1278,7 @@ pub fn encrypt_values_with_device_snapshot(
         Vec<serde_json::Value>,
         Option<arkret_sdk::MlsCommitEnvelope>,
         Option<crate::mls::persistence::MlsSnapshotEnvelope>,
+        Option<crate::state::PendingHistorySecrets>,
     ),
     MlsRuntimeError,
 > {
@@ -1330,16 +1346,25 @@ pub fn encrypt_values_with_device_snapshot(
     // `share_history_to_requester` returns `Ok(false)` — leaving every late
     // joiner's pre-join cards permanently locked. `group.epoch()` is read after
     // any forced commit above, so it matches the epoch the content rides.
-    if use_exporter_aead
-        && let Ok(history_secret) = group.derive_and_retain_history_secret(realm_id)
-        && !history_secret.is_empty()
-    {
-        state_store.save_history_secret(
-            realm_id.to_owned(),
-            group.epoch(),
-            history_secret.to_vec(),
-        );
-    }
+    let pending_history_secrets = if use_exporter_aead {
+        let history_secret = group
+            .derive_and_retain_history_secret(realm_id)
+            .map_err(|error| MlsRuntimeError::Encrypt(error.to_string()))?;
+        if history_secret.is_empty() {
+            return Err(MlsRuntimeError::Encrypt(
+                "MLS history-secret derivation returned an empty secret".to_owned(),
+            ));
+        }
+        state_store
+            .prepare_history_secrets(
+                secure_store,
+                realm_id.to_owned(),
+                [(group.epoch(), history_secret.to_vec())],
+            )
+            .map_err(MlsRuntimeError::DeviceSecret)?
+    } else {
+        None
+    };
     let schedule_hash = group.schedule_hash();
     let member_dids = group.member_principal_ids();
     let post_state = group
@@ -1369,13 +1394,21 @@ pub fn encrypt_values_with_device_snapshot(
             encrypted_values,
             commit_envelope,
             Some(new_envelope.with_app_messages_observed(sent)),
+            pending_history_secrets,
         ));
     }
     new_envelope = new_envelope
         .carry_epoch_started_at(&snapshot)
         .with_app_messages_observed(snapshot.app_messages_observed.saturating_add(sent));
     state_store.save_mls_snapshot(realm_id.to_owned(), new_envelope);
-    Ok((schedule_hash, member_dids, encrypted_values, None, None))
+    Ok((
+        schedule_hash,
+        member_dids,
+        encrypted_values,
+        None,
+        None,
+        pending_history_secrets,
+    ))
 }
 
 /// Encrypt a single message plaintext under the Realm MLS group, binding
@@ -1394,9 +1427,10 @@ type DeviceSnapshotEncryption = (
     arkret_sdk::EncryptedPayload,
     Option<arkret_sdk::MlsCommitEnvelope>,
     Option<crate::mls::persistence::MlsSnapshotEnvelope>,
+    Option<crate::state::PendingHistorySecrets>,
 );
 
-pub fn encrypt_message_with_device_snapshot(
+pub(crate) fn encrypt_message_with_device_snapshot(
     state_store: &mut crate::state::LocalStateStore,
     secure_store: &dyn SecureKeyStore,
     realm_id: &str,
@@ -1461,16 +1495,25 @@ pub fn encrypt_message_with_device_snapshot(
     // so a late joiner can decrypt it — see the fuller rationale in
     // `encrypt_values_with_device_snapshot`. Without this the author's own
     // messages become permanently unreadable to every late joiner.
-    if use_exporter_aead
-        && let Ok(history_secret) = group.derive_and_retain_history_secret(realm_id)
-        && !history_secret.is_empty()
-    {
-        state_store.save_history_secret(
-            realm_id.to_owned(),
-            group.epoch(),
-            history_secret.to_vec(),
-        );
-    }
+    let pending_history_secrets = if use_exporter_aead {
+        let history_secret = group
+            .derive_and_retain_history_secret(realm_id)
+            .map_err(|error| MlsRuntimeError::Encrypt(error.to_string()))?;
+        if history_secret.is_empty() {
+            return Err(MlsRuntimeError::Encrypt(
+                "MLS history-secret derivation returned an empty secret".to_owned(),
+            ));
+        }
+        state_store
+            .prepare_history_secrets(
+                secure_store,
+                realm_id.to_owned(),
+                [(group.epoch(), history_secret.to_vec())],
+            )
+            .map_err(MlsRuntimeError::DeviceSecret)?
+    } else {
+        None
+    };
     let schedule_hash = group.schedule_hash();
     let member_dids = group.member_principal_ids();
     let post_state = group
@@ -1498,13 +1541,21 @@ pub fn encrypt_message_with_device_snapshot(
             encrypted,
             commit_envelope,
             Some(new_envelope.with_app_messages_observed(1)),
+            pending_history_secrets,
         ));
     }
     new_envelope = new_envelope
         .carry_epoch_started_at(&snapshot)
         .with_app_messages_observed(snapshot.app_messages_observed.saturating_add(1));
     state_store.save_mls_snapshot(realm_id.to_owned(), new_envelope);
-    Ok((schedule_hash, member_dids, encrypted, None, None))
+    Ok((
+        schedule_hash,
+        member_dids,
+        encrypted,
+        None,
+        None,
+        pending_history_secrets,
+    ))
 }
 
 fn self_update_with_verified_governance_binding(

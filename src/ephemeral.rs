@@ -98,13 +98,16 @@ fn pending_ephemeral_proof(
 ) -> anyhow::Result<arkret_sdk::Proof> {
     Ok(arkret_sdk::Proof {
         kind: arkret_sdk::proof_kind::DETACHED_JWS.to_owned(),
-        alg: "pending".to_owned(),
+        // The typed envelope now validates proof shape at construction time.
+        // This non-empty sentinel is replaced by
+        // `attach_broadcast_ephemeral_proof` before transport submission.
+        alg: "EdDSA".to_owned(),
         verification_method: format!("{actor_id}#{device_id}"),
         event_digest: arkret_sdk::Hash::new(format!("sha256:{}", "0".repeat(64)))?,
         created_at: crate::clock::now_utc(),
         domain: None,
         audience: None,
-        jws: String::new(),
+        jws: "pending-signature".to_owned(),
     })
 }
 
@@ -128,11 +131,9 @@ pub fn build_typing_envelope(
         .map_err(|err| anyhow::anyhow!("invalid strand_id for ak.typing: {err}"))?;
     // ephemeral-envelope.schema.json: device_id is REQUIRED for every
     // broadcast ephemeral kind; the proof binds to `{actor_id}#{device_id}`.
-    let device = Some(
-        arkret_sdk::DeviceId::new(device_id)
-            .map_err(|err| anyhow::anyhow!("invalid device_id for ak.typing: {err}"))?,
-    );
-    let proof = pending_ephemeral_proof(&actor, device.as_ref().expect("typing device"))?;
+    let device = arkret_sdk::DeviceId::new(device_id)
+        .map_err(|err| anyhow::anyhow!("invalid device_id for ak.typing: {err}"))?;
+    let proof = pending_ephemeral_proof(&actor, &device)?;
     arkret_sdk::EphemeralEnvelope::new(
         "ak.typing",
         realm,
@@ -194,7 +195,7 @@ pub fn build_receipt_read_envelope(
         "ak.receipt.read",
         realm,
         actor,
-        Some(device),
+        device,
         now,
         expires_at,
         ephemeral_payload(&receipt)?,
@@ -252,7 +253,7 @@ pub fn build_presence_envelope(
         "ak.presence",
         realm,
         actor,
-        Some(device),
+        device,
         now,
         expires_at,
         payload.into_iter().collect(),
@@ -305,10 +306,8 @@ pub fn build_call_signal_envelope_v1(
     if device_id.trim().is_empty() {
         anyhow::bail!("ak.call.signal requires non-empty device_id (round 4 schema_violation)");
     }
-    let device = Some(
-        arkret_sdk::DeviceId::new(device_id)
-            .map_err(|err| anyhow::anyhow!("invalid device_id for ak.call.signal: {err}"))?,
-    );
+    let device = arkret_sdk::DeviceId::new(device_id)
+        .map_err(|err| anyhow::anyhow!("invalid device_id for ak.call.signal: {err}"))?;
     if !arkret_sdk::CALL_SIGNAL_TYPES.contains(&signal_type) {
         anyhow::bail!("ak.call.signal signal_type {signal_type:?} not in canonical 13-value enum");
     }
@@ -326,7 +325,7 @@ pub fn build_call_signal_envelope_v1(
     payload
         .validate_signal_type()
         .map_err(|err| anyhow::anyhow!("ak.call.signal payload rejected: {err}"))?;
-    let proof = pending_ephemeral_proof(&actor, device.as_ref().expect("call signal device"))?;
+    let proof = pending_ephemeral_proof(&actor, &device)?;
     arkret_sdk::EphemeralEnvelope::new(
         "ak.call.signal",
         realm,
@@ -351,12 +350,7 @@ pub(crate) fn attach_broadcast_ephemeral_proof(
     envelope: &mut arkret_sdk::EphemeralEnvelope,
 ) -> anyhow::Result<()> {
     let kind = envelope.kind.clone();
-    let device_id = envelope
-        .device_id
-        .as_ref()
-        .ok_or_else(|| anyhow::anyhow!("{kind} proof requires envelope.device_id"))?
-        .as_str()
-        .to_owned();
+    let device_id = envelope.device_id.as_str().to_owned();
     let signer = crate::event_signer::active_signer().ok_or_else(|| {
         anyhow::anyhow!("no active signer configured — cannot submit {kind} without device proof")
     })?;

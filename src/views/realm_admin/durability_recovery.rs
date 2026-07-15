@@ -120,15 +120,36 @@ pub fn DurabilityRecoveryPanel(realm_id: String) -> Element {
                         return;
                     }
                     let count = recovered.len();
-                    {
-                        let mut store = state_store.write();
-                        for (epoch, secret) in recovered {
-                            store.save_history_secret(realm_id.clone(), epoch, secret);
+                    spawn(async move {
+                        let secure_store =
+                            crate::secure_key_store::default_secure_key_store("inkson");
+                        let pending = {
+                            state_store.read().prepare_history_secrets(
+                                secure_store.as_ref(),
+                                realm_id,
+                                recovered,
+                            )
+                        };
+                        let pending = match pending {
+                            Ok(Some(pending)) => pending,
+                            Ok(None) => {
+                                status.set("恢复结果不包含有效的 history_secret。".to_owned());
+                                return;
+                            }
+                            Err(error) => {
+                                status.set(format!("读取 history_secret 安全存储失败: {error}"));
+                                return;
+                            }
+                        };
+                        if let Err(error) = pending.persist(secure_store.as_ref()).await {
+                            status.set(format!("持久化 history_secret 失败: {error}"));
+                            return;
                         }
-                    }
-                    status.set(format!(
-                        "已恢复并安装 {count} 个 epoch 的 history_secret；历史内容现可在本设备解密。"
-                    ));
+                        state_store.write().publish_history_secrets(pending);
+                        status.set(format!(
+                            "已恢复并安装 {count} 个 epoch 的 history_secret；历史内容现可在本设备解密。"
+                        ));
+                    });
                 },
                 "Recover history"
             }

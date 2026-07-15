@@ -1,5 +1,49 @@
 use super::*;
 
+/// A history-secret update assembled but not yet published. The owned value
+/// survives while the durable secure-store write is in flight without making
+/// the secret observable through `LocalStateStore` prematurely.
+#[derive(Clone, Debug)]
+pub(crate) struct PendingHistorySecrets {
+    realm_id: String,
+    by_epoch: BTreeMap<u64, Vec<u8>>,
+    new_secret_count: usize,
+}
+
+impl PendingHistorySecrets {
+    pub(crate) fn new_secret_count(&self) -> usize {
+        self.new_secret_count
+    }
+
+    pub(crate) async fn persist(
+        &self,
+        secure_store: &dyn crate::secure_key_store::SecureKeyStore,
+    ) -> Result<(), crate::secure_key_store::SecureKeyStoreError> {
+        // Serialize the read/merge/write sequence so two concurrent installs
+        // from the same process cannot overwrite different epochs that were
+        // both prepared from an older durable snapshot.
+        static HISTORY_SECRET_WRITE_LOCK: std::sync::OnceLock<tokio::sync::Mutex<()>> =
+            std::sync::OnceLock::new();
+        let _guard = HISTORY_SECRET_WRITE_LOCK
+            .get_or_init(|| tokio::sync::Mutex::new(()))
+            .lock()
+            .await;
+        let key = crate::secure_key_store::mls_history_secret_store_key(&self.realm_id);
+        let mut merged = secure_store
+            .get_secret(&key)?
+            .as_deref()
+            .map(crate::secure_key_store::decode_history_secrets_json)
+            .unwrap_or_default();
+        merged.extend(self.by_epoch.clone());
+        crate::secure_key_store::persist_realm_history_secrets(
+            secure_store,
+            &self.realm_id,
+            &merged,
+        )
+        .await
+    }
+}
+
 impl LocalStateStore {
     // ── MLS group state persistence ─────────────────────────────────
 
@@ -55,34 +99,50 @@ impl LocalStateStore {
 
     // ── MLS history-secret persistence (history sharing) ────────────
 
-    /// Install a per-(realm, epoch) MLS `history_secret` recovered from an
-    /// inbound `ak.realm_key.share`. Idempotent: a re-install at the same
-    /// `(realm, epoch)` overwrites with the (identical) secret. Empty secrets
-    /// are ignored so a malformed share can never shadow a real key.
-    pub fn save_history_secret(
-        &mut self,
+    /// Assemble an aggregated update without publishing it. The caller must
+    /// await [`PendingHistorySecrets::persist`] and only then call
+    /// [`Self::publish_history_secrets`].
+    pub(crate) fn prepare_history_secrets(
+        &self,
+        secure_store: &dyn crate::secure_key_store::SecureKeyStore,
         realm_id: impl Into<String>,
-        epoch: u64,
-        secret: Vec<u8>,
-    ) {
-        if secret.is_empty() {
-            return;
-        }
+        secrets: impl IntoIterator<Item = (u64, Vec<u8>)>,
+    ) -> Result<Option<PendingHistorySecrets>, crate::secure_key_store::SecureKeyStoreError> {
         let realm_id = realm_id.into();
-        // E2EE-at-rest: route raw history key material to the hardened secure
-        // store instead of plaintext account-state JSON. If the secure store is
-        // unavailable, keep only the in-memory fallback for this process.
-        let mut by_epoch =
-            crate::secure_key_store::load_realm_history_secrets(&realm_id).unwrap_or_default();
-        by_epoch.insert(epoch, secret.clone());
-        let _persisted =
-            crate::secure_key_store::persist_realm_history_secrets(&realm_id, &by_epoch);
+        let key = crate::secure_key_store::mls_history_secret_store_key(&realm_id);
+        let mut by_epoch = secure_store
+            .get_secret(&key)?
+            .as_deref()
+            .map(crate::secure_key_store::decode_history_secrets_json)
+            .unwrap_or_default();
+        if let Some(inline) = self.cached.history_secrets.get(&realm_id) {
+            by_epoch.extend(
+                inline
+                    .iter()
+                    .map(|(epoch, secret)| (*epoch, secret.clone())),
+            );
+        }
+        let mut new_secret_count = 0;
+        for (epoch, secret) in secrets {
+            if !secret.is_empty() {
+                by_epoch.insert(epoch, secret);
+                new_secret_count += 1;
+            }
+        }
+        Ok((new_secret_count > 0).then_some(PendingHistorySecrets {
+            realm_id,
+            by_epoch,
+            new_secret_count,
+        }))
+    }
+
+    /// Publish an update after its secure-store write succeeds.
+    pub(crate) fn publish_history_secrets(&mut self, pending: PendingHistorySecrets) {
         self.cached
             .history_secrets
-            .entry(realm_id)
+            .entry(pending.realm_id)
             .or_default()
-            .insert(epoch, secret);
-        let _ = self.flush();
+            .extend(pending.by_epoch);
     }
 
     /// All installed `history_secret`s for `realm_id`, as `(epoch, secret)`

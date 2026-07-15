@@ -33,6 +33,8 @@ pub(super) struct EncryptedWriteMlsEvents {
     /// permanent `mls_epoch_skew`). `None` when the encrypted write rides the
     /// current epoch without forcing a commit.
     pub snapshot: Option<crate::mls::persistence::MlsSnapshotEnvelope>,
+    /// Must commit before genesis/commit/content submission begins.
+    pub pending_history_secrets: Option<crate::state::PendingHistorySecrets>,
 }
 
 pub(super) fn encrypt_private_card_detail_patch_values(
@@ -89,17 +91,23 @@ pub(super) fn encrypt_private_card_detail_patch_values_with_store(
         device_id,
         fresh_summary.as_ref(),
     )?;
-    let (schedule_hash, _member_dids, encrypted_values, commit_envelope, new_snapshot) =
-        crate::mls::runtime::encrypt_values_with_device_snapshot(
-            state_store,
-            secure_store,
-            realm_id,
-            actor_id,
-            device_id,
-            KANBAN_STRAND_PATCH_VALUE_CONTENT_TYPE,
-            &plaintext_values,
-        )
-        .map_err(|err| err.user_message())?;
+    let (
+        schedule_hash,
+        _member_dids,
+        encrypted_values,
+        commit_envelope,
+        new_snapshot,
+        pending_history_secrets,
+    ) = crate::mls::runtime::encrypt_values_with_device_snapshot(
+        state_store,
+        secure_store,
+        realm_id,
+        actor_id,
+        device_id,
+        KANBAN_STRAND_PATCH_VALUE_CONTENT_TYPE,
+        &plaintext_values,
+    )
+    .map_err(|err| err.user_message())?;
     let commit_event = match commit_envelope.as_ref() {
         Some(commit_envelope) => Some(mls_commit_event_from_store(
             state_store,
@@ -137,6 +145,7 @@ pub(super) fn encrypt_private_card_detail_patch_values_with_store(
             // commit (see the commit Ok arm). Ordinary application writes
             // already persisted the same-epoch ratchet snapshot in-place.
             snapshot: new_snapshot,
+            pending_history_secrets,
         },
     ))
 }
@@ -231,6 +240,7 @@ pub(super) fn dispatch_card_detail_update(
         genesis: mls_genesis_op,
         commit: mls_commit_op,
         snapshot: mls_new_snapshot,
+        pending_history_secrets,
     } = mls_events;
 
     let op = match crate::operation::ak_ops::strand_update_patch(
@@ -317,6 +327,20 @@ pub(super) fn dispatch_card_detail_update(
     let device_for_sidecar_backup = device_id.clone();
     let submit_event = op;
     spawn(async move {
+        if let Some(pending) = pending_history_secrets {
+            let secure_store = crate::secure_key_store::default_secure_key_store("inkson");
+            if let Err(error) = pending.persist(secure_store.as_ref()).await {
+                state_store.write().update_raw_operation_write_state(
+                    &operation_id,
+                    "failed",
+                    None,
+                    Some(error.to_string()),
+                );
+                board_status.set(format!("MLS history-secret persist failed: {error}"));
+                return;
+            }
+            state_store.write().publish_history_secrets(pending);
+        }
         // Genesis MUST land before the first commit so the server has the
         // group at epoch 0 before the commit bumps it to 1. A duplicate
         // genesis (`mls_genesis_already_exists`) is treated as success.

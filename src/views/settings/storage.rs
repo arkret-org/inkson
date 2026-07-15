@@ -221,30 +221,47 @@ pub(super) fn E2eeStorageManagement() -> Element {
                                     variant: ButtonVariant::Destructive,
                                     "data-testid": "e2ee-cache-clear-confirm",
                                     onclick: move |_| {
-                                        let secure_store =
-                                            crate::secure_key_store::default_secure_key_store("inkson");
-                                        let result = {
-                                            let mut store = state_store.write();
-                                            store.clear_e2ee_plaintext_cache_with_secure_store(
-                                                &clear_scope_for_action,
-                                                secure_store.as_ref(),
-                                            )
-                                        };
-                                        match result {
-                                            Ok(true) => cache_status.set(
-                                                "Protected plaintext cleared. MLS receive state was retained."
-                                                    .to_owned(),
-                                            ),
-                                            Ok(false) => cache_status
-                                                .set("Nothing matched that cleanup scope.".to_owned()),
-                                            Err(error) => cache_status.set(format!(
-                                                "Protected plaintext cleanup failed: {error}"
-                                            )),
-                                        }
-                                        cache_usage.set(
-                                            state_store.read().e2ee_plaintext_cache_usage(),
-                                        );
-                                        pending_clear.set(None);
+                                        let clear_scope = clear_scope_for_action.clone();
+                                        spawn(async move {
+                                            let secure_store =
+                                                crate::secure_key_store::default_secure_key_store("inkson");
+                                            let pending = state_store
+                                                .write()
+                                                .prepare_e2ee_plaintext_cache_clear(&clear_scope);
+                                            let result = match pending {
+                                                Ok(Some(pending)) => {
+                                                    if let Err(error) =
+                                                        pending.persist(secure_store.as_ref()).await
+                                                    {
+                                                        state_store
+                                                            .write()
+                                                            .rollback_e2ee_plaintext_cache_clear(
+                                                                pending,
+                                                            );
+                                                        Err(error)
+                                                    } else {
+                                                        Ok(true)
+                                                    }
+                                                }
+                                                Ok(None) => Ok(false),
+                                                Err(error) => Err(error),
+                                            };
+                                            match result {
+                                                Ok(true) => cache_status.set(
+                                                    "Protected plaintext cleared. MLS receive state was retained."
+                                                        .to_owned(),
+                                                ),
+                                                Ok(false) => cache_status
+                                                    .set("Nothing matched that cleanup scope.".to_owned()),
+                                                Err(error) => cache_status.set(format!(
+                                                    "Protected plaintext cleanup failed: {error}"
+                                                )),
+                                            }
+                                            cache_usage.set(
+                                                state_store.read().e2ee_plaintext_cache_usage(),
+                                            );
+                                            pending_clear.set(None);
+                                        });
                                     },
                                     "Clear protected plaintext"
                                 }

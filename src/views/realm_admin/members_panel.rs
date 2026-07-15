@@ -1723,6 +1723,32 @@ fn PendingInviteRow(
     }
 }
 
+async fn retain_current_history_secret_durable(
+    mut state_store: SyncSignal<LocalStateStore>,
+    secure_store: &dyn crate::secure_key_store::SecureKeyStore,
+    realm_id: &str,
+    actor_id: &str,
+    device_id: &str,
+) -> anyhow::Result<Option<(u64, zeroize::Zeroizing<Vec<u8>>)>> {
+    let derived = {
+        let store = state_store.read();
+        crate::mls::runtime::derive_and_retain_realm_history_secret(
+            &store,
+            secure_store,
+            realm_id,
+            actor_id,
+            device_id,
+        )
+    }
+    .map_err(|error| anyhow::anyhow!(error.user_message()))?;
+    let Some((epoch, secret, pending)) = derived else {
+        return Ok(None);
+    };
+    pending.persist(secure_store).await?;
+    state_store.write().publish_history_secrets(pending);
+    Ok(Some((epoch, secret)))
+}
+
 pub(crate) async fn submit_mls_admission_for_invitee(
     api: &crate::transport::TransportClient,
     mut state_store: SyncSignal<LocalStateStore>,
@@ -1790,16 +1816,14 @@ pub(crate) async fn submit_mls_admission_for_invitee(
     // joins at epoch N+1 and requests the pre-join window [0, N], but the
     // provider has only ever retained the post-commit epoch (N+1) — its share
     // range is empty and the late joiner can never decrypt pre-join content.
-    {
-        let mut store = state_store.write();
-        let _ = crate::mls::runtime::derive_and_retain_realm_history_secret(
-            &mut store,
-            secure_store.as_ref(),
-            &realm_id,
-            &actor_id,
-            &device_id,
-        );
-    }
+    retain_current_history_secret_durable(
+        state_store,
+        secure_store.as_ref(),
+        &realm_id,
+        &actor_id,
+        &device_id,
+    )
+    .await?;
     let admission = {
         let store = state_store.read();
         crate::mls::admission::build_realm_mls_admission_events_from_claim(
@@ -1843,21 +1867,19 @@ pub(crate) async fn submit_mls_admission_for_invitee(
     api.event_submitter()?
         .submit_sdk_events_batch(&realm_id, vec![admission.welcome], None)
         .await?;
-    {
-        let mut store = state_store.write();
-        store.save_mls_snapshot(realm_id.clone(), admission.snapshot);
-        // History sharing (encryption-and-audit.md): retain THIS epoch's
-        // `history_secret` so a late joiner can later be granted read access to
-        // content authored from here on. Best-effort — a failure to retain only
-        // means the provider must re-derive on demand from the current epoch.
-        let _ = crate::mls::runtime::derive_and_retain_realm_history_secret(
-            &mut store,
-            secure_store.as_ref(),
-            &realm_id,
-            &actor_id,
-            &device_id,
-        );
-    }
+    state_store
+        .write()
+        .save_mls_snapshot(realm_id.clone(), admission.snapshot);
+    // Retain the post-admission epoch only after the snapshot is installed,
+    // and do not report admission completion until its durable write commits.
+    retain_current_history_secret_durable(
+        state_store,
+        secure_store.as_ref(),
+        &realm_id,
+        &actor_id,
+        &device_id,
+    )
+    .await?;
     // Eager RRK seal (encryption-and-audit.md §2.10.8): if this Realm declares an
     // effective `durability_policy` (mode != none + mls-exporter-aead-v1), seal
     // the retained history_secret(s) to every recovery recipient right after the
@@ -2134,7 +2156,7 @@ fn history_share_source_authorization_ref_from_events(events: &[Value]) -> Optio
 /// to-device envelope; `realm_id`/`actor_id`/`device_id` are the provider's.
 pub(crate) async fn share_history_to_requester(
     api: &crate::transport::TransportClient,
-    mut state_store: SyncSignal<LocalStateStore>,
+    state_store: SyncSignal<LocalStateStore>,
     realm_id: String,
     actor_id: String,
     device_id: String,
@@ -2154,16 +2176,14 @@ pub(crate) async fn share_history_to_requester(
     let secure_store = crate::secure_key_store::default_secure_key_store("inkson");
     // Ensure the current epoch's key is retained, then gather every retained
     // (epoch, secret) the requester is asking for.
-    {
-        let mut store = state_store.write();
-        let _ = crate::mls::runtime::derive_and_retain_realm_history_secret(
-            &mut store,
-            secure_store.as_ref(),
-            &realm_id,
-            &actor_id,
-            &device_id,
-        );
-    }
+    retain_current_history_secret_durable(
+        state_store,
+        secure_store.as_ref(),
+        &realm_id,
+        &actor_id,
+        &device_id,
+    )
+    .await?;
     let (all, policy_digest, local_source_authorization_ref) = {
         let store = state_store.read();
         let source_authorization_ref =
@@ -2276,23 +2296,21 @@ pub(crate) async fn share_history_to_requester(
 /// itself already landed).
 pub(crate) async fn seal_history_to_recovery_recipients(
     api: &crate::transport::TransportClient,
-    mut state_store: SyncSignal<LocalStateStore>,
+    state_store: SyncSignal<LocalStateStore>,
     realm_id: String,
     actor_id: String,
     device_id: String,
 ) -> anyhow::Result<(usize, usize)> {
     let secure_store = crate::secure_key_store::default_secure_key_store("inkson");
     // Ensure the just-advanced epoch's key is retained before sealing.
-    {
-        let mut store = state_store.write();
-        let _ = crate::mls::runtime::derive_and_retain_realm_history_secret(
-            &mut store,
-            secure_store.as_ref(),
-            &realm_id,
-            &actor_id,
-            &device_id,
-        );
-    }
+    retain_current_history_secret_durable(
+        state_store,
+        secure_store.as_ref(),
+        &realm_id,
+        &actor_id,
+        &device_id,
+    )
+    .await?;
     let (policy, history_secrets, policy_digest, source_authorization_ref) = {
         let store = state_store.read();
         let Some(policy) = store.realm_durability_policy(&realm_id) else {

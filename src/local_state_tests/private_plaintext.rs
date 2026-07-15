@@ -525,8 +525,8 @@ fn e2ee_plaintext_cache_usage_is_grouped_by_realm() {
     assert_eq!(usage.realms[realm_b].plaintext_bytes, 4);
 }
 
-#[test]
-fn explicit_e2ee_plaintext_cleanup_persists_scope_and_keeps_mls_state() {
+#[tokio::test]
+async fn explicit_e2ee_plaintext_cleanup_persists_scope_and_keeps_mls_state() {
     use crate::mls::persistence::encrypt_state;
     use crate::secure_key_store::{MemorySecureKeyStore, SecureKeyStore};
 
@@ -556,6 +556,7 @@ fn explicit_e2ee_plaintext_cleanup_persists_scope_and_keeps_mls_state() {
                 &E2eePlaintextCacheClearScope::Realm(realm_a.to_owned()),
                 &secure,
             )
+            .await
             .unwrap()
     );
     assert!(
@@ -600,6 +601,7 @@ fn explicit_e2ee_plaintext_cleanup_persists_scope_and_keeps_mls_state() {
                 &E2eePlaintextCacheClearScope::All,
                 &secure,
             )
+            .await
             .unwrap()
     );
     assert_eq!(reloaded.e2ee_plaintext_cache_usage().entry_count(), 0);
@@ -610,7 +612,94 @@ fn explicit_e2ee_plaintext_cleanup_persists_scope_and_keeps_mls_state() {
                 &E2eePlaintextCacheClearScope::All,
                 &secure,
             )
+            .await
             .unwrap()
+    );
+}
+
+#[tokio::test]
+async fn failed_durable_plaintext_cleanup_rolls_back_and_reports_error() {
+    use std::sync::atomic::{AtomicBool, Ordering};
+
+    use garth::{SecretBytes, SecureKeyStoreBackendInfo};
+
+    use crate::secure_key_store::{MemorySecureKeyStore, SecureKeyStore, SecureKeyStoreError};
+
+    #[derive(Default)]
+    struct FailingStore {
+        inner: MemorySecureKeyStore,
+        fail_writes: AtomicBool,
+    }
+
+    impl SecureKeyStore for FailingStore {
+        fn store_secret_bytes(&self, key: &str, value: &[u8]) -> Result<(), SecureKeyStoreError> {
+            if self.fail_writes.load(Ordering::SeqCst) {
+                return Err(SecureKeyStoreError::Backend(
+                    "injected durable write failure".to_owned(),
+                ));
+            }
+            self.inner.store_secret_bytes(key, value)
+        }
+
+        fn get_secret_bytes(&self, key: &str) -> Result<Option<SecretBytes>, SecureKeyStoreError> {
+            self.inner.get_secret_bytes(key)
+        }
+
+        fn delete_secret(&self, key: &str) -> Result<(), SecureKeyStoreError> {
+            self.inner.delete_secret(key)
+        }
+
+        fn list_secret_keys(
+            &self,
+            prefix: Option<&str>,
+        ) -> Result<Vec<String>, SecureKeyStoreError> {
+            self.inner.list_secret_keys(prefix)
+        }
+
+        fn backend_info(&self) -> SecureKeyStoreBackendInfo {
+            self.inner.backend_info()
+        }
+    }
+
+    let actor = "did:web:alice.example";
+    let realm = "ak:realm:0196419b-0000-7000-8000-000000000065";
+    let strand = "ak:strand:0196419b-0000-7000-8000-0000000000aa";
+    let secure = FailingStore::default();
+    let mut store = LocalStateStore::with_path(temp_state_path("e2ee-cache-clear-failure"));
+    store.switch_active_account(actor);
+    store.save_private_plaintext(realm, strand, "body", "must-survive");
+    store
+        .persist_e2ee_plaintext_cache_with_secure_store(&secure)
+        .unwrap();
+    let key = crate::secure_key_store::e2ee_plaintext_cache_store_key(actor);
+    let before = secure.get_secret(&key).unwrap().unwrap();
+
+    secure.fail_writes.store(true, Ordering::SeqCst);
+    let pending = store
+        .prepare_e2ee_plaintext_cache_clear(&E2eePlaintextCacheClearScope::All)
+        .unwrap()
+        .unwrap();
+    store.save_private_plaintext(realm, strand, "new-field", "arrived-during-write");
+    let error = pending
+        .persist(&secure)
+        .await
+        .expect_err("durable failure must be visible to the caller");
+    store.rollback_e2ee_plaintext_cache_clear(pending);
+    assert!(
+        format!("{error:#}").contains("injected durable write failure"),
+        "full error chain must retain the durable backend failure: {error:#}"
+    );
+    assert_eq!(
+        store.private_plaintext_for(realm, strand, "body"),
+        Some("must-survive".to_owned())
+    );
+    assert_eq!(
+        store.private_plaintext_for(realm, strand, "new-field"),
+        Some("arrived-during-write".to_owned())
+    );
+    assert_eq!(
+        secure.get_secret(&key).unwrap().as_deref(),
+        Some(before.as_str())
     );
 }
 

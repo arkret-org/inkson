@@ -25,6 +25,25 @@ pub(crate) struct E2eePlaintextCacheUsage {
     pub(crate) received_entries: usize,
 }
 
+pub(crate) struct PendingE2eePlaintextClear {
+    key: String,
+    json: String,
+    previous_private: BTreeMap<String, BTreeMap<String, BTreeMap<String, String>>>,
+    previous_decrypted: BTreeMap<String, BTreeMap<String, String>>,
+}
+
+impl PendingE2eePlaintextClear {
+    pub(crate) async fn persist(
+        &self,
+        secure_store: &dyn crate::secure_key_store::SecureKeyStore,
+    ) -> anyhow::Result<()> {
+        secure_store
+            .store_secret_durable(&self.key, &self.json)
+            .await
+            .context("persist cleared E2EE plaintext cache")
+    }
+}
+
 impl E2eePlaintextCacheUsage {
     pub(crate) fn entry_count(&self) -> usize {
         self.authored_entries + self.received_entries
@@ -206,16 +225,13 @@ impl LocalStateStore {
         E2eePlaintextCacheV1::from_state(&self.effective_state_for_persist()).plaintext_usage()
     }
 
-    /// Clear protected plaintext only after an explicit user action. MLS
-    /// snapshots are deliberately retained so cleanup cannot break the live
-    /// receive chain. The remaining cache is synchronously handed to the
-    /// secure-store backend before success is reported; browser backends queue
-    /// the IndexedDB commit from that call.
-    pub(crate) fn clear_e2ee_plaintext_cache_with_secure_store(
+    /// Apply the in-memory clear and return the owned durable write. Callers
+    /// using a shared state lock must release that lock before awaiting
+    /// [`PendingE2eePlaintextClear::persist`].
+    pub(crate) fn prepare_e2ee_plaintext_cache_clear(
         &mut self,
         scope: &E2eePlaintextCacheClearScope,
-        secure_store: &dyn crate::secure_key_store::SecureKeyStore,
-    ) -> anyhow::Result<bool> {
+    ) -> anyhow::Result<Option<PendingE2eePlaintextClear>> {
         self.ensure_cached_loaded();
         self.absorb_mls_receive_overlay();
 
@@ -240,23 +256,65 @@ impl LocalStateStore {
             }
         };
         if !changed {
-            return Ok(false);
+            return Ok(None);
         }
 
-        let persist_result = (|| {
-            let Some((key, json)) = self.e2ee_plaintext_cache_secure_write()? else {
-                anyhow::bail!("cannot clear E2EE plaintext cache without an active account");
-            };
-            // Keep a minimal encrypted empty object instead of deleting the
-            // entry. This replaces any prior plaintext-bearing value in one
-            // secure-store write and avoids a delete/recreate gap.
-            secure_store
-                .store_secret(&key, json.as_deref().unwrap_or("{}"))
-                .context("persist cleared E2EE plaintext cache")
-        })();
-        if let Err(error) = persist_result {
+        let Some((key, json)) = self.e2ee_plaintext_cache_secure_write()? else {
             self.cached.mls_private_plaintext = previous_private;
             self.cached.mls_decrypted_plaintext = previous_decrypted;
+            anyhow::bail!("cannot clear E2EE plaintext cache without an active account");
+        };
+        // Keep a minimal encrypted empty object instead of deleting the entry.
+        Ok(Some(PendingE2eePlaintextClear {
+            key,
+            json: json.unwrap_or_else(|| "{}".to_owned()),
+            previous_private,
+            previous_decrypted,
+        }))
+    }
+
+    pub(crate) fn rollback_e2ee_plaintext_cache_clear(
+        &mut self,
+        pending: PendingE2eePlaintextClear,
+    ) {
+        // Preserve writes that arrived while the durable request was in
+        // flight; restore only entries removed by the failed clear.
+        for (realm_id, strands) in pending.previous_private {
+            let current_strands = self
+                .cached
+                .mls_private_plaintext
+                .entry(realm_id)
+                .or_default();
+            for (strand_id, fields) in strands {
+                let current_fields = current_strands.entry(strand_id).or_default();
+                for (field, plaintext) in fields {
+                    current_fields.entry(field).or_insert(plaintext);
+                }
+            }
+        }
+        for (realm_id, entries) in pending.previous_decrypted {
+            let current_entries = self
+                .cached
+                .mls_decrypted_plaintext
+                .entry(realm_id)
+                .or_default();
+            for (digest, plaintext) in entries {
+                current_entries.entry(digest).or_insert(plaintext);
+            }
+        }
+    }
+
+    /// Convenience wrapper for callers that exclusively own the state value.
+    pub(crate) async fn clear_e2ee_plaintext_cache_with_secure_store(
+        &mut self,
+        scope: &E2eePlaintextCacheClearScope,
+        secure_store: &dyn crate::secure_key_store::SecureKeyStore,
+    ) -> anyhow::Result<bool> {
+        let Some(pending) = self.prepare_e2ee_plaintext_cache_clear(scope)? else {
+            return Ok(false);
+        };
+        if let Err(error) = pending.persist(secure_store).await {
+            self.rollback_e2ee_plaintext_cache_clear(pending);
             return Err(error);
         }
         Ok(true)

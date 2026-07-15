@@ -49,6 +49,7 @@ pub(crate) type LocalMlsEncryptResult = (
     Option<LocalEncryptedMessage>,
     Option<arkret_sdk::MlsCommitEnvelope>,
     Option<crate::mls::persistence::MlsSnapshotEnvelope>,
+    Option<crate::state::PendingHistorySecrets>,
 );
 
 /// Encrypt `plaintext_bytes` under the Realm MLS group and return the
@@ -60,7 +61,7 @@ pub(crate) type LocalMlsEncryptResult = (
 /// uses the same wasm-enabled OpenMLS path as kanban strand-content encryption.
 ///
 /// On any failure (missing Welcome/snapshot, restore fails, encrypt fails) it
-/// returns `(None, vec![], None, None, None)` and the caller aborts.
+/// returns an all-empty result and the caller aborts.
 pub(crate) fn run_local_mls_encrypt(
     mut state_store: SyncSignal<LocalStateStore>,
     realm_id: &str,
@@ -68,23 +69,29 @@ pub(crate) fn run_local_mls_encrypt(
     device_id: &str,
     plaintext_bytes: &[u8],
 ) -> LocalMlsEncryptResult {
-    let empty = (None, Vec::new(), None, None, None);
+    let empty = (None, Vec::new(), None, None, None, None);
     let secure_store = crate::secure_key_store::default_secure_key_store("inkson");
     let Ok(aad_realm_id) = arkret_sdk::RealmId::new(realm_id.to_owned()) else {
         return empty;
     };
     let aad = arkret_sdk::EncryptedEnvelopeAad::hidden(aad_realm_id, "ak.message.create");
-    let Ok((schedule_hash, member_dids, payload, commit_envelope, new_snapshot)) =
-        crate::mls::runtime::encrypt_message_with_device_snapshot(
-            &mut state_store.write(),
-            secure_store.as_ref(),
-            realm_id,
-            principal_id,
-            device_id,
-            "application/vnd.arkret.message+json",
-            aad.clone(),
-            plaintext_bytes,
-        )
+    let Ok((
+        schedule_hash,
+        member_dids,
+        payload,
+        commit_envelope,
+        new_snapshot,
+        pending_history_secrets,
+    )) = crate::mls::runtime::encrypt_message_with_device_snapshot(
+        &mut state_store.write(),
+        secure_store.as_ref(),
+        realm_id,
+        principal_id,
+        device_id,
+        "application/vnd.arkret.message+json",
+        aad.clone(),
+        plaintext_bytes,
+    )
     else {
         return empty;
     };
@@ -94,6 +101,7 @@ pub(crate) fn run_local_mls_encrypt(
         Some((payload, aad)),
         commit_envelope,
         new_snapshot,
+        pending_history_secrets,
     )
 }
 
@@ -191,6 +199,8 @@ pub(crate) struct SecureSendBuild {
     pub member_dids: Vec<arkret_sdk::Did>,
     /// The Realm move-seal ref captured at build time (covered-seals binding).
     pub seal_ref: String,
+    /// History-secret update that must commit before either MLS event is sent.
+    pub pending_history_secrets: Option<crate::state::PendingHistorySecrets>,
 }
 
 /// Build the full encrypted send (MLS encrypt → forced commit event →
@@ -223,6 +233,7 @@ pub(crate) fn build_secure_send(
         encrypted_message,
         real_commit_envelope,
         new_mls_snapshot,
+        pending_history_secrets,
     ): LocalMlsEncryptResult =
         run_local_mls_encrypt(state_store, realm_id, actor, device_id, plaintext_bytes);
 
@@ -329,6 +340,7 @@ pub(crate) fn build_secure_send(
         new_mls_snapshot,
         member_dids: local_member_dids,
         seal_ref,
+        pending_history_secrets,
     })
 }
 
@@ -370,7 +382,17 @@ pub(crate) async fn submit_secure_send(
         new_mls_snapshot,
         seal_ref,
         member_dids: _,
+        pending_history_secrets,
     } = build;
+    if let Some(pending) = pending_history_secrets {
+        let secure_store = crate::secure_key_store::default_secure_key_store("inkson");
+        if let Err(error) = pending.persist(secure_store.as_ref()).await {
+            return SecureSendOutcome::MessageFailed {
+                message: format!("persist MLS history secret before send: {error}"),
+            };
+        }
+        state_store.write().publish_history_secrets(pending);
+    }
     let commit_op_id = commit_event
         .as_ref()
         .map(|commit| sdk_event_local_operation_id(commit).to_owned());

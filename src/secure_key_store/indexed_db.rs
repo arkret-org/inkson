@@ -91,6 +91,12 @@ unsafe impl<T> Send for IndexedDbSendBoundary<T> {}
 unsafe impl<T> Sync for IndexedDbSendBoundary<T> {}
 
 impl IndexedDbSecureKeyStore {
+    #[cfg(feature = "wasm-localstorage-secrets-test")]
+    #[doc(hidden)]
+    pub fn close_database_for_test(&self) {
+        self.db.0.close();
+    }
+
     /// IndexedDB database version. Bump when the object-store schema
     /// changes; the `onupgradeneeded` handler will fire.
     const DB_VERSION: u32 = 1;
@@ -949,11 +955,6 @@ impl SecureKeyStore for IndexedDbSecureKeyStore {
                 return Box::pin(async move { Err(err) });
             }
         };
-        // Update the in-memory cache synchronously (same as `store_secret_bytes`)
-        // so concurrent reads in this session observe the value immediately.
-        if let Ok(mut guard) = self.cache.lock() {
-            guard.insert(key.to_owned(), value.to_owned());
-        }
         Box::pin(async move {
             // AWAIT the real IndexedDB put: unlike `store_secret_bytes`'s
             // fire-and-forget `spawn_local`, this resolves only after the value
@@ -961,7 +962,15 @@ impl SecureKeyStore for IndexedDbSecureKeyStore {
             // callers that must guarantee durability before a remote party
             // depends on the secret (e.g. the MLS KeyPackage init key before the
             // KeyPackage is advertised to the server).
-            Self::persist_entry_value(&self.db.0, &self.crypto_key.0, key, value).await
+            Self::persist_entry_value(&self.db.0, &self.crypto_key.0, key, value).await?;
+            // A durable caller must never observe an uncommitted value through
+            // the process cache. Publish it only after IndexedDB confirms the
+            // transaction, and propagate a poisoned cache lock as a failure.
+            self.cache
+                .lock()
+                .map_err(|err| SecureKeyStoreError::Backend(format!("cache lock: {err}")))?
+                .insert(key.to_owned(), value.to_owned());
+            Ok(())
         })
     }
 

@@ -125,14 +125,7 @@ impl CallSignalReceiver {
                 };
             }
         };
-        let device_id = match envelope.device_id.as_ref() {
-            Some(d) => d,
-            None => {
-                return CallSignalIngestOutcome::Rejected {
-                    reason: "ak.call.signal envelope missing device_id".to_owned(),
-                };
-            }
-        };
+        let device_id = &envelope.device_id;
         let key = arkret_sdk::CallSignalSeqKey::new(
             envelope.realm_id.clone(),
             payload.call_id.clone(),
@@ -278,7 +271,7 @@ mod tests {
         for st in arkret_sdk::CALL_SIGNAL_TYPES {
             let env = make_v1_envelope(1, st);
             assert_eq!(env.kind, "ak.call.signal");
-            assert!(env.device_id.is_some());
+            assert!(!env.device_id.as_str().is_empty());
         }
     }
 

@@ -62,6 +62,7 @@ mod seal_view;
 pub use seal_view::*;
 
 mod mls_sidecar;
+pub(crate) use mls_sidecar::PendingHistorySecrets;
 
 mod mls_governance;
 
