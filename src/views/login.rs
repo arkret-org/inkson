@@ -213,15 +213,15 @@ pub fn LoginPanel(
         is_busy.set(false);
     });
 
-    // Account selection belongs to the Account Authority. Inkson chooses only
-    // the Principal Server; it must not turn the locally persisted account DID
-    // into a hidden account selection. Therefore an interactive OIDC sign-in
-    // omits `principal_id`. When a signed-out account is locally known, reuse
-    // its stable protocol device id so a hard re-login rotates only the
+    // Account selection belongs to the Account Authority. For a locally known
+    // account, carry its principal DID as the explicit session-grant binding
+    // assertion; coauth still authenticates the selected account and rejects a
+    // mismatch. This is not a login hint or silent account selection. Reuse the
+    // stable protocol device id so a hard re-login rotates only the
     // grant-binding key, not the E2EE device identity.
     let launch_sign_in = move || {
         let principal = base_url();
-        let device = interactive_sign_in_device_id(&account_did(), &device_id());
+        let (principal_binding, device) = interactive_sign_in_context(&account_did(), &device_id());
         device_id.set(device.clone());
         let mut reset_state_store = state_store;
         is_busy.set(true);
@@ -264,7 +264,8 @@ pub fn LoginPanel(
             ) {
                 tracing::warn!(%error, "persist bootstrap device_id for sign-in failed");
             }
-            match start_oidc_strand(&principal, device.trim(), "", "").await {
+            match start_oidc_strand(&principal, device.trim(), "", principal_binding.as_str()).await
+            {
                 Ok(()) => {}
                 Err(error) => {
                     is_busy.set(false);
@@ -508,6 +509,13 @@ fn interactive_sign_in_device_id(persisted_actor: &str, persisted_device: &str) 
     }
 }
 
+fn interactive_sign_in_context(persisted_actor: &str, persisted_device: &str) -> (String, String) {
+    (
+        persisted_actor.trim().to_owned(),
+        interactive_sign_in_device_id(persisted_actor, persisted_device),
+    )
+}
+
 fn persist_completed_login_dpop_key(
     store: &mut LocalStateStore,
     secure_store: &dyn crate::secure_key_store::SecureKeyStore,
@@ -742,6 +750,8 @@ async fn finish_oidc_callback(
         .map_err(|error| format!("invalid principal_id DID: {error}"))?;
     let device_id = arkret_sdk::DeviceId::new(device.clone())
         .map_err(|error| format!("invalid device_id: {error}"))?;
+    let principal_audience = arkret_sdk::Did::new(scaffold.principal_audience.trim().to_owned())
+        .map_err(|error| format!("invalid Principal Server audience DID: {error}"))?;
     let request_canonical_digest = oidc_request_canonical_digest(
         &scaffold.issuer,
         &scaffold.client_id,
@@ -763,7 +773,7 @@ async fn finish_oidc_callback(
                 requested_scope: Vec::new(),
                 challenge: String::new(),
                 request_canonical_digest,
-                audience: scaffold.principal_audience.clone(),
+                audience: principal_audience,
                 issuer: scaffold.issuer.clone(),
                 client_id: scaffold.client_id.clone(),
                 redirect_uri: scaffold.callback_uri.clone(),
@@ -881,7 +891,7 @@ fn persisted_session_grant_from_state(
         grant_jwt: grant.grant_jwt.clone(),
         session_private_key_pem: session_private_key_pem.to_owned(),
         grant_id: grant.grant_id.as_str().to_owned(),
-        audience: grant.audience.clone(),
+        audience: grant.audience.to_string(),
         principal_id: actor.to_owned(),
         device_id: device_id.to_owned(),
         principal_server_url: principal_server_url.to_owned(),
@@ -929,7 +939,7 @@ mod tests {
             grant_jwt: "test.grant.jwt".to_owned(),
             session_private_key_pem: "PEM".to_owned(),
             grant_id: "grant-1".to_owned(),
-            audience: "https://principal.example/api".to_owned(),
+            audience: "did:web:principal.example".to_owned(),
             principal_id: "did:web:alice.example".to_owned(),
             device_id: "device-1".to_owned(),
             principal_server_url: "https://principal.example".to_owned(),
@@ -1017,6 +1027,24 @@ mod tests {
     }
 
     #[test]
+    fn interactive_sign_in_carries_known_principal_binding() {
+        let actor = "did:webvh:z6mkfixture:alice.example";
+        let device = "ak:device:01964137-0000-7000-8000-000000000001";
+
+        let (binding, selected_device) =
+            interactive_sign_in_context(&format!("  {actor}  "), device);
+
+        assert_eq!(binding, actor);
+        assert_eq!(selected_device, device);
+
+        let (unbound, _) = interactive_sign_in_context("   ", device);
+        assert!(
+            unbound.is_empty(),
+            "first registration must not infer a principal DID"
+        );
+    }
+
+    #[test]
     fn completed_login_dpop_key_preserves_returning_account_key_material() {
         let _lock = seed_scope_test_lock();
         let _reset = SeedScopeReset;
@@ -1063,7 +1091,7 @@ mod tests {
             grant_id: arkret_sdk::GrantId::new(grant_id.to_owned()).unwrap(),
             grant_jwt: "grant.jwt".to_owned(),
             expires_at: "2026-05-29T12:00:00Z".parse().unwrap(),
-            audience: "https://local.host/api".to_owned(),
+            audience: arkret_sdk::Did::new("did:web:local.host".to_owned()).unwrap(),
             granted_scope: vec!["urn:arkret:principal-server:session.bind".to_owned()],
             session_public_key: Some("public-key".to_owned()),
             dpop_jkt: Some("dpop-jkt".to_owned()),
@@ -1079,7 +1107,7 @@ mod tests {
         assert_eq!(persisted.grant_jwt, "grant.jwt");
         assert_eq!(persisted.session_private_key_pem, "private-key-pem");
         assert_eq!(persisted.grant_id, grant_id);
-        assert_eq!(persisted.audience, "https://local.host/api");
+        assert_eq!(persisted.audience, "did:web:local.host");
         assert_eq!(persisted.principal_id, "did:web:alice.example");
         assert_eq!(persisted.device_id, device_id);
         assert_eq!(persisted.principal_server_url, "https://local.host");

@@ -81,7 +81,7 @@ fn session_grant_proof_signs_canonical_claims() {
         "type claim must match coauth's spec"
     );
     assert_eq!(claims.grant_id, "01HABC123");
-    assert_eq!(claims.audience, "did:web:principal.example");
+    assert_eq!(claims.audience.as_str(), "did:web:principal.example");
     assert_eq!(claims.challenge, "challenge-deadbeef");
     assert_eq!(
         claims.grant_jwt_hash,

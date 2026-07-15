@@ -486,7 +486,7 @@ mod tests {
             grant_jwt: "header.payload.signature".to_owned(),
             session_private_key_pem: pem,
             grant_id: "ak:grant:push-local".to_owned(),
-            audience: "https://principal.example/".to_owned(),
+            audience: "did:web:principal.example".to_owned(),
             principal_id: "did:web:alice.example".to_owned(),
             device_id: device.to_owned(),
             principal_server_url: "https://principal.example/".to_owned(),

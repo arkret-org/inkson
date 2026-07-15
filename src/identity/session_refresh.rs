@@ -366,7 +366,7 @@ async fn rotate_session_grant(
         .engine
         .refresh_after_unauthorized(
             SessionRefreshOptions {
-                audience: Some(grant.audience.clone()),
+                audience: Some(session_audience(&grant.audience)?),
                 device_id: Some(device_id),
                 proof: Some(refresh_proof),
                 expected_dpop_jkt: Some(device_handle.jkt().to_owned()),
@@ -388,7 +388,7 @@ async fn rotate_session_grant(
         grant_jwt: handle.access_token.clone(),
         session_private_key_pem: session_private_key_pem.to_string(),
         grant_id: state.grant_id.as_str().to_owned(),
-        audience: state.audience.clone(),
+        audience: state.audience.to_string(),
         principal_id: grant.principal_id.clone(),
         device_id: grant.device_id.clone(),
         principal_server_url: grant.principal_server_url.clone(),
@@ -417,7 +417,7 @@ fn session_grant_state_from_persisted(
             .map_err(|error| anyhow::anyhow!("invalid refresh grant_id: {error}"))?,
         grant_jwt: grant.grant_jwt.clone(),
         expires_at,
-        audience: grant.audience.clone(),
+        audience: session_audience(&grant.audience)?,
         granted_scope: Vec::new(),
         // Reconstructed-from-persistence state: the client persistence layer does
         // not retain the session public key, and garth's refresh flow never reads
@@ -509,7 +509,7 @@ fn mint_session_grant_refresh_proof(
         proof_kind: Some(arkret_sdk::SessionGrantProofKind::DidBoundSignature),
         challenge: Some(challenge),
         request_canonical_digest: Some(request_canonical_digest_hash),
-        audience: Some(audience.to_owned()),
+        audience: Some(session_audience(audience)?),
         issued_at: Some(issued_at),
         expires_at: Some(expires_at),
         signature: Some(signature),
@@ -523,6 +523,12 @@ fn required_trimmed<'a>(value: &'a str, field: &str) -> anyhow::Result<&'a str> 
         anyhow::bail!("{field} is required");
     }
     Ok(value)
+}
+
+fn session_audience(value: &str) -> anyhow::Result<arkret_sdk::Did> {
+    let value = required_trimmed(value, "audience")?;
+    arkret_sdk::Did::new(value.to_owned())
+        .map_err(|error| anyhow::anyhow!("invalid session audience DID: {error}"))
 }
 
 fn soft_logout_restore_request_canonical_digest(
@@ -620,7 +626,7 @@ mod tests {
             session_private_key_pem: "-----BEGIN PRIVATE KEY-----\nMOCK\n-----END PRIVATE KEY-----"
                 .to_owned(),
             grant_id: "grant-1".to_owned(),
-            audience: "https://principal.example/api".to_owned(),
+            audience: "did:web:principal.example".to_owned(),
             principal_id: "did:web:alice.example".to_owned(),
             device_id: "device-1".to_owned(),
             principal_server_url: "https://principal.example".to_owned(),

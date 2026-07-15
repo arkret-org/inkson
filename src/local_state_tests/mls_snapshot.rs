@@ -74,7 +74,7 @@ fn logout_session_clear_shreds_memory_and_preserves_encrypted_e2ee_state() {
         grant_jwt: "alice.grant".to_owned(),
         session_private_key_pem: "pem".to_owned(),
         grant_id: "g-alice".to_owned(),
-        audience: "https://principal.example/api".to_owned(),
+        audience: "did:web:principal.example".to_owned(),
         principal_id: actor.to_owned(),
         device_id: "ak:device:01904100-0000-7000-8000-000000000001".to_owned(),
         principal_server_url: "https://principal.example".to_owned(),

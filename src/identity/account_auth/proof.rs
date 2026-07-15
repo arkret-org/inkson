@@ -68,6 +68,8 @@ pub fn build_session_grant_introspection_proof(
     if audience.trim().is_empty() {
         anyhow::bail!("audience is required");
     }
+    let audience = arkret_sdk::Did::new(audience.trim().to_owned())
+        .map_err(|error| anyhow::anyhow!("audience must be a service DID: {error}"))?;
     if challenge.trim().is_empty() {
         anyhow::bail!("challenge is required");
     }
@@ -76,7 +78,7 @@ pub fn build_session_grant_introspection_proof(
         kind: arkret_sdk::SESSION_GRANT_INTROSPECTION_PROOF_CLAIMS_TYPE.to_owned(),
         grant_id: grant_id.to_owned(),
         grant_jwt_hash: session_grant_jwt_hash(grant_jwt),
-        audience: audience.to_owned(),
+        audience,
         challenge: challenge.to_owned(),
         issued_at: now,
         expires_at: now + chrono::Duration::seconds(60),

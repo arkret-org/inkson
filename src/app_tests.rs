@@ -129,7 +129,7 @@ fn session_grant(grant_expires_in: i64) -> PersistedSessionGrant {
         grant_jwt: "grant.jwt".to_owned(),
         session_private_key_pem: "PEM".to_owned(),
         grant_id: "grant-1".to_owned(),
-        audience: "https://local.host/api".to_owned(),
+        audience: "did:web:local.host".to_owned(),
         principal_id: "did:web:alice.example".to_owned(),
         device_id: "ak:device:01964137-0000-7000-8000-000000000001".to_owned(),
         principal_server_url: "https://local.host".to_owned(),
