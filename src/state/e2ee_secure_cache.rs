@@ -120,10 +120,7 @@ impl E2eePlaintextCacheV1 {
         usage
     }
 
-    #[cfg_attr(
-        not(target_arch = "wasm32"),
-        allow(dead_code, reason = "WASM secure-store hydration path")
-    )]
+    #[cfg(any(test, target_arch = "wasm32"))]
     fn merge_into(
         self,
         state: &mut ClientLocalState,
@@ -206,10 +203,7 @@ impl LocalStateStore {
         Ok(Some((key, json)))
     }
 
-    #[cfg_attr(
-        not(target_arch = "wasm32"),
-        allow(dead_code, reason = "WASM secure-store persistence path")
-    )]
+    #[cfg(any(test, target_arch = "wasm32"))]
     pub(crate) fn persist_e2ee_plaintext_cache_with_secure_store(
         &self,
         secure_store: &dyn crate::secure_key_store::SecureKeyStore,
@@ -313,7 +307,7 @@ impl LocalStateStore {
     }
 
     /// Convenience wrapper for callers that exclusively own the state value.
-    #[cfg(test)]
+    #[cfg(any(test, target_arch = "wasm32"))]
     pub(crate) async fn clear_e2ee_plaintext_cache_with_secure_store(
         &mut self,
         scope: &E2eePlaintextCacheClearScope,
@@ -329,10 +323,7 @@ impl LocalStateStore {
         Ok(true)
     }
 
-    #[cfg_attr(
-        not(target_arch = "wasm32"),
-        allow(dead_code, reason = "WASM secure-store hydration path")
-    )]
+    #[cfg(any(test, target_arch = "wasm32"))]
     pub(crate) fn hydrate_e2ee_plaintext_cache_with_secure_store(
         &mut self,
         secure_store: &dyn crate::secure_key_store::SecureKeyStore,
@@ -400,10 +391,7 @@ impl LocalStateStore {
         Ok(changed)
     }
 
-    #[cfg_attr(
-        not(target_arch = "wasm32"),
-        allow(dead_code, reason = "WASM post-hydration checkpoint cleanup")
-    )]
+    #[cfg(any(test, target_arch = "wasm32"))]
     pub(crate) fn clear_mls_receive_recovery_snapshots(&mut self) -> anyhow::Result<()> {
         self.ensure_cached_loaded();
         self.absorb_mls_receive_overlay();

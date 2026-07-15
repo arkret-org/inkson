@@ -35,10 +35,16 @@ const ARKRET_DEVICE_SCOPE_PREFIX: &str = "urn:arkret:client:device:";
 pub struct OidcDiscoveryDocument {
     pub issuer: String,
     pub authorization_endpoint: String,
-    #[expect(dead_code, reason = "standard OIDC discovery response field")]
+    #[expect(
+        dead_code,
+        reason = "discovery evidence retained for validation and diagnostics"
+    )]
     #[serde(default)]
     pub token_endpoint: Option<String>,
-    #[expect(dead_code, reason = "standard OIDC discovery response field")]
+    #[expect(
+        dead_code,
+        reason = "discovery evidence retained for validation and diagnostics"
+    )]
     #[serde(default)]
     pub userinfo_endpoint: Option<String>,
     #[serde(default)]
@@ -53,6 +59,8 @@ pub struct OidcScaffoldBundle {
     pub state: String,
     pub nonce: String,
     pub code_verifier: String,
+    #[cfg(test)]
+    pub code_challenge: String,
     pub authorize_url: String,
     pub callback_uri: String,
     pub principal_audience: String,

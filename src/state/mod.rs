@@ -342,6 +342,7 @@ impl LocalStateStore {
 
     const SECURE_DPOP_DEVICE_KEY: &'static str = "auth.dpop.device_key.v1";
 
+    #[cfg(any(not(test), target_arch = "wasm32"))]
     const SECURE_SESSION_GRANT_KEY: &'static str = "auth.session_grant.v1";
 
     pub(crate) fn enqueue_local_projection_command(
@@ -695,11 +696,12 @@ impl LocalStateStore {
     /// root index, then reads that entry. `None` when the entry is
     /// absent.
     fn read_persisted_state(&self) -> Option<ClientLocalState> {
-        let mut state = self
+        let state = self
             .read_account_state(&self.effective_account_key())
             .unwrap_or_default();
         #[cfg(not(test))]
         {
+            let mut state = state;
             let secure_store = crate::secure_key_store::default_secure_key_store("inkson");
             let secure_grant = load_session_grant_from_secure_store(secure_store.as_ref())
                 .map_err(|error| {
@@ -720,7 +722,9 @@ impl LocalStateStore {
                     state.session_grant = None;
                 }
             }
+            return Some(state);
         }
+        #[cfg(test)]
         Some(state)
     }
 

@@ -129,6 +129,15 @@ pub enum RefreshOutcome {
     /// clear a live credential because no refresh-endpoint terminal code was
     /// observed.
     NoGrant,
+    /// Nothing to do; the current grant is still fresh.
+    #[cfg_attr(
+        not(test),
+        expect(
+            dead_code,
+            reason = "test-only refresh driver returns Fresh; production checks refresh_decision before forced rotation"
+        )
+    )]
+    Fresh,
     /// The grant was rotated. `session_credential` carries the live
     /// `ak.session.grant` JWT; caller swaps it into the in-memory credential
     /// signal and the persisted config.
@@ -215,7 +224,25 @@ pub enum RefreshPrepared {
     },
 }
 
-/// Load the key material needed to rotate a persisted grant.
+/// Synchronous prep: read the persisted grant, decide whether to rotate, and
+/// (when due) load the device DPoP key. Writes happen only inside this function
+/// or [`commit_refresh`], so the caller can release its `LocalStateStore` borrow
+/// before awaiting the network rotation.
+#[cfg(test)]
+pub fn prepare_refresh(store: &mut LocalStateStore) -> RefreshPrepared {
+    match refresh_decision(store) {
+        RefreshDecision::NoGrant => return RefreshPrepared::Done(RefreshOutcome::NoGrant),
+        RefreshDecision::Fresh => return RefreshPrepared::Done(RefreshOutcome::Fresh),
+        RefreshDecision::GrantExpired | RefreshDecision::Due => {}
+    }
+
+    let Some(grant) = store.session_grant() else {
+        return RefreshPrepared::Done(RefreshOutcome::NoGrant);
+    };
+
+    prepare_refresh_grant(store, grant)
+}
+
 fn prepare_refresh_grant(
     store: &mut LocalStateStore,
     grant: PersistedSessionGrant,
@@ -257,8 +284,24 @@ fn prepare_refresh_grant(
     }
 }
 
-/// Force a rotation attempt after the server has already returned a definitive
-/// 401 for the current grant. Local
+/// Like [`prepare_refresh`], but refuses to use a grant minted for any server
+/// other than the currently selected Principal Server.
+#[cfg(test)]
+pub fn prepare_refresh_for_server(
+    store: &mut LocalStateStore,
+    principal_server_url: &str,
+) -> RefreshPrepared {
+    if let Some(grant) = store.session_grant()
+        && !grant_matches_principal_server(&grant, principal_server_url)
+    {
+        return RefreshPrepared::Done(RefreshOutcome::NoGrant);
+    }
+
+    prepare_refresh(store)
+}
+
+/// Like [`prepare_refresh_for_server`], but forces a rotation attempt after the
+/// server has already returned a definitive 401 for the current grant. Local
 /// expiry metadata can be stale when the Account Authority rotated or revoked
 /// the grant early.
 pub fn prepare_refresh_for_server_after_unauthorized(
@@ -636,10 +679,7 @@ mod tests {
         let mut store = isolated_store("inactive-server-grant");
         store.set_session_grant(Some(grant_with_expiry(86400)));
 
-        let outcome = prepare_refresh_for_server_after_unauthorized(
-            &mut store,
-            "https://other-principal.example",
-        );
+        let outcome = prepare_refresh_for_server(&mut store, "https://other-principal.example");
 
         assert!(matches!(
             outcome,

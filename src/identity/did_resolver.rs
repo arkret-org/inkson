@@ -35,9 +35,9 @@ use chrono::{DateTime, Duration, Utc};
 /// - `SmallTeam` / `Organization` / higher: principal MUST be `did:webvh`.
 /// - `Sovereign`: principal limited to a deployment-specific method list.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-#[allow(
+#[expect(
     dead_code,
-    reason = "resolver policy profiles are configuration surface"
+    reason = "non-personal deployment policies are conformance-tested before runtime profile selection is exposed"
 )]
 pub enum DeploymentProfile {
     PersonalNode,

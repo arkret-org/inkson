@@ -4,6 +4,8 @@ pub(crate) mod device_directory;
 pub(crate) mod device_enrollment;
 pub(crate) mod device_name;
 pub(crate) mod device_pairing;
+#[cfg(test)]
+pub(crate) mod device_revoke;
 pub(crate) mod did_key;
 pub(crate) mod did_resolver;
 pub(crate) mod handle;
