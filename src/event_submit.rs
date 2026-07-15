@@ -104,16 +104,19 @@ impl OutboundPostAcceptHook for InksonPostAcceptHook {
                     "queued post-accept action has no host state-store adapter".to_owned(),
                 )
             })?;
-            match action {
+            let barrier = match action {
                 PostAcceptAction::MlsSnapshot { realm_id, snapshot } => store.write(|store| {
                     store.save_mls_snapshot(realm_id, snapshot);
-                    store.flush().map_err(|error| {
+                    store.begin_durable_flush().map_err(|error| {
                         arkret_sdk::Error::Protocol(format!(
-                            "persist MLS post-accept snapshot: {error}"
+                            "begin durable MLS post-accept snapshot persist: {error}"
                         ))
                     })
-                }),
-            }
+                })?,
+            };
+            barrier.wait().await.map_err(|error| {
+                arkret_sdk::Error::Protocol(format!("persist MLS post-accept snapshot: {error}"))
+            })
         })
     }
 }

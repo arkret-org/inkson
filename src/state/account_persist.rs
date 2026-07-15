@@ -137,6 +137,49 @@ pub(super) enum EnqueueOutcome {
     AlreadyDraining,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) struct EnqueuedAccountWrite {
+    pub(super) seq: u64,
+    pub(super) outcome: EnqueueOutcome,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(super) enum AccountPersistBarrierStatus {
+    Pending,
+    Committed,
+    Failed(String),
+}
+
+#[derive(Clone, Debug)]
+pub(crate) struct AccountPersistBarrier {
+    #[cfg(target_arch = "wasm32")]
+    account_key: String,
+    #[cfg(target_arch = "wasm32")]
+    seq: u64,
+}
+
+impl AccountPersistBarrier {
+    pub(crate) fn ready() -> Self {
+        Self {
+            #[cfg(target_arch = "wasm32")]
+            account_key: String::new(),
+            #[cfg(target_arch = "wasm32")]
+            seq: 0,
+        }
+    }
+
+    pub(crate) async fn wait(self) -> anyhow::Result<()> {
+        #[cfg(target_arch = "wasm32")]
+        {
+            return wasm_driver::wait_for_account_state_persist(&self.account_key, self.seq).await;
+        }
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            Ok(())
+        }
+    }
+}
+
 /// Per-account single-writer commit-queue state machine.
 ///
 /// Invariants:
@@ -151,6 +194,7 @@ pub(super) enum EnqueueOutcome {
 pub(super) struct AccountPersistQueueState {
     pending: std::collections::HashMap<String, PendingAccountWrite>,
     committed_seq: std::collections::HashMap<String, u64>,
+    failed: std::collections::HashMap<String, (u64, String)>,
     draining: std::collections::HashSet<String>,
     next_seq: u64,
 }
@@ -158,17 +202,18 @@ pub(super) struct AccountPersistQueueState {
 impl AccountPersistQueueState {
     /// Stamp `json` with the next sequence number as the latest pending write
     /// for `account_key`, superseding any earlier not-yet-started snapshot.
-    pub(super) fn enqueue(&mut self, account_key: String, json: String) -> EnqueueOutcome {
+    pub(super) fn enqueue(&mut self, account_key: String, json: String) -> EnqueuedAccountWrite {
+        self.next_seq = self.next_seq.saturating_add(1);
         let seq = self.next_seq;
-        self.next_seq = self.next_seq.wrapping_add(1);
         self.pending
             .insert(account_key.clone(), PendingAccountWrite { seq, json });
-        if self.draining.contains(&account_key) {
+        let outcome = if self.draining.contains(&account_key) {
             EnqueueOutcome::AlreadyDraining
         } else {
             self.draining.insert(account_key);
             EnqueueOutcome::StartDrain
-        }
+        };
+        EnqueuedAccountWrite { seq, outcome }
     }
 
     /// Pull the latest pending write for `account_key`. Returns `None` and
@@ -194,6 +239,23 @@ impl AccountPersistQueueState {
         if seq > *entry {
             *entry = seq;
         }
+        if self
+            .failed
+            .get(account_key)
+            .is_some_and(|(failed_seq, _)| *failed_seq <= seq)
+        {
+            self.failed.remove(account_key);
+        }
+    }
+
+    pub(super) fn record_failed(&mut self, account_key: &str, seq: u64, error: String) {
+        let entry = self
+            .failed
+            .entry(account_key.to_owned())
+            .or_insert_with(|| (seq, error.clone()));
+        if seq >= entry.0 {
+            *entry = (seq, error);
+        }
     }
 
     /// The latest not-yet-drained snapshot JSON for `account_key`, if any.
@@ -208,11 +270,29 @@ impl AccountPersistQueueState {
     }
 
     /// Highest durably-committed sequence for `account_key` (0 when none).
-    /// The waitable durable barrier (phase 2, later) reads this to know when a
-    /// remote-dependency snapshot has truly landed.
+    /// The waitable durable barrier reads this to know when a remote-dependency
+    /// snapshot has truly landed.
     #[cfg_attr(not(test), allow(dead_code))]
     pub(super) fn committed_seq(&self, account_key: &str) -> u64 {
         self.committed_seq.get(account_key).copied().unwrap_or(0)
+    }
+
+    pub(super) fn barrier_status(
+        &self,
+        account_key: &str,
+        seq: u64,
+    ) -> AccountPersistBarrierStatus {
+        if self.committed_seq(account_key) >= seq {
+            return AccountPersistBarrierStatus::Committed;
+        }
+        if !self.draining.contains(account_key)
+            && !self.pending.contains_key(account_key)
+            && let Some((failed_seq, error)) = self.failed.get(account_key)
+            && *failed_seq >= seq
+        {
+            return AccountPersistBarrierStatus::Failed(error.clone());
+        }
+        AccountPersistBarrierStatus::Pending
     }
 }
 
@@ -222,7 +302,10 @@ impl AccountPersistQueueState {
 mod wasm_driver {
     use std::sync::{Mutex, OnceLock};
 
-    use super::{AccountPersistQueueState, EnqueueOutcome, PendingAccountWrite};
+    use super::{
+        AccountPersistBarrier, AccountPersistBarrierStatus, AccountPersistQueueState,
+        EnqueueOutcome, PendingAccountWrite,
+    };
 
     fn queue() -> &'static Mutex<AccountPersistQueueState> {
         static QUEUE: OnceLock<Mutex<AccountPersistQueueState>> = OnceLock::new();
@@ -235,6 +318,15 @@ mod wasm_driver {
             .unwrap_or_else(|poisoned| poisoned.into_inner())
     }
 
+    fn changes() -> &'static tokio::sync::watch::Sender<u64> {
+        static CHANGES: OnceLock<tokio::sync::watch::Sender<u64>> = OnceLock::new();
+        CHANGES.get_or_init(|| tokio::sync::watch::channel(0).0)
+    }
+
+    fn notify_change() {
+        changes().send_modify(|revision| *revision = revision.wrapping_add(1));
+    }
+
     /// Enqueue a durable persist of the account-state `json` under the frozen
     /// `account_key`. No-op before the IndexedDB tier is ready (fail closed:
     /// the value stays in the live `cached` state and is flushed by the boot
@@ -244,10 +336,27 @@ mod wasm_driver {
         if !crate::secure_key_store::wasm_secure_store_ready() {
             return;
         }
-        let outcome = lock().enqueue(account_key.clone(), json);
-        if matches!(outcome, EnqueueOutcome::StartDrain) {
+        let enqueued = lock().enqueue(account_key.clone(), json);
+        if matches!(enqueued.outcome, EnqueueOutcome::StartDrain) {
             wasm_bindgen_futures::spawn_local(drain_account(account_key));
         }
+    }
+
+    pub(crate) fn enqueue_account_state_persist_barrier(
+        account_key: String,
+        json: String,
+    ) -> anyhow::Result<AccountPersistBarrier> {
+        if !crate::secure_key_store::wasm_secure_store_ready() {
+            anyhow::bail!("secure account-state store is not ready");
+        }
+        let enqueued = lock().enqueue(account_key.clone(), json);
+        if matches!(enqueued.outcome, EnqueueOutcome::StartDrain) {
+            wasm_bindgen_futures::spawn_local(drain_account(account_key.clone()));
+        }
+        Ok(AccountPersistBarrier {
+            account_key,
+            seq: enqueued.seq,
+        })
     }
 
     /// The latest enqueued-but-not-yet-committed account-state JSON for
@@ -263,20 +372,25 @@ mod wasm_driver {
         loop {
             let next = { lock().take_next(&account_key) };
             let Some(PendingAccountWrite { seq, json }) = next else {
+                notify_change();
                 break;
             };
             let store = crate::secure_key_store::default_secure_key_store("inkson");
             match store.store_secret_durable(&account_key, &json).await {
                 Ok(()) => {
                     lock().record_committed(&account_key, seq);
+                    notify_change();
                 }
                 Err(error) => {
                     // The snapshot was removed from the queue but `cached` still
                     // holds it, so the next flush re-enqueues the latest state.
                     // Mirrors the fire-and-forget failure mode of the secure
                     // store's own sync writes.
+                    let error = error.to_string();
+                    lock().record_failed(&account_key, seq, error.clone());
+                    notify_change();
                     tracing::warn!(
-                        ?error,
+                        error = %error,
                         account_key = %account_key,
                         "account state durable IndexedDB persist failed (will retry on next flush)"
                     );
@@ -284,10 +398,33 @@ mod wasm_driver {
             }
         }
     }
+
+    pub(super) async fn wait_for_account_state_persist(
+        account_key: &str,
+        seq: u64,
+    ) -> anyhow::Result<()> {
+        let mut changes = changes().subscribe();
+        loop {
+            match lock().barrier_status(account_key, seq) {
+                AccountPersistBarrierStatus::Committed => return Ok(()),
+                AccountPersistBarrierStatus::Failed(error) => {
+                    anyhow::bail!("account state durable persist failed: {error}");
+                }
+                AccountPersistBarrierStatus::Pending => {
+                    changes.changed().await.map_err(|_| {
+                        anyhow::anyhow!("account state durable persist notifier closed")
+                    })?;
+                }
+            }
+        }
+    }
 }
 
 #[cfg(target_arch = "wasm32")]
-pub(crate) use wasm_driver::{enqueue_account_state_persist, pending_account_state_json};
+pub(crate) use wasm_driver::{
+    enqueue_account_state_persist, enqueue_account_state_persist_barrier,
+    pending_account_state_json,
+};
 
 // ── wasm boot-time migration + hydration ─────────────────────────────────
 
@@ -502,19 +639,14 @@ mod tests {
         let mut queue = AccountPersistQueueState::default();
         let key = "acct".to_owned();
 
-        assert_eq!(
-            queue.enqueue(key.clone(), "v1".to_owned()),
-            EnqueueOutcome::StartDrain
-        );
+        let first = queue.enqueue(key.clone(), "v1".to_owned());
+        assert_eq!(first.outcome, EnqueueOutcome::StartDrain);
+        assert_eq!(first.seq, 1);
         // Two more writes arrive before the drain starts consuming.
-        assert_eq!(
-            queue.enqueue(key.clone(), "v2".to_owned()),
-            EnqueueOutcome::AlreadyDraining
-        );
-        assert_eq!(
-            queue.enqueue(key.clone(), "v3".to_owned()),
-            EnqueueOutcome::AlreadyDraining
-        );
+        let second = queue.enqueue(key.clone(), "v2".to_owned());
+        assert_eq!(second.outcome, EnqueueOutcome::AlreadyDraining);
+        let third = queue.enqueue(key.clone(), "v3".to_owned());
+        assert_eq!(third.outcome, EnqueueOutcome::AlreadyDraining);
 
         // Read-your-writes: peek observes the latest pending snapshot before it
         // is drained to the durable backend.
@@ -523,7 +655,8 @@ mod tests {
         // The drain sees only the latest snapshot, with the latest sequence.
         let taken = queue.take_next(&key).expect("pending write");
         assert_eq!(taken.json, "v3");
-        assert_eq!(taken.seq, 2);
+        assert_eq!(taken.seq, third.seq);
+        assert!(first.seq < second.seq && second.seq < third.seq);
         // Once drained, nothing is pending to observe.
         assert!(queue.peek(&key).is_none());
         // Nothing else pending → drain ends and clears its flag.
@@ -535,18 +668,15 @@ mod tests {
         let mut queue = AccountPersistQueueState::default();
         let key = "acct".to_owned();
 
-        assert_eq!(
-            queue.enqueue(key.clone(), "v1".to_owned()),
-            EnqueueOutcome::StartDrain
-        );
+        let first = queue.enqueue(key.clone(), "v1".to_owned());
+        assert_eq!(first.outcome, EnqueueOutcome::StartDrain);
         assert_eq!(queue.take_next(&key).map(|w| w.json), Some("v1".to_owned()));
         assert!(queue.take_next(&key).is_none());
 
         // A write after the drain drained dry must start a fresh drain.
-        assert_eq!(
-            queue.enqueue(key.clone(), "v2".to_owned()),
-            EnqueueOutcome::StartDrain
-        );
+        let second = queue.enqueue(key.clone(), "v2".to_owned());
+        assert_eq!(second.outcome, EnqueueOutcome::StartDrain);
+        assert!(second.seq > first.seq);
     }
 
     #[test]
@@ -555,15 +685,11 @@ mod tests {
         let a = "acct-a".to_owned();
         let b = "acct-b".to_owned();
 
-        assert_eq!(
-            queue.enqueue(a.clone(), "a1".to_owned()),
-            EnqueueOutcome::StartDrain
-        );
+        let a_enqueued = queue.enqueue(a.clone(), "a1".to_owned());
+        assert_eq!(a_enqueued.outcome, EnqueueOutcome::StartDrain);
         // A different account starts its own independent drain.
-        assert_eq!(
-            queue.enqueue(b.clone(), "b1".to_owned()),
-            EnqueueOutcome::StartDrain
-        );
+        let b_enqueued = queue.enqueue(b.clone(), "b1".to_owned());
+        assert_eq!(b_enqueued.outcome, EnqueueOutcome::StartDrain);
 
         let a_write = queue.take_next(&a).expect("a pending");
         queue.record_committed(&a, a_write.seq);
@@ -574,5 +700,69 @@ mod tests {
         // A late lower sequence never lowers the high-water mark.
         queue.record_committed(&a, 0);
         assert_eq!(queue.committed_seq(&a), a_write.seq);
+    }
+
+    #[test]
+    fn barrier_is_satisfied_by_a_superseding_commit() {
+        let mut queue = AccountPersistQueueState::default();
+        let key = "acct".to_owned();
+        let first = queue.enqueue(key.clone(), "v1".to_owned());
+        let second = queue.enqueue(key.clone(), "v2".to_owned());
+
+        assert_eq!(
+            queue.barrier_status(&key, first.seq),
+            AccountPersistBarrierStatus::Pending
+        );
+        let write = queue.take_next(&key).expect("coalesced write");
+        assert_eq!(write.seq, second.seq);
+        queue.record_committed(&key, write.seq);
+
+        assert_eq!(
+            queue.barrier_status(&key, first.seq),
+            AccountPersistBarrierStatus::Committed
+        );
+        assert_eq!(
+            queue.barrier_status(&key, second.seq),
+            AccountPersistBarrierStatus::Committed
+        );
+    }
+
+    #[test]
+    fn barrier_reports_terminal_write_failure_after_drain_stops() {
+        let mut queue = AccountPersistQueueState::default();
+        let key = "acct".to_owned();
+        let enqueued = queue.enqueue(key.clone(), "v1".to_owned());
+        let write = queue.take_next(&key).expect("pending write");
+        queue.record_failed(&key, write.seq, "disk full".to_owned());
+
+        assert_eq!(
+            queue.barrier_status(&key, enqueued.seq),
+            AccountPersistBarrierStatus::Pending
+        );
+        assert!(queue.take_next(&key).is_none());
+        assert_eq!(
+            queue.barrier_status(&key, enqueued.seq),
+            AccountPersistBarrierStatus::Failed("disk full".to_owned())
+        );
+    }
+
+    #[test]
+    fn newer_commit_clears_an_older_terminal_failure() {
+        let mut queue = AccountPersistQueueState::default();
+        let key = "acct".to_owned();
+        let failed = queue.enqueue(key.clone(), "v1".to_owned());
+        let write = queue.take_next(&key).expect("first write");
+        queue.record_failed(&key, write.seq, "disk full".to_owned());
+        assert!(queue.take_next(&key).is_none());
+
+        let retry = queue.enqueue(key.clone(), "v2".to_owned());
+        let write = queue.take_next(&key).expect("retry write");
+        queue.record_committed(&key, write.seq);
+
+        assert!(retry.seq > failed.seq);
+        assert_eq!(
+            queue.barrier_status(&key, retry.seq),
+            AccountPersistBarrierStatus::Committed
+        );
     }
 }

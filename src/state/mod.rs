@@ -164,6 +164,30 @@ pub struct LocalStateStore {
     path: PathBuf,
 }
 
+pub(crate) struct LocalStatePersistBarrier {
+    inner: account_persist::AccountPersistBarrier,
+    persist_health: Arc<Mutex<Option<String>>>,
+}
+
+impl LocalStatePersistBarrier {
+    pub(crate) async fn wait(self) -> anyhow::Result<()> {
+        let result = self.inner.wait().await;
+        let mut health = self
+            .persist_health
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        match &result {
+            Ok(()) => {
+                health.take();
+            }
+            Err(error) => {
+                *health = Some(error.to_string());
+            }
+        }
+        result
+    }
+}
+
 fn realm_tree_projection_value_is_mls_encrypted(body: &Value) -> bool {
     fn normalized_profile(value: &str) -> String {
         value.trim().to_ascii_lowercase().replace(['-', ' '], "_")
@@ -409,6 +433,45 @@ impl LocalStateStore {
         let result = self.write_persisted_state(&self.effective_state_for_persist());
         self.record_persist_result(&result);
         result
+    }
+
+    /// Freeze the active account's current state into the single-writer queue
+    /// and return a barrier that resolves only after that sequence (or a newer
+    /// coalesced snapshot) is durably committed. Remote acknowledgements and
+    /// post-accept actions must await this instead of treating a wasm enqueue
+    /// as a completed IndexedDB write.
+    pub(crate) fn begin_durable_flush(&self) -> anyhow::Result<LocalStatePersistBarrier> {
+        if self.flush_suspended > 0 {
+            anyhow::bail!("cannot begin a durable state barrier inside a state batch");
+        }
+
+        #[cfg(not(target_arch = "wasm32"))]
+        let inner = {
+            self.flush()?;
+            account_persist::AccountPersistBarrier::ready()
+        };
+
+        #[cfg(target_arch = "wasm32")]
+        let inner = {
+            let state = e2ee_safe_persist_state(&self.effective_state_for_persist());
+            let json = serde_json::to_string(&state)?;
+            match account_persist::enqueue_account_state_persist_barrier(
+                account_state_key(&self.effective_account_key()),
+                json,
+            ) {
+                Ok(barrier) => barrier,
+                Err(error) => {
+                    tracing::error!(%error, "local state durable barrier enqueue failed");
+                    *self.lock_persist_health() = Some(error.to_string());
+                    return Err(error);
+                }
+            }
+        };
+
+        Ok(LocalStatePersistBarrier {
+            inner,
+            persist_health: Arc::clone(&self.persist_health),
+        })
     }
 
     /// YOU-02-004 — the state every persist must write: `cached` with the

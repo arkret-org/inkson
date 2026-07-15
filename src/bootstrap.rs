@@ -711,6 +711,16 @@ pub(crate) async fn bootstrap_mls_welcome_for_realm(
     }
 
     let applied = welcome_outcome.applied;
+    if applied > 0 || welcome_outcome.skipped_stale > 0 {
+        let barrier = state_store
+            .read()
+            .begin_durable_flush()
+            .map_err(|error| format!("begin durable MLS Welcome persist: {error}"))?;
+        barrier
+            .wait()
+            .await
+            .map_err(|error| format!("persist MLS Welcome state: {error}"))?;
+    }
     if applied == 0 && welcome_outcome.skipped_stale == 0 {
         return Ok(MlsWelcomeBootstrapOutcome::default());
     }

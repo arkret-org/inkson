@@ -1587,13 +1587,22 @@ pub fn apply_response(
     }
 }
 
-/// R3.1 MID-2 — walk a Realm projection's `members[]` roster looking
-/// for inlined `identity_events[]` arrays. Each
-/// `ak.member.identity.update` envelope is recorded on the
-/// `LocalStateStore` keyed by `(realm_id, actor_id)`. Also handles the
-/// canonical `state.events[]` form where the roster only carries
-/// `identity_event_ids[]` and the events themselves live in the
-/// frame-level event log.
+/// Freeze the current account state and wait until IndexedDB confirms the
+/// corresponding queue sequence before performing a destructive remote ACK.
+async fn await_account_state_durable(
+    ctx: &SyncEngineContext,
+    operation: &str,
+) -> anyhow::Result<()> {
+    let barrier = ctx
+        .state_store
+        .read(|store| store.begin_durable_flush())
+        .map_err(|error| anyhow::anyhow!("begin durable {operation}: {error}"))?;
+    barrier
+        .wait()
+        .await
+        .map_err(|error| anyhow::anyhow!("persist {operation}: {error}"))
+}
+
 async fn process_to_device_delivery(
     api: &TransportClient,
     response: &AccountSyncStep,
@@ -1609,6 +1618,7 @@ async fn process_to_device_delivery(
         && !response.updates.to_device.is_empty()
         && let Some(ack_token) = response.updates.to_device_ack_token.as_deref()
     {
+        await_account_state_durable(ctx, "account to-device batch before ACK").await?;
         keys.ack_device_messages(ack_token).await?;
     }
 
@@ -1640,6 +1650,7 @@ async fn process_to_device_delivery(
             && !messages.is_empty()
             && let Some(ack_token) = page.ack_token.as_deref()
         {
+            await_account_state_durable(ctx, "paginated to-device batch before ACK").await?;
             keys.ack_device_messages(ack_token).await?;
         }
         if !(page.has_more || page.limited) {
@@ -1687,6 +1698,7 @@ async fn ingest_device_message_pages(
             && !messages.is_empty()
             && let Some(ack_token) = page.ack_token.as_deref()
         {
+            await_account_state_durable(ctx, "polled to-device batch before ACK").await?;
             keys.ack_device_messages(ack_token).await?;
         }
         if !(page.has_more || page.limited) {
