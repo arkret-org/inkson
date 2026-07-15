@@ -130,10 +130,13 @@ pub enum RefreshOutcome {
     /// observed.
     NoGrant,
     /// Nothing to do; the current grant is still fresh.
-    #[cfg_attr(not(test), expect(
-        dead_code,
-        reason = "test-only refresh driver returns Fresh; production checks refresh_decision before forced rotation"
-    ))]
+    #[cfg_attr(
+        not(test),
+        expect(
+            dead_code,
+            reason = "test-only refresh driver returns Fresh; production checks refresh_decision before forced rotation"
+        )
+    )]
     Fresh,
     /// The grant was rotated. `session_credential` carries the live
     /// `ak.session.grant` JWT; caller swaps it into the in-memory credential
