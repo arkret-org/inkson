@@ -591,7 +591,7 @@ mod tests {
             // must carry a concrete auth mode.
             "auth_metadata": {"mode": "development"},
             "limits": {},
-            "plaintext_visibility": {"default": "encrypted"},
+            "plaintext_visibility": {"data_classes": [], "max_visibility": "none"},
             "implemented_features": [],
             "claimed_profiles": [],
             "verified_profiles": [],

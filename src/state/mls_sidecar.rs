@@ -94,7 +94,11 @@ impl LocalStateStore {
             crate::secure_key_store::load_realm_history_secrets(realm_id).unwrap_or_default();
         if let Some(inline) = self.load().history_secrets.get(realm_id) {
             for (epoch, secret) in inline {
-                merged.entry(*epoch).or_insert_with(|| secret.clone());
+                // The in-process copy is the value most recently accepted by
+                // this client. It must override a stale durable value when the
+                // preceding secure-store write failed after an older value had
+                // already been persisted.
+                merged.insert(*epoch, secret.clone());
             }
         }
         merged.into_iter().collect()
@@ -103,19 +107,24 @@ impl LocalStateStore {
     /// The installed `history_secret` for an exact `(realm, epoch)`, if any.
     pub fn history_secret_for(&self, realm_id: &str, epoch: u64) -> Option<Vec<u8>> {
         let realm_id = realm_id.trim();
-        // E2EE-at-rest: prefer the hardened secure store, falling back to a
-        // same-process inline entry only when durable secure storage is
-        // unavailable.
+        // The in-process copy is newer than any durable value read after a
+        // failed secure-store update, so consult it first. It is never written
+        // into account-state JSON; the hardened store remains the restart
+        // source of truth.
+        if let Some(secret) = self
+            .load()
+            .history_secrets
+            .get(realm_id)
+            .and_then(|by_epoch| by_epoch.get(&epoch))
+        {
+            return Some(secret.clone());
+        }
         if let Some(by_epoch) = crate::secure_key_store::load_realm_history_secrets(realm_id)
             && let Some(secret) = by_epoch.get(&epoch)
         {
             return Some(secret.clone());
         }
-        self.load()
-            .history_secrets
-            .get(realm_id)
-            .and_then(|by_epoch| by_epoch.get(&epoch))
-            .cloned()
+        None
     }
 
     /// Snapshot of every persisted MLS envelope. Used by the boot

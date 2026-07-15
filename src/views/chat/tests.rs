@@ -346,7 +346,10 @@ fn chat_message_create_operation_emits_schema_canonical_content() {
     assert!(op.payload.get("thread_id").is_none());
     arkret_sdk::schema::event_payload_validator_catalog()
         .unwrap()
-        .validate_payload(op.kind.as_str(), &serde_json::to_value(&op.payload).unwrap())
+        .validate_payload(
+            op.kind.as_str(),
+            &serde_json::to_value(&op.payload).unwrap(),
+        )
         .unwrap();
 }
 
@@ -390,7 +393,10 @@ fn chat_message_create_operation_keeps_public_update_notification_projection_out
     );
     arkret_sdk::schema::event_payload_validator_catalog()
         .unwrap()
-        .validate_payload(op.kind.as_str(), &serde_json::to_value(&op.payload).unwrap())
+        .validate_payload(
+            op.kind.as_str(),
+            &serde_json::to_value(&op.payload).unwrap(),
+        )
         .unwrap();
 }
 
@@ -421,7 +427,10 @@ fn chat_message_create_operation_with_expiry_puts_contract_at_payload_top_level(
     assert!(op.payload["content"].get("expiry").is_none());
     arkret_sdk::schema::event_payload_validator_catalog()
         .unwrap()
-        .validate_payload(op.kind.as_str(), &serde_json::to_value(&op.payload).unwrap())
+        .validate_payload(
+            op.kind.as_str(),
+            &serde_json::to_value(&op.payload).unwrap(),
+        )
         .unwrap();
 }
 
@@ -449,7 +458,10 @@ fn chat_message_create_operation_embeds_audience_mentions_in_content_only() {
     assert!(op.payload.get("mention_relations").is_none());
     arkret_sdk::schema::event_payload_validator_catalog()
         .unwrap()
-        .validate_payload(op.kind.as_str(), &serde_json::to_value(&op.payload).unwrap())
+        .validate_payload(
+            op.kind.as_str(),
+            &serde_json::to_value(&op.payload).unwrap(),
+        )
         .unwrap();
 }
 
@@ -500,7 +512,10 @@ fn chat_message_create_operation_embeds_agent_selector_mention_metadata() {
     assert!(op.payload.get("mentions").is_none());
     arkret_sdk::schema::event_payload_validator_catalog()
         .unwrap()
-        .validate_payload(op.kind.as_str(), &serde_json::to_value(&op.payload).unwrap())
+        .validate_payload(
+            op.kind.as_str(),
+            &serde_json::to_value(&op.payload).unwrap(),
+        )
         .unwrap();
 }
 
@@ -552,7 +567,10 @@ fn chat_message_create_operation_includes_reply_fields_only_when_present() {
     assert!(op.payload.get("thread_id").is_none());
     arkret_sdk::schema::event_payload_validator_catalog()
         .unwrap()
-        .validate_payload(op.kind.as_str(), &serde_json::to_value(&op.payload).unwrap())
+        .validate_payload(
+            op.kind.as_str(),
+            &serde_json::to_value(&op.payload).unwrap(),
+        )
         .unwrap();
 }
 
@@ -668,7 +686,10 @@ fn shared_pin_operations_use_pin_events_not_account_data() {
     assert!(remove.payload.get("key").is_none());
     arkret_sdk::schema::event_payload_validator_catalog()
         .unwrap()
-        .validate_payload(add.kind.as_str(), &serde_json::to_value(&add.payload).unwrap())
+        .validate_payload(
+            add.kind.as_str(),
+            &serde_json::to_value(&add.payload).unwrap(),
+        )
         .unwrap();
     arkret_sdk::schema::event_payload_validator_catalog()
         .unwrap()
@@ -700,7 +721,10 @@ fn default_discussion_shared_pin_uses_realm_scope() {
     assert_eq!(add.payload["target_ref"], target_ref);
     arkret_sdk::schema::event_payload_validator_catalog()
         .unwrap()
-        .validate_payload(add.kind.as_str(), &serde_json::to_value(&add.payload).unwrap())
+        .validate_payload(
+            add.kind.as_str(),
+            &serde_json::to_value(&add.payload).unwrap(),
+        )
         .unwrap();
 }
 
@@ -3302,7 +3326,10 @@ fn chat_message_revise_operation_uses_schema_target_ref() {
     assert!(op.payload.get("target_event_id").is_none());
     arkret_sdk::schema::event_payload_validator_catalog()
         .unwrap()
-        .validate_payload(op.kind.as_str(), &serde_json::to_value(&op.payload).unwrap())
+        .validate_payload(
+            op.kind.as_str(),
+            &serde_json::to_value(&op.payload).unwrap(),
+        )
         .unwrap();
 }
 
@@ -3329,7 +3356,10 @@ fn chat_message_revise_operation_addresses_message_target_via_message_id() {
     assert_eq!(op.payload["content"]["body"], "edited");
     arkret_sdk::schema::event_payload_validator_catalog()
         .unwrap()
-        .validate_payload(op.kind.as_str(), &serde_json::to_value(&op.payload).unwrap())
+        .validate_payload(
+            op.kind.as_str(),
+            &serde_json::to_value(&op.payload).unwrap(),
+        )
         .unwrap();
 }
 
@@ -3351,7 +3381,10 @@ fn chat_message_redact_operation_uses_event_target_for_event_id() {
     assert!(op.payload.get("message_id").is_none());
     arkret_sdk::schema::event_payload_validator_catalog()
         .unwrap()
-        .validate_payload(op.kind.as_str(), &serde_json::to_value(&op.payload).unwrap())
+        .validate_payload(
+            op.kind.as_str(),
+            &serde_json::to_value(&op.payload).unwrap(),
+        )
         .unwrap();
 }
 
@@ -3373,7 +3406,10 @@ fn chat_message_redact_operation_uses_message_id_for_message_target() {
     assert!(op.payload.get("target_event_id").is_none());
     arkret_sdk::schema::event_payload_validator_catalog()
         .unwrap()
-        .validate_payload(op.kind.as_str(), &serde_json::to_value(&op.payload).unwrap())
+        .validate_payload(
+            op.kind.as_str(),
+            &serde_json::to_value(&op.payload).unwrap(),
+        )
         .unwrap();
 }
 
@@ -3396,7 +3432,10 @@ fn chat_reaction_add_operation_uses_schema_target_ref() {
     assert!(op.payload.get("actor").is_none());
     arkret_sdk::schema::event_payload_validator_catalog()
         .unwrap()
-        .validate_payload(op.kind.as_str(), &serde_json::to_value(&op.payload).unwrap())
+        .validate_payload(
+            op.kind.as_str(),
+            &serde_json::to_value(&op.payload).unwrap(),
+        )
         .unwrap();
 }
 

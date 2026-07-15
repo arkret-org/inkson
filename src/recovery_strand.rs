@@ -852,8 +852,8 @@ mod tests {
         let replacement =
             arkret_sdk::identity_root::derive_identity_recovery_key_material_from_bip39(
                 "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon art",
-                "",
-                1,
+                "replacement",
+                0,
             )
             .expect("replacement generation");
         let error =

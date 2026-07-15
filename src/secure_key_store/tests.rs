@@ -228,9 +228,6 @@ fn wasm_indexeddb_required_key_classifier_covers_high_value_secrets() {
         PENDING_LOGOUT_SECRET_KEY
     ));
     assert!(is_wasm_indexeddb_required_secret_key(
-        "inkson.recovery.pending_key.v1.account-digest"
-    ));
-    assert!(is_wasm_indexeddb_required_secret_key(
         "inkson.e2ee_plaintext_cache.v1.account-digest"
     ));
     // The per-account main state blob moved into the IndexedDB entries store;

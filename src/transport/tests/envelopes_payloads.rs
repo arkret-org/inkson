@@ -297,19 +297,19 @@ fn space_bootstrap_events_use_canonical_create_and_facet_kinds() {
     assert_eq!(create.payload["object"]["notary"]["type"], "single_did");
     assert_eq!(
         create.payload["object"]["notary"]["did"],
-        create.actor_id.as_str()
+        "did:web:server.example"
     );
     assert_eq!(
         create.payload["object"]["notary"]["recovery_members"][0],
-        "did:web:alice.example:recovery:notary",
+        "did:web:server.example:recovery:notary",
     );
     assert_eq!(
         create.payload["object"]["notary"]["controller_organization"],
-        "did:web:alice.example",
+        "did:web:server.example",
     );
     assert_eq!(
         create.payload["object"]["notary"]["recovery_controller_organizations"][0],
-        "did:web:alice.example:recovery",
+        "did:web:server.example:recovery",
     );
     assert_eq!(
         create.effects[0].cell.to_string(),

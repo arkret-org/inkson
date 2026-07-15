@@ -149,9 +149,9 @@ fn mls_snapshot_remains_post_accept() {
         .unwrap_or_else(|error| panic!("failed to read {}: {error}", submit_path.display()));
     assert!(
         submit.contains("PostAcceptAction::MlsSnapshot")
-            && submit.contains("submit_next_with_hook")
+            && submit.contains("submit_next_with_fence_and_hook")
             && submit.contains("drain_mls_outbound"),
-        "MLS snapshot must be a durable post-accept action resumed by account sync"
+        "MLS snapshot must be a generation-fenced durable post-accept action resumed by account sync"
     );
 
     let path = manifest.join("src/views/kanban/mls_encrypt.rs");

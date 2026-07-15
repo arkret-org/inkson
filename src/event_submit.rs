@@ -1707,7 +1707,7 @@ mod tests {
             "supported_features": ["ak.feature.soland.events.describe"],
             "auth_metadata": {"mode": "development"},
             "limits": {},
-            "plaintext_visibility": {"default": "encrypted"},
+            "plaintext_visibility": {"data_classes": [], "max_visibility": "none"},
             "implemented_features": ["ak.feature.soland.events.describe"],
             "claimed_profiles": [],
             "verified_profiles": [],

@@ -125,7 +125,7 @@ pub fn pairing_request_body(
     )
     .map_err(anyhow::Error::msg)?;
     let new_device_pubkey = match payload.get("new_device_pubkey") {
-        Some(value @ Value::Object(_)) => serde_json::from_value(value.clone())?,
+        Some(value @ Value::Object(_)) => pairing_gate_public_key(value)?,
         _ => anyhow::bail!("pairing payload is missing new_device_pubkey"),
     };
     let challenge_signature = arkret_sdk::Base64UrlString::new(
@@ -158,6 +158,44 @@ pub fn pairing_request_body(
     })
 }
 
+fn pairing_gate_public_key(value: &Value) -> anyhow::Result<arkret_sdk::PublicKey> {
+    if value.get("kty").is_some() || value.get("key").is_some() {
+        return serde_json::from_value(value.clone()).map_err(Into::into);
+    }
+
+    let object = value
+        .as_object()
+        .ok_or_else(|| anyhow::anyhow!("new_device_pubkey must be an object"))?;
+    let kid = object
+        .get("kid")
+        .and_then(Value::as_str)
+        .ok_or_else(|| anyhow::anyhow!("new_device_pubkey is missing kid"))?;
+    let alg = object
+        .get("alg")
+        .and_then(Value::as_str)
+        .ok_or_else(|| anyhow::anyhow!("new_device_pubkey is missing alg"))?;
+    let key = object
+        .get("public_key")
+        .and_then(Value::as_str)
+        .ok_or_else(|| anyhow::anyhow!("new_device_pubkey is missing public_key"))?;
+    let kty = match alg {
+        "Ed25519" | "EdDSA" => "OKP",
+        _ => anyhow::bail!(
+            "new_device_pubkey alg `{alg}` cannot be mapped to a gate public-key type"
+        ),
+    };
+    let mut gate_value = json!({
+        "kty": kty,
+        "kid": kid,
+        "alg": alg,
+        "key": key,
+    });
+    if let Some(key_digest) = object.get("key_digest") {
+        gate_value["key_digest"] = key_digest.clone();
+    }
+    serde_json::from_value(gate_value).map_err(Into::into)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -175,7 +213,7 @@ mod tests {
                 "pairing_code": "384921",
                 "new_device_pubkey": {
                     "kid": "ak:device:01904100-0000-7000-8000-000000000001",
-                    "alg": "EdDSA",
+                    "alg": "Ed25519",
                     "public_key": "abc-123"
                 },
                 "challenge_signature": "challenge-signature",
@@ -246,6 +284,8 @@ mod tests {
         assert_eq!(body.pairing_code.as_str(), "384921");
         assert_eq!(body.challenge_signature.as_str(), "challenge-signature");
         assert_eq!(body.display_name.as_deref(), Some("New browser"));
+        assert_eq!(body.new_device_pubkey.kty.as_str(), "OKP");
+        assert_eq!(body.new_device_pubkey.key.as_str(), "abc-123");
         assert_eq!(
             body.new_device_pubkey.kid.as_str(),
             "ak:device:01904100-0000-7000-8000-000000000001"

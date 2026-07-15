@@ -2590,17 +2590,24 @@ mod tests {
             }),
         );
         let mut response = empty_response("ak:cursor:account-adapter");
-        response.realm_projections.insert(
-            sdk_realm_id().as_str().to_owned(),
-            json!({
-                "timeline": {
-                    "events": [serde_json::to_value(message_event).unwrap()],
-                    "limited": false
-                },
-                "state": [serde_json::to_value(state_event).unwrap()],
-                "summary": {}
-            }),
-        );
+        let realm_id = sdk_realm_id();
+        let projection = json!({
+            "timeline": {
+                "events": [serde_json::to_value(message_event).unwrap()],
+                "limited": false
+            },
+            "state": {"events": [serde_json::to_value(state_event).unwrap()]},
+            "summary": {}
+        });
+        let entry: arkret_sdk::RealmSyncEntry =
+            serde_json::from_value(projection.clone()).expect("typed Realm sync entry");
+        response
+            .realm_projections
+            .insert(realm_id.as_str().to_owned(), projection);
+        response
+            .updates
+            .realm_updates
+            .push(arkret_sdk::RealmUpdate { realm_id, entry });
 
         let projector = AccountClientEventProjector::default();
         project_account_response_client_events(&response, &InboundDecoder::new(), &projector)

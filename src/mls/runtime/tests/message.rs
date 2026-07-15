@@ -1059,6 +1059,9 @@ fn tier3_history_decrypt_reads_provider_exporter_aead_content() {
     let bob_actor = "did:web:bob.example";
     let bob_device = "ak:device:01904100-0000-7000-8000-0000000000f2";
     let alice_device = "ak:device:01904100-0000-7000-8000-0000000000a1";
+    let history_store = crate::secure_key_store::default_secure_key_store("inkson");
+    let history_key = crate::secure_key_store::mls_history_secret_store_key(realm);
+    let _ = history_store.delete_secret(&history_key);
 
     // Bob holds a join-epoch snapshot (so `decrypt_application_payload` can
     // instantiate a group), but cannot ratchet to alice's exporter-aead content.
@@ -1124,6 +1127,7 @@ fn tier3_history_decrypt_reads_provider_exporter_aead_content() {
         decrypt_application_payload(&state, &secure, realm, bob_actor, bob_device, &payload)
             .expect("tier-3 history decrypt opens pre-join content");
     assert_eq!(decrypted, plaintext);
+    let _ = history_store.delete_secret(&history_key);
 }
 
 #[cfg(not(target_arch = "wasm32"))]

@@ -5482,7 +5482,10 @@ mod tests {
 
     const PROVIDER_DID: &str = "did:web:provider.example";
     const SELF_DID: &str = "did:web:self.example";
+    const SELF_DEVICE: &str = "ak:device:01904100-0000-7000-8000-0000000000bb";
     const PROVIDER_DEVICE: &str = "ak:device:01904100-0000-7000-8000-0000000000aa";
+    const TEST_REALM: &str = "ak:realm:01904100-0000-7000-8000-0000000000ab";
+    const OTHER_REALM: &str = "ak:realm:01904100-0000-7000-8000-0000000000ac";
 
     #[test]
     fn plans_request_when_prejoin_gap_and_provider_exist() {
@@ -5547,21 +5550,21 @@ mod tests {
                 "kind": "ak.mls.welcome",
                 "sender": PROVIDER_DID,
                 "sender_device_id": PROVIDER_DEVICE,
-                "content": { "realm_id": "ak:realm:abc" },
+                "content": { "realm_id": TEST_REALM },
             }),
             // A self-authored message must never name ourselves as provider.
             json!({
                 "kind": "ak.mls.commit",
                 "sender": SELF_DID,
-                "sender_device_id": "ak:device:self",
-                "realm_id": "ak:realm:abc",
+                "sender_device_id": SELF_DEVICE,
+                "realm_id": TEST_REALM,
             }),
             // Unrelated kind is ignored.
             json!({
                 "kind": "ak.typing",
                 "sender": "did:web:noise.example",
                 "sender_device_id": "ak:device:noise",
-                "realm_id": "ak:realm:abc",
+                "realm_id": TEST_REALM,
             }),
             // A message for a different realm is filtered out.
             json!({
@@ -5571,7 +5574,7 @@ mod tests {
                 "realm_id": "ak:realm:zzz",
             }),
         ];
-        let candidates = provider_candidates_from_inbox(&inbox, "ak:realm:abc", SELF_DID);
+        let candidates = provider_candidates_from_inbox(&inbox, TEST_REALM, SELF_DID);
         assert_eq!(
             candidates,
             vec![(PROVIDER_DID.to_owned(), PROVIDER_DEVICE.to_owned())]
@@ -5585,16 +5588,16 @@ mod tests {
                 "kind": "ak.mls.welcome",
                 "sender": PROVIDER_DID,
                 "sender_device_id": PROVIDER_DEVICE,
-                "realm_id": "ak:realm:abc",
+                "realm_id": TEST_REALM,
             }),
             json!({
                 "kind": "ak.realm_key.share",
                 "sender": PROVIDER_DID,
                 "sender_device_id": PROVIDER_DEVICE,
-                "realm_id": "ak:realm:abc",
+                "realm_id": TEST_REALM,
             }),
         ];
-        let candidates = provider_candidates_from_inbox(&inbox, "ak:realm:abc", SELF_DID);
+        let candidates = provider_candidates_from_inbox(&inbox, TEST_REALM, SELF_DID);
         assert_eq!(candidates.len(), 1);
     }
 
@@ -5605,14 +5608,14 @@ mod tests {
             "sender_principal_id": PROVIDER_DID,
             "sender_device_id": PROVIDER_DEVICE,
             "recipient_principal_id": SELF_DID,
-            "recipient_device_id": "ak:device:self",
+            "recipient_device_id": SELF_DEVICE,
             "sent_at": "2026-07-05T00:00:00Z",
             "expires_at": "2099-07-05T00:01:00Z",
             "content": {
                 "group_id": "test-group",
                 "epoch": 1,
                 "recipient_principal_id": SELF_DID,
-                "recipient_device_id": "ak:device:self",
+                "recipient_device_id": SELF_DEVICE,
                 "welcome": "b3BhcXVl",
                 "welcome_hash": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
             },
@@ -5623,7 +5626,7 @@ mod tests {
             }
         })];
 
-        let candidates = provider_candidates_from_inbox(&inbox, "ak:realm:abc", SELF_DID);
+        let candidates = provider_candidates_from_inbox(&inbox, TEST_REALM, SELF_DID);
 
         assert_eq!(
             candidates,
@@ -5633,7 +5636,7 @@ mod tests {
 
     #[test]
     fn pending_history_key_request_uses_projected_shared_realm_and_welcome_provider() {
-        let realm = "ak:realm:abc";
+        let realm = TEST_REALM;
         let mut store = temp_store("pending-history-key-request");
         store.save_realm_tree_projection(
             realm,
@@ -5654,14 +5657,14 @@ mod tests {
             "sender_principal_id": PROVIDER_DID,
             "sender_device_id": PROVIDER_DEVICE,
             "recipient_principal_id": SELF_DID,
-            "recipient_device_id": "ak:device:self",
+            "recipient_device_id": SELF_DEVICE,
             "sent_at": "2026-07-05T00:00:00Z",
             "expires_at": "2099-07-05T00:01:00Z",
             "content": {
                 "group_id": "test-group",
                 "epoch": 1,
                 "recipient_principal_id": SELF_DID,
-                "recipient_device_id": "ak:device:self",
+                "recipient_device_id": SELF_DEVICE,
                 "welcome": "b3BhcXVl",
                 "welcome_hash": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
             }
@@ -5671,12 +5674,12 @@ mod tests {
         let key = pending_history_request_dedup_key(&store, realm, SELF_DID)
             .expect("shared pre-join gap with a Welcome provider should request history keys");
 
-        assert!(key.contains("ak:realm:abc|0|0|"), "{key}");
+        assert!(key.contains(&format!("{TEST_REALM}|0|0|")), "{key}");
     }
 
     #[test]
     fn parses_projected_realm_key_request_payload_envelope() {
-        let realm = "ak:realm:abc";
+        let realm = TEST_REALM;
         let request = arkret_sdk::RealmKeyRequestPayload {
             key_scope: arkret_sdk::RealmKeyRequestScope {
                 effective_scope: arkret_sdk::models::EffectiveScope::Realm {
@@ -5689,7 +5692,7 @@ mod tests {
                 history_visibility: None,
             },
             recipient_principal_id: arkret_sdk::Did::new(SELF_DID.to_owned()).unwrap(),
-            recipient_device_id: arkret_sdk::DeviceId::new("ak:device:self").unwrap(),
+            recipient_device_id: arkret_sdk::DeviceId::new(SELF_DEVICE).unwrap(),
             recipient_hpke_public_key: arkret_sdk::NonEmptyString::new(
                 "Ikuf_h0tiOTpwnUEEZZeY4p_OIaixaYHYcT6GnmJOmE",
             )
@@ -5707,7 +5710,7 @@ mod tests {
             "kind": "ak.realm_key.request",
             "realm_id": realm,
             "request_id": "sha256:5e54ee81d9debde1e0a09f20e0c7bc282f511e5ccb6c1e41d75f07018db835e9",
-            "sender_device_id": "ak:device:self",
+            "sender_device_id": SELF_DEVICE,
             "payload": request,
         });
 
@@ -5726,7 +5729,7 @@ mod tests {
 
     #[test]
     fn realm_key_request_answer_dedup_key_prefers_request_id() {
-        let realm = "ak:realm:abc";
+        let realm = TEST_REALM;
         let request = arkret_sdk::RealmKeyRequestPayload {
             key_scope: arkret_sdk::RealmKeyRequestScope {
                 effective_scope: arkret_sdk::models::EffectiveScope::Realm {
@@ -5739,7 +5742,7 @@ mod tests {
                 history_visibility: None,
             },
             recipient_principal_id: arkret_sdk::Did::new(SELF_DID.to_owned()).unwrap(),
-            recipient_device_id: arkret_sdk::DeviceId::new("ak:device:self").unwrap(),
+            recipient_device_id: arkret_sdk::DeviceId::new(SELF_DEVICE).unwrap(),
             recipient_hpke_public_key: arkret_sdk::NonEmptyString::new(
                 "Ikuf_h0tiOTpwnUEEZZeY4p_OIaixaYHYcT6GnmJOmE",
             )
@@ -5769,7 +5772,7 @@ mod tests {
 
     #[test]
     fn realm_key_request_answer_dedup_key_falls_back_to_payload() {
-        let realm = "ak:realm:abc";
+        let realm = TEST_REALM;
         let request = arkret_sdk::RealmKeyRequestPayload {
             key_scope: arkret_sdk::RealmKeyRequestScope {
                 effective_scope: arkret_sdk::models::EffectiveScope::Realm {
@@ -5782,7 +5785,7 @@ mod tests {
                 history_visibility: None,
             },
             recipient_principal_id: arkret_sdk::Did::new(SELF_DID.to_owned()).unwrap(),
-            recipient_device_id: arkret_sdk::DeviceId::new("ak:device:self").unwrap(),
+            recipient_device_id: arkret_sdk::DeviceId::new(SELF_DEVICE).unwrap(),
             recipient_hpke_public_key: arkret_sdk::NonEmptyString::new(
                 "Ikuf_h0tiOTpwnUEEZZeY4p_OIaixaYHYcT6GnmJOmE",
             )
@@ -5804,8 +5807,10 @@ mod tests {
         let parsed = parse_realm_key_request_envelope(&envelope).unwrap();
         let key = realm_key_request_answer_dedup_key(&parsed);
 
-        assert!(key.contains("scope:ak:realm:abc|target:did:web:provider.example|"));
-        assert!(key.contains("|recipient:did:web:self.example|ak:device:self|"));
+        assert!(key.contains(&format!(
+            "scope:{TEST_REALM}|target:did:web:provider.example|"
+        )));
+        assert!(key.contains(&format!("|recipient:did:web:self.example|{SELF_DEVICE}|")));
         assert!(key.contains("|range:1..3|"));
     }
 
@@ -5814,7 +5819,7 @@ mod tests {
         let request = arkret_sdk::RealmKeyRequestPayload {
             key_scope: arkret_sdk::RealmKeyRequestScope {
                 effective_scope: arkret_sdk::models::EffectiveScope::Realm {
-                    realm_id: arkret_sdk::RealmId::new("ak:realm:abc").unwrap(),
+                    realm_id: arkret_sdk::RealmId::new(TEST_REALM).unwrap(),
                 },
                 policy_digest: None,
                 membership_frontier_digest: None,
@@ -5823,7 +5828,7 @@ mod tests {
                 history_visibility: None,
             },
             recipient_principal_id: arkret_sdk::Did::new(SELF_DID.to_owned()).unwrap(),
-            recipient_device_id: arkret_sdk::DeviceId::new("ak:device:self").unwrap(),
+            recipient_device_id: arkret_sdk::DeviceId::new(SELF_DEVICE).unwrap(),
             recipient_hpke_public_key: arkret_sdk::NonEmptyString::new(
                 "Ikuf_h0tiOTpwnUEEZZeY4p_OIaixaYHYcT6GnmJOmE",
             )
@@ -5839,7 +5844,7 @@ mod tests {
         };
         let envelope = json!({
             "kind": "ak.realm_key.request",
-            "realm_id": "ak:realm:other",
+            "realm_id": OTHER_REALM,
             "payload": request,
         });
 

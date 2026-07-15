@@ -460,7 +460,7 @@ mod tests {
             realm,
             7,
             8,
-            json!("sha256:policy"),
+            json!("sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"),
             "ak:device:01904100-0000-7000-8000-00000000ae01",
             "ak:event:01904100-0000-7000-8000-00000000ae02",
             json!({}),
