@@ -3054,6 +3054,9 @@ fn default_discussion_channel_synthesizes_default_strand_when_projection_is_abse
 
 #[test]
 fn presence_maps_from_sync_events_prefers_account_subscribe_presence() {
+    let now = chrono::Utc::now();
+    let sent_at = now - chrono::Duration::seconds(5);
+    let expires_at = now + chrono::Duration::seconds(55);
     let participants = vec![
         "did:web:alice.example".to_owned(),
         "did:web:bob.example".to_owned(),
@@ -3061,14 +3064,19 @@ fn presence_maps_from_sync_events_prefers_account_subscribe_presence() {
     ];
     let events = vec![
         json!({
+            "kind": "ak.presence",
             "actor_id": "did:web:bob.example",
-            "state": "online",
-            "status_message": "On vacation until May 5",
-            "updated_at": "2026-05-29T04:12:43Z"
+            "device_id": "ak:device:bob",
+            "sent_at": sent_at,
+            "expires_at": expires_at,
+            "payload": {
+                "state": "online",
+                "status_message": "On vacation until May 5",
+                "ttl_ms": 60000
+            }
         }),
         json!({
             "actor_id": "did:web:carol.example",
-            // Projection field names (`status` / `presence`) resolve too;
             // Matrix-legacy `unavailable` fails closed to offline.
             "status": "unavailable"
         }),
@@ -3103,6 +3111,63 @@ fn presence_maps_from_sync_events_prefers_account_subscribe_presence() {
         Some(&"On vacation until May 5".to_owned())
     );
     assert!(!states.contains_key("did:web:mallory.example"));
+}
+
+#[test]
+fn presence_maps_from_sync_events_aggregates_live_device_envelopes() {
+    let now = chrono::Utc::now();
+    let participants = vec![
+        "did:web:alice.example".to_owned(),
+        "did:web:bob.example".to_owned(),
+    ];
+    let events = vec![
+        json!({
+            "kind": "ak.presence",
+            "actor_id": "did:web:bob.example",
+            "device_id": "ak:device:bob-a",
+            "sent_at": now - chrono::Duration::seconds(20),
+            "expires_at": now + chrono::Duration::seconds(40),
+            "payload": {
+                "state": "dnd",
+                "status_message": "Heads down",
+                "ttl_ms": 60000
+            }
+        }),
+        json!({
+            "kind": "ak.presence",
+            "actor_id": "did:web:bob.example",
+            "device_id": "ak:device:bob-b",
+            "sent_at": now - chrono::Duration::seconds(10),
+            "expires_at": now + chrono::Duration::seconds(50),
+            "payload": {
+                "state": "online",
+                "status_message": "Available soon",
+                "ttl_ms": 60000
+            }
+        }),
+        json!({
+            "kind": "ak.presence",
+            "actor_id": "did:web:bob.example",
+            "device_id": "ak:device:bob-expired",
+            "sent_at": now - chrono::Duration::seconds(70),
+            "expires_at": now - chrono::Duration::seconds(10),
+            "payload": {
+                "state": "dnd",
+                "status_message": "Expired override",
+                "ttl_ms": 60000
+            }
+        }),
+    ];
+
+    let (states, _, status_messages) =
+        presence_maps_from_sync_events(&events, &participants, "did:web:alice.example", "Alice")
+            .expect("live remote presence should match participants");
+
+    assert_eq!(states.get("did:web:bob.example"), Some(&"dnd".to_owned()));
+    assert_eq!(
+        status_messages.get("did:web:bob.example"),
+        Some(&"Available soon".to_owned())
+    );
 }
 
 #[test]

@@ -1808,15 +1808,20 @@ pub(crate) fn sync_presence_actor(event: &Value) -> Option<String> {
         .map(ToOwned::to_owned)
 }
 
-/// Presence state from a sync projection event. soland's projection
-/// emits `presence` / `status`; `state` is kept for raw-envelope-shaped
-/// fixtures. Values outside the closed v1 set (`online` / `idle` /
-/// `dnd` / `offline`) fail closed to `None` — the caller renders
-/// `offline`, never a guessed nearby state (profiles-presence.md §3.2).
+fn sync_presence_payload(event: &Value) -> &Value {
+    event.get("payload").unwrap_or(event)
+}
+
+/// Presence state from an account-subscribe ephemeral envelope. Flat
+/// projection-shaped values remain readable for existing local fixtures.
+/// Values outside the closed v1 set (`online` / `idle` / `dnd` / `offline`)
+/// fail closed to `None` — the caller renders `offline`, never a guessed
+/// nearby state (profiles-presence.md §3.2).
 pub(crate) fn sync_presence_state(event: &Value) -> Option<String> {
+    let payload = sync_presence_payload(event);
     ["state", "status", "presence"]
         .iter()
-        .find_map(|field| event.get(*field).and_then(Value::as_str))
+        .find_map(|field| payload.get(*field).and_then(Value::as_str))
         .map(str::trim)
         .and_then(arkret_sdk::PresenceStatus::parse_wire)
         .map(|state| state.as_wire().to_owned())
@@ -1826,13 +1831,49 @@ pub(crate) fn sync_presence_state(event: &Value) -> Option<String> {
 /// (profiles-presence.md §3.3). Fail-closed: values violating the wire
 /// constraint are dropped rather than truncated.
 pub(crate) fn sync_presence_status_message(event: &Value) -> Option<String> {
-    event
+    sync_presence_payload(event)
         .get("status_message")
         .and_then(Value::as_str)
         .map(str::trim)
         .filter(|message| !message.is_empty())
         .filter(|message| arkret_sdk::validate_status_message(message).is_ok())
         .map(ToOwned::to_owned)
+}
+
+fn sync_presence_timestamp(event: &Value, field: &str) -> Option<chrono::DateTime<chrono::Utc>> {
+    event
+        .get(field)
+        .and_then(Value::as_str)
+        .and_then(|value| chrono::DateTime::parse_from_rfc3339(value).ok())
+        .map(|value| value.with_timezone(&chrono::Utc))
+}
+
+fn sync_presence_event_is_live(event: &Value, now: chrono::DateTime<chrono::Utc>) -> bool {
+    if event
+        .get("kind")
+        .and_then(Value::as_str)
+        .is_some_and(|kind| kind != "ak.presence")
+    {
+        return false;
+    }
+    if event.get("expires_at").is_some()
+        && sync_presence_timestamp(event, "expires_at").is_none_or(|expires_at| expires_at <= now)
+    {
+        return false;
+    }
+    let payload = sync_presence_payload(event);
+    let Some(ttl_value) = payload.get("ttl_ms") else {
+        return true;
+    };
+    let Some(ttl_ms) = ttl_value.as_u64().and_then(|ttl| i64::try_from(ttl).ok()) else {
+        return false;
+    };
+    let Some(sent_at) = sync_presence_timestamp(event, "sent_at") else {
+        return false;
+    };
+    sent_at
+        .checked_add_signed(chrono::Duration::milliseconds(ttl_ms))
+        .is_some_and(|expires_at| expires_at > now)
 }
 
 pub(crate) fn presence_maps_from_sync_events(
@@ -1870,24 +1911,57 @@ pub(crate) fn presence_maps_from_sync_events(
             labels.insert(did.clone(), label);
         }
     }
-    let mut matched_remote = false;
+    let now = chrono::Utc::now();
+    let mut presence_by_actor = std::collections::BTreeMap::<
+        String,
+        (
+            Vec<arkret_sdk::PresenceStatus>,
+            Option<(Option<chrono::DateTime<chrono::Utc>>, String, String)>,
+        ),
+    >::new();
     for event in events {
         let Some(actor) = sync_presence_actor(event) else {
             continue;
         };
-        if !participant_set.contains(&actor) {
+        if !participant_set.contains(&actor) || !sync_presence_event_is_live(event, now) {
             continue;
         }
-        if actor != account_did {
-            matched_remote = true;
-        }
+        let Some(state) = sync_presence_state(event)
+            .as_deref()
+            .and_then(arkret_sdk::PresenceStatus::parse_wire)
+        else {
+            continue;
+        };
+        let entry = presence_by_actor.entry(actor).or_default();
+        entry.0.push(state);
         if let Some(message) = sync_presence_status_message(event) {
-            status_messages.insert(actor.clone(), message);
+            let candidate = (
+                sync_presence_timestamp(event, "sent_at"),
+                event
+                    .get("device_id")
+                    .and_then(Value::as_str)
+                    .unwrap_or_default()
+                    .to_owned(),
+                message,
+            );
+            if entry.1.as_ref().is_none_or(|current| candidate > *current) {
+                entry.1 = Some(candidate);
+            }
         }
+    }
+    let matched_remote = presence_by_actor
+        .keys()
+        .any(|actor| actor.as_str() != account_did);
+    for (actor, (actor_states, status_message)) in presence_by_actor {
         states.insert(
-            actor,
-            sync_presence_state(event).unwrap_or_else(|| "offline".to_owned()),
+            actor.clone(),
+            arkret_sdk::aggregate_presence_states(actor_states)
+                .as_wire()
+                .to_owned(),
         );
+        if let Some((_, _, message)) = status_message {
+            status_messages.insert(actor, message);
+        }
     }
     matched_remote.then_some((states, labels, status_messages))
 }

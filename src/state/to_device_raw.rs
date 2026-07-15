@@ -166,7 +166,7 @@ impl LocalStateStore {
         let _ = self.flush();
     }
 
-    pub fn save_presence_projection(&mut self, events: &[arkret_sdk::Event]) {
+    pub fn save_presence_projection(&mut self, events: &[arkret_sdk::EphemeralEnvelope]) {
         let events = events
             .iter()
             .filter_map(|event| serde_json::to_value(event).ok())
