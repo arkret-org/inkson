@@ -10,7 +10,6 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use arkret_sdk::NotificationContainer;
 use serde_json::{Value, json};
 
 pub(crate) fn is_notification_account_data(value: &BTreeMap<String, Value>) -> bool {
@@ -32,14 +31,6 @@ pub(crate) fn raw_notifications_from_sources(
             .filter_map(|event| serde_json::to_value(&event.payload).ok())
             .collect(),
     }
-}
-
-pub(crate) fn notification_items_from_value(value: &NotificationContainer) -> Vec<Value> {
-    value
-        .items
-        .iter()
-        .filter_map(|item| serde_json::to_value(item).ok())
-        .collect()
 }
 
 pub(crate) fn append_invite_notifications(

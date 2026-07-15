@@ -4,17 +4,13 @@ use url::Url;
 #[cfg(target_arch = "wasm32")]
 use super::OIDC_SCAFFOLD_STORAGE_KEY;
 use super::util::{
-    PKCE_VERIFIER_BYTES, STATE_NONCE_TOKEN_BYTES, current_oidc_redirect_uri,
-    pkce_code_challenge_s256, preferred_pkce_method, random_url_safe_token,
+    PKCE_VERIFIER_BYTES, STATE_NONCE_TOKEN_BYTES, pkce_code_challenge_s256, preferred_pkce_method,
+    random_url_safe_token,
 };
 use super::{
     ARKRET_DEVICE_SCOPE_PREFIX, INKSON_OIDC_CLIENT_ID, OidcDiscoveryDocument, OidcScaffoldBundle,
     PersistedOidcScaffold,
 };
-
-pub fn active_oidc_redirect_uri() -> String {
-    current_oidc_redirect_uri()
-}
 
 /// T1.Y1 — build the authorize scaffold (PKCE state/nonce/verifier + the full
 /// `authorization_endpoint` URL) directly from standard OIDC discovery and the

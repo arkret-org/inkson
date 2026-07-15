@@ -85,35 +85,6 @@ fn mls_base_epoch_ref_for_scope(
         })
 }
 
-fn mls_membership_frontier_from_seal_view(
-    seal_view: &LocalSealView,
-    fallback_event_id: &arkret_sdk::EventId,
-) -> Vec<arkret_sdk::EventId> {
-    let mut frontier = seal_view
-        .frontier
-        .iter()
-        .chain(seal_view.leaves.iter())
-        .filter_map(|value| arkret_sdk::EventId::new(value.clone()).ok())
-        .collect::<Vec<_>>();
-    if frontier.is_empty() {
-        frontier.push(fallback_event_id.clone());
-    }
-    frontier.sort();
-    frontier.dedup();
-    frontier
-}
-
-fn mls_self_update_membership_frontier(
-    base_group_state_ref: &str,
-) -> Result<Vec<arkret_sdk::EventId>, String> {
-    arkret_sdk::EventId::new(base_group_state_ref.to_owned())
-        .map(|event_id| vec![event_id])
-        .map_err(|_| {
-            "MLS self-update membership_frontier requires a ak:event base group-state ref"
-                .to_owned()
-        })
-}
-
 pub(crate) fn mls_policy_root_from_seal_view(
     seal_view: &LocalSealView,
     realm_id: &str,
@@ -134,30 +105,6 @@ pub(crate) fn mls_policy_root_from_seal_view(
             })
         });
     arkret_sdk::Hash::new(hash).map_err(|err| format!("invalid MLS policy root hash: {err:?}"))
-}
-
-/// Resolve the `policy_root` a `ak.mls.commit` MUST declare for this group.
-///
-/// soland's `apply_commit_epoch` carries the genesis-locked `policy_root`
-/// forward unchanged on every epoch advance and rejects any commit whose
-/// binding declares a different value (`governance_binding_mismatch`). So a
-/// commit MUST reuse the exact bytes `ak.mls.genesis` locked — NOT recompute
-/// from the live Seal `state_root`, which advances on every non-policy event
-/// and would drift the commit away from genesis. We return the recorded
-/// genesis-locked root when present, falling back to the Seal-derived root only
-/// for groups created before this value was tracked (`encryption-and-audit.md`
-/// §2.5.1, [`crate::state::types::PersistedState::mls_genesis_policy_root`]).
-fn mls_commit_policy_root(
-    state_store: &LocalStateStore,
-    seal_view: &LocalSealView,
-    realm_id: &str,
-    circle_id: Option<&str>,
-) -> Result<arkret_sdk::Hash, String> {
-    if let Some(stored) = state_store.genesis_policy_root_for_effective_scope(realm_id, circle_id) {
-        return arkret_sdk::Hash::new(stored)
-            .map_err(|err| format!("stored MLS genesis policy_root invalid: {err:?}"));
-    }
-    mls_policy_root_from_seal_view(seal_view, realm_id)
 }
 
 fn projection_creator_matches_actor(projection: &Value, actor_id: &str) -> bool {

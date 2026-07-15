@@ -996,47 +996,6 @@ impl EventSubmitter {
         Ok(response)
     }
 
-    /// The sole post-entry-0 write allowed to bypass the recovery-material
-    /// gate. SDK validation confines this to the exact two-slot self-principal
-    /// PCR bootstrap unit; this method cannot submit an arbitrary batch.
-    pub(crate) async fn submit_self_principal_bootstrap_unit(
-        &self,
-        request: arkret_sdk::EventsSubmitRequestBody,
-        idempotency_key: &str,
-    ) -> anyhow::Result<arkret_sdk::EventsSubmitOutcome> {
-        if request.event.is_some() || request.events.len() != 2 {
-            anyhow::bail!("self principal bootstrap request must contain exactly two events");
-        }
-        let [create, authorize]: [arkret_sdk::Event; 2] = request
-            .events
-            .try_into()
-            .map_err(|_| anyhow::anyhow!("self principal bootstrap request has invalid arity"))?;
-        arkret_sdk::identity::validate_self_principal_bootstrap_unit(&create, &authorize)?;
-        validate_signed_sdk_event_for_submit(&create)?;
-        validate_signed_sdk_event_for_submit(&authorize)?;
-        let idempotency_key = idempotency_key.trim();
-        if idempotency_key.is_empty() {
-            anyhow::bail!("self principal bootstrap idempotency key is required");
-        }
-        let body = arkret_sdk::EventsSubmitBatchRequestBody {
-            events: vec![create, authorize],
-            idempotency_key: Some(idempotency_key.to_owned()),
-        };
-        let response: arkret_sdk::EventsSubmitOutcome = self
-            .http
-            .post_with_options(
-                "/_arkret/self/events",
-                &body,
-                &arkret_sdk::http_client::ClientRequestOptions::new()
-                    .request_id(idempotency_key.to_owned())
-                    .idempotency_key(idempotency_key.to_owned()),
-            )
-            .await
-            .map_err(anyhow::Error::from)?;
-        ensure_events_submit_accepted(&response)?;
-        Ok(response)
-    }
-
     pub(crate) async fn submit_sdk_events_batch(
         &self,
         _realm_id: &str,

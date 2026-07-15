@@ -17,7 +17,6 @@
 
 use anyhow::Context as _;
 
-use crate::secure_key_store::SigningSeedMaterial;
 use crate::transport::TransportClient;
 
 /// Inputs the caller resolves before invoking [`enroll_current_device`]. Kept as
@@ -78,12 +77,6 @@ pub fn inkson_device_algorithms() -> Vec<String> {
         .iter()
         .map(|value| (*value).to_owned())
         .collect()
-}
-
-/// Multibase Ed25519 `device_public_key` for the device described by `material`.
-pub fn device_public_key_multibase(material: &SigningSeedMaterial) -> String {
-    let verifying = ed25519_dalek::SigningKey::from_bytes(&material.seed).verifying_key();
-    crate::identity::did_key::encode_ed25519_did_key_multibase(&verifying)
 }
 
 /// Validate that the enrollment authority returned a usable, self-consistent

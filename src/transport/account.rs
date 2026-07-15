@@ -33,12 +33,6 @@ pub(crate) fn did_for_request_field(field: &str, value: &str) -> anyhow::Result<
         .map_err(|err| anyhow::anyhow!("invalid {field} DID `{value}`: {err}"))
 }
 
-fn device_id_for_request_field(field: &str, value: &str) -> anyhow::Result<arkret_sdk::DeviceId> {
-    let value = value.trim();
-    arkret_sdk::DeviceId::new(value.to_owned())
-        .map_err(|err| anyhow::anyhow!("invalid {field} `{value}`: {err}"))
-}
-
 fn contact_response_action(action: &str) -> anyhow::Result<String> {
     match action.trim() {
         "accept" | "reject" => Ok(action.trim().to_owned()),
@@ -55,37 +49,6 @@ fn optional_did_for_request_field(
         .filter(|value| !value.is_empty())
         .map(|value| did_for_request_field(field, value))
         .transpose()
-}
-
-pub async fn register_account(
-    http: &arkret_sdk::http_client::Client,
-    did: &str,
-    _handle: &str,
-    display_name: Option<&str>,
-    device_id: Option<&str>,
-) -> anyhow::Result<arkret_sdk::models::AccountRegisterOutcome> {
-    let body = arkret_sdk::models::AccountRegisterRequestBody {
-        principal_id: did_for_request_field("principal_id", did)?,
-        // Canonical registration handle is asserted by the Account Authority
-        // on the coauth -> soland register path; this direct client path
-        // leaves it unset (the Principal Server falls back to a synthetic
-        // bootstrap localpart).
-        handle: None,
-        display_name: display_name
-            .map(str::trim)
-            .filter(|value| !value.is_empty())
-            .map(ToOwned::to_owned),
-        device_id: device_id
-            .map(str::trim)
-            .filter(|value| !value.is_empty())
-            .map(|value| device_id_for_request_field("device_id", value))
-            .transpose()?,
-        policy_evidence: None,
-        proof: None,
-    };
-    http.account_register(&body)
-        .await
-        .map_err(anyhow::Error::from)
 }
 
 pub async fn account_viewer(

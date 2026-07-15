@@ -4070,7 +4070,6 @@ dependencies = [
  "chime",
  "chrono",
  "dioxus",
- "dioxus-icons",
  "dioxus-primitives",
  "dioxus-router",
  "ed25519-dalek",

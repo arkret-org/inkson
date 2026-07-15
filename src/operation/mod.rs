@@ -99,13 +99,6 @@ pub(crate) fn trim_realm_id(value: &str) -> String {
     value.trim().to_owned()
 }
 
-pub(crate) fn realm_effective_scope_value(realm_id: &str) -> Result<Value, String> {
-    let realm_id = arkret_sdk::RealmId::new(trim_realm_id(realm_id))
-        .map_err(|err| format!("invalid realm effective_scope realm_id: {err:?}"))?;
-    serde_json::to_value(arkret_sdk::EffectiveScope::Realm { realm_id })
-        .map_err(|err| format!("serialize realm effective_scope: {err}"))
-}
-
 /// Builder for creating typed event envelopes. Callers attach
 /// preconditions / effects / seal_ref / requirements after `new()`
 /// and before `build_sdk_event()`; the SDK event submit path requires an active

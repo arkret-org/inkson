@@ -155,10 +155,6 @@ fn grant_refresh_state(grant: &PersistedSessionGrant) -> garth::SessionGrantRefr
 /// its own expiry and should be rotated (grant-binding DPoP proof → fresh
 /// grant). `None` grant expiry is "not due" — the 401 path handles
 /// unknown-expiry grants, and we must not rotate blindly without a deadline.
-pub fn grant_due_for_rotation(grant: &PersistedSessionGrant) -> bool {
-    garth::grant_due_for_rotation(&grant_refresh_state(grant), Utc::now())
-}
-
 /// True when the grant itself has gone past its `grant_expires_at`.
 pub fn grant_is_dead(grant: &PersistedSessionGrant) -> bool {
     garth::grant_is_dead(&grant_refresh_state(grant), Utc::now())

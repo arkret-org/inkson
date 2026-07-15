@@ -17,19 +17,6 @@
 //!   3. `proofs[0].event_digest` starts with `sha256:` and has 64 hex chars.
 //!   4. `seal_ref` is `Some(_)` for reducer-input kinds AND matches
 //!      `^ak:seal:sha256:[0-9a-f]{64}$`. The fake seal is NOT the all-zero hash.
-//!
-//! The `roundtrip_through_live_principal_endpoint` test below is the live
-//! variant — it is marked `#[ignore]` because it requires a soland
-//! server running locally. Run with:
-//!
-//! ```text
-//! cargo test --test seal_staleness_drill -p inkson -- --ignored
-//! ```
-//!
-//! and set `INKSON_TEST_SOLAND_URL=http://localhost:8698` (or wherever
-//! the test soland instance listens). When unset, the test is skipped
-//! with a visible log line.
-
 use ed25519_dalek::SigningKey;
 use inkson::canonical::hex_encode;
 use inkson::event_builders;
@@ -233,49 +220,5 @@ fn assert_seal_ref_is_real(envelope: &Event) {
         seal, zero_anchor,
         "envelope kind={} seal_ref is the all-zero sha256 hash (placeholder leak)",
         envelope.kind
-    );
-}
-
-/// Live-soland end-to-end drill. Marked `#[ignore]` because it requires
-/// a running soland instance reachable via `INKSON_TEST_SOLAND_URL`.
-/// Run with:
-///
-/// ```text
-/// INKSON_TEST_SOLAND_URL=http://localhost:8698 \
-///   cargo test --test seal_staleness_drill -p inkson -- --ignored
-/// ```
-///
-/// When `INKSON_TEST_SOLAND_URL` is unset, the test logs a skip line
-/// and returns success. When set but unreachable, the test panics —
-/// that's the desired behaviour for a live drill on CI.
-#[test]
-#[ignore]
-fn roundtrip_through_live_principal_endpoint() {
-    let url = match std::env::var("INKSON_TEST_SOLAND_URL") {
-        Ok(u) if !u.is_empty() => u,
-        _ => {
-            eprintln!(
-                "[seal_staleness_drill] skipped: set \
-                 INKSON_TEST_SOLAND_URL=http://localhost:8698 to run the live drill"
-            );
-            return;
-        }
-    };
-
-    // The live path needs:
-    //   1. A test ArkretApi pointed at `url`.
-    //   2. An installed real Ed25519 signer (inkson::event_signer::install_active_signer).
-    //   3. A `ak.realm.create` round-trip whose returned envelope must pass the same assertions
-    //      exercised above.
-    //
-    // The shape below is reachable but assumes the test soland
-    // instance is in `SOLAND_DEVELOPMENT_MODE=true` so anonymous
-    // realm-create succeeds. Tightening the auth path is a follow-up.
-
-    eprintln!(
-        "[seal_staleness_drill] would now POST to {url} with real \
-         Ed25519 signer + verify returned envelope shape. Wire-up of \
-         the live HTTP client is tracked separately so the rest of the \
-         gate stays portable."
     );
 }

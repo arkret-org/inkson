@@ -104,7 +104,6 @@ bip39 = {workspace = true}
 chacha20poly1305 = {workspace = true,default-features = false,features = ["alloc"]}
 chime = {workspace = true,features = ["http"]}
 chrono = {workspace = true,features = ["serde"]}
-dioxus-icons = {workspace = true,default-features = false}
 dioxus-primitives = {workspace = true,default-features = false}
 dioxus-router = {workspace = true}
 # C3: shared Arkret frontend component crate. The former `src/ui/`
@@ -338,7 +337,6 @@ chime = {version = "0.3.0",path = "../chime"}
 chrono = "0.4.45"
 arkret-sdk = {package = "arkret",version = "0.3.0",path = "../arkret-rust-sdk/crates/sdk"}
 dioxus = {version = "0.7.9",default-features = false,features = ["minimal", "asset", "document", "mounted"]}
-dioxus-icons = {version = "0.1.0",default-features = false}
 dioxus-primitives = {version = "0.0.1",git = "https://github.com/DioxusLabs/components",default-features = false}
 dioxus-router = "0.7.9"
 ed25519-dalek = "2.2.0"

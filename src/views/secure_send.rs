@@ -139,50 +139,6 @@ pub(crate) fn mls_base_epoch_ref(seal_view: &LocalSealView, realm_id: &str) -> S
         })
 }
 
-/// Build the governance binding's `membership_frontier` for a self-update
-/// Commit from the precise base MLS state it advances.
-///
-/// A self-update Commit does not consume invite/leave/ban/device-trust
-/// proposals, so it must not claim arbitrary Seal frontier/leaves as
-/// membership evidence. The base group state is the exact member set this
-/// Commit carries forward.
-pub(crate) fn mls_membership_frontier(
-    base_group_state_ref: &str,
-) -> Result<Vec<arkret_sdk::EventId>, String> {
-    arkret_sdk::EventId::new(base_group_state_ref.to_owned())
-        .map(|event_id| vec![event_id])
-        .map_err(|_| {
-            "MLS self-update membership_frontier requires a ak:event base group-state ref"
-                .to_owned()
-        })
-}
-
-/// Derive the governance binding's `policy_root` hash from the seal view's
-/// `state_root`, with a deterministic canonical-hash fallback.
-pub(crate) fn mls_policy_root(
-    seal_view: &LocalSealView,
-    realm_id: &str,
-    schedule_hash: &arkret_sdk::Hash,
-) -> Result<arkret_sdk::Hash, String> {
-    let hash = seal_view
-        .state_root
-        .as_deref()
-        .and_then(mls_sha256_hash_from_ref)
-        .unwrap_or_else(|| {
-            crate::canonical::canonical_sha256(&json!({
-                "kind": "chat_mls_policy_root",
-                "realm_id": realm_id,
-                "frontier": seal_view.frontier,
-                "state_root": seal_view.state_root,
-                "schedule_hash": schedule_hash.as_str(),
-            }))
-            .unwrap_or_else(|_| {
-                "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855".to_owned()
-            })
-        });
-    arkret_sdk::Hash::new(hash).map_err(|err| format!("invalid MLS policy root hash: {err:?}"))
-}
-
 /// The built (but not yet submitted) secure-send artifacts: the optional
 /// forced MLS commit event, the encrypted `ak.message.create` event, and
 /// the metadata the caller needs to drive UI / persist-on-accept.
