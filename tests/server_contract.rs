@@ -130,7 +130,7 @@ fn inkson_accepts_server_contract_payloads() {
         "supported_schema_profiles": ["ak.schema.core.v1"],
         "auth_metadata": {"mode": "development"},
         "limits": {"storage": "memory", "max_limit": 100},
-        "plaintext_visibility": {"default": "encrypted"},
+        "plaintext_visibility": {"data_classes": [], "max_visibility": "none"},
         "implemented_features": [],
         "claimed_profiles": [],
         "verified_profiles": [],
@@ -185,7 +185,7 @@ fn inkson_accepts_server_contract_payloads() {
         "supported_bindings": [],
         "auth_metadata": {"mode": "development"},
         "limits": {},
-        "plaintext_visibility": {"default": "encrypted"},
+        "plaintext_visibility": {"data_classes": [], "max_visibility": "none"},
         "implemented_features": [],
         "claimed_profiles": [],
         "verified_profiles": [],
@@ -387,7 +387,22 @@ fn inkson_accepts_server_contract_payloads() {
     assert_eq!(keys.one_time_key_counts[&signed_curve25519], 1);
 
     let claimed: inkson::models::KeysClaimOutcome = serde_json::from_value(json!({
-        "one_time_keys": {"did:web:alice.example": {"ak:device:0196419b-0000-7000-8000-000000000000": {"key_id": "alice-otk-1"}}},
+        "one_time_keys": {
+            "did:web:alice.example": {
+                "ak:device:0196419b-0000-7000-8000-000000000000": {
+                    "signed_curve25519": {
+                        "key": "YWxpY2Utb3RrLTE",
+                        "algorithm": "signed_curve25519",
+                        "signature": {
+                            "kid": "did:web:alice.example#device-key",
+                            "alg": "EdDSA",
+                            "sig": "c2ln"
+                        },
+                        "key_id": "alice-otk-1"
+                    }
+                }
+            }
+        },
         "failures": []
     }))
     .unwrap();
@@ -489,7 +504,7 @@ fn server_description_gates_event_envelope_write_plane() {
         "supported_features": ["events.submit", "account.subscribe"],
         "auth_metadata": {"mode": "development"},
         "limits": {},
-        "plaintext_visibility": {"default": "e2ee", "allowed_services": []},
+        "plaintext_visibility": {"data_classes": [], "max_visibility": "none"},
         "implemented_features": [],
         "claimed_profiles": [],
         "verified_profiles": [],
@@ -526,7 +541,7 @@ fn server_description_gates_event_envelope_write_plane() {
         "supported_features": ["ak.feature.soland.events.describe"],
         "auth_metadata": {"mode": "development"},
         "limits": {"storage": "postgres"},
-        "plaintext_visibility": {"default": "encrypted"},
+        "plaintext_visibility": {"data_classes": [], "max_visibility": "none"},
         "implemented_features": ["ak.feature.soland.events.describe"],
         "claimed_profiles": [
             {
@@ -574,7 +589,7 @@ fn server_description_gates_event_envelope_write_plane() {
         "supported_features": ["account.subscribe"],
         "auth_metadata": {"mode": "development"},
         "limits": {},
-        "plaintext_visibility": {"default": "encrypted"},
+        "plaintext_visibility": {"data_classes": [], "max_visibility": "none"},
         "implemented_features": [],
         "claimed_profiles": [],
         "verified_profiles": [],
