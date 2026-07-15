@@ -1034,25 +1034,37 @@ pub fn ChatPanel(
                                                         return;
                                                     }
                                                 };
-                                                if !op.payload["object"]
+                                                let Some(object) = op
+                                                    .payload
+                                                    .get_mut("object")
+                                                    .and_then(Value::as_object_mut)
+                                                else {
+                                                    status_msg.set("Could not create Strand: payload object missing".to_owned());
+                                                    return;
+                                                };
+                                                if !object
                                                     .get("fields")
-                                                    .is_some_and(|fields| fields.is_object())
+                                                    .is_some_and(Value::is_object)
                                                 {
-                                                    op.payload["object"]["fields"] = json!({});
+                                                    object.insert("fields".to_owned(), json!({}));
                                                 }
-                                                op.payload["object"]["fields"]["category"] =
-                                                    json!(category.clone());
-                                                op.payload["object"]["fields"]["has_synthesis"] =
-                                                    json!(create_card);
-                                                op.payload["object"]["rank"] = json!(rank.clone());
+                                                let fields = object
+                                                    .get_mut("fields")
+                                                    .and_then(Value::as_object_mut)
+                                                    .expect("fields was initialized as an object");
+                                                fields.insert("category".to_owned(), json!(category.clone()));
+                                                fields.insert("has_synthesis".to_owned(), json!(create_card));
+                                                object.insert("rank".to_owned(), json!(rank.clone()));
                                                 if !summary.is_empty() {
-                                                    op.payload["object"]["summary"] = json!(summary.clone());
+                                                    object.insert("summary".to_owned(), json!(summary.clone()));
                                                 }
                                                 if let Some(circle_id) = selected_scope_circle_id.as_deref() {
-                                                    op.payload["object"]["scope_circle_id"] = json!(circle_id);
+                                                    object.insert("scope_circle_id".to_owned(), json!(circle_id));
                                                 }
                                                 if !create_card
-                                                    && let Some(tracks) = op.payload["object"]["tracks"].as_object_mut()
+                                                    && let Some(tracks) = object
+                                                        .get_mut("tracks")
+                                                        .and_then(Value::as_object_mut)
                                                 {
                                                     tracks.remove("synthesis");
                                                 }

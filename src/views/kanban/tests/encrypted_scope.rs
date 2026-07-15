@@ -170,7 +170,7 @@ fn encrypted_private_patch_reports_unusable_pending_local_welcome() {
     let add = alice_group.add_member(&bob_key_package).unwrap();
 
     let mut state = temp_state_store("pending-local-welcome");
-    state.ingest_to_device_messages(&[json!({
+    state.ingest_to_device_messages(&[serde_json::from_value(json!({
         "kind": "ak.mls.welcome",
         "sender_principal_id": "did:web:alice.example",
         "sender_device_id": "ak:device:01904100-0000-7000-8000-0000000000a1",
@@ -183,7 +183,8 @@ fn encrypted_private_patch_reports_unusable_pending_local_welcome() {
             "mls_welcome_id": "ak:mls_welcome:01904100-0000-7000-8000-0000000000ff",
             "key_package_id": bob_key_package.keypackage_id.clone(),
         },
-    })]);
+    }))
+    .unwrap()]);
     // Deliberately DO NOT store the KeyPackage identity state for this device:
     // the Welcome names a KeyPackage whose private init key is absent from the
     // secure store, so the apply must fail closed at the early identity-state
@@ -233,7 +234,7 @@ fn encrypted_private_patch_applies_pending_welcome_with_key_package_state() {
     let add = alice_group.add_member(&bob_key_package).unwrap();
 
     let mut state = temp_state_store("pending-local-welcome-with-state");
-    state.ingest_to_device_messages(&[json!({
+    state.ingest_to_device_messages(&[serde_json::from_value(json!({
         "kind": "ak.mls.welcome",
         "sender_principal_id": "did:web:alice.example",
         "sender_device_id": "ak:device:01904100-0000-7000-8000-0000000000a1",
@@ -246,7 +247,8 @@ fn encrypted_private_patch_applies_pending_welcome_with_key_package_state() {
             "mls_welcome_id": "ak:mls_welcome:01904100-0000-7000-8000-0000000000f1",
             "key_package_id": bob_key_package.keypackage_id.clone(),
         },
-    })]);
+    }))
+    .unwrap()]);
     let secure = crate::secure_key_store::MemorySecureKeyStore::new();
     crate::mls::runtime::store_mls_key_package_identity_state(
         &secure,

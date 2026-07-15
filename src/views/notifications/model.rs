@@ -12,7 +12,7 @@ use arkret_sdk::push_rule_core::{
 };
 use serde_json::Value;
 
-use crate::models::ClientSyncOutcome;
+use crate::models::AccountSyncStep;
 use crate::notification_rules::{
     DndSettings, NotificationEvalContext, PushRulesConfig, WatchLevel, evaluate_notification,
 };
@@ -124,20 +124,17 @@ pub(crate) fn notification_value_read_by_cursor(
     )
 }
 
-pub(crate) fn joined_realm_ids(response: &ClientSyncOutcome) -> BTreeSet<String> {
-    response.realms.keys().cloned().collect()
+pub(crate) fn joined_realm_ids(response: &AccountSyncStep) -> BTreeSet<String> {
+    response.realm_projections.keys().cloned().collect()
 }
 
 pub(crate) fn apply_sync_projection_to_store(
     store: &mut LocalStateStore,
-    response: &ClientSyncOutcome,
+    response: &AccountSyncStep,
     realm_title_hints: &BTreeMap<String, String>,
 ) {
     store.save_sync_cursor(response.cursor.clone());
-    for left_id in &response.left_realms {
-        store.forget_realm_tree_projection(left_id);
-    }
-    for (id, body) in &response.realms {
+    for (id, body) in &response.realm_projections {
         let projection = crate::realm_tree::projection_with_title_hint(
             id,
             body,

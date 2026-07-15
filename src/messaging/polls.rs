@@ -340,8 +340,10 @@ pub fn build_poll_create_op(
     let payload = arkret_sdk::MessageCreatePayload::with_content(
         strand_id_value(strand_id)?,
         "discussion",
-        serde_json::to_value(&block)
-            .map_err(|err| anyhow::anyhow!("poll create content serialize: {err}"))?,
+        arkret_sdk::ContentBlock::from_value(
+            serde_json::to_value(&block)
+                .map_err(|err| anyhow::anyhow!("poll create content serialize: {err}"))?,
+        )?,
     );
     let mut event = OperationBuilder::new(
         realm_id,
@@ -358,7 +360,9 @@ pub fn build_poll_create_op(
         .event_id
         .as_str()
         .replacen("ak:event:", "ak:message:", 1);
-    event.payload["message_id"] = json!(message_ref);
+    event
+        .payload
+        .insert("message_id".to_owned(), json!(message_ref));
     Ok(event)
 }
 
@@ -404,8 +408,10 @@ pub fn build_poll_vote_op(
     let payload = arkret_sdk::MessageCreatePayload::with_content(
         strand_id_value(strand_id)?,
         "discussion",
-        serde_json::to_value(&block)
-            .map_err(|err| anyhow::anyhow!("poll vote content serialize: {err}"))?,
+        arkret_sdk::ContentBlock::from_value(
+            serde_json::to_value(&block)
+                .map_err(|err| anyhow::anyhow!("poll vote content serialize: {err}"))?,
+        )?,
     );
     OperationBuilder::new(
         realm_id,

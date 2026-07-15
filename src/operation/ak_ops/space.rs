@@ -20,7 +20,7 @@ pub fn space_create(
     parent_space_id: Option<&str>,
     rank: Option<&str>,
 ) -> anyhow::Result<OperationBuilder> {
-    let mut object = arkret_sdk::SpaceCreateObject::new(
+    let mut object = arkret_sdk::Space::new(
         space_id_value(container_space_id)?,
         realm_id_value(&trim_realm_id(realm_id))?,
         kind,

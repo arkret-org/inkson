@@ -1,3 +1,5 @@
+use std::collections::BTreeMap;
+
 pub use arkret_sdk::{
     ClaimedProfileEntry, CompatSurfaceEntry, ServerDescription, VerifiedProfileEntry,
 };
@@ -425,20 +427,43 @@ impl ServerDescriptionExt for ServerDescription {
 // name so call sites (`registry_mode` read in `views/dashboard.rs`) stay
 // unchanged while the field shapes are now SDK-owned.
 // `ak.self.account.query.describe` decodes into the SDK's authoritative
-// `arkret_sdk::models::SyncDescription`; the former inkson-local
-// `SyncDescribeView` mirror was removed in favor of the wire type.
+// `arkret_sdk::ServerDescription`; the former inkson-local describe mirror was
+// removed in favor of the wire type.
 /// Directory `describe` response. The SDK's `DirectoryDescribeOutcome` is a
 /// transparent wrapper over this exact wire body, so inkson consumes the SDK
 /// authority directly instead of maintaining a flat local mirror.
 pub use arkret_sdk::models::DirectoryDescription;
-/// Wire-shape sync response — re-exports the SDK's canonical
-/// [`arkret_sdk::models::SyncOutcome`] so client + server can never
-/// drift on field names / per-realm body shape. Spec source of truth
-/// at `arkret-spec/spec/v1/zh/sync/client-sync.md §2`. Inkson used to
-/// own a custom `ClientSyncOutcome` with a bucketed-`spaces`
-/// deserializer; that was an older Matrix-style transcript that
-/// disagreed with what soland actually emits.
-pub use arkret_sdk::models::SyncOutcome as ClientSyncOutcome;
+/// App runtime state derived from validated canonical account-subscribe frames.
+/// Wire ownership remains in `AccountSubscribeBatch` and `SyncUpdates`; the
+/// JSON map is only the heterogeneous local projection consumed by UI reducers.
+#[derive(Clone, Debug)]
+pub struct AccountSyncStep {
+    pub cursor: String,
+    pub updates: arkret_sdk::SyncUpdates,
+    pub realm_projections: BTreeMap<String, Value>,
+}
+
+impl AccountSyncStep {
+    pub fn from_batch(batch: arkret_sdk::AccountSubscribeBatch) -> arkret_sdk::Result<Self> {
+        let cursor = batch.cursor.clone();
+        let mut processor = arkret_sdk::SyncResponseProcessor::new();
+        let updates = processor.process(batch)?;
+        let realm_projections = updates
+            .realm_updates
+            .iter()
+            .map(|update| {
+                serde_json::to_value(&update.entry)
+                    .map(|value| (update.realm_id.as_str().to_owned(), value))
+                    .map_err(|error| arkret_sdk::Error::Protocol(error.to_string()))
+            })
+            .collect::<arkret_sdk::Result<BTreeMap<_, _>>>()?;
+        Ok(Self {
+            cursor,
+            updates,
+            realm_projections,
+        })
+    }
+}
 // `resolve-realm` decodes into the canonical SDK wire types so the client stays
 // byte-compatible with soland's `DirectoryRealmResolutionOutcome` response. A
 // inkson-local duplicate previously drifted from the wire (a required
@@ -446,10 +471,8 @@ pub use arkret_sdk::models::SyncOutcome as ClientSyncOutcome;
 // invite-accept with "error decoding response body" whenever the server omitted
 // those fields. The SDK type is the single source of truth.
 pub use arkret_sdk::models::{
-    DirectoryRealmResolutionOutcome as ResolveRealmOutcome, RealmJoinCandidate,
-};
-pub use arkret_sdk::models::{
-    IdentityDescription as IdentityDescribeOutcome, IdentityResolveOutcome,
+    DirectoryRealmResolutionOutcome as ResolveRealmOutcome,
+    IdentityDescription as IdentityDescribeOutcome, IdentityResolveOutcome, RealmJoinCandidate,
 };
 
 /// Sidebar tag distinguishing a security-boundary Realm from a product
@@ -813,7 +836,7 @@ mod tests {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(transparent)]
 pub struct SnapshotBootstrapJson(pub arkret_sdk::SnapshotBootstrap);
 
@@ -823,7 +846,7 @@ impl From<arkret_sdk::SnapshotBootstrap> for SnapshotBootstrapJson {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct BackfillView {
     #[serde(default)]
     pub events: Vec<arkret_sdk::Event>,
@@ -897,16 +920,6 @@ pub use arkret_sdk::models::{
 pub type SearchOrganizationsView = arkret_sdk::models::DirectoryOrganizationSearchOutcome;
 pub type SearchActorsView = arkret_sdk::models::DirectoryActorSearchOutcome;
 
-#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
-#[serde(transparent)]
-pub struct DirectoryClaimsJson(pub Value);
-
-impl From<Value> for DirectoryClaimsJson {
-    fn from(value: Value) -> Self {
-        Self(value)
-    }
-}
-
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(transparent)]
 pub struct DirectoryDidDocumentJson(pub Value);
@@ -926,7 +939,7 @@ pub struct ResolveHandleView {
     #[serde(default)]
     pub verified: bool,
     #[serde(default)]
-    pub claims: DirectoryClaimsJson,
+    pub claims: Option<Vec<arkret_sdk::models::HandleClaim>>,
     /// Audience the directory bound the response claim to. Spec 0a5ab85:
     /// the client MUST reject claims whose audience doesn't match the
     /// invocation context (e.g. the Space the user is about to join).

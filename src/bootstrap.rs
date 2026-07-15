@@ -686,14 +686,10 @@ pub(crate) async fn bootstrap_mls_welcome_for_realm(
     // request `ak.realm_key.share` from. Each envelope already carries
     // `sender_principal_id` + `sender_device_id`, which is exactly the
     // (principal, device) tuple the request planner needs.
-    if let Some(welcome_messages) = messages_value
-        .get("messages")
-        .and_then(Value::as_array)
-        .filter(|entries| !entries.is_empty())
-    {
+    if !messages.messages.is_empty() {
         let ingested = state_store
             .write()
-            .ingest_to_device_messages(welcome_messages);
+            .ingest_to_device_messages(&messages.messages);
         tracing::debug!(
             realm = %realm_id,
             ingested,

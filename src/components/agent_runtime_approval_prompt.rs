@@ -542,7 +542,7 @@ fn pending_runtime_approval_from_view(
     }
     let key_state = view.key_state.as_ref()?;
     let request_value = key_state.pending_runtime_key_request.clone()?;
-    if request_value.is_null() {
+    if request_value.is_empty() {
         return None;
     }
     let request_json = serde_json::to_string(&request_value).ok()?;

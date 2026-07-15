@@ -472,11 +472,12 @@ async fn register_media_service_keys(
     }
     .await
     .map_err(|_| RtcClientError::TokenIssuerUnauthorised)?;
-    if outcome.did_document.did.as_str() != service_id {
+    if outcome.did_document.get("id").and_then(Value::as_str) != Some(service_id) {
         return Err(RtcClientError::TokenIssuerUnauthorised);
     }
 
-    let document: DidDocument = serde_json::from_value(outcome.did_document.document)
+    let document: DidDocument = serde_json::to_value(outcome.did_document)
+        .and_then(serde_json::from_value)
         .map_err(|_| RtcClientError::TokenIssuerUnauthorised)?;
     if document.id.as_str() != service_id {
         return Err(RtcClientError::TokenIssuerUnauthorised);

@@ -9,15 +9,13 @@
 //!
 //! Two target-agnostic pieces live here so they can be unit-tested natively:
 //!
-//!   * [`merge_persisted_into_live`] — the boot-time reconciliation between the
-//!     previous session's stored blob and any live in-memory writes made before
-//!     the IndexedDB tier finished initialising. Live values win; stored values
-//!     fill gaps ("现场优先、已存补缺").
-//!   * [`AccountPersistQueueState`] — the per-account single-writer commit-queue
-//!     state machine. Each enqueue freezes the target account key and takes a
-//!     monotonic sequence number; a single drain per account coalesces to the
-//!     latest not-yet-started snapshot so an older async write can never land on
-//!     top of a newer one.
+//!   * [`merge_persisted_into_live`] — the boot-time reconciliation between the previous session's
+//!     stored blob and any live in-memory writes made before the IndexedDB tier finished
+//!     initialising. Live values win; stored values fill gaps ("现场优先、已存补缺").
+//!   * [`AccountPersistQueueState`] — the per-account single-writer commit-queue state machine.
+//!     Each enqueue freezes the target account key and takes a monotonic sequence number; a single
+//!     drain per account coalesces to the latest not-yet-started snapshot so an older async write
+//!     can never land on top of a newer one.
 //!
 //! The wasm driver ([`enqueue_account_state_persist`]) wires the state machine
 //! to `spawn_local` + `SecureKeyStore::store_secret_durable`. Native builds keep
@@ -73,10 +71,10 @@ fn json_merge_live_priority(live: Value, stored: Value) -> Value {
 /// was ready.
 ///
 /// Fast paths keep the common cases exact:
-///   * `live` is structurally default → adopt `stored` wholesale (the ordinary
-///     reload: nothing wrote main state before hydration).
-///   * `stored` is default → keep `live` (an empty durable tier catches the
-///     writes made before it initialised — "空安全库也会接住现场值").
+///   * `live` is structurally default → adopt `stored` wholesale (the ordinary reload: nothing
+///     wrote main state before hydration).
+///   * `stored` is default → keep `live` (an empty durable tier catches the writes made before it
+///     initialised — "空安全库也会接住现场值").
 ///
 /// Otherwise both are non-default (a real live write raced hydration) and the
 /// field-wise [`json_merge_live_priority`] union runs.
@@ -103,10 +101,7 @@ pub(super) fn merge_persisted_into_live(
     let live_decrypted_plaintext = live.mls_decrypted_plaintext.clone();
     let live_history_secrets = live.history_secrets.clone();
 
-    let merged_value = match (
-        serde_json::to_value(&live),
-        serde_json::to_value(&stored),
-    ) {
+    let merged_value = match (serde_json::to_value(&live), serde_json::to_value(&stored)) {
         (Ok(live_value), Ok(stored_value)) => json_merge_live_priority(live_value, stored_value),
         _ => {
             // Serialization cannot realistically fail for these types; if it
@@ -145,14 +140,13 @@ pub(super) enum EnqueueOutcome {
 /// Per-account single-writer commit-queue state machine.
 ///
 /// Invariants:
-///   * At most one entry is pending per account key — a newer enqueue replaces
-///     an older not-yet-started snapshot (coalescing to the latest tail).
+///   * At most one entry is pending per account key — a newer enqueue replaces an older
+///     not-yet-started snapshot (coalescing to the latest tail).
 ///   * At most one drain runs per account key (`draining` set membership).
-///   * `enqueue` and `take_next` are the only mutators of `draining`, and both
-///     run under the same external lock in the wasm driver, so there is no
-///     lost-wakeup window: a write enqueued while a drain is finishing is either
-///     seen by that drain's next `take_next` (pending inserted before the
-///     drain's lock) or starts a new drain (drain cleared `draining` first).
+///   * `enqueue` and `take_next` are the only mutators of `draining`, and both run under the same
+///     external lock in the wasm driver, so there is no lost-wakeup window: a write enqueued while
+///     a drain is finishing is either seen by that drain's next `take_next` (pending inserted
+///     before the drain's lock) or starts a new drain (drain cleared `draining` first).
 #[derive(Debug, Default)]
 pub(super) struct AccountPersistQueueState {
     pending: std::collections::HashMap<String, PendingAccountWrite>,
@@ -208,7 +202,9 @@ impl AccountPersistQueueState {
     /// in-memory cache. `pending` holds at most the coalesced latest per key, so
     /// this is exactly the value a subsequent read should observe.
     pub(super) fn peek(&self, account_key: &str) -> Option<String> {
-        self.pending.get(account_key).map(|write| write.json.clone())
+        self.pending
+            .get(account_key)
+            .map(|write| write.json.clone())
     }
 
     /// Highest durably-committed sequence for `account_key` (0 when none).
@@ -234,7 +230,9 @@ mod wasm_driver {
     }
 
     fn lock() -> std::sync::MutexGuard<'static, AccountPersistQueueState> {
-        queue().lock().unwrap_or_else(|poisoned| poisoned.into_inner())
+        queue()
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
     }
 
     /// Enqueue a durable persist of the account-state `json` under the frozen
@@ -438,18 +436,22 @@ mod tests {
     #[test]
     fn merge_prefers_live_scalar_but_unions_stored_only_map_entries() {
         let mut live = state_with_cursor("sx:live");
-        live.realm_tree_projections
-            .insert("ak:realm:a".to_owned(), serde_json::json!({"name": "A-live"}));
+        live.realm_tree_projections.insert(
+            "ak:realm:a".to_owned(),
+            serde_json::json!({"name": "A-live"}),
+        );
 
         let mut stored = state_with_cursor("sx:stored");
         // Same-key projection: live must win.
-        stored
-            .realm_tree_projections
-            .insert("ak:realm:a".to_owned(), serde_json::json!({"name": "A-stored"}));
+        stored.realm_tree_projections.insert(
+            "ak:realm:a".to_owned(),
+            serde_json::json!({"name": "A-stored"}),
+        );
         // Stored-only projection: must be recovered into the merge.
-        stored
-            .realm_tree_projections
-            .insert("ak:realm:b".to_owned(), serde_json::json!({"name": "B-stored"}));
+        stored.realm_tree_projections.insert(
+            "ak:realm:b".to_owned(),
+            serde_json::json!({"name": "B-stored"}),
+        );
         // Stored-only cursor entry: must be recovered.
         stored
             .realm_events_cursors
@@ -469,7 +471,10 @@ mod tests {
             "B-stored"
         );
         assert_eq!(
-            merged.realm_events_cursors.get("ak:realm:b").map(String::as_str),
+            merged
+                .realm_events_cursors
+                .get("ak:realm:b")
+                .map(String::as_str),
             Some("cursor-b")
         );
     }

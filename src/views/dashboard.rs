@@ -544,7 +544,7 @@ pub fn DashboardPanel(
                                                         Err(e) => rows.push(("Describe".to_owned(), format!("Error: {e}"))),
                                                     }
                                                     match async { crate::transport::account::sync_describe(&api.sdk_http_client()?).await }.await {
-                                                        Ok(s) => rows.push(("Sync".to_owned(), format!("{} profiles", s.supported_sync_profiles.len()))),
+                                                        Ok(s) => rows.push(("Sync".to_owned(), format!("{} profiles", s.supported_profiles.len()))),
                                                         Err(e) => rows.push(("Sync".to_owned(), format!("Error: {e}"))),
                                                     }
                                                     match async { crate::transport::account::identity_describe(&api.sdk_http_client()?).await }.await {

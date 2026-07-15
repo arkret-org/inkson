@@ -159,57 +159,61 @@ fn inkson_accepts_server_contract_payloads() {
 
     let resolved_identity: inkson::models::IdentityResolveOutcome = serde_json::from_value(json!({
         "did_document": {
-            "did": "did:web:alice.example",
-            "document": {"id": "did:web:alice.example"}
+            "id": "did:web:alice.example"
         },
         "key_log_head": null,
         "seq": 0,
-        "receipts": [],
-        "method_evidence": {"mode": "development_local"}
+        "receipts": []
     }))
     .unwrap();
     assert_eq!(
-        resolved_identity.did_document.document["id"],
+        resolved_identity.did_document["id"],
         "did:web:alice.example"
     );
 
-    let sync_describe: arkret_sdk::models::SyncDescription = serde_json::from_value(json!({
+    let sync_describe: arkret_sdk::ServerDescription = serde_json::from_value(json!({
         "service_id": "did:web:server.local",
-        "supported_sync_profiles": ["initial", "incremental"],
-        "limits": {"max_realms": 50, "max_timeline_events": 100},
-        "frontier": {"storage": "memory"}
+        "trust_domain": "ak:trust_domain:server.local",
+        "service_type": "principal_server",
+        "protocol_version": "1.0",
+        "supported_profiles": ["ak.profile.minimal_client.v1"],
+        "supported_features": [],
+        "supported_operations": ["ak.self.account.query.describe"],
+        "supported_bindings": [],
+        "auth_metadata": {"mode": "development"},
+        "limits": {},
+        "plaintext_visibility": {"default": "encrypted"},
+        "implemented_features": [],
+        "claimed_profiles": [],
+        "verified_profiles": [],
+        "experimental_features": [],
+        "compat_surfaces": [],
+        "development_mode": false
     }))
     .unwrap();
     assert!(
         sync_describe
-            .supported_sync_profiles
-            .contains(&"initial".to_owned())
+            .supported_profiles
+            .contains(&"ak.profile.minimal_client.v1".to_owned())
     );
 
-    let sync: inkson::models::ClientSyncOutcome = serde_json::from_value(json!({
+    let frame: arkret_sdk::AccountSubscribeFrame = serde_json::from_value(json!({
+        "kind": "delta",
         "cursor": "ak:cursor:contract-sync",
         "realms": {
             "ak:realm:0196419b-0000-7000-8000-000000000000": {
-                "summary": {
-                    "title": "Arkret Demo Realm",
-                    "summary": "Shared demo Realm served by server",
-                    "tags": ["demo"],
-                    "category": "collaboration"
-                },
-                "timeline": {"events": [], "limited": false},
-                "state": [],
-                "ephemeral": [],
-                "unread": {"notification_count": 0, "highlight_count": 0}
+                "timeline": {"events": [], "limited": false}
             }
-        },
-        "left_realms": [],
-        "to_device": [],
-        "account_data": [],
-        "device_lists": {"changed": [], "left": []}
+        }
     }))
     .unwrap();
+    let sync = inkson::models::AccountSyncStep::from_batch(arkret_sdk::AccountSubscribeBatch {
+        cursor: "ak:cursor:contract-sync".to_owned(),
+        frames: vec![frame],
+    })
+    .unwrap();
     assert!(
-        sync.realms
+        sync.realm_projections
             .contains_key("ak:realm:0196419b-0000-7000-8000-000000000000")
     );
 
@@ -606,38 +610,31 @@ fn inkson_accepts_v1_sync_buckets_and_subscribe_ndjson_contract() {
     // Spec-aligned wire shape per `arkret-spec/.../client-sync.md §2`:
     // flat `realms` keyed by realm id, explicit top-level
     // `left_realms`, flat arrays for `to_device` / `account_data` /
-    // `presence`. The SDK's `SyncOutcome` is the single source of
-    // truth; inkson no longer owns a custom deserializer.
-    let sync: inkson::models::ClientSyncOutcome = serde_json::from_value(json!({
-        "cursor": "sx:v1-bucket",
+    let frame: arkret_sdk::AccountSubscribeFrame = serde_json::from_value(json!({
+        "kind": "delta",
+        "cursor": "ak:cursor:v1-bucket",
         "realms": {
-            "ak:realm:joined": {
-                "summary": {"title": "Joined Realm"},
-                "timeline": {"events": [], "limited": false},
-                "state": [],
-                "ephemeral": [],
-                "unread": {"notification_count": 0, "highlight_count": 0}
+            "ak:realm:0196419b-0000-7000-8000-000000000001": {
+                "timeline": {"events": [], "limited": false}
             }
         },
-        "left_realms": ["ak:realm:left"],
-        "to_device": [{"type": "ak.mls.welcome"}],
-        "account_data": [{
-            "data_type": "ak.push_rules",
-            "content": {"global": {"enabled": true}}
-        }],
         "device_lists": {"changed": [], "left": []},
-        "notifications": {"items": []},
-        "presence": [{"actor_id": "did:web:alice.example"}]
+        "notifications": {"items": []}
     }))
     .unwrap();
-    assert_eq!(sync.cursor, "sx:v1-bucket");
-    assert!(sync.realms.contains_key("ak:realm:joined"));
-    assert_eq!(sync.left_realms, vec!["ak:realm:left".to_owned()]);
-    assert_eq!(sync.to_device.len(), 1);
-    assert_eq!(sync.account_data.len(), 1);
-    assert!(sync.notifications.items.is_empty());
-    assert_eq!(sync.presence[0]["actor_id"], "did:web:alice.example");
-    assert!(sync.presence[0].get("sender").is_none());
+    let sync = inkson::models::AccountSyncStep::from_batch(arkret_sdk::AccountSubscribeBatch {
+        cursor: "ak:cursor:v1-bucket".to_owned(),
+        frames: vec![frame],
+    })
+    .unwrap();
+    assert_eq!(sync.cursor, "ak:cursor:v1-bucket");
+    assert!(
+        sync.realm_projections
+            .contains_key("ak:realm:0196419b-0000-7000-8000-000000000001")
+    );
+    assert!(sync.updates.to_device.is_empty());
+    assert!(sync.updates.account_data.is_empty());
+    assert!(sync.updates.notifications.is_empty());
 
     let frames = [
         r#"{"kind":"heartbeat"}"#,

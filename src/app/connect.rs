@@ -70,7 +70,7 @@ async fn client_core_events_describe(
 
 async fn client_core_account_subscribe_snapshot(
     authed: &crate::transport::TransportClient,
-) -> anyhow::Result<crate::models::ClientSyncOutcome> {
+) -> anyhow::Result<crate::models::AccountSyncStep> {
     let http = authed.sdk_http_client()?;
     crate::client_core::account_subscribe_snapshot(&http, None).await
 }
@@ -1268,7 +1268,7 @@ pub(super) fn connect(base: String, actor: String, device: String, ctx: ConnectC
                             // so keep local container projections while their
                             // home Realm is still present.
                             let server_set: BTreeSet<String> =
-                                sync.realms.keys().cloned().collect();
+                                sync.realm_projections.keys().cloned().collect();
                             let keep_set = full_sync_projection_keep_set(
                                 &server_set,
                                 &store.load().realm_tree_projections,
@@ -1286,16 +1286,13 @@ pub(super) fn connect(base: String, actor: String, device: String, ctx: ConnectC
                             // they're redundant with `retain_realm_tree_projections`
                             // above but cheap to apply when soland evolves
                             // to send them on full sync.
-                            for left_id in &sync.left_realms {
-                                store.forget_realm_tree_projection(left_id);
-                            }
                             let realm_title_hints = invite_notifications
                                 .as_deref()
                                 .map(
                                     crate::state::projection::notifications::realm_title_hints_from_values,
                                 )
                                 .unwrap_or_default();
-                            for (id, body) in &sync.realms {
+                            for (id, body) in &sync.realm_projections {
                                 let projection = crate::realm_tree::projection_with_title_hint(
                                     id,
                                     body,
@@ -1314,24 +1311,26 @@ pub(super) fn connect(base: String, actor: String, device: String, ctx: ConnectC
                             }
                             crate::disappearing::shred_expired_message_plaintext_from_sync_realms(
                                 &mut store,
-                                &sync.realms,
+                                &sync.realm_projections,
                             );
                             // Keep notification projection current even when
                             // invites live on `authz/invites` rather than the
                             // normal account subscribe notification stream.
-                            let projection_from_sync =
-                                crate::state::projection::notifications::notification_items_from_value(
-                                    &sync.notifications,
-                                );
+                            let projection_from_sync = sync
+                                .updates
+                                .notifications
+                                .iter()
+                                .filter_map(|notification| serde_json::to_value(notification).ok())
+                                .collect::<Vec<_>>();
                             let account_notification_projection = sync
+                                .updates
                                 .account_data
                                 .iter()
-                                .filter(|entry| {
+                                .filter_map(|entry| {
                                     crate::state::projection::notifications::is_notification_account_data(
-                                        entry,
-                                    )
+                                        &entry.payload,
+                                    ).then(|| serde_json::to_value(&entry.payload).ok()).flatten()
                                 })
-                                .cloned()
                                 .collect::<Vec<_>>();
                             let mut notification_projection =
                                 if account_notification_projection.is_empty() {
@@ -1356,17 +1355,18 @@ pub(super) fn connect(base: String, actor: String, device: String, ctx: ConnectC
                                 );
                             }
                             store.save_notification_projection(notification_projection);
-                            store.save_presence_projection(sync.presence.clone());
-                            store.ingest_to_device_messages(&sync.to_device);
+                            store.save_presence_projection(&sync.updates.presence);
+                            store.ingest_to_device_messages(&sync.updates.to_device);
                             // `/account/subscribe` carries the actor's complete
                             // account_data projection on every successful frame.
                             // Track blocklist presence so a server-side tombstone
                             // (represented by absence from that full projection)
                             // clears the durable local cache as well.
                             let mut blocklist_snapshot_seen = false;
-                            for entry in &sync.account_data {
+                            for event in &sync.updates.account_data {
+                                let entry = &event.payload;
                                 let Some(data_type) =
-                                    entry.get("data_type").and_then(serde_json::Value::as_str)
+                                    entry.get("key").and_then(serde_json::Value::as_str)
                                 else {
                                     continue;
                                 };
@@ -1606,7 +1606,7 @@ pub(super) fn connect(base: String, actor: String, device: String, ctx: ConnectC
                                     crate::identity::did_resolver::DeploymentProfile::PersonalNode,
                                     did_cache.read().clone(),
                                 );
-                            for (id, body) in &sync.realms {
+                            for (id, body) in &sync.realm_projections {
                                 crate::views::call_signals::route_realm_call_signals(
                                     &mut hub,
                                     id,
@@ -1635,7 +1635,7 @@ pub(super) fn connect(base: String, actor: String, device: String, ctx: ConnectC
                                 let mut store = state_store.write();
                                 crate::disappearing::shred_expired_message_plaintext_from_sync_realms(
                                     &mut store,
-                                    &sync.realms,
+                                    &sync.realm_projections,
                                 );
                             }
                             // Merge encrypted bodies on read (author sidecar →
@@ -1644,7 +1644,7 @@ pub(super) fn connect(base: String, actor: String, device: String, ctx: ConnectC
                             // guard scoped to this call.
                             let store_guard = state_store.read();
                             crate::state::projection::projection_events_from_sync_realms(
-                                &sync.realms,
+                                &sync.realm_projections,
                                 Some(&store_guard),
                                 Some((&canonical_actor, &device)),
                             )

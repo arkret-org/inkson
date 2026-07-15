@@ -5649,7 +5649,7 @@ mod tests {
         let mut snapshot = dummy_mls_snapshot(realm);
         snapshot.epoch = 1;
         store.save_mls_snapshot(realm.to_owned(), snapshot);
-        store.ingest_to_device_messages(&[json!({
+        store.ingest_to_device_messages(&[serde_json::from_value(json!({
             "kind": "ak.mls.welcome",
             "sender_principal_id": PROVIDER_DID,
             "sender_device_id": PROVIDER_DEVICE,
@@ -5665,7 +5665,8 @@ mod tests {
                 "welcome": "b3BhcXVl",
                 "welcome_hash": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
             }
-        })]);
+        }))
+        .unwrap()]);
 
         let key = pending_history_request_dedup_key(&store, realm, SELF_DID)
             .expect("shared pre-join gap with a Welcome provider should request history keys");

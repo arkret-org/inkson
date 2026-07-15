@@ -339,9 +339,14 @@ fn local_state_store_persists_private_read_cursors() {
 fn local_state_store_ingests_read_cursor_update_to_device() {
     let path = temp_state_path("read-cursor-update");
     let mut store = LocalStateStore::with_path(path.clone());
-    store.ingest_to_device_messages(&[serde_json::json!({
+    store.ingest_to_device_messages(&[serde_json::from_value(serde_json::json!({
         "kind": "ak.read_cursor.update",
+        "sender_principal_id": "did:webvh:z6mkfixture:alice.example",
         "sender_device_id": "ak:device:01904100-0000-7000-8000-000000000001",
+        "recipient_principal_id": "did:webvh:z6mkfixture:alice.example",
+        "recipient_device_id": "ak:device:01904100-0000-7000-8000-000000000001",
+        "sent_at": "2026-06-24T00:00:00Z",
+        "expires_at": "2026-06-25T00:00:00Z",
         "content": {
             "schema": "ak.schema.read_cursor.v1",
             "actor_id": "did:web:alice.example",
@@ -358,7 +363,8 @@ fn local_state_store_ingests_read_cursor_update_to_device() {
             },
             "updated_at": "2026-06-24T00:00:00Z"
         }
-    })]);
+    }))
+    .unwrap()]);
 
     let reader = LocalStateStore::with_path(path);
     let marker = reader

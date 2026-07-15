@@ -34,7 +34,7 @@ use arkret_sdk::models::{
 };
 use dioxus::prelude::*;
 use dioxus_primitives::checkbox::CheckboxState;
-use serde_json::{Value, json};
+use serde_json::Value;
 
 use crate::transport::auth::with_authed_sdk_client;
 use crate::ui::button::{Button, ButtonVariant};

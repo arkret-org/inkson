@@ -99,6 +99,10 @@ fn organization_preview_value(preview: arkret_sdk::models::OrganizationPreview) 
     serde_json::to_value(preview).unwrap_or(Value::Null)
 }
 
+fn actor_preview_value(preview: arkret_sdk::models::ActorPreview) -> Value {
+    serde_json::to_value(preview).unwrap_or(Value::Null)
+}
+
 #[component]
 pub fn DirectoryPanel(
     selected_realm_id: Signal<String>,
@@ -483,7 +487,7 @@ pub fn DirectoryPanel(
                                                             search
                                                                 .actors
                                                                 .into_iter()
-                                                                .map(|actor| actor.preview)
+                                                                .map(actor_preview_value)
                                                                 .collect(),
                                                         );
                                                     }
@@ -577,7 +581,7 @@ pub fn DirectoryPanel(
                                                                 search
                                                                     .actors
                                                                     .into_iter()
-                                                                    .map(|actor| actor.preview)
+                                                                    .map(actor_preview_value)
                                                                     .collect(),
                                                             );
                                                         }
@@ -1203,7 +1207,7 @@ pub fn DirectoryPanel(
                                                         search
                                                             .actors
                                                             .into_iter()
-                                                            .map(|actor| actor.preview),
+                                                            .map(actor_preview_value),
                                                     );
                                                     actor_results.set(current);
                                                 }

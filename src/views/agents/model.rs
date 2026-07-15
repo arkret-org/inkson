@@ -912,9 +912,7 @@ pub fn build_act_on_behalf_message_operation(
 ) -> anyhow::Result<arkret_sdk::Event> {
     let strand_id_typed = arkret_sdk::StrandId::new(strand_id.to_owned())
         .map_err(|error| anyhow::anyhow!("invalid strand id {strand_id:?}: {error:?}"))?;
-    let content = arkret_sdk::ContentBlock::text(body)
-        .to_value()
-        .map_err(|error| anyhow::anyhow!("act-on-behalf content serialize: {error}"))?;
+    let content = arkret_sdk::ContentBlock::text(body);
     let mut payload =
         arkret_sdk::MessageCreatePayload::with_content(strand_id_typed, "discussion", content)
             .to_value()

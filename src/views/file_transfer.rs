@@ -360,7 +360,13 @@ fn refresh_items(
         };
         match sync_result {
             Ok(sync) => {
-                let next = file_transfer_items_from_account_data(&sync.account_data, &crypto);
+                let account_data = sync
+                    .updates
+                    .account_data
+                    .iter()
+                    .filter_map(|event| serde_json::to_value(&event.payload).ok())
+                    .collect::<Vec<_>>();
+                let next = file_transfer_items_from_account_data(&account_data, &crypto);
                 let count = next.len();
                 items.set(next);
                 status.set(if count == 0 {

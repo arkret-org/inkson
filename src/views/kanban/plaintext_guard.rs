@@ -70,6 +70,7 @@ pub(super) fn patch_touches_private_paths(payload: &Value, private_paths: &[&str
 }
 
 pub(super) fn kanban_event_carries_plaintext_private_content(event: &arkret_sdk::Event) -> bool {
+    let payload = serde_json::to_value(&event.payload).unwrap_or(Value::Null);
     match event.kind.as_str() {
         "ak.strand.create" => [
             &["body"][..],
@@ -86,11 +87,9 @@ pub(super) fn kanban_event_carries_plaintext_private_content(event: &arkret_sdk:
             &["object", "fields", "synthesis"][..],
         ]
         .iter()
-        .any(|path| {
-            value_at_path(&event.payload, path).is_some_and(value_is_plaintext_private_content)
-        }),
+        .any(|path| value_at_path(&payload, path).is_some_and(value_is_plaintext_private_content)),
         "ak.strand.update" => {
-            patch_touches_private_paths(&event.payload, KANBAN_PRIVATE_STRAND_PATCH_PATHS)
+            patch_touches_private_paths(&payload, KANBAN_PRIVATE_STRAND_PATCH_PATHS)
         }
         _ => false,
     }

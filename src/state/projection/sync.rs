@@ -169,11 +169,11 @@ pub fn projection_events_from_sync_realms(
                 // canonical Content Block JSON → display text.
                 let decrypted_body = if sidecar_body.is_none() {
                     if let (Some((actor_id, device_id)), Some(store)) = (decrypt_identity, store) {
-                        serde_json::from_value::<arkret_sdk::EncryptedEnvelopeV1>(
+                        serde_json::from_value::<arkret_sdk::EncryptedEnvelope>(
                             encrypted_content.clone(),
                         )
                         .ok()
-                        .and_then(|env| env.to_payload().ok())
+                        .and_then(|env| arkret_sdk::mls::encrypted_envelope_to_payload(&env).ok())
                         .and_then(|payload| serde_json::to_value(payload).ok())
                         .and_then(|payload_value| {
                             try_local_mls_decrypt_core(

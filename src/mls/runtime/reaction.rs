@@ -128,7 +128,10 @@ pub fn encrypt_reaction_with_device_snapshot(
     // soland rejects with) so any future edit that widens visibility on a
     // minimal Realm fails loudly here instead of leaking message-id metadata.
     let is_minimal_metadata = state_store.realm_projection_is_minimal_metadata(realm_id);
-    assert_minimal_metadata_aad(&arkret_sdk::AadVisibility::Hidden, is_minimal_metadata)?;
+    assert_minimal_metadata_aad(
+        &arkret_sdk::EncryptedEnvelopeAadVisibility::Hidden,
+        is_minimal_metadata,
+    )?;
 
     // SEC-08 (§2.9) — minimal-metadata epoch lifetime ≤ 1h. A reaction normally
     // reuses the current epoch (no commit), so on a minimal Realm we MUST roll
@@ -173,10 +176,8 @@ pub fn encrypt_reaction_with_device_snapshot(
     let aad_realm_id = arkret_sdk::RealmId::new(realm_id.to_owned())
         .map_err(|err| MlsRuntimeError::Serialize(format!("invalid AAD realm id: {err}")))?;
     let aad = arkret_sdk::EncryptedEnvelopeAad::hidden(aad_realm_id, "ak.reaction.add");
-    let aad_value =
-        serde_json::to_value(&aad).map_err(|err| MlsRuntimeError::Serialize(err.to_string()))?;
     let encrypted_payload = group
-        .encrypt_payload_with_aad(REACTION_ENCRYPTED_CONTENT_TYPE, Some(aad_value), &plaintext)
+        .encrypt_payload_with_aad(REACTION_ENCRYPTED_CONTENT_TYPE, Some(aad), &plaintext)
         .map_err(|err| MlsRuntimeError::Encrypt(err.to_string()))?;
 
     let post_state = group

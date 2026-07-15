@@ -16,6 +16,18 @@ mod tests {
         ReadMarkerRecord, read_scope_for_cursor,
     };
 
+    fn account_data_event(payload: serde_json::Value) -> arkret_sdk::Event {
+        arkret_sdk::Event::new(
+            "ak.account_data.set",
+            arkret_sdk::RealmId::new("ak:realm:0196419b-0000-7000-8000-000000000001").unwrap(),
+            arkret_sdk::Did::new("did:webvh:z6mkfixture:alice.example").unwrap(),
+            1,
+            arkret_sdk::Hlc::new("01970e589d21-0004-a13f9c2e").unwrap(),
+            payload,
+        )
+        .unwrap()
+    }
+
     #[test]
     fn hydrate_notifications_applies_push_rules_and_dnd() {
         let raw = vec![json!({
@@ -438,34 +450,32 @@ mod tests {
     #[test]
     fn notification_source_falls_back_to_account_data_only_when_endpoint_missing() {
         let account_data = vec![
-            json!({
+            account_data_event(json!({
                 "schema": "ak.schema.notification.v1",
                 "notification_id": "n1",
                 "read": false
-            }),
-            json!({
+            })),
+            account_data_event(json!({
                 "kind": "ak.profile",
                 "id": "profile"
-            }),
+            })),
         ];
 
         let fallback = raw_notifications_from_sources(None, &account_data);
         assert_eq!(fallback.len(), 1);
 
-        let server_empty = arkret_sdk::NotificationContainer::default();
+        let server_empty = Vec::<arkret_sdk::NotificationDelta>::new();
         assert!(raw_notifications_from_sources(Some(&server_empty), &account_data).is_empty());
 
-        let subscribe_delta = arkret_sdk::NotificationContainer {
-            items: vec![arkret_sdk::NotificationDelta {
-                id: arkret_sdk::NotificationId::new(
-                    "ak:notification:01964137-0000-7000-8000-000000000004",
-                )
-                .unwrap(),
-                notification_type: arkret_sdk::NotificationType::Agent,
-                action: arkret_sdk::NotificationDeltaAction::Remove,
-                data: None,
-            }],
-        };
+        let subscribe_delta = vec![arkret_sdk::NotificationDelta {
+            id: arkret_sdk::NotificationId::new(
+                "ak:notification:01964137-0000-7000-8000-000000000004",
+            )
+            .unwrap(),
+            notification_type: arkret_sdk::NotificationType::Agent,
+            action: arkret_sdk::NotificationDeltaAction::Remove,
+            data: None,
+        }];
         let from_subscribe = raw_notifications_from_sources(Some(&subscribe_delta), &account_data);
         assert_eq!(from_subscribe.len(), 1);
         assert_eq!(

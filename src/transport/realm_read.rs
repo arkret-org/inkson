@@ -44,7 +44,7 @@ pub async fn authz_check_resource(
     let body = arkret_sdk::models::AuthzCheckRequestBody {
         actor_id: arkret_sdk::Did::new(actor.trim().to_owned())?,
         action: action.trim().to_owned(),
-        resource,
+        resource: resource.map(serde_json::from_value).transpose()?,
         context: None,
     };
     http.authz_check(&body).await.map_err(anyhow::Error::from)

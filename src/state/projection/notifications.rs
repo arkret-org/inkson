@@ -13,20 +13,23 @@ use std::collections::{BTreeMap, BTreeSet};
 use arkret_sdk::NotificationContainer;
 use serde_json::{Value, json};
 
-pub(crate) fn is_notification_account_data(value: &Value) -> bool {
+pub(crate) fn is_notification_account_data(value: &BTreeMap<String, Value>) -> bool {
     value.get("schema").and_then(Value::as_str) == Some("ak.schema.notification.v1")
 }
 
 pub(crate) fn raw_notifications_from_sources(
-    notification_response: Option<&NotificationContainer>,
-    account_data: &[Value],
+    notification_response: Option<&[arkret_sdk::NotificationDelta]>,
+    account_data: &[arkret_sdk::Event],
 ) -> Vec<Value> {
     match notification_response {
-        Some(notification_response) => notification_items_from_value(notification_response),
+        Some(notification_response) => notification_response
+            .iter()
+            .filter_map(|item| serde_json::to_value(item).ok())
+            .collect(),
         None => account_data
             .iter()
-            .filter(|value| is_notification_account_data(value))
-            .cloned()
+            .filter(|event| is_notification_account_data(&event.payload))
+            .filter_map(|event| serde_json::to_value(&event.payload).ok())
             .collect(),
     }
 }

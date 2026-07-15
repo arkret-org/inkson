@@ -664,7 +664,7 @@ pub fn build_space_create_event(
         .map_err(|e| anyhow::anyhow!("invalid space_id for space.create: {e:?}"))?;
     let space_created_by = arkret_sdk::Did::new(actor_id.to_owned())
         .map_err(|e| anyhow::anyhow!("invalid created_by DID for space.create: {e:?}"))?;
-    let mut space_object = arkret_sdk::SpaceCreateObject::new(
+    let mut space_object = arkret_sdk::Space::new(
         space_object_id,
         space_realm_id,
         kind,

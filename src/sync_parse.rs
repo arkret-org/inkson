@@ -8,7 +8,7 @@ use tokio::sync::Mutex;
 /// Keep account-subscribe network calls globally serial so duplicate UI tasks
 /// cannot leave multiple pending long-polls in browser runtimes.
 ///
-/// NDJSON parsing itself lives in the SDK (`account_subscribe_once` /
+/// NDJSON parsing itself lives in the SDK (`account_subscribe_batch` /
 /// `AccountSubscribeFolder`), which runs the request-aware
 /// `StreamTraceValidator` over every frame — inkson keeps no shape-only
 /// parsing side path (SPI-INK-002).

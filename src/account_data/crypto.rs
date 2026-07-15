@@ -1,5 +1,6 @@
 use base64::Engine as _;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
+use serde::Serialize;
 use serde_json::Value;
 
 pub fn decrypt_account_data_value(
@@ -25,13 +26,15 @@ pub fn decrypt_account_data_value(
     .map_err(Into::into)
 }
 
-pub fn decrypt_account_data_entry(
+pub fn decrypt_account_data_entry<T: Serialize>(
     actor_id: &str,
     data_type: &str,
-    entry: &Value,
+    entry: &T,
 ) -> anyhow::Result<Value> {
+    let entry = serde_json::to_value(entry)?;
     let value = entry
         .get("content")
+        .or_else(|| entry.get("body"))
         .or_else(|| entry.get("encrypted_payload"))
         .or_else(|| entry.get("encrypted_content"))
         .ok_or_else(|| anyhow::anyhow!("account_data entry has no encrypted value"))?;

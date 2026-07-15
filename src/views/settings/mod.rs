@@ -1542,11 +1542,11 @@ pub fn SettingsPanel(
                                         .await
                                         {
                                             Ok(directory) => {
-                                                let features = serde_json::to_string_pretty(&directory.features)
-                                                    .unwrap_or_else(|_| directory.features.to_string());
+                                                let features = serde_json::to_string_pretty(&directory.mimi.features)
+                                                    .unwrap_or_else(|_| "[]".to_owned());
                                                 mimi_directory.set(format!(
-                                                    "providers {}\nfeatures {}",
-                                                    directory.providers.len(),
+                                                    "provider {}\nfeatures {}",
+                                                    directory.mimi.provider_id,
                                                     features,
                                                 ));
                                             }

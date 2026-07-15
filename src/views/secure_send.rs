@@ -74,9 +74,6 @@ pub(crate) fn run_local_mls_encrypt(
         return empty;
     };
     let aad = arkret_sdk::EncryptedEnvelopeAad::hidden(aad_realm_id, "ak.message.create");
-    let Ok(aad_value) = serde_json::to_value(&aad) else {
-        return empty;
-    };
     let Ok((schedule_hash, member_dids, payload, commit_envelope, new_snapshot)) =
         crate::mls::runtime::encrypt_message_with_device_snapshot(
             &mut state_store.write(),
@@ -85,7 +82,7 @@ pub(crate) fn run_local_mls_encrypt(
             principal_id,
             device_id,
             "application/vnd.arkret.message+json",
-            aad_value,
+            aad.clone(),
             plaintext_bytes,
         )
     else {
@@ -290,21 +287,19 @@ pub(crate) fn build_secure_send(
     // Wrap the MLS payload in the spec-canonical
     // `ak.schema.encrypted_envelope.v1` wire shape, binding
     // key_ref.group_state_ref to the current MLS group state.
-    let encrypted_envelope = arkret_sdk::EncryptedEnvelopeV1::from_payload(
+    let encrypted_envelope = arkret_sdk::mls::encrypted_envelope_from_payload(
         &encrypted_payload,
         envelope_aad,
-        arkret_sdk::AadVisibility::Hidden,
+        arkret_sdk::EncryptedEnvelopeAadVisibility::Hidden,
         &group_state_ref,
     )
     .map_err(|err| format!("MLS encrypted envelope build failed: {err}"))?;
-    let encrypted_payload_json = serde_json::to_value(&encrypted_envelope)
-        .map_err(|err| format!("MLS encrypted envelope encode failed: {err}"))?;
     let typed_strand_id = arkret_sdk::StrandId::new(strand_id.to_owned())
         .map_err(|err| format!("Send Secure strand id invalid: {err:?}"))?;
     let mut message_payload = arkret_sdk::MessageCreatePayload::with_encrypted_content(
         typed_strand_id,
         "discussion",
-        encrypted_payload_json,
+        encrypted_envelope,
     )
     .with_message_id(message_id.to_owned());
     if let Some(reply_to) = reply_to.filter(|value| !value.trim().is_empty()) {

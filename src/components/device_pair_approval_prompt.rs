@@ -22,7 +22,6 @@ use dioxus::prelude::*;
 use crate::identity::device_pairing::{
     PendingPairingRequest, pairing_request_body, parse_pending_pairing_requests,
 };
-use crate::transport::auth::with_authed_api;
 use crate::ui::button::{Button, ButtonVariant};
 use crate::ui::dialog::Dialog;
 use crate::views::helpers::short_protocol_id;

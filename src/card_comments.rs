@@ -118,13 +118,8 @@ pub fn build_card_comment_payload(comment: &CardComment) -> anyhow::Result<Value
         )
     })?;
 
-    let mut payload = arkret_sdk::MessageCreatePayload::with_content(
-        strand_id,
-        DISCUSSION_TRACK,
-        content
-            .to_value()
-            .map_err(|err| anyhow::anyhow!("content block serialize: {err}"))?,
-    );
+    let mut payload =
+        arkret_sdk::MessageCreatePayload::with_content(strand_id, DISCUSSION_TRACK, content);
     if let Some(reply_to) = &comment.reply_to {
         payload = payload.with_reply_to(reply_to.clone());
     }

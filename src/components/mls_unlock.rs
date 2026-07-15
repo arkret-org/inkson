@@ -146,7 +146,11 @@ pub fn MlsUnlockPrompt(
                         None,
                     )
                     .await?;
-                    Ok::<_, anyhow::Error>((payload, active_policy, account_snapshot.account_data))
+                    Ok::<_, anyhow::Error>((
+                        payload,
+                        active_policy,
+                        account_snapshot.updates.account_data,
+                    ))
                 }))
                 .await;
             let result = match payload_result {

@@ -8,7 +8,7 @@
 //! `ak.component.moderation.appeal.v1` and enforces the §5.5.2
 //! separation-of-duties / atomicity constraints.
 
-use serde_json::{Value, json};
+use serde_json::json;
 
 use super::{OperationBuilder, did_id, payload_value, trim_realm_id};
 

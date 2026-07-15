@@ -3,15 +3,19 @@
 //! the `ak.typing` / `ak.receipt.read` / `ak.presence` / `ak.call.signal`
 //! ephemeral envelopes, and the events-batch acceptance gate.
 
+use std::collections::BTreeMap;
+
 use chrono::Timelike as _;
+use serde::Serialize;
 use serde_json::{Value, json};
 
 use crate::operation::{EventKind, OperationBuilder, trim_realm_id};
 
-pub(crate) fn validate_outgoing_registered_event_payload(
+pub(crate) fn validate_outgoing_registered_event_payload<T: Serialize>(
     kind: &str,
-    payload: &Value,
+    payload: &T,
 ) -> anyhow::Result<()> {
+    let payload = serde_json::to_value(payload)?;
     let catalog = arkret_sdk::schema::event_payload_validator_catalog()?;
     if !catalog
         .missing_payload_validators_for(std::iter::once(kind))
@@ -20,7 +24,7 @@ pub(crate) fn validate_outgoing_registered_event_payload(
         return Ok(());
     }
 
-    catalog.validate_payload(kind, payload).map_err(|err| {
+    catalog.validate_payload(kind, &payload).map_err(|err| {
         anyhow::anyhow!(
             "outgoing event kind '{kind}' payload violates registered payload schema: {err}"
         )
@@ -83,6 +87,27 @@ pub(crate) fn ensure_events_submit_accepted(
 const EPHEMERAL_DEFAULT_TTL_SECS: i64 = 30;
 const TYPING_EPHEMERAL_TTL_SECS: i64 = 5;
 
+fn ephemeral_payload<T: Serialize>(value: &T) -> anyhow::Result<BTreeMap<String, Value>> {
+    serde_json::from_value(serde_json::to_value(value)?)
+        .map_err(|error| anyhow::anyhow!("ephemeral payload must be an object: {error}"))
+}
+
+fn pending_ephemeral_proof(
+    actor_id: &arkret_sdk::Did,
+    device_id: &arkret_sdk::DeviceId,
+) -> anyhow::Result<arkret_sdk::Proof> {
+    Ok(arkret_sdk::Proof {
+        kind: arkret_sdk::proof_kind::DETACHED_JWS.to_owned(),
+        alg: "pending".to_owned(),
+        verification_method: format!("{actor_id}#{device_id}"),
+        event_digest: arkret_sdk::Hash::new(format!("sha256:{}", "0".repeat(64)))?,
+        created_at: crate::clock::now_utc(),
+        domain: None,
+        audience: None,
+        jws: String::new(),
+    })
+}
+
 /// Round R2/R3 (T02) — build a `ak.typing` `EphemeralEnvelope`. Enforces
 /// the kind allowlist + the 5-minute hard ceiling on `expires_at - sent_at`.
 pub fn build_typing_envelope(
@@ -107,6 +132,7 @@ pub fn build_typing_envelope(
         arkret_sdk::DeviceId::new(device_id)
             .map_err(|err| anyhow::anyhow!("invalid device_id for ak.typing: {err}"))?,
     );
+    let proof = pending_ephemeral_proof(&actor, device.as_ref().expect("typing device"))?;
     arkret_sdk::EphemeralEnvelope::new(
         "ak.typing",
         realm,
@@ -114,7 +140,7 @@ pub fn build_typing_envelope(
         device,
         now,
         expires_at,
-        json!({
+        ephemeral_payload(&json!({
             "actor_id": actor_id,
             "realm_id": realm_id_wire,
             "strand_id": strand.as_str(),
@@ -123,8 +149,8 @@ pub fn build_typing_envelope(
             "track_name": "discussion",
             "typing": typing,
             "ttl_ms": TYPING_EPHEMERAL_TTL_SECS * 1000
-        }),
-        None,
+        }))?,
+        proof,
     )
     .map_err(|err| anyhow::anyhow!("typing envelope rejected: {err}"))
 }
@@ -163,6 +189,7 @@ pub fn build_receipt_read_envelope(
     };
     let device = arkret_sdk::DeviceId::new(device_id)
         .map_err(|err| anyhow::anyhow!("invalid device_id for ak.receipt.read: {err}"))?;
+    let proof = pending_ephemeral_proof(&actor, &device)?;
     arkret_sdk::EphemeralEnvelope::new(
         "ak.receipt.read",
         realm,
@@ -170,8 +197,8 @@ pub fn build_receipt_read_envelope(
         Some(device),
         now,
         expires_at,
-        serde_json::to_value(receipt)?,
-        None,
+        ephemeral_payload(&receipt)?,
+        proof,
     )
     .map_err(|err| anyhow::anyhow!("read receipt envelope rejected: {err}"))
 }
@@ -220,6 +247,7 @@ pub fn build_presence_envelope(
     );
     let device = arkret_sdk::DeviceId::new(device_id)
         .map_err(|err| anyhow::anyhow!("invalid device_id for ak.presence: {err}"))?;
+    let proof = pending_ephemeral_proof(&actor, &device)?;
     arkret_sdk::EphemeralEnvelope::new(
         "ak.presence",
         realm,
@@ -227,8 +255,8 @@ pub fn build_presence_envelope(
         Some(device),
         now,
         expires_at,
-        Value::Object(payload),
-        None,
+        payload.into_iter().collect(),
+        proof,
     )
     .map_err(|err| anyhow::anyhow!("presence envelope rejected: {err}"))
 }
@@ -286,15 +314,19 @@ pub fn build_call_signal_envelope_v1(
     }
     let call = arkret_sdk::CallId::new(call_id)
         .map_err(|err| anyhow::anyhow!("invalid call_id for ak.call.signal: {err}"))?;
-    let payload = arkret_sdk::CallSignalPayload {
-        call_id: call,
-        signal_type: signal_type.to_owned(),
-        seq,
-        data,
-    };
+    let payload =
+        arkret_sdk::CallSignalPayload {
+            call_id: call,
+            signal_type: signal_type.to_owned(),
+            seq,
+            data: Some(serde_json::from_value(data).map_err(|error| {
+                anyhow::anyhow!("ak.call.signal data must be an object: {error}")
+            })?),
+        };
     payload
         .validate_signal_type()
         .map_err(|err| anyhow::anyhow!("ak.call.signal payload rejected: {err}"))?;
+    let proof = pending_ephemeral_proof(&actor, device.as_ref().expect("call signal device"))?;
     arkret_sdk::EphemeralEnvelope::new(
         "ak.call.signal",
         realm,
@@ -302,8 +334,8 @@ pub fn build_call_signal_envelope_v1(
         device,
         now,
         expires_at,
-        serde_json::to_value(payload)?,
-        None,
+        ephemeral_payload(&payload)?,
+        proof,
     )
     .map_err(|err| anyhow::anyhow!("call signal envelope rejected: {err}"))
 }
@@ -330,9 +362,13 @@ pub(crate) fn attach_broadcast_ephemeral_proof(
     })?;
 
     // event_digest covers the canonical envelope bytes without `proof`.
-    envelope.proof = None;
+    let mut unsigned_envelope = serde_json::to_value(&*envelope)?;
+    unsigned_envelope
+        .as_object_mut()
+        .expect("EphemeralEnvelope serializes as an object")
+        .remove("proof");
     let canonical_bytes = arkret_sdk::signatures::proof::EventProofBuilder::new()
-        .canonical_bytes(&serde_json::to_value(&*envelope)?)
+        .canonical_bytes(&unsigned_envelope)
         .map_err(|err| anyhow::anyhow!("{kind} canonical encoding failed: {err}"))?;
     let event_digest = arkret_sdk::Hash::new(crate::canonical::sha256_digest(&canonical_bytes))
         .map_err(|err| anyhow::anyhow!("{kind} event digest is not a typed Hash: {err}"))?;
@@ -358,6 +394,6 @@ pub(crate) fn attach_broadcast_ephemeral_proof(
     proof.jws = signer
         .detached_jws_over(&binding_bytes)
         .map_err(|err| anyhow::anyhow!("{kind} proof signing failed: {err}"))?;
-    envelope.proof = Some(serde_json::to_value(&proof)?);
+    envelope.proof = proof;
     Ok(())
 }

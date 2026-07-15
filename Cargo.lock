@@ -1114,6 +1114,7 @@ name = "chime"
 version = "0.3.0"
 dependencies = [
  "arkret",
+ "arkret-wire-edge",
  "base64",
  "chrono",
  "gloo-timers 0.4.0",

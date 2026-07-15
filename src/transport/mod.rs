@@ -14,11 +14,9 @@ pub mod media;
 pub mod realm_read;
 pub mod realm_write;
 
-pub use blob::{BlobEndpoints, RESUMABLE_UPLOAD_THRESHOLD_BYTES};
+pub use blob::BlobEndpoints;
 pub use context::{RequestContext, TransportClient};
-pub use endpoints::{
-    AccountEndpoints, DirectoryEndpoints, EndpointClients, KeysEndpoints, MlsEndpoints,
-};
+pub use endpoints::{EndpointClients, KeysEndpoints};
 pub use media::MediaEndpoints;
 
 #[cfg(test)]

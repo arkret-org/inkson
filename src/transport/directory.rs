@@ -8,8 +8,6 @@
 //! session-refresh + terminal-session classification identical to the old
 //! facade path while dropping the per-domain facade method.
 
-use serde_json::Value;
-
 use crate::directory_helpers::{ResolveHandleContext, resolve_handle_request_body};
 use crate::models::{
     ResolveHandleView, ResolveRealmOutcome, SearchActorsView, SearchOrganizationsView,
@@ -123,7 +121,7 @@ pub async fn search_organizations(
         .map(|cursor| cursor.into_string());
     let body = arkret_sdk::models::DirectorySearchOrganizationsRequestBody {
         query: Some(query.to_owned()),
-        claims: Value::Null,
+        claims: None,
         cursor,
         limit: Some(20),
     };

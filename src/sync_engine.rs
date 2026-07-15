@@ -13,7 +13,7 @@
 //! * **First iteration is initial account sync** when no cursor is stored. Subsequent iterations
 //!   resume with `after=<cursor>&catchup=true`.
 //! * **Server-authoritative reconcile**: on a full sync the response is the truth for top-level
-//!   Realm membership. Nested container Spaces may not appear as top-level `response.realms`
+//!   Realm membership. Nested container Spaces may not appear as top-level realm projections
 //!   entries, so locally projected Spaces are retained while their home Realm remains in the
 //!   full-sync response. On incremental, soland's `left_realms` field is the prune signal.
 //! * **Lifecycle via generation counter**: callers (login / logout / server-switch) bump the
@@ -58,7 +58,7 @@ use crate::api_error::{
     is_auth_expired_error, is_invalid_cursor_error, is_stale_frontier_error,
     is_terminal_session_grant_error, rate_limited_retry_after,
 };
-use crate::models::{ClientSyncOutcome, DeviceMessagesGetOutcome, RealmTreeNodeKind};
+use crate::models::{AccountSyncStep, DeviceMessagesGetOutcome, RealmTreeNodeKind};
 use crate::runtime::engine_loop::{EngineLoopDirective, run_engine_loop};
 use crate::runtime::projection::{ClientProjectionEvent, ProjectionSink, SyncStatusEvent};
 use crate::runtime_helpers::MAX_RETRY_DELAY;
@@ -288,17 +288,9 @@ fn push_decoded_account_event(
 fn push_account_event_payload(
     decoder: &InboundDecoder,
     batch: &mut Vec<ClientEvent>,
-    payload: &Value,
+    event: &arkret_sdk::Event,
 ) {
-    match serde_json::from_value::<arkret_sdk::Event>(payload.clone()) {
-        Ok(event) => push_decoded_account_event(decoder, batch, event),
-        Err(error) => {
-            tracing::debug!(
-                error = %error,
-                "account sync event payload was not a typed Event; ignoring payload"
-            );
-        }
-    }
+    push_decoded_account_event(decoder, batch, event.clone());
 }
 
 #[cfg(test)]
@@ -307,10 +299,12 @@ fn push_account_realm_update_events(
     batch: &mut Vec<ClientEvent>,
     update: &arkret_sdk::RealmUpdate,
 ) {
-    for payload in &update.state {
-        push_account_event_payload(decoder, batch, payload);
+    if let Some(state) = &update.entry.state {
+        for payload in &state.events {
+            push_account_event_payload(decoder, batch, payload);
+        }
     }
-    if let Some(timeline) = &update.timeline {
+    if let Some(timeline) = &update.entry.timeline {
         for payload in &timeline.events {
             push_account_event_payload(decoder, batch, payload);
         }
@@ -319,15 +313,14 @@ fn push_account_realm_update_events(
 
 #[cfg(test)]
 async fn project_account_response_client_events<P>(
-    response: &ClientSyncOutcome,
+    response: &AccountSyncStep,
     decoder: &InboundDecoder,
     projector: &P,
 ) -> anyhow::Result<()>
 where
     P: ClientProjector + ?Sized,
 {
-    let mut processor = arkret_sdk::SyncResponseProcessor::new();
-    let updates = processor.process(response.clone())?;
+    let updates = response.updates.clone();
     let realm_updates = updates.realm_updates.clone();
     let mut batch = garth::account_updates_to_events(updates);
 
@@ -648,38 +641,27 @@ async fn run_circle_scope_rotate_pass(
                             continue;
                         }
                     };
-                if !outcome.accepted.is_empty() || !outcome.duplicate.is_empty() {
-                    if generation.get() != start_generation {
-                        return;
-                    }
-                    ctx.state_store.write(|store| {
-                        store.save_mls_snapshot_for_effective_scope(
-                            realm_id.clone(),
-                            Some(&circle_id),
-                            post_commit_snapshot,
-                        )
-                    });
-                    tracing::info!(
-                        %realm_id,
-                        %circle_id,
-                        %target_principal_id,
-                        ?removed_leaves,
-                        ?removed_principals,
-                        accepted = outcome.accepted.len(),
-                        duplicate = outcome.duplicate.len(),
-                        cleared_pending_removals = outcome.cleared_pending_removals.len(),
-                        "sync_engine: Circle scope-rotate commit accepted",
-                    );
+                if generation.get() != start_generation {
                     return;
                 }
-                tracing::debug!(
+                ctx.state_store.write(|store| {
+                    store.save_mls_snapshot_for_effective_scope(
+                        realm_id.clone(),
+                        Some(&circle_id),
+                        post_commit_snapshot,
+                    )
+                });
+                tracing::info!(
                     %realm_id,
                     %circle_id,
                     %target_principal_id,
-                    rejected = outcome.rejected.len(),
-                    quarantine = outcome.quarantine.len(),
-                    "sync_engine: Circle scope-rotate commit not accepted",
+                    ?removed_leaves,
+                    ?removed_principals,
+                    mls_group_ref = ?outcome.mls_group_ref,
+                    note = ?outcome.note,
+                    "sync_engine: Circle scope-rotate commit accepted",
                 );
+                return;
             }
         }
     }
@@ -881,7 +863,15 @@ async fn run_iteration(
 
     match crate::client_core::account_subscribe_snapshot_outcome(&sdk_http, cursor.as_deref()).await
     {
-        Ok(AccountSubscribeSnapshotResult::Delta(response)) => {
+        Ok(AccountSubscribeSnapshotResult::Batch(batch)) => {
+            let response = match AccountSyncStep::from_batch(batch) {
+                Ok(response) => response,
+                Err(error) => {
+                    return IterationOutcome::Transient(format!(
+                        "sync_engine account frame processing: {error}"
+                    ));
+                }
+            };
             // Late-arriving response from a stale generation must not
             // overwrite signals owned by the new generation. The
             // state_store write below is still safe because it's keyed
@@ -990,7 +980,7 @@ async fn run_iteration(
                 return IterationOutcome::Transient(format!("sync_engine to-device poll: {error}"));
             }
             IterationOutcome::Ok {
-                realm_ids: response.realms.keys().cloned().collect(),
+                realm_ids: response.realm_projections.keys().cloned().collect(),
             }
         }
         Ok(AccountSubscribeSnapshotResult::ReconnectAfter {
@@ -1110,7 +1100,7 @@ async fn run_iteration(
 /// synchronous `apply_response` because directory resolution needs `keys/query`.
 async fn route_inbound_call_signals(
     api: &TransportClient,
-    response: &ClientSyncOutcome,
+    response: &AccountSyncStep,
     ctx: &SyncEngineContext,
 ) {
     let account_did = ctx.account_did.clone();
@@ -1129,7 +1119,7 @@ async fn route_inbound_call_signals(
         did_cache.get(),
     );
 
-    for (id, body) in &response.realms {
+    for (id, body) in &response.realm_projections {
         // Retained in `views::call_signals` on purpose: this router operates
         // on `&mut CallSignalHub`, which owns Dioxus `Signal` state and is
         // deliberately kept in the view layer (YGN-ARCH-01). Relocating the
@@ -1160,7 +1150,7 @@ async fn route_inbound_call_signals(
 /// a principal-scoped `(actor, device)` `keys/query` pair.
 pub(crate) async fn prefetch_persistent_event_sender_keys(
     api: &TransportClient,
-    response: &ClientSyncOutcome,
+    response: &AccountSyncStep,
     did_cache: crate::runtime::input::ValueCell<crate::identity::did_resolver::DidResolutionCache>,
     is_minimal_metadata_realm: impl Fn(&str) -> bool,
 ) -> bool {
@@ -1176,11 +1166,11 @@ pub(crate) async fn prefetch_persistent_event_sender_keys(
 /// (`did:method:identifier#device`); the controller MUST be the asserting actor.
 async fn prefetch_member_identity_proof_keys(
     api: &TransportClient,
-    response: &ClientSyncOutcome,
+    response: &AccountSyncStep,
     did_cache: crate::runtime::input::ValueCell<crate::identity::did_resolver::DidResolutionCache>,
 ) -> bool {
     let mut pairs = BTreeSet::<(String, String)>::new();
-    for (_realm_id, body) in &response.realms {
+    for (_realm_id, body) in &response.realm_projections {
         collect_member_identity_proof_devices_from_value(body, 0, &mut pairs);
     }
     prefetch_persistent_event_sender_key_pairs(api, pairs.into_iter().collect(), did_cache).await
@@ -1286,7 +1276,7 @@ async fn prefetch_persistent_event_sender_key_pairs(
         return false;
     }
 
-    let mut did_cache = did_cache;
+    let did_cache = did_cache;
     let anchor = crate::identity::did_resolver::ResolverDidAnchor::from_profile(
         crate::identity::did_resolver::DeploymentProfile::PersonalNode,
         did_cache.get(),
@@ -1297,7 +1287,7 @@ async fn prefetch_persistent_event_sender_key_pairs(
 }
 
 fn refresh_projection_events_from_sync_response(
-    response: &ClientSyncOutcome,
+    response: &AccountSyncStep,
     is_full_sync: bool,
     ctx: &SyncEngineContext,
 ) {
@@ -1306,7 +1296,7 @@ fn refresh_projection_events_from_sync_response(
     let device_id = ctx.device_id.clone();
     let synced_projection_events = state_store.read(|store| {
         crate::state::projection::projection_events_from_sync_realms(
-            &response.realms,
+            &response.realm_projections,
             Some(store),
             Some((&account_did, &device_id)),
         )
@@ -1321,11 +1311,11 @@ fn refresh_projection_events_from_sync_response(
 }
 
 fn collect_persistent_proof_sender_devices(
-    response: &ClientSyncOutcome,
+    response: &AccountSyncStep,
     is_minimal_metadata_realm: &impl Fn(&str) -> bool,
 ) -> Vec<(String, String)> {
     let mut pairs = BTreeSet::<(String, String)>::new();
-    for (realm_id, body) in &response.realms {
+    for (realm_id, body) in &response.realm_projections {
         // §2.10.3 — a minimal-metadata Realm's content authorship never forms
         // a directory pair; its authors verify against the MLS LeafNode.
         if is_minimal_metadata_realm(realm_id) {
@@ -1415,7 +1405,7 @@ fn proof_sender_device_from_verification_method(
 /// the engine fully owns sync, `connect()` is just a "force one
 /// iteration now" entry that calls this.
 pub fn apply_response(
-    response: &ClientSyncOutcome,
+    response: &AccountSyncStep,
     is_full_sync: bool,
     ctx: &SyncEngineContext,
     invite_notifications: Option<Vec<Value>>,
@@ -1433,7 +1423,7 @@ pub fn apply_response(
     // walks the resolver chain instead of trusting a stale cache entry (old key
     // set). Keep this separate from the state-store write callback.
     did_cache.update(|cache| {
-        for body in response.realms.values() {
+        for body in response.realm_projections.values() {
             invalidate_cache_for_revocation_events(cache, body);
         }
     });
@@ -1451,8 +1441,10 @@ pub fn apply_response(
         // data — each setter used to flush the *entire* `ClientLocalState` to
         // disk/localStorage. Wrap the whole apply in one batch so it persists
         // exactly once.
-        let cursor_can_advance =
-            to_device_batch_allows_cursor_advance(&response.to_device, response.to_device_limited);
+        let cursor_can_advance = to_device_batch_allows_cursor_advance(
+            &response.updates.to_device,
+            response.updates.to_device_limited,
+        );
         store.batch(|store| {
             if is_full_sync {
                 // Server-authoritative for top-level Realm membership:
@@ -1460,7 +1452,8 @@ pub fn apply_response(
                 // Space-container projections whose home Realm is still
                 // present. Containers are not guaranteed to arrive as
                 // top-level sync entries.
-                let server_set: BTreeSet<String> = response.realms.keys().cloned().collect();
+                let server_set: BTreeSet<String> =
+                    response.realm_projections.keys().cloned().collect();
                 let keep_set = crate::app::full_sync_projection_keep_set(
                     &server_set,
                     &store.load().realm_tree_projections,
@@ -1475,10 +1468,7 @@ pub fn apply_response(
             }
             // Explicit `left_realms` deltas — meaningful primarily on
             // incremental sync, but cheap to apply on full sync too.
-            for left_id in &response.left_realms {
-                store.forget_realm_tree_projection(left_id);
-            }
-            for (id, body) in &response.realms {
+            for (id, body) in &response.realm_projections {
                 store.save_realm_tree_projection(id.clone(), body.clone());
                 let view = LocalSealView::from_sync_body(body);
                 store.set_realm_seal_view(id.clone(), view);
@@ -1502,13 +1492,13 @@ pub fn apply_response(
             }
             crate::disappearing::shred_expired_message_plaintext_from_sync_realms(
                 store,
-                &response.realms,
+                &response.realm_projections,
             );
 
             synced_theme = apply_account_data(store, response, &account_did);
             apply_notification_projection(store, response, is_full_sync, invite_notifications);
-            store.save_presence_projection(response.presence.clone());
-            store.ingest_to_device_messages(&response.to_device);
+            store.save_presence_projection(&response.updates.presence);
+            store.ingest_to_device_messages(&response.updates.to_device);
             if cursor_can_advance {
                 store.save_sync_cursor(response.cursor.clone());
             }
@@ -1562,7 +1552,7 @@ pub fn apply_response(
     let device_id = ctx.device_id.clone();
     let synced_projection_events = state_store.read(|store| {
         crate::state::projection::projection_events_from_sync_realms(
-            &response.realms,
+            &response.realm_projections,
             Some(store),
             Some((&account_did, &device_id)),
         )
@@ -1579,7 +1569,10 @@ pub fn apply_response(
         .projection(ClientProjectionEvent::DeviceQueue {
             pending: state_store.read(|store| store.load().to_device_inbox.len()),
         });
-    if to_device_batch_allows_cursor_advance(&response.to_device, response.to_device_limited) {
+    if to_device_batch_allows_cursor_advance(
+        &response.updates.to_device,
+        response.updates.to_device_limited,
+    ) {
         ctx.projection_sink
             .projection(ClientProjectionEvent::CursorCheckpoint {
                 scope: "account".to_owned(),
@@ -1588,7 +1581,7 @@ pub fn apply_response(
     } else {
         tracing::debug!(
             cursor = %response.cursor,
-            to_device_count = response.to_device.len(),
+            to_device_count = response.updates.to_device.len(),
             "sync engine: deferred cursor advancement until to-device key material is durable"
         );
     }
@@ -1603,24 +1596,24 @@ pub fn apply_response(
 /// frame-level event log.
 async fn process_to_device_delivery(
     api: &TransportClient,
-    response: &ClientSyncOutcome,
+    response: &AccountSyncStep,
     ctx: &SyncEngineContext,
 ) -> anyhow::Result<()> {
     let key_clients = crate::transport::EndpointClients::from_http(api.sdk_http_client()?);
     let keys = key_clients.keys();
-    let mut ack_safe_prefix = to_device_batch_all_ack_safe(&response.to_device)
+    let mut ack_safe_prefix = to_device_batch_all_ack_safe(&response.updates.to_device)
         && ctx
             .state_store
             .read(|store| store.persist_error().is_none());
     if ack_safe_prefix
-        && !response.to_device.is_empty()
-        && let Some(ack_token) = response.to_device_ack_token.as_deref()
+        && !response.updates.to_device.is_empty()
+        && let Some(ack_token) = response.updates.to_device_ack_token.as_deref()
     {
         keys.ack_device_messages(ack_token).await?;
     }
 
-    let mut next_cursor = if response.to_device_limited {
-        response.to_device_next_cursor.clone()
+    let mut next_cursor = if response.updates.to_device_limited {
+        response.updates.to_device_next_cursor.clone()
     } else {
         None
     };
@@ -1635,7 +1628,7 @@ async fn process_to_device_delivery(
         let page = keys
             .receive_device_messages_page(Some(&cursor), Some(TO_DEVICE_PAGE_LIMIT))
             .await?;
-        let messages = device_messages_get_values(&page)?;
+        let messages = page.messages.clone();
         let persisted = ctx.state_store.write(|store| {
             store.ingest_to_device_messages(&messages);
             store.persist_error().is_none()
@@ -1684,7 +1677,7 @@ async fn ingest_device_message_pages(
     let mut page = first_page;
     let mut page_count = 0usize;
     loop {
-        let messages = device_messages_get_values(&page)?;
+        let messages = page.messages.clone();
         let persisted = ctx.state_store.write(|store| {
             store.ingest_to_device_messages(&messages);
             store.persist_error().is_none()
@@ -1721,27 +1714,19 @@ async fn ingest_device_message_pages(
     Ok(())
 }
 
-fn device_messages_get_values(page: &DeviceMessagesGetOutcome) -> anyhow::Result<Vec<Value>> {
-    page.messages
-        .iter()
-        .map(|message| serde_json::to_value(message).map_err(Into::into))
-        .collect()
-}
-
-fn to_device_batch_all_ack_safe(messages: &[Value]) -> bool {
+fn to_device_batch_all_ack_safe(messages: &[arkret_sdk::DeviceMessageEnvelope]) -> bool {
     messages.iter().all(|message| {
-        let kind = message
-            .get("kind")
-            .or_else(|| message.get("type"))
-            .and_then(Value::as_str)
-            .unwrap_or_default();
+        let kind = message.kind.as_str();
         kind.starts_with("ak.key.verification.")
             || kind == crate::mls::secret_share::SECRET_SHARE_KIND_REQUEST
             || kind == "ak.realm_key.request"
     })
 }
 
-fn to_device_batch_allows_cursor_advance(messages: &[Value], limited: bool) -> bool {
+fn to_device_batch_allows_cursor_advance(
+    messages: &[arkret_sdk::DeviceMessageEnvelope],
+    limited: bool,
+) -> bool {
     !limited && to_device_batch_all_ack_safe(messages)
 }
 
@@ -1754,7 +1739,7 @@ fn sync_realm_state_events(body: &Value) -> Vec<Value> {
 }
 
 fn response_revokes_local_device(
-    response: &ClientSyncOutcome,
+    response: &AccountSyncStep,
     account_did: &str,
     device_id: &str,
 ) -> bool {
@@ -1763,7 +1748,7 @@ fn response_revokes_local_device(
     if account_did.is_empty() || device_id.is_empty() {
         return false;
     }
-    response.realms.values().any(|body| {
+    response.realm_projections.values().any(|body| {
         sync_realm_state_events(body).iter().any(|event| {
             let kind = event
                 .get("kind")
@@ -2239,19 +2224,21 @@ fn invalidate_cache_for_revocation_events(
 
 fn apply_notification_projection(
     store: &mut LocalStateStore,
-    response: &ClientSyncOutcome,
+    response: &AccountSyncStep,
     is_full_sync: bool,
     invite_notifications: Option<Vec<Value>>,
 ) {
     let account_notification_projection = response
+        .updates
         .account_data
         .iter()
-        .filter(|entry| {
-            crate::state::projection::notifications::is_notification_account_data(entry)
+        .filter_map(|entry| {
+            crate::state::projection::notifications::is_notification_account_data(&entry.payload)
+                .then(|| serde_json::to_value(&entry.payload).ok())
+                .flatten()
         })
-        .cloned()
         .collect::<Vec<_>>();
-    let should_save_notification_projection = !response.notifications.items.is_empty()
+    let should_save_notification_projection = !response.updates.notifications.is_empty()
         || is_full_sync
         || !account_notification_projection.is_empty()
         || invite_notifications.is_some();
@@ -2263,7 +2250,7 @@ fn apply_notification_projection(
     if is_full_sync {
         notification_projection.retain(|value| !is_agent_runtime_approval_delta(value));
     }
-    for delta in &response.notifications.items {
+    for delta in &response.updates.notifications {
         let id = delta.id.as_str();
         match delta.action {
             arkret_sdk::NotificationDeltaAction::Add
@@ -2285,7 +2272,11 @@ fn apply_notification_projection(
         }
     }
     if let Some(invites) = invite_notifications {
-        let joined_realms = response.realms.keys().cloned().collect::<BTreeSet<_>>();
+        let joined_realms = response
+            .realm_projections
+            .keys()
+            .cloned()
+            .collect::<BTreeSet<_>>();
         crate::state::projection::notifications::merge_invite_notifications(
             &mut notification_projection,
             invites,
@@ -2304,25 +2295,29 @@ fn is_agent_runtime_approval_delta(value: &Value) -> bool {
 
 fn apply_account_data(
     store: &mut LocalStateStore,
-    response: &ClientSyncOutcome,
+    response: &AccountSyncStep,
     account_did: &str,
 ) -> Option<String> {
-    apply_account_data_entries(store, &response.account_data, account_did)
+    apply_account_data_entries(store, &response.updates.account_data, account_did)
 }
 
 pub(crate) fn apply_account_data_entries(
     store: &mut LocalStateStore,
-    entries: &[Value],
+    entries: &[arkret_sdk::Event],
     account_did: &str,
 ) -> Option<String> {
     let mut synced_theme = None;
     for entry in entries {
-        let Some(data_type) = entry.get("data_type").and_then(Value::as_str) else {
+        let Some(data_type) = entry.payload.get("key").and_then(Value::as_str) else {
             continue;
         };
         // ak.client.ui_state — theme + avatar pointer.
         if data_type == "ak.client.ui_state" {
-            match crate::account_data::decrypt_account_data_entry(account_did, data_type, entry) {
+            match crate::account_data::decrypt_account_data_entry(
+                account_did,
+                data_type,
+                &entry.payload,
+            ) {
                 Ok(content) => {
                     let local_theme = store
                         .load_private_data(account_did, "theme")
@@ -2351,14 +2346,16 @@ pub(crate) fn apply_account_data_entries(
         }
         // ak.account.blocklist — personal block list.
         if data_type == "ak.presence.visibility" {
-            let Some(visibility) =
-                crate::account_data::decrypt_account_data_entry(account_did, data_type, entry)
-                    .ok()
-                    .as_ref()
-                    .and_then(|content| content.get("presence_visibility"))
-                    .and_then(Value::as_str)
-                    .and_then(crate::state::PresenceVisibility::try_from_wire)
-            else {
+            let Some(visibility) = crate::account_data::decrypt_account_data_entry(
+                account_did,
+                data_type,
+                &entry.payload,
+            )
+            .ok()
+            .as_ref()
+            .and_then(|content| content.get("presence_visibility"))
+            .and_then(Value::as_str)
+            .and_then(crate::state::PresenceVisibility::try_from_wire) else {
                 tracing::warn!(
                     "sync engine: ignoring malformed ak.presence.visibility account_data"
                 );
@@ -2371,8 +2368,12 @@ pub(crate) fn apply_account_data_entries(
         // (profiles-presence.md §3.6). The server stores only the standard
         // account-data AEAD envelope; decrypt before applying it locally.
         if data_type == "ak.presence.preference" {
-            match crate::account_data::decrypt_account_data_entry(account_did, data_type, entry)
-                .and_then(|content| serde_json::from_value(content).map_err(Into::into))
+            match crate::account_data::decrypt_account_data_entry(
+                account_did,
+                data_type,
+                &entry.payload,
+            )
+            .and_then(|content| serde_json::from_value(content).map_err(Into::into))
             {
                 Ok(preference) => store.set_presence_preference(preference),
                 Err(error) => tracing::warn!(
@@ -2382,7 +2383,11 @@ pub(crate) fn apply_account_data_entries(
             continue;
         }
         if data_type == "ak.dnd_schedule" {
-            match crate::account_data::decrypt_account_data_entry(account_did, data_type, entry) {
+            match crate::account_data::decrypt_account_data_entry(
+                account_did,
+                data_type,
+                &entry.payload,
+            ) {
                 Ok(content) => store.set_notification_dnd_settings(
                     crate::notification_rules::parse_dnd_settings(&content),
                 ),
@@ -2393,11 +2398,15 @@ pub(crate) fn apply_account_data_entries(
             continue;
         }
         if data_type == "ak.account.blocklist" {
-            match crate::account_data::decrypt_account_data_entry(account_did, data_type, entry)
-                .and_then(|content| {
-                    crate::account_data::blocklist_entries_from_account_data(&content)
-                        .map_err(anyhow::Error::msg)
-                }) {
+            match crate::account_data::decrypt_account_data_entry(
+                account_did,
+                data_type,
+                &entry.payload,
+            )
+            .and_then(|content| {
+                crate::account_data::blocklist_entries_from_account_data(&content)
+                    .map_err(anyhow::Error::msg)
+            }) {
                 Ok(entries) => store.set_client_blocklist(entries),
                 Err(error) => {
                     tracing::warn!(
@@ -2409,8 +2418,12 @@ pub(crate) fn apply_account_data_entries(
         }
         // ak.contacts.actor.<did> — actor-private contact remarks.
         if let Some(actor_id) = crate::account_data::actor_id_from_contact_remark_key(data_type) {
-            match crate::account_data::decrypt_account_data_entry(account_did, data_type, entry)
-                .and_then(|content| serde_json::from_value(content).map_err(Into::into))
+            match crate::account_data::decrypt_account_data_entry(
+                account_did,
+                data_type,
+                &entry.payload,
+            )
+            .and_then(|content| serde_json::from_value(content).map_err(Into::into))
             {
                 Ok(remark) => store.set_contact_remark(actor_id.to_owned(), remark),
                 Err(error) => {
@@ -2425,8 +2438,12 @@ pub(crate) fn apply_account_data_entries(
         let Some(realm_id) = crate::account_data::realm_id_from_realm_remark_key(data_type) else {
             continue;
         };
-        match crate::account_data::decrypt_account_data_entry(account_did, data_type, entry)
-            .and_then(|content| serde_json::from_value(content).map_err(Into::into))
+        match crate::account_data::decrypt_account_data_entry(
+            account_did,
+            data_type,
+            &entry.payload,
+        )
+        .and_then(|content| serde_json::from_value(content).map_err(Into::into))
         {
             Ok(remark) => store.set_realm_remark(realm_id.to_owned(), remark),
             Err(error) => {
@@ -2445,21 +2462,27 @@ mod tests {
 
     use super::*;
 
-    fn empty_response(cursor: &str) -> ClientSyncOutcome {
-        ClientSyncOutcome {
+    fn empty_response(cursor: &str) -> AccountSyncStep {
+        AccountSyncStep {
             cursor: cursor.to_owned(),
-            realms: Default::default(),
-            left_realms: Vec::new(),
-            to_device: Vec::new(),
-            to_device_ack_token: None,
-            to_device_limited: false,
-            to_device_next_cursor: None,
-            to_device_lost: None,
-            account_data: Vec::new(),
-            device_lists: json!({}),
-            presence: Vec::new(),
-            notifications: Default::default(),
-            partial: false,
+            realm_projections: Default::default(),
+            updates: arkret_sdk::SyncUpdates {
+                realm_updates: Vec::new(),
+                malformed_realms: Vec::new(),
+                to_device: Vec::new(),
+                to_device_ack_token: None,
+                to_device_limited: false,
+                to_device_next_cursor: None,
+                to_device_lost: false,
+                device_lists: arkret_sdk::AccountSubscribeDeviceListChanges {
+                    changed: Vec::new(),
+                    left: Vec::new(),
+                },
+                presence: Vec::new(),
+                account_data: Vec::new(),
+                notifications: Vec::new(),
+                partial: false,
+            },
         }
     }
 
@@ -2518,11 +2541,11 @@ mod tests {
         let minimal_realm = "ak:realm:0196419b-0000-7000-8000-00000000aaaa";
         let ordinary_realm = "ak:realm:0196419b-0000-7000-8000-00000000bbbb";
         let mut response = empty_response("ak:cursor:minimal-metadata");
-        response.realms.insert(
+        response.realm_projections.insert(
             minimal_realm.to_owned(),
             json!({ "events": [pairwise_envelope] }),
         );
-        response.realms.insert(
+        response.realm_projections.insert(
             ordinary_realm.to_owned(),
             json!({ "events": [directory_envelope] }),
         );
@@ -2567,7 +2590,7 @@ mod tests {
             }),
         );
         let mut response = empty_response("ak:cursor:account-adapter");
-        response.realms.insert(
+        response.realm_projections.insert(
             sdk_realm_id().as_str().to_owned(),
             json!({
                 "timeline": {
@@ -2738,14 +2761,21 @@ mod tests {
         );
     }
 
-    fn to_device_message(kind: &str) -> Value {
-        json!({
+    fn to_device_message(kind: &str) -> arkret_sdk::DeviceMessageEnvelope {
+        serde_json::from_value(json!({
             "kind": kind,
+            "sender_principal_id": "did:webvh:z6mkfixture:alice.example",
+            "sender_device_id": "ak:device:0196419b-0000-7000-8000-000000000001",
+            "recipient_principal_id": "did:webvh:z6mkfixture:bob.example",
+            "recipient_device_id": "ak:device:0196419b-0000-7000-8000-000000000002",
+            "sent_at": "2026-07-15T00:00:00Z",
+            "expires_at": "2026-07-16T00:00:00Z",
             "content": {
                 "transaction_id": "txn-1",
                 "request_id": "request-1"
             }
-        })
+        }))
+        .unwrap()
     }
 
     #[test]
@@ -2927,7 +2957,7 @@ mod tests {
     #[test]
     fn persistent_proof_sender_device_collection_dedupes_nested_events() {
         let mut response = empty_response("cursor-1");
-        response.realms.insert(
+        response.realm_projections.insert(
             "ak:realm:01904100-0000-7000-8000-000000000001".to_owned(),
             json!({
                 "timeline": {
@@ -3028,11 +3058,11 @@ mod tests {
 
         let mut response = empty_response("sx:42");
         response
-            .realms
+            .realm_projections
             .insert("ak:realm:a".to_owned(), json!({"summary": {"title": "A"}}));
 
         // Mirror the engine's full-sync prune step.
-        let server_set: BTreeSet<String> = response.realms.keys().cloned().collect();
+        let server_set: BTreeSet<String> = response.realm_projections.keys().cloned().collect();
         let keep_set = crate::app::full_sync_projection_keep_set(
             &server_set,
             &store.load().realm_tree_projections,
@@ -3043,29 +3073,6 @@ mod tests {
         let state = store.load();
         assert!(state.realm_tree_projections.contains_key("ak:realm:a"));
         assert!(state.realm_tree_projections.contains_key("ak:space:child"));
-        assert!(!state.realm_tree_projections.contains_key("ak:space:b"));
-    }
-
-    #[test]
-    fn incremental_response_forgets_left_realms() {
-        let mut store = temp_store("left");
-        store.save_realm_tree_projection("ak:space:a", json!({"name": "A"}));
-        store.save_realm_tree_projection("ak:space:b", json!({"name": "B"}));
-
-        let mut response = empty_response("sx:43");
-        // Fixture typo fix: the forgotten projection id must match the
-        // `ak:space:b` saved above. `forget_realm_tree_projection` deletes by
-        // exact id, without prefix normalization, so otherwise the
-        // `!contains_key("ak:space:b")` assertion would always be false.
-        response.left_realms = vec!["ak:space:b".to_owned()];
-
-        // Mirror the engine's left_realms step.
-        for id in &response.left_realms {
-            store.forget_realm_tree_projection(id);
-        }
-
-        let state = store.load();
-        assert!(state.realm_tree_projections.contains_key("ak:space:a"));
         assert!(!state.realm_tree_projections.contains_key("ak:space:b"));
     }
 
@@ -3125,7 +3132,7 @@ mod tests {
         let actor = "did:web:alice.example";
         let device = "ak:device:0196419b-0000-7000-8000-000000000001";
         let mut response = empty_response("ak:cursor:device-revoke");
-        response.realms.insert(
+        response.realm_projections.insert(
             "ak:realm:0196419b-0000-7000-8000-000000000002".to_owned(),
             json!({
                 "state": { "events": [{
@@ -3160,7 +3167,7 @@ mod tests {
         let actor = "did:web:alice.example";
         let device = "ak:device:0196419b-0000-7000-8000-000000000001";
         let mut response = empty_response("ak:cursor:malformed-device-revoke");
-        response.realms.insert(
+        response.realm_projections.insert(
             "ak:realm:0196419b-0000-7000-8000-000000000002".to_owned(),
             json!({
                 "state": { "events": [{

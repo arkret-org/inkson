@@ -234,8 +234,8 @@ impl From<arkret_sdk::ProjectionItem> for ProjectionItemView {
 impl From<arkret_sdk::CollectionProjectionGroupView> for CollectionProjectionGroupView {
     fn from(group: arkret_sdk::CollectionProjectionGroupView) -> Self {
         Self {
-            key: group.key,
-            title: group.title,
+            key: group.key.as_str().to_owned(),
+            title: group.title.as_str().to_owned(),
             rank: group.rank,
             source: group
                 .source
@@ -252,7 +252,7 @@ impl From<arkret_sdk::CollectionProjectionGroupView> for CollectionProjectionGro
 impl From<arkret_sdk::CollectionProjectionView> for CollectionProjectionView {
     fn from(view: arkret_sdk::CollectionProjectionView) -> Self {
         Self {
-            projection: view.projection,
+            projection: "collection".to_owned(),
             renderer: view.renderer.as_ref().and_then(sdk_wire_string),
             view_id: view.view_id.as_str().to_owned(),
             realm_id: view.realm_id.map(|realm_id| realm_id.as_str().to_owned()),

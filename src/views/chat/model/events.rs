@@ -803,9 +803,10 @@ pub(crate) fn decrypt_chat_encrypted_content(
     encrypted_content: &Value,
 ) -> Option<String> {
     let envelope =
-        serde_json::from_value::<arkret_sdk::EncryptedEnvelopeV1>(encrypted_content.clone())
+        serde_json::from_value::<arkret_sdk::EncryptedEnvelope>(encrypted_content.clone()).ok()?;
+    let payload_value =
+        serde_json::to_value(arkret_sdk::mls::encrypted_envelope_to_payload(&envelope).ok()?)
             .ok()?;
-    let payload_value = serde_json::to_value(envelope.to_payload().ok()?).ok()?;
     let plaintext = crate::state::projection::try_local_mls_decrypt_core(
         state_store,
         realm_id,

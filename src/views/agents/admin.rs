@@ -883,7 +883,7 @@ pub fn PersonalAgentAdminPanel(token: Signal<String>) -> Element {
                                                     slug: slug_value.clone(),
                                                     avatar_blob_ref: avatar_blob_ref.clone(),
                                                     requested_scope: requested_scope.clone(),
-                                                    accountability: Value::Null,
+                                                    accountability: None,
                                                     pairing_ttl_ms: None,
                                                 };
                                                 let base = base.clone();

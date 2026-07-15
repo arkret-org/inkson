@@ -85,7 +85,7 @@ pub fn validate_draft_slot(kind: arkret_sdk::DraftKind, draft_slot: &str) -> any
 }
 
 pub fn validate_draft_sync_value(value: &arkret_sdk::DraftSyncValue) -> anyhow::Result<()> {
-    if value.content.is_null() {
+    if value.content.is_empty() {
         anyhow::bail!("draft content must not be null");
     }
     validate_draft_slot(value.kind, &value.draft_slot)?;
@@ -144,7 +144,7 @@ pub fn build_message_draft_sync_value(
         target_ref: target_ref.to_owned(),
         kind: arkret_sdk::DraftKind::Message,
         draft_slot: DRAFT_MESSAGE_SLOT.to_owned(),
-        content,
+        content: serde_json::from_value(content)?,
         updated_hlc: updated_hlc.to_owned(),
         origin_device_id: arkret_sdk::DeviceId::new(origin_device_id.to_owned())
             .map_err(|error| anyhow::anyhow!("origin_device_id is invalid: {error:?}"))?,

@@ -220,16 +220,21 @@ async fn resolve_proof_signer_document(
                 "authority DID resolution failed for MLS governance proof signer {did}: {error}"
             )
         })?;
-    if outcome.did_document.did != *did {
+    if outcome
+        .did_document
+        .get("id")
+        .and_then(serde_json::Value::as_str)
+        != Some(did.as_str())
+    {
         return Err(format!(
-            "authority DID resolution returned {} for MLS governance proof signer {did}",
-            outcome.did_document.did
+            "authority DID resolution returned a different DID for MLS governance proof signer {did}"
         ));
     }
-    let document: arkret_sdk::DidDocument = serde_json::from_value(outcome.did_document.document)
+    let document: arkret_sdk::DidDocument = serde_json::to_value(outcome.did_document)
+        .and_then(serde_json::from_value)
         .map_err(|error| {
-        format!("decode authority DID document for MLS governance proof signer {did}: {error}")
-    })?;
+            format!("decode authority DID document for MLS governance proof signer {did}: {error}")
+        })?;
     if document.id != *did {
         return Err(format!(
             "authority DID document id {} does not match MLS governance proof signer {did}",

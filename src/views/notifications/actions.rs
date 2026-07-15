@@ -66,12 +66,13 @@ pub(crate) fn refresh_notifications(
         {
             Ok((response, invite_notifications)) => {
                 let account_did = state_store.read().active_account_did().unwrap_or_default();
-                let push_rules = push_rules_from_account_data(&account_did, &response.account_data);
+                let push_rules =
+                    push_rules_from_account_data(&account_did, &response.updates.account_data);
                 let account_dnd =
-                    dnd_settings_from_account_data(&account_did, &response.account_data);
+                    dnd_settings_from_account_data(&account_did, &response.updates.account_data);
                 let mut raw_notifications = raw_notifications_from_sources(
-                    Some(&response.notifications),
-                    &response.account_data,
+                    Some(&response.updates.notifications),
+                    &response.updates.account_data,
                 );
                 let joined_realms = joined_realm_ids(&response);
                 merge_invite_notifications(
@@ -81,7 +82,7 @@ pub(crate) fn refresh_notifications(
                 );
                 let hydrated = {
                     let mut store = state_store.write();
-                    store.ingest_to_device_messages(&response.to_device);
+                    store.ingest_to_device_messages(&response.updates.to_device);
                     store.save_notification_projection(raw_notifications.clone());
                     let local_state = store.load();
                     let effective_dnd = local_state
@@ -318,8 +319,10 @@ fn accept_invite_notification(
         {
             Ok((Ok(sync), invite_notifications)) => {
                 let account_did = state_store.read().active_account_did().unwrap_or_default();
-                let push_rules = push_rules_from_account_data(&account_did, &sync.account_data);
-                let account_dnd = dnd_settings_from_account_data(&account_did, &sync.account_data);
+                let push_rules =
+                    push_rules_from_account_data(&account_did, &sync.updates.account_data);
+                let account_dnd =
+                    dnd_settings_from_account_data(&account_did, &sync.updates.account_data);
                 let mut hidden_realms = joined_realm_ids(&sync);
                 hidden_realms.insert(accepted_realm.clone());
                 let mut realm_title_hints = BTreeMap::new();
@@ -331,8 +334,10 @@ fn accept_invite_notification(
                     realm_title_hints.insert(accepted_realm.clone(), label.to_owned());
                 }
 
-                let mut raw_notifications =
-                    raw_notifications_from_sources(Some(&sync.notifications), &sync.account_data);
+                let mut raw_notifications = raw_notifications_from_sources(
+                    Some(&sync.updates.notifications),
+                    &sync.updates.account_data,
+                );
                 for (realm_id, title) in realm_title_hints_from_values(&raw_notifications) {
                     realm_title_hints.entry(realm_id).or_insert(title);
                 }

@@ -1,7 +1,9 @@
 use base64::Engine as _;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use ed25519_dalek::Signer;
-use serde_json::{Value, json};
+use serde_json::Value;
+#[cfg(test)]
+use serde_json::json;
 
 use crate::cross_signing::{CrossSigningKeyRole, load_signing_key};
 use crate::mls::persistence::MlsSnapshotEnvelope;

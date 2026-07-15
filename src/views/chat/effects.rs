@@ -549,13 +549,13 @@ pub(super) fn ChatEffects(
                     {
                         let mut store = state_store.write();
                         store.save_sync_cursor(sync.cursor.clone());
-                        store.save_presence_projection(sync.presence.clone());
-                        for (realm_id, projection) in &sync.realms {
+                        store.save_presence_projection(&sync.updates.presence);
+                        for (realm_id, projection) in &sync.realm_projections {
                             store.save_realm_tree_projection(realm_id.clone(), projection.clone());
                         }
                         crate::disappearing::shred_expired_message_plaintext_from_sync_realms(
                             &mut store,
-                            &sync.realms,
+                            &sync.realm_projections,
                         );
                     }
                     crate::sync_engine::prefetch_persistent_event_sender_keys(
@@ -570,20 +570,20 @@ pub(super) fn ChatEffects(
                     )
                     .await;
                     loaded_messages.extend(chat_messages_from_sync_realms_with_sidecar(
-                        &sync.realms,
+                        &sync.realm_projections,
                         Some(&state_store.read()),
                         decrypt_identity,
                     ));
-                    loaded_poll_cards.extend(poll_cards_from_sync_realms(&sync.realms));
+                    loaded_poll_cards.extend(poll_cards_from_sync_realms(&sync.realm_projections));
                     loaded_moderation_appeal_prompts.extend(
                         moderation_appeal_prompts_from_sync_realms(
-                            &sync.realms,
+                            &sync.realm_projections,
                             &account_did_for_load,
                         ),
                     );
                     event_sink.emit(ChatProjectionEvent::MergeChannels(
                         channels_from_sync_realms(
-                            &sync.realms,
+                            &sync.realm_projections,
                             std::slice::from_ref(&selected_realm_for_load),
                         ),
                     ));

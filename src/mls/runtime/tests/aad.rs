@@ -1,62 +1,62 @@
 //! Tests for the SEC-08 minimal-metadata AAD policy enforcement.
 
-use serde_json::json;
-
 use crate::mls::runtime::*;
 
 #[test]
 fn minimal_metadata_aad_enforcement_is_fail_closed() {
-    use arkret_sdk::AadVisibility;
+    use arkret_sdk::EncryptedEnvelopeAadVisibility;
     // Hidden is always accepted.
-    assert_minimal_metadata_aad(&AadVisibility::Hidden, true).unwrap();
-    assert_minimal_metadata_aad(&AadVisibility::Hidden, false).unwrap();
+    assert_minimal_metadata_aad(&EncryptedEnvelopeAadVisibility::Hidden, true).unwrap();
+    assert_minimal_metadata_aad(&EncryptedEnvelopeAadVisibility::Hidden, false).unwrap();
     // Non-hidden on a minimal Realm is rejected with the typed policy error.
-    for v in [AadVisibility::RoutingDigest, AadVisibility::OpaqueId] {
+    for v in [
+        EncryptedEnvelopeAadVisibility::RoutingDigest,
+        EncryptedEnvelopeAadVisibility::OpaqueId,
+    ] {
         let err = assert_minimal_metadata_aad(&v, true).unwrap_err();
         assert!(matches!(err, MlsRuntimeError::AadPolicy(_)));
     }
     // Non-minimal Realm is unaffected by any visibility.
-    assert_minimal_metadata_aad(&AadVisibility::RoutingDigest, false).unwrap();
-    assert_minimal_metadata_aad(&AadVisibility::OpaqueId, false).unwrap();
+    assert_minimal_metadata_aad(&EncryptedEnvelopeAadVisibility::RoutingDigest, false).unwrap();
+    assert_minimal_metadata_aad(&EncryptedEnvelopeAadVisibility::OpaqueId, false).unwrap();
 }
 
 #[test]
 fn aad_visibility_inferred_from_canonical_aad_shape() {
-    use arkret_sdk::AadVisibility;
+    use arkret_sdk::EncryptedEnvelopeAadVisibility;
     // hidden() omits both event-id fields ⇒ Hidden.
-    let hidden = serde_json::to_value(arkret_sdk::EncryptedEnvelopeAad::hidden(
+    let hidden = arkret_sdk::EncryptedEnvelopeAad::hidden(
         arkret_sdk::RealmId::new("ak:realm:0196419b-0000-7000-8000-000000000001".to_owned())
             .unwrap(),
         "ak.message.create",
-    ))
-    .unwrap();
-    assert_eq!(aad_visibility_of(&hidden), AadVisibility::Hidden);
+    );
+    assert_eq!(
+        aad_visibility_of(&hidden),
+        EncryptedEnvelopeAadVisibility::Hidden
+    );
     // event_ref_digest present ⇒ RoutingDigest.
     assert_eq!(
-        aad_visibility_of(&json!({
-            "realm_id": "ak:realm:r",
-            "event_kind": "ak.message.create",
-            "event_ref_digest": "sha256:aa"
-        })),
-        AadVisibility::RoutingDigest
+        aad_visibility_of(&arkret_sdk::EncryptedEnvelopeAad {
+            event_ref_digest: Some(
+                arkret_sdk::Hash::new(format!("sha256:{}", "a".repeat(64))).unwrap()
+            ),
+            ..hidden.clone()
+        }),
+        EncryptedEnvelopeAadVisibility::RoutingDigest
     );
     // event_id present ⇒ OpaqueId (checked first / least private).
     assert_eq!(
-        aad_visibility_of(&json!({
-            "realm_id": "ak:realm:r",
-            "event_kind": "ak.message.create",
-            "event_id": "ak:event:1"
-        })),
-        AadVisibility::OpaqueId
+        aad_visibility_of(&arkret_sdk::EncryptedEnvelopeAad {
+            event_id: Some(
+                arkret_sdk::EventId::new("ak:event:0196419b-0000-7000-8000-000000000001").unwrap()
+            ),
+            ..hidden.clone()
+        }),
+        EncryptedEnvelopeAadVisibility::OpaqueId
     );
     // Null event-id fields are treated as absent ⇒ Hidden.
     assert_eq!(
-        aad_visibility_of(&json!({
-            "realm_id": "ak:realm:r",
-            "event_kind": "ak.message.create",
-            "event_id": null,
-            "event_ref_digest": null
-        })),
-        AadVisibility::Hidden
+        aad_visibility_of(&hidden),
+        EncryptedEnvelopeAadVisibility::Hidden
     );
 }

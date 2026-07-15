@@ -316,7 +316,7 @@ pub async fn identity_resolve(
 
 pub async fn sync_describe(
     http: &arkret_sdk::http_client::Client,
-) -> anyhow::Result<arkret_sdk::models::SyncDescription> {
+) -> anyhow::Result<arkret_sdk::models::ServiceDescribe> {
     http.account_describe().await.map_err(anyhow::Error::from)
 }
 
@@ -355,9 +355,8 @@ fn primary_handle_from_viewer(viewer: &arkret_sdk::models::AccountView) -> Strin
     viewer
         .primary_handle_claim
         .as_ref()
-        .and_then(|claim| claim.get("handle"))
-        .and_then(Value::as_str)
-        .map(str::trim)
+        .and_then(|claim| claim.handle.as_ref())
+        .map(|handle| handle.canonical().trim())
         .filter(|handle| !handle.is_empty())
         .unwrap_or_default()
         .to_owned()

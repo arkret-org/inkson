@@ -166,7 +166,11 @@ impl LocalStateStore {
         let _ = self.flush();
     }
 
-    pub fn save_presence_projection(&mut self, events: Vec<Value>) {
+    pub fn save_presence_projection(&mut self, events: &[arkret_sdk::Event]) {
+        let events = events
+            .iter()
+            .filter_map(|event| serde_json::to_value(event).ok())
+            .collect::<Vec<_>>();
         self.ensure_cached_loaded();
         if self.cached.presence_projection == events {
             return;
@@ -175,7 +179,10 @@ impl LocalStateStore {
         let _ = self.flush();
     }
 
-    pub fn ingest_to_device_messages(&mut self, messages: &[Value]) -> usize {
+    pub fn ingest_to_device_messages(
+        &mut self,
+        messages: &[arkret_sdk::DeviceMessageEnvelope],
+    ) -> usize {
         if messages.is_empty() {
             return 0;
         }
@@ -195,15 +202,18 @@ impl LocalStateStore {
         let mut inserted = 0;
         let mut read_cursor_updated = false;
         for message in messages {
-            read_cursor_updated |= self.ingest_read_cursor_update_message(message);
-            if to_device_message_expired(message, now) {
+            let Ok(message) = serde_json::to_value(message) else {
+                continue;
+            };
+            read_cursor_updated |= self.ingest_read_cursor_update_message(&message);
+            if to_device_message_expired(&message, now) {
                 continue;
             }
-            let key = to_device_message_dedup_key(message);
+            let key = to_device_message_dedup_key(&message);
             if !seen.insert(key) {
                 continue;
             }
-            self.cached.to_device_inbox.push(message.clone());
+            self.cached.to_device_inbox.push(message);
             inserted += 1;
         }
         let overflow = self

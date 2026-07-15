@@ -320,7 +320,7 @@ impl garth::EventsScanTransport for InksonRealmEventsTransport {
     fn scan_events<'a>(
         &'a self,
         request: garth::EventsScanRequest,
-    ) -> garth::subscribe::scan::BoxScanFuture<'a, arkret_sdk::SyncBackfillOutcome> {
+    ) -> garth::subscribe::scan::BoxScanFuture<'a, arkret_sdk::EventsQueryOutcome> {
         garth::EventsScanTransport::scan_events(&self.http, request)
     }
 }
@@ -328,9 +328,11 @@ impl garth::EventsScanTransport for InksonRealmEventsTransport {
 pub async fn account_subscribe_snapshot(
     http: &arkret_sdk::http_client::Client,
     after: Option<&str>,
-) -> anyhow::Result<crate::models::ClientSyncOutcome> {
+) -> anyhow::Result<crate::models::AccountSyncStep> {
     match account_subscribe_snapshot_outcome(http, after).await? {
-        AccountSubscribeSnapshotResult::Delta(response) => Ok(*response),
+        AccountSubscribeSnapshotResult::Batch(batch) => {
+            Ok(crate::models::AccountSyncStep::from_batch(batch)?)
+        }
         AccountSubscribeSnapshotResult::ReconnectAfter {
             reconnect_after_ms,
             reconnect_cursor,
@@ -347,7 +349,7 @@ pub async fn account_subscribe_snapshot(
 }
 
 /// One validated account-subscribe snapshot through the SDK's request-aware
-/// pipeline (SPI-INK-002). `account_subscribe_once` runs the full §1.1
+/// pipeline (SPI-INK-002). `account_subscribe_batch` runs the full §1.1
 /// StreamTraceValidator over every frame — inkson no longer parses NDJSON
 /// shapes itself, so there is no trace-bypassing side path. Stream interrupts
 /// (`dropped` / `resync_required` / `unauthorized`) fold back into the typed
@@ -371,8 +373,8 @@ pub async fn account_subscribe_snapshot_outcome(
         subscriptions: None,
         wait_for: None,
     };
-    match http.account_subscribe_once(&request).await {
-        Ok(outcome) => Ok(AccountSubscribeSnapshotResult::Delta(Box::new(outcome))),
+    match http.account_subscribe_batch(&request).await {
+        Ok(batch) => Ok(AccountSubscribeSnapshotResult::Batch(batch)),
         Err(arkret_sdk::Error::AccountStreamInterrupt(interrupt)) => {
             Ok(reconnect_result_from_interrupt(interrupt))
         }

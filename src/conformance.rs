@@ -501,7 +501,7 @@ fn validate_encrypted_envelope_schema(value: &Value) -> Result<(), ValidationErr
     if !value.is_object() {
         return Err(ValidationError::ExpectedObject("encrypted-envelope".into()));
     }
-    arkret_sdk::EncryptedEnvelopeV1::parse_and_validate(value.clone())
+    arkret_sdk::mls::parse_and_validate_encrypted_envelope(value.clone())
         .map(|_| ())
         .map_err(|_| ValidationError::InvalidValue {
             field: "encrypted-envelope".into(),

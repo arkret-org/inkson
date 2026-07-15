@@ -58,7 +58,7 @@ fn decode_capability_row(grant: &Capability) -> CapabilityRow {
         scope: grant
             .resources
             .first()
-            .map(|resource| resource.to_string())
+            .and_then(|resource| serde_json::to_string(resource).ok())
             .unwrap_or_default(),
         issuer_did: grant.issuer.as_str().to_owned(),
         subject_did: match &grant.subject {

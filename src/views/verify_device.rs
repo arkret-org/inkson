@@ -291,14 +291,9 @@ pub fn VerifyDevicePanel(
                         Ok(v) => v,
                         Err(_) => continue,
                     };
-                    if let Some(items) = messages_value
-                        .get("messages")
-                        .and_then(serde_json::Value::as_array)
-                    {
-                        state_store_for_poll
-                            .write()
-                            .ingest_to_device_messages(items);
-                    }
+                    state_store_for_poll
+                        .write()
+                        .ingest_to_device_messages(&messages.messages);
                     if let Some(key) = extract_peer_verification_key(&messages_value) {
                         peer_public_b64.set(key);
                         sas_send_status.set(

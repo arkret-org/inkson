@@ -415,7 +415,7 @@ pub(crate) fn chat_message_create_operation_with_expiry(
     let mut payload = arkret_sdk::MessageCreatePayload::with_content(
         strand_id_value(strand_id)?,
         "discussion",
-        sdk_payload_value(content.to_value(), "chat message content serialize")?,
+        content,
     )
     .with_message_id(message_id);
     if let Some(reply_to) = reply_to.map(str::trim).filter(|value| !value.is_empty()) {

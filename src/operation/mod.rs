@@ -284,7 +284,8 @@ impl OperationBuilder {
                 .map_err(|err| anyhow::anyhow!("generated HLC is invalid: {err}"))?,
             prev_refs,
             refs: self.refs,
-            payload: self.body,
+            payload: serde_json::from_value(self.body)
+                .map_err(|err| anyhow::anyhow!("event payload must be an object: {err}"))?,
             preconditions: self.preconditions,
             effects: self.effects,
             seal_ref: self

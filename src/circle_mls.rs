@@ -154,13 +154,11 @@ pub async fn submit_circle_scope_rotate_draft(
         None,
     )
     .await?;
-    if !outcome.accepted.is_empty() || !outcome.duplicate.is_empty() {
-        state_store.save_mls_snapshot_for_effective_scope(
-            realm_id.to_owned(),
-            Some(circle_id),
-            draft.post_commit_snapshot,
-        );
-    }
+    state_store.save_mls_snapshot_for_effective_scope(
+        realm_id.to_owned(),
+        Some(circle_id),
+        draft.post_commit_snapshot,
+    );
     Ok(outcome)
 }
 

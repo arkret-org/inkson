@@ -1403,7 +1403,7 @@ pub fn encrypt_message_with_device_snapshot(
     actor_id: &str,
     device_id: &str,
     content_type: &str,
-    aad: serde_json::Value,
+    aad: arkret_sdk::EncryptedEnvelopeAad,
     plaintext: &[u8],
 ) -> Result<DeviceSnapshotEncryption, MlsRuntimeError> {
     let snapshot = state_store
@@ -1537,7 +1537,7 @@ fn self_update_with_verified_governance_binding(
 /// can never emit a non-hidden AAD, and the server would reject it if it
 /// somehow did.
 pub fn assert_minimal_metadata_aad(
-    visibility: &arkret_sdk::AadVisibility,
+    visibility: &arkret_sdk::EncryptedEnvelopeAadVisibility,
     is_minimal_metadata: bool,
 ) -> Result<(), MlsRuntimeError> {
     arkret_sdk::enforce_minimal_metadata_aad(visibility, is_minimal_metadata)
@@ -1554,13 +1554,14 @@ pub fn assert_minimal_metadata_aad(
 /// path so a minimal Realm cannot ship a non-hidden AAD even if a caller
 /// constructed one. `event_id` is checked first so a malformed value carrying
 /// both fields resolves to the *less* private (and therefore rejected) form.
-pub(crate) fn aad_visibility_of(aad: &serde_json::Value) -> arkret_sdk::AadVisibility {
-    let has = |key: &str| aad.get(key).is_some_and(|v| !v.is_null());
-    if has("event_id") {
-        arkret_sdk::AadVisibility::OpaqueId
-    } else if has("event_ref_digest") {
-        arkret_sdk::AadVisibility::RoutingDigest
+pub(crate) fn aad_visibility_of(
+    aad: &arkret_sdk::EncryptedEnvelopeAad,
+) -> arkret_sdk::EncryptedEnvelopeAadVisibility {
+    if aad.event_id.is_some() {
+        arkret_sdk::EncryptedEnvelopeAadVisibility::OpaqueId
+    } else if aad.event_ref_digest.is_some() {
+        arkret_sdk::EncryptedEnvelopeAadVisibility::RoutingDigest
     } else {
-        arkret_sdk::AadVisibility::Hidden
+        arkret_sdk::EncryptedEnvelopeAadVisibility::Hidden
     }
 }

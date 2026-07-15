@@ -13,8 +13,8 @@
 //! device-message pull loop (receive / ack / cursor) carry signing,
 //! trust-anchor, or durable cursor semantics and remain inherent `TransportClient`
 //! methods. The one-shot device-message send and the `ak.realm_key.request`
-//! ephemeral relay below are plain transport writes (the caller prepares any
-//! signed `content`; the request itself carries `proof: None`), so they are
+//! directed message below are plain transport writes (the caller prepares any
+//! signed `content`), so they are
 //! migrated here.
 
 use std::collections::BTreeMap;
@@ -73,17 +73,11 @@ pub async fn send_device_message_envelope(
         .map_err(anyhow::Error::from)
 }
 
-/// Submit an ephemeral `ak.realm_key.request` (realm-and-space.md
+/// Submit a directed `ak.realm_key.request` device message (realm-and-space.md
 /// history-sharing): a late-joining device asks the provider device named by
 /// `target_source_ref` to seal the retained `history_secret` range to
-/// `recipient_hpke_public_key`. soland relays it to the provider's to-device
-/// queue (`relay_ephemeral_realm_key_request`); the provider answers with a
+/// `recipient_hpke_public_key`. The provider answers with a
 /// durable `ak.realm_key.share`.
-///
-/// Posts directly to `/_arkret/self/ephemeral` rather than via the broadcast
-/// ephemeral submitter, whose SDK guard only admits the broadcast ephemeral
-/// allowlist (`ak.realm_key.request` is a directed relay, not a broadcast
-/// signal).
 #[allow(clippy::too_many_arguments)]
 pub async fn submit_realm_key_request(
     http: &arkret_sdk::http_client::Client,
@@ -95,7 +89,7 @@ pub async fn submit_realm_key_request(
     recipient_hpke_public_key: &str,
     from_epoch: u64,
     to_epoch: u64,
-) -> anyhow::Result<arkret_sdk::EphemeralSubmitOutcome> {
+) -> anyhow::Result<DeviceMessagesSendOutcome> {
     let realm_id = arkret_sdk::RealmId::new(crate::operation::trim_realm_id(realm_id))?;
     let device_id = arkret_sdk::DeviceId::new(device_id.trim().to_owned())?;
     let payload = arkret_sdk::RealmKeyRequestPayload {
@@ -128,24 +122,17 @@ pub async fn submit_realm_key_request(
     payload
         .validate()
         .map_err(|err| anyhow::anyhow!("ak.realm_key.request invalid: {err}"))?;
-    let sent_at = crate::clock::now_utc();
-    let envelope = arkret_sdk::EphemeralEnvelope {
-        // `ak.realm_key.request` is a directed ephemeral relay, not a broadcast
-        // signal, so it has no `events::kinds` constant; the literal is the
-        // wire kind soland's `relay_ephemeral_realm_key_request` matches on.
-        kind: "ak.realm_key.request".to_owned(),
-        realm_id,
-        actor_id: arkret_sdk::Did::new(actor_id.trim().to_owned())?,
-        device_id: Some(device_id),
-        sent_at,
-        // Directed relay; soland enforces its own TTL. Stay a full minute
-        // under the 5-minute ephemeral ceiling so clock skew / a closed-
-        // interval check server-side can't reject a boundary value.
-        expires_at: sent_at + chrono::Duration::minutes(4),
-        payload: serde_json::to_value(&payload)?,
-        proof: None,
-    };
-    http.post("/_arkret/self/ephemeral", &envelope)
-        .await
-        .map_err(anyhow::Error::from)
+    let expires_at = (crate::clock::now_utc() + chrono::Duration::minutes(4))
+        .to_rfc3339_opts(chrono::SecondsFormat::Secs, true);
+    let txn_id = format!("realm-key-request-{}", crate::operation::uuid_v7());
+    send_device_message_envelope(
+        http,
+        &txn_id,
+        provider_principal_id,
+        provider_device_ref,
+        "ak.realm_key.request",
+        &expires_at,
+        serde_json::to_value(payload)?,
+    )
+    .await
 }
