@@ -59,6 +59,7 @@ fn lifecycle_projection_response_accepts_spec_keys() {
         canonical_spaces.items[0].space_id,
         "ak:space:01904100-0000-7000-8000-f10dc0000001"
     );
+    assert_eq!(canonical_spaces.total, 1);
 
     let strands: LifecycleProjectionView<StrandProjectionView> = serde_json::from_value(json!({
         "realm_id": "ak:realm:0196419b-0000-7000-8000-000000000000",

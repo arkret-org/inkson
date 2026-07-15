@@ -9,6 +9,7 @@ use serde_json::Value;
 /// hydrate path can pluck projection rows with the same code. The decoder
 /// normalizes spec `spaces` / `strands` / `morphs` collection keys into `items`.
 #[derive(Clone, Debug, Deserialize)]
+#[cfg(test)]
 pub struct LifecycleProjectionView<T> {
     pub realm_id: String,
     #[serde(default)]
@@ -292,6 +293,7 @@ impl From<arkret_sdk::ProjectionSpaceRow> for SpaceContainerProjectionView {
     }
 }
 
+#[cfg(test)]
 impl From<arkret_sdk::ProjectionSpaceList>
     for LifecycleProjectionView<SpaceContainerProjectionView>
 {
@@ -356,6 +358,7 @@ impl From<arkret_sdk::ProjectionStrandRow> for StrandProjectionView {
     }
 }
 
+#[cfg(test)]
 impl From<arkret_sdk::ProjectionStrandList> for LifecycleProjectionView<StrandProjectionView> {
     fn from(list: arkret_sdk::ProjectionStrandList) -> Self {
         Self {

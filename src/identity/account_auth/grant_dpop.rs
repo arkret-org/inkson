@@ -173,6 +173,7 @@ impl DpopHandle {
 
 /// RFC 9449 `ath` hash:
 /// `base64url-no-pad(sha256(authorization_credential))`.
+#[cfg(test)]
 pub fn dpop_authorization_credential_hash(authorization_credential: &str) -> String {
     arkret_sdk::dpop::dpop_access_token_hash(authorization_credential)
 }
@@ -280,6 +281,7 @@ fn ensure_device_key_in_plaintext_state(
 
 /// Read the persisted device DPoP key without generating a new one.
 /// Returns `Ok(None)` when no key has been persisted yet.
+#[cfg(test)]
 pub fn load_device_key(store: &LocalStateStore) -> Result<Option<DpopHandle>, AuthDpopError> {
     #[cfg(not(test))]
     {
@@ -298,6 +300,7 @@ pub fn load_device_key(store: &LocalStateStore) -> Result<Option<DpopHandle>, Au
 
 /// Read the persisted DPoP key from the supplied secure-key backend
 /// without generating a new one.
+#[cfg(test)]
 pub fn load_device_key_with_secure_store(
     store: &LocalStateStore,
     secure_store: &dyn crate::secure_key_store::SecureKeyStore,
@@ -417,6 +420,7 @@ fn decode_record(record: &DpopDeviceKeyRecord) -> Result<DpopHandle, AuthDpopErr
 /// Convenience wrapper — generate-if-missing and mint a proof in one
 /// call. Useful from view code where the caller doesn't want to thread
 /// a `DpopHandle` through every spawn.
+#[cfg(test)]
 pub fn mint_dpop_proof(
     store: &mut LocalStateStore,
     htu: &str,

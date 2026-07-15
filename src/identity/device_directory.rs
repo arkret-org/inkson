@@ -699,6 +699,7 @@ pub fn verify_persistent_envelope_proofs(
 
 /// Drop the cached entry for one `(actor, device)` (e.g. after observing a
 /// `ak.device.revoke` locally) so the next lookup re-queries.
+#[cfg(test)]
 pub fn invalidate(actor: &str, device: &str) {
     let mut guard = match CACHE.write() {
         Ok(g) => g,

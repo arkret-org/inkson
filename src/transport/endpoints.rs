@@ -163,10 +163,6 @@ impl AccountEndpoints<'_> {
         crate::transport::account::account_viewer(self.transport.http()).await
     }
 
-    pub async fn current(&self) -> anyhow::Result<crate::models::CurrentAccount> {
-        crate::transport::account::account_me(self.transport.http()).await
-    }
-
     pub async fn contacts(&self) -> anyhow::Result<crate::models::ContactListView> {
         crate::transport::account::contacts(self.transport.http()).await
     }
@@ -196,13 +192,6 @@ impl DirectoryEndpoints<'_> {
                 }
             }
         }
-    }
-
-    pub async fn resolve_handle(
-        &self,
-        handle: &str,
-    ) -> anyhow::Result<crate::models::ResolveHandleView> {
-        super::directory::resolve_handle(self.transport.http(), handle).await
     }
 
     pub async fn list_handles_for_subject(

@@ -12,6 +12,7 @@
 //! UI callers (kanban move arrow, message position chips) should
 //! prefer these over decoding the raw JSON.
 
+#[cfg(test)]
 pub use arkret_sdk::cursor::RealmSyncPosition as RealmPosition;
 
 /// Compact label for a [`RealmPosition`] used by Board move controls and
@@ -24,6 +25,7 @@ pub use arkret_sdk::cursor::RealmSyncPosition as RealmPosition;
 /// for now (the SDK's realm position struct has no field for it yet —
 /// when the SDK promotes the field, callers should switch to reading
 /// it directly off the struct and pass the value in here).
+#[cfg(test)]
 pub fn strand_position_label(position: &RealmPosition, last_read_at: Option<&str>) -> String {
     // HLC format is `<rfc3339>-<seq>`. We strip the trailing `-<seq>`
     // chunk so the label fits in a chip; if there's no hyphen at all
@@ -50,6 +52,7 @@ pub fn strand_position_label(position: &RealmPosition, last_read_at: Option<&str
 /// Spec field name registered on `arkret-service-api/openapi.yaml`.
 /// Once the SDK promotes it onto [`RealmPosition`] directly, replace the JSON
 /// lookup with a struct field read.
+#[cfg(test)]
 pub fn last_read_at_from_projection(raw: &serde_json::Value) -> Option<String> {
     raw.get("last_read_at")
         .and_then(|value| value.as_str())
@@ -63,6 +66,7 @@ pub fn last_read_at_from_projection(raw: &serde_json::Value) -> Option<String> {
 /// SDK cursor position model now stores it as `timeline_order`. Callers should
 /// use this helper rather than touching the struct field directly so the rename
 /// lands in a single place when it arrives in the SDK.
+#[cfg(test)]
 pub fn strand_position_hlc(position: &RealmPosition) -> &str {
     position.timeline_order.as_str()
 }

@@ -130,6 +130,10 @@ pub enum RefreshOutcome {
     /// observed.
     NoGrant,
     /// Nothing to do; the current grant is still fresh.
+    #[cfg_attr(not(test), expect(
+        dead_code,
+        reason = "test-only refresh driver returns Fresh; production checks refresh_decision before forced rotation"
+    ))]
     Fresh,
     /// The grant was rotated. `session_credential` carries the live
     /// `ak.session.grant` JWT; caller swaps it into the in-memory credential
@@ -221,6 +225,7 @@ pub enum RefreshPrepared {
 /// (when due) load the device DPoP key. Writes happen only inside this function
 /// or [`commit_refresh`], so the caller can release its `LocalStateStore` borrow
 /// before awaiting the network rotation.
+#[cfg(test)]
 pub fn prepare_refresh(store: &mut LocalStateStore) -> RefreshPrepared {
     match refresh_decision(store) {
         RefreshDecision::NoGrant => return RefreshPrepared::Done(RefreshOutcome::NoGrant),
@@ -278,6 +283,7 @@ fn prepare_refresh_grant(
 
 /// Like [`prepare_refresh`], but refuses to use a grant minted for any server
 /// other than the currently selected Principal Server.
+#[cfg(test)]
 pub fn prepare_refresh_for_server(
     store: &mut LocalStateStore,
     principal_server_url: &str,
@@ -587,26 +593,6 @@ pub fn commit_refresh(
             }
         }
     }
-}
-
-/// Convenience wrapper that drives the full prep → exchange → commit
-/// strand against a single `&mut LocalStateStore`. Holds the borrow
-/// across the network await, so callers backed by a Dioxus
-/// `SyncSignal<LocalStateStore>` must orchestrate the three phases by hand
-/// (see the session-refresh `use_future` in `app.rs`). Test code that
-/// owns the store directly can keep using this entrypoint.
-#[cfg(test)]
-pub async fn run_refresh(store: &mut LocalStateStore) -> RefreshOutcome {
-    let prepared = prepare_refresh(store);
-    let (grant, device_handle) = match prepared {
-        RefreshPrepared::Done(outcome) => return outcome,
-        RefreshPrepared::Ready {
-            grant,
-            device_handle,
-        } => (grant, device_handle),
-    };
-    let result = exchange_refresh(&grant, &device_handle).await;
-    commit_refresh(store, result)
 }
 
 #[cfg(test)]
