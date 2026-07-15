@@ -53,17 +53,6 @@ fn try_attach_device_dpop(api: TransportClient) -> anyhow::Result<TransportClien
     Ok(api.with_dpop_device(handle))
 }
 
-#[cfg(target_arch = "wasm32")]
-fn require_device_dpop(api: TransportClient) -> anyhow::Result<TransportClient> {
-    let mut store = crate::state::LocalStateStore::default();
-    let Some(handle) =
-        crate::identity::account_auth::grant_dpop::load_or_recover_device_key(&mut store)?
-    else {
-        anyhow::bail!("missing DPoP device key for authenticated self request");
-    };
-    Ok(api.with_dpop_device(handle))
-}
-
 async fn ensure_self_path_auth_material_ready() -> Result<(), ApiCallError> {
     #[cfg(target_arch = "wasm32")]
     {

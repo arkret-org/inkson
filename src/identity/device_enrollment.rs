@@ -87,6 +87,7 @@ pub fn inkson_device_algorithms() -> Vec<String> {
 /// (carries proofs — inkson never submits an unsigned enrollment event), and its
 /// `payload.device_id` equals `expected_device_id` (this session's device id, so
 /// a server bug cannot enroll a different device under this session).
+#[cfg(test)]
 pub fn parse_signed_device_authorize(
     signed_event: &serde_json::Value,
     expected_device_id: &str,

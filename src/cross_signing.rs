@@ -5,7 +5,7 @@
 //! device-lifecycle.md) §5 (Signing Hierarchy), §5.1 (Cross-Signing Publish Envelope), §5.2 (Device
 //! Trust Chain), §14 (Cross-Signing Reset).
 //!
-//! Like [`device_revoke`](super::device_revoke), this layer only produces an
+//! This layer only produces an
 //! **auditable step plan** — it does not perform side effects. The executor
 //! consumes the steps in order. Corresponding SDK primitives:
 //!

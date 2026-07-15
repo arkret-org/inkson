@@ -601,6 +601,7 @@ fn current_local_minute() -> u16 {
     (now.hour() as u16) * 60 + now.minute() as u16
 }
 
+#[cfg(test)]
 fn account_data_content<'a>(entries: &'a [Value], key: &str) -> Option<&'a Value> {
     entries.iter().find_map(|entry| {
         let data_type = entry

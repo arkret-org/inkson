@@ -112,14 +112,6 @@ impl EffectRegistry {
         }
     }
 
-    pub async fn cancel_generation(&self, generation: u64) {
-        self.cancel_where(|key| key.generation != generation).await;
-    }
-
-    pub async fn cancel_owner(&self, owner: &EffectOwner) {
-        self.cancel_where(|key| &key.owner == owner).await;
-    }
-
     pub async fn cancel_all(&self) {
         self.cancel_where(|_| true).await;
     }

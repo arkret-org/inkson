@@ -253,10 +253,14 @@ fn bundle_challenge_is_s256_of_verifier_when_supported() {
         "https://principal.example/api",
     )
     .unwrap();
+    let authorize_url = url::Url::parse(&bundle.authorize_url).unwrap();
+    let code_challenge = authorize_url
+        .query_pairs()
+        .find_map(|(key, value)| (key == "code_challenge").then(|| value.into_owned()))
+        .expect("authorize URL code_challenge");
     assert_eq!(
-        bundle.code_challenge,
-        pkce_code_challenge_s256(&bundle.code_verifier),
-        "S256 discovery must produce S256(verifier) challenge"
+        code_challenge,
+        pkce_code_challenge_s256(&bundle.code_verifier)
     );
 }
 

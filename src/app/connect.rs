@@ -193,16 +193,6 @@ pub(super) async fn refresh_session_credential_for_active_context(
         crate::identity::session_refresh::RefreshOutcome::Transient { reason } => {
             crate::runtime::session::CurrentSessionRefresh::RetryLater { reason }
         }
-        crate::identity::session_refresh::RefreshOutcome::Fresh => {
-            let current = token();
-            if current.trim().is_empty() {
-                crate::runtime::session::CurrentSessionRefresh::retry_later(
-                    "session grant is fresh but no live credential is loaded",
-                )
-            } else {
-                crate::runtime::session::CurrentSessionRefresh::Credential(current)
-            }
-        }
     }
 }
 

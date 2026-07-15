@@ -35,6 +35,10 @@ use chrono::{DateTime, Duration, Utc};
 /// - `SmallTeam` / `Organization` / higher: principal MUST be `did:webvh`.
 /// - `Sovereign`: principal limited to a deployment-specific method list.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[allow(
+    dead_code,
+    reason = "resolver policy profiles are configuration surface"
+)]
 pub enum DeploymentProfile {
     PersonalNode,
     SmallTeam,
@@ -81,6 +85,7 @@ pub fn policy_for(profile: DeploymentProfile) -> ResolverPolicy {
 /// adapters and the given policy. Documents must be ingested via the SDK
 /// resolver APIs (`insert_from_https_response`, `ingest_log`, etc.) before
 /// `resolve()` will succeed for that DID.
+#[cfg(test)]
 pub fn build_default_resolver(profile: DeploymentProfile) -> CompositeDidResolver {
     let mut composite = CompositeDidResolver::new().with_policy(policy_for(profile));
     composite.push(DidKeyResolver::new());

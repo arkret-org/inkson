@@ -71,8 +71,6 @@ pub struct AuthorityResolver {
     /// Absolute `gate_account_base` — the only origin client `gate/account`
     /// calls are routed to (service-surface §2.5.1).
     pub gate_account_base: String,
-    /// Principal Server origin that published the describe response.
-    pub principal_server_url: String,
     /// Audience the issued session grant authenticates against.
     pub principal_audience: String,
     /// Authentication methods the Account Authority accepts.
@@ -122,7 +120,6 @@ impl AuthorityResolver {
         };
         Ok(Self {
             gate_account_base,
-            principal_server_url: principal_server_url.to_owned(),
             principal_audience,
             methods: metadata.methods.clone(),
         })

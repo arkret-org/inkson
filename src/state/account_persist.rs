@@ -159,13 +159,9 @@ pub(crate) struct AccountPersistBarrier {
 }
 
 impl AccountPersistBarrier {
+    #[cfg(not(target_arch = "wasm32"))]
     pub(crate) fn ready() -> Self {
-        Self {
-            #[cfg(target_arch = "wasm32")]
-            account_key: String::new(),
-            #[cfg(target_arch = "wasm32")]
-            seq: 0,
-        }
+        Self {}
     }
 
     pub(crate) async fn wait(self) -> anyhow::Result<()> {

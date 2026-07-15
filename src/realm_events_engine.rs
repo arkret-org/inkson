@@ -242,7 +242,6 @@ impl TransportProvider for RealmTransportProvider {
                 self.ctx.token.set(session_credential);
                 Ok(true)
             }
-            crate::identity::session_refresh::RefreshOutcome::Fresh => Ok(true),
             crate::identity::session_refresh::RefreshOutcome::Transient { reason } => {
                 Err(arkret_sdk::Error::Http(reason))
             }
