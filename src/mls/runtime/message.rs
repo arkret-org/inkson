@@ -1383,7 +1383,7 @@ pub fn encrypt_values_with_device_snapshot(
 /// [`arkret_sdk::EncryptedPayload`] (not yet wrapped as a wire envelope).
 ///
 /// The caller assembles the spec-canonical `ak.schema.encrypted_envelope.v1`
-/// wire shape via [`arkret_sdk::EncryptedEnvelopeV1::from_payload`] once it
+/// wire shape via [`arkret_sdk::encrypted_envelope_from_payload`] once it
 /// knows the accepted group-state reference for this epoch (genesis, latest
 /// winning commit, or a forced commit returned by this helper). `aad` MUST be
 /// the canonical `EncryptedEnvelopeAad` value, so the digest verification
@@ -1544,7 +1544,7 @@ pub fn assert_minimal_metadata_aad(
         .map_err(|err| MlsRuntimeError::AadPolicy(err.to_string()))
 }
 
-/// SEC-08 — infer the [`arkret_sdk::AadVisibility`] discriminator from a
+/// SEC-08 — infer the [`arkret_sdk::EncryptedEnvelopeAadVisibility`] discriminator from a
 /// canonical `ak.schema.encrypted_envelope.v1` AAD value.
 ///
 /// The schema discriminator is structural (`encryption-and-audit.md` §2.9): a

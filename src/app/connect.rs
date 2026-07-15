@@ -236,7 +236,7 @@ pub(super) struct ConnectContext {
     pub(super) state_store: SyncSignal<LocalStateStore>,
     pub(super) network_state: Signal<String>,
     pub(super) last_error: Signal<Option<String>>,
-    pub(super) server_description: Signal<Option<ServerDescription>>,
+    pub(super) server_description: Signal<Option<ServiceDescribe>>,
     pub(super) server_probe_status: Signal<String>,
     pub(super) account_primary_handle: Signal<String>,
     pub(super) personal_handles: Signal<Vec<String>>,
@@ -644,7 +644,7 @@ pub(super) fn connect(base: String, actor: String, device: String, ctx: ConnectC
                 // manually retries.
                 let description = match bootstrap_request("server describe", api.describe()).await {
                     Ok(description) => {
-                        let missing = description.missing_v1_principal_server_requirements();
+                        let missing = missing_v1_principal_server_requirements(&description);
                         if !missing.is_empty() {
                             let message =
                                 format!("server describe rejected: missing {}", missing.join(", "));

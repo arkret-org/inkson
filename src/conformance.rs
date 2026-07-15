@@ -7,7 +7,7 @@ use arkret_sdk::Discoverability;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-use crate::models::{ServerDescription, ServerDescriptionExt};
+use crate::models::{ServiceDescribe, service_supports_operation, service_supports_profile};
 
 pub const PROFILE_MINIMAL_CLIENT: &str = "ak.profile.minimal_client.v1";
 // T2.3: chat_only_client / kanban_only_client profile ids were removed from
@@ -343,7 +343,7 @@ pub fn actor_private_event_kinds() -> &'static [&'static str] {
     ACTOR_PRIVATE_EVENT_KINDS.as_slice()
 }
 
-pub fn profile_readiness(server: Option<&ServerDescription>) -> Vec<ProfileReadiness> {
+pub fn profile_readiness(server: Option<&ServiceDescribe>) -> Vec<ProfileReadiness> {
     client_profile_declarations()
         .into_iter()
         .map(|declaration| {
@@ -371,10 +371,10 @@ pub fn profile_readiness(server: Option<&ServerDescription>) -> Vec<ProfileReadi
         .collect()
 }
 
-pub fn profile_ready(server: Option<&ServerDescription>, profile_id: &str) -> bool {
+pub fn profile_ready(server: Option<&ServiceDescribe>, profile_id: &str) -> bool {
     server
         .map(|description| {
-            description.supports_profile(profile_id)
+            service_supports_profile(description, profile_id)
                 || missing_requirements(profile_id, description).is_empty()
         })
         .unwrap_or(true)
@@ -391,14 +391,14 @@ pub fn profile_ready(server: Option<&ServerDescription>, profile_id: &str) -> bo
 /// checked here — those describe what the *client* must implement,
 /// not what the server has to expose. The server-side gate is about
 /// "can I call the endpoints I'd need" only.
-fn missing_requirements(profile_id: &str, server: &ServerDescription) -> Vec<String> {
+fn missing_requirements(profile_id: &str, server: &ServiceDescribe) -> Vec<String> {
     let Some(req) = arkret_sdk::generated::profile_requirements::requirements_for(profile_id)
     else {
         return vec![format!("unknown profile {profile_id}")];
     };
     req.required_operations
         .iter()
-        .filter(|operation| !server.supports_operation(operation))
+        .filter(|operation| !service_supports_operation(server, operation))
         .map(|operation| (*operation).to_owned())
         .collect()
 }
@@ -574,7 +574,7 @@ mod tests {
         // client should be ready. `chat_mvp` additionally requires
         // `ak.self.account.stream.subscribe` which the fixture intentionally omits, so
         // the readiness gate flags it as missing.
-        let server: ServerDescription = serde_json::from_value(json!({
+        let server: ServiceDescribe = serde_json::from_value(json!({
             "service_id": "did:web:server.example",
             "trust_domain": "ak:trust_domain:server.example",
             "service_type": "principal_server",

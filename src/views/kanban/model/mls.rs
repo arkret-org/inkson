@@ -29,7 +29,7 @@ pub(crate) fn value_is_raw_mls_envelope(value: &Value) -> bool {
 /// Extract a canonical MLS envelope from the value shapes the reducer/projection
 /// can hand back to the board UI:
 ///
-/// - raw `EncryptedPayload` / `EncryptedEnvelopeV1`
+/// - raw `EncryptedPayload` / `EncryptedEnvelope`
 /// - `{ "encrypted_content": <envelope> }`
 /// - patch/set wrappers such as `{ "$op": "set", "value": <envelope> }`
 ///

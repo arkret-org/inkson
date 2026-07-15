@@ -165,7 +165,7 @@ pub fn build_container_rebalance(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::operation::EventEnvelopeExt;
+    use crate::operation::EventExt;
 
     #[test]
     fn morph_update_emits_canonical_kind() {

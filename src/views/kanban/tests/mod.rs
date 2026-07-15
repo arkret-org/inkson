@@ -60,7 +60,7 @@ pub(super) fn assert_registered_payload_valid(event: &impl TestEventPayloadView)
 }
 
 #[cfg(not(target_arch = "wasm32"))]
-pub(super) fn sdk_event(event: crate::operation::EventEnvelope) -> arkret_sdk::Event {
+pub(super) fn sdk_event(event: crate::operation::Event) -> arkret_sdk::Event {
     event
 }
 

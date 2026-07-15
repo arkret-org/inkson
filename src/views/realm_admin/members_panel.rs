@@ -272,7 +272,7 @@ fn spawn_set_agent_realm_behavior(
                 return;
             }
         };
-        let body = arkret_sdk::models::AgentParticipationSetRequestBody {
+        let body = arkret_sdk::models::AgentParticipationReplaceRequestBody {
             scope: AgentParticipationScope::Realm { realm_id },
             selection,
         };

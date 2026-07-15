@@ -70,7 +70,7 @@ pub struct TransportClient {
     base_url: Url,
     http: arkret_sdk::http_client::Client,
     context: RequestContext,
-    describe_cache: Arc<OnceCell<crate::models::ServerDescription>>,
+    describe_cache: Arc<OnceCell<crate::models::ServiceDescribe>>,
 }
 
 impl TransportClient {
@@ -156,7 +156,7 @@ impl TransportClient {
         Ok(self.base_url.join(normalized)?)
     }
 
-    pub async fn describe(&self) -> anyhow::Result<crate::models::ServerDescription> {
+    pub async fn describe(&self) -> anyhow::Result<crate::models::ServiceDescribe> {
         self.http
             .describe()
             .await
@@ -167,7 +167,7 @@ impl TransportClient {
         &self.context
     }
 
-    pub async fn describe_cached(&self) -> anyhow::Result<&crate::models::ServerDescription> {
+    pub async fn describe_cached(&self) -> anyhow::Result<&crate::models::ServiceDescribe> {
         self.describe_cache
             .get_or_try_init(|| async {
                 self.http

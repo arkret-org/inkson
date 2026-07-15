@@ -1,7 +1,7 @@
 use std::collections::BTreeMap;
 
 pub use arkret_sdk::{
-    ClaimedProfileEntry, CompatSurfaceEntry, ServerDescription, VerifiedProfileEntry,
+    ClaimedProfileEntry, CompatSurfaceEntry, ServiceDescribe, VerifiedProfileEntry,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -325,99 +325,59 @@ pub const OP_EVENTS_DESCRIBE: &str = "ak.self.events.query.describe";
 pub const OP_EVENTS_SUBMIT: &str = "ak.self.events.command.submit";
 pub const OP_SNAPSHOT_HEAD: &str = "ak.self.snapshot.query.manifest_head";
 
-/// Inkson-side convenience methods over the SDK's [`ServerDescription`].
-///
-/// Inkson no longer maintains its own `ServerDescription` struct; the SDK
-/// type is now the single source of truth, matching the spec at
-/// `arkret-spec/spec/v1/artifacts/schemas/service-describe.schema.json`
-/// (17 required Round 4 fields, typed `claimed_profiles` / `compat_surfaces`,
-/// validated `Did` / `TypedTrustDomainId`). Because inkson cannot add
-/// inherent impls on a foreign type, the previous helper methods now live
-/// on this extension trait — call sites only need `use
-/// crate::models::ServerDescriptionExt;` to get them back.
-pub trait ServerDescriptionExt {
-    fn supports_profile(&self, profile: &str) -> bool;
-    fn supports_operation(&self, operation_id: &str) -> bool;
-    fn supports_feature(&self, feature: &str) -> bool;
-    fn supports_event_envelope_write_plane(&self) -> bool;
-    fn missing_event_envelope_write_requirements(&self) -> Vec<&'static str>;
-    fn missing_v1_principal_server_requirements(&self) -> Vec<&'static str>;
-    fn is_v1_principal_server_ready(&self) -> bool;
-    /// Round 4 — true iff the declared trust domain matches `expected`.
-    /// `Did` / `TypedTrustDomainId` enforce non-emptiness on
-    /// construction so we don't need a separate "is empty" guard.
-    fn trust_domain_matches(&self, expected: &str) -> bool;
-    /// Round 4 — treat a missing / null `plaintext_visibility` as
-    /// `untrusted` for late-recovery handling.
-    fn is_plaintext_visibility_untrusted(&self) -> bool;
+/// Return whether the canonical service description advertises a profile.
+pub fn service_supports_profile(description: &ServiceDescribe, profile: &str) -> bool {
+    description
+        .supported_profiles
+        .iter()
+        .any(|value| value == profile)
 }
 
-impl ServerDescriptionExt for ServerDescription {
-    fn supports_profile(&self, profile: &str) -> bool {
-        self.supported_profiles.iter().any(|value| value == profile)
-    }
+pub fn service_supports_operation(description: &ServiceDescribe, operation_id: &str) -> bool {
+    description
+        .supported_operations
+        .iter()
+        .any(|value| value == operation_id)
+}
 
-    fn supports_operation(&self, operation_id: &str) -> bool {
-        self.supported_operations
-            .iter()
-            .any(|value| value == operation_id)
+pub fn missing_event_envelope_write_requirements(
+    description: &ServiceDescribe,
+) -> Vec<&'static str> {
+    let mut missing = Vec::new();
+    if !service_supports_profile(description, PROFILE_CORE_EVENT_STORE)
+        && !service_supports_profile(description, PROFILE_PRINCIPAL_SERVER_EVENTS_API)
+    {
+        missing.push(PROFILE_CORE_EVENT_STORE);
     }
+    if !service_supports_operation(description, OP_EVENTS_DESCRIBE) {
+        missing.push(OP_EVENTS_DESCRIBE);
+    }
+    if !service_supports_operation(description, OP_EVENTS_SUBMIT) {
+        missing.push(OP_EVENTS_SUBMIT);
+    }
+    missing
+}
 
-    fn supports_feature(&self, feature: &str) -> bool {
-        self.supported_features.iter().any(|value| value == feature)
-    }
+pub fn service_supports_event_envelope_write_plane(description: &ServiceDescribe) -> bool {
+    missing_event_envelope_write_requirements(description).is_empty()
+}
 
-    fn supports_event_envelope_write_plane(&self) -> bool {
-        self.missing_event_envelope_write_requirements().is_empty()
+pub fn missing_v1_principal_server_requirements(
+    description: &ServiceDescribe,
+) -> Vec<&'static str> {
+    let mut missing = Vec::new();
+    if description.service_type != "principal_server" {
+        missing.push("service_type=principal_server");
     }
+    if description.protocol_version != "1.0" {
+        missing.push("protocol_version=1.0");
+    }
+    missing.extend(missing_event_envelope_write_requirements(description));
+    missing
+}
 
-    fn missing_event_envelope_write_requirements(&self) -> Vec<&'static str> {
-        let mut missing = Vec::new();
-        if !self.supports_profile(PROFILE_CORE_EVENT_STORE)
-            && !self.supports_profile(PROFILE_PRINCIPAL_SERVER_EVENTS_API)
-        {
-            missing.push(PROFILE_CORE_EVENT_STORE);
-        }
-        if !self.supports_operation(OP_EVENTS_DESCRIBE) {
-            missing.push(OP_EVENTS_DESCRIBE);
-        }
-        if !self.supports_operation(OP_EVENTS_SUBMIT) {
-            missing.push(OP_EVENTS_SUBMIT);
-        }
-        missing
-    }
-
-    fn missing_v1_principal_server_requirements(&self) -> Vec<&'static str> {
-        // `service_id` is a `Did` validated on construction; failure to
-        // start with "did:" makes the whole response un-deserialisable.
-        let mut missing = Vec::new();
-        if self.service_type != "principal_server" {
-            missing.push("service_type=principal_server");
-        }
-        if self.protocol_version != "1.0" {
-            missing.push("protocol_version=1.0");
-        }
-        missing.extend(self.missing_event_envelope_write_requirements());
-        // `plaintext_visibility` is a required, strongly-typed field of the v1
-        // ServiceDescribe: a describe that omits it fails to deserialize before
-        // reaching here, so its presence is structurally guaranteed.
-        missing
-    }
-
-    fn is_v1_principal_server_ready(&self) -> bool {
-        self.missing_v1_principal_server_requirements().is_empty()
-    }
-
-    fn trust_domain_matches(&self, expected: &str) -> bool {
-        self.trust_domain.as_str() == expected.trim()
-    }
-
-    fn is_plaintext_visibility_untrusted(&self) -> bool {
-        // Vacuous (all-default) declaration carries no usable plaintext-boundary
-        // signal — treat as untrusted / fail-closed, matching the v1 receiver
-        // rule for an absent value.
-        self.plaintext_visibility == arkret_sdk::PlaintextVisibility::none()
-    }
+pub fn service_is_v1_principal_server_ready(description: &ServiceDescribe) -> bool {
+    missing_v1_principal_server_requirements(description).is_empty()
 }
 
 // R35: `ak.identity.describe` body. The SDK's canonical type is
@@ -427,12 +387,8 @@ impl ServerDescriptionExt for ServerDescription {
 // name so call sites (`registry_mode` read in `views/dashboard.rs`) stay
 // unchanged while the field shapes are now SDK-owned.
 // `ak.self.account.query.describe` decodes into the SDK's authoritative
-// `arkret_sdk::ServerDescription`; the former inkson-local describe mirror was
+// `arkret_sdk::ServiceDescribe`; the former inkson-local describe mirror was
 // removed in favor of the wire type.
-/// Directory `describe` response. The SDK's `DirectoryDescribeOutcome` is a
-/// transparent wrapper over this exact wire body, so inkson consumes the SDK
-/// authority directly instead of maintaining a flat local mirror.
-pub use arkret_sdk::models::DirectoryDescription;
 /// App runtime state derived from validated canonical account-subscribe frames.
 /// Wire ownership remains in `AccountSubscribeBatch` and `SyncUpdates`; the
 /// JSON map is only the heterogeneous local projection consumed by UI reducers.

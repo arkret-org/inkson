@@ -4,7 +4,7 @@
 //! T5.2 (Round 22, 2026-05-20) — T5.1 landed `Ed25519DetachedJwsSigner`,
 //! `EventProofBuilder`, and `ProductionVerifier` in the SDK
 //! (`arkret-rust-sdk/crates/signatures/src/proof.rs`). Before T5.2
-//! inkson's previous EventEnvelope signing helper hand-rolled
+//! inkson's previous Event signing helper hand-rolled
 //! the same canonical-bytes → JWS pipeline, which meant a bug fixed in
 //! the SDK had to be ported a second time into inkson. This module
 //! collapses both code paths through the SDK.
@@ -57,7 +57,7 @@ use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use chrono::{DateTime, Utc};
 use ed25519_dalek::{Signer as _, SigningKey};
 
-use crate::operation::{EventEnvelope, EventProofAudience, ProofMode, current_proof_mode};
+use crate::operation::{Event, EventProofAudience, ProofMode, current_proof_mode};
 
 /// Errors produced by the active-write signing pipeline.
 #[derive(Debug, thiserror::Error)]
@@ -303,14 +303,14 @@ impl InksonEventSigner {
     /// another verification method makes the signing attempt fail closed.
     ///
     /// Updates [`Self::last_signed_at_snapshot`] on success.
-    pub fn sign_envelope(&self, event: &mut EventEnvelope) -> Result<(), EventSignerError> {
+    pub fn sign_envelope(&self, event: &mut Event) -> Result<(), EventSignerError> {
         self.sign_envelope_with_context(event, EventProofContext::default())
     }
 
     /// Sign `event` with an explicit EventProof domain/audience binding.
     pub fn sign_envelope_with_context(
         &self,
-        event: &mut EventEnvelope,
+        event: &mut Event,
         context: EventProofContext,
     ) -> Result<(), EventSignerError> {
         self.sign_sdk_event_with_context(event, context)
@@ -363,7 +363,7 @@ impl InksonEventSigner {
     /// Produce a detached JWS (`<b64u header>..<b64u sig>`) over `bytes`
     /// using the active backend, matching the alg-only protected header
     /// shape [`Self::sign_envelope_with_context`] uses. Control-plane
-    /// signatures that are NOT [`EventEnvelope`] proofs — notably the
+    /// signatures that are NOT [`Event`] proofs — notably the
     /// `ak.call.signal` ephemeral envelope `proof` (spec
     /// `webrtc-signaling.md` §5: detached signature over canonical
     /// envelope bytes excluding `proof`) — go through this helper instead
@@ -747,7 +747,7 @@ pub fn should_auto_sign() -> bool {
 /// just before sending to the wire so envelopes built with placeholder
 /// dev proofs (or no proofs at all) get a real signature attached when
 /// the proof mode expects one.
-pub fn sign_with_active(event: &mut EventEnvelope) -> Result<(), EventSignerError> {
+pub fn sign_with_active(event: &mut Event) -> Result<(), EventSignerError> {
     let signer = active_signer().ok_or(EventSignerError::MissingSigner {
         mode: current_proof_mode().label_en(),
     })?;
@@ -756,7 +756,7 @@ pub fn sign_with_active(event: &mut EventEnvelope) -> Result<(), EventSignerErro
 
 /// Sign `event` with the active signer and explicit EventProof context.
 pub fn sign_with_active_context(
-    event: &mut EventEnvelope,
+    event: &mut Event,
     context: EventProofContext,
 ) -> Result<(), EventSignerError> {
     let signer = active_signer().ok_or(EventSignerError::MissingSigner {

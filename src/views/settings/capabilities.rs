@@ -12,7 +12,7 @@
 //! - `authz/capabilities.md` §3.3 — revoke + cascade.
 //! - `authz/capabilities.md` §3.4 — audit trail.
 
-use arkret_sdk::models::{Capability, CapabilitySubject};
+use arkret_sdk::models::{CapabilityGrant, CapabilitySubject};
 use dioxus::prelude::*;
 
 use crate::components::{EmptyState, EmptyStateKind};
@@ -24,7 +24,7 @@ use crate::views::helpers::{display_name_for_did, short_protocol_id};
 /// One row in the user's capability list. Backed by either the user
 /// being the subject (capability held) or the issuer (capability
 /// delegated to someone else). Mapped from the authoritative SDK
-/// [`Capability`] grant rows that `ak.self.authz.grants.query.effective`
+/// [`CapabilityGrant`] rows that `ak.self.authz.grants.query.effective`
 /// returns (soland serialises the SDK `GrantList` verbatim).
 #[derive(Clone, Debug, PartialEq)]
 struct CapabilityRow {
@@ -47,11 +47,11 @@ struct DelegationStep {
     constraints: String,
 }
 
-/// Map one authoritative SDK [`Capability`] grant onto a display row.
+/// Map one authoritative SDK [`CapabilityGrant`] onto a display row.
 /// The SDK grant carries no per-hop delegation chain (only
 /// `parent_grant_id`), so `chain` stays empty until soland exposes a
 /// chain projection (see the G3.Y3-followup note below).
-fn decode_capability_row(grant: &Capability) -> CapabilityRow {
+fn decode_capability_row(grant: &CapabilityGrant) -> CapabilityRow {
     CapabilityRow {
         capability_id: grant.id.as_str().to_owned(),
         action: grant.actions.first().cloned().unwrap_or_default(),
@@ -263,7 +263,7 @@ mod tests {
 
     use super::*;
 
-    fn sample_grant(subject: serde_json::Value) -> Capability {
+    fn sample_grant(subject: serde_json::Value) -> CapabilityGrant {
         serde_json::from_value(json!({
             "id": "ak:grant:0196419b-0000-7000-8000-000000000000",
             "schema": "ak.schema.capability.v1",
@@ -278,7 +278,7 @@ mod tests {
             "expires_at": "2026-12-31T00:00:00Z",
             "proofs": [],
         }))
-        .expect("sample grant decodes as SDK Capability")
+        .expect("sample grant decodes as SDK CapabilityGrant")
     }
 
     #[test]

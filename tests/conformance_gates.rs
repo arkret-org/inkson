@@ -1,5 +1,5 @@
 //! Conformance gate: every typed builder in inkson MUST produce an
-//! EventEnvelope that validates against arkret-spec event-envelope.schema.json.
+//! Event that validates against arkret-spec event-envelope.schema.json.
 //!
 //! Stream J of `_claude_todos.md`: for each typed builder in
 //! `inkson::event_builders`,
@@ -17,7 +17,7 @@ use std::sync::OnceLock;
 
 use ed25519_dalek::SigningKey;
 use inkson::event_builders;
-use inkson::operation::{EventEnvelope, EventEnvelopeExt, EventKind};
+use inkson::operation::{Event, EventExt, EventKind};
 use jsonschema::{Registry, Resource};
 use serde_json::Value;
 
@@ -130,7 +130,7 @@ const TEST_ROOT_HASH: &str =
 /// Stamp the wire fields the submit pipeline would normally attach
 /// (CBA basis + Ed25519 proof) so the envelope satisfies the reducer-input
 /// rules baked into event-envelope.schema.json.
-fn stamp_wire_fields(envelope: &mut EventEnvelope) {
+fn stamp_wire_fields(envelope: &mut Event) {
     if should_stamp_control_move_basis(envelope) && envelope.seal_basis.is_none() {
         envelope.seal_basis = Some(test_seal_basis());
     }
@@ -141,7 +141,7 @@ fn stamp_wire_fields(envelope: &mut EventEnvelope) {
         .expect("Ed25519 sign succeeds for schema-conformant envelope");
 }
 
-fn should_stamp_control_move_basis(envelope: &EventEnvelope) -> bool {
+fn should_stamp_control_move_basis(envelope: &Event) -> bool {
     !envelope.effects.is_empty() && !cba_exempt_reducer_kind(&envelope.kind)
 }
 
@@ -236,7 +236,7 @@ fn schema_validator_rejects_obviously_invalid_envelope() {
 
 /// Validate `envelope` against event-schema. Panics with a readable
 /// diff on any schema violation.
-fn assert_envelope_matches_schema(label: &str, envelope: &EventEnvelope) {
+fn assert_envelope_matches_schema(label: &str, envelope: &Event) {
     assert!(
         !envelope.hlc.as_str().is_empty(),
         "{label}: builder produced empty hlc — should be `<12>-<4>-<8>` hex"

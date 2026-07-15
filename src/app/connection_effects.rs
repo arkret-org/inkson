@@ -16,7 +16,7 @@ pub(super) struct ConnectionEffectState {
     pub config_store: Signal<LocalConfigStore>,
     pub network_state: Signal<String>,
     pub last_error: Signal<Option<String>>,
-    pub server_description: Signal<Option<ServerDescription>>,
+    pub server_description: Signal<Option<ServiceDescribe>>,
     pub server_probe_status: Signal<String>,
     pub account_primary_handle: Signal<String>,
     pub personal_handles: Signal<Vec<String>>,

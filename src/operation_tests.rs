@@ -2,7 +2,7 @@ use serde_json::{Value, json};
 
 use super::*;
 
-fn assert_registered_payload_valid(event: &EventEnvelope) {
+fn assert_registered_payload_valid(event: &Event) {
     let catalog = arkret_sdk::schema::event_payload_validator_catalog().unwrap();
     catalog
         .validate_payload(event.kind.as_str(), &event.payload)
@@ -99,7 +99,7 @@ fn operation_round_trip_serde() {
     .body(json!({"content": {"kind": "ak.content.text", "body": "hello world"}}))
     .build("node");
     let json = serde_json::to_string(&op).unwrap();
-    let parsed: EventEnvelope = serde_json::from_str(&json).unwrap();
+    let parsed: Event = serde_json::from_str(&json).unwrap();
     assert_eq!(op, parsed);
 }
 
@@ -159,7 +159,7 @@ fn event_envelope_accepts_current_optional_top_level_fields() {
     );
     object.insert("actor_kind".to_owned(), json!("agent"));
 
-    let parsed: EventEnvelope = serde_json::from_value(value).unwrap();
+    let parsed: Event = serde_json::from_value(value).unwrap();
     assert_eq!(
         parsed.effective_scope,
         Some(arkret_sdk::models::EffectiveScope::Realm {
@@ -199,7 +199,7 @@ fn event_envelope_rejects_unknown_top_level_fields() {
         .insert("sender".to_owned(), json!("did:web:removed.example"));
 
     assert!(
-        serde_json::from_value::<EventEnvelope>(value).is_err(),
+        serde_json::from_value::<Event>(value).is_err(),
         "deprecated/unknown top-level envelope fields must fail closed"
     );
 }

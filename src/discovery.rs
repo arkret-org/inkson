@@ -96,7 +96,7 @@ pub struct PreviewSettings {
 
 /// Read marker for multi-device sync.
 #[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct ReadMarker {
+pub struct DiscoveryReadMarker {
     /// Realm ID.
     pub realm_id: String,
     /// Actor DID.
@@ -139,7 +139,7 @@ pub struct ReadMarkerPosition {
 #[derive(Clone, Debug, Default)]
 pub struct MarkerMerger {
     /// Markers indexed by (realm_id, actor_id, read_scope) -> device_id -> marker.
-    markers: HashMap<(String, String, String), HashMap<String, ReadMarker>>,
+    markers: HashMap<(String, String, String), HashMap<String, DiscoveryReadMarker>>,
 }
 
 impl MarkerMerger {
@@ -148,7 +148,7 @@ impl MarkerMerger {
     }
 
     /// Add or update a read marker.
-    pub fn set_marker(&mut self, marker: ReadMarker) {
+    pub fn set_marker(&mut self, marker: DiscoveryReadMarker) {
         let key = (
             marker.realm_id.clone(),
             marker.actor_id.clone(),
@@ -165,7 +165,7 @@ impl MarkerMerger {
         realm_id: &str,
         actor_id: &str,
         read_scope: &ReadMarkerScope,
-    ) -> Option<ReadMarker> {
+    ) -> Option<DiscoveryReadMarker> {
         let key = (
             realm_id.to_owned(),
             actor_id.to_owned(),
@@ -185,7 +185,7 @@ impl MarkerMerger {
         realm_id: &str,
         actor_id: &str,
         read_scope: &ReadMarkerScope,
-    ) -> Vec<&ReadMarker> {
+    ) -> Vec<&DiscoveryReadMarker> {
         let key = (
             realm_id.to_owned(),
             actor_id.to_owned(),
@@ -204,7 +204,7 @@ impl MarkerMerger {
         actor_id: &str,
         read_scope: &ReadMarkerScope,
         device_id: &str,
-    ) -> Option<&ReadMarker> {
+    ) -> Option<&DiscoveryReadMarker> {
         let key = (
             realm_id.to_owned(),
             actor_id.to_owned(),
@@ -347,7 +347,7 @@ mod tests {
         let mut merger = MarkerMerger::new();
         let scope = strand_discussion_scope();
 
-        merger.set_marker(ReadMarker {
+        merger.set_marker(DiscoveryReadMarker {
             realm_id: "ak:realm:test".to_owned(),
             actor_id: "did:web:alice".to_owned(),
             device_id: "device-1".to_owned(),
@@ -370,7 +370,7 @@ mod tests {
         let mut merger = MarkerMerger::new();
         let scope = strand_discussion_scope();
 
-        merger.set_marker(ReadMarker {
+        merger.set_marker(DiscoveryReadMarker {
             realm_id: "ak:realm:test".to_owned(),
             actor_id: "did:web:alice".to_owned(),
             device_id: "device-1".to_owned(),
@@ -383,7 +383,7 @@ mod tests {
             set_at: Hlc::now("inkson"),
         });
 
-        merger.set_marker(ReadMarker {
+        merger.set_marker(DiscoveryReadMarker {
             realm_id: "ak:realm:test".to_owned(),
             actor_id: "did:web:alice".to_owned(),
             device_id: "device-2".to_owned(),
@@ -412,7 +412,7 @@ mod tests {
         let mut merger = MarkerMerger::new();
         let scope = strand_discussion_scope();
 
-        merger.set_marker(ReadMarker {
+        merger.set_marker(DiscoveryReadMarker {
             realm_id: "ak:realm:test".to_owned(),
             actor_id: "did:web:alice".to_owned(),
             device_id: "device-1".to_owned(),

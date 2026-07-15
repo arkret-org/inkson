@@ -15,8 +15,9 @@ use crate::conformance::{
 };
 use crate::i18n::{Locale, TextDirection};
 use crate::models::{
-    RealmTreeNode, RealmTreeNodeKind, ServerDescription, ServerDescriptionExt,
-    projection_realm_id_for_known_node,
+    RealmTreeNode, RealmTreeNodeKind, ServiceDescribe, missing_v1_principal_server_requirements,
+    projection_realm_id_for_known_node, service_supports_event_envelope_write_plane,
+    service_supports_operation,
 };
 // R28-B — realm-tree / projection / field-extraction helpers moved to
 // `crate::realm_tree`. Re-export the two `pub` entry points used by
@@ -355,7 +356,7 @@ fn AppBootstrap() -> Element {
     let crypto_state = use_signal(|| "No authenticated session".to_owned());
     let network_state = use_signal(|| "offline".to_owned());
     let mut last_error = use_signal(|| Option::<String>::None);
-    let server_description = use_signal(|| Option::<ServerDescription>::None);
+    let server_description = use_signal(|| Option::<ServiceDescribe>::None);
     let server_probe_status = use_signal(|| "server not probed".to_owned());
     let locale = use_signal(move || initial_locale);
     let secure_store_bootstrap_ready = use_signal(move || initial_secure_store_bootstrap_ready);
@@ -579,9 +580,12 @@ fn AppBootstrap() -> Element {
         .as_ref()
         .map(|description| description.service_id.as_str().to_owned())
         .unwrap_or_default();
-    let can_list_handles_for_subject = active_server_description
-        .as_ref()
-        .is_some_and(|description| description.supports_operation(OP_LIST_HANDLES_FOR_SUBJECT));
+    let can_list_handles_for_subject =
+        active_server_description
+            .as_ref()
+            .is_some_and(|description| {
+                service_supports_operation(description, OP_LIST_HANDLES_FOR_SUBJECT)
+            });
     let has_session = !token().trim().is_empty();
     let boot_state = session_boot_state();
     let auth_surface = auth_surface_for_route(&route, has_session, boot_state);
@@ -643,7 +647,7 @@ fn AppBootstrap() -> Element {
     let e2ee_ready = profile_ready(active_server_description.as_ref(), PROFILE_E2EE_CLIENT);
     let event_write_ready = active_server_description
         .as_ref()
-        .map(|description| description.supports_event_envelope_write_plane())
+        .map(service_supports_event_envelope_write_plane)
         .unwrap_or(false);
     let route_uses_realm_context = route_uses_realm_context(&route);
     let context_realm_id = if route_uses_realm_context {

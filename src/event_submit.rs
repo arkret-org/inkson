@@ -29,7 +29,7 @@ use crate::ephemeral::{
     validate_outgoing_registered_event_payload,
 };
 use crate::models::{
-    BackfillView, PresenceResult, ReceiptResult, ServerDescription, SubmitEventResult, TypingResult,
+    BackfillView, PresenceResult, ReceiptResult, ServiceDescribe, SubmitEventResult, TypingResult,
 };
 use crate::operation::uuid_v7;
 #[cfg(test)]
@@ -41,7 +41,7 @@ use crate::wire_helpers::query_component;
 /// the shared SDK http-client (see `crate::transport::auth::with_event_submitter`).
 pub struct EventSubmitter {
     http: arkret_sdk::http_client::Client,
-    describe_cache: OnceCell<ServerDescription>,
+    describe_cache: OnceCell<ServiceDescribe>,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -361,7 +361,7 @@ impl EventSubmitter {
         }
     }
 
-    async fn describe(&self) -> anyhow::Result<ServerDescription> {
+    async fn describe(&self) -> anyhow::Result<ServiceDescribe> {
         self.http
             .describe()
             .await
@@ -370,7 +370,7 @@ impl EventSubmitter {
 
     /// Lazily fetch + cache the service describe for this submitter. Only the
     /// signing path calls this, so a submitter that never signs never fetches.
-    async fn describe_cached(&self) -> anyhow::Result<&ServerDescription> {
+    async fn describe_cached(&self) -> anyhow::Result<&ServiceDescribe> {
         self.describe_cache
             .get_or_try_init(|| async { self.describe().await })
             .await
@@ -1168,7 +1168,7 @@ fn data_event_key_id_for(event: &arkret_sdk::Event) -> String {
 }
 
 fn event_proof_context_from_description(
-    describe: &ServerDescription,
+    describe: &ServiceDescribe,
 ) -> crate::event_signer::EventProofContext {
     let service_id = describe.service_id.to_string();
     crate::event_signer::EventProofContext::new()

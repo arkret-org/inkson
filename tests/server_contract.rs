@@ -5,7 +5,10 @@ use inkson::account_data::{
 };
 use inkson::api_error::{TransportClientError, decode_arkret_error, is_auth_expired_error};
 use inkson::config::{ClientConfig, LocalConfigStore};
-use inkson::models::ServerDescriptionExt;
+use inkson::models::{
+    missing_event_envelope_write_requirements, missing_v1_principal_server_requirements,
+    service_is_v1_principal_server_ready, service_supports_event_envelope_write_plane,
+};
 use inkson::operation::OperationBuilder;
 use inkson::push::validate_blind_wakeup_payload;
 use inkson::service_parse::parse_server_description;
@@ -171,7 +174,7 @@ fn inkson_accepts_server_contract_payloads() {
         "did:web:alice.example"
     );
 
-    let sync_describe: arkret_sdk::ServerDescription = serde_json::from_value(json!({
+    let sync_describe: arkret_sdk::ServiceDescribe = serde_json::from_value(json!({
         "service_id": "did:web:server.local",
         "trust_domain": "ak:trust_domain:server.local",
         "service_type": "principal_server",
@@ -217,7 +220,7 @@ fn inkson_accepts_server_contract_payloads() {
             .contains_key("ak:realm:0196419b-0000-7000-8000-000000000000")
     );
 
-    let directory: inkson::models::DirectoryDescription = serde_json::from_value(json!({
+    let directory: inkson::models::ServiceDescribe = serde_json::from_value(json!({
         "service_id": "did:web:server.local",
         "trust_domain": "ak:trust_domain:server.local",
         "service_type": "directory_service",
@@ -495,13 +498,9 @@ fn server_description_gates_event_envelope_write_plane() {
         "development_mode": true,
     }))
     .unwrap();
-    assert!(events_ready.supports_event_envelope_write_plane());
-    assert!(events_ready.is_v1_principal_server_ready());
-    assert!(
-        events_ready
-            .missing_event_envelope_write_requirements()
-            .is_empty()
-    );
+    assert!(service_supports_event_envelope_write_plane(&events_ready));
+    assert!(service_is_v1_principal_server_ready(&events_ready));
+    assert!(missing_event_envelope_write_requirements(&events_ready).is_empty());
 
     let external_compat_surface = serde_json::to_value(
         arkret_sdk::CompatSurfaceEntry::external_interop("external_mimi_provider")
@@ -584,9 +583,11 @@ fn server_description_gates_event_envelope_write_plane() {
         "development_mode": true,
     }))
     .unwrap();
-    assert!(!events_missing.supports_event_envelope_write_plane());
+    assert!(!service_supports_event_envelope_write_plane(
+        &events_missing
+    ));
     assert_eq!(
-        events_missing.missing_event_envelope_write_requirements(),
+        missing_event_envelope_write_requirements(&events_missing),
         vec![
             "ak.profile.core_event_store.v1",
             "ak.self.events.query.describe",
@@ -596,7 +597,7 @@ fn server_description_gates_event_envelope_write_plane() {
     // `plaintext_visibility` is now present + non-null, so it falls out of
     // the missing list; only the event write requirements remain.
     assert_eq!(
-        events_missing.missing_v1_principal_server_requirements(),
+        missing_v1_principal_server_requirements(&events_missing),
         vec![
             "ak.profile.core_event_store.v1",
             "ak.self.events.query.describe",

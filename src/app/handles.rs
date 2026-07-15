@@ -131,7 +131,7 @@ pub(super) struct ServerSelectionContext {
     pub(super) state_store: SyncSignal<LocalStateStore>,
     pub(super) network_state: Signal<String>,
     pub(super) last_error: Signal<Option<String>>,
-    pub(super) server_description: Signal<Option<ServerDescription>>,
+    pub(super) server_description: Signal<Option<ServiceDescribe>>,
     pub(super) server_probe_status: Signal<String>,
     pub(super) connection_status: Signal<String>,
     pub(super) account_did: Signal<String>,

@@ -108,7 +108,7 @@ impl AuthorityResolver {
 
     pub(crate) fn from_description(
         principal_server_url: &str,
-        description: &arkret_sdk::ServerDescription,
+        description: &arkret_sdk::ServiceDescribe,
     ) -> anyhow::Result<Self> {
         let metadata = &description.auth_metadata;
         let gate_account_base = resolve_gate_account_base(principal_server_url, metadata)?;

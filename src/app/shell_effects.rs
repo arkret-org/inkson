@@ -5,7 +5,7 @@ pub(super) struct ShellEffectState {
     pub account_primary_handle: Signal<String>,
     pub account_did: Signal<String>,
     pub token: Signal<String>,
-    pub server_description: Signal<Option<ServerDescription>>,
+    pub server_description: Signal<Option<ServiceDescribe>>,
     pub personal_handles: Signal<Vec<String>>,
     pub personal_handles_status: Signal<String>,
     pub personal_handles_lookup_key: Signal<String>,
@@ -138,7 +138,7 @@ pub(super) fn ShellEffects(state: ShellEffectState) -> Element {
             let lookup_actor = account_did();
             let lookup_token = token();
             let lookup_supported = server_description().as_ref().is_some_and(|description| {
-                description.supports_operation(OP_LIST_HANDLES_FOR_SUBJECT)
+                service_supports_operation(description, OP_LIST_HANDLES_FOR_SUBJECT)
             });
             let key = format!(
                 "{}|{}|{}|{}",
@@ -243,7 +243,7 @@ pub(super) fn ShellEffects(state: ShellEffectState) -> Element {
             let lookup_base_url = base_url();
             let lookup_token = token();
             let lookup_supported = server_description().as_ref().is_some_and(|description| {
-                description.supports_operation(OP_LIST_HANDLES_FOR_SUBJECT)
+                service_supports_operation(description, OP_LIST_HANDLES_FOR_SUBJECT)
             });
             let mut peers = direct_contact_rows
                 .read()

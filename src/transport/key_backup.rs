@@ -97,7 +97,7 @@ impl crate::transport::TransportClient {
         &self,
         backup_id: &str,
         payload: serde_json::Value,
-    ) -> anyhow::Result<arkret_sdk::KeysBackupsPutOutcome> {
+    ) -> anyhow::Result<arkret_sdk::KeysBackupsReplaceOutcome> {
         let (record, _) = self
             .prepare_key_backup_put_payload(backup_id, payload)
             .await?;
@@ -113,7 +113,7 @@ impl crate::transport::TransportClient {
         &self,
         backup_id: &str,
         payload: serde_json::Value,
-    ) -> anyhow::Result<(arkret_sdk::KeysBackupsPutOutcome, serde_json::Value)> {
+    ) -> anyhow::Result<(arkret_sdk::KeysBackupsReplaceOutcome, serde_json::Value)> {
         let (record, sent_body) = self
             .prepare_key_backup_put_payload(backup_id, payload)
             .await?;

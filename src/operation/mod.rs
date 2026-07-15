@@ -15,9 +15,9 @@ use std::sync::atomic::{AtomicU8, Ordering};
 
 pub use arkret_sdk::events::kinds::EventKind;
 pub use arkret_sdk::{
-    Audience as EventProofAudience, CriticalExtension, Effect, Event as EventEnvelope,
-    EventRef as SemanticRef, EventRequirements, LatticeOp, LatticeOpType, Precondition, Predicate,
-    PredicateOp, Proof as EventProof, SealBasis,
+    Audience as EventProofAudience, CriticalExtension, Effect, Event, EventRef as SemanticRef,
+    EventRequirements, LatticeOp, LatticeOpType, Precondition, Predicate, PredicateOp,
+    Proof as EventProof, SealBasis,
 };
 use serde_json::Value;
 
@@ -217,7 +217,7 @@ impl OperationBuilder {
     }
 
     #[allow(clippy::expect_used)]
-    pub fn build(self, node_id: &str) -> EventEnvelope {
+    pub fn build(self, node_id: &str) -> Event {
         self.build_sdk_event(node_id)
             .expect("OperationBuilder emitted an invalid SDK Event")
     }
@@ -227,7 +227,7 @@ impl OperationBuilder {
     }
 
     #[allow(clippy::expect_used)]
-    pub fn build_with_deps(self, node_id: &str, deps: Vec<String>) -> EventEnvelope {
+    pub fn build_with_deps(self, node_id: &str, deps: Vec<String>) -> Event {
         self.build_sdk_event_with_deps(node_id, deps)
             .expect("OperationBuilder emitted an invalid SDK Event")
     }
@@ -305,16 +305,16 @@ impl OperationBuilder {
     }
 }
 
-/// Free-function form of [`EventEnvelopeExt::local_operation_id`]: the local
+/// Free-function form of [`EventExt::local_operation_id`]: the local
 /// reconciliation/dedupe key for an SDK event — the optimistic write chain's
 /// `unsigned.local_operation_idempotency_alias` when present, else the event
 /// id. Single source (YGN-DRY-03); every view consumes this one definition so
 /// the dedupe fallback rule can never drift between surfaces.
-pub(crate) fn sdk_event_local_operation_id(event: &EventEnvelope) -> &str {
+pub(crate) fn sdk_event_local_operation_id(event: &Event) -> &str {
     event.local_operation_id()
 }
 
-pub trait EventEnvelopeExt {
+pub trait EventExt {
     fn local_operation_idempotency_alias(&self) -> Option<&str>;
     fn local_operation_id(&self) -> &str;
     fn local_target_ref(&self) -> Option<&str>;
@@ -329,7 +329,7 @@ pub trait EventEnvelopeExt {
     fn require_proof(&self) -> anyhow::Result<&EventProof>;
 }
 
-impl EventEnvelopeExt for EventEnvelope {
+impl EventExt for Event {
     fn local_operation_idempotency_alias(&self) -> Option<&str> {
         self.unsigned
             .get("local_operation_idempotency_alias")

@@ -33,7 +33,7 @@
 use ed25519_dalek::SigningKey;
 use inkson::canonical::hex_encode;
 use inkson::event_builders;
-use inkson::operation::{EventEnvelope, EventEnvelopeExt};
+use inkson::operation::{Event, EventExt};
 use regex::Regex;
 use sha2::{Digest, Sha256};
 
@@ -57,7 +57,7 @@ fn signing_key() -> SigningKey {
 /// own kind. We deliberately do NOT use the zero hash, so the test
 /// catches a downstream regression that would forget to mint a real
 /// seal.
-fn stamp_real_proof_and_anchor(envelope: &mut EventEnvelope) {
+fn stamp_real_proof_and_anchor(envelope: &mut Event) {
     // Seal ref: SHA-256 of the envelope kind plus a "test" salt.
     // Stable across runs, non-zero, and tied to the event we're about
     // to sign — that's exactly the property a real notary guarantees.
@@ -145,7 +145,7 @@ fn full_bootstrap_chain_carries_real_proofs_and_anchors() {
     }
 }
 
-fn assert_jws_is_real_signature(envelope: &EventEnvelope) {
+fn assert_jws_is_real_signature(envelope: &Event) {
     let proof = envelope
         .proofs
         .first()
@@ -178,7 +178,7 @@ fn assert_jws_is_real_signature(envelope: &EventEnvelope) {
     );
 }
 
-fn assert_event_digest_is_sha256(envelope: &EventEnvelope) {
+fn assert_event_digest_is_sha256(envelope: &Event) {
     let proof = envelope
         .proofs
         .first()
@@ -209,7 +209,7 @@ fn assert_event_digest_is_sha256(envelope: &EventEnvelope) {
     );
 }
 
-fn assert_seal_ref_is_real(envelope: &EventEnvelope) {
+fn assert_seal_ref_is_real(envelope: &Event) {
     let seal = envelope
         .seal_ref
         .as_ref()

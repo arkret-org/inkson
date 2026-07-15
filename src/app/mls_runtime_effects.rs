@@ -11,7 +11,7 @@ pub(super) struct MlsRuntimeEffectState {
     pub token: Signal<String>,
     pub account_did: Signal<String>,
     pub device_id: Signal<String>,
-    pub server_description: Signal<Option<ServerDescription>>,
+    pub server_description: Signal<Option<ServiceDescribe>>,
     pub sync_bootstrap_complete: Signal<bool>,
     pub sync_cursor: Signal<String>,
     pub realm_live_epoch: Signal<u64>,
