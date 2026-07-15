@@ -66,6 +66,10 @@ mod mls_sidecar;
 mod mls_governance;
 
 mod e2ee_secure_cache;
+pub(crate) use e2ee_secure_cache::{
+    BrowserStorageEstimate, E2eePlaintextCacheClearScope, E2eePlaintextCacheUsage,
+    browser_storage_estimate,
+};
 
 mod account_persist;
 #[cfg(target_arch = "wasm32")]

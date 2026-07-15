@@ -2,6 +2,58 @@ use anyhow::Context as _;
 
 use super::*;
 
+const BROWSER_STORAGE_WARNING_RATIO: f64 = 0.8;
+
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub(crate) struct E2eePlaintextCacheRealmUsage {
+    pub(crate) plaintext_bytes: usize,
+    pub(crate) authored_entries: usize,
+    pub(crate) received_entries: usize,
+}
+
+impl E2eePlaintextCacheRealmUsage {
+    pub(crate) fn entry_count(&self) -> usize {
+        self.authored_entries + self.received_entries
+    }
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub(crate) struct E2eePlaintextCacheUsage {
+    pub(crate) realms: BTreeMap<String, E2eePlaintextCacheRealmUsage>,
+    pub(crate) plaintext_bytes: usize,
+    pub(crate) authored_entries: usize,
+    pub(crate) received_entries: usize,
+}
+
+impl E2eePlaintextCacheUsage {
+    pub(crate) fn entry_count(&self) -> usize {
+        self.authored_entries + self.received_entries
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) enum E2eePlaintextCacheClearScope {
+    All,
+    Realm(String),
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct BrowserStorageEstimate {
+    pub(crate) usage_bytes: u64,
+    pub(crate) quota_bytes: u64,
+}
+
+impl BrowserStorageEstimate {
+    pub(crate) fn usage_ratio(&self) -> Option<f64> {
+        (self.quota_bytes != 0).then(|| self.usage_bytes as f64 / self.quota_bytes as f64)
+    }
+
+    pub(crate) fn is_near_quota(&self) -> bool {
+        self.usage_ratio()
+            .is_some_and(|ratio| ratio >= BROWSER_STORAGE_WARNING_RATIO)
+    }
+}
+
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 struct E2eePlaintextCacheV1 {
     #[serde(default)]
@@ -25,6 +77,28 @@ impl E2eePlaintextCacheV1 {
         self.mls_snapshots.is_empty()
             && self.private_plaintext.is_empty()
             && self.decrypted_plaintext.is_empty()
+    }
+
+    fn plaintext_usage(&self) -> E2eePlaintextCacheUsage {
+        let mut usage = E2eePlaintextCacheUsage::default();
+        for (realm_id, strands) in &self.private_plaintext {
+            let realm = usage.realms.entry(realm_id.clone()).or_default();
+            for fields in strands.values() {
+                realm.authored_entries += fields.len();
+                realm.plaintext_bytes += fields.values().map(|value| value.len()).sum::<usize>();
+            }
+        }
+        for (realm_id, entries) in &self.decrypted_plaintext {
+            let realm = usage.realms.entry(realm_id.clone()).or_default();
+            realm.received_entries += entries.len();
+            realm.plaintext_bytes += entries.values().map(|value| value.len()).sum::<usize>();
+        }
+        for realm in usage.realms.values() {
+            usage.plaintext_bytes += realm.plaintext_bytes;
+            usage.authored_entries += realm.authored_entries;
+            usage.received_entries += realm.received_entries;
+        }
+        usage
     }
 
     fn merge_into(
@@ -124,6 +198,66 @@ impl LocalStateStore {
             secure_store
                 .delete_secret(&key)
                 .context("delete E2EE plaintext cache from secure store")?;
+        }
+        Ok(true)
+    }
+
+    pub(crate) fn e2ee_plaintext_cache_usage(&self) -> E2eePlaintextCacheUsage {
+        E2eePlaintextCacheV1::from_state(&self.effective_state_for_persist()).plaintext_usage()
+    }
+
+    /// Clear protected plaintext only after an explicit user action. MLS
+    /// snapshots are deliberately retained so cleanup cannot break the live
+    /// receive chain. The remaining cache is synchronously handed to the
+    /// secure-store backend before success is reported; browser backends queue
+    /// the IndexedDB commit from that call.
+    pub(crate) fn clear_e2ee_plaintext_cache_with_secure_store(
+        &mut self,
+        scope: &E2eePlaintextCacheClearScope,
+        secure_store: &dyn crate::secure_key_store::SecureKeyStore,
+    ) -> anyhow::Result<bool> {
+        self.ensure_cached_loaded();
+        self.absorb_mls_receive_overlay();
+
+        let previous_private = self.cached.mls_private_plaintext.clone();
+        let previous_decrypted = self.cached.mls_decrypted_plaintext.clone();
+        let changed = match scope {
+            E2eePlaintextCacheClearScope::All => {
+                let changed = !self.cached.mls_private_plaintext.is_empty()
+                    || !self.cached.mls_decrypted_plaintext.is_empty();
+                self.cached.mls_private_plaintext.clear();
+                self.cached.mls_decrypted_plaintext.clear();
+                changed
+            }
+            E2eePlaintextCacheClearScope::Realm(realm_id) => {
+                let removed_private = self.cached.mls_private_plaintext.remove(realm_id).is_some();
+                let removed_decrypted = self
+                    .cached
+                    .mls_decrypted_plaintext
+                    .remove(realm_id)
+                    .is_some();
+                removed_private || removed_decrypted
+            }
+        };
+        if !changed {
+            return Ok(false);
+        }
+
+        let persist_result = (|| {
+            let Some((key, json)) = self.e2ee_plaintext_cache_secure_write()? else {
+                anyhow::bail!("cannot clear E2EE plaintext cache without an active account");
+            };
+            // Keep a minimal encrypted empty object instead of deleting the
+            // entry. This replaces any prior plaintext-bearing value in one
+            // secure-store write and avoids a delete/recreate gap.
+            secure_store
+                .store_secret(&key, json.as_deref().unwrap_or("{}"))
+                .context("persist cleared E2EE plaintext cache")
+        })();
+        if let Err(error) = persist_result {
+            self.cached.mls_private_plaintext = previous_private;
+            self.cached.mls_decrypted_plaintext = previous_decrypted;
+            return Err(error);
         }
         Ok(true)
     }
@@ -267,4 +401,41 @@ impl LocalStateStore {
         #[cfg(not(target_arch = "wasm32"))]
         let _ = self;
     }
+}
+
+#[cfg(target_arch = "wasm32")]
+pub(crate) async fn browser_storage_estimate() -> anyhow::Result<Option<BrowserStorageEstimate>> {
+    use js_sys::Reflect;
+    use wasm_bindgen::JsValue;
+    use wasm_bindgen_futures::JsFuture;
+
+    let window = web_sys::window().context("browser window is unavailable")?;
+    let promise = window
+        .navigator()
+        .storage()
+        .estimate()
+        .map_err(|error| anyhow::anyhow!("browser storage estimate failed: {error:?}"))?;
+    let estimate = JsFuture::from(promise)
+        .await
+        .map_err(|error| anyhow::anyhow!("browser storage estimate rejected: {error:?}"))?;
+    let read_bytes = |field: &str| -> anyhow::Result<u64> {
+        let value = Reflect::get(&estimate, &JsValue::from_str(field))
+            .map_err(|error| anyhow::anyhow!("browser storage {field} read failed: {error:?}"))?
+            .as_f64()
+            .with_context(|| format!("browser storage {field} is missing"))?;
+        anyhow::ensure!(
+            value.is_finite() && value >= 0.0,
+            "browser storage {field} is invalid"
+        );
+        Ok(value as u64)
+    };
+    Ok(Some(BrowserStorageEstimate {
+        usage_bytes: read_bytes("usage")?,
+        quota_bytes: read_bytes("quota")?,
+    }))
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+pub(crate) async fn browser_storage_estimate() -> anyhow::Result<Option<BrowserStorageEstimate>> {
+    Ok(None)
 }

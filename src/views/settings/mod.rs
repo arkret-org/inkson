@@ -14,6 +14,7 @@ pub mod devices;
 /// U4 - "who can invite me" invite_receive_policy editor.
 pub mod invite_policy;
 pub mod mls_recovery;
+pub mod storage;
 
 mod account_data;
 mod invite_locator;
@@ -1426,25 +1427,27 @@ pub fn SettingsPanel(
                     }
                 }
 
+                            storage::E2eeStorageManagement {}
+
                             details { class: "event", "data-testid": "storage-risks",
                     summary { class: "event-head", span { "Storage diagnostics" } span { "Advanced" } }
                     if cfg!(target_arch = "wasm32") {
                         div { class: "metric",
                             strong {
-                                "Web localStorage Limit "
-                                HelpTip { text: "localStorage has a ~5MB limit. Large sync data, drafts, and cached operations may exceed this limit. Consider using IndexedDB for production." }
+                                "Bounded localStorage projection "
+                                HelpTip { text: "localStorage carries the small root/config projection. Account state, E2EE plaintext, session credentials, and key material use the protected IndexedDB tier." }
                             }
-                            span { class: "badge badge-warning", "data-testid": "risk-badge",
-                                "Warning"
+                            span { class: "badge badge-info", "data-testid": "risk-badge",
+                                "Bounded"
                             }
                         }
                         div { class: "metric",
                             strong {
-                                "No Encryption at Rest "
-                                HelpTip { text: "Web localStorage is not encrypted. Session tokens and cached data are accessible to any script on the same origin. Use secure httpOnly cookies or IndexedDB with encryption for production." }
+                                "Protected E2EE storage "
+                                HelpTip { text: "E2EE plaintext caches and secret account state are encrypted in IndexedDB with a non-extractable SubtleCrypto wrapping key and are never mirrored to localStorage." }
                             }
-                            span { class: "badge badge-error",
-                                "Critical"
+                            span { class: "badge badge-success",
+                                "Encrypted"
                             }
                         }
                         div { class: "metric",

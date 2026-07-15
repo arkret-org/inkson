@@ -496,6 +496,147 @@ fn history_secret_is_never_written_to_plaintext_state() {
 }
 
 #[test]
+fn e2ee_plaintext_cache_usage_is_grouped_by_realm() {
+    use crate::mls::persistence::encrypt_state;
+
+    let realm_a = "ak:realm:0196419b-0000-7000-8000-000000000061";
+    let realm_b = "ak:realm:0196419b-0000-7000-8000-000000000062";
+    let strand = "ak:strand:0196419b-0000-7000-8000-0000000000aa";
+    let digest = "sha256:6161616161616161616161616161616161616161616161616161616161616161";
+    let mut store = LocalStateStore::with_path(temp_state_path("e2ee-cache-usage"));
+    store.save_private_plaintext(realm_a, strand, "body", "alpha");
+    store.save_private_plaintext(realm_b, strand, "body", "beta");
+    store.advance_mls_receive_chain(
+        realm_a,
+        encrypt_state(realm_a, "abcd", 1, b"state", "profile", b"salt"),
+        digest,
+        b"remote",
+    );
+
+    let usage = store.e2ee_plaintext_cache_usage();
+    assert_eq!(usage.realms.len(), 2);
+    assert_eq!(usage.authored_entries, 2);
+    assert_eq!(usage.received_entries, 1);
+    assert_eq!(usage.entry_count(), 3);
+    assert_eq!(usage.plaintext_bytes, 17);
+    assert_eq!(usage.realms[realm_a].authored_entries, 1);
+    assert_eq!(usage.realms[realm_a].received_entries, 1);
+    assert_eq!(usage.realms[realm_a].plaintext_bytes, 13);
+    assert_eq!(usage.realms[realm_b].plaintext_bytes, 4);
+}
+
+#[test]
+fn explicit_e2ee_plaintext_cleanup_persists_scope_and_keeps_mls_state() {
+    use crate::mls::persistence::encrypt_state;
+    use crate::secure_key_store::{MemorySecureKeyStore, SecureKeyStore};
+
+    let actor = "did:web:alice.example";
+    let realm_a = "ak:realm:0196419b-0000-7000-8000-000000000063";
+    let realm_b = "ak:realm:0196419b-0000-7000-8000-000000000064";
+    let strand = "ak:strand:0196419b-0000-7000-8000-0000000000aa";
+    let digest = "sha256:6363636363636363636363636363636363636363636363636363636363636363";
+    let secure = MemorySecureKeyStore::new();
+    let mut store = LocalStateStore::with_path(temp_state_path("e2ee-cache-clear"));
+    store.switch_active_account(actor);
+    store.save_private_plaintext(realm_a, strand, "body", "realm-a-author");
+    store.save_private_plaintext(realm_b, strand, "body", "realm-b-author");
+    store.advance_mls_receive_chain(
+        realm_a,
+        encrypt_state(realm_a, "abcd", 3, b"state", "profile", b"salt"),
+        digest,
+        b"realm-a-remote",
+    );
+    store
+        .persist_e2ee_plaintext_cache_with_secure_store(&secure)
+        .unwrap();
+
+    assert!(
+        store
+            .clear_e2ee_plaintext_cache_with_secure_store(
+                &E2eePlaintextCacheClearScope::Realm(realm_a.to_owned()),
+                &secure,
+            )
+            .unwrap()
+    );
+    assert!(
+        store
+            .private_plaintext_for(realm_a, strand, "body")
+            .is_none()
+    );
+    assert!(store.mls_decrypted_plaintext_for(realm_a, digest).is_none());
+    assert!(store.mls_snapshot_for(realm_a).is_some());
+    assert_eq!(
+        store.private_plaintext_for(realm_b, strand, "body"),
+        Some("realm-b-author".to_owned())
+    );
+
+    let key = crate::secure_key_store::e2ee_plaintext_cache_store_key(actor);
+    let persisted: serde_json::Value =
+        serde_json::from_str(&secure.get_secret(&key).unwrap().unwrap()).unwrap();
+    assert!(persisted["mls_snapshots"].get(realm_a).is_some());
+    assert!(persisted["private_plaintext"].get(realm_a).is_none());
+    assert!(persisted["decrypted_plaintext"].get(realm_a).is_none());
+    assert!(persisted["private_plaintext"].get(realm_b).is_some());
+
+    let mut reloaded = LocalStateStore::with_path(temp_state_path("e2ee-cache-clear-reload"));
+    reloaded.switch_active_account(actor);
+    reloaded
+        .hydrate_e2ee_plaintext_cache_with_secure_store(&secure)
+        .unwrap();
+    assert!(
+        reloaded
+            .private_plaintext_for(realm_a, strand, "body")
+            .is_none()
+    );
+    assert!(reloaded.mls_snapshot_for(realm_a).is_some());
+    assert_eq!(
+        reloaded.private_plaintext_for(realm_b, strand, "body"),
+        Some("realm-b-author".to_owned())
+    );
+
+    assert!(
+        reloaded
+            .clear_e2ee_plaintext_cache_with_secure_store(
+                &E2eePlaintextCacheClearScope::All,
+                &secure,
+            )
+            .unwrap()
+    );
+    assert_eq!(reloaded.e2ee_plaintext_cache_usage().entry_count(), 0);
+    assert!(reloaded.mls_snapshot_for(realm_a).is_some());
+    assert!(
+        !reloaded
+            .clear_e2ee_plaintext_cache_with_secure_store(
+                &E2eePlaintextCacheClearScope::All,
+                &secure,
+            )
+            .unwrap()
+    );
+}
+
+#[test]
+fn browser_storage_warning_starts_at_eighty_percent() {
+    let below = BrowserStorageEstimate {
+        usage_bytes: 799,
+        quota_bytes: 1000,
+    };
+    let threshold = BrowserStorageEstimate {
+        usage_bytes: 800,
+        quota_bytes: 1000,
+    };
+    assert!(!below.is_near_quota());
+    assert!(threshold.is_near_quota());
+    assert_eq!(
+        BrowserStorageEstimate {
+            usage_bytes: 0,
+            quota_bytes: 0,
+        }
+        .usage_ratio(),
+        None
+    );
+}
+
+#[test]
 fn disappearing_message_plaintext_drop_clears_sidecar_and_decrypt_cache() {
     use crate::mls::persistence::encrypt_state;
 

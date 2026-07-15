@@ -224,6 +224,7 @@ web-sys = {workspace = true,features = [
     "CssStyleDeclaration",
     "MediaQueryList",
     "Navigator",
+    "StorageManager",
     "ServiceWorker",
     "ServiceWorkerContainer",
     "ServiceWorkerRegistration",
