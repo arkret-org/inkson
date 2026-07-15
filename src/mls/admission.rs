@@ -673,7 +673,10 @@ mod tests {
 
         let catalog = arkret_sdk::schema::event_payload_validator_catalog().unwrap();
         catalog
-            .validate_payload(event.kind.as_str(), &event.payload)
+            .validate_payload(
+                event.kind.as_str(),
+                &serde_json::to_value(&event.payload).unwrap(),
+            )
             .unwrap_or_else(|err| {
                 panic!(
                     "ak.realm_key.share payload violates registered schema: {err}\npayload: {}",
@@ -806,7 +809,10 @@ mod tests {
         );
         let catalog = arkret_sdk::schema::event_payload_validator_catalog().unwrap();
         catalog
-            .validate_payload(admission.welcome.kind.as_str(), &admission.welcome.payload)
+            .validate_payload(
+                admission.welcome.kind.as_str(),
+                &serde_json::to_value(&admission.welcome.payload).unwrap(),
+            )
             .unwrap_or_else(|err| {
                 panic!(
                     "ak.mls.welcome payload violates registered schema: {err}\npayload: {}",

@@ -4,8 +4,9 @@ use super::*;
 
 fn assert_registered_payload_valid(event: &Event) {
     let catalog = arkret_sdk::schema::event_payload_validator_catalog().unwrap();
+    let payload = serde_json::to_value(&event.payload).unwrap();
     catalog
-        .validate_payload(event.kind.as_str(), &event.payload)
+        .validate_payload(event.kind.as_str(), &payload)
         .unwrap_or_else(|err| {
             panic!(
                 "{} payload violates registered spec schema: {err}\npayload: {}",
@@ -15,7 +16,9 @@ fn assert_registered_payload_valid(event: &Event) {
         });
 }
 
-fn assert_payload_field_names_are_spec_canonical(value: &serde_json::Value) {
+fn assert_payload_field_names_are_spec_canonical(
+    payload: &std::collections::BTreeMap<String, serde_json::Value>,
+) {
     fn check(value: &serde_json::Value) -> Result<(), String> {
         match value {
             serde_json::Value::Array(values) => {
@@ -43,7 +46,8 @@ fn assert_payload_field_names_are_spec_canonical(value: &serde_json::Value) {
         }
         Ok(())
     }
-    check(value).unwrap_or_else(|err| {
+    let value = serde_json::to_value(payload).unwrap();
+    check(&value).unwrap_or_else(|err| {
         panic!("payload violates soland canonical JSON gate: {err}\npayload: {value}")
     });
 }
@@ -640,7 +644,7 @@ fn canonical_digest_is_stable_across_key_order() {
     op_a.actor_seq = 1;
 
     let mut op_b = op_a.clone();
-    op_b.payload = json!({"a": 1, "b": 2});
+    op_b.payload = serde_json::from_value(json!({"a": 1, "b": 2})).unwrap();
 
     assert_eq!(
         op_a.canonical_digest().unwrap(),

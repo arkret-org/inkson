@@ -6,9 +6,9 @@ use dioxus_router::hooks::use_navigator;
 use super::backup_summary::{
     backup_inventory_status, fmt_backup_timestamp, parse_backup_list, sorted_backups_latest_first,
 };
-use super::helpers::{copy_recovery_text_to_clipboard, passkey_wrap_aad};
+use super::helpers::copy_recovery_text_to_clipboard;
 use super::state::{fmt_relative, load_state, save_generated_recovery_key_metadata, save_state};
-use super::types::{BackupSummaryRow, Guardian, PasskeyRecoveryWrap, RecoveryState};
+use super::types::{BackupSummaryRow, Guardian, RecoveryState};
 use super::upload::{RecoveryKeyBackupOutcome, upload_recovery_key_account_backup};
 use crate::components::HelpTip;
 // SyncBadge / SyncBadgeState are shared in `crate::components::sync_badge`.
@@ -16,34 +16,29 @@ use crate::components::HelpTip;
 // component, overriding the "Local" label to "Not backed up yet" — the badge
 // semantics stay global, only this view's copy changes. See C1.
 use crate::components::SyncBadgeState as SyncBadge;
-use crate::operation::uuid_v7;
 use crate::recovery_crypto::{
-    RecoveryKeyConfirmationDiff, fingerprint_recovery_key, generate_passkey_wrap_salt,
-    generate_recovery_key, normalize_recovery_key_input, open_recovery_key_with_passkey_prf,
-    recovery_key_confirmation_diff, seal_recovery_key_with_passkey_prf,
+    RecoveryKeyConfirmationDiff, generate_recovery_key, recovery_key_confirmation_diff,
 };
 use crate::transport::auth::with_authed_api;
 use crate::ui::button::{Button, ButtonVariant};
 use crate::ui::input::Input;
 use crate::ui::label::Label;
 use crate::ui::textarea::Textarea;
-use crate::views::helpers::{display_name_for_did, short_protocol_id};
+use crate::views::helpers::display_name_for_did;
 
 const RESTORE_BACKUP_TIME_LIMIT: usize = 5;
 
-/// Server-first enrollment phases. The plaintext key lives in memory only
-/// during `Registering` (not yet on screen) and `Transcribe` (on screen,
-/// awaiting the transcription check).
+/// Custody-first recovery-material phases. The plaintext exists only in
+/// memory while the user transcribes it and while the confirmed material is
+/// being published.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum EnrollPhase {
     /// No enrollment in flight.
     Idle,
-    /// Key generated in memory; waiting for the server to accept the backup.
-    /// The words are never shown in this phase, so a rejection costs nothing.
-    Registering,
-    /// Server accepted the backup; the words are on screen and local metadata
-    /// stays pending until the user re-enters them correctly.
-    Transcribe,
+    /// Words are on screen and must be re-entered before any server write.
+    CustodyConfirmation,
+    /// Custody is confirmed; policy and first backup are being published.
+    Publishing,
 }
 
 #[component]
@@ -61,12 +56,10 @@ pub fn RecoveryPanel(
     // Recovery key state — plaintext only in memory after Generate.
     let mut live_recovery_key = use_signal(String::new);
     let mut recovery_key_fp = use_signal(|| initial.recovery_key_fingerprint.clone());
-    let mut recovery_public_key_b64u = use_signal(|| initial.recovery_public_key_b64u.clone());
+    let mut backup_hpke_public_key_multibase =
+        use_signal(|| initial.backup_hpke_public_key_multibase.clone());
     let mut recovery_key_rotated_at = use_signal(|| initial.recovery_key_rotated_at.clone());
     let mut recovery_key_status = use_signal(String::new);
-    let mut passkey_wraps = use_signal(|| initial.passkey_wraps.clone());
-    let mut passkey_status = use_signal(String::new);
-    let mut passkey_recovery_key_input = use_signal(String::new);
     let mut recovery_key_confirm_input = use_signal(String::new);
     let mut enroll_phase = use_signal(|| EnrollPhase::Idle);
     let mut confirm_attempts = use_signal(|| 0u32);
@@ -95,6 +88,7 @@ pub fn RecoveryPanel(
     // `mark_mls_recovery_backup_configured`). Drives the section sync badge.
     let recovery_key_backed_up =
         crate::components::mls_recovery_backup_configured(&state_store.read(), &actor_key);
+    let recovery_material_established = !recovery_key_fp().is_empty() || recovery_key_backed_up;
 
     {
         let actor_key = actor_key.clone();
@@ -104,26 +98,22 @@ pub fn RecoveryPanel(
             if recovery_key_fp() != next.recovery_key_fingerprint {
                 recovery_key_fp.set(next.recovery_key_fingerprint);
             }
-            if recovery_public_key_b64u() != next.recovery_public_key_b64u {
-                recovery_public_key_b64u.set(next.recovery_public_key_b64u);
+            if backup_hpke_public_key_multibase() != next.backup_hpke_public_key_multibase {
+                backup_hpke_public_key_multibase.set(next.backup_hpke_public_key_multibase);
             }
             if recovery_key_rotated_at() != next.recovery_key_rotated_at {
                 recovery_key_rotated_at.set(next.recovery_key_rotated_at);
-            }
-            if passkey_wraps() != next.passkey_wraps {
-                passkey_wraps.set(next.passkey_wraps);
             }
         });
     }
 
     let snapshot_state = move || RecoveryState {
         recovery_key_fingerprint: recovery_key_fp(),
-        recovery_public_key_b64u: recovery_public_key_b64u(),
+        backup_hpke_public_key_multibase: backup_hpke_public_key_multibase(),
         recovery_key_rotated_at: recovery_key_rotated_at(),
         sss_threshold: threshold(),
         sss_total: total(),
         guardians: guardians(),
-        passkey_wraps: passkey_wraps(),
         last_rehearsed_at: last_rehearsed(),
     };
 
@@ -141,11 +131,11 @@ pub fn RecoveryPanel(
                         span {
                             {
                                 match enroll_phase() {
-                                    EnrollPhase::Registering => "registering with the server…",
-                                    EnrollPhase::Transcribe => "write the words down now",
+                                    EnrollPhase::Publishing => "publishing confirmed recovery material…",
+                                    EnrollPhase::CustodyConfirmation => "write the words down now",
                                     EnrollPhase::Idle => {
                                         if !recovery_key_fp().is_empty() {
-                                            "backed up ✓"
+                                            "recovery material accepted ✓"
                                         } else if recovery_key_backed_up {
                                             "backup on server — unconfirmed here"
                                         } else {
@@ -158,17 +148,17 @@ pub fn RecoveryPanel(
                         div { class: "muted",
                             {
                                 match enroll_phase() {
-                                    EnrollPhase::Registering => "The 24 words appear only after the server accepts the encrypted backup.".to_owned(),
-                                    EnrollPhase::Transcribe => "Write the words down, then re-enter them below to finish.".to_owned(),
+                                    EnrollPhase::Publishing => "Cold custody is confirmed; the policy and first encrypted backup are being accepted.".to_owned(),
+                                    EnrollPhase::CustodyConfirmation => "Write the words down, then re-enter them before anything is published.".to_owned(),
                                     EnrollPhase::Idle => {
                                         if !recovery_key_fp().is_empty() {
                                             if recovery_key_rotated_at().is_empty() {
-                                                "Recovery Key imported on this device".to_owned()
+                                                "Recovery Key confirmed on this device".to_owned()
                                             } else {
-                                                format!("Last rotated {}", fmt_relative(&recovery_key_rotated_at()))
+                                                format!("Accepted {}", fmt_relative(&recovery_key_rotated_at()))
                                             }
                                         } else if recovery_key_backed_up {
-                                            "A previous enrollment was never confirmed on this device. Generate a new key to replace it.".to_owned()
+                                            "Accepted recovery material exists, but this device does not retain its plaintext.".to_owned()
                                         } else {
                                             "Generate one to enable cross-device recovery".to_owned()
                                         }
@@ -203,14 +193,11 @@ pub fn RecoveryPanel(
                 // the single most important value on the panel, not one metric
                 // cell among equals.
                 div { class: "recovery-key-hero",
-                    if enroll_phase() == EnrollPhase::Registering {
-                        // Server-first ordering: no words on screen until the
-                        // server accepts the backup, so a rejection can never
-                        // invalidate a copy the user already wrote down.
+                    if enroll_phase() == EnrollPhase::Publishing {
                         div { class: "recovery-key-empty", "data-testid": "recovery-key-pending",
-                            strong { "Registering the encrypted backup with the server…" }
+                            strong { "Publishing the recovery policy and encrypted backup…" }
                             span { class: "muted",
-                                "The 24 words are shown only after the server accepts the backup — you will never copy a key that later turns out to be rejected."
+                                "The confirmed words stay only in memory until this write succeeds or you retry."
                             }
                         }
                     } else if !live_recovery_key().is_empty() {
@@ -265,15 +252,24 @@ pub fn RecoveryPanel(
                         }
                     }
                 } else if !recovery_key_fp().is_empty() {
-                    div { class: "muted", "Plaintext is no longer in memory. Regenerate to view a new value." }
+                    div { class: "muted", "Plaintext is no longer in memory. Recovery-key replacement requires the staged handoff workflow." }
+                }
+
+                if recovery_material_established && enroll_phase() == EnrollPhase::Idle {
+                    div { class: "callout warn", "data-testid": "recovery-key-rotation-guard",
+                        div { class: "body",
+                            strong { "Direct replacement is disabled." }
+                            " A new Recovery Key must be activated through the durable two-entry handoff, then all protected backup series must be rewrapped before the old key is revoked."
+                        }
+                    }
                 }
 
                 // Supporting metadata — deliberately quieter than the key above.
                 div { class: "recovery-key-meta",
                     div {
-                        span { class: "lbl", "Last rotated" }
+                        span { class: "lbl", "Last accepted" }
                         span { class: "val", "data-testid": "recovery-key-rotated-at", "{fmt_relative(&recovery_key_rotated_at())}" }
-                        span { class: "muted", "Rotate at least every 90 days" }
+                        span { class: "muted", "Rotate only through the staged handoff workflow" }
                     }
                     div {
                         span { class: "lbl", "Fingerprint" }
@@ -312,78 +308,53 @@ pub fn RecoveryPanel(
                 }
                 div { class: "actions",
                     Button {
-                        variant: if enroll_phase() == EnrollPhase::Transcribe { ButtonVariant::Secondary } else { ButtonVariant::Primary },
-                        "data-testid": "recovery-key-regenerate",
-                        disabled: enroll_phase() == EnrollPhase::Registering,
-                        title: if enroll_phase() == EnrollPhase::Transcribe {
-                            "Discard the displayed words and register a fresh key with the server."
+                        variant: if enroll_phase() == EnrollPhase::CustodyConfirmation {
+                            ButtonVariant::Secondary
                         } else {
-                            "The words are shown only after the server accepts the encrypted backup."
+                            ButtonVariant::Primary
                         },
-                        onclick: {
-                            let base_url = base_url.clone();
-                            move |_| {
-                                if enroll_phase() == EnrollPhase::Registering {
-                                    return;
+                        "data-testid": "recovery-key-regenerate",
+                        disabled: enroll_phase() == EnrollPhase::Publishing || (recovery_material_established && enroll_phase() == EnrollPhase::Idle),
+                        title: if enroll_phase() == EnrollPhase::CustodyConfirmation {
+                            "Discard the displayed words and prepare a fresh recovery secret."
+                        } else if recovery_material_established {
+                            "Direct replacement is unsafe; use staged handoff."
+                        } else {
+                            "Generate the words locally; nothing is published until you re-enter them."
+                        },
+                        onclick: move |_| {
+                            if enroll_phase() == EnrollPhase::Publishing
+                                || (recovery_material_established
+                                    && enroll_phase() == EnrollPhase::Idle)
+                            {
+                                return;
+                            }
+                            match generate_recovery_key() {
+                                Ok(key) => {
+                                    live_recovery_key.set(key);
+                                    recovery_key_confirm_input.set(String::new());
+                                    confirm_attempts.set(0);
+                                    copied_feedback.set(false);
+                                    device_unauthorized.set(false);
+                                    enroll_phase.set(EnrollPhase::CustodyConfirmation);
+                                    recovery_key_status.set(
+                                        "Write the words down offline and re-enter them. No recovery material has been published yet."
+                                            .to_owned(),
+                                    );
                                 }
-                                match generate_recovery_key() {
-                                    Ok(key) => {
-                                        // Server-first ordering (design:
-                                        // recovery-key-server-first): keep the key in
-                                        // memory only and reveal it exclusively on
-                                        // `Established`, so a rejected registration never
-                                        // shows words the user could copy in vain. Local
-                                        // metadata stays pending until the transcription
-                                        // check passes.
-                                        live_recovery_key.set(String::new());
-                                        recovery_key_confirm_input.set(String::new());
-                                        confirm_attempts.set(0);
-                                        copied_feedback.set(false);
-                                        device_unauthorized.set(false);
-                                        passkey_status.set(String::new());
-                                        enroll_phase.set(EnrollPhase::Registering);
-                                        let reveal_key = key.clone();
-                                        let on_outcome = EventHandler::new(move |outcome: RecoveryKeyBackupOutcome| {
-                                            match outcome {
-                                                RecoveryKeyBackupOutcome::Established => {
-                                                    live_recovery_key.set(reveal_key.clone());
-                                                    enroll_phase.set(EnrollPhase::Transcribe);
-                                                }
-                                                RecoveryKeyBackupOutcome::DeviceNotAuthorized => {
-                                                    enroll_phase.set(EnrollPhase::Idle);
-                                                    device_unauthorized.set(true);
-                                                }
-                                                RecoveryKeyBackupOutcome::Transient => {
-                                                    enroll_phase.set(EnrollPhase::Idle);
-                                                }
-                                            }
-                                        });
-                                        upload_recovery_key_account_backup(
-                                            base_url.clone(),
-                                            token,
-                                            account_did,
-                                            device_id,
-                                            state_store,
-                                            key,
-                                            recovery_key_status,
-                                            None,
-                                            Some(on_outcome),
-                                        );
-                                    }
-                                    Err(err) => {
-                                        recovery_key_status.set(format!("Generate failed: {err}"));
-                                    }
+                                Err(err) => {
+                                    recovery_key_status.set(format!("Generate failed: {err}"));
                                 }
                             }
                         },
-                        if enroll_phase() == EnrollPhase::Registering {
-                            "Registering…"
-                        } else if enroll_phase() == EnrollPhase::Transcribe {
+                        if enroll_phase() == EnrollPhase::Publishing {
+                            "Publishing…"
+                        } else if enroll_phase() == EnrollPhase::CustodyConfirmation {
                             "Start over with a new key"
                         } else if recovery_key_fp().is_empty() {
                             "Generate"
                         } else {
-                            "Regenerate"
+                            "Staged handoff required"
                         }
                     }
                     Button {
@@ -420,10 +391,11 @@ pub fn RecoveryPanel(
                         variant: ButtonVariant::Secondary,
                         "data-testid": "recovery-key-clear-live",
                         disabled: live_recovery_key().is_empty(),
-                        title: "Re-enter the saved 24 words before dropping the plaintext from memory.",
+                        title: "Confirm the offline copy before publishing recovery material.",
                         onclick: {
+                            let base_url = base_url.clone();
                             let actor_key = actor_key.clone();
-                            let mut store = state_store;
+                            let store = state_store;
                             move |_| {
                                 let current_key = live_recovery_key();
                                 match recovery_key_confirmation_diff(
@@ -431,31 +403,67 @@ pub fn RecoveryPanel(
                                     &recovery_key_confirm_input(),
                                 ) {
                                     RecoveryKeyConfirmationDiff::Match => {
-                                        // Transcription verified — finalize the pending
-                                        // enrollment: persist fingerprint / public key /
-                                        // rotated_at now, never earlier.
-                                        let Some((fingerprint, rotated_at)) =
-                                            save_generated_recovery_key_metadata(
-                                                &mut store,
-                                                &actor_key,
-                                                &current_key,
-                                            )
-                                        else {
-                                            recovery_key_status.set(
-                                                "Could not persist local recovery metadata; the words stay on screen. Try again."
-                                                    .to_owned(),
-                                            );
-                                            return;
-                                        };
-                                        recovery_key_fp.set(fingerprint);
-                                        recovery_key_rotated_at.set(rotated_at);
-                                        live_recovery_key.set(String::new());
-                                        recovery_key_confirm_input.set(String::new());
-                                        confirm_attempts.set(0);
-                                        enroll_phase.set(EnrollPhase::Idle);
+                                        enroll_phase.set(EnrollPhase::Publishing);
                                         recovery_key_status.set(
-                                            "Recovery Key confirmed; plaintext cleared from memory. Recommended next step: create a passkey quick unlock under Advanced options below."
+                                            "Cold custody confirmed. Publishing the recovery policy and first encrypted backup…"
                                                 .to_owned(),
+                                        );
+                                        let accepted_key = current_key.clone();
+                                        let accepted_actor = actor_key.clone();
+                                        let on_outcome = EventHandler::new(
+                                            move |outcome: RecoveryKeyBackupOutcome| match outcome {
+                                                RecoveryKeyBackupOutcome::Established => {
+                                                    let mut accepted_store = store;
+                                                    let Some((fingerprint, rotated_at)) =
+                                                        save_generated_recovery_key_metadata(
+                                                            &mut accepted_store,
+                                                            &accepted_actor,
+                                                            &accepted_key,
+                                                        )
+                                                    else {
+                                                        enroll_phase.set(
+                                                            EnrollPhase::CustodyConfirmation,
+                                                        );
+                                                        recovery_key_status.set(
+                                                            "Recovery material was accepted, but public local metadata could not be saved."
+                                                                .to_owned(),
+                                                        );
+                                                        return;
+                                                    };
+                                                    recovery_key_fp.set(fingerprint);
+                                                    recovery_key_rotated_at.set(rotated_at);
+                                                    live_recovery_key.set(String::new());
+                                                    recovery_key_confirm_input.set(String::new());
+                                                    confirm_attempts.set(0);
+                                                    enroll_phase.set(EnrollPhase::Idle);
+                                                    recovery_key_status.set(
+                                                        "Recovery material accepted; plaintext cleared from memory. Keep the offline copy in cold custody."
+                                                            .to_owned(),
+                                                    );
+                                                }
+                                                RecoveryKeyBackupOutcome::DeviceNotAuthorized => {
+                                                    enroll_phase.set(
+                                                        EnrollPhase::CustodyConfirmation,
+                                                    );
+                                                    device_unauthorized.set(true);
+                                                }
+                                                RecoveryKeyBackupOutcome::Transient => {
+                                                    enroll_phase.set(
+                                                        EnrollPhase::CustodyConfirmation,
+                                                    );
+                                                }
+                                            },
+                                        );
+                                        upload_recovery_key_account_backup(
+                                            base_url.clone(),
+                                            token,
+                                            account_did,
+                                            device_id,
+                                            state_store,
+                                            current_key,
+                                            recovery_key_status,
+                                            None,
+                                            Some(on_outcome),
                                         );
                                     }
                                     RecoveryKeyConfirmationDiff::WordCount { entered } => {
@@ -485,269 +493,7 @@ pub fn RecoveryPanel(
                                 }
                             }
                         },
-                        "Confirm and clear"
-                    }
-                }
-            }
-
-            // Passkey quick unlock — browser-local WebAuthn PRF wrapper.
-            // Advanced, collapsed by default: the status card + main flow above
-            // are the page's primary layer.
-            details { class: "event", "data-testid": "passkey-recovery-section",
-                summary { class: "event-head",
-                    span { "Advanced · Passkey quick unlock" }
-                    span { class: "muted", "browser-local WebAuthn PRF" }
-                    HelpTip { text: "This wraps the 24-word Recovery Key with a WebAuthn PRF output for this browser/RP context. It is a convenience unlock layer, not a replacement for writing down the 24 words or for fresh-device recovery policy proof. The encrypted wrapper is stored locally; the server never receives the words." }
-                }
-                div { class: "metric-grid", "data-testid": "passkey-wrap-overview",
-                    div { class: "metric",
-                        strong { "Local wrappers" }
-                        span { "data-testid": "passkey-wrap-count", "{passkey_wraps().len()} saved" }
-                        div { class: "muted", "Stored in local recovery.state.v1 only" }
-                    }
-                    div { class: "metric",
-                        strong { "Scope" }
-                        span { "data-testid": "passkey-wrap-scope",
-                            {
-                                passkey_wraps()
-                                    .last()
-                                    .map(|wrap| wrap.rp_id.clone())
-                                    .unwrap_or_else(|| crate::passkey_prf::default_rp_id().unwrap_or_else(|| "browser only".to_owned()))
-                            }
-                        }
-                        div { class: "muted", "Bound to this origin / RP id" }
-                    }
-                    div { class: "metric",
-                        strong { "Root method" }
-                        span { "24-word Recovery Key" }
-                        div { class: "muted", "Passkey unlock is additive; keep the words offline" }
-                    }
-                }
-                if !passkey_status().is_empty() {
-                    div { class: "muted", "data-testid": "passkey-wrap-status", "{passkey_status}" }
-                }
-                div { class: "workflow-form", "data-testid": "passkey-wrap-key-form",
-                    Label { html_for: "passkey-wrap-recovery-key", "Recovery Key for passkey setup" }
-                    Input {
-                        id: "passkey-wrap-recovery-key",
-                        "data-testid": "passkey-wrap-recovery-key",
-                        r#type: "password",
-                        autocomplete: "off",
-                        value: "{passkey_recovery_key_input}",
-                        placeholder: "Paste your existing 24-word Recovery Key",
-                        oninput: move |event: FormEvent| passkey_recovery_key_input.set(event.value()),
-                    }
-                    div { class: "muted", "data-testid": "passkey-wrap-key-hint",
-                        if !live_recovery_key().trim().is_empty() {
-                            "A Recovery Key setup is in progress; that key will be wrapped automatically — no need to paste it."
-                        } else if passkey_recovery_key_input().trim().is_empty() {
-                            "Paste your existing 24-word Recovery Key here, or wrap a new one in a single step right after generating it."
-                        } else {
-                            "Ready to create a browser-local passkey wrapper. The pasted words are cleared after setup succeeds."
-                        }
-                    }
-                }
-                div { class: "actions",
-                    Button {
-                        variant: ButtonVariant::Primary,
-                        "data-testid": "passkey-wrap-create",
-                        disabled: live_recovery_key().trim().is_empty() && passkey_recovery_key_input().trim().is_empty(),
-                        title: if live_recovery_key().trim().is_empty() && passkey_recovery_key_input().trim().is_empty() {
-                            "Generate a Recovery Key or paste your existing 24 words first."
-                        } else {
-                            "Create a browser-local passkey wrapper for the current 24-word Recovery Key."
-                        },
-                        onclick: {
-                            let actor_key = actor_key.clone();
-                            let mut store = state_store;
-                            move |_| {
-                                let raw_recovery_key = if live_recovery_key().trim().is_empty() {
-                                    passkey_recovery_key_input()
-                                } else {
-                                    live_recovery_key()
-                                };
-                                let Some(recovery_key) = normalize_recovery_key_input(&raw_recovery_key) else {
-                                    passkey_status.set(
-                                        "Enter the full 24-word Recovery Key before creating passkey unlock.".to_owned(),
-                                    );
-                                    return;
-                                };
-                                let entered_fp = fingerprint_recovery_key(&recovery_key);
-                                let existing_fp = recovery_key_fp();
-                                if !existing_fp.trim().is_empty() && existing_fp != entered_fp {
-                                    passkey_status.set(
-                                        "Entered Recovery Key does not match the fingerprint stored for this account.".to_owned(),
-                                    );
-                                    return;
-                                }
-                                let effective_fp = if existing_fp.trim().is_empty() {
-                                    entered_fp
-                                } else {
-                                    existing_fp
-                                };
-                                let actor = actor_key.clone();
-                                let rp_id = crate::passkey_prf::default_rp_id()
-                                    .unwrap_or_else(|| "origin-default".to_owned());
-                                let label = format!("Arkret Recovery {}", short_protocol_id(&actor));
-                                passkey_status.set("Waiting for passkey user verification…".to_owned());
-                                spawn(async move {
-                                    let salt = match generate_passkey_wrap_salt() {
-                                        Ok(salt) => salt,
-                                        Err(err) => {
-                                            passkey_status.set(format!("Passkey wrapper salt failed: {err}"));
-                                            return;
-                                        }
-                                    };
-                                    let material = match crate::passkey_prf::create_recovery_passkey_prf(
-                                        &label,
-                                        &actor,
-                                        &rp_id,
-                                        &salt,
-                                    )
-                                    .await
-                                    {
-                                        Ok(material) => material,
-                                        Err(err) => {
-                                            passkey_status.set(format!("Passkey PRF unavailable: {err}"));
-                                            return;
-                                        }
-                                    };
-                                    let created_at = chrono::Utc::now().to_rfc3339();
-                                    let mut wrap = PasskeyRecoveryWrap {
-                                        wrap_id: format!("ak:recovery-wrap:{}", uuid_v7()),
-                                        credential_id_b64: material.credential_id_b64.clone(),
-                                        credential_label: label.clone(),
-                                        rp_id: rp_id.clone(),
-                                        recovery_key_fingerprint: effective_fp.clone(),
-                                        created_at,
-                                        ..PasskeyRecoveryWrap::default()
-                                    };
-                                    let aad = match passkey_wrap_aad(&actor, &wrap) {
-                                        Ok(aad) => aad,
-                                        Err(err) => {
-                                            passkey_status.set(format!("Passkey wrapper AAD failed: {err}"));
-                                            return;
-                                        }
-                                    };
-                                    let sealed = match seal_recovery_key_with_passkey_prf(
-                                        &recovery_key,
-                                        &material.prf_output,
-                                        &salt,
-                                        &aad,
-                                    ) {
-                                        Ok(sealed) => sealed,
-                                        Err(err) => {
-                                            passkey_status.set(format!("Passkey wrapper encrypt failed: {err}"));
-                                            return;
-                                        }
-                                    };
-                                    wrap.salt_b64 = sealed.salt_b64;
-                                    wrap.nonce_b64 = sealed.nonce_b64;
-                                    wrap.ciphertext_b64 = sealed.ciphertext_b64;
-                                    wrap.ciphertext_digest = sealed.ciphertext_digest;
-
-                                    let mut next = passkey_wraps();
-                                    next.retain(|existing| {
-                                        existing.credential_id_b64 != wrap.credential_id_b64
-                                            || existing.recovery_key_fingerprint != wrap.recovery_key_fingerprint
-                                    });
-                                    next.push(wrap);
-                                    passkey_wraps.set(next);
-                                    if recovery_key_fp().trim().is_empty() {
-                                        recovery_key_fp.set(effective_fp);
-                                    }
-                                    passkey_recovery_key_input.set(String::new());
-                                    save_state(&mut store, &actor, &snapshot_state());
-                                    passkey_status.set(
-                                        "Passkey quick unlock saved locally. Keep the 24 words offline for fresh-device recovery.".to_owned()
-                                    );
-                                });
-                            }
-                        },
-                        "Create passkey unlock"
-                    }
-                    Button {
-                        variant: ButtonVariant::Secondary,
-                        "data-testid": "passkey-wrap-unlock",
-                        disabled: passkey_wraps().is_empty(),
-                        title: "Use the latest local passkey wrapper to show the 24-word Recovery Key after user verification.",
-                        onclick: {
-                            let actor_key = actor_key.clone();
-                            move |_| {
-                                let actor = actor_key.clone();
-                                let current_fp = recovery_key_fp();
-                                let wrap = passkey_wraps()
-                                    .into_iter()
-                                    .rev()
-                                    .find(|wrap| current_fp.is_empty() || wrap.recovery_key_fingerprint == current_fp);
-                                let Some(wrap) = wrap else {
-                                    passkey_status.set("No passkey wrapper matches the current Recovery Key fingerprint.".to_owned());
-                                    return;
-                                };
-                                passkey_status.set("Waiting for passkey user verification…".to_owned());
-                                spawn(async move {
-                                    let material = match crate::passkey_prf::evaluate_recovery_passkey_prf(
-                                        &wrap.credential_id_b64,
-                                        &wrap.rp_id,
-                                        &wrap.salt_b64,
-                                    )
-                                    .await
-                                    {
-                                        Ok(material) => material,
-                                        Err(err) => {
-                                            passkey_status.set(format!("Passkey PRF unlock failed: {err}"));
-                                            return;
-                                        }
-                                    };
-                                    let aad = match passkey_wrap_aad(&actor, &wrap) {
-                                        Ok(aad) => aad,
-                                        Err(err) => {
-                                            passkey_status.set(format!("Passkey wrapper AAD failed: {err}"));
-                                            return;
-                                        }
-                                    };
-                                    let recovery_key = match open_recovery_key_with_passkey_prf(
-                                        &material.prf_output,
-                                        &wrap.salt_b64,
-                                        &wrap.nonce_b64,
-                                        &wrap.ciphertext_b64,
-                                        &aad,
-                                    ) {
-                                        Ok(key) => key,
-                                        Err(err) => {
-                                            passkey_status.set(format!("Passkey wrapper decrypt failed: {err}"));
-                                            return;
-                                        }
-                                    };
-                                    if fingerprint_recovery_key(&recovery_key) != wrap.recovery_key_fingerprint {
-                                        passkey_status.set("Passkey wrapper fingerprint mismatch.".to_owned());
-                                        return;
-                                    }
-                                    live_recovery_key.set(recovery_key);
-                                    recovery_key_status.set(
-                                        "Recovery Key restored from local passkey quick unlock. Clear it from the screen when done.".to_owned()
-                                    );
-                                    passkey_status.set("Passkey quick unlock succeeded locally.".to_owned());
-                                });
-                            }
-                        },
-                        "Unlock with passkey"
-                    }
-                    Button {
-                        variant: ButtonVariant::Secondary,
-                        "data-testid": "passkey-wrap-remove",
-                        disabled: passkey_wraps().is_empty(),
-                        title: "Remove local passkey quick-unlock wrappers. This does not delete server backups or the 24-word Recovery Key.",
-                        onclick: {
-                            let actor_key = actor_key.clone();
-                            let mut store = state_store;
-                            move |_| {
-                                passkey_wraps.set(Vec::new());
-                                save_state(&mut store, &actor_key, &snapshot_state());
-                                passkey_status.set("Removed local passkey quick-unlock wrappers.".to_owned());
-                            }
-                        },
-                        "Remove local passkeys"
+                        "Confirm custody and publish"
                     }
                 }
             }

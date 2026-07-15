@@ -324,7 +324,7 @@ mod tests {
         registry
             .validate_value(
                 "ak.schema.moderation_appeal.v1#/$defs/submit_payload",
-                &op.payload,
+                &serde_json::to_value(&op.payload).unwrap(),
             )
             .unwrap();
     }

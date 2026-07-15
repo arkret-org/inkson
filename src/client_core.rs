@@ -727,14 +727,18 @@ mod tests {
                 kind: arkret_sdk::EventsSubscribeFrameKind::Event,
                 realm_id: Some(realm_id.clone()),
                 cursor: Some(arkret_sdk::identifiers::Cursor::new("ak:cursor:projected").unwrap()),
-                payload: serde_json::to_value(event).unwrap(),
+                payload: Some(
+                    serde_json::from_value(serde_json::to_value(event).unwrap()).unwrap(),
+                ),
                 reconnect_after_ms: None,
             },
             arkret_sdk::EventsSubscribeFrame {
                 kind: arkret_sdk::EventsSubscribeFrameKind::Unauthorized,
                 realm_id: Some(realm_id.clone()),
                 cursor: None,
-                payload: serde_json::json!({"reason": "stop fixture"}),
+                payload: Some(
+                    serde_json::from_value(serde_json::json!({"reason": "stop fixture"})).unwrap(),
+                ),
                 reconnect_after_ms: None,
             },
         ];

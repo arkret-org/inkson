@@ -230,8 +230,9 @@ impl crate::transport::TransportClient {
 
     /// 6.3 — open a recovery session bound to the active policy. `body` is the
     /// `recovery-session.schema.json` `create_request`
-    /// (`principal_id`, `requesting_device_id`, `trust_domain`, `ssk_generation`,
-    /// optional `expected_recovery_policy_ref`). Returns the session JSON.
+    /// (`principal_id`, `requesting_device_id`, `trust_domain`, optional
+    /// `expected_recovery_policy_ref`). The server derives the A/B model and
+    /// authoritative generation snapshot; the client cannot self-report them.
     pub async fn create_recovery_session(
         &self,
         body: &arkret_sdk::models::RecoverySessionCreateRequestBody,
@@ -259,8 +260,9 @@ impl crate::transport::TransportClient {
             .map_err(anyhow::Error::from)
     }
 
-    /// 6.3 — finalize a verified recovery session. `body` carries the client-
-    /// signed `device_authorize` material (`complete_request`).
+    /// 6.3 — finalize a verified recovery session. `body` carries exactly the
+    /// A-model list-update reference or B-model re-anchor references alongside
+    /// the accepted device authorization.
     pub async fn complete_recovery_session(
         &self,
         recovery_session_id: &str,

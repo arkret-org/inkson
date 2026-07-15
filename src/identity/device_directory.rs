@@ -447,6 +447,10 @@ fn service_attested_accepted_key(
         return None;
     }
     record.device_authorize_event_id.as_ref()?;
+    let generation = outcome.device_generations.get(actor)?;
+    if !record.is_usable_in_generation(Some(generation)) {
+        return None;
+    }
     Some(directory_key)
 }
 
@@ -854,8 +858,15 @@ mod tests {
                                 "authority_did": "did:web:auth.example",
                                 "authorization_ref": "did:web:managed-alice.example#device-enrollment"
                             },
-                            "device_authorize_event_id": "ak:event:01904100-0000-7000-8000-000000000011"
+                            "device_authorize_event_id": "ak:event:01904100-0000-7000-8000-000000000011",
+                            "authorized_generation_ref": "1-QmCurrent"
                         }
+                    }
+                },
+                "device_generations": {
+                    actor.as_str(): {
+                        "current_device_generation_ref": "1-QmCurrent",
+                        "device_generation_status": "active"
                     }
                 }
             }))
@@ -889,6 +900,39 @@ mod tests {
                                 "authorization_ref": "did:web:managed-bob.example#device-enrollment"
                             }
                         }
+                    }
+                }
+            }))
+            .unwrap();
+        assert!(service_attested_accepted_key(&outcome, &actor, &device).is_none());
+    }
+
+    #[test]
+    fn service_attested_superseded_generation_fails_closed() {
+        let actor = Did::new("did:web:managed-carol.example".to_owned()).unwrap();
+        let device = DeviceId::new(TEST_DEVICE_ID.to_owned()).unwrap();
+        let outcome: arkret_sdk::models::KeysQueryOutcome =
+            serde_json::from_value(serde_json::json!({
+                "device_keys": {
+                    actor.as_str(): {
+                        device.as_str(): {
+                            "algorithms": {},
+                            "device_signing_key": test_did_key(57),
+                            "device_status": "active",
+                            "enrollment_authority_binding": {
+                                "kind": "service_attested",
+                                "authority_did": "did:web:auth.example",
+                                "authorization_ref": "did:web:managed-carol.example#device-enrollment"
+                            },
+                            "device_authorize_event_id": "ak:event:01904100-0000-7000-8000-000000000012",
+                            "authorized_generation_ref": "1-QmOld"
+                        }
+                    }
+                },
+                "device_generations": {
+                    actor.as_str(): {
+                        "current_device_generation_ref": "2-QmCurrent",
+                        "device_generation_status": "active"
                     }
                 }
             }))

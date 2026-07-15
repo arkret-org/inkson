@@ -7,7 +7,7 @@ use super::backup_summary::{
     sorted_backups_latest_first,
 };
 use super::state::recovery_state_has_user_material;
-use super::types::{PasskeyRecoveryWrap, RecoveryState};
+use super::types::RecoveryState;
 
 #[test]
 fn parse_backup_summary_extracts_visible_metadata() {
@@ -106,19 +106,4 @@ fn recovery_state_with_key_is_configured() {
     let mut keyed = RecoveryState::default();
     keyed.recovery_key_fingerprint = "sha256:abc".to_owned();
     assert!(recovery_state_has_user_material(&keyed));
-}
-
-#[test]
-fn recovery_state_with_only_passkey_wrapper_is_not_configured() {
-    let mut state = RecoveryState::default();
-    state.passkey_wraps.push(PasskeyRecoveryWrap {
-        wrap_id: "ak:recovery-wrap:test".to_owned(),
-        credential_id_b64: "Y3JlZA".to_owned(),
-        recovery_key_fingerprint: "sha256:abc".to_owned(),
-        ..PasskeyRecoveryWrap::default()
-    });
-    assert!(
-        !recovery_state_has_user_material(&state),
-        "passkey wrappers are convenience unlocks, not root recovery material"
-    );
 }

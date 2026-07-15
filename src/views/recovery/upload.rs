@@ -1,57 +1,25 @@
-//! RK-as-authority server backup flow.
+//! Custody-confirmed Recovery Key publication and first-backup flow.
 
 use dioxus::prelude::*;
 
 use crate::state::LocalStateStore;
 use crate::transport::auth::with_authed_api;
 
-fn pending_recovery_key_store_key(actor_id: &str) -> String {
-    format!(
-        "{}{}",
-        crate::secure_key_store::PENDING_RECOVERY_KEY_PREFIX,
-        crate::canonical::sha256_digest(actor_id.trim().as_bytes())
-    )
-}
-
-pub(crate) fn load_pending_recovery_key(actor_id: &str) -> Option<String> {
-    if actor_id.trim().is_empty() {
-        return None;
-    }
-    crate::secure_key_store::default_secure_key_store("inkson")
-        .get_secret(&pending_recovery_key_store_key(actor_id))
-        .ok()
-        .flatten()
-        .filter(|key| !key.trim().is_empty())
-}
-
-pub(crate) fn clear_pending_recovery_key(actor_id: &str) {
-    if actor_id.trim().is_empty() {
-        return;
-    }
-    let _ = crate::secure_key_store::default_secure_key_store("inkson")
-        .delete_secret(&pending_recovery_key_store_key(actor_id));
-}
-
-/// RK-as-authority backup: publish the active recovery policy and a
-/// `did_recovery` backup immediately, then create or load the account MLS
-/// secret and wrap it behind the just generated 24-word Recovery Key. This
-/// keeps the server-side first-backup gate satisfied and closes the window
-/// where a user has DID recovery but no fresh-device content bootstrap path.
+/// After the caller has displayed the words and verified the offline copy,
+/// publish the active recovery policy and first `did_recovery` backup, then
+/// wrap the account MLS secret for the policy's dedicated HPKE recipient.
 /// Outcome of attempting to establish a freshly generated account Recovery Key
 /// on the server, reported back to the setup prompt so it can stay fail-closed.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum RecoveryKeyBackupOutcome {
     /// Server accepted the recovery policy + DID-recovery (and, when present,
-    /// account-secret) backup. Only now may the device reveal the 24 words.
-    /// Local recovery metadata (fingerprint / rotated_at / public key) stays
-    /// pending until the user passes the transcription check — the caller
-    /// finalizes it via `save_generated_recovery_key_metadata` on verify
-    /// success, so an abandoned enrollment never claims to be configured.
+    /// account-secret) backup. The caller may now persist public-only local
+    /// metadata and clear the already-confirmed plaintext from memory.
     Established,
     /// The server refused because this session device is not an authorized,
     /// verified key-management device (`device_not_authorized`). The generated
-    /// key MUST be discarded — never persisted, never shown — and the user
-    /// routed to device authorization / restore-with-existing-Recovery-Key.
+    /// key remains only in the caller's in-memory custody-confirmation surface;
+    /// it is never persisted or uploaded.
     DeviceNotAuthorized,
     /// A transient failure (network / 5xx / not-yet-authenticated). Nothing was
     /// established; the caller may retry without having leaked or persisted a
@@ -91,7 +59,7 @@ pub(crate) fn upload_recovery_key_account_backup(
     };
     let needs_mls_backup_signal = crate::components::try_needs_mls_backup_signal();
     status.set(
-        "Recovery Key generated — publishing recovery policy and DID recovery backup…".to_owned(),
+        "Cold custody confirmed — publishing recovery policy and DID recovery backup…".to_owned(),
     );
     spawn(async move {
         let actor_for_sidecar = actor.clone();
@@ -130,37 +98,9 @@ pub(crate) fn upload_recovery_key_account_backup(
         .await;
         match result {
             Ok((did_backup_id, account_backup_id)) => {
-                // Keep the not-yet-confirmed words in the hardened secure
-                // store before revealing them. A page refresh can then resume
-                // the exact same setup instead of silently treating the
-                // server-side backup as user-confirmed or generating a
-                // mismatched replacement key.
-                let secure = crate::secure_key_store::default_secure_key_store("inkson");
-                if let Err(error) = secure
-                    .store_secret_durable(
-                        &pending_recovery_key_store_key(&actor_for_sidecar),
-                        &recovery_key,
-                    )
-                    .await
-                {
-                    if let Ok(mut slot) = status.try_write() {
-                        *slot = format!(
-                            "Recovery backup was accepted, but the pending Recovery Key could not be stored safely: {error}"
-                        );
-                    }
-                    if let Some(handler) = on_outcome {
-                        handler.call(RecoveryKeyBackupOutcome::Transient);
-                    }
-                    return;
-                }
-                // Fail-closed ordering: the server accepted the backup, so this
-                // device is an authorized key-management device and the caller
-                // may now reveal the 24 words. Local recovery metadata is NOT
-                // persisted here — enrollment stays pending until the user
-                // passes the transcription check, at which point the caller
-                // runs `save_generated_recovery_key_metadata`. The server-side
-                // backup marker below records a server fact (the ciphertext
-                // exists) and therefore lands at accept time.
+                // The caller already confirmed cold custody before invoking
+                // this function. Only public local metadata and the server fact
+                // that ciphertext exists are persisted after acceptance.
                 if let Ok(mut store) = state_store.try_write() {
                     let configured_backup_id = account_backup_id
                         .as_deref()

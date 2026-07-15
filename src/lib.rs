@@ -95,7 +95,6 @@ pub(crate) mod payload;
 pub mod operation;
 pub mod organization;
 mod outbound_store;
-pub mod passkey_prf;
 pub mod pending_logout;
 /// Input-path perf helpers — draft-save debounce + typing throttle for the
 /// composer hot paths. See [`perf`] for the rationale.

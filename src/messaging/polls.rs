@@ -528,7 +528,10 @@ mod tests {
         assert!(message_ref.starts_with("ak:message:"));
         arkret_sdk::schema::event_payload_validator_catalog()
             .unwrap()
-            .validate_payload(op.kind.as_str(), &op.payload)
+            .validate_payload(
+                op.kind.as_str(),
+                &serde_json::to_value(&op.payload).unwrap(),
+            )
             .unwrap();
     }
 
@@ -553,7 +556,10 @@ mod tests {
         assert_eq!(block["poll_response"]["selections"], json!(["opt-1"]));
         arkret_sdk::schema::event_payload_validator_catalog()
             .unwrap()
-            .validate_payload(op.kind.as_str(), &op.payload)
+            .validate_payload(
+                op.kind.as_str(),
+                &serde_json::to_value(&op.payload).unwrap(),
+            )
             .unwrap();
     }
 

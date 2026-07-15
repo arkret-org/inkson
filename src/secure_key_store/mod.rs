@@ -100,9 +100,6 @@ const WASM_LOCAL_IDENTITY_SEED_KEY: &str = "identity.local.primary.v1";
 /// (no localStorage tier) and excluded from the unload-race localStorage
 /// mirror, exactly like an Ed25519 signing seed.
 pub(crate) const PENDING_LOGOUT_SECRET_KEY: &str = "arkret.pending_logout.v1";
-/// Account-scoped, unconfirmed Recovery Keys. These are seed-grade secrets and
-/// must remain in the IndexedDB + non-extractable WebCrypto tier on wasm.
-pub(crate) const PENDING_RECOVERY_KEY_PREFIX: &str = "inkson.recovery.pending_key.v1.";
 
 #[cfg(target_arch = "wasm32")]
 const WASM_ED25519_SEED_INDEXEDDB_REQUIRED: &str = "wasm Ed25519 signing seeds require IndexedDbSecureKeyStore with a non-extractable \
@@ -202,7 +199,6 @@ pub(crate) fn is_wasm_indexeddb_required_secret_key(key: &str) -> bool {
         || key.starts_with("inkson_mls_account_secret")
         || key.starts_with("inkson.mls_key_package.identity_state.")
         || key.starts_with("coauth.session_credential.")
-        || key.starts_with(PENDING_RECOVERY_KEY_PREFIX)
         || key.starts_with(MLS_HISTORY_SECRET_KEY_PREFIX)
         || key.starts_with(E2EE_PLAINTEXT_CACHE_KEY_PREFIX)
         || key.starts_with(ACCOUNT_LOCAL_STATE_KEY_PREFIX)

@@ -1,4 +1,5 @@
 pub(crate) mod account_auth;
+pub(crate) mod authoring_generation;
 pub(crate) mod device_directory;
 pub(crate) mod device_enrollment;
 pub(crate) mod device_name;
@@ -7,5 +8,6 @@ pub(crate) mod device_revoke;
 pub(crate) mod did_key;
 pub(crate) mod did_resolver;
 pub(crate) mod handle;
+pub(crate) mod identity_workflow;
 pub(crate) mod member_identity_store;
 pub(crate) mod session_refresh;

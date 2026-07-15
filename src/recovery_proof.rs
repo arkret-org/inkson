@@ -6,10 +6,10 @@
 //! arkret-spec `recovery-session.schema.json` `$defs/principal_signing_transcript`).
 //! Mismatch ⇒ the server rejects the proof, so this MUST stay in lockstep.
 //!
-//! The transcript binds every session-defining field; the recovering client
-//! reconstructs it from the create-session response (which carries them all):
-//! `principal_id, requesting_device_id, trust_domain, policy_id, policy_version,
-//! recovery_session_id, ssk_generation, challenge, created_at, expires_at`.
+//! The transcript binds every session-defining field, including the mutually
+//! exclusive A/B authority model and its authoritative generation reference.
+//! Construction delegates to the SDK truth type rather than mirroring the wire
+//! object locally.
 
 use base64::Engine as _;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD as B64;
@@ -19,28 +19,44 @@ use serde_json::{Value, json};
 /// Build the canonical `principal_signing` proof transcript from a recovery
 /// session JSON (the `ak.schema.recovery_session.v1` create/get response).
 pub fn principal_signing_proof_transcript(session: &Value) -> anyhow::Result<Value> {
-    let field = |name: &str| -> anyhow::Result<Value> {
-        session
-            .get(name)
-            .cloned()
-            .ok_or_else(|| anyhow::anyhow!("recovery session missing `{name}`"))
+    let state: arkret_sdk::RecoverySessionState = serde_json::from_value(session.clone())?;
+    let model_generation_ref = match state.identity_model {
+        arkret_sdk::RecoveryIdentityModel::CrossSigning => {
+            let generation = state
+                .ssk_generation
+                .and_then(std::num::NonZeroU64::new)
+                .ok_or_else(|| {
+                    anyhow::anyhow!("cross-signing recovery session omits ssk_generation")
+                })?;
+            arkret_sdk::RecoveryModelGenerationRef::CrossSigning(generation)
+        }
+        arkret_sdk::RecoveryIdentityModel::EnrollmentAuthority => {
+            let generation = state.current_device_generation_ref.ok_or_else(|| {
+                anyhow::anyhow!(
+                    "enrollment-authority recovery session omits current_device_generation_ref"
+                )
+            })?;
+            arkret_sdk::RecoveryModelGenerationRef::EnrollmentAuthority(generation)
+        }
     };
-    Ok(json!({
-        "type": "ak.identity.recovery_proof.v1",
-        "kind": "principal_signing",
-        "principal_id": field("principal_id")?,
-        "requesting_device_id": field("requesting_device_id")?,
-        "trust_domain": field("trust_domain")?,
-        "policy_id": field("policy_id")?,
-        "policy_version": field("policy_version")?,
-        "recovery_session_id": field("recovery_session_id")?,
-        "ssk_generation": field("ssk_generation")?,
-        "challenge": field("challenge")?,
-        // created_at is the SESSION creation time (echoed from the response),
-        // NOT a fresh client timestamp — must match the server's record.
-        "created_at": field("created_at")?,
-        "expires_at": field("expires_at")?,
-    }))
+    let transcript = arkret_sdk::PrincipalSigningTranscript {
+        r#type: "ak.identity.recovery_proof.v1".to_owned(),
+        kind: arkret_sdk::RecoveryProofKind::PrincipalSigning,
+        principal_id: state.principal_id,
+        requesting_device_id: state.requesting_device_id,
+        trust_domain: state.trust_domain,
+        policy_id: state.policy_id,
+        policy_version: state.policy_version,
+        recovery_session_id: state.recovery_session_id,
+        identity_model: state.identity_model,
+        model_generation_ref,
+        challenge: state.challenge,
+        expires_at: state.expires_at,
+        // This is the session creation time, never a client-generated timestamp.
+        created_at: state.created_at,
+    };
+    transcript.validate()?;
+    Ok(serde_json::to_value(transcript)?)
 }
 
 /// Build the `principal_signing` proof body for `POST recovery-sessions/{id}/proofs`,
@@ -112,6 +128,7 @@ mod tests {
             "trust_domain": "ak:trust_domain:soland.local",
             "policy_id": "ak:policy:01964137-0000-7000-8000-0000000000bb",
             "policy_version": 1,
+            "identity_model": "cross_signing",
             "ssk_generation": 1,
             "challenge": "Zm9vYmFyZm9vYmFyZm9vYmFyZm9vYmFyZm9vYmFyZm8",
             "state": "pending",
@@ -133,7 +150,8 @@ mod tests {
             "policy_id",
             "policy_version",
             "recovery_session_id",
-            "ssk_generation",
+            "identity_model",
+            "model_generation_ref",
             "challenge",
             "created_at",
             "expires_at",
@@ -142,6 +160,8 @@ mod tests {
         }
         // created_at is the session value (not regenerated).
         assert_eq!(t["created_at"], "2026-05-30T00:00:00.000Z");
+        assert_eq!(t["model_generation_ref"], 1);
+        assert!(t.get("ssk_generation").is_none());
     }
 
     #[test]
@@ -175,7 +195,7 @@ mod tests {
     #[test]
     fn missing_session_field_errors() {
         let mut session = sample_session();
-        session.as_object_mut().unwrap().remove("ssk_generation");
+        session.as_object_mut().unwrap().remove("identity_model");
         assert!(principal_signing_proof_transcript(&session).is_err());
     }
 }

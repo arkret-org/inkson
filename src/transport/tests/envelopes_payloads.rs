@@ -662,7 +662,10 @@ fn space_create_payload_matches_spec_schema() {
     if catalog
         .missing_payload_validators_for(std::iter::once(event.kind.as_str()))
         .is_empty()
-        && let Err(error) = catalog.validate_payload(event.kind.as_str(), &event.payload)
+        && let Err(error) = catalog.validate_payload(
+            event.kind.as_str(),
+            &serde_json::to_value(&event.payload).expect("event payload serializes"),
+        )
     {
         panic!(
             "ak.space.create payload violates spec: {error}\npayload: {}",
@@ -705,7 +708,10 @@ fn realm_bootstrap_payloads_match_spec_schema() {
         if catalog
             .missing_payload_validators_for(std::iter::once(event.kind.as_str()))
             .is_empty()
-            && let Err(error) = catalog.validate_payload(event.kind.as_str(), &event.payload)
+            && let Err(error) = catalog.validate_payload(
+                event.kind.as_str(),
+                &serde_json::to_value(&event.payload).expect("event payload serializes"),
+            )
         {
             panic!(
                 "event kind `{}` payload violates spec schema: {error}\n\

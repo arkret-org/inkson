@@ -1259,6 +1259,12 @@ mod notary_derivation_tests {
             event.authorization_ref.as_deref(),
             Some("did:web:agent.example#managed-controller")
         );
+        assert!(
+            event
+                .refs
+                .iter()
+                .all(|reference| reference.role != arkret_sdk::identity::DID_INCEPTION_REF_ROLE)
+        );
         assert_eq!(
             event.payload["object"]["fields"]["purpose"],
             "principal_control"

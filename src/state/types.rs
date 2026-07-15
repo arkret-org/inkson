@@ -585,6 +585,17 @@ pub struct CachedMlsGovernanceProof {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ClientLocalState {
     pub sync_cursor: Option<String>,
+    /// Public-only principal inception drafts. Recovery mnemonics, root seeds,
+    /// recovery-proof seeds, and HPKE private material are never serializable
+    /// members of this state.
+    #[serde(default)]
+    pub(crate) identity_inception_drafts:
+        BTreeMap<String, crate::identity::identity_workflow::PublicPrincipalInceptionDraft>,
+    /// Exactly one recovery workflow per principal. The tagged enum makes A
+    /// and B orchestration mutually exclusive in durable state.
+    #[serde(default)]
+    pub(crate) identity_recovery_workflows:
+        BTreeMap<String, crate::identity::identity_workflow::RecoveryWorkflow>,
     /// Per-realm `ak.self.events.stream.subscribe` resume cursors, keyed by
     /// realm id. Kept PHYSICALLY SEPARATE from the account-aggregate
     /// `sync_cursor`: the realm events stream and the account stream are
@@ -1090,6 +1101,8 @@ impl Default for ClientLocalState {
     fn default() -> Self {
         Self {
             sync_cursor: None,
+            identity_inception_drafts: BTreeMap::new(),
+            identity_recovery_workflows: BTreeMap::new(),
             realm_events_cursors: BTreeMap::new(),
             device_message_cursors: BTreeMap::new(),
             client_core_seen_event_ids: VecDeque::new(),

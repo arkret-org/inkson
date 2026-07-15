@@ -188,7 +188,10 @@ mod tests {
         for event in &ops {
             arkret_sdk::schema::event_payload_validator_catalog()
                 .unwrap()
-                .validate_payload(event.kind.as_str(), &event.payload)
+                .validate_payload(
+                    event.kind.as_str(),
+                    &serde_json::to_value(&event.payload).unwrap(),
+                )
                 .unwrap_or_else(|err| {
                     panic!(
                         "discussion promote {} payload violates spec: {err}\npayload: {}",

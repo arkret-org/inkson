@@ -18,7 +18,7 @@ use arkret_sdk::models::{
     RealmOrganizationPayload, RealmOrganizationRelationship, RealmOrganizationStatus,
     SignatureMaterial,
 };
-use arkret_sdk::webvh::{InceptionInput, PreparedInception, prepare_inception};
+use arkret_sdk::webvh::{PreparedInception, ServiceInceptionInput, prepare_service_inception};
 use base64::Engine as _;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use ed25519_dalek::SigningKey;
@@ -144,11 +144,11 @@ pub enum OrganizationError {
 /// `principal_endpoint` is the soland base URL (the organization is anchored to
 /// this Principal Server's `did:webvh` method authority). `local_id` is the
 /// organization's stable handle / slug. `also_known_as` carries optional
-/// reverse-link handles. `enrollment_authority_did` is written into the minted
-/// document's device-enrollment-authority service slot; for an organization the
-/// caller passes the deployment's service DID (the organization itself does not
-/// authorize end-user devices, but the embedded-webvh profile records the
-/// service entry uniformly).
+/// reverse-link handles. Organizations use the service-identity WebVH profile:
+/// they are not human principals and therefore must not publish a principal
+/// device-enrollment-authority service slot. The legacy
+/// `enrollment_authority_did` argument is retained for call-site compatibility
+/// and deliberately ignored.
 ///
 /// On success returns the prepared inception (which carries `submit_body` to
 /// POST to soland) plus a [`PreparedOrganization`] with the secrets + ids the
@@ -158,7 +158,7 @@ pub fn prepare_organization_inception(
     local_id: &str,
     display_name: Option<&str>,
     also_known_as: &[String],
-    enrollment_authority_did: &str,
+    _enrollment_authority_did: &str,
 ) -> Result<(PreparedInception, PreparedOrganization), OrganizationError> {
     let local_id = local_id.trim();
     if local_id.is_empty() {
@@ -180,16 +180,15 @@ pub fn prepare_organization_inception(
         }
     }
 
-    let input = InceptionInput {
+    let input = ServiceInceptionInput {
         principal_endpoint: &endpoint,
         local_id,
         also_known_as: &aka,
         version_time: crate::clock::now_utc(),
         did_key_fragment: None,
-        enrollment_authority_did,
     };
     let mut rng = GetrandomRng;
-    let prepared = prepare_inception(&mut rng, &input)?;
+    let prepared = prepare_service_inception(&mut rng, &input)?;
 
     let organization = PreparedOrganization {
         did: prepared.did.clone(),

@@ -11,11 +11,15 @@
 //! (`create_request` / `proof_submit_request` / `complete_request`).
 
 use arkret_sdk::models::{
-    RecoveryPolicyActiveOutcome, RecoveryPolicyRef, RecoveryPolicySummary,
-    RecoverySessionCompleteRequestBody, RecoverySessionCreateRequestBody,
+    RecoveryHpkeSuite, RecoveryKeyAgreementAlgorithm, RecoveryKeyAgreementEntry,
+    RecoveryKeyAgreementUse, RecoveryKeyEntry, RecoveryKeySignatureAlgorithm, RecoveryPolicy,
+    RecoveryPolicyActiveOutcome, RecoveryPolicyAuthData, RecoveryPolicyRef, RecoveryPolicySummary,
+    RecoveryProofKind, RecoverySessionCompleteRequestBody, RecoverySessionCreateRequestBody,
     RecoverySessionProofSubmitRequestBody,
 };
-use arkret_sdk::{DeviceId, Did, EventId, PolicyId, TypedTrustDomainId};
+use arkret_sdk::{
+    DeviceId, Did, DidUrl, EventId, NonEmptyString, PolicyId, ReceiptId, TypedTrustDomainId,
+};
 use base64::Engine as _;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD as B64;
 use ed25519_dalek::SigningKey;
@@ -30,6 +34,8 @@ pub const RECOVERY_POLICY_SIGNED_FIELDS: &[&str] = &[
     "version",
     "trust_domain",
     "allowed_proof_kinds",
+    "recovery_keys",
+    "recovery_key_agreements",
     "supersedes",
     "issued_at",
     "expires_at",
@@ -180,6 +186,7 @@ pub async fn fetch_active_recovery_policy(
 pub fn build_signed_genesis_recovery_policy(
     principal_id: &str,
     trust_domain: &str,
+    key_material: &arkret_sdk::identity_root::IdentityRecoveryKeyMaterial,
 ) -> anyhow::Result<Value> {
     if let Some(signer) = crate::event_signer::active_signer()
         && let Ok(verification_method) =
@@ -188,6 +195,7 @@ pub fn build_signed_genesis_recovery_policy(
         return build_signed_genesis_recovery_policy_with_raw_signer(
             principal_id,
             trust_domain,
+            key_material,
             verification_method,
             |bytes| signer.sign_raw(bytes),
         );
@@ -203,6 +211,7 @@ pub fn build_signed_genesis_recovery_policy_for_session_device(
     principal_id: &str,
     trust_domain: &str,
     device_id: &str,
+    key_material: &arkret_sdk::identity_root::IdentityRecoveryKeyMaterial,
 ) -> anyhow::Result<Value> {
     let device_id = device_id.trim();
     if device_id.is_empty() {
@@ -216,13 +225,19 @@ pub fn build_signed_genesis_recovery_policy_for_session_device(
         return build_signed_genesis_recovery_policy_with_raw_signer(
             principal_id,
             trust_domain,
+            key_material,
             &verification_method,
             |bytes| signer.sign_raw(bytes),
         );
     }
 
     let signer = default_principal_scoped_recovery_policy_signer(principal_id, device_id)?;
-    build_signed_genesis_recovery_policy_with_signer(principal_id, trust_domain, &signer)
+    build_signed_genesis_recovery_policy_with_signer(
+        principal_id,
+        trust_domain,
+        key_material,
+        &signer,
+    )
 }
 
 fn default_principal_scoped_recovery_policy_signer(
@@ -252,6 +267,7 @@ fn default_principal_scoped_recovery_policy_signer(
 fn build_signed_genesis_recovery_policy_with_signer(
     principal_id: &str,
     trust_domain: &str,
+    key_material: &arkret_sdk::identity_root::IdentityRecoveryKeyMaterial,
     signer: &crate::event_signer::InksonEventSigner,
 ) -> anyhow::Result<Value> {
     let verification_method =
@@ -259,6 +275,7 @@ fn build_signed_genesis_recovery_policy_with_signer(
     build_signed_genesis_recovery_policy_with_raw_signer(
         principal_id,
         trust_domain,
+        key_material,
         verification_method,
         |bytes| signer.sign_raw(bytes),
     )
@@ -267,6 +284,7 @@ fn build_signed_genesis_recovery_policy_with_signer(
 fn build_signed_genesis_recovery_policy_with_raw_signer(
     principal_id: &str,
     trust_domain: &str,
+    key_material: &arkret_sdk::identity_root::IdentityRecoveryKeyMaterial,
     verification_method: &str,
     sign_raw: impl Fn(&[u8]) -> Result<Vec<u8>, crate::event_signer::EventSignerError>,
 ) -> anyhow::Result<Value> {
@@ -280,29 +298,76 @@ fn build_signed_genesis_recovery_policy_with_raw_signer(
         anyhow::bail!("trust_domain is required");
     }
     principal_scoped_recovery_policy_verification_method_id(principal_id, verification_method)?;
-    let issued_at = chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Secs, true);
-    let mut policy = json!({
-        "schema": "ak.schema.recovery_policy.v1",
-        "policy_id": format!("ak:policy:{}", crate::operation::uuid_v7()),
-        "principal_id": principal_id,
-        "version": 1,
-        "supersedes": null,
-        "trust_domain": trust_domain,
-        "allowed_proof_kinds": ["principal_signing", "recovery_unlock"],
-        "issued_at": issued_at,
-        "expires_at": null,
-        "auth_data": {
-            "verification_method": verification_method,
-            "signature_algorithm": "Ed25519",
-            "signed_fields": RECOVERY_POLICY_SIGNED_FIELDS,
-            "signature": ""
-        }
-    });
+    let issued_at = chrono::Utc::now();
+    let key_expires_at = issued_at + chrono::Duration::days(3650);
+    let recovery_proof_ref = DidUrl::new(format!("{principal_id}#recovery-proof-0"))
+        .map_err(|error| anyhow::anyhow!(error))?;
+    let backup_hpke_ref = DidUrl::new(format!("{principal_id}#backup-hpke-0"))
+        .map_err(|error| anyhow::anyhow!(error))?;
+    let mut typed_policy = RecoveryPolicy {
+        schema: "ak.schema.recovery_policy.v1".to_owned(),
+        policy_id: PolicyId::new(format!("ak:policy:{}", crate::operation::uuid_v7()))?,
+        principal_id: Did::new(principal_id.to_owned())?,
+        version: 1,
+        supersedes: None,
+        trust_domain: TypedTrustDomainId::new(trust_domain.to_owned())?,
+        allowed_proof_kinds: vec![
+            RecoveryProofKind::PrincipalSigning,
+            RecoveryProofKind::RecoveryUnlock,
+        ],
+        threshold: None,
+        device_quorum: None,
+        trusted_recovery_services: None,
+        recovery_keys: Some(vec![RecoveryKeyEntry {
+            verification_method: recovery_proof_ref,
+            public_key_multibase: NonEmptyString::new(
+                key_material.recovery_proof_public_key_multikey.clone(),
+            )
+            .map_err(|error| anyhow::anyhow!(error))?,
+            key_agreement_ref: backup_hpke_ref.clone(),
+            alg: RecoveryKeySignatureAlgorithm::Ed25519,
+            not_before: issued_at,
+            expires_at: key_expires_at,
+            revoked_at: None,
+        }]),
+        recovery_key_agreements: Some(vec![RecoveryKeyAgreementEntry {
+            key_agreement_ref: backup_hpke_ref,
+            alg: RecoveryKeyAgreementAlgorithm::X25519,
+            public_key_multibase: NonEmptyString::new(
+                key_material.backup_hpke_public_key_multikey.clone(),
+            )
+            .map_err(|error| anyhow::anyhow!(error))?,
+            hpke_suites: vec![RecoveryHpkeSuite::X25519ChaCha20Poly1305],
+            usage: RecoveryKeyAgreementUse::BackupHpke,
+            not_before: issued_at,
+            expires_at: key_expires_at,
+            revoked_at: None,
+        }]),
+        approval_requirement: None,
+        audit: None,
+        issued_at,
+        not_before: None,
+        expires_at: None,
+        auth_data: RecoveryPolicyAuthData {
+            verification_method: verification_method.to_owned(),
+            signature_algorithm: "Ed25519".to_owned(),
+            signature: String::new(),
+            signed_fields: RECOVERY_POLICY_SIGNED_FIELDS
+                .iter()
+                .map(|field| (*field).to_owned())
+                .collect(),
+        },
+        extra: Default::default(),
+    };
+    typed_policy.validate()?;
+    let mut policy = serde_json::to_value(&typed_policy)?;
     let transcript = recovery_policy_signature_transcript(&policy, RECOVERY_POLICY_SIGNED_FIELDS);
     let bytes = crate::canonical::canonical_json_bytes(&transcript)?;
     let signature =
         sign_raw(&bytes).map_err(|err| anyhow::anyhow!("recovery policy sign: {err:?}"))?;
     policy["auth_data"]["signature"] = Value::String(B64.encode(signature));
+    typed_policy = serde_json::from_value(policy.clone())?;
+    typed_policy.validate()?;
     Ok(policy)
 }
 
@@ -353,8 +418,10 @@ pub async fn ensure_active_recovery_policy(
     api: &TransportClient,
     principal_id: &str,
     device_id: &str,
+    key_material: &arkret_sdk::identity_root::IdentityRecoveryKeyMaterial,
 ) -> anyhow::Result<ActiveRecoveryPolicy> {
     if let Some(policy) = fetch_active_recovery_policy(api).await? {
+        validate_active_policy_key_material(&policy, principal_id, key_material)?;
         return Ok(policy);
     }
 
@@ -368,12 +435,72 @@ pub async fn ensure_active_recovery_policy(
         principal_id,
         description.trust_domain.as_str(),
         device_id,
+        key_material,
     )?;
     api.put_recovery_policy(body).await?;
 
-    fetch_active_recovery_policy(api)
+    let policy = fetch_active_recovery_policy(api)
         .await?
-        .ok_or_else(|| anyhow::anyhow!("server accepted recovery policy but did not expose it"))
+        .ok_or_else(|| anyhow::anyhow!("server accepted recovery policy but did not expose it"))?;
+    validate_active_policy_key_material(&policy, principal_id, key_material)?;
+    Ok(policy)
+}
+
+fn validate_active_policy_key_material(
+    summary: &ActiveRecoveryPolicy,
+    principal_id: &str,
+    key_material: &arkret_sdk::identity_root::IdentityRecoveryKeyMaterial,
+) -> anyhow::Result<()> {
+    if summary.principal_id.as_str() != principal_id.trim() {
+        anyhow::bail!(
+            "active recovery policy principal `{}` does not match requested principal `{}`",
+            summary.principal_id,
+            principal_id.trim()
+        );
+    }
+    let policy = summary.policy.as_ref().ok_or_else(|| {
+        anyhow::anyhow!(
+            "active recovery policy omitted its signed key configuration; refusing to pair it with supplied recovery material"
+        )
+    })?;
+    policy.validate()?;
+    if policy.policy_id != summary.policy_id
+        || policy.principal_id != summary.principal_id
+        || policy.version != summary.version
+    {
+        anyhow::bail!("active recovery policy summary does not match its signed policy body");
+    }
+
+    let agreement_ref = policy
+        .recovery_key_agreements
+        .as_deref()
+        .unwrap_or_default()
+        .iter()
+        .find(|entry| {
+            entry.public_key_multibase.as_str() == key_material.backup_hpke_public_key_multikey
+        })
+        .map(|entry| &entry.key_agreement_ref);
+    let Some(agreement_ref) = agreement_ref else {
+        anyhow::bail!(
+            "supplied Recovery Key does not match the active policy backup recipient; use the staged recovery-key handoff workflow"
+        );
+    };
+    let proof_key_matches = policy
+        .recovery_keys
+        .as_deref()
+        .unwrap_or_default()
+        .iter()
+        .any(|entry| {
+            &entry.key_agreement_ref == agreement_ref
+                && entry.public_key_multibase.as_str()
+                    == key_material.recovery_proof_public_key_multikey
+        });
+    if !proof_key_matches {
+        anyhow::bail!(
+            "supplied Recovery Key does not match the active policy recovery proof key; use the staged recovery-key handoff workflow"
+        );
+    }
+    Ok(())
 }
 
 pub async fn ensure_recovery_policy_and_did_recovery_backup(
@@ -382,7 +509,12 @@ pub async fn ensure_recovery_policy_and_did_recovery_backup(
     device_id: &str,
     recovery_key: &str,
 ) -> anyhow::Result<String> {
-    let policy = ensure_active_recovery_policy(api, principal_id, device_id).await?;
+    let key_material = arkret_sdk::identity_root::derive_identity_recovery_key_material_from_bip39(
+        recovery_key,
+        "",
+        0,
+    )?;
+    let policy = ensure_active_recovery_policy(api, principal_id, device_id, &key_material).await?;
     // `matching_did_recovery_first_backup_id` reads `backups[]` leniently via
     // `Value` accessors; serialize the typed list back to its wire JSON.
     let list = serde_json::to_value(
@@ -393,17 +525,16 @@ pub async fn ensure_recovery_policy_and_did_recovery_backup(
         return Ok(backup_id);
     }
 
-    let (recovery_private_key, recovery_public_key) =
-        crate::hpke_backup::derive_recovery_keypair_from_recovery_key(recovery_key)?;
     let backup_id = format!("ak:backup:{}", crate::operation::uuid_v7());
-    let recovery_key_ref = format!("{}#recovery", principal_id.trim());
+    let recovery_key_ref = format!("{}#backup-hpke-0", principal_id.trim());
     let created_at = chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Secs, true);
     let plaintext = crate::canonical::canonical_json_bytes(&json!({
-        "schema": "ak.local.did_recovery_share.v1",
+        "schema": "ak.local.did_recovery_metadata.v1",
         "principal_id": principal_id,
-        "recovery_key_ref": recovery_key_ref,
-        "recovery_private_key_b64u": B64.encode(&recovery_private_key),
-        "recovery_public_key_b64u": B64.encode(&recovery_public_key),
+        "root_generation": key_material.root_generation,
+        "root_public_key_multibase": key_material.root_public_key_multikey,
+        "next_root_public_key_multibase": key_material.next_root_public_key_multikey,
+        "next_root_key_hash": key_material.next_root_key_hash,
         "recovery_policy_ref": {
             "policy_id": policy.policy_id.as_str(),
             "policy_version": policy.version,
@@ -414,7 +545,7 @@ pub async fn ensure_recovery_policy_and_did_recovery_backup(
         &backup_id,
         principal_id,
         device_id,
-        &recovery_public_key,
+        &key_material.backup_hpke_public_key,
         &recovery_key_ref,
         &plaintext,
         policy.policy_id.as_str(),
@@ -482,14 +613,12 @@ pub fn create_session_body(
     principal_id: &str,
     requesting_device_id: &str,
     trust_domain: &str,
-    ssk_generation: u64,
     expected_recovery_policy_ref: Option<(&str, u64)>,
 ) -> anyhow::Result<RecoverySessionCreateRequestBody> {
     Ok(RecoverySessionCreateRequestBody {
         principal_id: Did::new(principal_id.trim().to_owned())?,
         requesting_device_id: DeviceId::new(requesting_device_id.trim().to_owned())?,
         trust_domain: TypedTrustDomainId::new(trust_domain.trim().to_owned())?,
-        ssk_generation,
         expected_recovery_policy_ref: match expected_recovery_policy_ref {
             Some((policy_id, policy_version)) => Some(RecoveryPolicyRef {
                 policy_id: PolicyId::new(policy_id.trim().to_owned())?,
@@ -507,14 +636,12 @@ pub async fn open_recovery_session(
     principal_id: &str,
     requesting_device_id: &str,
     trust_domain: &str,
-    ssk_generation: u64,
     expected_recovery_policy_ref: Option<(&str, u64)>,
 ) -> anyhow::Result<Value> {
     let body = create_session_body(
         principal_id,
         requesting_device_id,
         trust_domain,
-        ssk_generation,
         expected_recovery_policy_ref,
     )?;
     // Callers read `recovery_session_id` from the session via lenient `Value`
@@ -547,21 +674,54 @@ pub async fn submit_principal_signing_proof(
     )?)
 }
 
-/// 6.3 — complete a verified session by REFERENCING the durable control events
-/// the client already submitted to `POST /events`: an accepted `ak.device.authorize`
-/// and `ak.device.list_update` (recovery-session.schema.json `complete_request`).
-/// The server resolves + verifies each by id; it does not author control events.
+/// Accepted artifacts required to complete a recovery session. The variants
+/// enforce the protocol's mutually exclusive Model A and Model B shapes before
+/// serialization.
+pub enum RecoveryCompletionArtifacts<'a> {
+    CrossSigning {
+        device_list_update_event_id: &'a str,
+    },
+    EnrollmentAuthority {
+        reanchor_event_id: &'a str,
+        reanchor_batch_receipt_id: &'a str,
+    },
+}
+
+/// 6.3 — complete a verified session by referencing the model-specific durable
+/// control artifacts the client already submitted. The server resolves and
+/// verifies each reference; it does not author control events.
 pub async fn complete_recovery_session(
     api: &TransportClient,
     recovery_session_id: &str,
     authorization_event_id: &str,
-    device_list_update_event_id: &str,
+    artifacts: RecoveryCompletionArtifacts<'_>,
 ) -> anyhow::Result<Value> {
+    let (device_list_update_event_id, reanchor_event_id, reanchor_batch_receipt_id) =
+        match artifacts {
+            RecoveryCompletionArtifacts::CrossSigning {
+                device_list_update_event_id,
+            } => (
+                Some(EventId::new(device_list_update_event_id.trim().to_owned())?),
+                None,
+                None,
+            ),
+            RecoveryCompletionArtifacts::EnrollmentAuthority {
+                reanchor_event_id,
+                reanchor_batch_receipt_id,
+            } => (
+                None,
+                Some(EventId::new(reanchor_event_id.trim().to_owned())?),
+                Some(ReceiptId::new(reanchor_batch_receipt_id.trim().to_owned())?),
+            ),
+        };
     let body = RecoverySessionCompleteRequestBody {
         authorization_event_id: EventId::new(authorization_event_id.trim().to_owned())?,
-        device_list_update_event_id: EventId::new(device_list_update_event_id.trim().to_owned())?,
+        device_list_update_event_id,
+        reanchor_event_id,
+        reanchor_batch_receipt_id,
         idempotency_key: None,
     };
+    body.validate()?;
     Ok(serde_json::to_value(
         &api.complete_recovery_session(recovery_session_id, &body)
             .await?,
@@ -580,7 +740,6 @@ pub async fn run_principal_signing_recovery(
     principal_id: &str,
     requesting_device_id: &str,
     trust_domain: &str,
-    ssk_generation: u64,
     verification_method: &str,
     principal_signing_key: &SigningKey,
     authorization_event_id: &str,
@@ -592,7 +751,6 @@ pub async fn run_principal_signing_recovery(
         principal_id,
         requesting_device_id,
         trust_domain,
-        ssk_generation,
         expected_recovery_policy_ref,
     )
     .await?;
@@ -606,7 +764,9 @@ pub async fn run_principal_signing_recovery(
         api,
         session_id,
         authorization_event_id,
-        device_list_update_event_id,
+        RecoveryCompletionArtifacts::CrossSigning {
+            device_list_update_event_id,
+        },
     )
     .await
 }
@@ -617,6 +777,15 @@ mod tests {
     use serde_json::json;
 
     use super::*;
+
+    fn identity_recovery_key_material() -> arkret_sdk::identity_root::IdentityRecoveryKeyMaterial {
+        arkret_sdk::identity_root::derive_identity_recovery_key_material_from_bip39(
+            "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon art",
+            "",
+            0,
+        )
+        .expect("identity recovery KDF")
+    }
 
     fn test_active_policy(policy_id: &str, version: u64) -> ActiveRecoveryPolicy {
         let issued_at = chrono::DateTime::parse_from_rfc3339("2026-01-01T00:00:00Z")
@@ -641,19 +810,70 @@ mod tests {
         }
     }
 
+    fn active_policy_with_material(
+        material: &arkret_sdk::identity_root::IdentityRecoveryKeyMaterial,
+    ) -> ActiveRecoveryPolicy {
+        let principal_id = "did:web:alice.example";
+        let signer = crate::event_signer::build_ed25519_signer_with_verification_method(
+            [7u8; 32],
+            principal_id,
+            format!("{principal_id}#device-1"),
+        );
+        let value = build_signed_genesis_recovery_policy_with_signer(
+            principal_id,
+            "ak:trust_domain:soland.local",
+            material,
+            &signer,
+        )
+        .expect("signed policy");
+        let policy: RecoveryPolicy = serde_json::from_value(value).expect("typed policy");
+        ActiveRecoveryPolicy {
+            policy_id: policy.policy_id.clone(),
+            principal_id: policy.principal_id.clone(),
+            version: policy.version,
+            recovery_policy_ref: None,
+            trust_domain: policy.trust_domain.clone(),
+            allowed_proof_kinds: policy.allowed_proof_kinds.clone(),
+            supersedes: policy.supersedes.clone(),
+            expires_at: policy.expires_at,
+            issued_at: policy.issued_at,
+            accepted_at: policy.issued_at + chrono::Duration::seconds(1),
+            policy: Some(policy),
+        }
+    }
+
+    #[test]
+    fn active_policy_must_match_both_recovery_key_roles() {
+        let material = identity_recovery_key_material();
+        let policy = active_policy_with_material(&material);
+        validate_active_policy_key_material(&policy, "did:web:alice.example", &material)
+            .expect("matching signing and HPKE keys");
+
+        let replacement =
+            arkret_sdk::identity_root::derive_identity_recovery_key_material_from_bip39(
+                "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon art",
+                "",
+                1,
+            )
+            .expect("replacement generation");
+        let error =
+            validate_active_policy_key_material(&policy, "did:web:alice.example", &replacement)
+                .expect_err("unaccepted replacement must fail closed");
+        assert!(error.to_string().contains("staged recovery-key handoff"));
+    }
+
     #[test]
     fn create_session_body_matches_schema_shape() {
         let body = create_session_body(
             "did:web:alice.example",
             "ak:device:019a6aa0-0000-7000-8000-000000000099",
             "ak:trust_domain:soland.local",
-            2,
             None,
         )
         .unwrap();
         let body = serde_json::to_value(body).unwrap();
         assert_eq!(body["principal_id"], "did:web:alice.example");
-        assert_eq!(body["ssk_generation"], 2);
+        assert!(body.get("ssk_generation").is_none());
         assert!(body.get("expected_recovery_policy_ref").is_none());
     }
 
@@ -663,7 +883,6 @@ mod tests {
             "did:web:alice.example",
             "ak:device:019a6aa0-0000-7000-8000-000000000099",
             "ak:trust_domain:soland.local",
-            1,
             Some(("ak:policy:019a6aa0-0000-7000-8000-0000000000bb", 1)),
         )
         .unwrap();
@@ -720,6 +939,7 @@ mod tests {
         let err = build_signed_genesis_recovery_policy_with_signer(
             "did:webvh:zQmExample:local.host:webvh:01kv0q5a7cfrxa69d5vmtyz72f",
             "ak:trust_domain:local.host",
+            &identity_recovery_key_material(),
             &signer,
         )
         .expect_err("did:key device signer must not publish a did:webvh policy");
@@ -739,6 +959,7 @@ mod tests {
         let policy = build_signed_genesis_recovery_policy_with_signer(
             "did:webvh:zQmExample:local.host:webvh:01kv0q5a7cfrxa69d5vmtyz72f",
             "ak:trust_domain:local.host",
+            &identity_recovery_key_material(),
             &signer,
         )
         .expect("principal-scoped signer should build policy");
@@ -765,6 +986,7 @@ mod tests {
         let policy = build_signed_genesis_recovery_policy_with_signer(
             principal_id,
             "ak:trust_domain:local.host",
+            &identity_recovery_key_material(),
             &signer,
         )
         .expect("principal signing key should build policy");
@@ -802,12 +1024,21 @@ mod tests {
             principal_id,
             "ak:trust_domain:local.host",
             device_id,
+            &identity_recovery_key_material(),
         )
         .expect("active device signer should sign principal-scoped recovery policy");
 
         assert_eq!(
             policy["auth_data"]["verification_method"],
             format!("{principal_id}#{device_id}")
+        );
+        assert_ne!(
+            policy["recovery_keys"][0]["public_key_multibase"],
+            policy["recovery_key_agreements"][0]["public_key_multibase"]
+        );
+        assert_eq!(
+            policy["recovery_keys"][0]["key_agreement_ref"],
+            policy["recovery_key_agreements"][0]["key_agreement_ref"]
         );
 
         let transcript =

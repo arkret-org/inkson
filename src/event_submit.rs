@@ -13,11 +13,12 @@ use std::time::Duration;
 use arkret_sdk::ErrorEnvelope;
 use garth::outbound::BoxOutboundFuture;
 use garth::{
-    OutboundEngine, OutboundEngineOutcome, OutboundPostAcceptHook, OutboundSubmitOutcome,
-    OutboundSubmitter,
+    OutboundEngine, OutboundEngineOutcome, OutboundGenerationFenceDecision, OutboundPostAcceptHook,
+    OutboundSubmitOutcome, OutboundSubmitter,
 };
 #[cfg(test)]
 use reqwest::StatusCode;
+use serde::Deserialize as _;
 use serde_json::Value;
 use tokio::sync::OnceCell;
 
@@ -51,32 +52,34 @@ pub(crate) struct DurablyQueuedError {
 }
 
 #[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
-struct QueuedSdkEvent {
-    event: arkret_sdk::Event,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    post_accept: Option<PostAcceptAction>,
+#[serde(deny_unknown_fields)]
+pub(crate) struct QueuedSdkEvent {
+    pub(crate) event: arkret_sdk::Event,
+    pub(crate) authoring_generation: crate::identity::authoring_generation::AuthoringGeneration,
+    #[serde(deserialize_with = "deserialize_required_nullable")]
+    pub(crate) post_accept: Option<PostAcceptAction>,
 }
 
 #[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
-enum PostAcceptAction {
+pub(crate) enum PostAcceptAction {
     MlsSnapshot {
         realm_id: String,
         snapshot: crate::mls::persistence::MlsSnapshotEnvelope,
     },
 }
 
+fn deserialize_required_nullable<'de, D, T>(deserializer: D) -> Result<Option<T>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+    T: serde::Deserialize<'de>,
+{
+    Option::<T>::deserialize(deserializer)
+}
+
 fn decode_queued_sdk_event(content: Value) -> arkret_sdk::Result<QueuedSdkEvent> {
-    match serde_json::from_value::<QueuedSdkEvent>(content.clone()) {
-        Ok(queued) => Ok(queued),
-        Err(_) => serde_json::from_value(content)
-            .map(|event| QueuedSdkEvent {
-                event,
-                post_accept: None,
-            })
-            .map_err(|error| {
-                arkret_sdk::Error::Protocol(format!("decode queued Inkson SDK event: {error}"))
-            }),
-    }
+    serde_json::from_value(content).map_err(|error| {
+        arkret_sdk::Error::Protocol(format!("decode queued Inkson SDK event: {error}"))
+    })
 }
 
 #[derive(Clone, Default)]
@@ -295,6 +298,48 @@ impl EventSubmitter {
         &self.http
     }
 
+    async fn resolve_queue_generation_fence(
+        &self,
+        outbound: &OutboundEngine<crate::outbound_store::InksonOutboundStore>,
+    ) -> anyhow::Result<crate::identity::authoring_generation::ResolvedQueueGenerationFence> {
+        use arkret_sdk::sync_client::SendQueueStatus;
+
+        use crate::identity::authoring_generation::CurrentEventAuthoringGeneration;
+
+        let mut decisions = BTreeMap::new();
+        for item in outbound.snapshot().await?.items {
+            if !matches!(
+                item.status,
+                SendQueueStatus::Queued | SendQueueStatus::Sending | SendQueueStatus::Failed
+            ) {
+                continue;
+            }
+            let queued = decode_queued_sdk_event(item.content.clone())?;
+            let decision = match crate::identity::authoring_generation::resolve_current_event_authoring_generation(
+                &self.http,
+                &queued.event,
+            )
+            .await?
+            {
+                CurrentEventAuthoringGeneration::Active(current)
+                    if current == queued.authoring_generation =>
+                {
+                    OutboundGenerationFenceDecision::Current
+                }
+                CurrentEventAuthoringGeneration::Active(_) => {
+                    OutboundGenerationFenceDecision::Quarantine {
+                        reason: "authoring_generation_superseded".to_owned(),
+                    }
+                }
+                CurrentEventAuthoringGeneration::Quarantine(reason) => {
+                    OutboundGenerationFenceDecision::Quarantine { reason }
+                }
+            };
+            decisions.insert(item.transaction_id, decision);
+        }
+        Ok(crate::identity::authoring_generation::ResolvedQueueGenerationFence::new(decisions))
+    }
+
     /// Resume queued events for this actor without requiring a new user send.
     /// The account runner calls this after it has rebuilt an authenticated
     /// client, so process/browser restarts eventually drain pending work.
@@ -308,11 +353,23 @@ impl EventSubmitter {
         };
         let mut completed = 0usize;
         loop {
-            match outbound.submit_next(&submitter, chrono::Utc::now()).await? {
+            let fence = self.resolve_queue_generation_fence(&outbound).await?;
+            match outbound
+                .submit_next_with_fence(&submitter, &fence, chrono::Utc::now())
+                .await?
+            {
                 OutboundEngineOutcome::Accepted(_) | OutboundEngineOutcome::Duplicate(_) => {
                     completed = completed.saturating_add(1);
                 }
                 OutboundEngineOutcome::Rejected(_) | OutboundEngineOutcome::Terminal(_) => {
+                    completed = completed.saturating_add(1);
+                }
+                OutboundEngineOutcome::Quarantined { item, reason } => {
+                    tracing::warn!(
+                        transaction_id = %item.transaction_id,
+                        %reason,
+                        "durable outbound item quarantined by authoring-generation fence"
+                    );
                     completed = completed.saturating_add(1);
                 }
                 OutboundEngineOutcome::Idle | OutboundEngineOutcome::RetryAt { .. } => {
@@ -344,14 +401,23 @@ impl EventSubmitter {
         };
         let mut completed = 0usize;
         loop {
+            let fence = self.resolve_queue_generation_fence(&outbound).await?;
             match outbound
-                .submit_next_with_hook(&submitter, &hook, chrono::Utc::now())
+                .submit_next_with_fence_and_hook(&submitter, &fence, &hook, chrono::Utc::now())
                 .await?
             {
                 OutboundEngineOutcome::Accepted(_)
                 | OutboundEngineOutcome::Duplicate(_)
                 | OutboundEngineOutcome::Rejected(_)
                 | OutboundEngineOutcome::Terminal(_) => {
+                    completed = completed.saturating_add(1);
+                }
+                OutboundEngineOutcome::Quarantined { item, reason } => {
+                    tracing::warn!(
+                        transaction_id = %item.transaction_id,
+                        %reason,
+                        "durable MLS outbound item quarantined by authoring-generation fence"
+                    );
                     completed = completed.saturating_add(1);
                 }
                 OutboundEngineOutcome::Idle | OutboundEngineOutcome::RetryAt { .. } => {
@@ -366,6 +432,33 @@ impl EventSubmitter {
             .describe()
             .await
             .map_err(|error| anyhow::anyhow!("server describe: {error}"))
+    }
+
+    async fn ensure_recovery_material_ready(&self) -> anyhow::Result<()> {
+        let policy: arkret_sdk::RecoveryPolicyActiveOutcome = self
+            .http
+            .get("/_arkret/root/identity/recovery-policy")
+            .await
+            .map_err(anyhow::Error::from)?;
+        let backups = self
+            .http
+            .list_key_backups(&arkret_sdk::KeyBackupsListQuery {
+                series_id: None,
+                backup_class: Some(arkret_sdk::BackupClass::DidRecovery),
+                cursor: None,
+                limit: None,
+            })
+            .await
+            .map_err(anyhow::Error::from)?;
+        match crate::recovery_strand::first_backup_gate_status_from_payloads(
+            &serde_json::to_value(policy)?,
+            &serde_json::to_value(backups)?,
+        ) {
+            crate::recovery_strand::FirstBackupGateStatus::Satisfied { .. } => Ok(()),
+            crate::recovery_strand::FirstBackupGateStatus::Blocked(reason) => anyhow::bail!(
+                "recovery_material_pending blocks post-bootstrap persistent write: {reason:?}"
+            ),
+        }
     }
 
     /// Lazily fetch + cache the service describe for this submitter. Only the
@@ -598,6 +691,7 @@ impl EventSubmitter {
         &self,
         signed: &arkret_sdk::Event,
     ) -> anyhow::Result<SubmitEventResult> {
+        self.ensure_recovery_material_ready().await?;
         self.post_signed_sdk_event(signed, uuid_v7()).await
     }
 
@@ -630,11 +724,17 @@ impl EventSubmitter {
         post_accept: Option<PostAcceptAction>,
         state_store: Option<crate::runtime::input::StateStoreHandle>,
     ) -> anyhow::Result<SubmitEventResult> {
+        self.ensure_recovery_material_ready().await?;
         let transaction_id = event.event_id.to_string();
         let durable_post_accept = post_accept.is_some();
         let outbound = OutboundEngine::new(crate::outbound_store::InksonOutboundStore::open(
             &outbound_store_scope(event, durable_post_accept),
         )?);
+        let authoring_generation =
+            crate::identity::authoring_generation::resolve_event_authoring_generation(
+                &self.http, event,
+            )
+            .await?;
         outbound
             .enqueue(
                 Some(transaction_id.clone()),
@@ -644,6 +744,7 @@ impl EventSubmitter {
                 },
                 serde_json::to_value(QueuedSdkEvent {
                     event: event.clone(),
+                    authoring_generation,
                     post_accept,
                 })?,
                 Vec::new(),
@@ -657,8 +758,9 @@ impl EventSubmitter {
         };
         let hook = InksonPostAcceptHook { state_store };
         loop {
+            let fence = self.resolve_queue_generation_fence(&outbound).await?;
             match outbound
-                .submit_next_with_hook(&submitter, &hook, chrono::Utc::now())
+                .submit_next_with_fence_and_hook(&submitter, &fence, &hook, chrono::Utc::now())
                 .await?
             {
                 OutboundEngineOutcome::Accepted(item) | OutboundEngineOutcome::Duplicate(item)
@@ -699,6 +801,16 @@ impl EventSubmitter {
                     anyhow::bail!("queued event {} reached a terminal state", event.event_id);
                 }
                 OutboundEngineOutcome::Rejected(_) | OutboundEngineOutcome::Terminal(_) => {}
+                OutboundEngineOutcome::Quarantined { item, reason }
+                    if item.transaction_id == transaction_id =>
+                {
+                    anyhow::bail!(
+                        "queued event {} quarantined by authoring-generation fence: {}",
+                        event.event_id,
+                        reason
+                    );
+                }
+                OutboundEngineOutcome::Quarantined { .. } => {}
                 OutboundEngineOutcome::Idle => {
                     let snapshot = outbound.snapshot().await?;
                     if let Some(item) = snapshot
@@ -850,6 +962,7 @@ impl EventSubmitter {
         sdk_events: &[arkret_sdk::Event],
         idempotency_key: Option<&str>,
     ) -> anyhow::Result<arkret_sdk::EventsSubmitOutcome> {
+        self.ensure_recovery_material_ready().await?;
         // YOU-01-016: the former `capabilities.batch_submit` probe (a
         // non-spec soland capability field) was removed. The batch request
         // body is one of the three spec-defined `ak.self.events.command.submit`
@@ -873,6 +986,47 @@ impl EventSubmitter {
                 &arkret_sdk::http_client::ClientRequestOptions::new()
                     .request_id(idem.clone())
                     .idempotency_key(idem),
+            )
+            .await
+            .map_err(anyhow::Error::from)?;
+        ensure_events_submit_accepted(&response)?;
+        Ok(response)
+    }
+
+    /// The sole post-entry-0 write allowed to bypass the recovery-material
+    /// gate. SDK validation confines this to the exact two-slot self-principal
+    /// PCR bootstrap unit; this method cannot submit an arbitrary batch.
+    pub(crate) async fn submit_self_principal_bootstrap_unit(
+        &self,
+        request: arkret_sdk::EventsSubmitRequestBody,
+        idempotency_key: &str,
+    ) -> anyhow::Result<arkret_sdk::EventsSubmitOutcome> {
+        if request.event.is_some() || request.events.len() != 2 {
+            anyhow::bail!("self principal bootstrap request must contain exactly two events");
+        }
+        let [create, authorize]: [arkret_sdk::Event; 2] = request
+            .events
+            .try_into()
+            .map_err(|_| anyhow::anyhow!("self principal bootstrap request has invalid arity"))?;
+        arkret_sdk::identity::validate_self_principal_bootstrap_unit(&create, &authorize)?;
+        validate_signed_sdk_event_for_submit(&create)?;
+        validate_signed_sdk_event_for_submit(&authorize)?;
+        let idempotency_key = idempotency_key.trim();
+        if idempotency_key.is_empty() {
+            anyhow::bail!("self principal bootstrap idempotency key is required");
+        }
+        let body = arkret_sdk::EventsSubmitBatchRequestBody {
+            events: vec![create, authorize],
+            idempotency_key: Some(idempotency_key.to_owned()),
+        };
+        let response: arkret_sdk::EventsSubmitOutcome = self
+            .http
+            .post_with_options(
+                "/_arkret/self/events",
+                &body,
+                &arkret_sdk::http_client::ClientRequestOptions::new()
+                    .request_id(idempotency_key.to_owned())
+                    .idempotency_key(idempotency_key.to_owned()),
             )
             .await
             .map_err(anyhow::Error::from)?;
@@ -1184,6 +1338,26 @@ mod tests {
 
     use super::*;
 
+    fn test_authoring_generation() -> crate::identity::authoring_generation::AuthoringGeneration {
+        crate::identity::authoring_generation::AuthoringGeneration {
+            authority_model:
+                crate::identity::authoring_generation::AuthoringAuthorityModel::EnrollmentAuthority,
+            authority_principal_id: "did:web:alice.example".to_owned(),
+            generation_ref: "1-QmCurrent".to_owned(),
+        }
+    }
+
+    #[test]
+    fn queued_event_rejects_pre_generation_shape() {
+        let event = sdk_event_without_proof("did:web:alice.example");
+        let error = decode_queued_sdk_event(serde_json::json!({
+            "event": event,
+            "post_accept": null
+        }))
+        .unwrap_err();
+        assert!(error.to_string().contains("authoring_generation"));
+    }
+
     #[test]
     fn frontier_context_preserves_retryable_transport_error() {
         let error = actor_frontier_refresh_error(
@@ -1209,9 +1383,10 @@ mod tests {
             actor,
         );
         let mut pending = pending;
-        pending.payload = json!({
+        pending.payload = serde_json::from_value(json!({
             "message_id": "ak:message:01904100-0000-7000-8000-000000000001"
-        });
+        }))
+        .unwrap();
         queue
             .enqueue(
                 Some(pending.event_id.to_string()),
@@ -1221,6 +1396,7 @@ mod tests {
                 },
                 serde_json::to_value(QueuedSdkEvent {
                     event: pending,
+                    authoring_generation: test_authoring_generation(),
                     post_accept: None,
                 })
                 .unwrap(),
@@ -1244,6 +1420,7 @@ mod tests {
                 },
                 serde_json::to_value(QueuedSdkEvent {
                     event: sent,
+                    authoring_generation: test_authoring_generation(),
                     post_accept: None,
                 })
                 .unwrap(),
@@ -1351,6 +1528,7 @@ mod tests {
         };
         let content = serde_json::to_value(QueuedSdkEvent {
             event,
+            authoring_generation: test_authoring_generation(),
             post_accept: Some(PostAcceptAction::MlsSnapshot {
                 realm_id: realm_id.to_owned(),
                 snapshot,

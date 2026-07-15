@@ -67,13 +67,11 @@ pub(super) fn RecoveryReminderEffects(state: RecoveryReminderEffectState) -> Ele
             if state_store.read().session_grant().is_none() {
                 return;
             }
-            let (inputs, already_prompted, pending_confirmation) = {
+            let (inputs, already_prompted) = {
                 let store = state_store.read();
                 let account_recovery_configured = account_recovery_configured();
                 let local_recovery_configured =
                     crate::views::recovery::recovery_options_configured(&store, &actor);
-                let pending_confirmation = !local_recovery_configured
-                    && crate::views::recovery::load_pending_recovery_key(&actor).is_some();
                 let inputs = crate::account_health::AccountHealthInputs {
                     has_session: true,
                     sync_bootstrap_complete: sync_bootstrap_complete(),
@@ -100,14 +98,9 @@ pub(super) fn RecoveryReminderEffects(state: RecoveryReminderEffectState) -> Ele
                     &actor,
                     account_recovery_configured,
                 );
-                (inputs, already, pending_confirmation)
+                (inputs, already)
             };
-            if pending_confirmation
-                || crate::account_health::should_auto_prompt_recovery_setup(
-                    inputs,
-                    already_prompted,
-                )
-            {
+            if crate::account_health::should_auto_prompt_recovery_setup(inputs, already_prompted) {
                 recovery_auto_prompt_fired.set(true);
                 recovery_key_setup_prompt.set(true);
             }

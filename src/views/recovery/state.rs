@@ -1,7 +1,5 @@
 //! Private-data load/save and recovery-material predicates.
 
-use base64::Engine as _;
-use base64::engine::general_purpose::URL_SAFE_NO_PAD as B64;
 use dioxus::prelude::*;
 
 use super::RECOVERY_STATE_KEY;
@@ -50,13 +48,16 @@ pub(crate) fn save_generated_recovery_key_metadata(
     }
     let mut state = load_state(state_store, account_key);
     let fingerprint = fingerprint_recovery_key(recovery_key);
-    let (_, recovery_public_key) =
-        crate::hpke_backup::derive_recovery_keypair_from_recovery_key(recovery_key).ok()?;
+    let key_material = arkret_sdk::identity_root::derive_identity_recovery_key_material_from_bip39(
+        recovery_key,
+        "",
+        0,
+    )
+    .ok()?;
     let rotated_at = chrono::Utc::now().to_rfc3339();
     state.recovery_key_fingerprint = fingerprint.clone();
-    state.recovery_public_key_b64u = B64.encode(recovery_public_key);
+    state.backup_hpke_public_key_multibase = key_material.backup_hpke_public_key_multikey.clone();
     state.recovery_key_rotated_at = rotated_at.clone();
-    state.passkey_wraps.clear();
     save_state(state_store, account_key, &state);
     Some((fingerprint, rotated_at))
 }
@@ -113,11 +114,15 @@ pub(crate) fn local_recovery_public_key(
     state_store
         .load_private_data(account_key, RECOVERY_STATE_KEY)
         .and_then(|raw| serde_json::from_str::<RecoveryState>(&raw).ok())
-        .map(|state| state.recovery_public_key_b64u)
+        .map(|state| state.backup_hpke_public_key_multibase)
         .map(|key| key.trim().to_owned())
         .filter(|key| !key.is_empty())
-        .and_then(|key| B64.decode(key.as_bytes()).ok())
-        .filter(|key| !key.is_empty())
+        .and_then(|key| arkret_sdk::decode_multibase_base58btc(&key).ok())
+        .and_then(|encoded| {
+            let (codec, header_len) = arkret_sdk::decode_multicodec_varint(&encoded)?;
+            (codec == 0xec && encoded.len().saturating_sub(header_len) == 32)
+                .then(|| encoded[header_len..].to_vec())
+        })
 }
 
 pub(crate) fn fmt_relative(iso: &str) -> String {

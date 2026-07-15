@@ -732,20 +732,14 @@ async fn finish_oidc_callback(
     if scaffold.issuer.trim().is_empty() {
         return Err("Sign-in state is missing the OIDC issuer.".to_owned());
     }
-    // `principal_id` is optional for Account Authority session-grants. Inkson's
-    // neutral interactive login leaves the scaffold actor hint blank (sent as
-    // `None`), so the Account Authority derives the principal DID from the OIDC
-    // subject and returns it in `SessionGrantOutcome.principal_id`. A non-empty
-    // scaffold value is an explicit binding request and coauth must reject it if
-    // it does not match the authenticated user.
-    let principal_id = if actor_hint.trim().is_empty() {
-        None
-    } else {
-        Some(
-            arkret_sdk::Did::new(actor_hint.clone())
-                .map_err(|error| format!("invalid principal_id DID: {error}"))?,
-        )
-    };
+    // Session grants are explicitly principal-bound. A callback scaffold that
+    // lost the principal binding must fail closed instead of asking coauth to
+    // infer a different identity from the OIDC subject.
+    if actor_hint.is_empty() {
+        return Err("Sign-in state is missing the principal DID binding.".to_owned());
+    }
+    let principal_id = arkret_sdk::Did::new(actor_hint.clone())
+        .map_err(|error| format!("invalid principal_id DID: {error}"))?;
     let device_id = arkret_sdk::DeviceId::new(device.clone())
         .map_err(|error| format!("invalid device_id: {error}"))?;
     let request_canonical_digest = oidc_request_canonical_digest(

@@ -10,40 +10,30 @@ use dioxus_router::hooks::use_navigator;
 use crate::recovery_crypto::{
     RecoveryKeyConfirmationDiff, generate_recovery_key, recovery_key_confirmation_diff,
 };
-use crate::state::LocalStateStore;
 use crate::ui::button::{Button, ButtonVariant};
 use crate::ui::dialog::Dialog;
 use crate::ui::label::Label;
 use crate::ui::textarea::Textarea;
 use crate::views::recovery::RecoveryKeyBackupOutcome;
 
-/// Fail-closed Recovery Key establishment.
+/// Prepare a recovery secret for explicit cold-custody confirmation.
 ///
-/// Security invariant: a device may only establish (reveal + locally persist) a
-/// brand-new account Recovery Key root if the SERVER first confirms this device
-/// is an authorized, verified key-management device for the account. So we:
-///
-/// 1. generate the 24 words without exposing them to the UI;
-/// 2. attempt the server backup (`upload_recovery_key_account_backup`);
-/// 3. after `Established`, durably stage the words only in the hardened secure store and reveal
-///    them; local recovery metadata stays pending until the user passes the transcription check
-///    ("Confirm saved key"), which finalizes it via `save_generated_recovery_key_metadata` and
-///    deletes the staged secret;
-/// 4. on `DeviceNotAuthorized` discard the key and route the user to authorize this device /
-///    restore with their existing Recovery Key — never leave a divergent root behind.
+/// The words are revealed before any recovery-policy or backup write. The
+/// caller may publish recovery material only after the user re-enters the same
+/// phrase; no plaintext or encrypted copy is persisted as ordinary device
+/// state while confirmation is pending.
 fn begin_recovery_key_setup(
-    base_url: Signal<String>,
-    token: Signal<String>,
     account_did: Signal<String>,
-    device_id: Signal<String>,
-    state_store: SyncSignal<LocalStateStore>,
     mut generated_recovery_key: Signal<String>,
     mut confirmation_input: Signal<String>,
     mut status: Signal<String>,
     mut copied: Signal<bool>,
     mut device_unauthorized: Signal<bool>,
-    on_server_configured: Option<EventHandler<()>>,
 ) {
+    if account_did().trim().is_empty() {
+        status.set("Recovery Key setup requires an active account.".to_owned());
+        return;
+    }
     let recovery_key = match generate_recovery_key() {
         Ok(key) => key,
         Err(err) => {
@@ -51,44 +41,15 @@ fn begin_recovery_key_setup(
             return;
         }
     };
-    if account_did().trim().is_empty() {
-        status.set("Recovery Key setup requires an active account.".to_owned());
-        return;
-    }
     copied.set(false);
     confirmation_input.set(String::new());
     device_unauthorized.set(false);
-    generated_recovery_key.set(String::new());
-    status.set("Authorizing this device and publishing the recovery backup…".to_owned());
-    // Reveal/persist gating happens entirely on the server outcome. Built within
-    // component scope (this fn is only ever called from a use_effect / onclick),
-    // so EventHandler::new is valid here.
-    let reveal_key = recovery_key.clone();
-    let on_outcome = EventHandler::new(move |outcome: RecoveryKeyBackupOutcome| match outcome {
-        RecoveryKeyBackupOutcome::Established => {
-            generated_recovery_key.set(reveal_key.clone());
-        }
-        RecoveryKeyBackupOutcome::DeviceNotAuthorized => {
-            generated_recovery_key.set(String::new());
-            device_unauthorized.set(true);
-        }
-        RecoveryKeyBackupOutcome::Transient => {
-            generated_recovery_key.set(String::new());
-        }
-    });
-    crate::views::recovery::upload_recovery_key_account_backup(
-        base_url(),
-        token,
-        account_did,
-        device_id,
-        state_store,
-        recovery_key,
-        status,
-        on_server_configured,
-        Some(on_outcome),
+    generated_recovery_key.set(recovery_key);
+    status.set(
+        "Write the 24 words down offline, then re-enter them. Nothing has been published yet."
+            .to_owned(),
     );
 }
-
 #[component]
 pub fn RecoveryKeySetupPrompt(
     token: Signal<String>,
@@ -127,26 +88,14 @@ pub fn RecoveryKeySetupPrompt(
             return;
         }
         auto_generate_started.set(true);
-        if let Some(pending_key) = crate::views::recovery::load_pending_recovery_key(&account_did())
-        {
-            generated_recovery_key.set(pending_key);
-            status
-                .set("Recovery Key setup is still awaiting your 24-word confirmation.".to_owned());
-            return;
-        }
         status.set("Generating Recovery Key...".to_owned());
         begin_recovery_key_setup(
-            base_url,
-            token,
             account_did,
-            device_id,
-            state_store,
             generated_recovery_key,
             confirmation_input,
             status,
             copied,
             device_unauthorized,
-            on_server_configured,
         );
     });
 
@@ -207,7 +156,7 @@ pub fn RecoveryKeySetupPrompt(
                 div { class: "modal-body mls-recovery-modal-body",
                     if is_device_unauthorized {
                         div { class: "form-hint-warn", "data-testid": "recovery-key-setup-device-unauthorized",
-                            "This device isn't authorized to create the account Recovery Key. Authorize it from a device you already use, or restore with your existing 24-word Recovery Key. A new key is never created on an unverified device."
+                            "This device isn't authorized to publish recovery material. The words remain only on this screen; authorize the device, then retry with the same confirmed key, or restore with the existing Recovery Key."
                         }
                     } else {
                         div { class: "muted",
@@ -312,17 +261,12 @@ pub fn RecoveryKeySetupPrompt(
                                     auto_generate_started.set(true);
                                     status.set("Generating Recovery Key...".to_owned());
                                     begin_recovery_key_setup(
-                                        base_url,
-                                        token,
                                         account_did,
-                                        device_id,
-                                        state_store,
                                         generated_recovery_key,
                                         confirmation_input,
                                         status,
                                         copied,
                                         device_unauthorized,
-                                        on_server_configured,
                                     );
                                 },
                                 "Try again"
@@ -349,17 +293,12 @@ pub fn RecoveryKeySetupPrompt(
                                 auto_generate_started.set(true);
                                 status.set("Generating a replacement Recovery Key...".to_owned());
                                 begin_recovery_key_setup(
-                                    base_url,
-                                    token,
                                     account_did,
-                                    device_id,
-                                    state_store,
                                     generated_recovery_key,
                                     confirmation_input,
                                     status,
                                     copied,
                                     device_unauthorized,
-                                    on_server_configured,
                                 );
                             },
                             "Generate a new key"
@@ -390,40 +329,70 @@ pub fn RecoveryKeySetupPrompt(
                                         }
                                     }
                                     let actor = account_did();
-                                    if !actor.trim().is_empty()
-                                        && !saved_recovery_key.trim().is_empty()
+                                    if actor.trim().is_empty()
+                                        || saved_recovery_key.trim().is_empty()
                                     {
-                                        // Transcription verified — finalize the pending
-                                        // enrollment. The server backup was accepted before
-                                        // the words were revealed; local metadata
-                                        // (fingerprint / public key / rotated_at) lands
-                                        // only now, on verify success.
-                                        let mut store_signal = state_store;
-                                        let _ = crate::views::recovery::save_generated_recovery_key_metadata(
-                                            &mut store_signal,
-                                            &actor,
-                                            &saved_recovery_key,
+                                        status.set(
+                                            "Recovery Key setup requires an active account."
+                                                .to_owned(),
                                         );
-                                        let fingerprint =
-                                            crate::recovery_crypto::fingerprint_recovery_key(
-                                                &saved_recovery_key,
-                                            );
-                                        let mut store = state_store.write();
-                                        store.save_private_data(
-                                            &actor,
-                                            crate::app::RECOVERY_AUTO_PROMPT_SHOWN_KEY,
-                                            "1".to_owned(),
-                                        );
-                                        store.save_private_data(
-                                            &actor,
-                                            crate::app::RECOVERY_AUTO_PROMPT_LOCAL_ONLY_SHOWN_KEY,
-                                            fingerprint,
-                                        );
-                                        crate::views::recovery::clear_pending_recovery_key(&actor);
+                                        return;
                                     }
-                                    generated_recovery_key.set(String::new());
-                                    confirmation_input.set(String::new());
-                                    open.set(false);
+                                    status.set(
+                                        "Cold custody confirmed. Publishing the recovery policy and first encrypted backup…"
+                                            .to_owned(),
+                                    );
+                                    let accepted_key = saved_recovery_key.clone();
+                                    let accepted_actor = actor.clone();
+                                    let on_outcome = EventHandler::new(
+                                        move |outcome: RecoveryKeyBackupOutcome| match outcome {
+                                            RecoveryKeyBackupOutcome::Established => {
+                                                let mut store_signal = state_store;
+                                                let Some((fingerprint, _)) =
+                                                    crate::views::recovery::save_generated_recovery_key_metadata(
+                                                        &mut store_signal,
+                                                        &accepted_actor,
+                                                        &accepted_key,
+                                                    )
+                                                else {
+                                                    status.set(
+                                                        "Recovery material was accepted, but public local metadata could not be saved."
+                                                            .to_owned(),
+                                                    );
+                                                    return;
+                                                };
+                                                let mut store = state_store.write();
+                                                store.save_private_data(
+                                                    &accepted_actor,
+                                                    crate::app::RECOVERY_AUTO_PROMPT_SHOWN_KEY,
+                                                    "1".to_owned(),
+                                                );
+                                                store.save_private_data(
+                                                    &accepted_actor,
+                                                    crate::app::RECOVERY_AUTO_PROMPT_LOCAL_ONLY_SHOWN_KEY,
+                                                    fingerprint,
+                                                );
+                                                generated_recovery_key.set(String::new());
+                                                confirmation_input.set(String::new());
+                                                open.set(false);
+                                            }
+                                            RecoveryKeyBackupOutcome::DeviceNotAuthorized => {
+                                                device_unauthorized.set(true);
+                                            }
+                                            RecoveryKeyBackupOutcome::Transient => {}
+                                        },
+                                    );
+                                    crate::views::recovery::upload_recovery_key_account_backup(
+                                        base_url(),
+                                        token,
+                                        account_did,
+                                        device_id,
+                                        state_store,
+                                        saved_recovery_key.clone(),
+                                        status,
+                                        on_server_configured,
+                                        Some(on_outcome),
+                                    );
                                 }
                             },
                             "Confirm saved key"

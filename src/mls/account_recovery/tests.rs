@@ -42,7 +42,7 @@ fn wrap() -> Value {
 }
 
 /// Build the HPKE `recovery_public_key` account-secret backup that the
-/// server-first recovery redesign treats as the preferred, passphrase-free
+/// recovery-public-key design treats as the preferred, passphrase-free
 /// recovery material. The prompt gates (`mls_restore_prompt_required` /
 /// `mls_backup_prompt_required`) key off this body, not the passphrase-wrapped
 /// `wrap()` `secret_storage` body.

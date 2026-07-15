@@ -1,119 +1,64 @@
-# inkson — First Login
+# inkson — First identity setup
 
-> What happens between launching inkson for the first time and reaching the
-> dashboard. References `crypto-media/device-lifecycle.md` §1-§3 and the
-> coauth OIDC sign-in strand.
+The first identity setup is custody-first. Signing in and creating a principal
+identity are separate operations: a session is always bound to an already
+verified principal DID and cannot invent one from a handle or OIDC subject.
 
-The first-login strand has three legs:
+## 1. Discover and sign in
 
-1. **Discover the Principal Server** — base URL + capabilities.
-2. **Sign in via coauth OIDC** — the only place where account credentials
-   are entered.
-3. **Bootstrap the local device** — generate a signing key, publish
-   `ak.device.authorize`, run optional verification.
+1. Select the Principal Server and complete discovery.
+2. Sign in through coauth.
+3. Inkson verifies that the returned session grant contains the exact bound
+   `principal_id` and device binding. A missing principal binding fails closed.
 
-The /onboarding view in inkson owns leg 3 and adds an optional recovery
-policy step. Legs 1 + 2 belong to coauth.
+For a principal that does not exist yet, use the account-authority identity
+creation strand; do not enter an arbitrary DID in Inkson.
 
----
+## 2. Confirm cold custody
 
-## 1. Discover the Principal Server
+Before WebVH entry 0 exists, Inkson generates a 24-word Recovery Key locally.
+Write it down offline and re-enter it exactly. No policy, backup, DID entry, or
+ordinary local secret containing the words is written before this check.
 
-On first launch inkson shows the **Server picker** in the top bar.
+The SDK derives separate keys for the WebVH root, recovery proof, and backup
+HPKE recipient. Inkson persists only their public commitments and stable
+idempotency keys. If the app restarts, present the same Recovery Key to resume;
+Inkson re-derives and compares the public draft.
 
-<!-- TODO(screenshot): server-picker-empty.png -->
+## 3. Publish entry 0 and bootstrap the PCR
 
-1. Click **Server / Switch**.
-2. Choose an existing entry or **Add server**.
-3. Enter the soland base URL (for local testing: `https://local.host`).
-4. inkson pulls `/.well-known/arkret-discovery` and renders the result.
+After custody confirmation:
 
-If discovery fails you will see an error toast carrying the
-`x-arkret-request-id` from soland. Capture that header before opening
-a bug — see [`faq-troubleshooting.md`](../faq-troubleshooting.md#discovery-fails).
+1. Publish the root-signed principal WebVH entry 0. It delegates device
+   enrollment but contains no ownerless principal verification key.
+2. Atomically submit the two-slot PCR bootstrap unit:
+   root-signed `ak.realm.create`, followed by enrollment-authority-signed
+   `ak.device.authorize`.
+3. Managed Agent PCR creation stays on its controller-delegated path and never
+   uses the `did_inception` exception.
 
-<!-- TODO(screenshot): discovery-result.png -->
+The root seed exists only for this explicit cold-signing ceremony and is then
+cleared from the online buffer. It is not the device signing key.
 
----
+## 4. Satisfy the recovery-material gate
 
-## 2. Sign in via coauth
+Inkson publishes the signed recovery policy and the first recoverable
+`did_recovery` envelope. Ordinary durable writes remain blocked until both are
+accepted and the backup references the active policy version.
 
-1. Click **Login** in the top bar (or visit `/login`).
-2. inkson redirects to coauth's OIDC page in the same window.
-3. Complete the sign-in (passkey / password / TOTP — coauth owns the
-   factor set).
-4. coauth redirects back to inkson with an OIDC code; inkson exchanges it
-   for an access token and persists the bundle in `LocalStateStore`.
+Only after acceptance does Inkson store public local metadata (fingerprint,
+accepted time, and HPKE public multikey) and clear the displayed words.
 
-<!-- TODO(screenshot): coauth-oidc-page.png -->
-<!-- TODO(screenshot): coauth-callback-success.png -->
+## 5. Verify the result
 
-If the bundle is missing the `ak.session.grant` claim, the device-bootstrap
-step (next) will fail closed. Re-attempt the login.
+- The PCR exists with `mls_rfc9420` and both encryption floors set to
+  `e2ee_required`.
+- Exactly one first device authorization is accepted in the bootstrap batch.
+- Settings → Recovery reports accepted recovery material.
+- The Recovery Key plaintext is no longer present in device state.
+- If setup is interrupted, resuming uses the same draft and operation ids;
+  Inkson does not mint a second identity silently.
 
----
-
-## 3. Bootstrap the local device
-
-Open `/onboarding`. The four-step stepper walks through:
-
-### Step 1 — DID method
-
-`did:webvh` is the default. `did:web` is **test-only**; `did:plc` /
-`did:keri` are placeholders and cannot be selected.
-
-<!-- TODO(screenshot): onboarding-step-did.png -->
-
-### Step 2 — Handle binding
-
-Pick a local handle. Handles are a human-readable entry point and reverse-
-resolve to your DID; they are **not** a permission key.
-
-<!-- TODO(screenshot): onboarding-step-handle.png -->
-
-### Step 3 — Device key
-
-inkson generates a local ed25519 signing key, hands it to the keychain
-(desktop) or IndexedDB (web), and publishes
-`ak.device.authorize`. You may then run a `KeyVerification` round against
-a previously enrolled device to elevate trust.
-
-<!-- TODO(screenshot): onboarding-step-device.png -->
-<!-- TODO(screenshot): device-verification-qr.png -->
-
-### Step 4 — Recovery policy
-
-Pick an initial recovery preference:
-
-- **Encrypted Cloud Vault** — Argon2id passphrase + XChaCha20-Poly1305
-  upload. Unlocks encrypted backup material; requires you to remember a
-  passphrase.
-- **Social Recovery (SSS)** — split a recovery secret across N guardians.
-- **Recovery Key** — display-once high-entropy recovery phrase.
-
-The choice is persisted to `localState` under `onboarding.recovery_choice`.
-Publishing the active `ak.schema.recovery_policy.v1` remains a separate
-server-backed follow-up.
-
-<!-- TODO(screenshot): onboarding-step-recovery.png -->
-
-You can change the policy later under **Settings → Recovery**. The
-`FirstBackupGate` component blocks you from leaving the inception strand
-until at least one `backup_class=did_recovery` envelope is published —
-this is non-negotiable.
-
----
-
-## 4. Verification
-
-After step 4, the dashboard becomes reachable. Confirm:
-
-- [ ] Top bar shows your handle + the verified pill.
-- [ ] Settings → Devices lists exactly one device (this one).
-- [ ] Settings → Recovery shows your selected policy as **active**.
-- [ ] The notification preferences toggle defaults to **wakeup-only**.
-
-If any step fails, every error toast carries the soland `request_id`.
-Copy it before retrying.
-
-<!-- TODO(screenshot): dashboard-verified-state.png -->
+Direct Recovery Key replacement is disabled after setup. Rotation requires the
+durable staged handoff, complete backup-series rewrapping, pointer advance, and
+only then old-key revocation.

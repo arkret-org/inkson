@@ -4,14 +4,11 @@
 //! - **Recovery Key (24 words)**: 256 bits of entropy, formatted as a 24-word BIP-39 mnemonic. This
 //!   is the ONLY user-visible recovery credential — `normalize_recovery_key_input` (and therefore
 //!   the `MlsUnlockPrompt` restore path) only accepts this 24-word format. Enrollment is
-//!   server-first (design: `docs/design/recovery-key-server-first.md`): generating the key
-//!   publishes the recovery policy and a `did_recovery` backup, wraps the account MLS secret behind
-//!   it when one exists (see `upload_recovery_key_account_backup`), and the words are shown ONLY
-//!   after the server accepts — so a rejected registration never invalidates a copy the user
-//!   already wrote down. Local metadata (SHA-256 fingerprint + rotation timestamp, via
-//!   `LocalStateStore::save_private_data`) stays pending until the user passes the transcription
-//!   check; until then, the words are staged only in the hardened secure store so an accidental
-//!   refresh can resume the same confirmation. The words are never uploaded.
+//!   custody-first: the client generates and displays the words in memory, requires an exact
+//!   re-entry, and only then publishes the recovery policy and `did_recovery` backup. Public local
+//!   metadata (SHA-256 fingerprint, backup-HPKE multikey, and rotation timestamp) is committed
+//!   after server acceptance. The recovery secret is never uploaded or persisted as ordinary device
+//!   state.
 //! - **Backup history**: summarizes the server-side `ak.schema.key_backup.v1` ciphertext envelopes
 //!   by creation time, emphasizing the latest encrypted backup without exposing per-backup
 //!   controls.
@@ -22,14 +19,13 @@
 //! (NOT encrypted) at rest under the public account DID via
 //! `obfuscate_nonsensitive` (and on wasm32 mirrored to localStorage) — it holds
 //! only non-sensitive markers such as a last-rehearsal timestamp. The Recovery
-//! view never persists the Recovery Key itself in plaintext or via this path; pending words use
-//! the platform SecureKeyStore and are deleted after confirmation.
+//! view never persists the Recovery Key itself in plaintext, encrypted form, or via this path.
 //!
 //! Split by responsibility into:
 //!   - [`types`]: serialized state + backup-summary data types;
 //!   - [`backup_summary`]: backup-list parsing, sorting, and status formatting;
 //!   - [`state`]: private-data load/save and recovery-material predicates;
-//!   - [`helpers`]: passkey-wrap AAD and clipboard helpers;
+//!   - [`helpers`]: clipboard helper;
 //!   - [`upload`]: the RK-as-authority server backup flow;
 //!   - [`panel`]: the `RecoveryPanel` Dioxus component.
 
@@ -50,7 +46,4 @@ pub(crate) use state::{
     local_recovery_key_fingerprint, local_recovery_public_key, recovery_options_configured,
     save_generated_recovery_key_metadata,
 };
-pub(crate) use upload::{
-    RecoveryKeyBackupOutcome, clear_pending_recovery_key, load_pending_recovery_key,
-    upload_recovery_key_account_backup,
-};
+pub(crate) use upload::{RecoveryKeyBackupOutcome, upload_recovery_key_account_backup};

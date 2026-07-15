@@ -249,11 +249,16 @@ dependencies = [
  "arkret-canonical",
  "arkret-core",
  "arkret-signatures",
+ "bip39",
  "chrono",
+ "ed25519-dalek",
+ "hkdf 0.13.0",
+ "hpke",
  "serde",
  "serde_json",
  "sha2 0.11.0",
  "thiserror 2.0.18",
+ "zeroize",
 ]
 
 [[package]]

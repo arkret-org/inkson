@@ -31,7 +31,7 @@ mod strand_mls;
 #[cfg(not(target_arch = "wasm32"))]
 pub(super) trait TestEventPayloadView {
     fn kind_for_schema(&self) -> &str;
-    fn payload_for_schema(&self) -> &serde_json::Value;
+    fn payload_for_schema(&self) -> serde_json::Value;
 }
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -40,21 +40,22 @@ impl TestEventPayloadView for arkret_sdk::Event {
         self.kind.as_str()
     }
 
-    fn payload_for_schema(&self) -> &serde_json::Value {
-        &self.payload
+    fn payload_for_schema(&self) -> serde_json::Value {
+        serde_json::to_value(&self.payload).expect("event payload serializes")
     }
 }
 
 #[cfg(not(target_arch = "wasm32"))]
 pub(super) fn assert_registered_payload_valid(event: &impl TestEventPayloadView) {
+    let payload = event.payload_for_schema();
     arkret_sdk::schema::event_payload_validator_catalog()
         .unwrap()
-        .validate_payload(event.kind_for_schema(), event.payload_for_schema())
+        .validate_payload(event.kind_for_schema(), &payload)
         .unwrap_or_else(|err| {
             panic!(
                 "{} payload violates registered schema: {err}\npayload: {}",
                 event.kind_for_schema(),
-                serde_json::to_string_pretty(event.payload_for_schema()).unwrap()
+                serde_json::to_string_pretty(&payload).unwrap()
             )
         });
 }

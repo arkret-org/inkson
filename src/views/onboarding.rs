@@ -13,11 +13,10 @@
 //! - `crypto-media/device-lifecycle.md` §10-§13 — recovery key (24 words) / SSS.
 //!
 //! Steps:
-//!   1. Choose a DID method (default: did:webvh; did:web is test/local only; placeholder methods
-//!      are visible but not selectable).
-//!   2. Bind a handle.
-//!   3. Generate the local device key + ak.device.authorize.
-//!   4. Configure a recovery policy (recovery key (24 words) / SSS guardian).
+//!   1. Generate the recovery secret and complete cold-custody confirmation.
+//!   2. Prepare and publish the public DID inception draft.
+//!   3. Atomically submit the root-signed PCR create and authority-signed first device authorize.
+//!   4. Accept recovery policy + first backup before any ordinary durable write.
 
 use dioxus::prelude::*;
 use dioxus_router::Link;
@@ -27,12 +26,11 @@ use crate::recovery_strand::{
     FirstBackupGateBlockReason, FirstBackupGateStatus, first_backup_gate_status_from_payloads,
 };
 use crate::routes::Route;
-use crate::transport::TransportClient;
 use crate::transport::auth::{with_authed_api, with_authed_sdk_client};
 use crate::ui::button::{Button, ButtonVariant};
 use crate::ui::input::Input;
 use crate::ui::label::Label;
-use crate::views::helpers::{handle_from_did, short_protocol_id};
+use crate::views::helpers::short_protocol_id;
 
 /// Storage key for the onboarding-step-4 recovery choice (`vault` / `social` / `key`).
 const ONBOARDING_RECOVERY_CHOICE_KEY: &str = "onboarding.recovery_choice";
@@ -100,19 +98,19 @@ enum OnboardingStep {
 impl OnboardingStep {
     fn index(self) -> usize {
         match self {
-            Self::DidMethod => 1,
-            Self::Handle => 2,
+            Self::Recovery => 1,
+            Self::DidMethod => 2,
             Self::Device => 3,
-            Self::Recovery => 4,
+            Self::Handle => 4,
         }
     }
 
     fn label(self) -> &'static str {
         match self {
-            Self::DidMethod => "DID method",
-            Self::Handle => "Handle",
-            Self::Device => "Device key",
-            Self::Recovery => "Recovery",
+            Self::Recovery => "Cold custody",
+            Self::DidMethod => "Identity draft",
+            Self::Device => "Atomic bootstrap",
+            Self::Handle => "Recovery material",
         }
     }
 }
@@ -127,7 +125,7 @@ pub fn OnboardingPanel(
     // A4 — base_url / state_store from session context instead of props.
     let base_url = crate::app::SessionContext::base_url_string();
     let mut state_store = crate::app::SessionContext::get().state_store;
-    let mut step = use_signal(|| OnboardingStep::DidMethod);
+    let mut step = use_signal(|| OnboardingStep::Recovery);
     let mut did_method = use_signal(|| DEFAULT_PRINCIPAL_DID_METHOD.to_owned());
     let mut handle_local = use_signal(|| "alice".to_owned());
     let mut handle_domain = use_signal(|| "users.arkret.social".to_owned());
@@ -145,11 +143,7 @@ pub fn OnboardingPanel(
         .unwrap_or_else(|| shorten_device_key(""));
     let device_id_value = device_id();
     let device_id_label = short_protocol_id(&device_id_value);
-    let mut register_did = use_signal(|| account_did());
-    let mut register_handle = use_signal(|| handle_from_did(&account_did()));
-    let mut register_display_name = use_signal(|| "inkson".to_owned());
-    let mut register_device_id = use_signal(|| device_id());
-    let mut account_state = use_signal(|| "No bootstrap action yet".to_owned());
+    let mut account_state = use_signal(|| "Verified identity binding not loaded".to_owned());
 
     rsx! {
         div { class: "timeline", "data-testid": "onboarding-panel", role: "region", "aria-label": "Onboarding stepper",
@@ -163,7 +157,7 @@ pub fn OnboardingPanel(
                     "Establish a recoverable identity. Account registration and account recovery happen in the coauth sign-in strand; these four steps configure the on-device identity surface."
                 }
                 div { class: "actions", "data-testid": "onboarding-progress", role: "tablist",
-                    for s in [OnboardingStep::DidMethod, OnboardingStep::Handle, OnboardingStep::Device, OnboardingStep::Recovery] {
+                    for s in [OnboardingStep::Recovery, OnboardingStep::DidMethod, OnboardingStep::Device, OnboardingStep::Handle] {
                         Button {
                             variant: if step() == s { ButtonVariant::Primary } else { ButtonVariant::Secondary },
                             role: "tab",
@@ -184,7 +178,7 @@ pub fn OnboardingPanel(
                     span { "account / session checks" }
                 }
                 div { id: "account-strand-help", class: "muted",
-                    "Account bootstrap moved out of Realm setup. Routine sign-in still belongs to Login; this card exists so onboarding keeps the identity-side setup and verification actions together."
+                    "This signed-in surface only displays the Account Authority's verified principal binding. A user-supplied DID cannot be registered here. A new principal is bound only after its custody-confirmed entry 0 and atomic PCR bootstrap have been accepted."
                 }
                 div {
                     class: "muted",
@@ -194,78 +188,9 @@ pub fn OnboardingPanel(
                     "data-testid": "account-strand-status",
                     "{account_state}"
                 }
-                div { class: "workflow-form",
-                    Input {
-                        "data-testid": "account-register-did-input",
-                        "aria-label": "Account DID",
-                        "aria-describedby": "account-strand-help",
-                        value: "{register_did}",
-                        oninput: move |event: FormEvent| {
-                            let value = event.value();
-                            register_handle.set(handle_from_did(&value));
-                            register_did.set(value);
-                        }
-                    }
-                    Input {
-                        "data-testid": "account-register-handle-input",
-                        "aria-label": "Local handle",
-                        value: "{register_handle}",
-                        oninput: move |event: FormEvent| register_handle.set(event.value())
-                    }
-                    Input {
-                        "data-testid": "account-register-display-name-input",
-                        "aria-label": "Display name",
-                        value: "{register_display_name}",
-                        oninput: move |event: FormEvent| register_display_name.set(event.value())
-                    }
-                    Input {
-                        "data-testid": "account-register-device-id-input",
-                        "aria-label": "Device ID",
-                        value: "{register_device_id}",
-                        oninput: move |event: FormEvent| register_device_id.set(event.value())
-                    }
-                }
                 div { class: "actions",
                     Button {
                         variant: ButtonVariant::Primary,
-                        "data-testid": "register-account-button",
-                        onclick: {
-                            let base = base_url.clone();
-                            move |_| {
-                                let base = base.clone();
-                                let actor = register_did();
-                                let handle = register_handle();
-                                let display = register_display_name();
-                                let device = register_device_id();
-                                spawn(async move {
-                                    match TransportClient::unauthenticated(&base) {
-                                        Ok(api) => match async {
-                                            crate::transport::account::register_account(
-                                                &api.sdk_http_client()?,
-                                                &actor,
-                                                &handle,
-                                                Some(&display),
-                                                Some(&device),
-                                            )
-                                            .await
-                                        }
-                                        .await
-                                        {
-                                            Ok(account) => account_state.set(format!(
-                                                "registered {}",
-                                                account.principal_id
-                                            )),
-                                            Err(error) => account_state.set(format!("register failed: {error}")),
-                                        },
-                                        Err(error) => account_state.set(format!("invalid server URL: {error}")),
-                                    }
-                                });
-                            }
-                        },
-                        "Register"
-                    }
-                    Button {
-                        variant: ButtonVariant::Secondary,
                         "data-testid": "account-me-button",
                         onclick: {
                             let base = base_url.clone();
@@ -279,7 +204,7 @@ pub fn OnboardingPanel(
                                     .await
                                     {
                                         Ok(account) => account_state
-                                            .set(format!("me {}", account.did)),
+                                            .set(format!("verified principal {}", account.did)),
                                         Err(err) => account_state
                                             .set(format!("me: {}", err.display())),
                                     }
@@ -290,7 +215,7 @@ pub fn OnboardingPanel(
                     }
                     Button {
                         variant: ButtonVariant::Secondary,
-                        onclick: move |_| step.set(OnboardingStep::Handle),
+                        onclick: move |_| step.set(OnboardingStep::Recovery),
                         "Continue Onboarding"
                     }
                     Link { class: "secondary", to: Route::Login, "Open Login" }
@@ -298,15 +223,15 @@ pub fn OnboardingPanel(
                 }
             }
 
-            // Step 1: DID method
+            // Step 2: public identity draft
             if step() == OnboardingStep::DidMethod {
                 div { class: "event", "data-testid": "onboarding-step-did",
                     div { class: "event-head",
-                        span { "Step 1 · DID method" }
+                        span { "Step 2 · Public identity draft" }
                         span { "identity-did.md §3" }
                     }
                     div { class: "muted",
-                        "Default principal identifiers now use did:webvh. did:web is kept for testing/local strands and is not recommended for production. did:plc and did:keri are placeholders only; placeholder methods cannot be selected here."
+                        "The client derives root_0 and the root_1 pre-rotation commitment from the already-confirmed Recovery Key, then persists only this public draft and its canonical idempotency keys. Root seed material is never written to ordinary client state."
                     }
                     div { class: "metric-grid",
                         div { class: "metric",
@@ -343,12 +268,13 @@ pub fn OnboardingPanel(
                             onclick: move |_| did_method.set(TEST_ONLY_DID_METHOD.to_owned()),
                             "Use did:web (test only)"
                         }
-                        Button { variant: ButtonVariant::Secondary, "data-testid": "next-handle", onclick: move |_| step.set(OnboardingStep::Handle), "Next →" }
+                        Button { variant: ButtonVariant::Secondary, onclick: move |_| step.set(OnboardingStep::Recovery), "← Back" }
+                        Button { variant: ButtonVariant::Secondary, "data-testid": "next-device", onclick: move |_| step.set(OnboardingStep::Device), "Next →" }
                     }
                 }
             }
 
-            // Step 2: Handle binding
+            // Step 4: accepted recovery material and optional handle binding
             //
             // R3 spec sync (b47ff6ec) — wire-level handle homograph
             // guard. Surface an inline warning when the localpart
@@ -371,11 +297,11 @@ pub fn OnboardingPanel(
                     rsx! {
                         div { class: "event", "data-testid": "onboarding-step-handle",
                             div { class: "event-head",
-                                span { "Step 2 · Handle binding" }
+                                span { "Step 4 · Recovery material ready" }
                                 span { "identity-handles.md §17" }
                             }
                             div { class: "muted",
-                                "Handles are a human-readable entry point, not a permission key. Once bound, they can be reverse-resolved back to your DID."
+                                "Ordinary durable writes stay blocked until an accepted recovery policy and matching did_recovery envelope make recovery_material_pending=false. A handle may be bound only after that gate; it is a human-readable entry point, never a permission key."
                             }
                             div { class: "workflow-form",
                                 Label { html_for: "handle-local-input", "Local part" }
@@ -421,14 +347,7 @@ pub fn OnboardingPanel(
                                 "Reverse resolution evidence is preserved as a content-addressed proof in the public directory."
                             }
                             div { class: "actions",
-                                Button { variant: ButtonVariant::Secondary, onclick: move |_| step.set(OnboardingStep::DidMethod), "← Back" }
-                                Button {
-                                    variant: ButtonVariant::Secondary,
-                                    "data-testid": "next-device",
-                                    disabled: homograph_present,
-                                    onclick: move |_| step.set(OnboardingStep::Device),
-                                    "Next →"
-                                }
+                                Button { variant: ButtonVariant::Secondary, onclick: move |_| step.set(OnboardingStep::Device), "← Back" }
                             }
                         }
                     }
@@ -439,11 +358,11 @@ pub fn OnboardingPanel(
             if step() == OnboardingStep::Device {
                 div { class: "event", "data-testid": "onboarding-step-device",
                     div { class: "event-head",
-                        span { "Step 3 · Device key" }
+                        span { "Step 3 · Atomic PCR bootstrap" }
                         span { "device-lifecycle §1-§3" }
                     }
                     div { class: "muted",
-                        "This device generates its own signing key locally (ed25519). The private key never leaves the device. Authorizing the device into your long-term set is a separate step; signing in alone only gives this device a short-lived session."
+                        "Self PCR bootstrap is one atomic two-Event batch: the cold identity root signs only ak.realm.create with its critical did_inception ref, and the delegated enrollment authority signs ak.device.authorize. A managed Agent remains on its controller-delegated path and never carries did_inception."
                     }
                     div { class: "metric-grid",
                         div { class: "metric",
@@ -473,39 +392,30 @@ pub fn OnboardingPanel(
                         }
                     }
 
-                    // AKP B-C first-backup gate (spec head 37ce729 /
-                    // AKP-0008 §4 / device-lifecycle §10-§13).
-                    //
-                    // The inception key (the very first device key
-                    // authorized at account bootstrap) MUST NOT be
-                    // retired until a `backup_class=did_recovery`
-                    // envelope has been published — otherwise an
-                    // account could become permanently
-                    // unrecoverable. The UI hard-blocks the
-                    // "Authorize device" → retirement transition
-                    // until the first did_recovery envelope is
-                    // observed via `GET /_arkret/self/keys/backups`.
+                    // The bootstrap batch is the only durable-write exception.
+                    // Every later persistent Event remains blocked while
+                    // recovery_material_pending is true.
                     FirstBackupGate {
                         token,
                         account_did: account_did(),
                     }
 
                     div { class: "actions",
-                        Button { variant: ButtonVariant::Secondary, onclick: move |_| step.set(OnboardingStep::Handle), "← Back" }
-                        Button { variant: ButtonVariant::Secondary, "data-testid": "next-recovery", onclick: move |_| step.set(OnboardingStep::Recovery), "Next →" }
+                        Button { variant: ButtonVariant::Secondary, onclick: move |_| step.set(OnboardingStep::DidMethod), "← Back" }
+                        Button { variant: ButtonVariant::Secondary, "data-testid": "next-recovery", onclick: move |_| step.set(OnboardingStep::Handle), "Next →" }
                     }
                 }
             }
 
-            // Step 4: Recovery configuration
+            // Step 1: recovery-secret custody confirmation
             if step() == OnboardingStep::Recovery {
                 div { class: "event", "data-testid": "onboarding-step-recovery",
                     div { class: "event-head",
-                        span { "Step 4 · Recovery" }
+                        span { "Step 1 · Cold custody" }
                         span { "device-lifecycle §10-§13" }
                     }
                     div { class: "muted",
-                        "Your Principal Control Realm is MLS-backed from account creation with encryption_profile={PCR_ENCRYPTION_PROFILE} and metadata/content floors {PCR_ENCRYPTION_FLOOR}. Generate and store the Recovery Key (24 words) before relying on encrypted account state; Social Recovery can supplement it. A fresh device is authorized only after the active recovery_policy accepts a bound recovery_session."
+                        "Generate the 24-word Recovery Key before entry 0 exists. Confirm custody by re-entering the words or by an accepted hardware/guardian acknowledgement. Only then may the same public inception draft be published. The Recovery Key, root seed, recovery-proof seed and HPKE private key never enter logs, wire payloads or ordinary local state."
                     }
                     div { class: "metric-grid",
                         div { class: "metric",
@@ -542,7 +452,6 @@ pub fn OnboardingPanel(
                         }
                     }
                     div { class: "actions",
-                        Button { variant: ButtonVariant::Secondary, onclick: move |_| step.set(OnboardingStep::Device), "← Back" }
                         {
                             let choice = recovery_choice();
                             let choice_empty = choice.trim().is_empty();
@@ -585,9 +494,9 @@ pub fn OnboardingPanel(
     }
 }
 
-/// AKP B-C — first-backup gate. The inception key cannot retire
-/// until an accepted `backup_class=did_recovery` first envelope matches the
-/// active recovery policy. This component reads the active recovery policy,
+/// Recovery-material gate. Ordinary post-bootstrap durable writes remain
+/// blocked until an accepted `backup_class=did_recovery` first envelope
+/// matches the active recovery policy. This component reads the active policy,
 /// lists did_recovery backups, and renders a blocked panel until the list
 /// contains a matching `recovery_public_key` backup.
 #[component]
@@ -632,7 +541,8 @@ pub fn FirstBackupGate(token: Signal<String>, account_did: String) -> Element {
                             ) => {
                                 gate_satisfied.set(false);
                                 status.set(
-                                    "no active accepted recovery_policy on record; publish one before retiring the inception key".to_owned()
+                                    "recovery_material_pending: no active accepted recovery_policy"
+                                        .to_owned(),
                                 );
                             }
                             FirstBackupGateStatus::Blocked(
@@ -693,7 +603,7 @@ pub fn FirstBackupGate(token: Signal<String>, account_did: String) -> Element {
             "aria-labelledby": "first-backup-gate-heading",
             "aria-describedby": "first-backup-gate-help",
             div { class: "event-head",
-                span { id: "first-backup-gate-heading", "First-backup gate (AKP B-C)" }
+                span { id: "first-backup-gate-heading", "Recovery-material gate" }
                 if gate_satisfied() {
                     span { class: "badge green", "aria-label": "First backup envelope satisfied", "satisfied" }
                 } else {
@@ -701,7 +611,7 @@ pub fn FirstBackupGate(token: Signal<String>, account_did: String) -> Element {
                 }
             }
             div { id: "first-backup-gate-help", class: "muted",
-                "The inception key MUST NOT retire until a backup_class=did_recovery envelope has been published. This is a hard gate (AKP B-C / device-lifecycle §10-§13) — without it the Arkret principal control state could become permanently unrecoverable."
+                "While recovery_material_pending is true, the atomic PCR bootstrap is the only permitted durable write. Normal Events, MLS application writes, and second-device enrollment remain blocked until the accepted policy and matching did_recovery envelope are both visible."
             }
             div {
                 class: "muted",
@@ -741,10 +651,10 @@ mod tests {
     #[test]
     fn onboarding_step_indices_are_unique_and_one_based() {
         let steps = [
-            OnboardingStep::DidMethod,
-            OnboardingStep::Handle,
-            OnboardingStep::Device,
             OnboardingStep::Recovery,
+            OnboardingStep::DidMethod,
+            OnboardingStep::Device,
+            OnboardingStep::Handle,
         ];
         let indices: Vec<usize> = steps.iter().copied().map(OnboardingStep::index).collect();
         assert_eq!(

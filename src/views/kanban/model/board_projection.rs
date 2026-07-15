@@ -959,7 +959,7 @@ mod tests {
         operation_id: &str,
         received_at: &str,
         kind: &str,
-        body: Value,
+        body: std::collections::BTreeMap<String, Value>,
     ) -> RawOperationRecord {
         local_op(
             operation_id,

@@ -2682,7 +2682,8 @@ mod tests {
         let event_payloads: Vec<Value> = frames
             .iter()
             .filter(|frame| frame.kind == EventsSubscribeFrameKind::Event)
-            .map(|frame| frame.payload.clone())
+            .filter_map(|frame| frame.payload.as_ref())
+            .map(|payload| serde_json::to_value(payload).expect("frame payload serializes"))
             .collect();
         assert_eq!(event_payloads.len(), 1);
 

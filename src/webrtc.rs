@@ -261,7 +261,7 @@ mod tests {
     }
 
     fn make_v1_envelope(seq: u64, signal_type: &str) -> arkret_sdk::EphemeralEnvelope {
-        let mut env = crate::ephemeral::build_call_signal_envelope_v1(
+        crate::ephemeral::build_call_signal_envelope_v1(
             "ak:realm:01904100-0000-7000-8000-000000000001",
             "did:web:alice.example",
             "ak:device:01904100-0000-7000-8000-000000000002",
@@ -270,12 +270,7 @@ mod tests {
             seq,
             serde_json::json!({}),
         )
-        .expect("envelope must build");
-        // Round 4 — receiver requires `proof` to be present; the
-        // caller normally attaches a real signature before submit.
-        // Drop a placeholder here so we exercise the receiver path.
-        env.proof = Some(serde_json::json!({"alg":"EdDSA","sig":"placeholder"}));
-        env
+        .expect("envelope must build")
     }
 
     #[test]
@@ -319,30 +314,9 @@ mod tests {
     }
 
     #[test]
-    fn receiver_rejects_envelope_without_device_id_or_proof() {
-        // Hand-build an envelope without proof to verify the receiver
-        // rejects it (the Round 4 schema requires proof).
-        let env = arkret_sdk::EphemeralEnvelope::new(
-            "ak.call.signal",
-            arkret_sdk::RealmId::new("ak:realm:01904100-0000-7000-8000-000000000001").unwrap(),
-            arkret_sdk::Did::new("did:web:alice.example").unwrap(),
-            Some(
-                arkret_sdk::DeviceId::new("ak:device:01904100-0000-7000-8000-000000000002")
-                    .unwrap(),
-            ),
-            chrono::Utc::now(),
-            chrono::Utc::now() + chrono::Duration::seconds(60),
-            serde_json::json!({
-                "call_id": "ak:call:01904100-0000-7000-8000-000000000003",
-                "signal_type": "invite",
-                "seq": 1u64,
-                "data": {},
-            }),
-            None, // ← missing proof
-        )
-        .unwrap();
-        let mut rx = CallSignalReceiver::new();
-        let outcome = rx.ingest(&env);
-        assert!(matches!(outcome, CallSignalIngestOutcome::Rejected { .. }));
+    fn wire_decode_rejects_envelope_without_proof() {
+        let mut value = serde_json::to_value(make_v1_envelope(1, "invite")).unwrap();
+        value.as_object_mut().unwrap().remove("proof");
+        assert!(serde_json::from_value::<arkret_sdk::EphemeralEnvelope>(value).is_err());
     }
 }
