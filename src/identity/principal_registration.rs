@@ -184,9 +184,11 @@ pub async fn complete_account_handoff_binding(
     let session_engine = garth::SessionEngine::new(account_client);
     session_engine
         .login(
-            garth::LoginKind::PreRegistrationHandoff(garth::PreRegistrationHandoffLogin {
-                request: session_request,
-            }),
+            garth::LoginKind::PreRegistrationHandoff(Box::new(
+                garth::PreRegistrationHandoffLogin {
+                    request: session_request,
+                },
+            )),
             Utc::now(),
         )
         .await?;

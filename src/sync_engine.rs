@@ -46,7 +46,7 @@ use std::time::Duration;
 use arkret_sdk::{DecodedInbound, InboundDecoder};
 use garth::{
     AccountCommitOutcome, AccountPostCommitHook, AccountPostCommitOutcome, AccountStepCommitter,
-    AccountStreamStep, RunOptions, SyncLoopControl, TransportProvider,
+    AccountStepHandlers, AccountStreamStep, RunOptions, SyncLoopControl, TransportProvider,
 };
 #[cfg(test)]
 use garth::{ClientEvent, ClientProjector};
@@ -538,8 +538,7 @@ pub async fn run_sync_engine(
             actor_id,
             device_id,
             &provider,
-            &committer,
-            &hook,
+            AccountStepHandlers::new(&committer, &hook),
             &SyncLoopControl::new(),
             RunOptions {
                 beat: Duration::from_millis(MIN_INTER_ITERATION_MS),
