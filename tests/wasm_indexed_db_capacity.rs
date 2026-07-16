@@ -68,3 +68,11 @@ async fn failed_durable_write_does_not_publish_a_phantom_cache_value() {
         "a failed durable write must not survive a database reopen"
     );
 }
+
+#[wasm_bindgen_test(async)]
+#[cfg(feature = "wasm-localstorage-secrets-test")]
+async fn account_state_fault_injection_contract_holds_in_browser() {
+    inkson::run_browser_account_persist_fault_contract()
+        .await
+        .expect("browser account-state persistence contract");
+}

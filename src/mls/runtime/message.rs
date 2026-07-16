@@ -60,7 +60,7 @@ pub fn history_content_aad_bytes(realm_id: &str, epoch: u64) -> anyhow::Result<V
 /// AEAD path instead of forward-secret `mls-rfc9420`. Normalizes case + `_`/`-`
 /// so both the canonical kebab token and a `mls_exporter_aead_v1` spelling
 /// match. See [[content-scheme-capability-vs-toggle]].
-fn realm_content_scheme_is_exporter_aead(
+pub(crate) fn realm_content_scheme_is_exporter_aead(
     state_store: &crate::state::LocalStateStore,
     realm_id: &str,
 ) -> bool {

@@ -307,7 +307,7 @@ impl LocalStateStore {
     }
 
     /// Convenience wrapper for callers that exclusively own the state value.
-    #[cfg(any(test, target_arch = "wasm32"))]
+    #[cfg(test)]
     pub(crate) async fn clear_e2ee_plaintext_cache_with_secure_store(
         &mut self,
         scope: &E2eePlaintextCacheClearScope,

@@ -573,9 +573,186 @@ mod wasm_bootstrap {
 #[cfg(target_arch = "wasm32")]
 pub(crate) use wasm_bootstrap::migrate_localstorage_account_blobs;
 
+#[cfg(all(target_arch = "wasm32", feature = "wasm-localstorage-secrets-test"))]
+pub(crate) async fn run_browser_account_persist_fault_contract() -> anyhow::Result<()> {
+    use anyhow::Context as _;
+
+    use crate::secure_key_store::{IndexedDbSecureKeyStore, SecureKeyStore};
+
+    fn state_json(cursor: &str, seen: &[&str]) -> anyhow::Result<String> {
+        let mut state = ClientLocalState {
+            sync_cursor: Some(cursor.to_owned()),
+            ..ClientLocalState::default()
+        };
+        state.client_core_seen_event_ids = seen.iter().map(|value| (*value).to_owned()).collect();
+        serde_json::to_string(&state).context("encode browser account state")
+    }
+
+    let service = format!("account-persist-contract-{}", js_sys::Date::now());
+    let store = IndexedDbSecureKeyStore::new_async(&service)
+        .await
+        .context("open browser account store")?;
+    let key_a = "inkson.local_state.v1.account.did:example:contract-a";
+    let key_b = "inkson.local_state.v1.account.did:example:contract-b";
+    let mut queue = AccountPersistQueueState::default();
+
+    queue.enqueue(key_a.to_owned(), state_json("sx:a1", &["a1"])?);
+    queue.enqueue(key_a.to_owned(), state_json("sx:a2", &["a1", "a2"])?);
+    let latest_a = queue.enqueue(key_a.to_owned(), state_json("sx:a3", &["a1", "a2", "a3"])?);
+    let b = queue.enqueue(key_b.to_owned(), state_json("sx:b1", &["b1"])?);
+    let write_a = queue.take_next(key_a).context("take coalesced account a")?;
+    let write_b = queue.take_next(key_b).context("take account b")?;
+    anyhow::ensure!(write_a.seq == latest_a.seq, "rapid writes did not coalesce");
+
+    store
+        .store_secret_durable(key_b, &write_b.json)
+        .await
+        .context("commit account b first")?;
+    queue.record_committed(key_b, write_b.seq);
+    store
+        .store_secret_durable(key_a, &write_a.json)
+        .await
+        .context("commit account a second")?;
+    queue.record_committed(key_a, write_a.seq);
+    anyhow::ensure!(
+        queue.barrier_status(key_a, latest_a.seq) == AccountPersistBarrierStatus::Committed
+            && queue.barrier_status(key_b, b.seq) == AccountPersistBarrierStatus::Committed,
+        "out-of-order account commits did not satisfy their own barriers"
+    );
+    drop(store);
+
+    let reopened = IndexedDbSecureKeyStore::new_async(&service)
+        .await
+        .context("reload browser account store")?;
+    let state_a: ClientLocalState = serde_json::from_str(
+        &reopened
+            .get_secret(key_a)?
+            .context("reloaded account a is missing")?,
+    )
+    .context("decode reloaded account a")?;
+    let state_b: ClientLocalState = serde_json::from_str(
+        &reopened
+            .get_secret(key_b)?
+            .context("reloaded account b is missing")?,
+    )
+    .context("decode reloaded account b")?;
+    anyhow::ensure!(
+        state_a.sync_cursor.as_deref() == Some("sx:a3")
+            && state_a.client_core_seen_event_ids.len() == 3,
+        "reload lost the newest cursor or dedupe window"
+    );
+    anyhow::ensure!(
+        state_b.sync_cursor.as_deref() == Some("sx:b1"),
+        "account switch/isolation mixed account state"
+    );
+
+    let failure_service = format!("account-persist-failure-{}", js_sys::Date::now());
+    let failed_store = IndexedDbSecureKeyStore::new_async(&failure_service)
+        .await
+        .context("open failure-injection store")?;
+    failed_store
+        .store_secret_durable(key_a, &state_json("sx:stable", &["stable"])?)
+        .await
+        .context("seed stable account state")?;
+    failed_store.close_database_for_test();
+    let failed = queue.enqueue(key_a.to_owned(), state_json("sx:failed", &["failed"])?);
+    let failed_write = queue
+        .take_next(key_a)
+        .context("take injected failure write")?;
+    let error = match failed_store
+        .store_secret_durable(key_a, &failed_write.json)
+        .await
+    {
+        Ok(()) => anyhow::bail!("closed IndexedDB unexpectedly accepted a write"),
+        Err(error) => error,
+    };
+    queue.record_failed(key_a, failed_write.seq, error.to_string());
+    anyhow::ensure!(
+        queue.take_next(key_a).is_none(),
+        "failed drain did not stop"
+    );
+    anyhow::ensure!(
+        matches!(
+            queue.barrier_status(key_a, failed.seq),
+            AccountPersistBarrierStatus::Failed(_)
+        ),
+        "failed write did not publish terminal failure"
+    );
+    let retry_store = IndexedDbSecureKeyStore::new_async(&failure_service)
+        .await
+        .context("reopen failure-injection store")?;
+    let retry = queue.enqueue(key_a.to_owned(), state_json("sx:retry", &["retry"])?);
+    let retry_write = queue.take_next(key_a).context("take retry write")?;
+    retry_store
+        .store_secret_durable(key_a, &retry_write.json)
+        .await
+        .context("commit retry")?;
+    queue.record_committed(key_a, retry_write.seq);
+    anyhow::ensure!(
+        queue.barrier_status(key_a, retry.seq) == AccountPersistBarrierStatus::Committed,
+        "retry did not clear the older failure"
+    );
+
+    let migration_service = format!("account-persist-migration-{}", js_sys::Date::now());
+    let migration_key = format!(
+        "inkson.local_state.v1.account.did:example:migration-{}",
+        js_sys::Date::now()
+    );
+    let legacy = state_json("sx:legacy", &["legacy"])?;
+    let storage = web_sys::window()
+        .and_then(|window| window.local_storage().ok().flatten())
+        .context("browser localStorage is unavailable")?;
+    storage
+        .set_item(&migration_key, &legacy)
+        .map_err(|error| anyhow::anyhow!("seed migration source: {error:?}"))?;
+    let interrupted = IndexedDbSecureKeyStore::new_async(&migration_service)
+        .await
+        .context("open interrupted migration store")?;
+    interrupted.close_database_for_test();
+    migrate_localstorage_account_blobs(vec![migration_key.clone()], &interrupted).await;
+    anyhow::ensure!(
+        storage
+            .get_item(&migration_key)
+            .map_err(|error| anyhow::anyhow!("read interrupted source: {error:?}"))?
+            .as_deref()
+            == Some(legacy.as_str()),
+        "interrupted migration deleted its only source"
+    );
+    let migration_retry = IndexedDbSecureKeyStore::new_async(&migration_service)
+        .await
+        .context("reopen migration store")?;
+    migrate_localstorage_account_blobs(vec![migration_key.clone()], &migration_retry).await;
+    anyhow::ensure!(
+        storage
+            .get_item(&migration_key)
+            .map_err(|error| anyhow::anyhow!("read migrated source: {error:?}"))?
+            .is_none(),
+        "successful migration kept the plaintext source"
+    );
+    anyhow::ensure!(
+        migration_retry.get_secret(&migration_key)?.as_deref() == Some(legacy.as_str()),
+        "successful migration did not preserve the account state"
+    );
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[cfg(all(target_arch = "wasm32", feature = "wasm-localstorage-secrets-test"))]
+    use crate::secure_key_store::{IndexedDbSecureKeyStore, SecureKeyStore};
+
+    #[cfg(all(target_arch = "wasm32", feature = "wasm-localstorage-secrets-test"))]
+    fn browser_test_service(label: &str) -> String {
+        format!("account-persist-{label}-{}", js_sys::Date::now())
+    }
+
+    #[cfg(all(target_arch = "wasm32", feature = "wasm-localstorage-secrets-test"))]
+    fn account_state_json(cursor: &str, seen: &[&str]) -> String {
+        let mut state = state_with_cursor(cursor);
+        state.client_core_seen_event_ids = seen.iter().map(|value| (*value).to_owned()).collect();
+        serde_json::to_string(&state).expect("encode browser account state")
+    }
 
     fn state_with_cursor(cursor: &str) -> ClientLocalState {
         ClientLocalState {
@@ -855,5 +1032,239 @@ mod tests {
         .await
         .expect_err("source deletion gate must reject a missing durable read-back");
         assert!(error.to_string().contains("read-back mismatch"));
+    }
+
+    #[cfg(all(target_arch = "wasm32", feature = "wasm-localstorage-secrets-test"))]
+    #[wasm_bindgen_test::wasm_bindgen_test(async)]
+    async fn browser_rapid_writes_coalesce_and_reload_latest_cursor_and_dedupe_window() {
+        let service = browser_test_service("rapid-reload");
+        let key = "inkson.local_state.v1.account.did:example:rapid";
+        let store = IndexedDbSecureKeyStore::new_async(&service)
+            .await
+            .expect("open browser secure store");
+        let mut queue = AccountPersistQueueState::default();
+
+        queue.enqueue(key.to_owned(), account_state_json("sx:1", &["event-1"]));
+        queue.enqueue(
+            key.to_owned(),
+            account_state_json("sx:2", &["event-1", "event-2"]),
+        );
+        let latest = queue.enqueue(
+            key.to_owned(),
+            account_state_json("sx:3", &["event-1", "event-2", "event-3"]),
+        );
+        let write = queue.take_next(key).expect("coalesced browser write");
+        assert_eq!(write.seq, latest.seq);
+        store
+            .store_secret_durable(key, &write.json)
+            .await
+            .expect("commit latest browser state");
+        queue.record_committed(key, write.seq);
+        assert!(queue.take_next(key).is_none());
+        drop(store);
+
+        let reopened = IndexedDbSecureKeyStore::new_async(&service)
+            .await
+            .expect("reopen browser secure store");
+        let state: ClientLocalState = serde_json::from_str(
+            &reopened
+                .get_secret(key)
+                .expect("read browser account state")
+                .expect("browser account state exists"),
+        )
+        .expect("decode browser account state");
+        assert_eq!(state.sync_cursor.as_deref(), Some("sx:3"));
+        assert_eq!(
+            state
+                .client_core_seen_event_ids
+                .into_iter()
+                .collect::<Vec<_>>(),
+            vec!["event-1", "event-2", "event-3"]
+        );
+    }
+
+    #[cfg(all(target_arch = "wasm32", feature = "wasm-localstorage-secrets-test"))]
+    #[wasm_bindgen_test::wasm_bindgen_test(async)]
+    async fn browser_out_of_order_account_completion_remains_isolated() {
+        let service = browser_test_service("account-isolation");
+        let store = IndexedDbSecureKeyStore::new_async(&service)
+            .await
+            .expect("open browser secure store");
+        let a = "inkson.local_state.v1.account.did:example:a";
+        let b = "inkson.local_state.v1.account.did:example:b";
+        let mut queue = AccountPersistQueueState::default();
+        let a_enqueued = queue.enqueue(a.to_owned(), account_state_json("sx:a", &["a-1"]));
+        let b_enqueued = queue.enqueue(b.to_owned(), account_state_json("sx:b", &["b-1"]));
+        let a_write = queue.take_next(a).expect("account a write");
+        let b_write = queue.take_next(b).expect("account b write");
+
+        store
+            .store_secret_durable(b, &b_write.json)
+            .await
+            .expect("commit account b first");
+        queue.record_committed(b, b_write.seq);
+        store
+            .store_secret_durable(a, &a_write.json)
+            .await
+            .expect("commit account a second");
+        queue.record_committed(a, a_write.seq);
+        assert_eq!(
+            queue.barrier_status(a, a_enqueued.seq),
+            AccountPersistBarrierStatus::Committed
+        );
+        assert_eq!(
+            queue.barrier_status(b, b_enqueued.seq),
+            AccountPersistBarrierStatus::Committed
+        );
+        let a_state: ClientLocalState =
+            serde_json::from_str(&store.get_secret(a).unwrap().expect("account a persisted"))
+                .unwrap();
+        let b_state: ClientLocalState =
+            serde_json::from_str(&store.get_secret(b).unwrap().expect("account b persisted"))
+                .unwrap();
+        assert_eq!(a_state.sync_cursor.as_deref(), Some("sx:a"));
+        assert_eq!(b_state.sync_cursor.as_deref(), Some("sx:b"));
+    }
+
+    #[cfg(all(target_arch = "wasm32", feature = "wasm-localstorage-secrets-test"))]
+    #[wasm_bindgen_test::wasm_bindgen_test(async)]
+    async fn browser_account_switch_freezes_each_snapshot_under_its_original_key() {
+        let service = browser_test_service("account-switch");
+        let store = IndexedDbSecureKeyStore::new_async(&service)
+            .await
+            .expect("open browser secure store");
+        let leaving = "inkson.local_state.v1.account.did:example:leaving";
+        let entering = "inkson.local_state.v1.account.did:example:entering";
+        let mut queue = AccountPersistQueueState::default();
+
+        queue.enqueue(
+            leaving.to_owned(),
+            account_state_json("sx:leaving-final", &["leaving-event"]),
+        );
+        queue.enqueue(
+            entering.to_owned(),
+            account_state_json("sx:entering-live", &["entering-event"]),
+        );
+        for key in [entering, leaving] {
+            let write = queue.take_next(key).expect("frozen account write");
+            store
+                .store_secret_durable(key, &write.json)
+                .await
+                .expect("commit frozen account write");
+            queue.record_committed(key, write.seq);
+            assert!(queue.take_next(key).is_none());
+        }
+
+        let leaving_state: ClientLocalState = serde_json::from_str(
+            &store
+                .get_secret(leaving)
+                .unwrap()
+                .expect("leaving account persisted"),
+        )
+        .unwrap();
+        let entering_state: ClientLocalState = serde_json::from_str(
+            &store
+                .get_secret(entering)
+                .unwrap()
+                .expect("entering account persisted"),
+        )
+        .unwrap();
+        assert_eq!(
+            leaving_state.sync_cursor.as_deref(),
+            Some("sx:leaving-final")
+        );
+        assert_eq!(
+            entering_state.sync_cursor.as_deref(),
+            Some("sx:entering-live")
+        );
+    }
+
+    #[cfg(all(target_arch = "wasm32", feature = "wasm-localstorage-secrets-test"))]
+    #[wasm_bindgen_test::wasm_bindgen_test(async)]
+    async fn browser_failed_write_retries_without_publishing_failed_snapshot() {
+        let service = browser_test_service("failure-retry");
+        let key = "inkson.local_state.v1.account.did:example:retry";
+        let store = IndexedDbSecureKeyStore::new_async(&service)
+            .await
+            .expect("open browser secure store");
+        store
+            .store_secret_durable(key, &account_state_json("sx:committed", &["event-1"]))
+            .await
+            .expect("seed committed state");
+        store.close_database_for_test();
+
+        let mut queue = AccountPersistQueueState::default();
+        let failed = queue.enqueue(
+            key.to_owned(),
+            account_state_json("sx:failed", &["event-1", "event-2"]),
+        );
+        let write = queue.take_next(key).expect("failed write attempt");
+        let error = store
+            .store_secret_durable(key, &write.json)
+            .await
+            .expect_err("closed IndexedDB must reject write");
+        queue.record_failed(key, write.seq, error.to_string());
+        assert!(queue.take_next(key).is_none());
+        assert!(matches!(
+            queue.barrier_status(key, failed.seq),
+            AccountPersistBarrierStatus::Failed(_)
+        ));
+
+        let reopened = IndexedDbSecureKeyStore::new_async(&service)
+            .await
+            .expect("reopen browser secure store");
+        let retry = queue.enqueue(
+            key.to_owned(),
+            account_state_json("sx:retry", &["event-1", "event-2"]),
+        );
+        let write = queue.take_next(key).expect("retry write");
+        reopened
+            .store_secret_durable(key, &write.json)
+            .await
+            .expect("retry commits");
+        queue.record_committed(key, write.seq);
+        assert_eq!(
+            queue.barrier_status(key, retry.seq),
+            AccountPersistBarrierStatus::Committed
+        );
+        let state: ClientLocalState =
+            serde_json::from_str(&reopened.get_secret(key).unwrap().expect("retry persisted"))
+                .unwrap();
+        assert_eq!(state.sync_cursor.as_deref(), Some("sx:retry"));
+    }
+
+    #[cfg(all(target_arch = "wasm32", feature = "wasm-localstorage-secrets-test"))]
+    #[wasm_bindgen_test::wasm_bindgen_test(async)]
+    async fn browser_migration_interruption_keeps_source_then_retry_removes_it() {
+        let service = browser_test_service("migration-interrupt");
+        let key = format!(
+            "inkson.local_state.v1.account.did:example:migrate-{}",
+            js_sys::Date::now()
+        );
+        let legacy = account_state_json("sx:legacy", &["event-legacy"]);
+        let storage = web_sys::window()
+            .and_then(|window| window.local_storage().ok().flatten())
+            .expect("browser localStorage");
+        storage.set_item(&key, &legacy).expect("seed legacy state");
+
+        let interrupted = IndexedDbSecureKeyStore::new_async(&service)
+            .await
+            .expect("open migration store");
+        interrupted.close_database_for_test();
+        migrate_localstorage_account_blobs(vec![key.clone()], &interrupted).await;
+        assert_eq!(
+            storage.get_item(&key).unwrap().as_deref(),
+            Some(legacy.as_str())
+        );
+
+        let retry = IndexedDbSecureKeyStore::new_async(&service)
+            .await
+            .expect("reopen migration store");
+        migrate_localstorage_account_blobs(vec![key.clone()], &retry).await;
+        assert!(storage.get_item(&key).unwrap().is_none());
+        assert_eq!(
+            retry.get_secret(&key).unwrap().as_deref(),
+            Some(legacy.as_str())
+        );
     }
 }
