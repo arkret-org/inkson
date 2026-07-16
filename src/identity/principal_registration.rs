@@ -158,7 +158,6 @@ pub async fn complete_account_handoff_binding(
         did_operation,
         &key_material.root_seed,
         None,
-        Some(arkret_sdk::DeviceId::new(checkpoint.device_id.clone())?),
     )?;
     let register_outcome = account_client.account_register(&register_request).await?;
     let binding_receipt = register_outcome
