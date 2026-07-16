@@ -99,8 +99,7 @@ test("setup, onboarding, and Board entry works", async ({ page }) => {
   await page.goto("/onboarding", { waitUntil: "domcontentloaded" });
   await expect(page.getByTestId("onboarding-panel")).toBeVisible();
   await dismissRecoveryMissingModal(page);
-  await page.getByTestId("register-account-button").click();
-  await expect(page.getByTestId("account-strand")).toContainText("registered alice.example");
+  await expect(page.getByTestId("account-strand")).toContainText("Set up your identity");
 
   await page.getByTestId("sidebar-new-realm-cta").click();
   const setupPanel = page.getByTestId("setup-panel");

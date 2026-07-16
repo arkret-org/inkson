@@ -11,14 +11,18 @@ verified principal DID and cannot invent one from a handle or OIDC subject.
 3. Inkson verifies that the returned session grant contains the exact bound
    `principal_id` and device binding. A missing principal binding fails closed.
 
-For a principal that does not exist yet, use the account-authority identity
-creation strand; do not enter an arbitrary DID in Inkson.
+If the account has no identity yet, Inkson first asks whether to create a new
+identity or link an existing DID. An existing DID must be approved by a device
+or DID wallet that already controls it; entering the identifier alone is never
+enough. Inkson disables that option when the Account Authority does not
+advertise a compatible approval path.
 
 ## 2. Confirm cold custody
 
 Before WebVH entry 0 exists, Inkson generates a 24-word Recovery Key locally.
-Write it down offline and re-enter it exactly. No policy, backup, DID entry, or
-ordinary local secret containing the words is written before this check.
+Write it down offline and re-enter the complete phrase. No policy, backup, DID
+entry, or ordinary local secret containing the words is written before this
+check.
 
 The SDK derives separate keys for the WebVH root, recovery proof, and backup
 HPKE recipient. Inkson persists only their public commitments and stable
