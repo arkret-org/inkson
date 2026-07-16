@@ -125,6 +125,11 @@ pub mod rtc_transport;
 pub(crate) mod runtime;
 pub(crate) mod runtime_helpers;
 pub mod secure_key_store;
+
+#[cfg(all(target_arch = "wasm32", feature = "wasm-localstorage-secrets-test"))]
+pub async fn run_browser_account_persist_fault_contract() -> anyhow::Result<()> {
+    state::run_browser_account_persist_fault_contract().await
+}
 pub mod security_state;
 pub mod service_parse;
 pub mod sidecar;

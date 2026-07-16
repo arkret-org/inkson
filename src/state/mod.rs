@@ -75,6 +75,8 @@ pub(crate) use e2ee_secure_cache::{
 mod account_persist;
 #[cfg(target_arch = "wasm32")]
 pub(crate) use account_persist::migrate_localstorage_account_blobs;
+#[cfg(all(target_arch = "wasm32", feature = "wasm-localstorage-secrets-test"))]
+pub(crate) use account_persist::run_browser_account_persist_fault_contract;
 
 mod move_tracking;
 

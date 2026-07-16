@@ -37,7 +37,7 @@
 use base64::Engine as _;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use chrono::Utc;
-use ed25519_dalek::SigningKey;
+use ed25519_dalek::{Signer as _, SigningKey};
 use zeroize::Zeroizing;
 
 use crate::state::{DpopDeviceKeyRecord, LocalStateStore};
@@ -150,6 +150,20 @@ impl DpopHandle {
     /// Build SDK http-client DPoP auth for proof-only requests.
     pub fn sdk_dpop_proof_only_auth(&self) -> arkret_sdk::http_client::DpopAuth {
         garth::session::dpop::proof_only_auth(self.signing_key.clone())
+    }
+
+    /// Build SDK authentication for the DPoP-scheme account handoff token.
+    pub fn sdk_account_handoff_auth(
+        &self,
+        account_handoff_grant: impl Into<String>,
+    ) -> arkret_sdk::http_client::DpopAuth {
+        garth::session::dpop::account_handoff_auth(account_handoff_grant, self.signing_key.clone())
+    }
+
+    /// Holder-sign canonical protocol bytes with the same key published in
+    /// the request DPoP JWK.
+    pub fn sign_protocol_bytes(&self, bytes: &[u8]) -> arkret_sdk::Result<String> {
+        Ok(URL_SAFE_NO_PAD.encode(self.signing_key.sign(bytes).to_bytes()))
     }
 
     /// Sign the one-shot proof that soland forwards to coauth when it

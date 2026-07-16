@@ -124,6 +124,10 @@ pub(super) fn auth_surface_for_route(
 ) -> AuthSurface {
     if matches!(route, Route::AuthCallback) {
         AuthSurface::Callback
+    } else if matches!(route, Route::Onboarding) {
+        // Account-first onboarding intentionally runs before a session grant
+        // exists; the short-lived handoff credential is held separately.
+        AuthSurface::AppShell
     } else if has_session {
         AuthSurface::AppShell
     } else if matches!(route, Route::Register) {

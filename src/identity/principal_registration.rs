@@ -2,201 +2,14 @@
 
 use anyhow::{Context as _, anyhow};
 use chrono::{SecondsFormat, Timelike as _, Utc};
-use serde::de::DeserializeOwned;
-use serde::{Deserialize, Serialize};
-use serde_json::Value;
 use url::Url;
 
-use crate::identity::account_auth::AuthorityResolver;
-use crate::state::{PendingPrincipalRegistration, PendingPrincipalRegistrationStage};
-use crate::transport::TransportClient;
-
-const WEBVH_REGISTRATION_PATH: &str = "/_coauth/account/auth/register/webvh";
-
-#[derive(Clone, Debug)]
-pub struct RegistrationStart {
-    pub principal_server_url: String,
-    pub gate_account_base: String,
-    pub registration_id: String,
-    pub enrollment_authority_did: String,
-    pub trust_domain: String,
-}
-
-#[derive(Clone, Debug)]
-pub struct RegistrationEmailSent {
-    pub dev_code: Option<String>,
-}
-
-#[derive(Debug, Deserialize)]
-struct StartOutcome {
-    status: String,
-    registration_id: Option<String>,
-    enrollment_authority_did: Option<String>,
-    error: Option<String>,
-}
-
-#[derive(Debug, Deserialize)]
-struct EmailOutcome {
-    status: String,
-    dev_code: Option<String>,
-    error: Option<String>,
-}
-
-#[derive(Debug, Deserialize)]
-struct StepOutcome {
-    status: String,
-    error: Option<String>,
-}
-
-#[derive(Debug, Deserialize)]
-struct FinishOutcome {
-    status: String,
-    error: Option<String>,
-}
-
-#[derive(Serialize)]
-struct StartRequest<'a> {
-    handle: &'a str,
-    principal_server_url: &'a str,
-}
-
-fn registration_url(gate_account_base: &str, suffix: &str) -> anyhow::Result<Url> {
-    let mut url = Url::parse(gate_account_base.trim())
-        .context("invalid Account Authority gate_account_base")?;
-    if matches!(url.origin(), url::Origin::Opaque(_)) {
-        anyhow::bail!("Account Authority gate_account_base has no HTTPS origin");
-    }
-    url.set_path(&format!("{WEBVH_REGISTRATION_PATH}{suffix}"));
-    url.set_query(None);
-    url.set_fragment(None);
-    Ok(url)
-}
-
-async fn post_json<T: DeserializeOwned>(url: Url, body: &impl Serialize) -> anyhow::Result<T> {
-    let response = reqwest::Client::new()
-        .post(url)
-        .json(body)
-        .send()
-        .await
-        .context("Account Authority registration request failed")?;
-    let status = response.status();
-    let bytes = response
-        .bytes()
-        .await
-        .context("read Account Authority registration response")?;
-    if !status.is_success() {
-        let message = serde_json::from_slice::<Value>(&bytes)
-            .ok()
-            .and_then(|value| {
-                value
-                    .pointer("/error/message")
-                    .and_then(Value::as_str)
-                    .map(str::to_owned)
-                    .or_else(|| {
-                        value
-                            .get("error")
-                            .and_then(Value::as_str)
-                            .map(str::to_owned)
-                    })
-            })
-            .unwrap_or_else(|| format!("HTTP {status}"));
-        anyhow::bail!("Account Authority registration failed: {message}");
-    }
-    serde_json::from_slice(&bytes).context("decode Account Authority registration response")
-}
-
-pub async fn start_registration(
-    principal_server_url: &str,
-    handle: &str,
-) -> anyhow::Result<RegistrationStart> {
-    let principal_server_url = crate::config::normalize_server_url(principal_server_url);
-    let principal = TransportClient::unauthenticated(&principal_server_url)
-        .context("invalid Principal Server URL")?;
-    let description = principal
-        .describe()
-        .await
-        .context("Principal Server discovery failed")?;
-    let resolver = AuthorityResolver::from_description(&principal_server_url, &description)
-        .context("Account Authority discovery failed")?;
-    let outcome: StartOutcome = post_json(
-        registration_url(&resolver.gate_account_base, "/start")?,
-        &StartRequest {
-            handle: handle.trim(),
-            principal_server_url: &principal_server_url,
-        },
-    )
-    .await?;
-    if outcome.status != "success" {
-        anyhow::bail!(
-            "{}",
-            outcome
-                .error
-                .unwrap_or_else(|| "registration_start_failed".to_owned())
-        );
-    }
-    Ok(RegistrationStart {
-        principal_server_url,
-        gate_account_base: resolver.gate_account_base,
-        registration_id: outcome
-            .registration_id
-            .filter(|value| !value.trim().is_empty())
-            .ok_or_else(|| anyhow!("registration start omitted registration_id"))?,
-        enrollment_authority_did: outcome
-            .enrollment_authority_did
-            .filter(|value| !value.trim().is_empty())
-            .ok_or_else(|| anyhow!("registration start omitted enrollment authority DID"))?,
-        trust_domain: description.trust_domain.to_string(),
-    })
-}
-
-pub async fn send_registration_email(
-    start: &RegistrationStart,
-    email: &str,
-) -> anyhow::Result<RegistrationEmailSent> {
-    let suffix = format!("/{}/email", start.registration_id);
-    let outcome: EmailOutcome = post_json(
-        registration_url(&start.gate_account_base, &suffix)?,
-        &serde_json::json!({ "email": email.trim() }),
-    )
-    .await?;
-    if outcome.status != "sent" {
-        anyhow::bail!(
-            "{}",
-            outcome
-                .error
-                .unwrap_or_else(|| "registration_email_failed".to_owned())
-        );
-    }
-    Ok(RegistrationEmailSent {
-        dev_code: outcome.dev_code,
-    })
-}
-
-pub async fn verify_registration_email(
-    start: &RegistrationStart,
-    code: &str,
-) -> anyhow::Result<()> {
-    let suffix = format!("/{}/verify-email", start.registration_id);
-    let outcome: StepOutcome = post_json(
-        registration_url(&start.gate_account_base, &suffix)?,
-        &serde_json::json!({ "code": code.trim() }),
-    )
-    .await?;
-    if outcome.status != "success" {
-        anyhow::bail!(
-            "{}",
-            outcome
-                .error
-                .unwrap_or_else(|| "email_verification_failed".to_owned())
-        );
-    }
-    Ok(())
-}
+use crate::state::{
+    PendingAccountHandoff, PendingPrincipalRegistration, PendingPrincipalRegistrationStage,
+};
 
 pub fn prepare_registration_checkpoint(
-    start: &RegistrationStart,
-    handle: &str,
-    email: &str,
+    handoff: &PendingAccountHandoff,
     device_id: &str,
     recovery_key: &str,
 ) -> anyhow::Result<PendingPrincipalRegistration> {
@@ -205,10 +18,22 @@ pub fn prepare_registration_checkpoint(
         "",
         0,
     )?;
-    let endpoint = Url::parse(&start.principal_server_url)
+    let endpoint = Url::parse(&handoff.principal_server_url)
         .context("Principal Server URL cannot drive did:webvh inception")?;
     let created_at = Utc::now().with_nanosecond(0).unwrap_or_else(Utc::now);
-    let local_id = start.registration_id.trim().to_ascii_lowercase();
+    let local_id = handoff
+        .request_id
+        .trim()
+        .strip_prefix("ak:request:")
+        .unwrap_or(handoff.request_id.trim())
+        .to_ascii_lowercase();
+    let lease_id = handoff
+        .lease_id
+        .clone()
+        .ok_or_else(|| anyhow!("account handoff has no active identity-creation lease"))?;
+    let lease_fence = handoff
+        .lease_fence
+        .ok_or_else(|| anyhow!("account handoff has no lease fence"))?;
     let draft = arkret_sdk::webvh::prepare_principal_inception(
         &arkret_sdk::webvh::PrincipalInceptionInput {
             principal_endpoint: &endpoint,
@@ -218,7 +43,7 @@ pub fn prepare_registration_checkpoint(
             root_seed: &key_material.root_seed,
             next_root_public_key_multibase: &key_material.next_root_public_key_multikey,
             enrollment: arkret_sdk::webvh::PrincipalEnrollmentDelegation::ExternalAuthority {
-                authority_did: &start.enrollment_authority_did,
+                authority_did: &handoff.enrollment_authority_did,
             },
         },
     )?;
@@ -234,14 +59,14 @@ pub fn prepare_registration_checkpoint(
     )?
     .to_string();
     Ok(PendingPrincipalRegistration {
-        principal_server_url: start.principal_server_url.clone(),
-        gate_account_base: start.gate_account_base.clone(),
-        registration_id: start.registration_id.clone(),
-        handle: handle.trim().to_owned(),
-        email: email.trim().to_owned(),
+        principal_server_url: handoff.principal_server_url.clone(),
+        gate_account_base: handoff.gate_account_base.clone(),
+        handoff_request_id: handoff.request_id.clone(),
+        lease_id,
+        lease_fence,
         device_id: device_id.trim().to_owned(),
-        enrollment_authority_did: start.enrollment_authority_did.clone(),
-        trust_domain: start.trust_domain.clone(),
+        enrollment_authority_did: handoff.enrollment_authority_did.clone(),
+        trust_domain: handoff.trust_domain.clone(),
         did: draft.did,
         version_id: draft.version_id,
         root_public_key_multibase: draft.root_public_key_multibase,
@@ -257,46 +82,9 @@ pub fn prepare_registration_checkpoint(
         bootstrap_create_event_id,
         bootstrap_created_at: created_at.to_rfc3339_opts(SecondsFormat::Secs, true),
         bootstrap_hlc,
+        binding_receipt: None,
         stage: PendingPrincipalRegistrationStage::CustodyConfirmed,
     })
-}
-
-pub async fn finish_registration(
-    checkpoint: &PendingPrincipalRegistration,
-    password: &str,
-    password_confirm: &str,
-) -> anyhow::Result<()> {
-    let suffix = format!("/{}/finish", checkpoint.registration_id);
-    let outcome: FinishOutcome = post_json(
-        registration_url(&checkpoint.gate_account_base, &suffix)?,
-        &serde_json::json!({
-            "did_operation": checkpoint.did_operation,
-            "password": password,
-            "password_confirm": password_confirm,
-        }),
-    )
-    .await?;
-    if outcome.status != "success" {
-        anyhow::bail!(
-            "{}",
-            outcome
-                .error
-                .unwrap_or_else(|| "registration_finish_failed".to_owned())
-        );
-    }
-    Ok(())
-}
-
-pub fn registration_start_from_checkpoint(
-    checkpoint: &PendingPrincipalRegistration,
-) -> RegistrationStart {
-    RegistrationStart {
-        principal_server_url: checkpoint.principal_server_url.clone(),
-        gate_account_base: checkpoint.gate_account_base.clone(),
-        registration_id: checkpoint.registration_id.clone(),
-        enrollment_authority_did: checkpoint.enrollment_authority_did.clone(),
-        trust_domain: checkpoint.trust_domain.clone(),
-    }
 }
 
 pub fn validate_checkpoint_recovery_key(
@@ -321,6 +109,101 @@ pub fn validate_checkpoint_recovery_key(
         anyhow::bail!("Recovery Key does not match the persisted identity draft");
     }
     Ok(key_material)
+}
+
+pub struct IdentityBindingCompletion {
+    pub binding_receipt: arkret_sdk::AccountBindingReceipt,
+    pub session_grant: garth::SessionGrantState,
+    pub session_private_key_pem: String,
+    pub dpop_device_key: crate::state::DpopDeviceKeyRecord,
+}
+
+pub async fn complete_account_handoff_binding(
+    handoff: &PendingAccountHandoff,
+    checkpoint: &PendingPrincipalRegistration,
+    recovery_key: &str,
+    dpop: &crate::identity::account_auth::grant_dpop::DpopHandle,
+) -> anyhow::Result<IdentityBindingCompletion> {
+    if handoff.expires_at <= Utc::now() {
+        anyhow::bail!("account handoff expired; authenticate the account again");
+    }
+    if handoff.holder_jkt != dpop.jkt() {
+        anyhow::bail!("account handoff holder key does not match the current DPoP key");
+    }
+    let account_handoff_grant = crate::identity::account_auth::load_account_handoff_grant()?
+        .ok_or_else(|| anyhow!("account handoff credential is unavailable; authenticate again"))?;
+    let key_material = validate_checkpoint_recovery_key(checkpoint, recovery_key)?;
+    let did_operation: arkret_sdk::DidOperationSubmitRequestBody =
+        serde_json::from_value(checkpoint.did_operation.clone())
+            .context("persisted DID operation is invalid")?;
+    let lease = arkret_sdk::IdentityCreationLease {
+        lease_id: checkpoint.lease_id.clone(),
+        fence: checkpoint.lease_fence,
+        expires_at: handoff
+            .lease_expires_at
+            .ok_or_else(|| anyhow!("identity-creation lease expiry is unavailable"))?,
+        reserved_identity: None,
+    };
+    let challenge_request = garth::identity_binding_challenge_request(
+        arkret_sdk::RequestId::new(arkret_sdk::identifiers::new_prefixed_uuid7("ak:request:"))?,
+        &lease,
+        did_operation.clone(),
+    )?;
+    let account_base = crate::identity::session_refresh::sdk_base_url_from_gate_account_base(
+        &handoff.gate_account_base,
+    )?;
+    let account_client = arkret_sdk::http_client::ClientBuilder::new(account_base)
+        .allow_insecure_localhost()
+        .auth(arkret_sdk::http_client::Auth::Dpop(
+            dpop.sdk_account_handoff_auth(account_handoff_grant.clone()),
+        ))
+        .build()?;
+    let challenge = account_client
+        .auth_issue_identity_binding_challenge(&challenge_request)
+        .await?;
+    let register_request = garth::identity_creation_register_request(
+        &challenge,
+        did_operation,
+        &key_material.root_seed,
+        None,
+    )?;
+    let register_outcome = account_client.account_register(&register_request).await?;
+    let binding_receipt = register_outcome
+        .binding_receipt
+        .ok_or_else(|| anyhow!("Account Authority omitted identity-creation binding receipt"))?;
+    garth::validate_binding_receipt(&binding_receipt, &challenge)?;
+    let session_request = garth::pre_registration_session_grant_request(
+        register_outcome.principal_id,
+        Some(arkret_sdk::DeviceId::new(checkpoint.device_id.clone())?),
+        Vec::new(),
+        &account_handoff_grant,
+        arkret_sdk::Did::new(handoff.audience.clone())?,
+        Utc::now() + chrono::Duration::minutes(5),
+        |bytes| dpop.sign_protocol_bytes(bytes),
+    )?;
+    let session_engine = garth::SessionEngine::new(account_client);
+    session_engine
+        .login(
+            garth::LoginKind::PreRegistrationHandoff(garth::PreRegistrationHandoffLogin {
+                request: session_request,
+            }),
+            Utc::now(),
+        )
+        .await?;
+    let session_grant = session_engine
+        .current_state()
+        .ok_or_else(|| anyhow!("Account Authority did not return session state"))?;
+    let session_private_key_pem = dpop.session_signing_key_pkcs8_pem()?.to_string();
+    let dpop_device_key =
+        crate::identity::account_auth::grant_dpop::dpop_device_key_record_from_seed(
+            dpop.seed_b64().as_str(),
+        )?;
+    Ok(IdentityBindingCompletion {
+        binding_receipt,
+        session_grant,
+        session_private_key_pem,
+        dpop_device_key,
+    })
 }
 
 pub async fn bootstrap_principal(
@@ -409,33 +292,26 @@ mod tests {
     use super::*;
 
     #[test]
-    fn private_registration_url_uses_only_the_discovered_authority_origin() {
-        assert_eq!(
-            registration_url(
-                "https://auth.example/_arkret/gate/account",
-                "/01test/finish"
-            )
-            .unwrap()
-            .as_str(),
-            "https://auth.example/_coauth/account/auth/register/webvh/01test/finish"
-        );
-    }
-
-    #[test]
     fn persisted_checkpoint_contains_no_recovery_secret_and_requires_the_same_key() {
         let recovery_key = crate::recovery_crypto::generate_recovery_key().unwrap();
-        let start = RegistrationStart {
+        let handoff = PendingAccountHandoff {
             principal_server_url: "https://principal.example".to_owned(),
             gate_account_base: "https://auth.example/_arkret/gate/account".to_owned(),
-            registration_id: "01JTESTREGISTRATION0000000000".to_owned(),
+            request_id: "ak:request:019f0000-0000-7000-8000-000000000000".to_owned(),
+            holder_jkt: "holder-jkt".to_owned(),
+            audience: "did:webvh:z6mkfixture:principal.example".to_owned(),
+            expires_at: Utc::now() + chrono::Duration::minutes(10),
+            lease_id: Some("lease-1".to_owned()),
+            lease_fence: Some(1),
+            lease_expires_at: Some(Utc::now() + chrono::Duration::minutes(15)),
+            retry_after_ms: None,
+            device_id: "ak:device:019f0000-0000-7000-8000-000000000001".to_owned(),
             enrollment_authority_did: "did:key:z6MkrJVnaZkeFzdQyKjzgRHjhBfE6ZscXDFHq8T7TYNy9v1t"
                 .to_owned(),
             trust_domain: "ak:trust-domain:test".to_owned(),
         };
         let checkpoint = prepare_registration_checkpoint(
-            &start,
-            "alice",
-            "alice@example.test",
+            &handoff,
             "ak:device:019f0000-0000-7000-8000-000000000001",
             &recovery_key,
         )
