@@ -943,10 +943,22 @@ fn AppBootstrap() -> Element {
                                     callback_bootstrap_pending.set(true);
                                     callback_session_boot_state.set(SessionBootState::Checking);
                                     if callback_redirect_to_dashboard {
-                                        let _ = callback_navigator.push(Route::Dashboard);
+                                        let destination = if state_store
+                                            .read()
+                                            .pending_principal_registration()
+                                            .is_some()
+                                        {
+                                            Route::Onboarding
+                                        } else {
+                                            Route::Dashboard
+                                        };
+                                        let _ = callback_navigator.push(destination);
                                     }
                                 },
                             }
+                        },
+                        AuthSurface::Register => rsx! {
+                            crate::views::register::RegistrationPanel { device_id }
                         },
                         AuthSurface::Restoring => rsx! {
                             section {

@@ -1,6 +1,7 @@
 use arkret_sdk::http_client::{Auth, ClientBuilder};
 use chrono::Utc;
 use dioxus::prelude::*;
+use dioxus_router::Link;
 use garth::{LoginKind, OidcLogin, SessionEngine, SessionGrantState};
 
 use crate::components::UiIcon;
@@ -401,6 +402,15 @@ pub fn LoginPanel(
                     }
                 }
 
+                if !auto_capture_callback {
+                    div { class: "auth-footer",
+                        Link {
+                            to: crate::routes::Route::Register,
+                            "New here? Create a recoverable identity"
+                        }
+                    }
+                }
+
                 if !auth_status().is_empty() {
                     div { class: "auth-status", "data-testid": "auth-status", role: "status", "{auth_status}" }
                 }
@@ -594,6 +604,10 @@ fn discard_failed_oidc_callback(error: String) -> String {
     // actionable — the actual fix is signing in with the intended account.
     if error.contains("principal binding mismatch") {
         return "The account signed in at the Account Authority does not match this local device session. Start sign-in again with the intended account."
+            .to_owned();
+    }
+    if error.contains("principal_unknown") {
+        return "This Account Authority account has no verified Arkret principal identity. Create a recoverable identity from the registration page; retrying this sign-in cannot repair the account."
             .to_owned();
     }
     format!("{error} Start sign-in again.")
@@ -1015,6 +1029,16 @@ mod tests {
                 "Account Authority session-grant issue failed: reason_code=proof_invalid; principal binding mismatch: the request principal_id does not match the authenticated user".to_owned()
             ),
             "The account signed in at the Account Authority does not match this local device session. Start sign-in again with the intended account."
+        );
+    }
+
+    #[test]
+    fn unknown_principal_gets_registration_guidance() {
+        assert_eq!(
+            discard_failed_oidc_callback(
+                "Account Authority session-grant issue failed: principal_unknown".to_owned()
+            ),
+            "This Account Authority account has no verified Arkret principal identity. Create a recoverable identity from the registration page; retrying this sign-in cannot repair the account."
         );
     }
 

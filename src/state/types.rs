@@ -582,6 +582,44 @@ pub struct CachedMlsGovernanceProof {
     pub verified_at: DateTime<Utc>,
 }
 
+/// Public-only checkpoint for a client-authored principal registration.
+/// Recovery words and every derived private seed are deliberately absent; a
+/// resumed bootstrap must ask the user to re-enter the cold recovery secret.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PendingPrincipalRegistration {
+    pub principal_server_url: String,
+    pub gate_account_base: String,
+    pub registration_id: String,
+    pub handle: String,
+    pub email: String,
+    pub device_id: String,
+    pub enrollment_authority_did: String,
+    pub trust_domain: String,
+    pub did: String,
+    pub version_id: String,
+    pub root_public_key_multibase: String,
+    pub root_verification_method: String,
+    pub next_root_public_key_multibase: String,
+    pub next_root_key_hash: String,
+    pub recovery_proof_public_key_multibase: String,
+    pub backup_hpke_public_key_multibase: String,
+    pub recovery_key_fingerprint: String,
+    /// Typed `DidOperationSubmitRequestBody` serialized as public wire JSON.
+    pub did_operation: Value,
+    pub bootstrap_create_event_id: String,
+    pub bootstrap_created_at: String,
+    pub bootstrap_hlc: String,
+    pub stage: PendingPrincipalRegistrationStage,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PendingPrincipalRegistrationStage {
+    CustodyConfirmed,
+    DidBound,
+    BootstrapAccepted,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ClientLocalState {
     pub sync_cursor: Option<String>,
@@ -700,6 +738,10 @@ pub struct ClientLocalState {
     /// Account Authority refresh endpoint when it nears expiry.
     #[serde(default)]
     pub session_grant: Option<PersistedSessionGrant>,
+    /// Resumable public registration draft. This never contains the Recovery
+    /// Key or derived private material.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pending_principal_registration: Option<PendingPrincipalRegistration>,
     /// Client-side telemetry log buffer. Mirrors sodmin's
     /// `utils/audit.rs` shape - each entry is a structured "user action"
     /// record (actor / action / outcome / timestamp). Written by
@@ -1122,6 +1164,7 @@ impl Default for ClientLocalState {
             private_data: BTreeMap::new(),
             read_cursors: BTreeMap::new(),
             session_grant: None,
+            pending_principal_registration: None,
             telemetry_log: Vec::new(),
             mls_snapshots: BTreeMap::new(),
             mls_receive_recovery_snapshots: BTreeMap::new(),

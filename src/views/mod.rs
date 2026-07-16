@@ -73,6 +73,7 @@ pub mod onboarding;
 pub mod quarantine;
 pub mod realm_admin;
 pub mod recovery;
+pub mod register;
 /// Shared E2EE "Send Secure" pipeline (MLS encrypt → forced commit →
 /// encrypted `ak.message.create`) used by chat message writes.
 pub mod secure_send;

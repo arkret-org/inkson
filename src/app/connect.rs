@@ -441,6 +441,11 @@ async fn enroll_current_session_device(
             1
         }
     };
+    if actor_seq == 1 {
+        anyhow::bail!(
+            "first-device enrollment requires the cold-root PCR bootstrap unit; continue identity setup from Onboarding"
+        );
+    }
 
     // §5.4: the enrollment authority attests the device verify key, HPKE
     // sealing key AND the canonical algorithm set. Advertise this device's
@@ -460,6 +465,7 @@ async fn enroll_current_session_device(
         device_id: device.to_owned(),
         device_public_key,
         actor_seq,
+        bootstrap_create_event_id: None,
         not_before: None,
         hpke_key,
         algorithms: crate::identity::device_enrollment::inkson_device_algorithms(),

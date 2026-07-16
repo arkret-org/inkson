@@ -75,6 +75,7 @@ pub(super) fn route_label(route: &Route) -> &'static str {
     match route {
         Route::Dashboard => "Home",
         Route::Login | Route::AuthCallback => "Login",
+        Route::Register => "Create identity",
         Route::RealmsManage => "Manage Realms",
         Route::Realm { .. } => "Realm",
         Route::Chat { .. } => "Discussion",
