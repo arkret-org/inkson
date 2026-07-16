@@ -121,6 +121,7 @@ pub fn OnboardingPanel(
     token: Signal<String>,
     account_did: Signal<String>,
     device_id: Signal<String>,
+    config_store: Signal<crate::config::LocalConfigStore>,
 ) -> Element {
     // A4 — base_url / state_store from session context instead of props.
     let base_url = crate::app::SessionContext::base_url_string();
@@ -170,6 +171,12 @@ pub fn OnboardingPanel(
             }
 
             PendingPrincipalBootstrap { token, account_did, device_id }
+            PendingAccountIdentityCreation {
+                token,
+                account_did,
+                device_id,
+                config_store,
+            }
 
             div { class: "event", "data-testid": "account-strand",
                 role: "region",
@@ -496,6 +503,241 @@ pub fn OnboardingPanel(
     }
 }
 
+fn random_custody_word_indices(word_count: usize) -> anyhow::Result<Vec<usize>> {
+    if word_count < 3 {
+        anyhow::bail!("recovery phrase is too short for custody confirmation");
+    }
+    let mut indices = Vec::with_capacity(3);
+    while indices.len() < 3 {
+        let mut random = [0_u8; 2];
+        getrandom::fill(&mut random)?;
+        let candidate = usize::from(u16::from_le_bytes(random)) % word_count;
+        if !indices.contains(&candidate) {
+            indices.push(candidate);
+        }
+    }
+    indices.sort_unstable();
+    Ok(indices)
+}
+
+#[component]
+fn PendingAccountIdentityCreation(
+    mut token: Signal<String>,
+    mut account_did: Signal<String>,
+    mut device_id: Signal<String>,
+    config_store: Signal<crate::config::LocalConfigStore>,
+) -> Element {
+    let mut state_store = crate::app::SessionContext::get().state_store;
+    let handoff = state_store.read().pending_account_handoff();
+    let mut recovery_key = use_signal(String::new);
+    let mut word_indices = use_signal(Vec::<usize>::new);
+    let mut confirmations = use_signal(|| vec![String::new(), String::new(), String::new()]);
+    let mut busy = use_signal(|| false);
+    let mut status = use_signal(|| {
+        "Generate the Recovery Key locally. The server receives only the signed public inception operation."
+            .to_owned()
+    });
+
+    let Some(handoff) = handoff else {
+        return rsx! {};
+    };
+    if let Some(retry_after_ms) = handoff.retry_after_ms {
+        return rsx! {
+            div { class: "event", "data-testid": "identity-creation-busy",
+                div { class: "event-head", span { "Identity creation is active elsewhere" } }
+                div { class: "muted",
+                    "Another holder owns the current lease. Retry after approximately {retry_after_ms} ms; this client will not mint a second identity."
+                }
+                Link { class: "secondary", to: Route::Login, "Authenticate again after the lease expires" }
+            }
+        };
+    }
+    let expired = handoff.expires_at <= chrono::Utc::now()
+        || handoff
+            .lease_expires_at
+            .is_some_and(|expires_at| expires_at <= chrono::Utc::now());
+    let indices = word_indices();
+
+    rsx! {
+        div { class: "event", "data-testid": "account-handoff-onboarding",
+            div { class: "event-head",
+                span { "Account handoff · identity creation" }
+                span { class: "badge accent", "lease fence {handoff.lease_fence.unwrap_or_default()}" }
+            }
+            div { class: "muted",
+                "Hosting: {handoff.principal_server_url}. Enrollment authority: {handoff.enrollment_authority_did}. Trust domain: {handoff.trust_domain}."
+            }
+            if expired {
+                div { class: "auth-status", role: "alert",
+                    "The handoff or lease expired. Authenticate again; Inkson will resume only the same reserved public operation."
+                }
+                Link { class: "primary", to: Route::Login, "Authenticate again" }
+            } else if recovery_key().is_empty() {
+                Button {
+                    variant: ButtonVariant::Primary,
+                    "data-testid": "onboarding-generate-recovery-key",
+                    disabled: busy(),
+                    onclick: move |_| {
+                        match crate::recovery_crypto::generate_recovery_key().and_then(|key| {
+                            let count = key.split_whitespace().count();
+                            let selected = random_custody_word_indices(count)?;
+                            Ok((key, selected))
+                        }) {
+                            Ok((key, selected)) => {
+                                recovery_key.set(key);
+                                word_indices.set(selected);
+                                confirmations.set(vec![String::new(), String::new(), String::new()]);
+                                status.set("Write all 24 words down offline, then confirm the three randomly selected positions.".to_owned());
+                            }
+                            Err(error) => status.set(format!("Could not generate Recovery Key: {error}")),
+                        }
+                    },
+                    "Generate Recovery Key"
+                }
+            } else {
+                Label { html_for: "onboarding-recovery-key-display", "Recovery Key — shown once" }
+                textarea {
+                    id: "onboarding-recovery-key-display",
+                    class: "form-input",
+                    "data-testid": "onboarding-recovery-key-display",
+                    readonly: true,
+                    rows: "5",
+                    value: "{recovery_key}",
+                }
+                for (slot, index) in indices.iter().copied().enumerate() {
+                    Label { html_for: "custody-word-{slot}", "Word #{index + 1}" }
+                    Input {
+                        id: "custody-word-{slot}",
+                        "data-testid": "custody-word-confirmation",
+                        autocomplete: "off",
+                        value: "{confirmations()[slot]}",
+                        disabled: busy(),
+                        oninput: move |event: FormEvent| {
+                            let mut values = confirmations();
+                            values[slot] = event.value();
+                            confirmations.set(values);
+                        },
+                    }
+                }
+                Button {
+                    variant: ButtonVariant::Primary,
+                    "data-testid": "onboarding-bind-identity",
+                    disabled: busy(),
+                    onclick: move |_| {
+                        let words: Vec<String> = recovery_key()
+                            .split_whitespace()
+                            .map(|word| word.to_ascii_lowercase())
+                            .collect();
+                        let answers = confirmations();
+                        if indices.len() != 3
+                            || indices.iter().enumerate().any(|(slot, index)| {
+                                answers[slot].trim().to_ascii_lowercase() != words[*index]
+                            })
+                        {
+                            status.set("One or more selected words do not match. Nothing has been published.".to_owned());
+                            return;
+                        }
+                        let handoff = handoff.clone();
+                        let supplied_key = recovery_key();
+                        let device = handoff.device_id.clone();
+                        busy.set(true);
+                        status.set("Reserving the public operation, proving root control, and binding the account…".to_owned());
+                        spawn(async move {
+                            let result = async {
+                                let checkpoint = crate::identity::principal_registration::prepare_registration_checkpoint(
+                                    &handoff,
+                                    &device,
+                                    &supplied_key,
+                                )?;
+                                let barrier = {
+                                    let mut store = state_store.write();
+                                    store.set_pending_principal_registration(Some(checkpoint.clone()))?;
+                                    store.begin_durable_flush()?
+                                };
+                                barrier.wait().await?;
+                                let dpop = {
+                                    let mut store = state_store.write();
+                                    crate::identity::account_auth::grant_dpop::ensure_device_key(&mut store)?
+                                };
+                                let completion = crate::identity::principal_registration::complete_account_handoff_binding(
+                                    &handoff,
+                                    &checkpoint,
+                                    &supplied_key,
+                                    &dpop,
+                                )
+                                .await?;
+                                let actor = completion.session_grant.principal_id.to_string();
+                                let grant_jwt = completion.session_grant.grant_jwt.clone();
+                                let persisted_grant = crate::state::PersistedSessionGrant {
+                                    grant_jwt: grant_jwt.clone(),
+                                    session_private_key_pem: completion.session_private_key_pem,
+                                    grant_id: completion.session_grant.grant_id.to_string(),
+                                    audience: completion.session_grant.audience.to_string(),
+                                    principal_id: actor.clone(),
+                                    device_id: device.clone(),
+                                    principal_server_url: handoff.principal_server_url.clone(),
+                                    grant_expires_at: Some(completion.session_grant.expires_at),
+                                    stored_at: chrono::Utc::now(),
+                                };
+                                let secure_store = crate::secure_key_store::default_secure_key_store("inkson");
+                                crate::secure_key_store::adopt_device_seed_scope_on_login(
+                                    secure_store.as_ref(),
+                                    &actor,
+                                )?;
+                                let mut accepted = checkpoint;
+                                accepted.binding_receipt = Some(serde_json::to_value(
+                                    completion.binding_receipt,
+                                )?);
+                                accepted.stage = crate::state::PendingPrincipalRegistrationStage::BindingRegistered;
+                                {
+                                    let mut store = state_store.write();
+                                    store.adopt_pending_login(&actor);
+                                    crate::views::login::persist_completed_login_dpop_key(
+                                        &mut store,
+                                        secure_store.as_ref(),
+                                        &actor,
+                                        &device,
+                                        &completion.dpop_device_key,
+                                    )
+                                    .map_err(anyhow::Error::msg)?;
+                                    store.set_pending_principal_registration(Some(accepted))?;
+                                    store.set_pending_account_handoff(None)?;
+                                    store.set_session_grant(Some(persisted_grant));
+                                    store.register_known_account(&actor);
+                                }
+                                crate::identity::account_auth::clear_account_handoff_grant()?;
+                                crate::views::helpers::persist_config(
+                                    config_store,
+                                    handoff.principal_server_url,
+                                    actor.clone(),
+                                    device.clone(),
+                                    grant_jwt.clone(),
+                                );
+                                Ok::<_, anyhow::Error>((actor, device, grant_jwt))
+                            }
+                            .await;
+                            match result {
+                                Ok((actor, device, grant)) => {
+                                    account_did.set(actor);
+                                    device_id.set(device);
+                                    token.set(grant);
+                                    recovery_key.set(String::new());
+                                    confirmations.set(vec![String::new(), String::new(), String::new()]);
+                                    status.set("Identity entry 0 is bound. Continue the first-device PCR bootstrap below.".to_owned());
+                                }
+                                Err(error) => status.set(format!("Identity binding did not complete: {error}")),
+                            }
+                            busy.set(false);
+                        });
+                    },
+                    "Confirm custody and bind identity"
+                }
+            }
+            div { class: "muted", role: "status", "aria-live": "polite", "data-testid": "account-handoff-status", "{status}" }
+        }
+    }
+}
+
 #[component]
 fn PendingPrincipalBootstrap(
     token: Signal<String>,
@@ -578,7 +820,7 @@ fn PendingPrincipalBootstrap(
                                 )?;
 
                                 if registration.stage
-                                    == crate::state::PendingPrincipalRegistrationStage::DidBound
+                                    == crate::state::PendingPrincipalRegistrationStage::BindingRegistered
                                 {
                                     let signer = crate::event_signer::active_signer()
                                         .ok_or_else(|| anyhow::anyhow!("device signer is unavailable"))?;

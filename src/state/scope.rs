@@ -308,6 +308,19 @@ impl LocalStateStore {
         self.load().pending_principal_registration
     }
 
+    pub fn pending_account_handoff(&self) -> Option<PendingAccountHandoff> {
+        self.load().pending_account_handoff
+    }
+
+    pub fn set_pending_account_handoff(
+        &mut self,
+        handoff: Option<PendingAccountHandoff>,
+    ) -> anyhow::Result<()> {
+        self.ensure_cached_loaded();
+        self.cached.pending_account_handoff = handoff;
+        self.flush()
+    }
+
     pub fn set_pending_principal_registration(
         &mut self,
         registration: Option<PendingPrincipalRegistration>,

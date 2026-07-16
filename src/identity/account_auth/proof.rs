@@ -86,24 +86,6 @@ pub fn build_session_grant_introspection_proof(
     sign_compact_jws_eddsa(&claims, signing_key)
 }
 
-/// Deterministic `sha256:<hex>` digest binding the OIDC code-exchange request
-/// fields. The Account Authority does not consult this for the
-/// `oidc_code_exchange` branch (it re-validates against the issuer), but the
-/// SDK [`arkret_sdk::SessionGrantRequestProof`] requires a valid [`Hash`], so
-/// we compute a real content digest of the binding fields rather than ship a
-/// placeholder.
-pub(crate) fn oidc_request_canonical_digest(
-    issuer: &str,
-    client_id: &str,
-    authorization_code: &str,
-    state: &str,
-) -> anyhow::Result<arkret_sdk::Hash> {
-    let canonical = format!("oidc_code_exchange|{issuer}|{client_id}|{authorization_code}|{state}");
-    let digest = arkret_sdk::canonical::sha256_digest(canonical.as_bytes());
-    arkret_sdk::Hash::new(digest)
-        .map_err(|error| anyhow::anyhow!("invalid oidc request digest: {error}"))
-}
-
 /// Hash the grant JWT bytes per coauth's `session_grant_jwt_hash`
 /// (`"sha256:" + hex(sha256(grant_jwt))`). Public so callers can verify
 /// their proof binding before sending.
