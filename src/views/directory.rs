@@ -1105,11 +1105,10 @@ pub fn DirectoryPanel(
                             // without typing the DID by hand.
                             //
                             // TODO(G3.Y3-followup): replace the route-only
-                            // hop with an in-place block confirmation
-                            // overlay once the soland account_data
-                            // `POST /_arkret/self/account-data/blocklist`
-                            // endpoint exists; today the click is just a
-                            // shortcut into `/settings/blocklist`.
+                            // hop with an in-place block confirmation overlay
+                            // backed by the canonical account-data PUT for
+                            // `ak.account.blocklist`; today the click is just
+                            // a shortcut into `/settings/blocklist`.
                             {
                                 let actor_id = actor
                                     .get("did")

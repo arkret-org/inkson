@@ -124,10 +124,9 @@ pub enum AppView {
     /// setup surface. (claude-design `desktop/onboarding.html`, identity-did §3 +
     /// identity-handles + device-lifecycle §1-§13)
     Onboarding,
-    /// Invite-quarantine list. Admins see all entries from coauth's
-    /// `GET /_arkret/local/admin/invite-quarantine`; non-admins see their own
-    /// quarantined invites. Approve / reject buttons POST
-    /// `/_arkret/local/admin/invite-quarantine/{id}/resolve`.
+    /// Invite-quarantine placeholder. It fails closed until the SDK exposes a
+    /// public typed transport surface; Inkson does not call private coauth
+    /// administration routes.
     Quarantine,
     /// A6.1 — global cross-Space message search panel. Triggered by
     /// the `topbar-search-button`, `Cmd+F` (Ctrl+F off-mac), or by
