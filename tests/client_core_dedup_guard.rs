@@ -98,9 +98,11 @@ fn realm_runner_keeps_session_recovery_inside_transport_provider() {
         .unwrap_or_else(|error| panic!("failed to read {}: {error}", source_path.display()));
     assert!(
         source.contains("async fn recover_unauthorized(&self)")
-            && source.contains("prepare_refresh_for_server_after_unauthorized")
-            && source.contains("exchange_refresh(&grant, &device_handle)")
-            && source.contains("self.ctx.token.set(session_credential)"),
+            && source.contains("provide_authenticated_sdk_client")
+            && source.contains("refresh_authenticated_session_after_unauthorized")
+            && !source.contains("prepare_refresh_for_server_after_unauthorized")
+            && !source.contains("exchange_refresh(&grant, &device_handle)")
+            && !source.contains("self.ctx.token.set(session_credential)"),
         "Inkson Realm transport provider must own unauthorized refresh and credential rebuild"
     );
     assert!(
