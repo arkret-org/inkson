@@ -80,8 +80,6 @@ pub fn RealmAdminPanel(
     // Read-only notary cell value. The Arkret HTTP catalog does not expose
     // this as a spec endpoint yet, so surface that inline rather than
     // pretending a private path exists.
-    let mut notary_cell_status = use_signal(String::new);
-    let mut notary_cell_value = use_signal(String::new);
     // Selected Move for the failure detail inline panel. Clicking a row
     // that's in a failed state stores its move_id here; the detail block
     // below renders the reason / seal_ref.
@@ -592,73 +590,6 @@ pub fn RealmAdminPanel(
                     }
                     div { class: "muted", "data-testid": "seal-state-root",
                         "state_root: {seal_state_root_label}"
-                    }
-                }
-                // Notary cell (read-only, P0 M4). This remains disabled until
-                // the Arkret HTTP catalog exposes a spec endpoint for the
-                // recovery-notary mode.
-                div { class: "event", "data-testid": "notary-cell-card",
-                    div { class: "event-head",
-                        span { "Notary cell" }
-                        span { "ak.component.notary.v1" }
-                    }
-                    div { class: "muted",
-                        "Recovery notary mode for this Realm — controls who can re-seal a paused frontier. Read-only; modifications go through the dedicated notary-rotation strand."
-                    }
-                    div { class: "actions",
-                        Button {
-                            variant: ButtonVariant::Secondary,
-                            "data-testid": "notary-cell-refresh",
-                            onclick: {
-                                let base = base_url.clone();
-                                let realm = selected_realm_id.clone();
-                                move |_| {
-                                    let base = base.clone();
-                                    let realm = realm.clone();
-                                    let api_token = token();
-                                    spawn(async move {
-                                        match crate::transport::auth::with_authed_sdk_client(
-                                            &base,
-                                            api_token,
-                                            |http| async move {
-                                                crate::transport::realm_read::admin_notary_describe(
-                                                    &http, &realm,
-                                                )
-                                                .await
-                                            },
-                                        )
-                                        .await
-                                        {
-                                            Ok(value) => {
-                                                notary_cell_status.set("ok".to_owned());
-                                                notary_cell_value.set(value.to_string());
-                                            }
-                                            Err(err) => {
-                                                // 404 / not-implemented falls through here.
-                                                // Keep the message clear so the operator
-                                                // knows it's a missing endpoint, not bad
-                                                // data.
-                                                notary_cell_status.set(format!(
-                                                    "notary endpoint unavailable ({}); no spec-defined Arkret HTTP endpoint",
-                                                    err.display()
-                                                ));
-                                            }
-                                        }
-                                    });
-                                }
-                            },
-                            "Fetch notary cell"
-                        }
-                    }
-                    if !notary_cell_status().is_empty() {
-                        div { class: "muted", "data-testid": "notary-cell-status",
-                            "{notary_cell_status}"
-                        }
-                    }
-                    if !notary_cell_value().is_empty() {
-                        div { class: "muted", "data-testid": "notary-cell-value",
-                            "{notary_cell_value}"
-                        }
                     }
                 }
             }

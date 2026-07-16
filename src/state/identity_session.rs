@@ -19,12 +19,9 @@ impl LocalStateStore {
         self.load().local_identity
     }
 
-    /// Replace (or clear) the persisted device identity record. Used by
-    /// the [`crate::key_store::KeyStore`] trait's `save_identity` impl so
-    /// a future Keychain / Secret-Service backend can hand a different
-    /// record back to the in-memory cache without going through
-    /// `ensure_local_identity` (which would generate a fresh seed if the
-    /// record was missing).
+    /// Replace (or clear) the persisted device identity record without
+    /// going through `ensure_local_identity`, which would generate a fresh
+    /// seed if the record were missing.
     pub fn set_local_identity_record(&mut self, record: Option<LocalIdentityRecord>) {
         self.ensure_cached_loaded();
         #[cfg(target_arch = "wasm32")]

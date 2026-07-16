@@ -172,8 +172,8 @@ network panel.
 **Symptom**: a red banner says "Policy denied" with a code like
 `policy_denied.realm_class_mismatch`.
 
-**Cause**: the server's policy server rejected your request. The banner
-matches G3.Y3 — see `src/components/policy_deny_banner.rs`.
+**Cause**: the server's policy server rejected your request. The shared
+feedback component renders the denial as a toast; see `src/components/feedback.rs`.
 
 **Fix**: read the policy code. Each code in `authz/policy-server.md` §3
 has a documented obligation list. Often you simply need to switch to the

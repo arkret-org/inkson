@@ -190,10 +190,9 @@ just check-macos
 just check-mobile-stubs
 ```
 
-The iOS and Android targets are **stubs only** — they install host-bridge wrappers
-around the `HostSecretBridge` trait. There is no real JNI or
-Security.framework FFI inside inkson. See
-`docs/platform-stub-roadmap.md` for the path to real artifacts.
+The iOS and Android targets install host-bridge wrappers around the
+`HostSecretBridge` trait. There is no real JNI or Security.framework FFI inside
+inkson. See `docs/host-secret-bridge-reference.md` for the host contract.
 
 Gitea CI mirrors this shape in `.gitea/workflows/smoke.yml`: web/WASM
 and Linux checks are required, while Windows, macOS, iOS, and Android

@@ -29,11 +29,25 @@ jobs:
           path: arkret-rust-sdk
           token: ${{ secrets.CI_REPO_TOKEN }}
 
+      - name: Checkout garth
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ gitea.repository_owner }}/garth
+          path: garth
+          token: ${{ secrets.CI_REPO_TOKEN }}
+
       - name: Checkout chime
         uses: actions/checkout@v4
         with:
           repository: ${{ gitea.repository_owner }}/chime
           path: chime
+          token: ${{ secrets.CI_REPO_TOKEN }}
+
+      - name: Checkout yoface
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ gitea.repository_owner }}/yoface
+          path: yoface
           token: ${{ secrets.CI_REPO_TOKEN }}
 
       - name: Install Linux desktop dependencies
@@ -78,11 +92,25 @@ jobs:
           path: arkret-rust-sdk
           token: ${{ secrets.CI_REPO_TOKEN }}
 
+      - name: Checkout garth
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ gitea.repository_owner }}/garth
+          path: garth
+          token: ${{ secrets.CI_REPO_TOKEN }}
+
       - name: Checkout chime
         uses: actions/checkout@v4
         with:
           repository: ${{ gitea.repository_owner }}/chime
           path: chime
+          token: ${{ secrets.CI_REPO_TOKEN }}
+
+      - name: Checkout yoface
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ gitea.repository_owner }}/yoface
+          path: yoface
           token: ${{ secrets.CI_REPO_TOKEN }}
 
       - name: Install Linux desktop dependencies
@@ -156,11 +184,25 @@ jobs:
           path: arkret-rust-sdk
           token: ${{ secrets.CI_REPO_TOKEN }}
 
+      - name: Checkout garth
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ gitea.repository_owner }}/garth
+          path: garth
+          token: ${{ secrets.CI_REPO_TOKEN }}
+
       - name: Checkout chime
         uses: actions/checkout@v4
         with:
           repository: ${{ gitea.repository_owner }}/chime
           path: chime
+          token: ${{ secrets.CI_REPO_TOKEN }}
+
+      - name: Checkout yoface
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ gitea.repository_owner }}/yoface
+          path: yoface
           token: ${{ secrets.CI_REPO_TOKEN }}
 
       - name: Install Rust with wasm target

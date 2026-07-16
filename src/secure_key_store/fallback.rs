@@ -10,12 +10,15 @@ use garth::{SecretBytes, SecureKeyStoreBackendInfo};
 use super::{SecureKeyStore, SecureKeyStoreError, WASM_INDEXEDDB_SECURE_KEY_STORE_BACKEND};
 
 pub(super) struct FallbackSecureKeyStore {
-    primary: Arc<dyn SecureKeyStore>,
-    fallback: Arc<dyn SecureKeyStore>,
+    primary: Arc<dyn SecureKeyStore + Send + Sync>,
+    fallback: Arc<dyn SecureKeyStore + Send + Sync>,
 }
 
 impl FallbackSecureKeyStore {
-    pub(super) fn new(primary: Arc<dyn SecureKeyStore>, fallback: Arc<dyn SecureKeyStore>) -> Self {
+    pub(super) fn new(
+        primary: Arc<dyn SecureKeyStore + Send + Sync>,
+        fallback: Arc<dyn SecureKeyStore + Send + Sync>,
+    ) -> Self {
         Self { primary, fallback }
     }
 }

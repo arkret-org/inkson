@@ -149,11 +149,27 @@ jobs:
           ref: main
           token: ${{ secrets.CI_REPO_TOKEN }}
 
+      - name: Check out garth
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ gitea.repository_owner }}/garth
+          path: garth
+          ref: main
+          token: ${{ secrets.CI_REPO_TOKEN }}
+
       - name: Check out chime
         uses: actions/checkout@v4
         with:
           repository: ${{ gitea.repository_owner }}/chime
           path: chime
+          ref: main
+          token: ${{ secrets.CI_REPO_TOKEN }}
+
+      - name: Check out yoface
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ gitea.repository_owner }}/yoface
+          path: yoface
           ref: main
           token: ${{ secrets.CI_REPO_TOKEN }}
 

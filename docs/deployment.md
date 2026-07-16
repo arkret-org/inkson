@@ -88,7 +88,7 @@ future phase accepts mobile scope, prepare:
 - macOS runner with Xcode and iOS signing material for ad-hoc `.ipa` builds.
 - Android SDK, NDK, Gradle, and a local signing keystore for APK builds.
 - Real Android Keystore and iOS Keychain implementations in
-  `src/secure_key_store.rs`.
+  `src/secure_key_store/`.
 - Thin host adapters that forward FCM/APNs tokens into the Rust bridge before
   push registration.
 
@@ -193,9 +193,9 @@ means you must re-notarize the rebuilt artifact without changing
 
 Steps for a no-bump notarization:
 
-1. **Hardened-runtime build.** Use `scripts/build-macos.sh --hardened`
-   so the binary embeds the hardened-runtime flag. Notarization rejects
-   non-hardened binaries.
+1. **Hardened-runtime build.** Build the release binary, then create the app
+   bundle with `pwsh scripts/macos-bundle-local.ps1`. Apply hardened-runtime
+   signing in the following codesign step.
 2. **Codesign** with the Developer ID Application certificate:
    ```sh
    codesign --force --sign "Developer ID Application: Acroidea LLC (TEAMID)" \
@@ -247,7 +247,8 @@ Setup:
 
 1. EV cert lives on a hardware token (the issuer ships a USB-attached
    token; the private key MUST NOT leave the token).
-2. Build artifact: `scripts/build-windows.ps1 -Release`.
+2. Build the release binary, then create the local MSI artifact with
+   `pwsh scripts/windows-msi-local.ps1`.
 3. Sign with `signtool`:
    ```powershell
    signtool sign /n "Acroidea LLC" `

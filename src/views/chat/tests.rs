@@ -2063,7 +2063,7 @@ fn late_recovery_guards_block_sidecar_plaintext_before_timeline_entry() {
     );
     assert_eq!(
         message.error.as_deref(),
-        Some(crate::late_recovery::ReasonCode::LATE_RECOVERY_REJECTED_MEMBERSHIP)
+        Some(arkret_sdk::ReasonCode::LATE_RECOVERY_REJECTED_MEMBERSHIP)
     );
 }
 

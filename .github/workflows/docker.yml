@@ -28,11 +28,25 @@ jobs:
           path: arkret-rust-sdk
           token: ${{ secrets.CI_REPO_TOKEN || github.token }}
 
+      - name: Checkout garth
+        uses: actions/checkout@v6
+        with:
+          repository: ${{ github.repository_owner }}/garth
+          path: garth
+          token: ${{ secrets.CI_REPO_TOKEN || github.token }}
+
       - name: Checkout chime
         uses: actions/checkout@v6
         with:
           repository: ${{ github.repository_owner }}/chime
           path: chime
+          token: ${{ secrets.CI_REPO_TOKEN || github.token }}
+
+      - name: Checkout yoface
+        uses: actions/checkout@v6
+        with:
+          repository: ${{ github.repository_owner }}/yoface
+          path: yoface
           token: ${{ secrets.CI_REPO_TOKEN || github.token }}
 
       - name: Set up Docker Buildx
@@ -55,7 +69,15 @@ jobs:
           rsync -a --delete \
             --exclude .git \
             --exclude target \
+            garth/ docker-context/garth/
+          rsync -a --delete \
+            --exclude .git \
+            --exclude target \
             chime/ docker-context/chime/
+          rsync -a --delete \
+            --exclude .git \
+            --exclude target \
+            yoface/ docker-context/yoface/
 
       - name: Build image
         uses: docker/build-push-action@v6

@@ -8,9 +8,9 @@ or upload Sigstore transparency-log entries.
 ## Inputs
 
 - A clean inkson worktree except for deliberate release changes.
-- Sibling `../arkret-rust-sdk` and `../chime` checkouts matching the local
-  release plan.
-- Dioxus CLI `0.7.5`.
+- Sibling `../arkret-rust-sdk`, `../garth`, `../chime`, and `../yoface`
+  checkouts matching the local release plan.
+- Dioxus CLI `0.7.9`.
 - Docker for web image evidence.
 - Optional local signing tools:
   - macOS: `codesign`, `xcrun`, `INKSON_MACOS_SIGN_IDENTITY`.

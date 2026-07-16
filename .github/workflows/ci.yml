@@ -50,6 +50,13 @@ jobs:
           path: chime
           token: ${{ secrets.CI_REPO_TOKEN || github.token }}
 
+      - name: Checkout yoface
+        uses: actions/checkout@v6
+        with:
+          repository: ${{ github.repository_owner }}/yoface
+          path: yoface
+          token: ${{ secrets.CI_REPO_TOKEN || github.token }}
+
       - name: Install Linux desktop dependencies
         run: |
           sudo apt-get update
@@ -63,6 +70,7 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
         with:
           components: clippy, rustfmt
+          targets: wasm32-unknown-unknown
 
       - name: Cache Cargo
         uses: Swatinem/rust-cache@v2
@@ -116,6 +124,26 @@ jobs:
       - name: Install Playwright browser
         working-directory: inkson
         run: npx playwright install --with-deps chromium
+
+      - name: Install Chrome and ChromeDriver
+        id: setup-chrome
+        uses: browser-actions/setup-chrome@v2
+        with:
+          install-chromedriver: true
+
+      - name: Install wasm-bindgen test runner
+        run: cargo install wasm-bindgen-cli --version 0.2.123 --locked
+
+      - name: WebAssembly browser tests
+        working-directory: inkson
+        env:
+          CARGO_TARGET_WASM32_UNKNOWN_UNKNOWN_RUNNER: wasm-bindgen-test-runner
+          CHROME: ${{ steps.setup-chrome.outputs.chrome-path }}
+          CHROMEDRIVER: ${{ steps.setup-chrome.outputs.chromedriver-path }}
+        run: >-
+          cargo test --locked --target wasm32-unknown-unknown
+          --test mls_data_plane_wasm
+          --test wasm_indexed_db_capacity
 
       - name: Browser end-to-end tests
         working-directory: inkson
