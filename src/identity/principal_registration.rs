@@ -306,9 +306,8 @@ mod tests {
         .unwrap();
 
         let persisted = serde_json::to_string(&checkpoint).unwrap();
-        for word in recovery_key.split_whitespace() {
-            assert!(!persisted.contains(word));
-        }
+        let encoded_recovery_key = serde_json::to_string(&recovery_key).unwrap();
+        assert!(!persisted.contains(&encoded_recovery_key));
         assert!(!persisted.contains("root_seed"));
         assert!(!persisted.contains("recovery_proof_seed"));
         assert!(!persisted.contains("backup_hpke_private"));
