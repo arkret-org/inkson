@@ -280,6 +280,10 @@ impl LocalStateStore {
         if did.is_empty() {
             return false;
         }
+        let pending_registration = self
+            .read_account_state(ANONYMOUS_ACCOUNT_NAMESPACE)
+            .and_then(|state| state.pending_principal_registration)
+            .filter(|registration| registration.did == did);
         let is_returning_account = self.read_root().known_dids.iter().any(|known| known == did)
             || self.read_account_state(did).is_some();
         // Clear pending namespace pin before the seed-scope adopt re-homes it,
@@ -288,7 +292,29 @@ impl LocalStateStore {
         crate::secure_key_store::set_pending_login_device_id(None);
         self.mutate_root(|root| root.pending_login = None);
         self.switch_active_account(did);
+        if let Some(registration) = pending_registration {
+            self.cached.pending_principal_registration = Some(registration);
+            if self.flush().is_ok()
+                && let Some(mut anonymous) = self.read_account_state(ANONYMOUS_ACCOUNT_NAMESPACE)
+            {
+                anonymous.pending_principal_registration = None;
+                let _ = self.write_account_state(ANONYMOUS_ACCOUNT_NAMESPACE, &anonymous);
+            }
+        }
         !is_returning_account
+    }
+
+    pub fn pending_principal_registration(&self) -> Option<PendingPrincipalRegistration> {
+        self.load().pending_principal_registration
+    }
+
+    pub fn set_pending_principal_registration(
+        &mut self,
+        registration: Option<PendingPrincipalRegistration>,
+    ) -> anyhow::Result<()> {
+        self.ensure_cached_loaded();
+        self.cached.pending_principal_registration = registration;
+        self.flush()
     }
 
     /// G3.Y0 — hard logout: wipe everything `clear_account_scoped`

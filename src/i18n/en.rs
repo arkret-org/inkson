@@ -199,6 +199,16 @@ pub fn english_translations() -> TranslationDict {
     dict.set("login.continue", "Continue");
     dict.set("login.working", "Working...");
     dict.set("login.signed_in_as", "Signed in as");
+    dict.set("login.title", "Sign in");
+    dict.set("login.completing", "Completing sign in");
+    dict.set("login.principal_server", "Principal server");
+    dict.set("login.principal_server_url", "Principal server URL");
+    dict.set("login.show_preset_servers", "Show preset servers");
+    dict.set("login.preset_servers", "Preset servers");
+    dict.set("login.status.signed_out", "signed-out");
+    dict.set("login.status.session_expired", "session-expired");
+    dict.set("login.status.signed_in", "signed-in");
+    dict.set("login.refresh_now", "Refresh now");
 
     dict.set("dashboard.home", "Home");
     dict.set("dashboard.notifications_label", "Notifications");

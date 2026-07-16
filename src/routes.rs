@@ -14,6 +14,9 @@ pub enum Route {
     #[route("/login", RoutePage)]
     Login,
 
+    #[route("/register", RoutePage)]
+    Register,
+
     #[route("/auth/callback", RoutePage)]
     AuthCallback,
 
@@ -284,7 +287,7 @@ impl Route {
     pub fn to_view(&self) -> AppView {
         match self {
             Route::Dashboard => AppView::Dashboard,
-            Route::Login | Route::AuthCallback => AppView::Login,
+            Route::Login | Route::Register | Route::AuthCallback => AppView::Login,
             Route::RealmsManage => AppView::RealmsManage,
             // `/realms/:id` is an entry point, not a surface: it resolves the
             // user's RealmSurface preference and renders the board
@@ -424,6 +427,7 @@ mod tests {
         let routes = vec![
             Route::Dashboard,
             Route::Login,
+            Route::Register,
             Route::Realm {
                 realm_id: "ak:realm:roundtrip".to_owned(),
             },

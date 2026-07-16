@@ -360,6 +360,29 @@ impl InksonEventSigner {
         Ok(())
     }
 
+    /// Build the first B-model principal-control Seal with this device key.
+    /// The signer identity is rebound to the principal and the verification
+    /// method is the explicit `<principal>#<device_id>` session binding.
+    pub fn sign_self_principal_bootstrap_seal(
+        &self,
+        create: &arkret_sdk::Event,
+        authorize: &arkret_sdk::Event,
+        hlc: arkret_sdk::Hlc,
+    ) -> Result<arkret_sdk::Seal, EventSignerError> {
+        let device_id = self.device_id.as_deref().ok_or_else(|| {
+            EventSignerError::Encoding(
+                "principal bootstrap Seal requires a bound device_id".to_owned(),
+            )
+        })?;
+        let signer = InksonMoveSignerAdapter {
+            owner: self,
+            did: create.actor_id.clone(),
+            verification_method: format!("{}#{device_id}", create.actor_id),
+        };
+        arkret_sdk::identity::build_self_principal_bootstrap_seal(create, authorize, hlc, &signer)
+            .map_err(|error| EventSignerError::Backend(error.to_string()))
+    }
+
     /// Produce a detached JWS (`<b64u header>..<b64u sig>`) over `bytes`
     /// using the active backend, matching the alg-only protected header
     /// shape [`Self::sign_envelope_with_context`] uses. Control-plane

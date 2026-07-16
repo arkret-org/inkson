@@ -130,6 +130,9 @@ pub(super) fn RouteSurface(state: RouteSurfaceState) -> Element {
                             on_login: move |_| { let _ = navigator.push(Route::Dashboard); },
                         }
                     },
+                    Route::Register => rsx! {
+                        crate::views::register::RegistrationPanel { device_id }
+                    },
                     Route::Dashboard => rsx! {
                         crate::views::dashboard::DashboardPanel {
                             token,

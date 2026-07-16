@@ -112,6 +112,7 @@ pub(super) fn rehydrated_session_credential_for_active_config(
 pub(super) enum AuthSurface {
     AppShell,
     Login,
+    Register,
     Callback,
     Restoring,
 }
@@ -125,6 +126,8 @@ pub(super) fn auth_surface_for_route(
         AuthSurface::Callback
     } else if has_session {
         AuthSurface::AppShell
+    } else if matches!(route, Route::Register) {
+        AuthSurface::Register
     } else if boot_state.is_pending() {
         AuthSurface::Restoring
     } else {
@@ -133,7 +136,7 @@ pub(super) fn auth_surface_for_route(
 }
 
 pub(super) fn should_redirect_to_dashboard_after_login(route: &Route) -> bool {
-    matches!(route, Route::Login | Route::AuthCallback)
+    matches!(route, Route::Login | Route::Register | Route::AuthCallback)
 }
 
 pub(super) fn initial_session_credential_from_state(

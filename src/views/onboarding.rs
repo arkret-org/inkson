@@ -169,6 +169,8 @@ pub fn OnboardingPanel(
                 }
             }
 
+            PendingPrincipalBootstrap { token, account_did, device_id }
+
             div { class: "event", "data-testid": "account-strand",
                 role: "region",
                 "aria-labelledby": "account-strand-heading",
@@ -488,6 +490,203 @@ pub fn OnboardingPanel(
                             }
                         }
                     }
+                }
+            }
+        }
+    }
+}
+
+#[component]
+fn PendingPrincipalBootstrap(
+    token: Signal<String>,
+    account_did: Signal<String>,
+    device_id: Signal<String>,
+) -> Element {
+    let base_url = crate::app::SessionContext::base_url_string();
+    let mut state_store = crate::app::SessionContext::get().state_store;
+    let checkpoint = state_store.read().pending_principal_registration();
+    let mut recovery_key = use_signal(String::new);
+    let mut busy = use_signal(|| false);
+    let mut status = use_signal(|| {
+        "Re-enter the same 24-word Recovery Key to sign the PCR root anchor and finish the recovery-material gate."
+            .to_owned()
+    });
+
+    let Some(registration) = checkpoint else {
+        return rsx! {};
+    };
+    let did_label = short_protocol_id(&registration.did);
+    let stage_label = format!("{:?}", registration.stage);
+
+    rsx! {
+        div {
+            class: "event",
+            "data-testid": "pending-principal-bootstrap",
+            role: "region",
+            "aria-label": "Finish identity bootstrap",
+            div { class: "event-head",
+                span { "Finish identity bootstrap" }
+                span { class: "badge accent", "{stage_label}" }
+            }
+            div { class: "muted",
+                "Entry 0 is bound to {did_label}. The cold root will sign only the closed ak.realm.create anchor; the Account Authority signs the first device authorization. Both are submitted atomically."
+            }
+            Label { html_for: "bootstrap-recovery-key", "Recovery Key (24 words)" }
+            textarea {
+                id: "bootstrap-recovery-key",
+                class: "form-input",
+                "data-testid": "bootstrap-recovery-key",
+                rows: "5",
+                autocomplete: "off",
+                value: "{recovery_key}",
+                disabled: busy(),
+                oninput: move |event| recovery_key.set(event.value()),
+            }
+            div {
+                class: "muted",
+                "data-testid": "bootstrap-status",
+                role: "status",
+                "aria-live": "polite",
+                "{status}"
+            }
+            div { class: "actions",
+                Button {
+                    variant: ButtonVariant::Primary,
+                    "data-testid": "bootstrap-submit",
+                    disabled: busy() || recovery_key().trim().is_empty(),
+                    onclick: move |_| {
+                        let registration = registration.clone();
+                        let supplied_key = recovery_key();
+                        let base = base_url.clone();
+                        let session = token();
+                        let actor = account_did();
+                        let device = device_id();
+                        if actor != registration.did || device != registration.device_id {
+                            status.set(
+                                "The signed-in principal/device does not match the saved bootstrap draft. Sign out and continue the matching registration."
+                                    .to_owned(),
+                            );
+                            return;
+                        }
+                        busy.set(true);
+                        status.set("Validating the cold root and submitting the atomic bootstrap unit…".to_owned());
+                        spawn(async move {
+                            let result = async {
+                                crate::identity::principal_registration::validate_checkpoint_recovery_key(
+                                    &registration,
+                                    &supplied_key,
+                                )?;
+
+                                if registration.stage
+                                    == crate::state::PendingPrincipalRegistrationStage::DidBound
+                                {
+                                    let signer = crate::event_signer::active_signer()
+                                        .ok_or_else(|| anyhow::anyhow!("device signer is unavailable"))?;
+                                    let signer = crate::event_signer::bind_active_signer_device_id(&device)?
+                                        .unwrap_or(signer);
+                                    let device_public_key = signer
+                                        .public_key_multibase()
+                                        .ok_or_else(|| anyhow::anyhow!("device signer has no Ed25519 public key"))?;
+                                    let hpke_key = {
+                                        let secure_store = crate::secure_key_store::default_secure_key_store("inkson");
+                                        let (_, public_key) = crate::mls::runtime::load_or_create_device_hpke_keypair(
+                                            secure_store.as_ref(),
+                                            &actor,
+                                            &device,
+                                        )?;
+                                        crate::identity::did_key::encode_x25519_multibase(&public_key)
+                                    };
+                                    let dpop = {
+                                        let mut store = state_store.write();
+                                        crate::identity::account_auth::grant_dpop::ensure_device_key(&mut store)?
+                                    };
+                                    let account_base = crate::identity::session_refresh::sdk_base_url_from_gate_account_base(
+                                        &registration.gate_account_base,
+                                    )?;
+                                    let account_client = arkret_sdk::http_client::ClientBuilder::new(account_base)
+                                        .allow_insecure_localhost()
+                                        .auth(arkret_sdk::http_client::Auth::Dpop(
+                                            dpop.sdk_dpop_auth_for_access_token(session.clone()),
+                                        ))
+                                        .build()?;
+                                    let bootstrap_registration = registration.clone();
+                                    let bootstrap_key = supplied_key.clone();
+                                    crate::transport::auth::with_authed_sdk_client(
+                                        &base,
+                                        session.clone(),
+                                        |principal_client| async move {
+                                            crate::identity::principal_registration::bootstrap_principal(
+                                                &bootstrap_registration,
+                                                &bootstrap_key,
+                                                device_public_key,
+                                                hpke_key,
+                                                signer.as_ref(),
+                                                &account_client,
+                                                &principal_client,
+                                            )
+                                            .await
+                                        },
+                                    )
+                                    .await
+                                    .map_err(|error| anyhow::anyhow!(error.display()))?;
+                                    let mut accepted = registration.clone();
+                                    accepted.stage = crate::state::PendingPrincipalRegistrationStage::BootstrapAccepted;
+                                    let barrier = {
+                                        let mut store = state_store.write();
+                                        store.set_pending_principal_registration(Some(accepted))?;
+                                        store.begin_durable_flush()?
+                                    };
+                                    barrier.wait().await?;
+                                }
+
+                                let recovery_actor = actor.clone();
+                                let recovery_device = device.clone();
+                                let recovery_key_value = supplied_key.clone();
+                                let backup_id = crate::transport::auth::with_authed_api(
+                                    &base,
+                                    session,
+                                    |api| async move {
+                                        crate::recovery_strand::ensure_recovery_policy_and_did_recovery_backup(
+                                            &api,
+                                            &recovery_actor,
+                                            &recovery_device,
+                                            &recovery_key_value,
+                                        )
+                                        .await
+                                    },
+                                )
+                                .await
+                                .map_err(|error| anyhow::anyhow!(error.display()))?;
+                                crate::views::recovery::save_generated_recovery_key_metadata(
+                                    &mut state_store,
+                                    &actor,
+                                    &supplied_key,
+                                )
+                                .ok_or_else(|| anyhow::anyhow!("save public recovery metadata failed"))?;
+                                let barrier = {
+                                    let mut store = state_store.write();
+                                    store.set_pending_principal_registration(None)?;
+                                    store.begin_durable_flush()?
+                                };
+                                barrier.wait().await?;
+                                Ok::<_, anyhow::Error>(backup_id)
+                            }
+                            .await;
+                            match result {
+                                Ok(backup_id) => {
+                                    recovery_key.set(String::new());
+                                    status.set(format!(
+                                        "Identity bootstrap and recovery-material gate complete ({backup_id})."
+                                    ));
+                                }
+                                Err(error) => status.set(format!(
+                                    "Bootstrap remains resumable and no alternate identity was created: {error}"
+                                )),
+                            }
+                            busy.set(false);
+                        });
+                    },
+                    "Finish bootstrap and recovery"
                 }
             }
         }

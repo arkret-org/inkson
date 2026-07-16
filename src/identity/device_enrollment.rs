@@ -32,6 +32,9 @@ pub struct DeviceEnrollmentRequest {
     pub device_public_key: String,
     /// Next `actor_seq` on the principal control stream (highest accepted + 1).
     pub actor_seq: u64,
+    /// Root-signed `ak.realm.create` Event id for the atomic first-device
+    /// bootstrap unit. Required exactly when `actor_seq == 1`.
+    pub bootstrap_create_event_id: Option<String>,
     /// Optional `not_before` RFC 3339 timestamp; coauth defaults to now when absent.
     pub not_before: Option<String>,
     /// This device's HPKE sealing public key (multibase, §5.4).
@@ -61,6 +64,14 @@ impl DeviceEnrollmentRequest {
             hpke_key: self.hpke_key.clone(),
             algorithms: self.algorithms.clone(),
             actor_seq: self.actor_seq,
+            bootstrap_create_event_id: self
+                .bootstrap_create_event_id
+                .as_deref()
+                .map(|value| {
+                    arkret_sdk::EventId::new(value.trim().to_owned())
+                        .context("device-enroll `bootstrap_create_event_id`")
+                })
+                .transpose()?,
             not_before,
         })
     }
@@ -134,6 +145,23 @@ pub async fn enroll_current_device(
     request: &DeviceEnrollmentRequest,
     expected_device_id: &str,
 ) -> anyhow::Result<()> {
+    let event =
+        request_signed_device_authorize(account_client, request, expected_device_id).await?;
+    principal_api
+        .event_submitter()?
+        .submit_signed_sdk_event(&event)
+        .await?;
+    Ok(())
+}
+
+/// Ask the enrollment authority for the fully-signed authorize Event without
+/// submitting it. The first-device caller combines this Event with the
+/// root-signed PCR create in one atomic batch.
+pub async fn request_signed_device_authorize(
+    account_client: &arkret_sdk::http_client::Client,
+    request: &DeviceEnrollmentRequest,
+    expected_device_id: &str,
+) -> anyhow::Result<arkret_sdk::Event> {
     let sdk_request = request.to_sdk_body()?;
     let outcome = account_client
         .auth_device_enroll(&sdk_request)
@@ -146,12 +174,7 @@ pub async fn enroll_current_device(
             expected_device_id
         );
     }
-    let event = validate_signed_device_authorize(outcome.authorized_event, expected_device_id)?;
-    principal_api
-        .event_submitter()?
-        .submit_signed_sdk_event(&event)
-        .await?;
-    Ok(())
+    validate_signed_device_authorize(outcome.authorized_event, expected_device_id)
 }
 
 #[cfg(test)]
