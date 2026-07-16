@@ -2544,7 +2544,7 @@ fn AppBootstrap() -> Element {
                                     let error_text = last_error();
                                     // Truncate by characters, not bytes: these
                                     // strings carry server `reason` / error text
-                                    // that can contain non-ASCII (中文 / emoji),
+                                    // that can contain non-ASCII (CJK / emoji),
                                     // and a byte slice mid-character would panic
                                     // the whole shell to a white screen.
                                     let trimmed_status = if status_text.chars().count() > 96 {

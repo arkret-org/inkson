@@ -196,11 +196,6 @@ pub fn missing_translation_snapshot() -> Vec<(String, String)> {
     out
 }
 
-/// Get the current text direction.
-pub fn text_direction(signal: &I18nSignal) -> TextDirection {
-    signal.read().0.direction()
-}
-
 /// Format a UTC timestamp with locale-specific ordering.
 pub fn format_datetime(locale: Locale, timestamp: DateTime<Utc>) -> String {
     match locale {

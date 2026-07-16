@@ -793,20 +793,15 @@ pub(super) fn ChatTimeline(controller: ChatController, context: ChatTimelineCont
                                 // G3.Y2 — per-message read-receipt
                                 // indicator. Surfaces the set of actors
                                 // who have published a `ak.read_cursor.advance`
-                                // covering this message`ak.read_cursor.advance
-                                // until the receive path is wired.
+                                // covering this message.
                                 //
                                 // TODO(G3.Y2-followup): populate from the
                                 // soland sync projection once it carries
                                 // per-message `ak.read_cursor.advance`
-                                // coverage.`ak.read_cursor.advance
+                                // coverage. For now the list is empty — the
+                                // testid still mounts when there is data so
+                                // cotest can assert against it.
                                 {
-                                    // TODO(G3.Y2-followup): fill from the
-                                    // sync projection read-cursor coverage
-                                    // when available. For now the
-                                    // list is empty — the testid still
-                                    // mounts when there is data so
-                                    // cotest can assert against it.
                                     let readers: Vec<String> = Vec::new();
                                     let should_display = {
                                         let store = state_store.read();

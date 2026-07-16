@@ -150,13 +150,6 @@ pub(crate) enum OrgRelationshipPhase {
     /// The Realm merely declared an organization hint; no organization
     /// signature exists. NOT a verified relationship.
     DeclaredHint,
-    /// The organization-side authorization has been requested but the signed
-    /// statement is not yet accepted into Realm history. Client-side bind-flow
-    /// state only — the server never projects this, so the read-only panel never
-    /// constructs it; retained as the lifecycle vocabulary the sodmin-coordinated
-    /// bind flow uses.
-    #[allow(dead_code)]
-    PendingConsent,
     /// An organization signed an `active` statement and the Realm accepted it;
     /// the relationship is live.
     VerifiedActive,
@@ -168,7 +161,6 @@ impl OrgRelationshipPhase {
     pub(crate) fn badge_class(self) -> &'static str {
         match self {
             Self::DeclaredHint => "badge amber",
-            Self::PendingConsent => "badge blue",
             Self::VerifiedActive => "badge green",
             Self::RevokedOrExpired => "badge red",
         }
@@ -177,7 +169,6 @@ impl OrgRelationshipPhase {
     pub(crate) fn label(self) -> &'static str {
         match self {
             Self::DeclaredHint => "declared hint",
-            Self::PendingConsent => "pending organization consent",
             Self::VerifiedActive => "verified active",
             Self::RevokedOrExpired => "revoked / expired",
         }
@@ -191,10 +182,6 @@ impl OrgRelationshipPhase {
                 "This Realm names an organization, but the organization has not signed a \
                  statement. This is a hint only — it is NOT an organization-verified \
                  relationship."
-            }
-            Self::PendingConsent => {
-                "Waiting for the organization to authorize and sign. Nothing is verified until \
-                 the signed statement is accepted into Realm history."
             }
             Self::VerifiedActive => {
                 "The organization signed an active statement and the Realm accepted it. This is \
@@ -210,7 +197,7 @@ impl OrgRelationshipPhase {
 
 /// Map the spec projection's `lifecycle_phase` discriminator onto the UI phase.
 /// The server only emits `verified_active` / `revoked_or_expired`; declared
-/// hints arrive on a separate field and `pending_consent` is client-only.
+/// hints arrive on a separate field.
 pub(crate) fn phase_from_lifecycle(
     lifecycle: RealmOrganizationLifecyclePhase,
 ) -> OrgRelationshipPhase {
@@ -923,7 +910,6 @@ fn OrganizationBindPanel(token: Signal<String>, realm_id: String, account_did: S
 fn phase_slug(phase: OrgRelationshipPhase) -> &'static str {
     match phase {
         OrgRelationshipPhase::DeclaredHint => "declared_hint",
-        OrgRelationshipPhase::PendingConsent => "pending_consent",
         OrgRelationshipPhase::VerifiedActive => "verified_active",
         OrgRelationshipPhase::RevokedOrExpired => "revoked_or_expired",
     }
@@ -957,23 +943,12 @@ mod tests {
             OrgRelationshipPhase::VerifiedActive.badge_class(),
             "badge green"
         );
-        // Pending consent is explicitly not verified.
-        assert_ne!(
-            OrgRelationshipPhase::PendingConsent.badge_class(),
-            OrgRelationshipPhase::VerifiedActive.badge_class()
-        );
-        assert!(
-            OrgRelationshipPhase::PendingConsent
-                .explainer()
-                .contains("Nothing is verified")
-        );
     }
 
     #[test]
     fn every_phase_has_a_distinct_slug_and_badge() {
         let phases = [
             OrgRelationshipPhase::DeclaredHint,
-            OrgRelationshipPhase::PendingConsent,
             OrgRelationshipPhase::VerifiedActive,
             OrgRelationshipPhase::RevokedOrExpired,
         ];

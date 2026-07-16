@@ -55,8 +55,6 @@ pub fn build_oidc_authorize_scaffold(
         state,
         nonce,
         code_verifier,
-        #[cfg(test)]
-        code_challenge,
         authorize_url,
         callback_uri: redirect_uri.to_owned(),
         principal_audience: principal_audience.to_owned(),

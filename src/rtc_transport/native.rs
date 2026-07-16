@@ -74,10 +74,7 @@ enum DriverEvent {
     /// present at connect time). Cross-checked against the durable roster.
     Participant { identity: String },
     /// The driver failed closed (UMD load, connect rejected, or E2EE setup).
-    Failed {
-        #[allow(dead_code)]
-        reason: String,
-    },
+    Failed,
     /// `room.disconnect` completed after a leave command.
     Left,
 }
@@ -330,7 +327,7 @@ impl MediaTransport for NativeRtcTransport {
                             });
                         }
                     }
-                    DriverEvent::Failed { .. } => {
+                    DriverEvent::Failed => {
                         // Fail-closed: the driver could not establish a real
                         // session; never advance to Connected.
                         let mut slot = state.borrow_mut();

@@ -188,8 +188,6 @@ fn test_discovery() -> OidcDiscoveryDocument {
     OidcDiscoveryDocument {
         issuer: "https://issuer.example".to_owned(),
         authorization_endpoint: "https://issuer.example/auth".to_owned(),
-        token_endpoint: Some("https://issuer.example/token".to_owned()),
-        userinfo_endpoint: Some("https://issuer.example/userinfo".to_owned()),
         code_challenge_methods_supported: vec!["S256".to_owned()],
         scopes_supported: vec!["openid".to_owned(), "offline_access".to_owned()],
     }

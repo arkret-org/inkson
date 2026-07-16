@@ -230,21 +230,11 @@ pub fn GlobalSearchPanel(
 ) -> Element {
     // A4 — state_store from session context instead of a prop.
     let state_store = crate::app::SessionContext::get().state_store;
-    // `Signal` is `Copy`; the `mut` here is just so the closures below
-    // can re-assign the bindings without explicit `let mut` shadowing
-    // — `.set()` itself takes `&self`. The compiler suggests removing
-    // `mut` but that breaks the closure capture for `query` which is
-    // genuinely mutated below.
-    #[allow(unused_mut)]
     let mut query = use_signal(|| initial_query.clone());
-    #[allow(unused_mut)]
-    let mut results = use_signal(ResultRows::new);
-    #[allow(unused_mut)]
-    let mut loading = use_signal(|| false);
-    #[allow(unused_mut)]
-    let mut error_msg = use_signal(String::new);
-    #[allow(unused_mut)]
-    let mut has_searched = use_signal(|| false);
+    let results = use_signal(ResultRows::new);
+    let loading = use_signal(|| false);
+    let error_msg = use_signal(String::new);
+    let has_searched = use_signal(|| false);
     let navigator = use_navigator();
 
     // Auto-run the search when the panel is opened with a pre-filled

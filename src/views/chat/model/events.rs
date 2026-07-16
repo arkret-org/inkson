@@ -92,7 +92,7 @@ pub(crate) fn plaintext_services_for_policy(
 /// timeline (spec strand-and-message.md §9). The server folds a redacted
 /// `ak.message.create` into a tombstone form carrying `redacted: true` /
 /// `state: "redacted"`, so a receiver rebuilding the timeline renders the
-/// tombstone instead of either dropping the row or leaking the cleartext.
+/// tombstone instead of either dropping the row or leaking the plaintext.
 pub(crate) fn message_is_redaction_tombstone(candidates: &[&Value]) -> bool {
     candidates.iter().any(|candidate| {
         candidate.get("redacted").and_then(Value::as_bool) == Some(true)

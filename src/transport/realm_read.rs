@@ -111,8 +111,7 @@ pub async fn collection_projection(
 ///
 /// The server only returns `verified_active` / `revoked_or_expired`
 /// lifecycle rows plus `declared_organization_hints` (owning-organization
-/// DIDs with no verified statement). `pending_consent` is a client-side
-/// bind-flow state and is never projected here. This is read-only: binding
+/// DIDs with no verified statement). This is read-only: binding
 /// and organization-side signing happen in the admin console (sodmin).
 pub async fn list_realm_organizations(
     http: &arkret_sdk::http_client::Client,
