@@ -19,8 +19,8 @@ The phase-3 local 1.0 milestone does not ship iOS or Android artifacts. Treat
 this document as a future host-runtime contract, not a required build step for
 the local desktop/web release.
 
-[bridge]: ../src/secure_key_store.rs
-[install]: ../src/secure_key_store.rs
+[bridge]: ../src/secure_key_store/mod.rs
+[install]: ../src/secure_key_store/mod.rs
 
 ---
 
@@ -368,6 +368,6 @@ scoping + backend_label propagation.
 ## 5. Sprint history
 
 - 第二十二增量 (H1): trait + delegation pattern landed in
-  `secure_key_store.rs`. `unimplemented!()` stubs replaced.
+  `secure_key_store/mod.rs`. `unimplemented!()` stubs replaced.
 - 第二十四增量 (H1-mobile-host, this document): reference Android JNI
   + iOS Obj-C example code. Host projects paste + wire.

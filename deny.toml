@@ -7,7 +7,30 @@ no-default-features = false
 
 [advisories]
 version = 2
-ignore = []
+yanked = "warn"
+ignore = [
+    # Dioxus desktop's Linux backend is still GTK3. No compatible GTK4 backend
+    # exists in the pinned Dioxus release; keep each inherited maintenance
+    # notice explicit so a new advisory still fails the gate.
+    { id = "RUSTSEC-2024-0411", reason = "transitive GTK3 backend required by Dioxus desktop" },
+    { id = "RUSTSEC-2024-0412", reason = "transitive GTK3 backend required by Dioxus desktop" },
+    { id = "RUSTSEC-2024-0413", reason = "transitive GTK3 backend required by Dioxus desktop" },
+    { id = "RUSTSEC-2024-0414", reason = "transitive GTK3 backend required by Dioxus desktop" },
+    { id = "RUSTSEC-2024-0415", reason = "transitive GTK3 backend required by Dioxus desktop" },
+    { id = "RUSTSEC-2024-0416", reason = "transitive GTK3 backend required by Dioxus desktop" },
+    { id = "RUSTSEC-2024-0418", reason = "transitive GTK3 backend required by Dioxus desktop" },
+    { id = "RUSTSEC-2024-0419", reason = "transitive GTK3 backend required by Dioxus desktop" },
+    { id = "RUSTSEC-2024-0420", reason = "transitive GTK3 backend required by Dioxus desktop" },
+    { id = "RUSTSEC-2025-0057", reason = "transitive Dioxus dependency; maintenance notice has no vulnerability" },
+    { id = "RUSTSEC-2024-0436", reason = "transitive image/rav1e dependency with no compatible replacement" },
+    { id = "RUSTSEC-2024-0370", reason = "transitive GTK3 macro dependency with no compatible replacement" },
+    { id = "RUSTSEC-2026-0173", reason = "transitive OpenMLS hax macro dependency with no compatible replacement" },
+    # tauri-winrt-notification 0.7.2 uses quick-xml only for `escape`; it never
+    # invokes Reader, NsReader, or attribute iteration. notify-rust does not
+    # yet accept tauri-winrt-notification 0.8.
+    { id = "RUSTSEC-2026-0194", reason = "affected quick-xml parser APIs are unreachable" },
+    { id = "RUSTSEC-2026-0195", reason = "affected quick-xml NsReader API is unreachable" },
+]
 
 [licenses]
 version = 2
@@ -24,6 +47,8 @@ allow = [
     "Unicode-3.0",
     "MPL-2.0",
     "OpenSSL",
+    "NCSA",
+    "CDLA-Permissive-2.0",
 ]
 confidence-threshold = 0.93
 
@@ -38,3 +63,8 @@ skip-tree = []
 unknown-registry = "warn"
 unknown-git = "warn"
 allow-registry = ["https://github.com/rust-lang/crates.io-index"]
+allow-git = [
+    "https://github.com/arkret-org/dioxus",
+    "https://github.com/arkret-org/dioxus-components",
+    "https://github.com/openmls/openmls.git",
+]

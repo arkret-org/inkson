@@ -187,7 +187,7 @@ fn projection_late_recovery_rejection_blocks_sidecar_plaintext() {
     assert!(rejected.failed);
     assert_eq!(
         rejected.error.as_deref(),
-        Some(crate::late_recovery::ReasonCode::LATE_RECOVERY_SHARE_NOT_AUTHORIZED)
+        Some(arkret_sdk::ReasonCode::LATE_RECOVERY_SHARE_NOT_AUTHORIZED)
     );
 }
 

@@ -11,7 +11,7 @@
 | 机制 | 位置 | 用途现状 |
 |---|---|---|
 | 全局 `status: Signal<String>` | `app/mod.rs` 数十处、`app/sidebar.rs:85/115`、`realm_admin/*` 40+ 处 | 错误、成功、进度、导航提示全塞一行字符串，大多硬编码英文 |
-| `PolicyDenyBanner` | `components/policy_deny_banner.rs` | 仅 HTTP 403 policy/capability denied，8 秒自动消失 |
+| Policy denial toast | `components/feedback.rs` | HTTP 403 policy/capability denied 的统一反馈入口 |
 | `CircleErrorToast` | `components/circle_error_toast.rs` | 仅 AKP-0007 Circle 错误，单条覆盖不堆叠 |
 | `.event.error-banner` / `.badge.red|amber` | 各 view 内散落 | 持久告警（notary_paused、covered_seals 等） |
 | `.form-hint-warn` / `.field .err` | 表单 | 字段级内联错误 |

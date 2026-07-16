@@ -61,6 +61,12 @@ signing-dry-run: desktop-build
 test:
     cargo test
 
+# Run the browser-only wasm-bindgen integration tests. Requires
+# wasm-bindgen-test-runner 0.2.123 and a WebDriver-compatible Chrome install.
+[env("CARGO_TARGET_WASM32_UNKNOWN_UNKNOWN_RUNNER", "wasm-bindgen-test-runner")]
+test-wasm:
+    cargo test --locked --target wasm32-unknown-unknown --test mls_data_plane_wasm --test wasm_indexed_db_capacity
+
 # Run Playwright e2e tests.
 e2e:
     npm run e2e

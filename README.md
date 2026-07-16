@@ -1,6 +1,6 @@
 # inkson
 
-> **Spec target**: [arkret-spec @ 0b80cc78](../arkret-spec) (R3.4 sync 2026-06-13; includes §5.6 receive-chain persistence MUST from 58d68c89)
+> **Spec target**: the current Arkret v1 protocol in the sibling [arkret-spec](../arkret-spec) repository.
 
 Cross-platform Arkret client built with Dioxus 0.7.
 
@@ -132,7 +132,7 @@ npm install
 npm run e2e
 ```
 
-The Playwright runner starts `dx serve --platform web --port 4527 --open false` and exercises the web shell against mocked `/_arkret/*` responses. Use `INKSON_E2E_BASE_URL=http://127.0.0.1:<port>` when testing an already-running web build.
+The Playwright runner starts `dx serve --platform web --port 4727 --open false` and exercises the web shell against mocked `/_arkret/*` responses. Use `INKSON_E2E_BASE_URL=http://127.0.0.1:<port>` when testing an already-running web build.
 
 The e2e suite under `tests/e2e/` is **mock-only**: it pins inkson's UI surface against the contract in `tests/e2e/mockArkretContract.ts` and never speaks to a real Arkret server. Full UI ↔ real-server integration lives in the sibling [`cotest`](../cotest) joint suite (`cotest/e2e/`), which boots both `inkson` and a real `soland` process. Any test that needs a live server should be added there, not here.
 
@@ -157,11 +157,11 @@ The repository includes CI for:
 - `Docker`: local web image build, Trivy scan, SBOM evidence, and local cosign blob evidence when a local key is supplied. It does not push to GHCR or any registry.
 - `Dependabot`: weekly updates for GitHub Actions, Cargo, npm, and Docker.
 
-CI checks out `arkret-rust-sdk` and `chime` next to `inkson` because `Cargo.toml` uses sibling path dependencies. The expected GitHub repository names are `${OWNER}/arkret-rust-sdk` and `${OWNER}/chime`.
+CI checks out `arkret-rust-sdk`, `garth`, `chime`, and `yoface` next to `inkson` because `Cargo.toml` uses sibling path dependencies. The expected GitHub repository names use those four names under `${OWNER}`.
 
 ### Gitea Actions
 
-The Gitea smoke workflow lives in `.gitea/workflows/smoke.yml`. It follows the lightweight Rust-check structure used by the related synpad workflows and checks out `inkson`, `arkret-rust-sdk`, and `chime` as sibling directories so the local path dependencies resolve.
+The Gitea smoke workflow lives in `.gitea/workflows/smoke.yml`. It follows the lightweight Rust-check structure used by the related synpad workflows and checks out `inkson`, `arkret-rust-sdk`, `garth`, `chime`, and `yoface` as sibling directories so the local path dependencies resolve.
 
 The smoke job installs the Linux desktop build packages and runs:
 
@@ -171,9 +171,9 @@ cargo check --locked --all-targets
 cargo test --locked
 ```
 
-The expected Gitea repository names are `${OWNER}/arkret-rust-sdk` and `${OWNER}/chime`.
+The expected Gitea repository names use the four dependency repository names under `${OWNER}`.
 
-The Docker image serves the Dioxus web build with nginx. Build it from a clean context containing `inkson`, `arkret-rust-sdk`, and `chime`:
+The Docker image serves the Dioxus web build with nginx. Build it from a clean context containing `inkson`, `arkret-rust-sdk`, `garth`, `chime`, and `yoface`:
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File scripts/prepare-docker-context.ps1
@@ -201,8 +201,3 @@ Unauthenticated users see only the login or registration entry screen. After a r
 - Server-owned OIDC/coauth sign-in and registration. The client opens the authorization URL from server discovery and completes the callback into a Principal Server session.
 
 ---
-
-<!-- circle-rollout milestone pointer -->
-> **Active milestone tracking** (local-only, gitignored): see
-> `_inkson_todos.md` in the parent `arkret/` directory for the
-> circle-rollout (AKP-0007) work item list and per-stage checkpoints.

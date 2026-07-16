@@ -10,9 +10,9 @@ use arkret_sdk::models::{
 use arkret_sdk::{
     AgentKeyApprovalEvidence, AgentKeyApprovalEvidenceKind, AgentKeyAuthorizePayload,
     AgentKeyAuthorizePayloadRuntimeAttestation, AgentKeyPairRequestBody, AgentKeySupersession,
-    AgentPairingBootstrap, Did, DidUrl, Event, EventId, GrantConstraint, GrantConstraintEffect,
-    GrantConstraintSubtype, GrantConstraintType, Hash, NonEmptyJsonObject, NonEmptyString,
-    PublicKey, RealmId,
+    AgentPairingBootstrap, AgentRequestedScopeDisclosure, Did, DidUrl, Event, EventId,
+    GrantConstraint, GrantConstraintEffect, GrantConstraintSubtype, GrantConstraintType, Hash,
+    NonEmptyJsonObject, NonEmptyString, PublicKey, RealmId,
 };
 use chrono::Utc;
 use serde::Deserialize;
@@ -365,6 +365,7 @@ pub struct RuntimeKeyApprovalRequest {
     pub verification_method: DidUrl,
     pub public_key: PublicKey,
     pub proof_of_possession: NonEmptyJsonObject,
+    pub requested_scope_disclosure: AgentRequestedScopeDisclosure,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub runtime_attestation: Option<AgentKeyAuthorizePayloadRuntimeAttestation>,
 }
@@ -377,6 +378,7 @@ impl RuntimeKeyApprovalRequest {
             verification_method: self.verification_method,
             public_key: self.public_key,
             proof_of_possession: self.proof_of_possession,
+            requested_scope_disclosure: self.requested_scope_disclosure,
             runtime_attestation: self.runtime_attestation,
             authorize_event,
         }

@@ -10,8 +10,8 @@ This harness sits alongside the existing `tests/e2e/` suite (which is
 chromium-only and exercises full app strands). The cross-platform matrix
 is intentionally narrow: it only validates the platform APIs the
 round-26 `WebCryptoBoundary` / `web_push_subscribe` paths depend on.
-The Rust unit tests in `src/crypto_boundary.rs`, `src/push.rs`,
-`src/local_state.rs`, and `src/coauth.rs` cover the in-Rust logic;
+The Rust unit tests in `src/crypto_boundary.rs`, `src/push/`,
+`src/state/`, and `src/transport/` cover the in-Rust logic;
 this matrix only checks the contract on real engines. Local developer
 runs do not exercise real APNs/FCM provider delivery; the receive smoke
 pins the service-worker handoff for an opaque `background_sync_needed`

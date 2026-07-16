@@ -1,9 +1,8 @@
 //! Platform-secure secret storage.
 //!
-//! `crate::key_store` already abstracts the per-device *signing* identity
-//! (ed25519 seed → did:key). This module covers the orthogonal axis:
-//! arbitrary short-string secrets that should land in the OS keychain
-//! rather than `state.json`. Today's callers:
+//! This module stores both per-device signing identities and arbitrary
+//! short-string secrets in platform-protected storage rather than `state.json`.
+//! Today's callers include:
 //!
 //! * coauth-issued session credential and session-grant grant-binding material.
 //! * Push provider auth bundles for FCM / APNs once the host adapters land.
@@ -15,14 +14,6 @@
 //! | macOS / Linux / Windows | [`KeyringSecureKeyStore`] | Uses the `keyring` crate (Keychain / Secret Service / Credential Manager). |
 //! | wasm32          | [`LocalStorageSecureKeyStore`] for low-value first-paint secrets, then [`IndexedDbSecureKeyStore`] after async initialization | Ed25519 signing seeds, account MLS secrets, and session credentials require the IndexedDB + non-extractable SubtleCrypto tier and fail closed before initialization. |
 //! | iOS / Android   | [`HostBridgeSecureKeyStore`] when the host installs a bridge; otherwise [`MemorySecureKeyStore`] | Mobile artifacts are outside the local 1.0 milestone. |
-//!
-//! ## Why not reuse `crate::key_store::KeyStore`?
-//!
-//! `KeyStore` is typed for `LocalIdentityRecord` (seed bytes + did:key
-//! cache). [`SecureKeyStore`] is a string KV — it deliberately has no
-//! schema so callers don't have to extend a typed enum each time a new
-//! secret category appears.
-
 use std::sync::Arc;
 #[cfg(target_arch = "wasm32")]
 use std::sync::OnceLock;
@@ -393,7 +384,7 @@ pub fn unwrap_secret(
 /// [`initialize_wasm_secure_key_store_async`] to initialize the process
 /// default to the IndexedDB + SubtleCrypto-non-extractable tier before
 /// signer bootstrap.
-pub fn default_secure_key_store(service_name: &str) -> Arc<dyn SecureKeyStore> {
+pub fn default_secure_key_store(service_name: &str) -> Arc<dyn SecureKeyStore + Send + Sync> {
     #[cfg(target_arch = "wasm32")]
     {
         if let Some(store) = WASM_INDEXEDDB_SECURE_KEY_STORE.get() {

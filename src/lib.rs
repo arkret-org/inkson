@@ -58,7 +58,6 @@ pub(crate) mod identity;
 /// binding_proof transcript + 5 terminal states UI).
 pub mod invite_claim;
 pub mod key_backup;
-pub mod key_store;
 pub mod keyed_cooldown;
 /// Round R2/R3 (T16) — late key recovery UX helpers.
 pub mod late_recovery;

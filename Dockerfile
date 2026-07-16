@@ -1,5 +1,5 @@
 # syntax=docker/dockerfile:1.7
-# Build context must contain `inkson/`, sibling `arkret-rust-sdk/`, and sibling `chime/`.
+# Build context must contain `inkson/` and all of its sibling path dependencies.
 # From the parent directory run:
 #   docker build -f inkson/Dockerfile -t inkson-web .
 
@@ -14,7 +14,9 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry \
 WORKDIR /workspace
 
 COPY arkret-rust-sdk ./arkret-rust-sdk
+COPY garth ./garth
 COPY chime ./chime
+COPY yoface ./yoface
 COPY inkson ./inkson
 
 WORKDIR /workspace/inkson

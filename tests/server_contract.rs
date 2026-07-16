@@ -139,7 +139,10 @@ fn inkson_accepts_server_contract_payloads() {
         "development_mode": true,
     }))
     .unwrap();
-    assert_eq!(describe.service_type, "principal_server");
+    assert_eq!(
+        describe.service_type,
+        arkret_sdk::ServiceType::PrincipalServer
+    );
     assert!(
         describe
             .supported_operations

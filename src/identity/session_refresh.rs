@@ -142,7 +142,7 @@ impl AuthenticatedTransportFactory for InksonAuthenticatedTransportFactory {
 
 #[derive(Clone)]
 struct PersistedSessionGrantStore {
-    secure_store: Arc<dyn SecureKeyStore>,
+    secure_store: Arc<dyn SecureKeyStore + Send + Sync>,
     principal_server_url: String,
     device_handle: DpopHandle,
 }

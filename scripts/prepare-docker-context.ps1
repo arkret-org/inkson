@@ -27,6 +27,8 @@ function Copy-CleanDirectory {
 
 Copy-CleanDirectory -Source (Join-Path $parent "inkson") -Destination (Join-Path $context "inkson")
 Copy-CleanDirectory -Source (Join-Path $parent "arkret-rust-sdk") -Destination (Join-Path $context "arkret-rust-sdk")
+Copy-CleanDirectory -Source (Join-Path $parent "garth") -Destination (Join-Path $context "garth")
 Copy-CleanDirectory -Source (Join-Path $parent "chime") -Destination (Join-Path $context "chime")
+Copy-CleanDirectory -Source (Join-Path $parent "yoface") -Destination (Join-Path $context "yoface")
 
 Write-Host "Prepared Docker context at $context"

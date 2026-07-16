@@ -1,8 +1,8 @@
 //! Typed Realm read transport.
 //!
 //! These are the pure-passthrough realm read operations (authz checks,
-//! effective grants, collection / strand projections, realm-organization
-//! relationships, notary describe) that used to live as thin inherent methods
+//! effective grants, collection / strand projections, and realm-organization
+//! relationships) that used to live as thin inherent methods
 //! on [`crate::transport::TransportClient`]. They build a typed SDK request body (and do
 //! small projections) and call the shared SDK `http-client::Client` directly.
 //! Call sites reach them through [`crate::transport::auth::with_authed_sdk_client`]
@@ -19,21 +19,6 @@ use serde_json::{Value, json};
 use crate::models::{AuthzCheckOutcome, GrantList};
 use crate::operation::trim_realm_id;
 use crate::state::projection_views::CollectionProjectionView;
-
-/// Read the current notary cell value for a Realm (admin-only).
-/// Returns the raw JSON shape the server publishes — typically
-/// `{ "mode": "single_did" | "threshold" | "open_set" | "mixed",
-///    "principals": [...], ... }`. The endpoint is being implemented
-/// in soland on a separate track (P0 M4); when it 404s the caller's
-/// `Result::Err` arm should surface a clear "endpoint unavailable"
-/// message rather than blocking the page.
-pub async fn admin_notary_describe(
-    http: &arkret_sdk::http_client::Client,
-    realm_id: &str,
-) -> anyhow::Result<serde_json::Value> {
-    let _ = (http, realm_id);
-    anyhow::bail!("admin notary describe has no spec-defined Arkret HTTP endpoint")
-}
 
 pub async fn authz_check_resource(
     http: &arkret_sdk::http_client::Client,
