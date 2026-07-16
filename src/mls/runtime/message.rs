@@ -418,7 +418,7 @@ pub fn collect_realm_key_share_messages_for_realm(
                 .get("kind")
                 .or_else(|| message.get("type"))
                 .and_then(|t| t.as_str())
-                == Some(arkret_sdk::events::kinds::REALM_KEY_SHARE)
+                == Some(arkret_sdk::events::EventKind::REALM_KEY_SHARE)
         })
         .filter(|message| realm_key_share_message_realm_id(message).as_deref() == Some(realm_id))
         .cloned()
@@ -852,7 +852,7 @@ pub(super) fn durable_welcome_payload_reject_reason(value: &serde_json::Value) -
         .map(|error| {
             format!(
                 "{}: {error}",
-                arkret_sdk::error::REASON_KEYPACKAGE_WELCOME_ENVELOPE_MISMATCH
+                arkret_sdk::error::ReasonCode::KEYPACKAGE_WELCOME_ENVELOPE_MISMATCH
             )
         })
 }

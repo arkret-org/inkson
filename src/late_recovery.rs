@@ -26,10 +26,6 @@
 //! banner is bound to the audited recovery event id (and therefore
 //! auditable).
 
-pub use arkret_sdk::{
-    REASON_LATE_RECOVERY_REJECTED_EXPIRED, REASON_LATE_RECOVERY_REJECTED_MEMBERSHIP,
-    REASON_LATE_RECOVERY_SHARE_NOT_AUTHORIZED,
-};
 use chrono::{DateTime, Duration, Utc};
 use serde_json::Value;
 
@@ -84,9 +80,9 @@ pub enum LateRecoveryRejection {
 impl LateRecoveryRejection {
     pub const fn reason_code(self) -> &'static str {
         match self {
-            Self::Membership => REASON_LATE_RECOVERY_REJECTED_MEMBERSHIP,
-            Self::ShareNotAuthorized => REASON_LATE_RECOVERY_SHARE_NOT_AUTHORIZED,
-            Self::Expired => REASON_LATE_RECOVERY_REJECTED_EXPIRED,
+            Self::Membership => arkret_sdk::ReasonCode::LATE_RECOVERY_REJECTED_MEMBERSHIP,
+            Self::ShareNotAuthorized => arkret_sdk::ReasonCode::LATE_RECOVERY_SHARE_NOT_AUTHORIZED,
+            Self::Expired => arkret_sdk::ReasonCode::LATE_RECOVERY_REJECTED_EXPIRED,
         }
     }
 }
@@ -552,7 +548,7 @@ mod tests {
         );
         assert_eq!(
             decision.rejection_reason_code(),
-            Some(REASON_LATE_RECOVERY_REJECTED_MEMBERSHIP)
+            Some(arkret_sdk::ReasonCode::LATE_RECOVERY_REJECTED_MEMBERSHIP)
         );
     }
 
@@ -568,7 +564,7 @@ mod tests {
         );
         assert_eq!(
             decision.rejection_reason_code(),
-            Some(REASON_LATE_RECOVERY_SHARE_NOT_AUTHORIZED)
+            Some(arkret_sdk::ReasonCode::LATE_RECOVERY_SHARE_NOT_AUTHORIZED)
         );
     }
 
@@ -591,7 +587,7 @@ mod tests {
             );
             assert_eq!(
                 decision.rejection_reason_code(),
-                Some(REASON_LATE_RECOVERY_REJECTED_EXPIRED)
+                Some(arkret_sdk::ReasonCode::LATE_RECOVERY_REJECTED_EXPIRED)
             );
         }
     }

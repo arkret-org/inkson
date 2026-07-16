@@ -1191,7 +1191,7 @@ fn mls_genesis_event_id_from_events(
         .iter()
         .find(|event| {
             event.realm_id.as_str() == realm_id
-                && event.kind.as_str() == arkret_sdk::events::kinds::MLS_GENESIS
+                && event.kind.as_str() == arkret_sdk::events::EventKind::MLS_GENESIS
         })
         .map(|event| event.event_id.clone())
 }

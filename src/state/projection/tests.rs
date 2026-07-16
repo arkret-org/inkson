@@ -75,7 +75,7 @@ fn golden_event(
 fn client_core_message_decode_golden_matches_inkson_ingest() {
     let create = golden_event(
         "ak:event:01904100-0000-7000-8000-000000000101",
-        arkret_sdk::events::kinds::MESSAGE_CREATE,
+        arkret_sdk::events::EventKind::MESSAGE_CREATE,
         1,
         "2026-07-08T00:00:00Z",
         serde_json::json!({
@@ -86,7 +86,7 @@ fn client_core_message_decode_golden_matches_inkson_ingest() {
     );
     let reaction = golden_event(
         "ak:event:01904100-0000-7000-8000-000000000102",
-        arkret_sdk::events::kinds::REACTION_ADD,
+        arkret_sdk::events::EventKind::REACTION_ADD,
         2,
         "2026-07-08T00:00:01Z",
         serde_json::json!({
@@ -187,7 +187,7 @@ fn projection_late_recovery_rejection_blocks_sidecar_plaintext() {
     assert!(rejected.failed);
     assert_eq!(
         rejected.error.as_deref(),
-        Some(crate::late_recovery::REASON_LATE_RECOVERY_SHARE_NOT_AUTHORIZED)
+        Some(crate::late_recovery::ReasonCode::LATE_RECOVERY_SHARE_NOT_AUTHORIZED)
     );
 }
 

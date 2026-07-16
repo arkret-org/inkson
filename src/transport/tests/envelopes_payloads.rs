@@ -435,10 +435,9 @@ fn realm_bootstrap_rejects_prejoin_history_with_strict_mls_scheme() {
     )
     .expect_err("pre-join history requires the history-capable content scheme");
 
-    assert!(
-        err.to_string()
-            .contains(arkret_sdk::error::REASON_HISTORY_VISIBILITY_REQUIRES_HISTORY_CAPABLE_SCHEME)
-    );
+    assert!(err.to_string().contains(
+        arkret_sdk::error::ReasonCode::HISTORY_VISIBILITY_REQUIRES_HISTORY_CAPABLE_SCHEME
+    ));
 }
 
 #[test]

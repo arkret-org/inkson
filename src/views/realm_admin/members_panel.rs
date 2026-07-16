@@ -2533,7 +2533,7 @@ fn provider_candidates_from_inbox(
         let is_history_bearing = matches!(
             kind,
             "ak.mls.welcome" | "ak.mls.commit" | "ak.realm_key.share"
-        ) || kind == arkret_sdk::events::kinds::REALM_KEY_SHARE;
+        ) || kind == arkret_sdk::events::EventKind::REALM_KEY_SHARE;
         if !is_history_bearing {
             continue;
         }

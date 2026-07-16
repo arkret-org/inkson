@@ -684,7 +684,7 @@ fn target_notary_value(
     let genesis_events = bundle
         .frontier_events
         .iter()
-        .filter(|event| event.kind.as_str() == arkret_sdk::events::kinds::REALM_CREATE)
+        .filter(|event| event.kind.as_str() == arkret_sdk::events::EventKind::REALM_CREATE)
         .collect::<Vec<_>>();
     if genesis_events.len() > 1 {
         return Err("MLS governance proof contains multiple Realm genesis Events".to_owned());

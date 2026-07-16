@@ -18,7 +18,7 @@ impl SnapshotFallbackReason {
     }
 
     pub fn unavailable(message: impl Into<String>) -> Self {
-        Self::new(arkret_sdk::ERROR_CODE_SNAPSHOT_UNAVAILABLE, message)
+        Self::new(arkret_sdk::ErrorCode::SNAPSHOT_UNAVAILABLE, message)
     }
 
     pub fn from_validation(error: arkret_sdk::SnapshotValidationError) -> Self {
@@ -217,7 +217,7 @@ mod tests {
                 arkret_sdk::SnapshotValidationCode::DigestMismatch,
                 "chunk digest mismatch",
             ));
-        assert_eq!(reason.code, arkret_sdk::ERROR_CODE_DIGEST_MISMATCH);
+        assert_eq!(reason.code, arkret_sdk::ErrorCode::DIGEST_MISMATCH);
         assert!(reason.message.contains("digest"));
     }
 

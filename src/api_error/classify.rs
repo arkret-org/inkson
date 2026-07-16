@@ -22,10 +22,6 @@ use super::api_error_status_and_envelope;
 /// often a reverse-proxy hiccup, a clock skew, or a server-side temp deny
 /// — not a permanently dead token.
 pub fn is_auth_expired_error(error: &anyhow::Error) -> bool {
-    use arkret_sdk::error::{
-        ERROR_CODE_AUTH_EXPIRED, ERROR_CODE_SOFT_LOGGED_OUT, ERROR_CODE_UNAUTHENTICATED,
-    };
-
     if is_terminal_session_grant_error(error) {
         return true;
     }
@@ -35,9 +31,9 @@ pub fn is_auth_expired_error(error: &anyhow::Error) -> bool {
         }
         matches!(
             envelope.code(),
-            code if code == ERROR_CODE_AUTH_EXPIRED
-                || code == ERROR_CODE_UNAUTHENTICATED
-                || code == ERROR_CODE_SOFT_LOGGED_OUT
+            code if code == arkret_sdk::error::ErrorCode::AUTH_EXPIRED
+                || code == arkret_sdk::error::ErrorCode::UNAUTHENTICATED
+                || code == arkret_sdk::error::ErrorCode::SOFT_LOGGED_OUT
         )
     })
 }
@@ -93,34 +89,24 @@ pub fn is_terminal_session_grant_refresh_error(error: &anyhow::Error) -> bool {
 }
 
 fn is_terminal_session_grant_api_error(status: StatusCode, envelope: &ErrorEnvelope) -> bool {
-    use arkret_sdk::error::{
-        ERROR_CODE_AUTH_EXPIRED, ERROR_CODE_CAPABILITY_DENIED, ERROR_CODE_UNAUTHENTICATED,
-    };
-
     let code = envelope.code();
     let message = envelope.message().to_ascii_lowercase();
     (status == StatusCode::FORBIDDEN || status == StatusCode::UNAUTHORIZED)
-        && (code == ERROR_CODE_CAPABILITY_DENIED
+        && (code == arkret_sdk::error::ErrorCode::CAPABILITY_DENIED
             || code.ends_with(".capability_denied")
-            || code == ERROR_CODE_UNAUTHENTICATED
-            || code == ERROR_CODE_AUTH_EXPIRED)
+            || code == arkret_sdk::error::ErrorCode::UNAUTHENTICATED
+            || code == arkret_sdk::error::ErrorCode::AUTH_EXPIRED)
         && terminal_session_grant_message(&message)
 }
 
 fn terminal_session_grant_refresh_code(code: &str) -> bool {
-    use arkret_sdk::error::{
-        ERROR_CODE_AUTHORIZED_GRANT_REVOKED, ERROR_CODE_DID_PROOF_REQUIRED,
-        ERROR_CODE_GRANT_ALREADY_CONSUMED, ERROR_CODE_INVALID_SIGNATURE,
-        ERROR_CODE_SESSION_GRANT_NOT_FOUND, ERROR_CODE_SESSION_LOGGED_OUT,
-    };
-
     [
-        ERROR_CODE_GRANT_ALREADY_CONSUMED,
-        ERROR_CODE_SESSION_GRANT_NOT_FOUND,
-        ERROR_CODE_SESSION_LOGGED_OUT,
-        ERROR_CODE_INVALID_SIGNATURE,
-        ERROR_CODE_DID_PROOF_REQUIRED,
-        ERROR_CODE_AUTHORIZED_GRANT_REVOKED,
+        arkret_sdk::error::ErrorCode::GRANT_ALREADY_CONSUMED,
+        arkret_sdk::error::ErrorCode::SESSION_GRANT_NOT_FOUND,
+        arkret_sdk::error::ErrorCode::SESSION_LOGGED_OUT,
+        arkret_sdk::error::ErrorCode::INVALID_SIGNATURE,
+        arkret_sdk::error::ErrorCode::DID_PROOF_REQUIRED,
+        arkret_sdk::error::ErrorCode::AUTHORIZED_GRANT_REVOKED,
     ]
     .contains(&code)
         || matches!(
@@ -152,11 +138,9 @@ pub fn is_actor_frontier_absent_error(error: &anyhow::Error) -> bool {
 }
 
 pub fn is_actor_seq_cas_conflict_error(error: &anyhow::Error) -> bool {
-    use arkret_sdk::error::ERROR_CODE_CAS_CONFLICT;
-
     api_error_status_and_envelope(error).is_some_and(|(status, envelope)| {
         status == StatusCode::CONFLICT
-            && envelope.code() == ERROR_CODE_CAS_CONFLICT
+            && envelope.code() == arkret_sdk::error::ErrorCode::CAS_CONFLICT
             && envelope.message().contains("actor_seq")
     })
 }
@@ -170,9 +154,8 @@ pub fn is_actor_seq_cas_conflict_error(error: &anyhow::Error) -> bool {
 /// Returns `Some(retry_after_ms)` on match (with 0 when the server
 /// omitted the hint), `None` otherwise.
 pub fn rate_limited_retry_after(error: &anyhow::Error) -> Option<u64> {
-    use arkret_sdk::error::ERROR_CODE_RATE_LIMITED;
     let (_, envelope) = api_error_status_and_envelope(error)?;
-    if envelope.code() != ERROR_CODE_RATE_LIMITED {
+    if envelope.code() != arkret_sdk::error::ErrorCode::RATE_LIMITED {
         return None;
     }
     Some(envelope.retry_after_ms().unwrap_or(0))
@@ -185,10 +168,6 @@ pub fn rate_limited_retry_after(error: &anyhow::Error) -> Option<u64> {
 /// `cursor_integrity_invalid` / `cursor_unrecognized` all recover by
 /// clearing the local cursor and redoing initial sync.
 pub fn is_invalid_cursor_error(error: &anyhow::Error) -> bool {
-    use arkret_sdk::error::{ERROR_CODE_CURSOR_INTEGRITY_INVALID, ERROR_CODE_CURSOR_UNRECOGNIZED};
-    use arkret_sdk::{
-        ERROR_CODE_CURSOR_EXPIRED, ERROR_CODE_CURSOR_INVALID, ERROR_CODE_INVALID_PARAM,
-    };
     api_error_status_and_envelope(error).is_some_and(|(_, envelope)| {
         let code = envelope.code();
         // `invalid_param` only counts when the message mentions the
@@ -196,11 +175,11 @@ pub fn is_invalid_cursor_error(error: &anyhow::Error) -> bool {
         let cursor_message = envelope.message().to_lowercase().contains("cursor");
         matches!(
             code,
-            code if code == ERROR_CODE_CURSOR_EXPIRED
-                || code == ERROR_CODE_CURSOR_INTEGRITY_INVALID
-                || code == ERROR_CODE_CURSOR_UNRECOGNIZED
+            code if code == arkret_sdk::ErrorCode::CURSOR_EXPIRED
+                || code == arkret_sdk::error::ErrorCode::CURSOR_INTEGRITY_INVALID
+                || code == arkret_sdk::error::ErrorCode::CURSOR_UNRECOGNIZED
         ) || (cursor_message
-            && matches!(code, code if code == ERROR_CODE_INVALID_PARAM || code == ERROR_CODE_CURSOR_INVALID))
+            && matches!(code, code if code == arkret_sdk::ErrorCode::INVALID_PARAM || code == arkret_sdk::ErrorCode::CURSOR_INVALID))
     })
 }
 
@@ -210,52 +189,44 @@ pub fn is_invalid_cursor_error(error: &anyhow::Error) -> bool {
 /// fetch the current frontier via `account/describe` / `snapshot/head`
 /// (§12.3 step 2) and retry / backfill with the SAME cursor.
 pub fn is_stale_frontier_error(error: &anyhow::Error) -> bool {
-    use arkret_sdk::error::ERROR_CODE_STALE_FRONTIER;
-    api_error_status_and_envelope(error)
-        .is_some_and(|(_, envelope)| envelope.code() == ERROR_CODE_STALE_FRONTIER)
+    api_error_status_and_envelope(error).is_some_and(|(_, envelope)| {
+        envelope.code() == arkret_sdk::error::ErrorCode::STALE_FRONTIER
+    })
 }
 
 pub(crate) fn is_snapshot_unavailable_error(error: &anyhow::Error) -> bool {
-    use arkret_sdk::error::{
-        ERROR_CODE_NOT_FOUND, ERROR_CODE_NOT_IMPLEMENTED, ERROR_CODE_SNAPSHOT_UNAVAILABLE,
-        ERROR_CODE_UNRECOGNIZED_ENDPOINT, ERROR_CODE_UNSUPPORTED_FEATURE,
-    };
-
     api_error_status_and_envelope(error).is_some_and(|(status, envelope)| {
         let code = envelope.code();
         status == StatusCode::NOT_FOUND
             || matches!(
                 code,
-                code if code == ERROR_CODE_NOT_IMPLEMENTED
-                    || code == ERROR_CODE_SNAPSHOT_UNAVAILABLE
-                    || code == ERROR_CODE_NOT_FOUND
-                    || code == ERROR_CODE_UNRECOGNIZED_ENDPOINT
-                    || code == ERROR_CODE_UNSUPPORTED_FEATURE
+                code if code == arkret_sdk::error::ErrorCode::NOT_IMPLEMENTED
+                    || code == arkret_sdk::error::ErrorCode::SNAPSHOT_UNAVAILABLE
+                    || code == arkret_sdk::error::ErrorCode::NOT_FOUND
+                    || code == arkret_sdk::error::ErrorCode::UNRECOGNIZED_ENDPOINT
+                    || code == arkret_sdk::error::ErrorCode::UNSUPPORTED_FEATURE
             )
     })
 }
 
 pub fn is_plaintext_visibility_policy_error(error: &anyhow::Error) -> bool {
-    use arkret_sdk::error::{ERROR_CODE_CAPABILITY_DENIED, ERROR_CODE_POLICY_DENIED};
-
     api_error_status_and_envelope(error).is_some_and(|(status, envelope)| {
         let code = envelope.code();
         status == StatusCode::FORBIDDEN
-            && (code == ERROR_CODE_POLICY_DENIED
-                || code == ERROR_CODE_CAPABILITY_DENIED
+            && (code == arkret_sdk::error::ErrorCode::POLICY_DENIED
+                || code == arkret_sdk::error::ErrorCode::CAPABILITY_DENIED
                 || code.ends_with(".capability_denied"))
             && envelope.message().contains("plaintext_visible_services")
     })
 }
 
 pub fn is_space_membership_denied_error(error: &anyhow::Error) -> bool {
-    use arkret_sdk::error::ERROR_CODE_CAPABILITY_DENIED;
-
     api_error_status_and_envelope(error).is_some_and(|(status, envelope)| {
         let code = envelope.code();
         let message = envelope.message().to_ascii_lowercase();
         status == StatusCode::FORBIDDEN
-            && (code == ERROR_CODE_CAPABILITY_DENIED || code.ends_with(".capability_denied"))
+            && (code == arkret_sdk::error::ErrorCode::CAPABILITY_DENIED
+                || code.ends_with(".capability_denied"))
             && message.contains("not a member")
     })
 }

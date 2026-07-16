@@ -13,7 +13,7 @@ use serde::Serialize;
 
 /// Wire-canonical JSON bytes — sorted object keys, integer-only numbers per
 /// `encoding.md` §3.2. Returns an `anyhow::Error` so call sites can chain into
-/// the rest of inkson's error surface without dragging `arkret_core::Error`
+/// the rest of inkson's error surface without dragging `arkret_sdk::Error`
 /// across module boundaries.
 pub fn canonical_json_bytes<T: Serialize>(value: &T) -> anyhow::Result<Vec<u8>> {
     sdk_canonical_json_bytes(value).map_err(|e| anyhow::anyhow!("canonical encode failed: {e:?}"))

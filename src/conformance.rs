@@ -216,7 +216,10 @@ pub fn local_supported_profile_ids() -> Vec<&'static str> {
 /// `extensions/mimi-interop.md`.
 /// Canonical registry: `artifacts/registry/event-kind-registry.json`.
 pub fn known_event_kinds() -> Vec<&'static str> {
-    arkret_sdk::events::kinds::STANDARD_EVENT_KINDS.to_vec()
+    arkret_sdk::events::kinds::EventKind::ALL
+        .iter()
+        .map(arkret_sdk::events::kinds::EventKind::as_str)
+        .collect()
 }
 /// `wire_scope` classification for canonical event kinds — mirrors
 /// `wire_scope_definitions` in `event-kind-registry.json`.

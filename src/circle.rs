@@ -23,8 +23,6 @@
 //! SDK's [`arkret_sdk::models::events::EffectiveScope`]; pattern
 //! matching against `effective_scope` now happens against the same
 //! enum the reducer produces.
-
-use arkret_sdk::ERROR_CODE_DELIVERY_BINDING_HANDED_OVER;
 use serde::{Deserialize, Serialize};
 
 /// Keep ordinary Circle surfaces closed to every profile-specific Circle.
@@ -103,7 +101,7 @@ impl CircleScope {
 
 /// Lightweight projection of a Circle for sidebar / picker / modal
 /// rendering. The full canonical struct is
-/// [`arkret_sdk::arkret_core::models::circle::Circle`].
+/// [`arkret_sdk::arkret_sdk::models::circle::Circle`].
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CircleSummary {
     /// `ak:circle:…`
@@ -138,7 +136,7 @@ impl CircleSummary {
 /// `schema_violation` sub-code) to a typed enum the UI can translate.
 ///
 /// One Circle-adjacent code is the top-level
-/// [`arkret_sdk::error_codes::ERROR_CODE_DELIVERY_BINDING_HANDED_OVER`]
+/// [`arkret_sdk::error_codes::ErrorCode::DELIVERY_BINDING_HANDED_OVER`]
 /// already registered in AKP-0006; we surface it through the same
 /// pipeline so a single Toast component handles all Circle-adjacent
 /// failures.
@@ -194,7 +192,9 @@ impl CircleErrorKind {
     /// that may be emitted directly as the envelope code.
     pub fn from_error_code(code: &str) -> Option<Self> {
         match code {
-            ERROR_CODE_DELIVERY_BINDING_HANDED_OVER => Some(Self::DeliveryBindingHandedOver),
+            arkret_sdk::ErrorCode::DELIVERY_BINDING_HANDED_OVER => {
+                Some(Self::DeliveryBindingHandedOver)
+            }
             "circle_encryption_below_realm_floor" => Some(Self::EncryptionBelowRealmFloor),
             "circle_encryption_profile_create_locked" => Some(Self::EncryptionProfileCreateLocked),
             _ => None,
@@ -371,7 +371,7 @@ mod tests {
     #[test]
     fn direct_circle_errors_use_error_code() {
         assert_eq!(
-            CircleErrorKind::from_error_code(ERROR_CODE_DELIVERY_BINDING_HANDED_OVER),
+            CircleErrorKind::from_error_code(arkret_sdk::ErrorCode::DELIVERY_BINDING_HANDED_OVER),
             Some(CircleErrorKind::DeliveryBindingHandedOver)
         );
         assert_eq!(

@@ -206,7 +206,7 @@ mod tests {
     #[test]
     fn typed_message_raw_operation_uses_client_core_decoder() {
         let event = typed_event(
-            arkret_sdk::events::kinds::MESSAGE_CREATE,
+            arkret_sdk::events::EventKind::MESSAGE_CREATE,
             json!({
                 "strand_id": "ak:strand:01904100-0000-7000-8000-000000000201",
                 "track_name": "discussion",
@@ -232,7 +232,7 @@ mod tests {
     #[test]
     fn typed_message_raw_operation_ignores_non_message_events() {
         let event = typed_event(
-            arkret_sdk::events::kinds::PRESENCE,
+            arkret_sdk::events::EventKind::PRESENCE,
             json!({"state": "online"}),
         );
         let value = serde_json::to_value(&event).unwrap();
@@ -243,7 +243,7 @@ mod tests {
     #[test]
     fn client_event_path_keeps_the_typed_event_boundary() {
         let event = typed_event(
-            arkret_sdk::events::kinds::MESSAGE_CREATE,
+            arkret_sdk::events::EventKind::MESSAGE_CREATE,
             json!({
                 "strand_id": "ak:strand:01904100-0000-7000-8000-000000000002",
                 "track_name": "discussion",

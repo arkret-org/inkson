@@ -321,9 +321,6 @@ pub enum AccountDataSetResult {
 
 pub const PROFILE_CORE_EVENT_STORE: &str = "ak.profile.core_event_store.v1";
 pub const PROFILE_PRINCIPAL_SERVER_EVENTS_API: &str = "ak.profile.principal_server_events_api.v1";
-pub const OP_EVENTS_DESCRIBE: &str = "ak.self.events.query.describe";
-pub const OP_EVENTS_SUBMIT: &str = "ak.self.events.command.submit";
-pub const OP_SNAPSHOT_HEAD: &str = "ak.self.snapshot.query.manifest_head";
 
 /// Return whether the canonical service description advertises a profile.
 pub fn service_supports_profile(description: &ServiceDescribe, profile: &str) -> bool {
@@ -349,11 +346,11 @@ pub fn missing_event_envelope_write_requirements(
     {
         missing.push(PROFILE_CORE_EVENT_STORE);
     }
-    if !service_supports_operation(description, OP_EVENTS_DESCRIBE) {
-        missing.push(OP_EVENTS_DESCRIBE);
+    if !service_supports_operation(description, arkret_sdk::ServiceOperationId::SELF_EVENTS_QUERY_DESCRIBE) {
+        missing.push(arkret_sdk::ServiceOperationId::SELF_EVENTS_QUERY_DESCRIBE);
     }
-    if !service_supports_operation(description, OP_EVENTS_SUBMIT) {
-        missing.push(OP_EVENTS_SUBMIT);
+    if !service_supports_operation(description, arkret_sdk::ServiceOperationId::SELF_EVENTS_COMMAND_SUBMIT) {
+        missing.push(arkret_sdk::ServiceOperationId::SELF_EVENTS_COMMAND_SUBMIT);
     }
     missing
 }
@@ -366,7 +363,7 @@ pub fn missing_v1_principal_server_requirements(
     description: &ServiceDescribe,
 ) -> Vec<&'static str> {
     let mut missing = Vec::new();
-    if description.service_type != "principal_server" {
+    if description.service_type != arkret_sdk::ServiceType::PrincipalServer {
         missing.push("service_type=principal_server");
     }
     if description.protocol_version != "1.0" {
