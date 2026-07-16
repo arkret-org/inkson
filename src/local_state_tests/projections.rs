@@ -244,8 +244,11 @@ fn apply_snapshot_chunks_imports_projection_status_and_encrypted_payload() {
 fn retain_realm_tree_projections_prunes_per_realm_caches() {
     let path = temp_state_path("retain-prunes");
     let mut store = LocalStateStore::with_path(path);
+    const KEEP: &str = "ak:realm:01964137-0000-7000-8000-000000000010";
+    const DROP_A: &str = "ak:realm:01964137-0000-7000-8000-000000000011";
+    const DROP_B: &str = "ak:realm:01964137-0000-7000-8000-000000000012";
     // Seed three realms with overlapping per-realm caches.
-    for id in ["ak:realm:keep", "ak:realm:drop-a", "ak:realm:drop-b"] {
+    for id in [KEEP, DROP_A, DROP_B] {
         store.save_realm_tree_projection(id, serde_json::json!({"name": id}));
         store.set_realm_seal_view(id, LocalSealView::default());
         store.set_realm_muted(id, true);
@@ -255,44 +258,40 @@ fn retain_realm_tree_projections_prunes_per_realm_caches() {
         .save_read_cursor(
             "did:web:tester.example",
             "ak:device:01964137-0000-7000-8000-000000000001",
-            "ak:realm:drop-a",
+            DROP_A,
             None,
-            "ak:event:42",
+            "ak:event:01964137-0000-7000-8000-000000000021",
         )
         .unwrap();
     store
         .save_read_cursor(
             "did:web:tester.example",
             "ak:device:01964137-0000-7000-8000-000000000001",
-            "ak:realm:keep",
+            KEEP,
             None,
-            "ak:event:99",
+            "ak:event:01964137-0000-7000-8000-000000000022",
         )
         .unwrap();
 
-    let pruned = store.retain_realm_tree_projections(|id| id == "ak:realm:keep");
+    let pruned = store.retain_realm_tree_projections(|id| id == KEEP);
     assert_eq!(pruned.len(), 2);
-    assert!(pruned.contains(&"ak:realm:drop-a".to_owned()));
-    assert!(pruned.contains(&"ak:realm:drop-b".to_owned()));
+    assert!(pruned.contains(&DROP_A.to_owned()));
+    assert!(pruned.contains(&DROP_B.to_owned()));
 
     let state = store.load();
     assert_eq!(state.realm_tree_projections.len(), 1);
-    assert!(state.realm_tree_projections.contains_key("ak:realm:keep"));
-    assert!(!state.seal_views.contains_key("ak:realm:drop-a"));
-    assert!(state.seal_views.contains_key("ak:realm:keep"));
-    assert!(!state.realm_watch_levels.contains_key("ak:realm:drop-b"));
-    assert!(state.realm_watch_levels.contains_key("ak:realm:keep"));
+    assert!(state.realm_tree_projections.contains_key(KEEP));
+    assert!(!state.seal_views.contains_key(DROP_A));
+    assert!(state.seal_views.contains_key(KEEP));
+    assert!(!state.realm_watch_levels.contains_key(DROP_B));
+    assert!(state.realm_watch_levels.contains_key(KEEP));
     let kept_marker_keys: Vec<&str> = state.read_cursors.keys().map(String::as_str).collect();
     assert!(
-        kept_marker_keys
-            .iter()
-            .any(|k| k.starts_with("ak:realm:keep\n")),
+        kept_marker_keys.iter().any(|k| k.starts_with(KEEP)),
         "kept realm marker should survive prune: {kept_marker_keys:?}",
     );
     assert!(
-        kept_marker_keys
-            .iter()
-            .all(|k| !k.starts_with("ak:realm:drop-a\n")),
+        kept_marker_keys.iter().all(|k| !k.starts_with(DROP_A)),
         "pruned realm marker should be gone: {kept_marker_keys:?}",
     );
 }

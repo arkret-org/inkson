@@ -424,7 +424,7 @@ pub fn OnboardingPanel(
                         span { "device-lifecycle §10-§13" }
                     }
                     div { class: "muted",
-                        "Generate the 24-word Recovery Key before entry 0 exists. Confirm custody by re-entering the words or by an accepted hardware/guardian acknowledgement. Only then may the same public inception draft be published. The Recovery Key, root seed, recovery-proof seed and HPKE private key never enter logs, wire payloads or ordinary local state."
+                        "Generate the 24-word Recovery Key before entry 0 exists. Confirm custody by re-entering the randomly selected word positions or by an accepted hardware/guardian acknowledgement. Only then may the same public inception draft be published. The Recovery Key, root seed, recovery-proof seed and HPKE private key never enter logs, wire payloads or ordinary local state."
                     }
                     div { class: "metric-grid",
                         div { class: "metric",
@@ -1157,5 +1157,13 @@ mod tests {
         );
         assert_eq!(PCR_ENCRYPTION_PROFILE, "mls_rfc9420");
         assert_eq!(PCR_ENCRYPTION_FLOOR, "e2ee_required");
+    }
+
+    #[test]
+    fn account_first_custody_samples_three_distinct_word_positions() {
+        let positions = random_custody_word_indices(24).unwrap();
+        assert_eq!(positions.len(), 3);
+        assert!(positions.windows(2).all(|window| window[0] < window[1]));
+        assert!(positions.iter().all(|position| *position < 24));
     }
 }

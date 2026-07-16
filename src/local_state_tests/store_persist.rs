@@ -285,19 +285,16 @@ fn realm_watch_level_set_get_roundtrip() {
 fn local_state_store_persists_private_read_cursors() {
     let path = temp_state_path("read-cursor");
     let mut store = LocalStateStore::with_path(path.clone());
+    const DEVICE_ID: &str = "ak:device:01964137-0000-7000-8000-000000000001";
+    const REALM_ID: &str = "ak:realm:01964137-0000-7000-8000-000000000010";
+    const EVENT_ID: &str = "ak:event:01964137-0000-7000-8000-000000000020";
     let marker = store
-        .save_read_cursor(
-            "did:web:alice.example",
-            "ak:device:01964137-0000-7000-8000-000000000001",
-            "ak:realm:demo",
-            None,
-            "ak:event:read-1",
-        )
+        .save_read_cursor("did:web:alice.example", DEVICE_ID, REALM_ID, None, EVENT_ID)
         .unwrap();
 
     assert_eq!(marker.marker_type, "ak.read_cursor.advance");
-    assert_eq!(marker.body.realm_id, "ak:realm:demo");
-    assert_eq!(marker.body.position.event_id, "ak:event:read-1");
+    assert_eq!(marker.body.realm_id, REALM_ID);
+    assert_eq!(marker.body.position.event_id, EVENT_ID);
     assert_eq!(marker.body.read_scope.kind, "strand");
     assert_eq!(
         marker.body.read_scope.track_name.as_deref(),
@@ -311,15 +308,15 @@ fn local_state_store_persists_private_read_cursors() {
                 "id": &marker.body.id,
                 "schema": "ak.schema.read_cursor.v1",
                 "actor_id": "did:web:alice.example",
-                "device_id": "device-1",
-                "realm_id": "ak:realm:demo",
+                "device_id": DEVICE_ID,
+                "realm_id": REALM_ID,
                 "read_scope": {
                     "kind": "strand",
-                    "container_ref": "ak:strand:demo",
+                    "container_ref": "ak:strand:01964137-0000-7000-8000-000000000010",
                     "track_name": "discussion"
                 },
                 "position": {
-                    "event_id": "ak:event:read-1",
+                    "event_id": EVENT_ID,
                     "hlc": &marker.body.position.hlc
                 },
                 "updated_at": marker.updated_at.to_rfc3339_opts(chrono::SecondsFormat::Secs, true),
@@ -329,12 +326,12 @@ fn local_state_store_persists_private_read_cursors() {
 
     let reader = LocalStateStore::with_path(path);
     let persisted = reader
-        .read_cursor_for("ak:realm:demo", None)
+        .read_cursor_for(REALM_ID, None)
         .expect("read marker persisted");
     assert_eq!(persisted.body.id, marker.body.id);
     assert_eq!(persisted.actor, "did:web:alice.example");
-    assert_eq!(persisted.device_id, "device-1");
-    assert_eq!(persisted.body.position.event_id, "ak:event:read-1");
+    assert_eq!(persisted.device_id, DEVICE_ID);
+    assert_eq!(persisted.body.position.event_id, EVENT_ID);
 }
 
 #[test]
@@ -386,42 +383,46 @@ fn local_state_store_ingests_read_cursor_update_to_device() {
 fn local_state_store_keeps_thread_read_cursors_separate() {
     let path = temp_state_path("thread-read-cursor");
     let mut store = LocalStateStore::with_path(path);
+    const REALM_ID: &str = "ak:realm:01964137-0000-7000-8000-000000000011";
+    const TOPIC_EVENT_ID: &str = "ak:event:01964137-0000-7000-8000-000000000021";
+    const THREAD_ID: &str = "ak:thread:01964137-0000-7000-8000-000000000031";
+    const THREAD_EVENT_ID: &str = "ak:event:01964137-0000-7000-8000-000000000022";
     store
         .save_read_cursor(
             "did:web:alice.example",
             "ak:device:01964137-0000-7000-8000-000000000001",
-            "ak:realm:demo",
+            REALM_ID,
             None,
-            "ak:event:topic",
+            TOPIC_EVENT_ID,
         )
         .unwrap();
     store
         .save_read_cursor(
             "did:web:alice.example",
             "ak:device:01964137-0000-7000-8000-000000000001",
-            "ak:realm:demo",
-            Some("ak:thread:reply-1".to_owned()),
-            "ak:event:thread",
+            REALM_ID,
+            Some(THREAD_ID.to_owned()),
+            THREAD_EVENT_ID,
         )
         .unwrap();
 
     assert_eq!(
         store
-            .read_cursor_for("ak:realm:demo", None)
+            .read_cursor_for(REALM_ID, None)
             .expect("topic marker")
             .body
             .position
             .event_id,
-        "ak:event:topic"
+        TOPIC_EVENT_ID
     );
     assert_eq!(
         store
-            .read_cursor_for("ak:realm:demo", Some("ak:thread:reply-1"))
+            .read_cursor_for(REALM_ID, Some(THREAD_ID))
             .expect("thread marker")
             .body
             .position
             .event_id,
-        "ak:event:thread"
+        THREAD_EVENT_ID
     );
 }
 

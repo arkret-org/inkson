@@ -673,6 +673,8 @@ pub(crate) async fn start_oidc_strand(
         principal_actor_id,
         device_id,
         &discovery.issuer,
+        &resolver.enrollment_authority_did,
+        &resolver.principal_trust_domain,
     );
     persist_oidc_scaffold(&scaffold)
         .map_err(|error| format!("Could not save sign-in state: {error}"))?;
@@ -806,6 +808,20 @@ async fn finish_oidc_callback(
         .describe()
         .await
         .map_err(|error| format!("Account Authority describe failed: {error}"))?;
+    let advertised_enrollment_authority = authority_description
+        .auth_metadata
+        .account_authority
+        .as_ref()
+        .and_then(|authority| authority.enrollment_authority_did.as_ref())
+        .ok_or_else(|| {
+            "Account Authority describe omitted the enrollment authority DID.".to_owned()
+        })?;
+    if advertised_enrollment_authority.as_str() != scaffold.enrollment_authority_did.as_str() {
+        return Err(format!(
+            "Account Authority enrollment DID does not match the Principal Server deployment pin: expected {}, got {}.",
+            scaffold.enrollment_authority_did, advertised_enrollment_authority
+        ));
+    }
     let handoff_request = garth::oidc_account_handoff_request(
         OidcAccountHandoffInput {
             request_id: arkret_sdk::RequestId::new(arkret_sdk::identifiers::new_prefixed_uuid7(
@@ -850,8 +866,8 @@ async fn finish_oidc_callback(
                 lease_expires_at: Some(lease.expires_at),
                 retry_after_ms: None,
                 device_id: device,
-                enrollment_authority_did: authority_description.service_id.to_string(),
-                trust_domain: authority_description.trust_domain.to_string(),
+                enrollment_authority_did: scaffold.enrollment_authority_did.clone(),
+                trust_domain: scaffold.principal_trust_domain.clone(),
             }))
             .map_err(|error| format!("Persist public handoff checkpoint failed: {error}"))?;
         let _ = clear_persisted_oidc_scaffold();
@@ -877,8 +893,8 @@ async fn finish_oidc_callback(
                 lease_expires_at: None,
                 retry_after_ms: Some(retry_after_ms),
                 device_id: device,
-                enrollment_authority_did: authority_description.service_id.to_string(),
-                trust_domain: authority_description.trust_domain.to_string(),
+                enrollment_authority_did: scaffold.enrollment_authority_did.clone(),
+                trust_domain: scaffold.principal_trust_domain.clone(),
             }))
             .map_err(|error| format!("Persist busy handoff checkpoint failed: {error}"))?;
         let _ = clear_persisted_oidc_scaffold();
