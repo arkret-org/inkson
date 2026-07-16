@@ -151,6 +151,8 @@ pub fn build_persisted_oidc_scaffold(
     principal_actor_id: &str,
     device_id: &str,
     issuer: &str,
+    enrollment_authority_did: &arkret_sdk::Did,
+    principal_trust_domain: &arkret_sdk::TypedTrustDomainId,
 ) -> PersistedOidcScaffold {
     PersistedOidcScaffold {
         expected_state: bundle.state.clone(),
@@ -165,6 +167,8 @@ pub fn build_persisted_oidc_scaffold(
         authorize_url: bundle.authorize_url.clone(),
         issuer: issuer.to_owned(),
         gate_account_base: gate_account_base.to_owned(),
+        enrollment_authority_did: enrollment_authority_did.to_string(),
+        principal_trust_domain: principal_trust_domain.to_string(),
     }
 }
 

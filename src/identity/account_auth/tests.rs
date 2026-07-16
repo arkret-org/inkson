@@ -409,6 +409,7 @@ fn resolve_gate_account_base_prefers_account_authority() {
     metadata.account_authority = Some(arkret_sdk::AccountAuthority {
         origin: "https://aa.example".to_owned(),
         gate_account_base: "https://aa.example/_arkret/gate/account".to_owned(),
+        enrollment_authority_did: None,
     });
     let base = resolve_gate_account_base("https://principal.example", &metadata).unwrap();
     assert_eq!(base, "https://aa.example/_arkret/gate/account");
@@ -420,6 +421,7 @@ fn resolve_gate_account_base_derives_from_account_authority_origin() {
     metadata.account_authority = Some(arkret_sdk::AccountAuthority {
         origin: "https://aa.example".to_owned(),
         gate_account_base: String::new(),
+        enrollment_authority_did: None,
     });
     let base = resolve_gate_account_base("https://principal.example", &metadata).unwrap();
     assert_eq!(base, "https://aa.example/_arkret/gate/account");
@@ -433,5 +435,45 @@ fn resolve_gate_account_base_fails_closed_without_account_authority() {
         error
             .to_string()
             .contains("auth_metadata.account_authority")
+    );
+}
+
+fn principal_description_with_enrollment_pin(
+    enrollment_authority_did: Option<arkret_sdk::Did>,
+) -> arkret_sdk::ServiceDescribe {
+    let mut description = arkret_sdk::ServiceDescribe::development(
+        arkret_sdk::Did::new("did:webvh:z6mkfixture:principal.example".to_owned()).unwrap(),
+        arkret_sdk::TypedTrustDomainId::new("ak:trust_domain:principal.example".to_owned())
+            .unwrap(),
+        "principal_server",
+    );
+    description.auth_metadata.account_authority = Some(arkret_sdk::AccountAuthority {
+        origin: "https://auth.example".to_owned(),
+        gate_account_base: "https://auth.example/_arkret/gate/account".to_owned(),
+        enrollment_authority_did,
+    });
+    description
+}
+
+#[test]
+fn authority_resolver_requires_deployment_enrollment_pin() {
+    let description = principal_description_with_enrollment_pin(None);
+    let error =
+        AuthorityResolver::from_description("https://principal.example", &description).unwrap_err();
+    assert!(error.to_string().contains("enrollment authority pin"));
+}
+
+#[test]
+fn authority_resolver_carries_deployment_enrollment_pin_and_trust_domain() {
+    let expected =
+        arkret_sdk::Did::new("did:key:z6Mkfmm57fsb6VL7zVusP8zeA9SYkCKdvUhby2G7Yh8vvQ1P".to_owned())
+            .unwrap();
+    let description = principal_description_with_enrollment_pin(Some(expected.clone()));
+    let resolver =
+        AuthorityResolver::from_description("https://principal.example", &description).unwrap();
+    assert_eq!(resolver.enrollment_authority_did, expected);
+    assert_eq!(
+        resolver.principal_trust_domain.as_str(),
+        "ak:trust_domain:principal.example"
     );
 }

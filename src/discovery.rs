@@ -227,21 +227,6 @@ fn read_marker_scope_key(scope: &ReadMarkerScope) -> String {
     )
 }
 
-/// Push notification E2EE metadata (minimal metadata sent to push gateway).
-#[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct PushE2EEMetadata {
-    /// Realm ID.
-    pub realm_id: String,
-    /// Whether the message is encrypted.
-    pub is_encrypted: bool,
-    /// Message type hint (without content).
-    pub message_type: String,
-    /// Sender hint (minimal).
-    pub sender_hint: Option<String>,
-    /// Timestamp.
-    pub timestamp: Hlc,
-}
-
 /// Per-result authorization filter for directory searches.
 #[derive(Clone, Debug)]
 pub struct AuthorizationFilter {
@@ -491,20 +476,5 @@ mod tests {
         let config = manager.get_realm_discovery("ak:realm:test");
         assert!(config.is_some());
         assert_eq!(config.unwrap().discoverability, Discoverability::Public);
-    }
-
-    #[test]
-    fn test_push_e2ee_metadata() {
-        let metadata = PushE2EEMetadata {
-            realm_id: "ak:realm:test".to_owned(),
-            is_encrypted: true,
-            message_type: "message".to_owned(),
-            sender_hint: Some("alice".to_owned()),
-            timestamp: Hlc::from_parts(5_000, 0, 1),
-        };
-
-        let json = serde_json::to_string(&metadata).unwrap();
-        assert!(json.contains("is_encrypted"));
-        assert!(json.contains("ak:realm:test"));
     }
 }
