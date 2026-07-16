@@ -2,7 +2,6 @@
 
 use anyhow::{Context as _, anyhow};
 use chrono::{SecondsFormat, Timelike as _, Utc};
-use serde_json::Value;
 use url::Url;
 
 use crate::state::{

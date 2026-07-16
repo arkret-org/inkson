@@ -621,7 +621,7 @@ fn discard_failed_oidc_callback(error: String) -> String {
             .to_owned();
     }
     if error.contains("principal_unknown") {
-        return "This Account Authority account has no verified Arkret principal identity. Create a recoverable identity from the registration page; retrying this sign-in cannot repair the account."
+        return "The Account Authority reported that the verified principal binding is missing. No new identity was created; authenticate again and use account recovery or diagnostics if this device was already bound."
             .to_owned();
     }
     format!("{error} Start sign-in again.")
@@ -1130,12 +1130,12 @@ mod tests {
     }
 
     #[test]
-    fn unknown_principal_gets_registration_guidance() {
+    fn unknown_principal_fails_closed_without_minting_guidance() {
         assert_eq!(
             discard_failed_oidc_callback(
                 "Account Authority session-grant issue failed: principal_unknown".to_owned()
             ),
-            "This Account Authority account has no verified Arkret principal identity. Create a recoverable identity from the registration page; retrying this sign-in cannot repair the account."
+            "The Account Authority reported that the verified principal binding is missing. No new identity was created; authenticate again and use account recovery or diagnostics if this device was already bound."
         );
     }
 
