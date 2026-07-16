@@ -101,7 +101,7 @@ impl CircleScope {
 
 /// Lightweight projection of a Circle for sidebar / picker / modal
 /// rendering. The full canonical struct is
-/// [`arkret_sdk::arkret_sdk::models::circle::Circle`].
+/// [`arkret_sdk::models::circle::Circle`].
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CircleSummary {
     /// `ak:circle:…`
