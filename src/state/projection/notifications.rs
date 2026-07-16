@@ -20,17 +20,18 @@ pub(crate) fn raw_notifications_from_sources(
     notification_response: Option<&[arkret_sdk::NotificationDelta]>,
     account_data: &[arkret_sdk::Event],
 ) -> Vec<Value> {
-    match notification_response {
-        Some(notification_response) => notification_response
-            .iter()
-            .filter_map(|item| serde_json::to_value(item).ok())
-            .collect(),
-        None => account_data
+    let mut notifications = notification_response
+        .unwrap_or_default()
+        .iter()
+        .filter_map(|item| serde_json::to_value(item).ok())
+        .collect::<Vec<_>>();
+    notifications.extend(
+        account_data
             .iter()
             .filter(|event| is_notification_account_data(&event.payload))
-            .filter_map(|event| serde_json::to_value(&event.payload).ok())
-            .collect(),
-    }
+            .filter_map(|event| serde_json::to_value(&event.payload).ok()),
+    );
+    notifications
 }
 
 pub(crate) fn append_invite_notifications(
@@ -70,6 +71,8 @@ fn invite_notification_from_value(invite: &Value) -> Option<Value> {
     let invite_id = value_string(invite, &["id", "invite_id"])?;
     let realm_id = value_string(invite, &["realm_id"])?;
     let realm_title = realm_title_from_value(invite);
+    let invite_token = value_string(invite, &["invite_token"])
+        .or_else(|| nested_value_string(invite, &["join_rule_snapshot"], "invite_token"));
     let created_at = value_string(invite, &["created_at"])
         .unwrap_or_else(|| chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Secs, true));
     let body = if let Some(title) = realm_title.as_deref() {
@@ -89,6 +92,7 @@ fn invite_notification_from_value(invite: &Value) -> Option<Value> {
         // is pending, and a later re-invite gets a clean, visible entry.
         "notification_id": format!("invite:{invite_id}"),
         "invite_id": invite_id,
+        "invite_token": invite_token,
         "notification_kind": "invite",
         "notification_type": "invite",
         "kind": "invite",

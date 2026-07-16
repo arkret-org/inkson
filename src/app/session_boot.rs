@@ -345,9 +345,22 @@ pub(super) fn inject_test_session_grant(
         );
         return None;
     }
-    if let Err(error) =
-        crate::event_signer::bootstrap_default_signer_for_device("inkson", device_id)
-    {
+    let event_signer_result = parsed
+        .get("event_signing_seed_b64url")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|seed| !seed.is_empty())
+        .map_or_else(
+            || crate::event_signer::bootstrap_default_signer_for_device("inkson", device_id),
+            |seed| {
+                crate::event_signer::activate_device_signer_from_seed_b64url_for_device(
+                    seed,
+                    Some(secure_store),
+                    Some(device_id),
+                )
+            },
+        );
+    if let Err(error) = event_signer_result {
         tracing::warn!(
             ?error,
             "test session injection: device identity signer install failed"

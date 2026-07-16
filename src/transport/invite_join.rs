@@ -9,11 +9,16 @@ impl crate::transport::TransportClient {
         realm_id: &str,
         actor_id: &str,
         invite_id: &str,
+        invite_token: Option<&str>,
     ) -> anyhow::Result<SubmitEventResult> {
         let mut event = crate::operation::ak_ops::invite_accept(realm_id, actor_id, invite_id)?
             .build_sdk_event("inkson")?;
-        let resolved =
-            crate::transport::directory::resolve_realm(&self.sdk_http_client()?, realm_id).await?;
+        let resolved = crate::transport::directory::resolve_realm_with_invite_token(
+            &self.sdk_http_client()?,
+            realm_id,
+            invite_token,
+        )
+        .await?;
         let candidate =
             select_join_candidate(&resolved, arkret_sdk::models::RealmJoinMethod::InviteAccept)?;
         stamp_invite_join_seal_basis(&mut event, candidate)?;

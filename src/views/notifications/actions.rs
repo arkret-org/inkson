@@ -278,6 +278,7 @@ pub(crate) fn run_notification_action(
         UiNotificationAction::AcceptInvite {
             realm_id,
             invite_id,
+            invite_token,
             realm_label,
         } => accept_invite_notification(
             base_url,
@@ -288,6 +289,7 @@ pub(crate) fn run_notification_action(
             notification_id,
             realm_id,
             invite_id,
+            invite_token,
             realm_label,
         ),
     }
@@ -303,6 +305,7 @@ fn accept_invite_notification(
     notification_id: String,
     realm_id: String,
     invite_id: String,
+    invite_token: Option<String>,
     realm_label: Option<String>,
 ) {
     let accepted_realm = realm_id;
@@ -316,7 +319,12 @@ fn accept_invite_notification(
         match with_authed_api(&base_url, session_credential, |api| async move {
             let account = crate::transport::account::account_me(&api.sdk_http_client()?).await?;
             let submit = api
-                .accept_realm_invite(&accepted_realm_for_api, &account.did, &invite_id)
+                .accept_realm_invite(
+                    &accepted_realm_for_api,
+                    &account.did,
+                    &invite_id,
+                    invite_token.as_deref(),
+                )
                 .await?;
             // The SDK's account-subscribe surface no longer accepts a
             // per-request wait-for option (client-sync.md: X-Arkret-Wait-For

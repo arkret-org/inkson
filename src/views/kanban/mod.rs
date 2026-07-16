@@ -905,7 +905,7 @@ pub fn KanbanPanel(
                 &selected_realm_id,
             )
         })
-        .map(crate::security_state::realm_projection_is_encrypted)
+        .and_then(crate::security_state::realm_projection_security_state)
     };
     // Fail-closed `bool` projection for the non-guard consumers (security
     // badge display, the per-card encrypt decision): when the Realm security

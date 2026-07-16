@@ -143,7 +143,7 @@ pub fn security_projection_for_scope_id<'a>(
         .or(Some(direct))
 }
 
-pub fn realm_projection_is_encrypted(body: &Value) -> bool {
+pub fn realm_projection_security_state(body: &Value) -> Option<bool> {
     let summary = body.get("summary").unwrap_or(&Value::Null);
     for container in [
         body,
@@ -153,7 +153,7 @@ pub fn realm_projection_is_encrypted(body: &Value) -> bool {
         body.get("metadata").unwrap_or(&Value::Null),
     ] {
         if let Some(state) = direct_security_state(container) {
-            return state;
+            return Some(state);
         }
     }
 
@@ -193,12 +193,16 @@ pub fn realm_projection_is_encrypted(body: &Value) -> bool {
             event,
         ] {
             if let Some(state) = direct_security_state(container) {
-                return state;
+                return Some(state);
             }
         }
     }
 
-    false
+    None
+}
+
+pub fn realm_projection_is_encrypted(body: &Value) -> bool {
+    realm_projection_security_state(body).unwrap_or(false)
 }
 
 #[cfg(test)]
@@ -209,15 +213,30 @@ mod tests {
 
     #[test]
     fn realm_projection_reads_profile_and_plaintext_visibility() {
-        assert!(realm_projection_is_encrypted(&json!({
+        let encrypted = json!({
             "summary": {"encryption_profile": "mls_rfc9420"}
-        })));
-        assert!(realm_projection_is_encrypted(&json!({
+        });
+        assert_eq!(realm_projection_security_state(&encrypted), Some(true));
+        assert!(realm_projection_is_encrypted(&encrypted));
+
+        let e2ee = json!({
             "plaintext_visibility": {"default": "e2ee"}
-        })));
-        assert!(!realm_projection_is_encrypted(&json!({
-            "encryption_profile": "none"
-        })));
+        });
+        assert_eq!(realm_projection_security_state(&e2ee), Some(true));
+        assert!(realm_projection_is_encrypted(&e2ee));
+
+        let plaintext = json!({"encryption_profile": "none"});
+        assert_eq!(realm_projection_security_state(&plaintext), Some(false));
+        assert!(!realm_projection_is_encrypted(&plaintext));
+
+        assert_eq!(
+            realm_projection_security_state(&json!({
+                "schema": "ak.schema.realm.v1",
+                "title": "projection still syncing"
+            })),
+            None,
+            "an incomplete Realm projection is unknown, not known-plaintext"
+        );
     }
 
     #[test]

@@ -1338,6 +1338,23 @@ fn chat_messages_fold_revision_chain_into_latest_message() {
         vec!["v1".to_owned(), "v2".to_owned()]
     );
 
+    let stale_state = ClientLocalState {
+        raw_operations: message_operations_from_events("ak:realm:r1", &events[..2]),
+        ..ClientLocalState::default()
+    };
+    let optimistic = fold_local_state_into_chat_messages_with_sidecar(
+        messages.clone(),
+        &stale_state,
+        None,
+        None,
+    );
+    assert_eq!(optimistic[0].body, "v3");
+    assert_eq!(
+        optimistic[0].revisions,
+        vec!["v1".to_owned(), "v2".to_owned()],
+        "an older durable fold must not replace a locally projected later revision"
+    );
+
     let records = message_operations_from_events("ak:realm:r1", &events);
     assert_eq!(
         records.len(),
@@ -1352,6 +1369,15 @@ fn chat_messages_fold_revision_chain_into_latest_message() {
     assert_eq!(restored.len(), 1);
     assert_eq!(restored[0].body, "v3");
     assert_eq!(restored[0].revisions.len(), 2);
+
+    let replayed = fold_local_state_into_chat_messages_with_sidecar(restored, &state, None, None);
+    assert_eq!(replayed.len(), 1);
+    assert_eq!(replayed[0].body, "v3");
+    assert_eq!(
+        replayed[0].revisions,
+        vec!["v1".to_owned(), "v2".to_owned()],
+        "replaying durable history onto an already-folded row must not count the current body as a revision"
+    );
 }
 
 #[test]

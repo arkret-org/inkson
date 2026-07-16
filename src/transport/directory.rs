@@ -51,6 +51,14 @@ pub async fn resolve_realm(
     http: &arkret_sdk::http_client::Client,
     realm_id_or_alias: &str,
 ) -> anyhow::Result<ResolveRealmOutcome> {
+    resolve_realm_with_invite_token(http, realm_id_or_alias, None).await
+}
+
+pub async fn resolve_realm_with_invite_token(
+    http: &arkret_sdk::http_client::Client,
+    realm_id_or_alias: &str,
+    invite_token: Option<&str>,
+) -> anyhow::Result<ResolveRealmOutcome> {
     let input = realm_id_or_alias.trim();
     let (realm_id, alias) = match arkret_sdk::RealmId::new(input) {
         Ok(realm) => (Some(realm), None),
@@ -65,7 +73,7 @@ pub async fn resolve_realm(
     let body = arkret_sdk::models::DirectoryResolveRealmRequestBody {
         realm_id,
         alias,
-        invite_token: None,
+        invite_token: invite_token.map(str::to_owned),
         signed_link: None,
         requester: None,
         proof_challenge: None,

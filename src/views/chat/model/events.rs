@@ -605,7 +605,19 @@ pub(crate) fn merge_duplicate_create_message(
         append_revision_body(existing, incoming.body);
         return;
     }
-    if incoming.redacted || incoming.is_newer_or_same_lifecycle_version_than(existing) {
+    let incoming_is_strictly_newer =
+        match (incoming.created_at.as_ref(), existing.created_at.as_ref()) {
+            (Some(incoming_at), Some(existing_at)) => incoming_at > existing_at,
+            (Some(_), None) => true,
+            _ => false,
+        };
+    let existing_has_newer_local_revisions = !incoming_is_strictly_newer
+        && existing.edited
+        && existing.revisions.len() > incoming.revisions.len();
+    if incoming.redacted
+        || (incoming.is_newer_or_same_lifecycle_version_than(existing)
+            && !existing_has_newer_local_revisions)
+    {
         carry_create_metadata(&mut incoming, existing);
         // Carry forward locally-tracked edit metadata. The sync projection
         // rebuilds a message from its events but does not surface the
@@ -669,6 +681,7 @@ fn fold_event_list_into_chat_messages(
     state_store: Option<&LocalStateStore>,
     decrypt_identity: Option<(&str, &str)>,
 ) -> Vec<ChatMessage> {
+    let mut durable_messages = Vec::new();
     let mut pending_revisions = Vec::<(String, ChatMessage)>::new();
     for event in events {
         let candidates = message_candidates(event);
@@ -679,22 +692,28 @@ fn fold_event_list_into_chat_messages(
             continue;
         };
         if let Some(target_ref) = revision_target_ref {
-            if fold_revision_message(&mut messages, &target_ref, message.clone()).is_some() {
+            if fold_revision_message(&mut durable_messages, &target_ref, message.clone()).is_some()
+            {
                 continue;
             }
             pending_revisions.push((target_ref, message));
             continue;
         }
-        push_or_merge_create_message(&mut messages, message);
+        push_or_merge_create_message(&mut durable_messages, message);
         let mut index = 0;
         while index < pending_revisions.len() {
             let (target_ref, revision) = &pending_revisions[index];
-            if fold_revision_message(&mut messages, target_ref, revision.clone()).is_some() {
+            if fold_revision_message(&mut durable_messages, target_ref, revision.clone()).is_some()
+            {
                 pending_revisions.remove(index);
             } else {
                 index += 1;
             }
         }
+    }
+    merge_chat_messages(&mut messages, durable_messages);
+    for (target_ref, revision) in pending_revisions {
+        let _ = fold_revision_message(&mut messages, &target_ref, revision);
     }
     apply_message_redactions(&mut messages, events);
     apply_reaction_markers(&mut messages, events);

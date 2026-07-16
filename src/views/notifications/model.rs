@@ -40,6 +40,7 @@ pub(crate) enum UiNotificationAction {
     AcceptInvite {
         realm_id: String,
         invite_id: String,
+        invite_token: Option<String>,
         realm_label: Option<String>,
     },
 }
@@ -229,9 +230,16 @@ fn notification_from_value(
     let title = value_string(&value, &["title"])
         .unwrap_or_else(|| default_notification_title(&kind).to_owned());
     let body = value_string(&value, &["body", "preview", "summary"])
+        .or_else(|| {
+            value
+                .pointer("/preview/body")
+                .and_then(Value::as_str)
+                .map(ToOwned::to_owned)
+        })
         .unwrap_or_else(|| "Notification".to_owned());
     let realm_id = value_string(&value, &["realm_id"]).unwrap_or_default();
     let invite_id = value_string(&value, &["invite_id"]);
+    let invite_token = value_string(&value, &["invite_token"]);
     let realm_label = value_string(&value, &["realm_label", "realm_title"]);
     let action = if kind == "invite" {
         invite_id.clone().and_then(|invite_id| {
@@ -241,6 +249,7 @@ fn notification_from_value(
                 Some(UiNotificationAction::AcceptInvite {
                     realm_id: realm_id.clone(),
                     invite_id,
+                    invite_token: invite_token.clone(),
                     realm_label: realm_label.clone(),
                 })
             }

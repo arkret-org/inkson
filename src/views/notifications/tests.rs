@@ -307,6 +307,9 @@ mod tests {
             "schema": "ak.schema.invite.v1",
             "realm_id": realm_id,
             "realm_title": "Partner Launch",
+            "join_rule_snapshot": {
+                "invite_token": "ak:invite-token:01904100-0000-7000-8000-000000000012"
+            },
             "state": "pending",
             "created_at": "2026-05-29T00:00:00Z",
         });
@@ -327,9 +330,11 @@ mod tests {
         assert!(matches!(
             notifications[0].action.as_ref(),
             Some(UiNotificationAction::AcceptInvite {
+                invite_token: Some(token),
                 realm_label: Some(label),
                 ..
             }) if label == "Partner Launch"
+                && token == "ak:invite-token:01904100-0000-7000-8000-000000000012"
         ));
     }
 
@@ -448,7 +453,7 @@ mod tests {
     }
 
     #[test]
-    fn notification_source_falls_back_to_account_data_only_when_endpoint_missing() {
+    fn notification_sources_merge_account_data_with_typed_subscribe_deltas() {
         let account_data = vec![
             account_data_event(json!({
                 "schema": "ak.schema.notification.v1",
@@ -465,7 +470,10 @@ mod tests {
         assert_eq!(fallback.len(), 1);
 
         let server_empty = Vec::<arkret_sdk::NotificationDelta>::new();
-        assert!(raw_notifications_from_sources(Some(&server_empty), &account_data).is_empty());
+        assert_eq!(
+            raw_notifications_from_sources(Some(&server_empty), &account_data).len(),
+            1
+        );
 
         let subscribe_delta = vec![arkret_sdk::NotificationDelta {
             id: arkret_sdk::NotificationId::new(
@@ -477,10 +485,11 @@ mod tests {
             data: None,
         }];
         let from_subscribe = raw_notifications_from_sources(Some(&subscribe_delta), &account_data);
-        assert_eq!(from_subscribe.len(), 1);
+        assert_eq!(from_subscribe.len(), 2);
         assert_eq!(
             from_subscribe[0]["id"].as_str(),
             Some("ak:notification:01964137-0000-7000-8000-000000000004")
         );
+        assert_eq!(from_subscribe[1]["notification_id"].as_str(), Some("n1"));
     }
 }

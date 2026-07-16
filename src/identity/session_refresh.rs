@@ -87,18 +87,32 @@ impl SessionGrantTransport for ReplaceableSessionTransport {
 
 #[derive(Clone)]
 struct InksonAuthenticatedTransportFactory {
-    sdk_base_url: Url,
+    principal_sdk_base_url: Url,
+    account_sdk_base_url: Url,
     principal_server_url: String,
     device_handle: DpopHandle,
     refresh_transport: ReplaceableSessionTransport,
 }
 
 impl InksonAuthenticatedTransportFactory {
-    fn build_client(
+    fn build_principal_client(
         &self,
         state: &SessionGrantState,
     ) -> arkret_sdk::Result<arkret_sdk::http_client::Client> {
-        ClientBuilder::new(self.sdk_base_url.clone())
+        ClientBuilder::new(self.principal_sdk_base_url.clone())
+            .allow_insecure_localhost()
+            .auth(Auth::Dpop(
+                self.device_handle
+                    .sdk_dpop_auth_for_access_token(state.grant_jwt.clone()),
+            ))
+            .build()
+    }
+
+    fn build_account_client(
+        &self,
+        state: &SessionGrantState,
+    ) -> arkret_sdk::Result<arkret_sdk::http_client::Client> {
+        ClientBuilder::new(self.account_sdk_base_url.clone())
             .allow_insecure_localhost()
             .auth(Auth::Dpop(
                 self.device_handle
@@ -116,7 +130,7 @@ impl AuthenticatedTransportFactory for InksonAuthenticatedTransportFactory {
     type Transport = arkret_sdk::http_client::Client;
 
     fn build(&self, state: &SessionGrantState) -> arkret_sdk::Result<Self::Transport> {
-        self.build_client(state)
+        self.build_principal_client(state)
     }
 
     fn refresh_options(
@@ -124,7 +138,8 @@ impl AuthenticatedTransportFactory for InksonAuthenticatedTransportFactory {
         state: &SessionGrantState,
         fallback: &SessionRefreshOptions,
     ) -> arkret_sdk::Result<SessionRefreshOptions> {
-        self.refresh_transport.replace(self.build_client(state)?);
+        self.refresh_transport
+            .replace(self.build_account_client(state)?);
         let persisted = self
             .persisted(state)
             .map_err(|error| arkret_sdk::Error::Protocol(error.to_string()))?;
@@ -431,10 +446,12 @@ async fn session_transport_provider(
     )
     .await
     .map_err(|error| anyhow::anyhow!("resolve Account Authority: {error}"))?;
-    let sdk_base_url = sdk_base_url_from_gate_account_base(&gate_account_base)?;
+    let account_sdk_base_url = sdk_base_url_from_gate_account_base(&gate_account_base)?;
+    let principal_sdk_base_url = crate::config::validate_server_url(&grant.principal_server_url)?;
     let refresh_transport = ReplaceableSessionTransport::default();
     let factory = InksonAuthenticatedTransportFactory {
-        sdk_base_url,
+        principal_sdk_base_url,
+        account_sdk_base_url,
         principal_server_url: grant.principal_server_url.clone(),
         device_handle: device_handle.clone(),
         refresh_transport: refresh_transport.clone(),
@@ -666,4 +683,60 @@ fn soft_logout_refresh_challenge() -> anyhow::Result<String> {
         Utc::now().timestamp_millis(),
         URL_SAFE_NO_PAD.encode(nonce)
     ))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn test_device_handle() -> DpopHandle {
+        let seed = URL_SAFE_NO_PAD.encode([7_u8; 32]);
+        let record =
+            crate::identity::account_auth::grant_dpop::dpop_device_key_record_from_seed(&seed)
+                .unwrap();
+        crate::identity::account_auth::grant_dpop::device_handle_from_seed(&seed, &record.jkt)
+            .unwrap()
+    }
+
+    fn test_grant_state() -> SessionGrantState {
+        SessionGrantState {
+            principal_id: arkret_sdk::Did::new("did:webvh:z6mkfixture:alice.example".to_owned())
+                .unwrap(),
+            device_id: Some(
+                arkret_sdk::DeviceId::new(
+                    "ak:device:01964137-0000-7000-8000-000000000001".to_owned(),
+                )
+                .unwrap(),
+            ),
+            grant_id: arkret_sdk::GrantId::new(
+                "ak:grant:01964137-0000-7000-8000-000000000001".to_owned(),
+            )
+            .unwrap(),
+            grant_jwt: "grant.jwt.signature".to_owned(),
+            expires_at: Utc::now() + chrono::Duration::hours(1),
+            audience: arkret_sdk::Did::new("did:webvh:z6mkfixture:soland.example".to_owned())
+                .unwrap(),
+            granted_scope: Vec::new(),
+            session_public_key: None,
+            dpop_jkt: None,
+        }
+    }
+
+    #[test]
+    fn authenticated_and_refresh_transports_keep_their_respective_authorities() {
+        let factory = InksonAuthenticatedTransportFactory {
+            principal_sdk_base_url: Url::parse("https://soland.example/").unwrap(),
+            account_sdk_base_url: Url::parse("https://coauth.example/").unwrap(),
+            principal_server_url: "https://soland.example".to_owned(),
+            device_handle: test_device_handle(),
+            refresh_transport: ReplaceableSessionTransport::default(),
+        };
+        let state = test_grant_state();
+
+        let authenticated = factory.build(&state).unwrap();
+        let refresh = factory.build_account_client(&state).unwrap();
+
+        assert_eq!(authenticated.base_url().as_str(), "https://soland.example/");
+        assert_eq!(refresh.base_url().as_str(), "https://coauth.example/");
+    }
 }
