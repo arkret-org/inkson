@@ -426,6 +426,10 @@ fn prepare_actor_private_file(
     if device_id.trim().is_empty() {
         anyhow::bail!("device_id is required for file transfer");
     }
+    let actor = arkret_sdk::Did::new(actor_id.trim().to_owned())?;
+    let realm_id = arkret_sdk::principal_control_realm_id(&actor);
+    let updated_hlc =
+        crate::signing_stamp::issue_protocol_hlc(actor.as_str(), device_id.trim(), &realm_id)?;
     let transfer_id = crate::random::base64url_token(24, "file-transfer transfer-id rng")?;
     let account_data_key =
         crate::account_data::file_transfer_account_data_key(crypto.namespace_key(), &transfer_id)?;
@@ -472,7 +476,7 @@ fn prepare_actor_private_file(
         aad,
         origin_device_id: device_id.trim().to_owned(),
         created_at,
-        updated_hlc: crate::hlc::Hlc::now(device_id).encode(),
+        updated_hlc: updated_hlc.to_string(),
         retention_expires_at,
     })
 }

@@ -6,25 +6,18 @@
 //! - 16-bit logical counter (4 hex chars)
 //! - 32-bit node hash (8 hex chars)
 //!
-//! All HLC kernel responsibilities are delegated to the SDK:
+//! HLC validation responsibilities are delegated to the SDK:
 //! - format validation / parsing: `validate_hlc_format` / `parse_hlc`,
-//! - encode + overflow semantics: `arkret_sdk::Hlc::new`,
-//! - node-id derivation: `HlcGenerator::compute_node_id` (`encoding.md` §7, `SHA256("arkret-hlc-v1"
-//!   || realm_id || device_id || secret)[0:4]`), reached through generator construction because the
-//!   helper is private.
+//! - encode + overflow semantics: `arkret_sdk::Hlc::new`.
 //!
-//! The only local responsibility left is injecting the physical clock
-//! through `crate::clock`: the SDK generator's advancing entry points
-//! (`generate` / `generate_with_remote` / `HlcGenerator::new`) read
-//! `std::time::SystemTime::now()`, which panics on wasm32-unknown-unknown,
-//! so this wrapper mints values via the clock-free constructor
-//! `HlcGenerator::with_initial_time` + `current()`.
+//! New timestamps are minted by `crate::signing_stamp` through Garth's
+//! durable Realm-scoped allocator. This type only parses and formats values
+//! already present in local projections.
 
 use std::fmt;
-use std::sync::atomic::{AtomicU64, Ordering};
 
 use arkret_sdk::Hlc as SdkHlc;
-use arkret_sdk::hlc::{HlcGenerator, parse_hlc, validate_hlc_format};
+use arkret_sdk::hlc::{parse_hlc, validate_hlc_format};
 use serde::{Deserialize, Serialize};
 
 /// A Hybrid Logical Clock timestamp.
@@ -38,31 +31,7 @@ pub struct Hlc {
     pub node_id: u32,
 }
 
-/// Build an SDK generator pinned to the given physical time.
-///
-/// Node-id derivation is the SDK's `compute_node_id` (`encoding.md` §7); it
-/// is private, so generator construction is the supported way to run it.
-/// inkson carries a single process-wide node identifier, which maps onto the
-/// `device_id` slot with empty realm/secret — full §7 Realm-scoped secret
-/// wiring is a separate work item; the node segment stays an opaque,
-/// SDK-derived pseudonymous hash either way.
-fn sdk_generator_at(node_id: &str, physical_ms: u64) -> HlcGenerator {
-    HlcGenerator::with_initial_time("", node_id, &[], physical_ms)
-}
-
 impl Hlc {
-    /// Create a new HLC with the current wall-clock time.
-    ///
-    /// Minting is delegated to the SDK generator; the clock is read through
-    /// `crate::clock` (and injected via `with_initial_time`) so the wasm
-    /// build never touches `std::time::SystemTime::now()`.
-    pub fn now(node_id: &str) -> Self {
-        let minted =
-            sdk_generator_at(node_id, crate::clock::now_unix_ms().min(0xffffffffffff)).current();
-        Self::parse(minted.as_str())
-            .unwrap_or_else(|_| Self::from_parts(crate::clock::now_unix_ms(), 0, 0))
-    }
-
     /// Create an HLC from components.
     pub fn from_parts(physical_ms: u64, logical: u32, node_id: u32) -> Self {
         Self {
@@ -135,32 +104,6 @@ impl fmt::Display for Hlc {
     }
 }
 
-/// A global monotonic sequence counter for operation ordering.
-static GLOBAL_SEQ: AtomicU64 = AtomicU64::new(0);
-
-/// Generate the next monotonic sequence number.
-pub fn next_seq() -> u64 {
-    let wall_floor = crate::clock::now_unix_ms().saturating_mul(1000);
-    loop {
-        let current = GLOBAL_SEQ.load(Ordering::Relaxed);
-        let next = wall_floor.max(current.saturating_add(1));
-        if GLOBAL_SEQ
-            .compare_exchange(current, next, Ordering::Relaxed, Ordering::Relaxed)
-            .is_ok()
-        {
-            return next;
-        }
-    }
-}
-
-/// Advance the local sequence floor after observing remote history.
-pub fn observe_seq(seq: u64) {
-    let floor = seq.saturating_add(1);
-    let _ = GLOBAL_SEQ.fetch_update(Ordering::Relaxed, Ordering::Relaxed, |current| {
-        (floor > current).then_some(floor)
-    });
-}
-
 #[derive(Clone, Debug, PartialEq, Eq, thiserror::Error)]
 pub enum HlcError {
     /// The string is not a valid canonical v1 HLC. Format validation is
@@ -215,38 +158,5 @@ mod tests {
         assert!(Hlc::parse("not-an-hlc").is_err());
         assert!(Hlc::parse("000000000001-00000002").is_err());
         assert!(Hlc::parse("000000000001-00000002-deadbeef").is_err());
-    }
-
-    #[test]
-    fn now_node_segment_is_deterministic_per_identifier() {
-        // The node segment comes from the SDK's `compute_node_id` derivation
-        // (via generator construction): stable for the same identifier,
-        // distinct across identifiers.
-        let a1 = Hlc::now("device_1");
-        let a2 = Hlc::now("device_1");
-        let b = Hlc::now("device_2");
-        assert_eq!(a1.node_id, a2.node_id);
-        assert_ne!(a1.node_id, b.node_id);
-    }
-
-    #[test]
-    fn now_round_trips_through_sdk_wire_format() {
-        let hlc = Hlc::now("device_1");
-        let encoded = hlc.encode();
-        assert!(validate_hlc_format(&encoded).is_ok());
-        assert_eq!(Hlc::parse(&encoded).unwrap(), hlc);
-    }
-
-    #[test]
-    fn next_seq_is_monotonic() {
-        let a = next_seq();
-        let b = next_seq();
-        assert!(b > a);
-    }
-
-    #[test]
-    fn observe_seq_advances_next_sequence_floor() {
-        observe_seq(9_000_000_000_000_000);
-        assert!(next_seq() > 9_000_000_000_000_000);
     }
 }

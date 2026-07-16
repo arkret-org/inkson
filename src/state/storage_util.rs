@@ -281,7 +281,6 @@ pub(crate) fn store_dpop_device_key_in_secure_store(
     )
 }
 
-#[cfg(any(not(test), target_arch = "wasm32"))]
 pub(crate) fn load_session_grant_from_secure_store(
     secure_store: &dyn crate::secure_key_store::SecureKeyStore,
 ) -> Result<Option<PersistedSessionGrant>, crate::secure_key_store::SecureKeyStoreError> {
@@ -298,7 +297,7 @@ pub(crate) fn load_session_grant_from_secure_store(
     })
 }
 
-#[cfg(any(not(test), target_arch = "wasm32"))]
+#[cfg_attr(test, allow(dead_code))]
 pub(crate) fn store_session_grant_in_secure_store(
     secure_store: &dyn crate::secure_key_store::SecureKeyStore,
     grant: &PersistedSessionGrant,

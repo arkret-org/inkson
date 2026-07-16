@@ -281,11 +281,30 @@ impl ChatController {
                     return;
                 }
             };
-        let item = match chat_saved_account_data_item(
-            &namespace_key,
-            &target_ref,
-            &Hlc::now("inkson").encode(),
+        let actor = match arkret_sdk::Did::new(context.account_did.clone()) {
+            Ok(actor) => actor,
+            Err(error) => {
+                self.status_msg
+                    .set(format!("Private save failed: {error:#}"));
+                self.message_context_menu.set(None);
+                return;
+            }
+        };
+        let account_realm = arkret_sdk::principal_control_realm_id(&actor);
+        let hlc = match crate::signing_stamp::issue_protocol_hlc(
+            actor.as_str(),
+            &context.device_id,
+            &account_realm,
         ) {
+            Ok(hlc) => hlc,
+            Err(error) => {
+                self.status_msg
+                    .set(format!("Private save failed: {error:#}"));
+                self.message_context_menu.set(None);
+                return;
+            }
+        };
+        let item = match chat_saved_account_data_item(&namespace_key, &target_ref, hlc.as_str()) {
             Ok(item) => item,
             Err(error) => {
                 self.status_msg

@@ -404,6 +404,13 @@ impl AccountSyncStep {
         let cursor = batch.cursor.clone();
         let mut processor = arkret_sdk::SyncResponseProcessor::new();
         let updates = processor.process(batch)?;
+        Self::from_updates(cursor, updates)
+    }
+
+    pub fn from_updates(
+        cursor: String,
+        updates: arkret_sdk::SyncUpdates,
+    ) -> arkret_sdk::Result<Self> {
         let realm_projections = updates
             .realm_updates
             .iter()

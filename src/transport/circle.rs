@@ -29,24 +29,7 @@ pub async fn submit_circle_scope_rotate_events(
     if circle_id.is_empty() {
         anyhow::bail!("circle_id is required for scope rotate");
     }
-    let mut signed_events = Vec::with_capacity(events.len());
-    let proof_context = submitter.event_proof_context().await?;
-    for event in events {
-        let mut signed = event.clone();
-        submitter.stamp_cba_basis_for_sdk_event(&mut signed).await?;
-        if signed.proofs.is_empty() {
-            crate::event_signer::sign_sdk_event_with_active_context(
-                &mut signed,
-                proof_context.clone(),
-            )
-            .map_err(|err| {
-                anyhow::anyhow!(
-                    "no active signer configured \u{2014} cannot submit Circle scope rotate event: {err}"
-                )
-            })?;
-        }
-        signed_events.push(signed);
-    }
+    let signed_events = submitter.prepare_sdk_events_batch(events.to_vec()).await?;
     let idem = idempotency_key.unwrap_or_else(uuid_v7);
     let body = arkret_sdk::CircleScopeRotateRequestBody {
         events: signed_events,

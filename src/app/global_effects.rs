@@ -69,57 +69,44 @@ pub(super) fn GlobalEffects(
             async move {
                 crate::runtime_helpers::sleep_for(std::time::Duration::from_millis(1)).await;
                 loop {
-                    let due = {
-                        let store = state_store.read();
-                        matches!(
-                            crate::identity::session_refresh::refresh_decision(&store),
-                            crate::identity::session_refresh::RefreshDecision::Due
-                        )
-                    };
-                    if due {
-                        if token().trim().is_empty() {
-                            connection_status.set("Restoring session...".to_owned());
-                            session_boot_state.set(SessionBootState::Restoring);
+                    if token().trim().is_empty() {
+                        connection_status.set("Restoring session...".to_owned());
+                        session_boot_state.set(SessionBootState::Restoring);
+                    }
+                    match session.refresh().await {
+                        crate::runtime::session::CurrentSessionRefresh::Credential(_) => {
+                            connection_status.set("Online".to_owned());
+                            session_boot_state.set(SessionBootState::Authenticated);
+                            last_error.set(None);
                         }
-                        match session.refresh().await {
-                            crate::runtime::session::CurrentSessionRefresh::Credential(_) => {
-                                connection_status.set("Online".to_owned());
-                                session_boot_state.set(SessionBootState::Authenticated);
-                                last_error.set(None);
+                        crate::runtime::session::CurrentSessionRefresh::SignInRequired {
+                            reason,
+                        } => {
+                            last_error.set(Some(reason));
+                            if token().trim().is_empty() {
+                                connection_status
+                                    .set("Session could not be restored; sign in again".to_owned());
+                                session_boot_state.set(SessionBootState::Unauthenticated);
                             }
-                            crate::runtime::session::CurrentSessionRefresh::SignInRequired {
-                                reason,
-                            } => {
-                                last_error.set(Some(reason));
-                                if token().trim().is_empty() {
-                                    connection_status.set(
-                                        "Session could not be restored; sign in again".to_owned(),
-                                    );
-                                    session_boot_state.set(SessionBootState::Unauthenticated);
-                                }
+                        }
+                        crate::runtime::session::CurrentSessionRefresh::LoginRequired {
+                            reason,
+                        } => {
+                            last_error.set(Some(reason));
+                            if token().trim().is_empty() {
+                                connection_status.set("Session expired; sign in again".to_owned());
+                                session_boot_state.set(SessionBootState::Unauthenticated);
                             }
-                            crate::runtime::session::CurrentSessionRefresh::LoginRequired {
-                                reason,
-                            } => {
-                                last_error.set(Some(reason));
-                                if token().trim().is_empty() {
-                                    connection_status
-                                        .set("Session expired; sign in again".to_owned());
-                                    session_boot_state.set(SessionBootState::Unauthenticated);
-                                }
-                            }
-                            crate::runtime::session::CurrentSessionRefresh::RetryLater {
-                                reason,
-                            } => {
-                                last_error.set(Some(format!(
-                                    "background session refresh pending: {reason}"
-                                )));
-                                if token().trim().is_empty() {
-                                    connection_status.set(
-                                        "Session restore is unavailable; sign in again".to_owned(),
-                                    );
-                                    session_boot_state.set(SessionBootState::Unauthenticated);
-                                }
+                        }
+                        crate::runtime::session::CurrentSessionRefresh::RetryLater { reason } => {
+                            last_error.set(Some(format!(
+                                "background session refresh pending: {reason}"
+                            )));
+                            if token().trim().is_empty() {
+                                connection_status.set(
+                                    "Session restore is unavailable; sign in again".to_owned(),
+                                );
+                                session_boot_state.set(SessionBootState::Unauthenticated);
                             }
                         }
                     }

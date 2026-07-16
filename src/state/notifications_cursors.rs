@@ -1,5 +1,4 @@
 use super::*;
-use crate::hlc::Hlc;
 
 impl LocalStateStore {
     pub fn save_notification_projection(&mut self, notifications: Vec<Value>) {
@@ -55,8 +54,9 @@ impl LocalStateStore {
         realm_id: impl Into<String>,
         topic_id: Option<String>,
         event_id: impl Into<String>,
-    ) -> ReadMarkerRecord {
+    ) -> anyhow::Result<ReadMarkerRecord> {
         self.ensure_cached_loaded();
+        let actor = actor.into();
         let realm_id = realm_id.into();
         let device_id = device_id.into();
         let event_id = event_id.into();
@@ -64,7 +64,8 @@ impl LocalStateStore {
         let read_scope = read_scope_for_cursor(&realm_id, topic_id.as_deref());
         let position = ReadCursorPosition {
             event_id,
-            hlc: Hlc::now(&device_id).to_string(),
+            hlc: crate::signing_stamp::issue_protocol_hlc(&actor, &device_id, &realm_id)?
+                .to_string(),
         };
         let marker = ReadMarkerRecord {
             marker_type: "ak.read_cursor.advance".to_owned(),
@@ -75,15 +76,15 @@ impl LocalStateStore {
                 read_scope: read_scope.clone(),
                 position,
             },
-            actor: actor.into(),
+            actor,
             device_id,
             updated_at: Utc::now(),
         };
         self.cached
             .read_cursors
             .insert(read_cursor_key(&realm_id, &read_scope), marker.clone());
-        let _ = self.flush();
-        marker
+        self.flush()?;
+        Ok(marker)
     }
 
     pub fn read_cursor_for(

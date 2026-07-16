@@ -766,20 +766,6 @@ pub(crate) fn mentions_from_candidates(candidates: &[&Value]) -> Vec<MentionNode
     Vec::new()
 }
 
-pub(crate) fn seq_from_candidates(candidates: &[&Value]) -> Option<u64> {
-    candidates.iter().find_map(|candidate| {
-        candidate
-            .get("actor_seq")
-            .and_then(Value::as_u64)
-            .or_else(|| {
-                candidate
-                    .get("causal")
-                    .and_then(|causal| causal.get("actor_seq"))
-                    .and_then(Value::as_u64)
-            })
-    })
-}
-
 pub(crate) fn chat_message_from_event(realm_id: &str, event: &Value) -> Option<ChatMessage> {
     chat_message_from_event_with_sidecar(realm_id, event, None, None)
 }
@@ -1251,9 +1237,6 @@ pub(crate) fn chat_message_from_event_with_sidecar(
             .is_some();
     if !explicit_message_kind && !message_payload_shape {
         return None;
-    }
-    if let Some(seq) = seq_from_candidates(&candidates) {
-        observe_seq(seq);
     }
     let event_id = value_string_at(event, &["event_id", "id"])
         .or_else(|| first_string_in_candidates(&candidates, &["event_id", "message_id", "id"]))

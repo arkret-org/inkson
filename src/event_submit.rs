@@ -932,8 +932,11 @@ impl EventSubmitter {
             return Ok(());
         }
         let actor_id = event.actor_id.as_str().to_owned();
-        match self.events_frontier_actor(&actor_id).await {
-            Ok(frontier) => apply_actor_frontier_to_sdk_event(event, &frontier),
+        let observed_frontier = match self.events_frontier_actor(&actor_id).await {
+            Ok(frontier) => {
+                apply_actor_frontier_to_sdk_event(event, &frontier)?;
+                Some(frontier.actor_seq)
+            }
             Err(error) if crate::api_error::is_actor_frontier_absent_error(&error) => {
                 event.actor_seq = 1;
                 event.prev_refs.clear();
@@ -942,10 +945,14 @@ impl EventSubmitter {
                     event_id = %event.event_id,
                     "no actor frontier visible; submitting actor-chain genesis event"
                 );
-                Ok(())
+                None
             }
-            Err(error) => Err(actor_frontier_refresh_error(&actor_id, error)),
-        }
+            Err(error) => return Err(actor_frontier_refresh_error(&actor_id, error)),
+        };
+        let stamp = crate::signing_stamp::issue_event_stamp(event, observed_frontier).await?;
+        event.actor_seq = stamp.actor_seq;
+        event.hlc = stamp.hlc;
+        Ok(())
     }
 
     /// `ak.self.events.command.submit` in batch form over typed envelopes. Spec binds
@@ -999,9 +1006,35 @@ impl EventSubmitter {
     pub(crate) async fn submit_sdk_events_batch(
         &self,
         _realm_id: &str,
-        mut events: Vec<arkret_sdk::Event>,
+        events: Vec<arkret_sdk::Event>,
         idempotency_key: Option<&str>,
     ) -> anyhow::Result<arkret_sdk::EventsSubmitOutcome> {
+        let events = self.prepare_sdk_events_batch(events).await?;
+        self.submit_signed_sdk_events_batch(&events, idempotency_key)
+            .await
+    }
+
+    pub(crate) async fn prepare_sdk_events_batch(
+        &self,
+        mut events: Vec<arkret_sdk::Event>,
+    ) -> anyhow::Result<Vec<arkret_sdk::Event>> {
+        let mut batch_frontiers = BTreeMap::<String, (u64, arkret_sdk::EventId)>::new();
+        for event in &mut events {
+            let actor_id = event.actor_id.to_string();
+            if event.proofs.is_empty() {
+                if let Some((actor_seq, event_id)) = batch_frontiers.get(&actor_id) {
+                    event.prev_refs = vec![event_id.clone()];
+                    let stamp =
+                        crate::signing_stamp::issue_event_stamp(event, Some(*actor_seq)).await?;
+                    event.actor_seq = stamp.actor_seq;
+                    event.hlc = stamp.hlc;
+                } else {
+                    self.refresh_unsigned_sdk_event_actor_frontier(event)
+                        .await?;
+                }
+            }
+            batch_frontiers.insert(actor_id, (event.actor_seq, event.event_id.clone()));
+        }
         for event in &mut events {
             self.stamp_cba_basis_for_sdk_event(event).await?;
         }
@@ -1019,8 +1052,7 @@ impl EventSubmitter {
                 })?;
             }
         }
-        self.submit_signed_sdk_events_batch(&events, idempotency_key)
-            .await
+        Ok(events)
     }
 
     /// Round R2/R3 (T02) — POST a broadcast ephemeral signal to the

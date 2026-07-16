@@ -28,31 +28,6 @@ pub fn authed_api_with_sync(
     authenticated_transport(base_url, session_credential, wait_for_sync_token)
 }
 
-/// ②(A+②) — best-effort attach the grant-binding (DPoP) key to a client so its
-/// `/_arkret/self/*` requests are sender-constrained (api-conventions.md §3.3).
-/// In production the seed is read from the secure key store (independent of the
-/// passed state store); in tests no key is present and the client stays
-/// without device proof material.
-pub fn attach_device_dpop(api: TransportClient) -> TransportClient {
-    match try_attach_device_dpop(api.clone()) {
-        Ok(api) => api,
-        Err(error) => {
-            tracing::warn!(?error, "view API DPoP device-key attach skipped");
-            api
-        }
-    }
-}
-
-fn try_attach_device_dpop(api: TransportClient) -> anyhow::Result<TransportClient> {
-    let mut store = crate::state::LocalStateStore::default();
-    let Some(handle) =
-        crate::identity::account_auth::grant_dpop::load_or_recover_device_key(&mut store)?
-    else {
-        return Ok(api);
-    };
-    Ok(api.with_dpop_device(handle))
-}
-
 async fn ensure_self_path_auth_material_ready() -> Result<(), ApiCallError> {
     #[cfg(target_arch = "wasm32")]
     {
@@ -143,7 +118,13 @@ where
         )));
     }
     ensure_self_path_auth_material_ready().await?;
-    let api = authed_api(base_url, session_credential).map_err(ApiCallError::Unavailable)?;
+    let http = crate::identity::session_refresh::provide_authenticated_sdk_client(base_url)
+        .await
+        .map_err(ApiCallError::Unavailable)?;
+    let api = crate::transport::TransportClient::from_http(
+        http,
+        crate::transport::RequestContext::new(""),
+    );
     match f(api).await {
         Ok(value) => Ok(value),
         Err(err) => Err(classify_api_call_error(err).await),
@@ -170,8 +151,14 @@ where
         )));
     }
     ensure_self_path_auth_material_ready().await?;
-    let api = authed_api_with_sync(base_url, session_credential, wait_for_sync_token)
+    let http = crate::identity::session_refresh::provide_authenticated_sdk_client(base_url)
+        .await
         .map_err(ApiCallError::Unavailable)?;
+    let mut context = crate::transport::RequestContext::new("");
+    if let Some(cursor) = wait_for_sync_token {
+        context = context.with_cursor(cursor);
+    }
+    let api = crate::transport::TransportClient::from_http(http, context);
     match f(api).await {
         Ok(value) => Ok(value),
         Err(err) => Err(classify_api_call_error(err).await),
@@ -200,9 +187,10 @@ where
         )));
     }
     ensure_self_path_auth_material_ready().await?;
-    let transport = authenticated_transport(base_url, session_credential, None)
+    let http = crate::identity::session_refresh::provide_authenticated_sdk_client(base_url)
+        .await
         .map_err(ApiCallError::Unavailable)?;
-    match f(transport.http().clone()).await {
+    match f(http).await {
         Ok(value) => Ok(value),
         Err(err) => Err(classify_api_call_error(err).await),
     }
@@ -227,8 +215,14 @@ where
         )));
     }
     ensure_self_path_auth_material_ready().await?;
-    let transport = authenticated_transport(base_url, session_credential, cursor)
+    let http = crate::identity::session_refresh::provide_authenticated_sdk_client(base_url)
+        .await
         .map_err(ApiCallError::Unavailable)?;
+    let mut context = crate::transport::RequestContext::new("");
+    if let Some(cursor) = cursor {
+        context = context.with_cursor(cursor);
+    }
+    let transport = crate::transport::TransportClient::from_http(http, context);
     match f(crate::transport::EndpointClients::new(transport)).await {
         Ok(value) => Ok(value),
         Err(err) => Err(classify_api_call_error(err).await),
@@ -260,19 +254,20 @@ fn authenticated_transport(
     session_credential: String,
     cursor: Option<String>,
 ) -> anyhow::Result<crate::transport::TransportClient> {
-    let mut context = crate::transport::RequestContext::new(session_credential);
+    if session_credential.trim().is_empty() {
+        anyhow::bail!("missing authenticated session");
+    }
+    let http = crate::identity::session_refresh::cached_authenticated_sdk_client(base_url)
+        .ok_or_else(|| {
+            anyhow::anyhow!(
+                "authenticated session transport is not initialized; use an async provider-aware API path"
+            )
+        })?;
+    let mut context = crate::transport::RequestContext::new("");
     if let Some(cursor) = cursor {
         context = context.with_cursor(cursor);
     }
-    let mut store = crate::state::LocalStateStore::default();
-    match crate::identity::account_auth::grant_dpop::load_or_recover_device_key(&mut store)? {
-        Some(handle) => context = context.with_dpop(handle),
-        None if cfg!(target_arch = "wasm32") => {
-            anyhow::bail!("missing DPoP device key for authenticated self request")
-        }
-        None => {}
-    }
-    crate::transport::TransportClient::new(base_url, context)
+    Ok(crate::transport::TransportClient::from_http(http, context))
 }
 
 async fn classify_api_call_error(err: anyhow::Error) -> ApiCallError {

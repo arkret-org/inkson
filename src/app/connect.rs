@@ -110,63 +110,17 @@ pub(super) async fn refresh_session_credential_for_active_context(
         };
     }
 
-    if token().trim().is_empty() {
-        let live_grant = {
-            let store = state_store.read();
-            store.session_grant().and_then(|grant| {
-                (crate::identity::session_refresh::grant_matches_principal_server(&grant, &base)
-                    && !crate::identity::session_refresh::grant_is_dead(&grant))
-                .then_some(grant)
-            })
-        };
-        if let Some(grant) = live_grant {
-            let session_credential = grant.grant_jwt.clone();
-            token.set(session_credential.clone());
-            persist_config(
-                config_store,
-                base.clone(),
-                actor.clone(),
-                device.clone(),
-                session_credential.clone(),
-            );
-            return crate::runtime::session::CurrentSessionRefresh::Credential(session_credential);
-        }
+    // Provider restore owns expiry policy, durable rotation, and client rebuild.
+    let restored = crate::identity::session_refresh::provide_authenticated_session(&base).await;
+    if !same_server_url(&base, &base_url()) || session_generation() != generation {
+        return crate::runtime::session::CurrentSessionRefresh::retry_later(
+            "session changed while refresh was in flight",
+        );
     }
-
-    // ②(A+②): multi-day sliding session. The held credential is the grant
-    // itself; when it is near its own expiry the refresh path rotates it (DPoP
-    // grant-binding DPoP proof signed by the durable grant-binding key bound into `cnf.jkt`) onto a
-    // fresh grant, and the rotated grant JWT becomes the live credential.
-    // `prepare_refresh_for_server_after_unauthorized` forces a rotation attempt
-    // even when the local expiry metadata looks fresh (the server may have
-    // rotated/revoked the grant early).
-    let prepared = {
-        let mut store = state_store.write();
-        crate::identity::session_refresh::prepare_refresh_for_server_after_unauthorized(
-            &mut store, &base,
-        )
-    };
-    let outcome = match prepared {
-        crate::identity::session_refresh::RefreshPrepared::Done(outcome) => outcome,
-        crate::identity::session_refresh::RefreshPrepared::Ready {
-            grant,
-            device_handle,
-        } => {
-            let result =
-                crate::identity::session_refresh::exchange_refresh(&grant, &device_handle).await;
-            // Server-switch guard: don't write the old server's grant outcome
-            // onto a session that just moved or logged out.
-            if !same_server_url(&base, &base_url()) || session_generation() != generation {
-                return crate::runtime::session::CurrentSessionRefresh::retry_later(
-                    "session changed while refresh was in flight",
-                );
-            }
-            let mut store = state_store.write();
-            crate::identity::session_refresh::commit_refresh(&mut store, result)
-        }
-    };
-    match outcome {
-        crate::identity::session_refresh::RefreshOutcome::Refreshed { session_credential } => {
+    match restored {
+        Ok(session) => {
+            let session_credential = session.grant.grant_jwt.clone();
+            state_store.write().set_session_grant(Some(session.grant));
             if session_generation() != generation {
                 return crate::runtime::session::CurrentSessionRefresh::retry_later(
                     "session changed while refresh was in flight",
@@ -182,17 +136,20 @@ pub(super) async fn refresh_session_credential_for_active_context(
             );
             crate::runtime::session::CurrentSessionRefresh::Credential(session_credential)
         }
-        crate::identity::session_refresh::RefreshOutcome::LoginRequired { reason } => {
-            crate::runtime::session::CurrentSessionRefresh::LoginRequired { reason }
-        }
-        crate::identity::session_refresh::RefreshOutcome::NoGrant => {
-            crate::runtime::session::CurrentSessionRefresh::SignInRequired {
-                reason: "no session grant is available".to_owned(),
+        Err(error) if crate::api_error::is_terminal_session_grant_refresh_error(&error) => {
+            state_store.write().set_session_grant(None);
+            crate::runtime::session::CurrentSessionRefresh::LoginRequired {
+                reason: format!("session grant could not be rotated: {error}"),
             }
         }
-        crate::identity::session_refresh::RefreshOutcome::Transient { reason } => {
-            crate::runtime::session::CurrentSessionRefresh::RetryLater { reason }
+        Err(error) if error.to_string().contains("no session grant is available") => {
+            crate::runtime::session::CurrentSessionRefresh::SignInRequired {
+                reason: error.to_string(),
+            }
         }
+        Err(error) => crate::runtime::session::CurrentSessionRefresh::RetryLater {
+            reason: error.to_string(),
+        },
     }
 }
 
@@ -304,11 +261,9 @@ fn current_base_api(
 fn current_authed_api(
     base: &str,
     session_credential: &str,
-    mut state_store: SyncSignal<LocalStateStore>,
+    _state_store: SyncSignal<LocalStateStore>,
 ) -> anyhow::Result<TransportClient> {
-    let api = TransportClient::unauthenticated(base)?.with_bearer(session_credential.to_owned());
-    let mut store = state_store.write();
-    Ok(attach_current_session_material(api, &mut store))
+    crate::transport::auth::authed_api(base, session_credential.to_owned())
 }
 
 /// ②(A+②) — build a `/_arkret/self/*`-ready client: the credential
@@ -323,9 +278,7 @@ pub(super) fn self_authed_api(
     base: &str,
     session_credential: impl Into<String>,
 ) -> anyhow::Result<TransportClient> {
-    let api = TransportClient::unauthenticated(base)?.with_bearer(session_credential);
-    let mut store = crate::state::LocalStateStore::default();
-    Ok(attach_current_session_material(api, &mut store))
+    crate::transport::auth::authed_api(base, session_credential.into())
 }
 
 pub(super) fn adopt_live_token_for_api(
@@ -340,8 +293,6 @@ pub(super) fn adopt_live_token_for_api(
         *session_credential = latest.clone();
         if let Ok(api) = current_authed_api(base, &latest, state_store) {
             *authed = api;
-        } else {
-            *authed = authed.clone().with_bearer(latest);
         }
     }
 }
@@ -723,50 +674,52 @@ pub(super) fn connect(base: String, actor: String, device: String, ctx: ConnectC
                 };
                 did_resolution_health.set(identity_health);
 
-                let mut session_credential = token();
-                if session_credential.trim().is_empty() {
-                    match bootstrap_session_refresh(&session).await {
-                        crate::runtime::session::CurrentSessionRefresh::Credential(refreshed) => {
-                            session_credential = refreshed;
-                            if let Ok(rebound) = current_base_api(&base, state_store) {
-                                api = rebound;
-                            }
-                            session_boot_state.set(SessionBootState::Checking);
+                let mut session_credential;
+                match bootstrap_session_refresh(&session).await {
+                    crate::runtime::session::CurrentSessionRefresh::Credential(refreshed) => {
+                        session_credential = refreshed;
+                        if let Ok(rebound) = current_base_api(&base, state_store) {
+                            api = rebound;
                         }
-                        crate::runtime::session::CurrentSessionRefresh::SignInRequired {
-                            reason,
-                        }
-                        | crate::runtime::session::CurrentSessionRefresh::LoginRequired {
-                            reason,
-                        } => {
-                            let probe_label = description
-                                .as_ref()
-                                .map(|d| format!("{} / {}", d.service_type, d.protocol_version))
-                                .unwrap_or_else(|| "server probe unavailable".to_owned());
-                            status.set(format!("Refreshed: {probe_label}; sign-in required"));
-                            network_state.set("online".to_owned());
-                            crypto_state.set("No authenticated session".to_owned());
-                            last_error.set(Some(reason));
-                            needs_device_authorization.set(false);
-                            device_authorization_check_complete.set(true);
-                            session_boot_state.set(SessionBootState::Unauthenticated);
-                            sync_bootstrap_complete.set(true);
-                            return;
-                        }
-                        crate::runtime::session::CurrentSessionRefresh::RetryLater { reason } => {
-                            status.set("Session could not be restored; sign in again".to_owned());
-                            network_state.set("reconnecting".to_owned());
-                            last_error
-                                .set(Some(format!("session credential restore failed: {reason}")));
-                            session_boot_state.set(SessionBootState::Unauthenticated);
-                            sync_bootstrap_complete.set(true);
-                            return;
-                        }
+                        session_boot_state.set(SessionBootState::Checking);
+                    }
+                    crate::runtime::session::CurrentSessionRefresh::SignInRequired { reason }
+                    | crate::runtime::session::CurrentSessionRefresh::LoginRequired { reason } => {
+                        let probe_label = description
+                            .as_ref()
+                            .map(|d| format!("{} / {}", d.service_type, d.protocol_version))
+                            .unwrap_or_else(|| "server probe unavailable".to_owned());
+                        status.set(format!("Refreshed: {probe_label}; sign-in required"));
+                        network_state.set("online".to_owned());
+                        crypto_state.set("No authenticated session".to_owned());
+                        last_error.set(Some(reason));
+                        needs_device_authorization.set(false);
+                        device_authorization_check_complete.set(true);
+                        session_boot_state.set(SessionBootState::Unauthenticated);
+                        sync_bootstrap_complete.set(true);
+                        return;
+                    }
+                    crate::runtime::session::CurrentSessionRefresh::RetryLater { reason } => {
+                        status.set("Session could not be restored; sign in again".to_owned());
+                        network_state.set("reconnecting".to_owned());
+                        last_error
+                            .set(Some(format!("session credential restore failed: {reason}")));
+                        session_boot_state.set(SessionBootState::Unauthenticated);
+                        sync_bootstrap_complete.set(true);
+                        return;
                     }
                 }
 
-                let mut authed = current_authed_api(&base, &session_credential, state_store)
-                    .unwrap_or_else(|_| api.clone().with_bearer(session_credential.clone()));
+                let Ok(mut authed) = current_authed_api(&base, &session_credential, state_store)
+                else {
+                    invalidate_bootstrap_session(
+                        &session,
+                        "authenticated session provider did not yield a client",
+                        session_boot_state,
+                        sync_bootstrap_complete,
+                    );
+                    return;
+                };
                 adopt_live_token_for_api(
                     &base,
                     state_store,
@@ -808,14 +761,18 @@ pub(super) fn connect(base: String, actor: String, device: String, ctx: ConnectC
                                 refreshed,
                             ) => {
                                 session_credential = refreshed;
-                                if let Ok(rebound) = current_base_api(&base, state_store) {
-                                    api = rebound;
-                                }
-                                authed =
+                                let Ok(rebound) =
                                     current_authed_api(&base, &session_credential, state_store)
-                                        .unwrap_or_else(|_| {
-                                            api.clone().with_bearer(session_credential.clone())
-                                        });
+                                else {
+                                    invalidate_bootstrap_session(
+                                        &session,
+                                        "refreshed session provider did not yield a client",
+                                        session_boot_state,
+                                        sync_bootstrap_complete,
+                                    );
+                                    return;
+                                };
+                                authed = rebound;
                                 match bootstrap_request("account viewer retry", async {
                                     crate::transport::account::account_me(
                                         &authed.sdk_http_client()?,
@@ -1018,14 +975,18 @@ pub(super) fn connect(base: String, actor: String, device: String, ctx: ConnectC
                                 refreshed,
                             ) => {
                                 session_credential = refreshed;
-                                if let Ok(rebound) = current_base_api(&base, state_store) {
-                                    api = rebound;
-                                }
-                                authed =
+                                let Ok(rebound) =
                                     current_authed_api(&base, &session_credential, state_store)
-                                        .unwrap_or_else(|_| {
-                                            api.clone().with_bearer(session_credential.clone())
-                                        });
+                                else {
+                                    invalidate_bootstrap_session(
+                                        &session,
+                                        "refreshed session provider did not yield a client",
+                                        session_boot_state,
+                                        sync_bootstrap_complete,
+                                    );
+                                    return;
+                                };
+                                authed = rebound;
                                 match bootstrap_request(
                                     "device authorization retry",
                                     probe_device_authorization_with_auto_enroll(
@@ -1134,14 +1095,18 @@ pub(super) fn connect(base: String, actor: String, device: String, ctx: ConnectC
                                 refreshed,
                             ) => {
                                 session_credential = refreshed;
-                                if let Ok(rebound) = current_base_api(&base, state_store) {
-                                    api = rebound;
-                                }
-                                authed =
+                                let Ok(rebound) =
                                     current_authed_api(&base, &session_credential, state_store)
-                                        .unwrap_or_else(|_| {
-                                            api.clone().with_bearer(session_credential.clone())
-                                        });
+                                else {
+                                    invalidate_bootstrap_session(
+                                        &session,
+                                        "refreshed session provider did not yield a client",
+                                        session_boot_state,
+                                        sync_bootstrap_complete,
+                                    );
+                                    return;
+                                };
+                                authed = rebound;
                                 bootstrap_request(
                                     "account subscribe bootstrap retry",
                                     client_core_account_subscribe_snapshot(&authed),
@@ -1218,14 +1183,20 @@ pub(super) fn connect(base: String, actor: String, device: String, ctx: ConnectC
                                             {
                                                 api = rebound;
                                             }
-                                            authed = current_authed_api(
+                                            let Ok(rebound) = current_authed_api(
                                                 &base,
                                                 &session_credential,
                                                 state_store,
-                                            )
-                                            .unwrap_or_else(|_| {
-                                                api.clone().with_bearer(session_credential.clone())
-                                            });
+                                            ) else {
+                                                invalidate_bootstrap_session(
+                                                    &session,
+                                                    "refreshed session provider did not yield a client",
+                                                    session_boot_state,
+                                                    sync_bootstrap_complete,
+                                                );
+                                                return;
+                                            };
+                                            authed = rebound;
                                             bootstrap_request("invite notifications retry", async {
                                                 crate::transport::account::invites(
                                                     &authed.sdk_http_client()?,
@@ -1750,14 +1721,18 @@ pub(super) fn connect(base: String, actor: String, device: String, ctx: ConnectC
                                 refreshed,
                             ) => {
                                 session_credential = refreshed;
-                                if let Ok(rebound) = current_base_api(&base, state_store) {
-                                    api = rebound;
-                                }
-                                authed =
+                                let Ok(rebound) =
                                     current_authed_api(&base, &session_credential, state_store)
-                                        .unwrap_or_else(|_| {
-                                            api.clone().with_bearer(session_credential.clone())
-                                        });
+                                else {
+                                    invalidate_bootstrap_session(
+                                        &session,
+                                        "refreshed session provider did not yield a client",
+                                        session_boot_state,
+                                        sync_bootstrap_complete,
+                                    );
+                                    return;
+                                };
+                                authed = rebound;
                                 bootstrap_request(
                                     "events describe retry",
                                     client_core_events_describe(&authed, state_store),

@@ -77,7 +77,7 @@ pub async fn create_realm(
     let realm_id = format!("ak:realm:{}", uuid_v7());
     let join_rule = canonical_space_join_rule_v1(join_rule);
     let notary_did = submitter.service_id().await?;
-    let mut events = build_realm_bootstrap_events(
+    let events = build_realm_bootstrap_events(
         &realm_id,
         actor_id,
         &notary_did,
@@ -101,20 +101,9 @@ pub async fn create_realm(
     // `ak.realm.create` precondition asserts `head_eq null`; follow-up
     // facet events in the same batch are admitted after soland
     // materialises the creator membership from the create event.
-    // Sign every SDK Event before it reaches the wire; the batch
-    // submitter takes pre-signed typed Events.
-    let proof_context = submitter.event_proof_context().await?;
-    for event in events.iter_mut() {
-        crate::event_signer::sign_sdk_event_with_active_context(event, proof_context.clone())
-            .map_err(|err| {
-                anyhow::anyhow!(
-                    "no active signer configured \u{2014} cannot submit unsigned realm bootstrap: {err}"
-                )
-            })?;
-    }
     let idempotency_key = format!("ak:operation:{}", uuid_v7());
     submitter
-        .submit_signed_sdk_events_batch(&events, Some(&idempotency_key))
+        .submit_sdk_events_batch(&realm_id, events, Some(&idempotency_key))
         .await?;
 
     let resolved_invitees = parse_realm_bootstrap_members(&invitees)?;
@@ -709,24 +698,10 @@ pub async fn appeal_modify_atomic(
 async fn sign_and_submit_moderation_batch(
     submitter: &EventSubmitter,
     _realm_id: &str,
-    mut events: Vec<arkret_sdk::Event>,
+    events: Vec<arkret_sdk::Event>,
 ) -> anyhow::Result<arkret_sdk::EventsSubmitOutcome> {
-    for event in &mut events {
-        submitter.stamp_cba_basis_for_sdk_event(event).await?;
-    }
-    let proof_context = submitter.event_proof_context().await?;
-    for event in events.iter_mut() {
-        if event.proofs.is_empty() {
-            crate::event_signer::sign_sdk_event_with_active_context(event, proof_context.clone())
-                .map_err(|err| {
-                anyhow::anyhow!(
-                    "no active signer configured \u{2014} cannot submit moderation batch: {err}"
-                )
-            })?;
-        }
-    }
     submitter
-        .submit_signed_sdk_events_batch(&events, None)
+        .submit_sdk_events_batch(_realm_id, events, None)
         .await
 }
 

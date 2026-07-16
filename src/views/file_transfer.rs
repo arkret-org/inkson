@@ -8,7 +8,6 @@ use crate::file_transfer::{
     file_transfer_items_from_account_data, format_size, load_file_transfer_crypto_context,
     load_or_create_file_transfer_crypto_context, upload_actor_private_file,
 };
-use crate::transport::TransportClient;
 
 #[component]
 pub fn FileTransferPanel(token: Signal<String>, account_did: String, device_id: String) -> Element {
@@ -86,12 +85,16 @@ pub fn FileTransferPanel(token: Signal<String>, account_did: String, device_id: 
                                 uploading.set(true);
                                 status.set("Uploading".to_owned());
                                 spawn(async move {
-                                    let api = match TransportClient::unauthenticated(&base_url)
-                                        .map(|api| api.with_bearer(api_token.clone()))
+                                    let api = match crate::transport::auth::with_authed_api(
+                                        &base_url,
+                                        api_token.clone(),
+                                        |api| async move { Ok(api) },
+                                    )
+                                    .await
                                     {
-                                        Ok(api) => crate::transport::auth::attach_device_dpop(api),
+                                        Ok(api) => api,
                                         Err(error) => {
-                                            status.set(format!("Invalid server URL: {error}"));
+                                            status.set(error.display());
                                             uploading.set(false);
                                             return;
                                         }
@@ -273,12 +276,16 @@ fn FileTransferRow(
                             let transfer_id = transfer_id.clone();
                             status.set("Preparing download".to_owned());
                             spawn(async move {
-                                let api = match TransportClient::unauthenticated(&base_url)
-                                    .map(|api| api.with_bearer(api_token))
+                                let api = match crate::transport::auth::with_authed_api(
+                                    &base_url,
+                                    api_token,
+                                    |api| async move { Ok(api) },
+                                )
+                                .await
                                 {
-                                    Ok(api) => crate::transport::auth::attach_device_dpop(api),
+                                    Ok(api) => api,
                                     Err(error) => {
-                                        status.set(format!("Invalid server URL: {error}"));
+                                        status.set(error.display());
                                         return;
                                     }
                                 };
@@ -330,16 +337,19 @@ fn refresh_items(
     refreshing.set(true);
     status.set("Refreshing".to_owned());
     spawn(async move {
-        let api = match TransportClient::unauthenticated(&base_url)
-            .map(|api| api.with_bearer(api_token))
-        {
-            Ok(api) => crate::transport::auth::attach_device_dpop(api),
-            Err(error) => {
-                status.set(format!("Invalid server URL: {error}"));
-                refreshing.set(false);
-                return;
-            }
-        };
+        let api =
+            match crate::transport::auth::with_authed_api(&base_url, api_token, |api| async move {
+                Ok(api)
+            })
+            .await
+            {
+                Ok(api) => api,
+                Err(error) => {
+                    status.set(error.display());
+                    refreshing.set(false);
+                    return;
+                }
+            };
         let crypto = match load_file_transfer_crypto_context(&actor_id) {
             Ok(Some(crypto)) => crypto,
             Ok(None) => {
