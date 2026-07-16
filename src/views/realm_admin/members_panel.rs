@@ -5,7 +5,7 @@ use dioxus::prelude::*;
 use dioxus_primitives::checkbox::CheckboxState;
 use serde_json::{Value, json};
 
-use super::capabilities::{RealmMemberCapabilities, authz_json_allowed};
+use super::capabilities::RealmMemberCapabilities;
 use crate::components::SelfAttributionBadge;
 use crate::operation::ak_ops;
 use crate::state::{LocalStateStore, MoveSubmissionState, RawOperationRecord};
@@ -3354,7 +3354,7 @@ pub fn RealmMembersPanel(
                 match authed_api_with_sync(&base, api_token, None) {
                     Ok(api) => {
                         let invite = async {
-                            crate::transport::realm_read::authz_check_raw(
+                            crate::transport::realm_read::authz_check(
                                 &api.sdk_http_client()?,
                                 &actor,
                                 "ak.invite.create",
@@ -3364,7 +3364,7 @@ pub fn RealmMembersPanel(
                         }
                         .await;
                         let cancel_invite = async {
-                            crate::transport::realm_read::authz_check_raw(
+                            crate::transport::realm_read::authz_check(
                                 &api.sdk_http_client()?,
                                 &actor,
                                 "ak.invite.cancel",
@@ -3382,7 +3382,7 @@ pub fn RealmMembersPanel(
                         // an unknown high-risk action (fail-closed) by a
                         // spec-conformant server.
                         let remove = async {
-                            crate::transport::realm_read::authz_check_raw(
+                            crate::transport::realm_read::authz_check(
                                 &api.sdk_http_client()?,
                                 &actor,
                                 "ak.realm.admin",
@@ -3391,12 +3391,18 @@ pub fn RealmMembersPanel(
                             .await
                         }
                         .await;
-                        let can_invite = invite.as_ref().map(authz_json_allowed).unwrap_or(false);
+                        let can_invite = invite
+                            .as_ref()
+                            .map(crate::transport::realm_read::authz_allowed)
+                            .unwrap_or(false);
                         let can_cancel_invite = cancel_invite
                             .as_ref()
-                            .map(authz_json_allowed)
+                            .map(crate::transport::realm_read::authz_allowed)
                             .unwrap_or(false);
-                        let can_remove = remove.as_ref().map(authz_json_allowed).unwrap_or(false);
+                        let can_remove = remove
+                            .as_ref()
+                            .map(crate::transport::realm_read::authz_allowed)
+                            .unwrap_or(false);
                         if invite.is_err() && cancel_invite.is_err() && remove.is_err() {
                             status_msg.set(
                                 "member action permission check failed; write controls hidden"

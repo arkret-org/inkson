@@ -85,7 +85,7 @@ pub(super) fn RouteSurface(state: RouteSurfaceState) -> Element {
         push_state,
         locale,
         theme,
-        base_url,
+        base_url: _,
     } = state;
     let NavigationState {
         route,
@@ -457,20 +457,7 @@ pub(super) fn RouteSurface(state: RouteSurfaceState) -> Element {
                         }
                     },
                     Route::Quarantine => rsx! {
-                        crate::views::quarantine::QuarantinePanel {
-                            // Coauth and soland may share a host in
-                            // single-server dev deployments - fall back to
-                            // `base_url` until the topology probe surfaces a
-                            // separate coauth URL.
-                            coauth_url: base_url(),
-                            // Admin scope is currently inferred from the
-                            // login profile; until profile claims surface
-                            // here we treat any signed-in user as admin so
-                            // they can exercise the approve / reject path
-                            // in dev. Production will gate this on the
-                            // `coauth.admin` scope from the session grant.
-                            is_admin: true,
-                        }
+                        crate::views::quarantine::QuarantinePanel {}
                     },
                     Route::Applets => rsx! {
                         if crate::views::applets::applets_enabled() {

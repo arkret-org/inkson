@@ -505,24 +505,14 @@ pub(crate) fn ingest_realm_key_share(
 
 /// Extract the sender's principal DID from a `ak.realm_key.share` to-device
 /// envelope so [`verify_realm_key_share_sender_signature`] can bind the signing
-/// key to the sender's device-directory record. To-device / event envelopes
-/// expose the sender under one of these top-level keys.
+/// key to the sender's device-directory record.
 fn realm_key_share_sender_principal_id(envelope: &serde_json::Value) -> Option<String> {
-    [
-        "sender_principal_id",
-        "sender",
-        "actor_id",
-        "sender_actor_id",
-    ]
-    .iter()
-    .find_map(|key| {
-        envelope
-            .get(*key)
-            .and_then(serde_json::Value::as_str)
-            .map(str::trim)
-            .filter(|value| !value.is_empty())
-            .map(ToOwned::to_owned)
-    })
+    envelope
+        .get("sender_principal_id")
+        .and_then(serde_json::Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToOwned::to_owned)
 }
 
 /// SEC-02: derive the `(sender_principal_id, sender_device_id)` directory pair

@@ -657,6 +657,10 @@ pub struct ClientLocalState {
     /// cursors are not interchangeable and MUST NOT be cross-used.
     #[serde(default)]
     pub realm_events_cursors: BTreeMap<String, String>,
+    /// Realm scan cursors are filter-bound and cannot share the subscription
+    /// cursor slot. Keys include service, realm, and order.
+    #[serde(default)]
+    pub realm_scan_cursors: BTreeMap<String, String>,
     #[serde(default)]
     pub device_message_cursors: BTreeMap<String, String>,
     #[serde(default)]
@@ -1164,6 +1168,7 @@ impl Default for ClientLocalState {
         Self {
             sync_cursor: None,
             realm_events_cursors: BTreeMap::new(),
+            realm_scan_cursors: BTreeMap::new(),
             device_message_cursors: BTreeMap::new(),
             client_core_seen_event_ids: VecDeque::new(),
             raw_operations: Vec::new(),

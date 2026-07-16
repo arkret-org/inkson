@@ -392,6 +392,11 @@ fn apply_test_session_grant_expiry_override(
             return false;
         }
         state_store.write().set_session_grant(Some(grant));
+        // The session transport provider caches the grant state that was
+        // loaded before this test-only expiry override ran. Drop that cached
+        // provider so the next authenticated request restores the overridden
+        // expiry and exercises the real due-refresh path.
+        crate::identity::session_refresh::reset_session_grant_runtime();
         true
     })();
 

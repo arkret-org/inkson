@@ -4,8 +4,7 @@
 //!
 //! 1. Native (desktop) target: a `tracing-subscriber` chain that respects `RUST_LOG` and uses
 //!    ANSI-coloured terminal output.
-//! 2. Browser (wasm32) target: a sketch of how to mirror `tracing` events to `console.error` and
-//!    POST recoverable errors to a `/_arkret/self/telemetry/error` endpoint via `fetch`.
+//! 2. Browser (wasm32) target: a sketch of how to mirror `tracing` events to the browser console.
 //!
 //! Run the native variant with:
 //!
@@ -66,21 +65,4 @@ fn main() {
     //                 .build(),
     //         );
     //
-    //   3. POST structured error payloads to `/_arkret/self/telemetry/error` from a small
-    //      `report_error(code, context)` helper. The helper is fire-and-forget — a failed telemetry
-    //      POST must never crash the SPA. Wire it from `ErrorBanner` and the global panic hook:
-    //
-    //         pub fn report_error(code: &str, context: &str) {
-    //             let body = serde_json::json!({
-    //                 "code": code, "context": context,
-    //             }).to_string();
-    //             wasm_bindgen_futures::spawn_local(async move {
-    //                 let _ = reqwest::Client::new()
-    //                     .post("/_arkret/self/telemetry/error")
-    //                     .header("content-type", "application/json")
-    //                     .body(body)
-    //                     .send()
-    //                     .await;
-    //             });
-    //         }
 }

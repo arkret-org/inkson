@@ -103,12 +103,6 @@ pub fn CapabilitiesSettingsCard(account_did: Signal<String>, token: Signal<Strin
                     rows.set(decoded);
                 }
                 Err(err) => {
-                    // TODO(G3.Y3-followup): when soland adds the per-actor
-                    // `GET /_arkret/self/authz/capabilities/{actor}` endpoint with
-                    // the full delegation chain (spec §3.2), prefer that
-                    // over effective-grants — the latter projects only the
-                    // resolved leaf, not the hop history needed for the
-                    // `capability-chain-step` detail modal.
                     status.set(format!("Failed to load capabilities: {}", err.display()));
                 }
             }

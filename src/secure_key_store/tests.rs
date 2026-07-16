@@ -212,6 +212,9 @@ fn load_signing_seed_rejects_short_entries() {
 fn wasm_indexeddb_required_key_classifier_covers_high_value_secrets() {
     assert!(is_wasm_indexeddb_required_secret_key(SIGNING_SEED_KEY));
     assert!(is_wasm_indexeddb_required_secret_key(
+        GRANT_BINDING_SEED_KEY
+    ));
+    assert!(is_wasm_indexeddb_required_secret_key(
         "identity.local.primary.v1"
     ));
     assert!(is_wasm_indexeddb_required_secret_key(
@@ -222,6 +225,12 @@ fn wasm_indexeddb_required_key_classifier_covers_high_value_secrets() {
     ));
     assert!(is_wasm_indexeddb_required_secret_key(
         "coauth.session_credential.did:example:alice"
+    ));
+    assert!(is_wasm_indexeddb_required_secret_key(
+        "auth.dpop.device_key.v1.did:example:alice"
+    ));
+    assert!(is_wasm_indexeddb_required_secret_key(
+        "auth.session_grant.v1.did:example:alice"
     ));
     // The hard-logout journal embeds a grant-binding seed and is IndexedDB-only.
     assert!(is_wasm_indexeddb_required_secret_key(
