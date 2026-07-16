@@ -59,6 +59,10 @@ pub struct AccountHealthInputs {
     /// User is currently on a recovery/settings-recovery route, where the
     /// advisory prompts (floor, SPOF reminder) would be redundant noise.
     pub on_recovery_route: bool,
+    /// User is inside the account-first onboarding flow. That flow owns device
+    /// authorization and recovery setup, so global account-health prompts would
+    /// duplicate or obscure the active onboarding step.
+    pub on_onboarding_route: bool,
     /// Server-side recovery state has been fetched. Backup prompts depend on
     /// this because the UX is different for "use the existing Recovery Key"
     /// versus "create the account Recovery Key".
@@ -84,6 +88,14 @@ impl AccountHealthInputs {
 /// Pure priority resolver. See [`AccountHealthPrompt`] for the ordering.
 pub fn resolve(i: AccountHealthInputs) -> AccountHealthPrompt {
     if !i.has_session {
+        return AccountHealthPrompt::None;
+    }
+
+    // Account-first onboarding is itself the blocking setup surface. In
+    // particular, the existing-identity Recovery Key step authorizes the new
+    // device, so opening the global pairing prompt on top of it presents two
+    // competing ways to complete the same transition.
+    if i.on_onboarding_route {
         return AccountHealthPrompt::None;
     }
 
@@ -190,6 +202,21 @@ mod tests {
             ..healthy()
         };
         assert_eq!(resolve(i), AccountHealthPrompt::DeviceAuthorization);
+    }
+
+    #[test]
+    fn onboarding_owns_device_authorization_and_recovery_prompts() {
+        let i = AccountHealthInputs {
+            on_onboarding_route: true,
+            needs_device_authorization: true,
+            needs_mls_unlock: true,
+            needs_mls_backup: true,
+            needs_mls_recovery_setup: true,
+            floor_low: true,
+            recovery_unconfigured: true,
+            ..healthy()
+        };
+        assert_eq!(resolve(i), AccountHealthPrompt::None);
     }
 
     #[test]

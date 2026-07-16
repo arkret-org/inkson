@@ -1040,6 +1040,7 @@ fn AppBootstrap() -> Element {
                 &content_route,
                 Route::Recovery | Route::SettingsRecovery
             ),
+            on_onboarding_route: matches!(&content_route, Route::Onboarding),
             recovery_check_complete: account_recovery_configured.is_some(),
             needs_device_authorization: needs_device_authorization(),
             needs_mls_unlock: needs_mls_unlock(),
@@ -1150,6 +1151,7 @@ fn AppBootstrap() -> Element {
                     account_did,
                     sync_bootstrap_complete,
                     secure_store_bootstrap_ready,
+                    on_onboarding_route: matches!(&content_route, Route::Onboarding),
                     device_authorization_check_complete,
                     account_recovery_configured,
                     needs_device_authorization,
@@ -1350,8 +1352,10 @@ fn AppBootstrap() -> Element {
             crate::components::ToastHost {}
             crate::components::DidResolutionHealthBanner { health: did_resolution_health }
             Outlet::<Route> {}
-            crate::components::DeviceAuthorizationPrompt {
-                needs_device_authorization,
+            if active_prompt == AccountHealthPrompt::DeviceAuthorization {
+                crate::components::DeviceAuthorizationPrompt {
+                    needs_device_authorization,
+                }
             }
             // device-lifecycle.md §2.1/§7 — surface an incoming same-principal
             // pairing request on this (authorized) device so the user can
