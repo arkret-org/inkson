@@ -361,7 +361,7 @@ async fn moderator_signal_authorized(
         return false;
     };
     match async {
-        crate::transport::realm_read::authz_check_resource_raw(
+        crate::transport::realm_read::authz_check_resource(
             &api.sdk_http_client()?,
             &decoded.sender_actor,
             "ak.call.moderate",
@@ -382,7 +382,7 @@ async fn moderator_signal_authorized(
                 call_id = %decoded.call_id,
                 sender = %decoded.sender_actor,
                 signal_type = %decoded.signal_type,
-                outcome = %outcome,
+                ?outcome,
                 "dropping unauthorised moderator call signal"
             );
             false
@@ -463,29 +463,19 @@ fn moderation_target_device(decoded: &DecodedCallSignal) -> Option<&str> {
         .and_then(Value::as_str)
 }
 
-fn authz_check_allows_moderation(outcome: &Value) -> bool {
-    let allowed = outcome
-        .get("decision")
-        .and_then(Value::as_str)
-        .map(|decision| matches!(decision, "allow" | "allowed"))
-        .unwrap_or_else(|| {
-            outcome
-                .get("allowed")
-                .and_then(Value::as_bool)
-                .unwrap_or(false)
-        });
-    if !allowed {
+fn authz_check_allows_moderation(outcome: &crate::models::AuthzCheckOutcome) -> bool {
+    if !crate::transport::realm_read::authz_allowed(outcome) {
         return false;
     }
-    let stale_freshness = outcome
-        .get("freshness_state")
-        .and_then(Value::as_str)
-        .is_some_and(|state| matches!(state, "stale" | "unknown"));
-    let stale_notary = outcome
-        .get("notary_status")
-        .and_then(Value::as_str)
-        .is_some_and(|state| matches!(state, "lagging" | "unreachable" | "unknown"));
-    !(stale_freshness || stale_notary)
+    let freshness_acceptable = matches!(
+        outcome.freshness_state,
+        None | Some(arkret_sdk::FreshnessState::Fresh)
+    );
+    let notary_acceptable = matches!(
+        outcome.notary_status,
+        None | Some(arkret_sdk::NotaryStatus::Fresh)
+    );
+    freshness_acceptable && notary_acceptable
 }
 
 /// Current ring/active snapshot a routing decision is taken against. Pulled

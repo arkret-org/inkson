@@ -35,30 +35,23 @@ pub async fn authz_check_resource(
     http.authz_check(&body).await.map_err(anyhow::Error::from)
 }
 
-pub async fn authz_check_resource_raw(
-    http: &arkret_sdk::http_client::Client,
-    actor: &str,
-    action: &str,
-    resource: Option<Value>,
-) -> anyhow::Result<Value> {
-    let response = authz_check_resource(http, actor, action, resource).await?;
-    Ok(serde_json::to_value(response)?)
-}
-
-pub async fn authz_check_raw(
+pub async fn authz_check(
     http: &arkret_sdk::http_client::Client,
     actor: &str,
     action: &str,
     realm_id: &str,
-) -> anyhow::Result<Value> {
-    let response = authz_check_resource(
+) -> anyhow::Result<AuthzCheckOutcome> {
+    authz_check_resource(
         http,
         actor,
         action,
         Some(json!({"kind": "realm", "realm_id": realm_id.trim()})),
     )
-    .await?;
-    Ok(serde_json::to_value(response)?)
+    .await
+}
+
+pub fn authz_allowed(outcome: &AuthzCheckOutcome) -> bool {
+    matches!(outcome.decision, arkret_sdk::AuthzDecision::Allow)
 }
 
 pub async fn effective_grants(

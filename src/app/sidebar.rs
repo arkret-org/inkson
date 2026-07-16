@@ -299,22 +299,6 @@ pub(super) struct SidebarRowRealmPerms {
     pub(super) can_settings: bool,
 }
 
-/// Parse a `_arkret/self/authz/check` body into a simple allow boolean.
-/// Mirrors `realm_admin::authz_json_allowed`. Fail-closed: any shape we do
-/// not recognise reads as denied.
-pub(super) fn sidebar_authz_allowed(value: &Value) -> bool {
-    value
-        .get("allowed")
-        .and_then(Value::as_bool)
-        .unwrap_or_else(|| {
-            value
-                .get("decision")
-                .and_then(Value::as_str)
-                .map(|decision| matches!(decision, "allow" | "allowed"))
-                .unwrap_or(false)
-        })
-}
-
 /// Lazily probe whether `actor` may add members (`ak.invite.create`) or edit
 /// settings (`ak.realm.update`) on `realm_id`, caching the verdict in
 /// `perms_cache`.
@@ -342,7 +326,7 @@ pub(super) fn ensure_sidebar_row_perms(
         let perms = match crate::transport::auth::authed_api_with_sync(&base_url, api_token, None) {
             Ok(api) => {
                 let invite = async {
-                    crate::transport::realm_read::authz_check_raw(
+                    crate::transport::realm_read::authz_check(
                         &api.sdk_http_client()?,
                         &actor,
                         "ak.invite.create",
@@ -352,7 +336,7 @@ pub(super) fn ensure_sidebar_row_perms(
                 }
                 .await;
                 let settings = async {
-                    crate::transport::realm_read::authz_check_raw(
+                    crate::transport::realm_read::authz_check(
                         &api.sdk_http_client()?,
                         &actor,
                         "ak.realm.update",
@@ -362,10 +346,13 @@ pub(super) fn ensure_sidebar_row_perms(
                 }
                 .await;
                 SidebarRowRealmPerms {
-                    can_add_member: invite.as_ref().map(sidebar_authz_allowed).unwrap_or(false),
+                    can_add_member: invite
+                        .as_ref()
+                        .map(crate::transport::realm_read::authz_allowed)
+                        .unwrap_or(false),
                     can_settings: settings
                         .as_ref()
-                        .map(sidebar_authz_allowed)
+                        .map(crate::transport::realm_read::authz_allowed)
                         .unwrap_or(false),
                 }
             }
