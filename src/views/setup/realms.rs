@@ -894,9 +894,11 @@ pub(super) fn RealmsSection(
                                                             &encryption_profile,
                                                         ) {
                                                             let secure = crate::secure_key_store::default_secure_key_store("inkson");
-                                                            let seal_view = match submitter
-                                                                .events_frontier_realm_seal_view(&realm_id)
-                                                                .await
+                                                            let seal_view = match wait_for_realm_seal_view(
+                                                                &submitter,
+                                                                &realm_id,
+                                                            )
+                                                            .await
                                                             {
                                                                 Ok(view) => view,
                                                                 Err(err) => {
@@ -1236,4 +1238,27 @@ pub(super) fn RealmsSection(
             }
         }
     }
+}
+
+async fn wait_for_realm_seal_view(
+    submitter: &crate::event_submit::EventSubmitter,
+    realm_id: &str,
+) -> anyhow::Result<arkret_sdk::RealmSealFrontierView> {
+    const ATTEMPTS: usize = 20;
+    const DELAY: std::time::Duration = std::time::Duration::from_millis(250);
+
+    for attempt in 0..ATTEMPTS {
+        match submitter.events_frontier_realm_seal_view(realm_id).await {
+            Ok(view) => return Ok(view),
+            Err(error)
+                if attempt + 1 < ATTEMPTS
+                    && (error.to_string().contains("404")
+                        || error.to_string().contains("no accepted Seal")) =>
+            {
+                crate::runtime_helpers::sleep_for(DELAY).await;
+            }
+            Err(error) => return Err(error),
+        }
+    }
+    unreachable!("realm Seal retry loop returns on its final attempt")
 }

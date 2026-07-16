@@ -243,6 +243,35 @@ pub(super) fn inject_test_session_grant(
             return None;
         }
     };
+    if let Some(value) = parsed.get("pending_principal_registration").cloned() {
+        match serde_json::from_value::<crate::state::PendingPrincipalRegistration>(value) {
+            Ok(registration) if registration.did == account_did => {
+                if let Err(error) = state_store
+                    .write()
+                    .set_pending_principal_registration(Some(registration))
+                {
+                    tracing::warn!(
+                        ?error,
+                        "test session injection: pending principal registration persist failed"
+                    );
+                    return None;
+                }
+            }
+            Ok(_) => {
+                tracing::warn!(
+                    "test session injection: pending principal registration DID mismatch"
+                );
+                return None;
+            }
+            Err(error) => {
+                tracing::warn!(
+                    ?error,
+                    "test session injection: invalid pending principal registration"
+                );
+                return None;
+            }
+        }
+    }
     let Some(grant_jwt) = parsed
         .get("grant_jwt")
         .and_then(Value::as_str)

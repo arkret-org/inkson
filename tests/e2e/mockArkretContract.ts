@@ -56,19 +56,20 @@ export function mockArkretContract(req) {
   }
 
   if (method === "GET" && path === "/_arkret/self/account/viewer") {
+    const principalId = req.account?.did ?? "did:web:alice.example";
     return json({
-      principal_id: "did:web:alice.example",
+      principal_id: principalId,
       state: "active",
       devices: [],
       primary_handle_claim: {
         schema: "ak.schema.handle_claim.v1",
         handle: "alice:local.host",
-        subject: "did:web:alice.example",
+        subject: principalId,
       },
       profile: {
         id: "ak:actor_profile:01964137-0000-7000-8000-0000000000a1",
         schema: "ak.schema.actor_profile.v1",
-        principal_id: "did:web:alice.example",
+        principal_id: principalId,
         actor_kind: "user",
         display_name: "inkson",
         created_at: "2026-04-28T12:00:00Z",
