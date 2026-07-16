@@ -364,7 +364,7 @@ impl EventSubmitter {
                 OutboundEngineOutcome::Accepted(_) | OutboundEngineOutcome::Duplicate(_) => {
                     completed = completed.saturating_add(1);
                 }
-                OutboundEngineOutcome::Rejected(_) | OutboundEngineOutcome::Terminal(_) => {
+                OutboundEngineOutcome::Rejected { .. } | OutboundEngineOutcome::Terminal { .. } => {
                     completed = completed.saturating_add(1);
                 }
                 OutboundEngineOutcome::Quarantined { item, reason } => {
@@ -411,8 +411,8 @@ impl EventSubmitter {
             {
                 OutboundEngineOutcome::Accepted(_)
                 | OutboundEngineOutcome::Duplicate(_)
-                | OutboundEngineOutcome::Rejected(_)
-                | OutboundEngineOutcome::Terminal(_) => {
+                | OutboundEngineOutcome::Rejected { .. }
+                | OutboundEngineOutcome::Terminal { .. } => {
                     completed = completed.saturating_add(1);
                 }
                 OutboundEngineOutcome::Quarantined { item, reason } => {
@@ -790,7 +790,8 @@ impl EventSubmitter {
                     .into());
                 }
                 OutboundEngineOutcome::RetryAt { .. } => {}
-                OutboundEngineOutcome::Rejected(item) | OutboundEngineOutcome::Terminal(item)
+                OutboundEngineOutcome::Rejected { item, .. }
+                | OutboundEngineOutcome::Terminal { item, .. }
                     if item.transaction_id == transaction_id =>
                 {
                     if let Some(error) = results
@@ -803,7 +804,8 @@ impl EventSubmitter {
                     }
                     anyhow::bail!("queued event {} reached a terminal state", event.event_id);
                 }
-                OutboundEngineOutcome::Rejected(_) | OutboundEngineOutcome::Terminal(_) => {}
+                OutboundEngineOutcome::Rejected { .. } | OutboundEngineOutcome::Terminal { .. } => {
+                }
                 OutboundEngineOutcome::Quarantined { item, reason }
                     if item.transaction_id == transaction_id =>
                 {

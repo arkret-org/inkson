@@ -179,6 +179,14 @@ impl LocalStateStore {
                     "secure_key_store session grant delete on logout failed (likely already missing)",
                 );
             }
+            if let Err(error) =
+                crate::secure_key_store::delete_grant_binding_seed(secure_store.as_ref())
+            {
+                tracing::debug!(
+                    ?error,
+                    "secure_key_store grant-binding seed delete on logout failed (likely already missing)",
+                );
+            }
         }
         self.ensure_cached_loaded();
         self.cached.session_grant = None;

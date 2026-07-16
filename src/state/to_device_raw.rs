@@ -12,6 +12,15 @@ impl LocalStateStore {
             garth::CursorScope::RealmEvents { realm_id, .. } => {
                 self.realm_events_cursor(realm_id.as_str())
             }
+            garth::CursorScope::RealmEventsScan {
+                service_id,
+                realm_id,
+                order,
+            } => self.realm_scan_cursor(&realm_scan_cursor_key(
+                service_id.as_ref(),
+                realm_id,
+                order.as_deref(),
+            )),
             garth::CursorScope::DeviceMessages {
                 service_id,
                 actor_id,
@@ -34,6 +43,14 @@ impl LocalStateStore {
             garth::CursorScope::RealmEvents { realm_id, .. } => {
                 self.save_realm_events_cursor(realm_id.as_str(), Some(cursor));
             }
+            garth::CursorScope::RealmEventsScan {
+                service_id,
+                realm_id,
+                order,
+            } => self.save_realm_scan_cursor(
+                realm_scan_cursor_key(service_id.as_ref(), realm_id, order.as_deref()),
+                Some(cursor),
+            ),
             garth::CursorScope::DeviceMessages {
                 service_id,
                 actor_id,
@@ -56,6 +73,14 @@ impl LocalStateStore {
             garth::CursorScope::RealmEvents { realm_id, .. } => {
                 self.save_realm_events_cursor(realm_id.as_str(), None);
             }
+            garth::CursorScope::RealmEventsScan {
+                service_id,
+                realm_id,
+                order,
+            } => self.save_realm_scan_cursor(
+                realm_scan_cursor_key(service_id.as_ref(), realm_id, order.as_deref()),
+                None,
+            ),
             garth::CursorScope::DeviceMessages {
                 service_id,
                 actor_id,
@@ -121,6 +146,26 @@ impl LocalStateStore {
             }
             None => {
                 self.cached.realm_events_cursors.remove(realm_id);
+            }
+        }
+        let _ = self.flush();
+    }
+
+    fn realm_scan_cursor(&self, key: &str) -> Option<String> {
+        self.load().realm_scan_cursors.get(key).cloned()
+    }
+
+    fn save_realm_scan_cursor(&mut self, key: String, cursor: Option<String>) {
+        self.ensure_cached_loaded();
+        if self.cached.realm_scan_cursors.get(&key).cloned() == cursor {
+            return;
+        }
+        match cursor {
+            Some(cursor) => {
+                self.cached.realm_scan_cursors.insert(key, cursor);
+            }
+            None => {
+                self.cached.realm_scan_cursors.remove(&key);
             }
         }
         let _ = self.flush();
@@ -453,6 +498,19 @@ impl LocalStateStore {
         let _ = self.flush();
         true
     }
+}
+
+fn realm_scan_cursor_key(
+    service_id: Option<&arkret_sdk::Did>,
+    realm_id: &arkret_sdk::RealmId,
+    order: Option<&str>,
+) -> String {
+    format!(
+        "{}\n{}\n{}",
+        service_id.map(arkret_sdk::Did::as_str).unwrap_or(""),
+        realm_id.as_str(),
+        order.unwrap_or("")
+    )
 }
 
 fn realm_key_request_message_id(message: &Value) -> Option<String> {

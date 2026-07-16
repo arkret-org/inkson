@@ -887,7 +887,7 @@ async fn ingest_realm_key_share_installs_history_secrets() {
 #[tokio::test]
 async fn ingest_realm_key_share_accepts_projected_payload_envelope() {
     // soland projects durable ak.realm_key.share events into device_messages as
-    // `{ kind, realm_id, sender, sender_device_id, payload }`. The receiver
+    // `{ kind, realm_id, sender_principal_id, sender_device_id, payload }`. The receiver
     // must parse the spec payload field or Bob never installs the shared
     // history key.
     let mut state = temp_state_store("history-share-projected-payload");
@@ -911,7 +911,7 @@ async fn ingest_realm_key_share_accepts_projected_payload_envelope() {
     );
     let projected = json!({
         "kind": "ak.realm_key.share",
-        "sender": alice_actor,
+        "sender_principal_id": alice_actor,
         "sender_device_id": alice_device,
         "realm_id": realm,
         "operation_id": "ak:event:01904100-0000-7000-8000-0000000000ee",
@@ -930,12 +930,22 @@ async fn ingest_realm_key_share_accepts_projected_payload_envelope() {
         realm_key_share_sender_device_pair(&projected),
         Some((alice_actor.to_owned(), alice_device.to_owned()))
     );
+    let mut legacy = projected.clone();
+    legacy
+        .as_object_mut()
+        .unwrap()
+        .remove("sender_principal_id");
+    legacy["sender"] = json!(alice_actor);
+    assert_eq!(realm_key_share_sender_device_pair(&legacy), None);
     assert_eq!(
         realm_key_share_message_operation_id(&projected).as_deref(),
         Some("ak:event:01904100-0000-7000-8000-0000000000ee")
     );
     let mut ingestable = projected.clone();
-    ingestable.as_object_mut().unwrap().remove("sender");
+    ingestable
+        .as_object_mut()
+        .unwrap()
+        .remove("sender_principal_id");
     let pending =
         ingest_realm_key_share(&state, &secure, realm, bob_actor, bob_device, &ingestable).unwrap();
     assert_eq!(

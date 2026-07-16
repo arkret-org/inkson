@@ -829,23 +829,24 @@ mod tests {
 
     #[test]
     fn moderator_authz_requires_allow_and_freshness() {
-        assert!(authz_check_allows_moderation(&json!({
+        let outcome = |value| serde_json::from_value(value).unwrap();
+        assert!(authz_check_allows_moderation(&outcome(json!({
             "decision": "allow",
             "freshness_state": "fresh",
             "notary_status": "fresh"
-        })));
-        assert!(!authz_check_allows_moderation(&json!({
+        }))));
+        assert!(!authz_check_allows_moderation(&outcome(json!({
             "decision": "hard_deny",
             "freshness_state": "fresh"
-        })));
-        assert!(!authz_check_allows_moderation(&json!({
+        }))));
+        assert!(!authz_check_allows_moderation(&outcome(json!({
             "decision": "allow",
             "freshness_state": "unknown"
-        })));
-        assert!(!authz_check_allows_moderation(&json!({
+        }))));
+        assert!(!authz_check_allows_moderation(&outcome(json!({
             "decision": "allow",
             "notary_status": "unreachable"
-        })));
+        }))));
     }
 
     #[test]

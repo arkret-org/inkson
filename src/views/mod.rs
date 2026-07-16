@@ -67,9 +67,7 @@ pub mod moderation;
 pub mod moderation_appeal;
 pub mod notifications;
 pub mod onboarding;
-/// Invite-quarantine list + admin approve/reject buttons.
-/// (claude-design no dedicated page yet; lives at `/quarantine` and is
-/// linked from the Settings sidebar for admins.)
+/// Actor-private invite-quarantine status surface.
 pub mod quarantine;
 pub mod realm_admin;
 pub mod recovery;
@@ -124,9 +122,7 @@ pub enum AppView {
     /// setup surface. (claude-design `desktop/onboarding.html`, identity-did §3 +
     /// identity-handles + device-lifecycle §1-§13)
     Onboarding,
-    /// Invite-quarantine placeholder. It fails closed until the SDK exposes a
-    /// public typed transport surface; Inkson does not call private coauth
-    /// administration routes.
+    /// Actor-private invite-quarantine status surface.
     Quarantine,
     /// A6.1 — global cross-Space message search panel. Triggered by
     /// the `topbar-search-button`, `Cmd+F` (Ctrl+F off-mac), or by

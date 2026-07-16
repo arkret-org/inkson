@@ -157,6 +157,7 @@ pub(crate) fn is_wasm_ed25519_seed_key(key: &str) -> bool {
     key == SIGNING_SEED_KEY
         || key.starts_with(&format!("{SIGNING_SEED_KEY}."))
         || key == WASM_LOCAL_IDENTITY_SEED_KEY
+        || key == GRANT_BINDING_SEED_KEY
 }
 
 /// SecureKeyStore key prefix for per-realm aggregated MLS `history_secret`s
@@ -191,6 +192,8 @@ pub(crate) fn is_wasm_indexeddb_required_secret_key(key: &str) -> bool {
         || key.starts_with("inkson_mls_account_secret")
         || key.starts_with("inkson.mls_key_package.identity_state.")
         || key.starts_with("coauth.session_credential.")
+        || key.starts_with("auth.dpop.device_key.v1")
+        || key.starts_with("auth.session_grant.v1")
         || key.starts_with(MLS_HISTORY_SECRET_KEY_PREFIX)
         || key.starts_with(E2EE_PLAINTEXT_CACHE_KEY_PREFIX)
         || key.starts_with(ACCOUNT_LOCAL_STATE_KEY_PREFIX)
