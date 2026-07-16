@@ -16,6 +16,7 @@ use crate::ui::label::Label;
 pub fn RegistrationPanel(mut device_id: Signal<String>) -> Element {
     let mut base_url = crate::app::SessionContext::get().base_url;
     let mut state_store = crate::app::SessionContext::get().state_store;
+    let i18n = use_context::<crate::i18n::I18nSignal>();
     let initial_checkpoint = state_store.read().pending_principal_registration();
     let mut checkpoint = use_signal(|| initial_checkpoint.clone());
     let mut start = use_signal(|| {
@@ -55,6 +56,7 @@ pub fn RegistrationPanel(mut device_id: Signal<String>) -> Element {
         let principal_server = registration.principal_server_url.clone();
         let actor = registration.did.clone();
         let device = registration.device_id.clone();
+        let ui_locale = i18n.read().0.code().to_owned();
         device_id.set(device.clone());
         spawn(async move {
             let outcome = async {
@@ -78,6 +80,7 @@ pub fn RegistrationPanel(mut device_id: Signal<String>) -> Element {
                     device.trim(),
                     "",
                     actor.as_str(),
+                    &ui_locale,
                 )
                 .await
             }
