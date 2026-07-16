@@ -21,8 +21,6 @@ pub use arkret_sdk::{
 };
 use serde_json::Value;
 
-use crate::hlc::{Hlc, next_seq};
-
 /// Active client-side proof attachment mode. Retained so the settings UI
 /// can surface which signer backend is wired and so the signer bootstrap
 /// path can flip from `Production` (fail-closed) to `RealEd25519` /
@@ -230,7 +228,7 @@ impl OperationBuilder {
         node_id: &str,
         deps: Vec<String>,
     ) -> anyhow::Result<arkret_sdk::Event> {
-        let hlc = Hlc::now(node_id);
+        let _ = node_id;
         let operation_id = typed_operation_id(&uuid_v7());
         let mut unsigned = BTreeMap::new();
         unsigned.insert(
@@ -243,7 +241,6 @@ impl OperationBuilder {
         if let Some(authz_ref) = self.authz_ref {
             unsigned.insert("local_authz_ref".to_owned(), Value::String(authz_ref));
         }
-        let actor_seq = next_seq();
         let realm_id = trim_realm_id(&self.realm_id);
         let prev_refs = deps
             .into_iter()
@@ -271,10 +268,14 @@ impl OperationBuilder {
                 .map_err(|err| anyhow::anyhow!("invalid executed_by DID: {err}"))?,
             authorization_ref: self.authorization_ref,
             actor_kind: None,
-            actor_seq,
+            // The unsigned builder carries only a schema-valid placeholder.
+            // EventSubmitter replaces both stamp fields from Garth's durable
+            // allocator after observing the server actor frontier and before
+            // attaching any proof.
+            actor_seq: 1,
             created_at,
-            hlc: arkret_sdk::Hlc::new(hlc.encode())
-                .map_err(|err| anyhow::anyhow!("generated HLC is invalid: {err}"))?,
+            hlc: arkret_sdk::Hlc::new("000000000000-0000-00000000")
+                .map_err(|err| anyhow::anyhow!("placeholder HLC is invalid: {err}"))?,
             prev_refs,
             refs: self.refs,
             payload: serde_json::from_value(self.body)

@@ -285,13 +285,15 @@ fn realm_watch_level_set_get_roundtrip() {
 fn local_state_store_persists_private_read_cursors() {
     let path = temp_state_path("read-cursor");
     let mut store = LocalStateStore::with_path(path.clone());
-    let marker = store.save_read_cursor(
-        "did:web:alice.example",
-        "device-1",
-        "ak:realm:demo",
-        None,
-        "ak:event:read-1",
-    );
+    let marker = store
+        .save_read_cursor(
+            "did:web:alice.example",
+            "ak:device:01964137-0000-7000-8000-000000000001",
+            "ak:realm:demo",
+            None,
+            "ak:event:read-1",
+        )
+        .unwrap();
 
     assert_eq!(marker.marker_type, "ak.read_cursor.advance");
     assert_eq!(marker.body.realm_id, "ak:realm:demo");
@@ -384,20 +386,24 @@ fn local_state_store_ingests_read_cursor_update_to_device() {
 fn local_state_store_keeps_thread_read_cursors_separate() {
     let path = temp_state_path("thread-read-cursor");
     let mut store = LocalStateStore::with_path(path);
-    store.save_read_cursor(
-        "did:web:alice.example",
-        "desktop",
-        "ak:realm:demo",
-        None,
-        "ak:event:topic",
-    );
-    store.save_read_cursor(
-        "did:web:alice.example",
-        "desktop",
-        "ak:realm:demo",
-        Some("ak:thread:reply-1".to_owned()),
-        "ak:event:thread",
-    );
+    store
+        .save_read_cursor(
+            "did:web:alice.example",
+            "ak:device:01964137-0000-7000-8000-000000000001",
+            "ak:realm:demo",
+            None,
+            "ak:event:topic",
+        )
+        .unwrap();
+    store
+        .save_read_cursor(
+            "did:web:alice.example",
+            "ak:device:01964137-0000-7000-8000-000000000001",
+            "ak:realm:demo",
+            Some("ak:thread:reply-1".to_owned()),
+            "ak:event:thread",
+        )
+        .unwrap();
 
     assert_eq!(
         store

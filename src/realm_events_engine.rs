@@ -206,48 +206,19 @@ impl TransportProvider for RealmTransportProvider {
 
     async fn provide(&self) -> arkret_sdk::Result<Self::Transport> {
         let base = self.ctx.base_url.get();
-        let token = self.ctx.token.get();
-        let http = crate::transport::auth::authed_api(&base, token)
-            .and_then(|api| api.sdk_http_client())
+        let http = crate::identity::session_refresh::provide_authenticated_sdk_client(&base)
+            .await
             .map_err(|error| arkret_sdk::Error::Protocol(error.to_string()))?;
         Ok(crate::client_core::InksonRealmEventsTransport::new(http))
     }
 
     async fn recover_unauthorized(&self) -> arkret_sdk::Result<bool> {
-        let base = self.ctx.base_url.get();
-        let prepared = self.ctx.state_store.write(|store| {
-            crate::identity::session_refresh::prepare_refresh_for_server_after_unauthorized(
-                store, &base,
-            )
-        });
-        let outcome = match prepared {
-            crate::identity::session_refresh::RefreshPrepared::Done(outcome) => outcome,
-            crate::identity::session_refresh::RefreshPrepared::Ready {
-                grant,
-                device_handle,
-            } => {
-                let result =
-                    crate::identity::session_refresh::exchange_refresh(&grant, &device_handle)
-                        .await;
-                if !self.is_active() || self.ctx.base_url.get() != base {
-                    return Ok(false);
-                }
-                self.ctx
-                    .state_store
-                    .write(|store| crate::identity::session_refresh::commit_refresh(store, result))
-            }
-        };
-        match outcome {
-            crate::identity::session_refresh::RefreshOutcome::Refreshed { session_credential } => {
-                self.ctx.token.set(session_credential);
-                Ok(true)
-            }
-            crate::identity::session_refresh::RefreshOutcome::Transient { reason } => {
-                Err(arkret_sdk::Error::Http(reason))
-            }
-            crate::identity::session_refresh::RefreshOutcome::NoGrant
-            | crate::identity::session_refresh::RefreshOutcome::LoginRequired { .. } => Ok(false),
-        }
+        crate::identity::session_refresh::refresh_authenticated_session_after_unauthorized(
+            &self.ctx.base_url.get(),
+        )
+        .await
+        .map(|_| true)
+        .map_err(|error| arkret_sdk::Error::Http(error.to_string()))
     }
 
     fn is_active(&self) -> bool {

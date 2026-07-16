@@ -134,7 +134,7 @@ pub(crate) fn mark_all_notifications_read(
             }
         });
         if actor_id.trim().is_empty() || device_id.trim().is_empty() {
-            Vec::new()
+            Ok(Vec::new())
         } else {
             read_targets
                 .into_iter()
@@ -147,7 +147,16 @@ pub(crate) fn mark_all_notifications_read(
                         target.event_id,
                     )
                 })
-                .collect::<Vec<_>>()
+                .collect::<anyhow::Result<Vec<_>>>()
+        }
+    };
+    let markers = match markers {
+        Ok(markers) => markers,
+        Err(error) => {
+            status_msg.set(format!(
+                "All loaded notifications marked read locally; read cursor creation failed: {error:#}"
+            ));
+            return;
         }
     };
     if markers.is_empty() {
@@ -205,23 +214,30 @@ pub(crate) fn mark_notification_read_state(
         let mut store = state_store.write();
         store.batch(|store| {
             store.set_notification_read(notification_id.clone(), read);
-            if !read || actor_id.trim().is_empty() || device_id.trim().is_empty() {
-                return None;
-            }
-            let Some(event_id) = notification.source_event_id.clone() else {
-                return None;
-            };
-            if notification.realm_id.trim().is_empty() {
-                return None;
-            }
-            Some(store.save_read_cursor(
+        });
+        if !read || actor_id.trim().is_empty() || device_id.trim().is_empty() {
+            None
+        } else if let Some(event_id) = notification.source_event_id.clone()
+            && !notification.realm_id.trim().is_empty()
+        {
+            match store.save_read_cursor(
                 actor_id.clone(),
                 device_id.clone(),
                 notification.realm_id.clone(),
                 notification.strand_id.clone(),
                 event_id,
-            ))
-        })
+            ) {
+                Ok(marker) => Some(marker),
+                Err(error) => {
+                    status_msg.set(format!(
+                        "Notification marked read locally; read cursor creation failed: {error:#}"
+                    ));
+                    return;
+                }
+            }
+        } else {
+            None
+        }
     };
     if !read {
         status_msg.set("Notification marked unread locally.".to_owned());

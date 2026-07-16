@@ -49,7 +49,15 @@ pub fn prepare_registration_checkpoint(
     )?;
     let bootstrap_create_event_id = arkret_sdk::identifiers::new_prefixed_uuid7("ak:event:");
     arkret_sdk::EventId::new(bootstrap_create_event_id.clone())?;
-    let bootstrap_hlc = crate::hlc::Hlc::now(device_id).try_encode()?;
+    let draft_actor = arkret_sdk::Did::new(draft.did.clone())?;
+    let draft_realm = arkret_sdk::principal_control_realm_id(&draft_actor);
+    let bootstrap_hlc = crate::signing_stamp::issue_protocol_hlc_with_secret(
+        draft_actor.as_str(),
+        device_id.trim(),
+        &draft_realm,
+        &key_material.root_seed,
+    )?
+    .to_string();
     Ok(PendingPrincipalRegistration {
         principal_server_url: handoff.principal_server_url.clone(),
         gate_account_base: handoff.gate_account_base.clone(),
@@ -158,7 +166,6 @@ pub async fn complete_account_handoff_binding(
         did_operation,
         &key_material.root_seed,
         None,
-        Some(arkret_sdk::DeviceId::new(checkpoint.device_id.clone())?),
     )?;
     let register_outcome = account_client.account_register(&register_request).await?;
     let binding_receipt = register_outcome
@@ -177,9 +184,11 @@ pub async fn complete_account_handoff_binding(
     let session_engine = garth::SessionEngine::new(account_client);
     session_engine
         .login(
-            garth::LoginKind::PreRegistrationHandoff(garth::PreRegistrationHandoffLogin {
-                request: session_request,
-            }),
+            garth::LoginKind::PreRegistrationHandoff(Box::new(
+                garth::PreRegistrationHandoffLogin {
+                    request: session_request,
+                },
+            )),
             Utc::now(),
         )
         .await?;
@@ -217,7 +226,7 @@ pub async fn bootstrap_principal(
     let mut create = arkret_sdk::identity::build_self_principal_pcr_create(
         arkret_sdk::identity::SelfPrincipalPcrCreateInput {
             principal_id: principal_id.clone(),
-            realm_id,
+            realm_id: realm_id.clone(),
             trust_domain: arkret_sdk::TypedTrustDomainId::new(checkpoint.trust_domain.clone())?,
             did_inception_ref: arkret_sdk::EventRef::new(
                 checkpoint.version_id.clone(),
@@ -257,7 +266,12 @@ pub async fn bootstrap_principal(
         &checkpoint.device_id,
     )
     .await?;
-    let seal_hlc = arkret_sdk::Hlc::new(crate::hlc::Hlc::now(&checkpoint.device_id).try_encode()?)?;
+    let seal_hlc = crate::signing_stamp::issue_protocol_hlc_with_secret(
+        principal_id.as_str(),
+        &checkpoint.device_id,
+        realm_id.as_str(),
+        &key_material.root_seed,
+    )?;
     let seal = device_signer
         .sign_self_principal_bootstrap_seal(&create, &authorize, seal_hlc)
         .map_err(|error| anyhow!(error.to_string()))?;

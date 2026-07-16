@@ -516,7 +516,7 @@ pub(super) fn ChatEffects(
                 // `wait_for` header makes the server hold the stream open until the
                 // cursor advances — on a quiet realm that never returns and the
                 // discussion feed is stuck on "Loading…". The ongoing delta sync
-                // (sync_engine::run_iteration) omits `wait_for` for the same reason;
+                // The standard account step omits `wait_for` for the same reason;
                 // read-your-writes only applies after a local write (outbox flush).
                 let Ok(api) = authed_api_with_sync(&base, api_token, None) else {
                     event_sink.emit(ChatProjectionEvent::InitialSync {

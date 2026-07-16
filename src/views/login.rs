@@ -912,9 +912,9 @@ async fn finish_oidc_callback(
     let session_engine = SessionEngine::new(handoff_http);
     session_engine
         .login(
-            LoginKind::PreRegistrationHandoff(PreRegistrationHandoffLogin {
+            LoginKind::PreRegistrationHandoff(Box::new(PreRegistrationHandoffLogin {
                 request: session_request,
-            }),
+            })),
             Utc::now(),
         )
         .await

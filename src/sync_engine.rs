@@ -31,18 +31,12 @@
 //! invalidation. This keeps refresh policy in one place without turning
 //! auth failures into a spawn/exit/render loop.
 //!
-//! This host loop deliberately does not call `garth::SubscriptionEngine::run_account` yet.
-//! That runner projects normalized `ClientEvent` batches and checkpoints immediately after the
-//! projector returns, but inkson must atomically persist the raw account response (realm
-//! projections, Seal views, account data, notifications, to-device inbox, and cursor) and then run
-//! authenticated per-iteration work (invite refresh, sender-key prefetch, device-message ack,
-//! Circle rotation, and idle MLS self-update). `apply_response` performs the durable state + cursor
-//! write in one `LocalStateStore::batch`, and withholds the cursor when a limited or incomplete
-//! to-device batch cannot be durably accepted. Moving this loop to garth is only safe after garth
-//! exposes a raw response/iteration hook whose successful completion controls checkpointing;
-//! adapting the current normalized projector API would either discard required response fields or
-//! advance the cursor too early.
+//! The protocol loop runs through `garth::ArkretClient::run_account_steps`.
+//! `InksonAccountCommitter` atomically persists the typed raw step and cursor;
+//! `InksonAccountPostCommit` retains product-only invite, MLS, call and
+//! to-device work after that durability boundary.
 
+use std::cell::Cell;
 #[cfg(test)]
 use std::cell::RefCell;
 use std::collections::BTreeSet;
@@ -50,20 +44,18 @@ use std::time::Duration;
 
 #[cfg(test)]
 use arkret_sdk::{DecodedInbound, InboundDecoder};
+use garth::{
+    AccountCommitOutcome, AccountPostCommitHook, AccountPostCommitOutcome, AccountStepCommitter,
+    AccountStepHandlers, AccountStreamStep, RunOptions, SyncLoopControl, TransportProvider,
+};
 #[cfg(test)]
 use garth::{ClientEvent, ClientProjector};
 use serde_json::{Value, json};
 
-use crate::api_error::{
-    is_auth_expired_error, is_invalid_cursor_error, is_stale_frontier_error,
-    is_terminal_session_grant_error, rate_limited_retry_after,
-};
+use crate::api_error::{is_auth_expired_error, is_terminal_session_grant_error};
 use crate::models::{AccountSyncStep, DeviceMessagesGetOutcome, RealmTreeNodeKind};
-use crate::runtime::engine_loop::{EngineLoopDirective, run_engine_loop};
 use crate::runtime::projection::{ClientProjectionEvent, ProjectionSink, SyncStatusEvent};
-use crate::runtime_helpers::MAX_RETRY_DELAY;
 use crate::state::{LocalSealView, LocalStateStore, RawOperationRecord};
-use crate::sync_parse::AccountSubscribeSnapshotResult;
 use crate::transport::TransportClient;
 
 /// Connection-status label surfaced to the app shell's status signal.
@@ -163,47 +155,9 @@ pub struct SyncEngineContext {
     /// See `crate::views::call_signals`.
     pub call_signal_hub: crate::views::call_signals::CallSignalHub,
     pub session: crate::runtime::session::SessionCoordinator,
+    pub client_runtime: crate::client_core::InksonClientRuntime,
     pub effect: crate::runtime::effects::EffectHandle,
     pub projection_sink: crate::runtime::projection::ProjectionRouter,
-}
-
-/// Outcome of one sync iteration — used by the loop to decide whether to
-/// backoff, demote, or stop.
-#[derive(Debug)]
-enum IterationOutcome {
-    /// Response applied successfully — reset backoff, immediately
-    /// re-enter the loop.
-    Ok { realm_ids: Vec<String> },
-    /// Cursor was rejected (`cursor_expired` / `cursor_integrity_invalid`
-    /// / `cursor_unrecognized`). Clear the persisted cursor and re-enter
-    /// the loop as a full sync (client-sync.md §12.3).
-    InvalidCursor,
-    /// `stale_frontier` — the cursor is still valid but the service
-    /// frontier lags. Per client-sync.md §4 the cursor MUST NOT be
-    /// cleared; the iteration already refreshed the frontier via
-    /// `account/describe`, so just retry with the same cursor after a
-    /// beat.
-    StaleFrontier,
-    /// Auth expired or server otherwise told us the session is dead.
-    /// Engine exits; refresh poller + login strand take over.
-    AuthExpired,
-    /// Transient network / 5xx error. Backoff and retry.
-    Transient(String),
-    /// Server explicitly said "slow down" (HTTP 429 / `rate_limited`).
-    /// Sleep for the server-advertised `retry_after_ms` (0 ⇒ default
-    /// floor) before the next iteration instead of the generic
-    /// exponential backoff. Avoids spamming on top of a rate-limited
-    /// server.
-    RateLimited { retry_after_ms: u64, reason: String },
-    /// Subscribe control frame advertised a minimum reconnect delay for
-    /// this scope. This is not an HTTP error; the stream closed cleanly.
-    ReconnectAfter {
-        reconnect_after_ms: u64,
-        reason: Option<String>,
-    },
-    /// Configuration is incomplete (empty base URL or token). Engine
-    /// exits — caller will respawn when the missing piece arrives.
-    NotReady,
 }
 
 #[cfg(test)]
@@ -338,140 +292,282 @@ where
 /// The engine returns when the generation moves past `start_generation`
 /// (signal that a new engine should be spawned with the next number) or
 /// when an unrecoverable error fires (auth-expired, missing config).
+struct AccountTransportProvider {
+    ctx: SyncEngineContext,
+    generation: crate::runtime::input::ValueReader<u64>,
+    start_generation: u64,
+}
+
+impl TransportProvider for AccountTransportProvider {
+    type Transport = arkret_sdk::http_client::Client;
+
+    async fn provide(&self) -> arkret_sdk::Result<Self::Transport> {
+        crate::identity::session_refresh::provide_authenticated_sdk_client(&self.ctx.base_url)
+            .await
+            .map_err(|error| arkret_sdk::Error::Protocol(error.to_string()))
+    }
+
+    async fn recover_unauthorized(&self) -> arkret_sdk::Result<bool> {
+        crate::identity::session_refresh::refresh_authenticated_session_after_unauthorized(
+            &self.ctx.base_url,
+        )
+        .await
+        .map(|_| true)
+        .map_err(|error| arkret_sdk::Error::Http(error.to_string()))
+    }
+
+    fn is_active(&self) -> bool {
+        self.generation.get() == self.start_generation
+            && !self.ctx.effect.is_cancelled()
+            && !self.ctx.base_url.trim().is_empty()
+            && !self.ctx.token.get().trim().is_empty()
+    }
+}
+
+struct InksonAccountCommitter {
+    ctx: SyncEngineContext,
+}
+
+impl AccountStepCommitter for InksonAccountCommitter {
+    fn commit<'a>(
+        &'a self,
+        step: &'a AccountStreamStep,
+    ) -> impl std::future::Future<Output = arkret_sdk::Result<AccountCommitOutcome>> + 'a {
+        async move {
+            let cursor = step.cursor.clone().ok_or_else(|| {
+                arkret_sdk::Error::Protocol(
+                    "account stream update has no validated cursor".to_owned(),
+                )
+            })?;
+            let response = AccountSyncStep::from_updates(cursor, step.updates.clone())?;
+            apply_response(&response, step.initial, &self.ctx, None);
+            if let Some(error) = self.ctx.state_store.read(LocalStateStore::persist_error) {
+                return Err(arkret_sdk::Error::Protocol(format!(
+                    "persist account stream step: {error}"
+                )));
+            }
+            Ok(
+                if to_device_batch_allows_cursor_advance(
+                    &response.updates.to_device,
+                    response.updates.to_device_limited,
+                ) {
+                    AccountCommitOutcome::Committed
+                } else {
+                    AccountCommitOutcome::Replay
+                },
+            )
+        }
+    }
+}
+
+struct InksonAccountPostCommit {
+    ctx: SyncEngineContext,
+    generation: crate::runtime::input::ValueReader<u64>,
+    start_generation: u64,
+    deltas_since_invites: Cell<u32>,
+}
+
+impl InksonAccountPostCommit {
+    fn active(&self) -> bool {
+        self.generation.get() == self.start_generation && !self.ctx.effect.is_cancelled()
+    }
+
+    fn classify_error(&self, error: anyhow::Error) -> AccountPostCommitOutcome {
+        if is_auth_expired_error(&error) || is_terminal_session_grant_error(&error) {
+            AccountPostCommitOutcome::Unauthorized {
+                reason: Some(error.to_string()),
+            }
+        } else {
+            tracing::debug!(error = %error, "account post-commit work deferred");
+            AccountPostCommitOutcome::Retry
+        }
+    }
+}
+
+impl AccountPostCommitHook<arkret_sdk::http_client::Client> for InksonAccountPostCommit {
+    fn post_commit<'a>(
+        &'a self,
+        http: &'a arkret_sdk::http_client::Client,
+        step: &'a AccountStreamStep,
+    ) -> impl std::future::Future<Output = arkret_sdk::Result<AccountPostCommitOutcome>> + 'a {
+        async move {
+            if !self.active() {
+                return Ok(AccountPostCommitOutcome::Continue);
+            }
+            let cursor = step.cursor.clone().ok_or_else(|| {
+                arkret_sdk::Error::Protocol("account post-commit step has no cursor".to_owned())
+            })?;
+            let response = AccountSyncStep::from_updates(cursor, step.updates.clone())?;
+            let api = TransportClient::from_http(
+                http.clone(),
+                crate::transport::RequestContext::new(self.ctx.token.get()),
+            );
+
+            if !self.ctx.account_did.trim().is_empty() {
+                let submitter = crate::event_submit::EventSubmitter::new(http.clone());
+                if let Err(error) = submitter.drain_outbound(self.ctx.account_did.trim()).await {
+                    tracing::debug!(
+                        ?error,
+                        "account post-commit deferred durable outbound drain"
+                    );
+                }
+                if let Err(error) = submitter
+                    .drain_mls_outbound(self.ctx.account_did.trim(), self.ctx.state_store.clone())
+                    .await
+                {
+                    tracing::debug!(?error, "account post-commit deferred MLS outbound drain");
+                }
+            }
+
+            let refresh_invites =
+                step.initial || self.deltas_since_invites.get() >= INVITES_REFRESH_EVERY_N_DELTAS;
+            if refresh_invites {
+                match crate::transport::account::invites(http).await {
+                    Ok(invites) => {
+                        self.deltas_since_invites.set(0);
+                        let invite_notifications = invites
+                            .invites
+                            .into_iter()
+                            .filter_map(|invite| serde_json::to_value(invite).ok())
+                            .collect::<Vec<_>>();
+                        self.ctx.state_store.write(|store| {
+                            store.batch(|store| {
+                                apply_notification_projection(
+                                    store,
+                                    &response,
+                                    step.initial,
+                                    Some(invite_notifications),
+                                );
+                            });
+                        });
+                    }
+                    Err(error) if is_auth_expired_error(&error) => {
+                        return Ok(AccountPostCommitOutcome::Unauthorized {
+                            reason: Some(error.to_string()),
+                        });
+                    }
+                    Err(error) => tracing::debug!(?error, "invite refresh deferred"),
+                }
+            } else {
+                self.deltas_since_invites
+                    .set(self.deltas_since_invites.get().saturating_add(1));
+            }
+
+            route_inbound_call_signals(&api, &response, &self.ctx).await;
+            let state_store_for_profiles = self.ctx.state_store.clone();
+            if prefetch_persistent_event_sender_keys(
+                &api,
+                &response,
+                self.ctx.did_cache.clone(),
+                |realm_id| {
+                    state_store_for_profiles
+                        .read(|store| store.realm_projection_is_minimal_metadata(realm_id))
+                },
+            )
+            .await
+            {
+                refresh_projection_events_from_sync_response(&response, step.initial, &self.ctx);
+            }
+            prefetch_member_identity_proof_keys(&api, &response, self.ctx.did_cache.clone()).await;
+            if let Err(error) = process_to_device_delivery(&api, &response, &self.ctx).await {
+                return Ok(self.classify_error(error));
+            }
+            if let Err(error) = poll_device_message_queue(&api, &self.ctx).await {
+                return Ok(self.classify_error(error));
+            }
+
+            let realm_ids = response
+                .realm_projections
+                .keys()
+                .cloned()
+                .collect::<Vec<_>>();
+            run_circle_scope_rotate_pass(
+                self.start_generation,
+                self.generation.clone(),
+                &self.ctx,
+                &realm_ids,
+            )
+            .await;
+            run_idle_self_update_pass(self.start_generation, self.generation.clone(), &self.ctx)
+                .await;
+            Ok(AccountPostCommitOutcome::Continue)
+        }
+    }
+}
+
 pub async fn run_sync_engine(
     start_generation: u64,
     generation: crate::runtime::input::ValueReader<u64>,
     ctx: SyncEngineContext,
 ) {
-    // Snapshot the active profile id at spawn time. If the UI rotates
-    // profiles mid-loop, the engine exits cleanly and a fresh spawn
-    // picks up the new profile's cursor / token / account_did.
-    // Counts delta syncs since the last invite refetch; see
-    // `INVITES_REFRESH_EVERY_N_DELTAS`. Seeded at the threshold so the first
-    // delta after spawn refreshes immediately even if it isn't a full sync.
-    let mut deltas_since_invites = INVITES_REFRESH_EVERY_N_DELTAS;
     ctx.projection_sink.sync_status(SyncStatusEvent::Connecting);
-    run_engine_loop(
-        BACKOFF_FLOOR,
-        BACKOFF_CEILING,
-        || generation.get() == start_generation && !ctx.effect.is_cancelled(),
-        async || match run_iteration(
-            start_generation,
-            generation.clone(),
-            &ctx,
-            &mut deltas_since_invites,
-        )
-        .await
-        {
-            IterationOutcome::Ok { realm_ids } => {
-                ctx.projection_sink.sync_status(SyncStatusEvent::Online);
-                run_circle_scope_rotate_pass(
-                    start_generation,
-                    generation.clone(),
-                    &ctx,
-                    &realm_ids,
-                )
-                .await;
-                // YOU-02-004R (`encryption-and-audit.md` §5.6) — non-send
-                // self-preservation trigger. A long-lived read-only member's
-                // epoch is otherwise never force-advanced (the send path only
-                // fires while encrypting). After each successful sync — when
-                // the local membership/pending-commit view is freshest — drive
-                // the idle self-update pass. It is a no-op for every Realm not
-                // yet over the §5.6 floor / before this member's jitter slot,
-                // so the common case costs one cheap scan.
-                run_idle_self_update_pass(start_generation, generation.clone(), &ctx).await;
-                // Server-side long-poll absorbs the idle wait on a
-                // spec-compliant server; if the server returns
-                // immediately (older soland), MIN_INTER_ITERATION_MS
-                // keeps the loop from spinning at network RTT.
-                EngineLoopDirective::ContinueAfter(Duration::from_millis(MIN_INTER_ITERATION_MS))
-            }
-            IterationOutcome::InvalidCursor => {
-                // Demote to full sync next iteration. The persisted
-                // cursor was already cleared inside the iteration.
-                EngineLoopDirective::ContinueAfter(Duration::from_millis(MIN_INTER_ITERATION_MS))
-            }
-            IterationOutcome::StaleFrontier => {
-                ctx.projection_sink.sync_status(SyncStatusEvent::Retryable {
-                    reason: "service frontier is stale".to_owned(),
-                });
-                // Keep the cursor (spec MUST NOT clear it) and retry
-                // after a beat — the iteration already consulted
-                // `account/describe` for the current frontier.
-                EngineLoopDirective::ContinueAfter(Duration::from_millis(MIN_INTER_ITERATION_MS))
-            }
-            IterationOutcome::AuthExpired => match ctx.session.refresh().await {
-                crate::runtime::session::CurrentSessionRefresh::Credential(_) => {
-                    EngineLoopDirective::ContinueAfter(Duration::from_millis(
-                        MIN_INTER_ITERATION_MS,
-                    ))
-                }
-                crate::runtime::session::CurrentSessionRefresh::SignInRequired { reason } => {
-                    ctx.projection_sink
-                        .sync_status(SyncStatusEvent::NeedsSignIn { reason });
-                    EngineLoopDirective::Stop
-                }
-                crate::runtime::session::CurrentSessionRefresh::RetryLater { reason } => {
-                    ctx.projection_sink
-                        .sync_status(SyncStatusEvent::Retryable { reason });
-                    EngineLoopDirective::Retry {
-                        minimum_delay: None,
-                    }
-                }
-                crate::runtime::session::CurrentSessionRefresh::LoginRequired { reason } => {
-                    ctx.projection_sink.sync_status(SyncStatusEvent::Terminal {
-                        reason: reason.clone(),
-                    });
-                    EngineLoopDirective::Stop
-                }
+    let actor_id = match arkret_sdk::Did::new(ctx.account_did.trim().to_owned()) {
+        Ok(actor_id) => actor_id,
+        Err(error) => {
+            ctx.projection_sink.sync_status(SyncStatusEvent::Terminal {
+                reason: format!("invalid account DID: {error}"),
+            });
+            return;
+        }
+    };
+    let device_id = match arkret_sdk::DeviceId::new(ctx.device_id.trim().to_owned()) {
+        Ok(device_id) => device_id,
+        Err(error) => {
+            ctx.projection_sink.sync_status(SyncStatusEvent::Terminal {
+                reason: format!("invalid device id: {error}"),
+            });
+            return;
+        }
+    };
+    let provider = AccountTransportProvider {
+        ctx: ctx.clone(),
+        generation: generation.clone(),
+        start_generation,
+    };
+    let committer = InksonAccountCommitter { ctx: ctx.clone() };
+    let hook = InksonAccountPostCommit {
+        ctx: ctx.clone(),
+        generation,
+        start_generation,
+        deltas_since_invites: Cell::new(INVITES_REFRESH_EVERY_N_DELTAS),
+    };
+    let result = ctx
+        .client_runtime
+        .client()
+        .run_account_steps(
+            actor_id,
+            device_id,
+            &provider,
+            AccountStepHandlers::new(&committer, &hook),
+            &SyncLoopControl::new(),
+            RunOptions {
+                beat: Duration::from_millis(MIN_INTER_ITERATION_MS),
+                min_backoff: BACKOFF_FLOOR,
+                max_backoff: BACKOFF_CEILING,
+                jitter_ratio: 0.2,
             },
-            IterationOutcome::NotReady => {
-                ctx.projection_sink.sync_status(SyncStatusEvent::Offline);
-                // Nothing to do until base_url / token are populated.
-                // Caller's `use_effect` will respawn when they are.
-                EngineLoopDirective::Stop
-            }
-            IterationOutcome::RateLimited {
-                retry_after_ms,
-                reason,
-            } => {
-                ctx.projection_sink.sync_status(SyncStatusEvent::Retryable {
-                    reason: reason.clone(),
-                });
-                // Honour the server's hint with a floor of `BACKOFF_FLOOR` so a
-                // buggy server that returns `retry_after_ms = 0` still gives us a
-                // beat.
-                let wait_ms = retry_after_ms
-                    .max(u64::try_from(BACKOFF_FLOOR.as_millis()).unwrap_or(1_000))
-                    .min(u64::try_from(MAX_RETRY_DELAY.as_millis()).unwrap_or(u64::MAX));
-                EngineLoopDirective::Pause(Duration::from_millis(wait_ms))
-            }
-            IterationOutcome::ReconnectAfter {
-                reconnect_after_ms,
-                reason,
-            } => {
-                ctx.projection_sink.sync_status(SyncStatusEvent::Retryable {
+        )
+        .await;
+    match result {
+        Ok(garth::RunStopReason::Unauthorized { reason }) => {
+            ctx.projection_sink
+                .sync_status(SyncStatusEvent::NeedsSignIn {
                     reason: reason
-                        .clone()
-                        .unwrap_or_else(|| "sync stream requested reconnect".to_owned()),
+                        .unwrap_or_else(|| "session grant is no longer active".to_owned()),
                 });
-                let wait_ms = reconnect_after_ms
-                    .max(u64::try_from(BACKOFF_FLOOR.as_millis()).unwrap_or(1_000))
-                    .min(u64::try_from(MAX_RETRY_DELAY.as_millis()).unwrap_or(u64::MAX));
-                EngineLoopDirective::Pause(Duration::from_millis(wait_ms))
-            }
-            IterationOutcome::Transient(reason) => {
-                ctx.projection_sink.sync_status(SyncStatusEvent::Retryable {
-                    reason: reason.clone(),
-                });
-                EngineLoopDirective::Retry {
-                    minimum_delay: None,
-                }
-            }
-        },
-    )
-    .await;
+        }
+        Ok(garth::RunStopReason::Cancelled | garth::RunStopReason::LifecycleEnded) => {
+            ctx.projection_sink.sync_status(SyncStatusEvent::Offline);
+        }
+        Ok(garth::RunStopReason::Failed { class }) => {
+            ctx.projection_sink.sync_status(SyncStatusEvent::Terminal {
+                reason: format!("account runner failed: {class:?}"),
+            });
+        }
+        Err(error) => ctx.projection_sink.sync_status(SyncStatusEvent::Retryable {
+            reason: error.to_string(),
+        }),
+    }
 }
 
 /// Background Circle MLS scope-rotate worker.
@@ -782,314 +878,6 @@ async fn run_idle_self_update_pass(
                 continue;
             }
         }
-    }
-}
-
-async fn run_iteration(
-    start_generation: u64,
-    generation: crate::runtime::input::ValueReader<u64>,
-    ctx: &SyncEngineContext,
-    deltas_since_invites: &mut u32,
-) -> IterationOutcome {
-    let base = ctx.base_url.clone();
-    let token = ctx.token.get();
-    if base.trim().is_empty() || token.trim().is_empty() {
-        return IterationOutcome::NotReady;
-    }
-    #[cfg(target_arch = "wasm32")]
-    if let Err(error) = crate::secure_key_store::ensure_wasm_secure_key_store_ready("inkson").await
-    {
-        return IterationOutcome::Transient(format!(
-            "sync_engine: secure key store is not ready for authenticated sync: {error}"
-        ));
-    }
-
-    // ②(A+②): `token` is the `ak.session.grant`; every self-path sync request
-    // must include the grant-binding (DPoP) key instead of falling back to a bare
-    // bearer request that the server will reject.
-    let api = match crate::transport::auth::authed_api(&base, token.clone()) {
-        Ok(api) => api,
-        Err(error) => {
-            return IterationOutcome::Transient(format!(
-                "sync_engine: authenticated API unavailable: {error}"
-            ));
-        }
-    };
-
-    // Read cursor freshly each iteration — login strand / server switch
-    // may have cleared it underneath us.
-    let cursor = ctx.state_store.read(|store| {
-        store
-            .load()
-            .sync_cursor
-            .clone()
-            .filter(|c| !c.trim().is_empty())
-    });
-    let is_full_sync = cursor.is_none();
-
-    let sdk_http = match api.sdk_http_client() {
-        Ok(client) => client,
-        Err(error) => {
-            return IterationOutcome::Transient(format!(
-                "sync_engine: SDK account subscribe client unavailable: {error}"
-            ));
-        }
-    };
-
-    if !ctx.account_did.trim().is_empty() {
-        let submitter = crate::event_submit::EventSubmitter::new(sdk_http.clone());
-        match submitter.drain_outbound(ctx.account_did.trim()).await {
-            Ok(completed) if completed > 0 => {
-                tracing::debug!(completed, "sync engine drained durable outbound events");
-            }
-            Ok(_) => {}
-            Err(error) => {
-                tracing::debug!(?error, "sync engine deferred durable outbound drain");
-            }
-        }
-        match submitter
-            .drain_mls_outbound(ctx.account_did.trim(), ctx.state_store.clone())
-            .await
-        {
-            Ok(completed) if completed > 0 => {
-                tracing::debug!(completed, "sync engine drained MLS post-accept events");
-            }
-            Ok(_) => {}
-            Err(error) => {
-                tracing::debug!(?error, "sync engine deferred MLS post-accept drain");
-            }
-        }
-    }
-
-    match crate::client_core::account_subscribe_snapshot_outcome(&sdk_http, cursor.as_deref()).await
-    {
-        Ok(AccountSubscribeSnapshotResult::Batch(batch)) => {
-            let response = match AccountSyncStep::from_batch(batch) {
-                Ok(response) => response,
-                Err(error) => {
-                    return IterationOutcome::Transient(format!(
-                        "sync_engine account frame processing: {error}"
-                    ));
-                }
-            };
-            // Late-arriving response from a stale generation must not
-            // overwrite signals owned by the new generation. The
-            // state_store write below is still safe because it's keyed
-            // by content, but the UI signals are not.
-            if generation.get() != start_generation {
-                return IterationOutcome::Ok {
-                    realm_ids: Vec::new(),
-                };
-            }
-            // Throttle invite refetches: full syncs always refresh, delta
-            // syncs only every `INVITES_REFRESH_EVERY_N_DELTAS` iterations.
-            // Otherwise pass `None`, which preserves the last merged invite
-            // projection instead of clearing it. See the constant's doc.
-            let refresh_invites =
-                is_full_sync || *deltas_since_invites >= INVITES_REFRESH_EVERY_N_DELTAS;
-            let invite_notifications = if refresh_invites {
-                let latest_token = ctx.token.get();
-                let invite_api = if !latest_token.trim().is_empty() && latest_token != token {
-                    api.clone().with_bearer(latest_token)
-                } else {
-                    api.clone()
-                };
-                match async {
-                    crate::transport::account::invites(&invite_api.sdk_http_client()?).await
-                }
-                .await
-                {
-                    Ok(response) => {
-                        *deltas_since_invites = 0;
-                        // The notification pipeline folds invites through lenient
-                        // `Value` accessors; project the typed `Invite` rows back
-                        // to their wire JSON.
-                        Some(
-                            response
-                                .invites
-                                .into_iter()
-                                .filter_map(|invite| serde_json::to_value(invite).ok())
-                                .collect::<Vec<Value>>(),
-                        )
-                    }
-                    Err(error) if is_auth_expired_error(&error) => {
-                        return IterationOutcome::AuthExpired;
-                    }
-                    Err(error) => {
-                        tracing::debug!(
-                            ?error,
-                            "sync engine could not refresh invite notifications"
-                        );
-                        // Leave the counter saturated so the next iteration
-                        // retries rather than waiting another full window.
-                        None
-                    }
-                }
-            } else {
-                *deltas_since_invites += 1;
-                None
-            };
-            // YOU-02-006: the invite refetch above is a full network await; a
-            // logout / profile switch / server switch during it bumps the
-            // generation and rebinds `state_store`. Re-check before applying so a
-            // stale-generation `response` (old account's realms / cursor /
-            // event projections) can't be written into the new generation's store and UI
-            // signals. The generation bump covers the profile/server switch case.
-            if generation.get() != start_generation {
-                return IterationOutcome::Ok {
-                    realm_ids: Vec::new(),
-                };
-            }
-            apply_response(&response, is_full_sync, ctx, invite_notifications);
-            // Receiver side of `ak.call.signal` (async, needs the directory):
-            // verify each inbound envelope's proof against the sender's
-            // authoritative verify key and route only verified signals
-            // (fail-closed). Done here, not inside the synchronous
-            // `apply_response`, because the directory query is async.
-            route_inbound_call_signals(&api, &response, ctx).await;
-            let state_store_for_profiles = ctx.state_store.clone();
-            if prefetch_persistent_event_sender_keys(
-                &api,
-                &response,
-                ctx.did_cache.clone(),
-                |realm_id| {
-                    state_store_for_profiles
-                        .read(|store| store.realm_projection_is_minimal_metadata(realm_id))
-                },
-            )
-            .await
-            {
-                refresh_projection_events_from_sync_response(&response, is_full_sync, ctx);
-            }
-            // MID-5: prime the authoritative device signing keys for every
-            // `ak.member.identity.update` asserter in this response so the
-            // synchronous `MemberIdentityStore::current_identity` proof verifier
-            // can resolve them (a Miss is fail-closed → the identity would be
-            // dropped). Keyed by the proof `verification_method` (`actor#device`).
-            prefetch_member_identity_proof_keys(&api, &response, ctx.did_cache.clone()).await;
-            if let Err(error) = process_to_device_delivery(&api, &response, ctx).await {
-                if is_auth_expired_error(&error) {
-                    return IterationOutcome::AuthExpired;
-                }
-                return IterationOutcome::Transient(format!("sync_engine to-device: {error}"));
-            }
-            if let Err(error) = poll_device_message_queue(&api, ctx).await {
-                if is_auth_expired_error(&error) {
-                    return IterationOutcome::AuthExpired;
-                }
-                return IterationOutcome::Transient(format!("sync_engine to-device poll: {error}"));
-            }
-            IterationOutcome::Ok {
-                realm_ids: response.realm_projections.keys().cloned().collect(),
-            }
-        }
-        Ok(AccountSubscribeSnapshotResult::ReconnectAfter {
-            reconnect_after_ms,
-            reconnect_cursor,
-            reason,
-            reset_cursor,
-        }) => {
-            if reset_cursor {
-                ctx.state_store.write(LocalStateStore::clear_sync_cursor);
-                ctx.projection_sink
-                    .projection(ClientProjectionEvent::CursorReset {
-                        scope: "account".to_owned(),
-                    });
-            } else if let Some(cursor) = reconnect_cursor {
-                // §1.1 rule 4 — a validated `dropped` cursor IS the reconnect
-                // position: persist it so the next subscribe resumes there
-                // instead of replaying from the stale pre-drop cursor.
-                ctx.state_store
-                    .write(|store| store.save_sync_cursor(cursor.clone()));
-                ctx.projection_sink
-                    .projection(ClientProjectionEvent::CursorCheckpoint {
-                        scope: "account".to_owned(),
-                        cursor,
-                    });
-            }
-            IterationOutcome::ReconnectAfter {
-                reconnect_after_ms,
-                reason,
-            }
-        }
-        Err(error) if is_terminal_session_grant_error(&error) => {
-            ctx.session.invalidate("session grant is no longer active");
-            IterationOutcome::AuthExpired
-        }
-        Err(error) if is_auth_expired_error(&error) => IterationOutcome::AuthExpired,
-        Err(error) if let Some(retry_after_ms) = rate_limited_retry_after(&error) => {
-            IterationOutcome::RateLimited {
-                retry_after_ms,
-                reason: format!("sync_engine: {error}"),
-            }
-        }
-        Err(error) if is_invalid_cursor_error(&error) => {
-            let _ = error;
-            ctx.state_store.write(LocalStateStore::clear_sync_cursor);
-            ctx.projection_sink
-                .projection(ClientProjectionEvent::CursorReset {
-                    scope: "account".to_owned(),
-                });
-            IterationOutcome::InvalidCursor
-        }
-        Err(error) if is_stale_frontier_error(&error) => {
-            // client-sync.md §4 / §12.3: stale_frontier keeps the
-            // cursor. Refresh the service frontier via account/describe
-            // (step 2 of the recovery strand) before retrying with the
-            // SAME cursor; failures here are best-effort — the retry
-            // itself is the recovery.
-            if let Err(describe_error) =
-                async { crate::transport::account::sync_describe(&api.sdk_http_client()?).await }
-                    .await
-            {
-                tracing::debug!(
-                    ?describe_error,
-                    "stale_frontier recovery: account/describe failed"
-                );
-            }
-            let selected_realm_id = ctx.selected_realm_id.get();
-            if !selected_realm_id.is_empty() {
-                if let Ok(http) = api.sdk_http_client() {
-                    let snapshot_clients = crate::transport::EndpointClients::from_http(http);
-                    match snapshot_clients
-                        .directory()
-                        .snapshot_head(&selected_realm_id)
-                        .await
-                    {
-                        Ok(Some(manifest)) => {
-                            tracing::debug!(
-                                realm_id = %selected_realm_id,
-                                snapshot_id = %manifest.id,
-                                "stale_frontier recovery: snapshot head available for replay fallback"
-                            );
-                        }
-                        Ok(None) => {
-                            ctx.state_store.write(|store| {
-                                store.mark_snapshot_degraded(
-                                    selected_realm_id.clone(),
-                                    "snapshot head unavailable after stale_frontier",
-                                )
-                            });
-                        }
-                        Err(snapshot_error) => {
-                            tracing::debug!(
-                                ?snapshot_error,
-                                realm_id = %selected_realm_id,
-                                "stale_frontier recovery: snapshot head probe failed"
-                            );
-                            ctx.state_store.write(|store| {
-                                store.mark_snapshot_degraded(
-                                    selected_realm_id.clone(),
-                                    format!("snapshot head probe failed: {snapshot_error}"),
-                                )
-                            });
-                        }
-                    }
-                }
-            }
-            IterationOutcome::StaleFrontier
-        }
-        Err(error) => IterationOutcome::Transient(format!("sync_engine: {error}")),
     }
 }
 
@@ -1521,8 +1309,8 @@ pub fn apply_response(
     // NB: receiver proof verification + directory resolve for inbound
     // `ak.call.signal` is async (needs `keys/query`); it cannot run here
     // because `apply_response` is synchronous and holds no authenticated
-    // client. The async routing pass lives in `run_iteration`
-    // (`route_inbound_call_signals`) right after this call returns.
+    // client. The async routing pass lives in `InksonAccountPostCommit`
+    // (`route_inbound_call_signals`) after this durable commit returns.
 
     // Realm tree nodes are derived in the app projection adapter from the
     // canonical local-state projection; the engine only computes a snapshot

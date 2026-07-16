@@ -1,7 +1,5 @@
 use std::time::Duration;
 
-pub(crate) const MAX_RETRY_DELAY: Duration = Duration::from_secs(60);
-
 // `tokio::time::sleep` reads `std::time::Instant::now()` and panics on
 // wasm32-unknown-unknown ("time not implemented on this platform"). Route the
 // wasm build through `gloo_timers::future::TimeoutFuture`, which is backed by

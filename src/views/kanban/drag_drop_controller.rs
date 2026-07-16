@@ -4,7 +4,6 @@ use super::*;
 // Imports the drag-and-drop helpers relied on while they lived in the
 // monolithic `kanban/mod.rs`; re-added here after the structural split since
 // the component-only parent no longer brings them into scope.
-use crate::hlc::Hlc;
 use crate::move_builder::{
     StrandPositionEffect, StrandPositionExpectation, strand_position_cell_id,
 };
@@ -229,12 +228,19 @@ pub(super) fn submit_kanban_move(
     mut write_records: Signal<Vec<BoardWriteRecord>>,
     mut board_status: Signal<String>,
 ) {
-    let hlc = Hlc::now("inkson").to_string();
     let seal_ref = state_store.read().seal_ref_for_realm_move(&realm_id);
     if actor_id.trim().is_empty() {
         board_status.set("sign in before updating cards".to_owned());
         return;
     }
+    let hlc = match crate::signing_stamp::issue_protocol_hlc_for_active_device(&actor_id, &realm_id)
+    {
+        Ok(hlc) => hlc.to_string(),
+        Err(error) => {
+            board_status.set(format!("cannot update cards: {error:#}"));
+            return;
+        }
+    };
     let envelope = if kind == "ak.strand.create" {
         let Some(board_space_id) = value.get("board_space_id").and_then(Value::as_str) else {
             board_status.set("cannot create card: missing board_space_id".to_owned());
@@ -976,12 +982,19 @@ pub(super) fn submit_strand_position_cas_move_with_attempt(
     mut write_records: Signal<Vec<BoardWriteRecord>>,
     mut board_status: Signal<String>,
 ) {
-    let hlc = Hlc::now("inkson").to_string();
     let seal_ref = state_store.read().seal_ref_for_realm_move(&realm_id);
     if actor_id.trim().is_empty() {
         board_status.set("sign in before moving cards".to_owned());
         return;
     }
+    let hlc = match crate::signing_stamp::issue_protocol_hlc_for_active_device(&actor_id, &realm_id)
+    {
+        Ok(hlc) => hlc.to_string(),
+        Err(error) => {
+            board_status.set(format!("cannot move cards: {error:#}"));
+            return;
+        }
+    };
     let expected_json = match &expected {
         StrandPositionExpectation::Initial => serde_json::Value::Null,
         StrandPositionExpectation::At {

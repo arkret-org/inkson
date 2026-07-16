@@ -344,8 +344,7 @@ impl LocalStateStore {
 
     const SECURE_DPOP_DEVICE_KEY: &'static str = "auth.dpop.device_key.v1";
 
-    #[cfg(any(not(test), target_arch = "wasm32"))]
-    const SECURE_SESSION_GRANT_KEY: &'static str = "auth.session_grant.v1";
+    pub(crate) const SECURE_SESSION_GRANT_KEY: &'static str = "auth.session_grant.v1";
 
     pub(crate) fn enqueue_local_projection_command(
         &mut self,

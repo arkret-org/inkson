@@ -12,7 +12,6 @@ use crate::components::{
     ActorIdentityLabel, CircleScopePicker, HelpTip, SecurityStateBadge, SelfAttributionBadge,
     UiIcon,
 };
-use crate::hlc::{Hlc, observe_seq};
 use crate::models::SubmitEventResult;
 use crate::operation::{
     OperationBuilder, ak_ops, sdk_event_local_operation_id, trim_realm_id, uuid_v7,

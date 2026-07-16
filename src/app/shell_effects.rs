@@ -169,63 +169,57 @@ pub(super) fn ShellEffects(state: ShellEffectState) -> Element {
             let api_token = lookup_token.clone();
             let existing_personal_handles = personal_handles();
             spawn(async move {
-                match TransportClient::unauthenticated(&base)
-                    .and_then(|api| api.with_bearer(api_token).sdk_http_client())
+                match crate::transport::auth::with_authed_sdk_client(
+                    &base,
+                    api_token,
+                    |http| async move {
+                        crate::transport::directory::list_handles_for_subject(
+                            &http,
+                            &actor,
+                            None,
+                            Some("display"),
+                        )
+                        .await
+                    },
+                )
+                .await
                 {
-                    Ok(http) => match crate::transport::directory::list_handles_for_subject(
-                        &http,
-                        &actor,
-                        None,
-                        Some("display"),
-                    )
-                    .await
-                    {
-                        Ok(res) => {
-                            let directory_primary_handle = res
-                                .primary_handle
-                                .as_ref()
-                                .map(|handle| handle.canonical().to_owned());
-                            let directory_handles = display_handles_from_directory_response(&res);
-                            if directory_handles.is_empty() {
-                                // Mirror the error branches below: keep any
-                                // account viewer primary handle claim already
-                                // loaded instead of clobbering it with an empty
-                                // directory page.
-                                if existing_personal_handles.is_empty() {
-                                    try_set_signal(
-                                        personal_handles_status,
-                                        "No handles published".to_owned(),
-                                    );
-                                }
-                            } else {
-                                if let Some(primary_handle) = directory_primary_handle {
-                                    try_set_signal(account_primary_handle, primary_handle);
-                                }
-                                let handles = merge_personal_handles(
-                                    &existing_personal_handles,
-                                    directory_handles,
-                                );
+                    Ok(res) => {
+                        let directory_primary_handle = res
+                            .primary_handle
+                            .as_ref()
+                            .map(|handle| handle.canonical().to_owned());
+                        let directory_handles = display_handles_from_directory_response(&res);
+                        if directory_handles.is_empty() {
+                            // Mirror the error branches below: keep any
+                            // account viewer primary handle claim already
+                            // loaded instead of clobbering it with an empty
+                            // directory page.
+                            if existing_personal_handles.is_empty() {
                                 try_set_signal(
                                     personal_handles_status,
-                                    personal_handles_status_for(&handles),
+                                    "No handles published".to_owned(),
                                 );
-                                try_set_signal(personal_handles, handles);
                             }
-                        }
-                        Err(err) => {
-                            tracing::warn!(
-                                ?err,
-                                "directory list_handles_for_subject failed; keeping account primary handle claim"
+                        } else {
+                            if let Some(primary_handle) = directory_primary_handle {
+                                try_set_signal(account_primary_handle, primary_handle);
+                            }
+                            let handles = merge_personal_handles(
+                                &existing_personal_handles,
+                                directory_handles,
                             );
-                            if existing_personal_handles.is_empty() {
-                                try_set_signal(personal_handles_status, "Not published".to_owned());
-                            }
+                            try_set_signal(
+                                personal_handles_status,
+                                personal_handles_status_for(&handles),
+                            );
+                            try_set_signal(personal_handles, handles);
                         }
-                    },
+                    }
                     Err(err) => {
                         tracing::warn!(
                             ?err,
-                            "directory list_handles_for_subject skipped for invalid server URL"
+                            "directory list_handles_for_subject failed; keeping account primary handle claim"
                         );
                         if existing_personal_handles.is_empty() {
                             try_set_signal(personal_handles_status, "Not published".to_owned());

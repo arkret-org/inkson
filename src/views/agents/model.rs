@@ -548,7 +548,10 @@ pub fn build_agent_key_authorize_event_for_pairing(
     };
     let realm_id = RealmId::new(key_state_str(key_state, "principal_control_realm_id")?)?;
     let authorization_ref = key_state_str(key_state, "controller_authorization_ref")?;
-    let hlc = arkret_sdk::Hlc::new(crate::hlc::Hlc::now("inkson").encode())?;
+    let hlc = crate::signing_stamp::issue_protocol_hlc_for_active_device(
+        controller.as_str(),
+        realm_id.as_str(),
+    )?;
     let mut event = arkret_sdk::agent::build_agent_key_authorize_event(
         &payload,
         realm_id,

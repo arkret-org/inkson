@@ -1538,7 +1538,6 @@ pub(super) fn ChatComposer(controller: ChatController, context: ChatComposerCont
                                         return;
                                     }
                                 };
-                                let _hlc = Hlc::now("inkson").to_string();
                                 let seal_view = state_store.read().seal_view_for_realm(&realm);
                                 // Shared MLS core: encrypt → forced ak.mls.commit
                                 // envelope (governance / prev→post epoch /

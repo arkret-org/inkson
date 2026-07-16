@@ -95,9 +95,9 @@ impl TransportClient {
         http: arkret_sdk::http_client::Client,
         context: RequestContext,
     ) -> Self {
+        let base_url = http.base_url().clone();
         Self {
-            base_url: Url::parse("https://transport.invalid/")
-                .expect("static transport placeholder URL must parse"),
+            base_url,
             http,
             context,
             describe_cache: Arc::new(OnceCell::new()),

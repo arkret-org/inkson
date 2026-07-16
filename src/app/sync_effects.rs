@@ -28,6 +28,7 @@ pub(super) fn SyncEffects(
     let sync_effects = runtime_services.effects.clone();
     let sync_session = runtime_services.session.clone();
     let sync_projection_sink = runtime_services.projection_sink.clone();
+    let sync_client_runtime = runtime_services.client.clone();
     use_effect(move || {
         let current_gen = sync_generation();
         let base = base_url();
@@ -56,6 +57,7 @@ pub(super) fn SyncEffects(
             did_cache: runtime_adapter::value_cell(did_cache),
             call_signal_hub,
             session: sync_session.clone(),
+            client_runtime: sync_client_runtime.clone(),
             effect: effect.clone(),
             projection_sink: sync_projection_sink.clone(),
         };
