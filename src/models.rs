@@ -346,10 +346,16 @@ pub fn missing_event_envelope_write_requirements(
     {
         missing.push(PROFILE_CORE_EVENT_STORE);
     }
-    if !service_supports_operation(description, arkret_sdk::ServiceOperationId::SELF_EVENTS_QUERY_DESCRIBE) {
+    if !service_supports_operation(
+        description,
+        arkret_sdk::ServiceOperationId::SELF_EVENTS_QUERY_DESCRIBE,
+    ) {
         missing.push(arkret_sdk::ServiceOperationId::SELF_EVENTS_QUERY_DESCRIBE);
     }
-    if !service_supports_operation(description, arkret_sdk::ServiceOperationId::SELF_EVENTS_COMMAND_SUBMIT) {
+    if !service_supports_operation(
+        description,
+        arkret_sdk::ServiceOperationId::SELF_EVENTS_COMMAND_SUBMIT,
+    ) {
         missing.push(arkret_sdk::ServiceOperationId::SELF_EVENTS_COMMAND_SUBMIT);
     }
     missing

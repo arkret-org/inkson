@@ -479,7 +479,10 @@ mod personal_agent_tests {
         )
         .unwrap();
 
-        assert_eq!(event.kind.as_str(), arkret_sdk::events::EventKind::AGENT_KEY_AUTHORIZE);
+        assert_eq!(
+            event.kind.as_str(),
+            arkret_sdk::events::EventKind::AGENT_KEY_AUTHORIZE
+        );
         assert_eq!(event.payload["agent_id"], agent);
         assert_eq!(event.payload["verification_method"], verification_method);
         assert_eq!(event.payload["public_key_digest"], runtime_digest.as_str());

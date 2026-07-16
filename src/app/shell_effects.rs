@@ -138,7 +138,10 @@ pub(super) fn ShellEffects(state: ShellEffectState) -> Element {
             let lookup_actor = account_did();
             let lookup_token = token();
             let lookup_supported = server_description().as_ref().is_some_and(|description| {
-                service_supports_operation(description, OP_LIST_HANDLES_FOR_SUBJECT)
+                service_supports_operation(
+                    description,
+                    arkret_sdk::ServiceOperationId::FIND_DIRECTORY_QUERY_LIST_HANDLES_FOR_SUBJECT,
+                )
             });
             let key = format!(
                 "{}|{}|{}|{}",
@@ -237,7 +240,10 @@ pub(super) fn ShellEffects(state: ShellEffectState) -> Element {
             let lookup_base_url = base_url();
             let lookup_token = token();
             let lookup_supported = server_description().as_ref().is_some_and(|description| {
-                service_supports_operation(description, OP_LIST_HANDLES_FOR_SUBJECT)
+                service_supports_operation(
+                    description,
+                    arkret_sdk::ServiceOperationId::FIND_DIRECTORY_QUERY_LIST_HANDLES_FOR_SUBJECT,
+                )
             });
             let mut peers = direct_contact_rows
                 .read()

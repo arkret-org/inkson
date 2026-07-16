@@ -178,7 +178,10 @@ impl DirectoryEndpoints<'_> {
         realm_id: &str,
     ) -> anyhow::Result<Option<arkret_sdk::SnapshotManifest>> {
         let describe = self.transport.describe_cached().await?;
-        if !crate::models::service_supports_operation(&describe, arkret_sdk::ServiceOperationId::SELF_SNAPSHOT_QUERY_MANIFEST_HEAD) {
+        if !crate::models::service_supports_operation(
+            &describe,
+            arkret_sdk::ServiceOperationId::SELF_SNAPSHOT_QUERY_MANIFEST_HEAD,
+        ) {
             return Ok(None);
         }
         match self.transport.http().snapshot_head(realm_id).await {

@@ -129,7 +129,6 @@ use sync_effects::SyncEffects;
 const UI_PREFERENCES_SCOPE: &str = "ui.browser";
 const SIDEBAR_WIDTH_PREFERENCE_KEY: &str = "layout.sidebar.width";
 const DEFAULT_SIDEBAR_WIDTH: f64 = 320.0;
-const OP_LIST_HANDLES_FOR_SUBJECT: &str = "ak.find.directory.query.list_handles_for_subject";
 const MIN_SIDEBAR_WIDTH: f64 = 280.0;
 const MAX_SIDEBAR_WIDTH: f64 = 420.0;
 
@@ -584,7 +583,10 @@ fn AppBootstrap() -> Element {
         active_server_description
             .as_ref()
             .is_some_and(|description| {
-                service_supports_operation(description, OP_LIST_HANDLES_FOR_SUBJECT)
+                service_supports_operation(
+                    description,
+                    arkret_sdk::ServiceOperationId::FIND_DIRECTORY_QUERY_LIST_HANDLES_FOR_SUBJECT,
+                )
             });
     let has_session = !token().trim().is_empty();
     let boot_state = session_boot_state();
