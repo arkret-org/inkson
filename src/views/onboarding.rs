@@ -28,6 +28,7 @@ pub fn OnboardingPanel(
     account_did: Signal<String>,
     device_id: Signal<String>,
     config_store: Signal<crate::config::LocalConfigStore>,
+    account_primary_handle: Signal<String>,
 ) -> Element {
     let state_store = crate::app::SessionContext::get().state_store;
     let pending_handoff = state_store.read().pending_account_handoff();
@@ -41,6 +42,7 @@ pub fn OnboardingPanel(
                     account_did,
                     device_id,
                     config_store,
+                    account_primary_handle,
                 }
             }
         };
@@ -101,6 +103,7 @@ fn PendingAccountIdentityCreation(
     mut account_did: Signal<String>,
     mut device_id: Signal<String>,
     config_store: Signal<crate::config::LocalConfigStore>,
+    account_primary_handle: Signal<String>,
 ) -> Element {
     let state_store = crate::app::SessionContext::get().state_store;
     let handoff = state_store.read().pending_account_handoff();
@@ -233,6 +236,25 @@ fn PendingAccountIdentityCreation(
                         },
                         if copied() { "Copied" } else { "Copy words" }
                     }
+                    Button {
+                        variant: ButtonVariant::Secondary,
+                        "data-testid": "onboarding-download-recovery-key",
+                        onclick: {
+                            let key = recovery_key();
+                            let handoff_handle = handoff.account_handle.clone();
+                            move |_| {
+                                let handles = [handoff_handle.clone(), account_primary_handle()];
+                                let filename = crate::components::mls_backup_prompt::recovery_key_filename_from_handles(
+                                    &handles,
+                                );
+                                crate::components::mls_backup_prompt::download_text_as_file(
+                                    &filename,
+                                    &key,
+                                );
+                            }
+                        },
+                        "Download .txt"
+                    }
                 }
 
                 div { class: "callout warn onboarding-recovery-warning",
@@ -316,6 +338,7 @@ fn PendingAccountIdentityCreation(
 
                                 match result {
                                     Ok((actor, device, grant)) => {
+                                        account_primary_handle.set(handoff.account_handle.clone());
                                         account_did.set(actor);
                                         device_id.set(device);
                                         token.set(grant);
@@ -682,6 +705,17 @@ mod tests {
         assert_eq!(
             recovery_key_confirmation_diff(&key, &key),
             RecoveryKeyConfirmationDiff::Match
+        );
+    }
+
+    #[test]
+    fn onboarding_recovery_download_uses_account_handle() {
+        let handle = "alice:local.host".to_owned();
+        assert_eq!(
+            crate::components::mls_backup_prompt::recovery_key_filename_from_handles(
+                std::slice::from_ref(&handle),
+            ),
+            "arkret-recovery-key-alice.txt"
         );
     }
 }

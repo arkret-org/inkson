@@ -1025,6 +1025,8 @@
 .onboarding-key-actions {
   display: flex;
   justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: 10px;
 }
 .onboarding-recovery-warning { margin: 0; }
 .onboarding-confirmation { gap: 8px; }

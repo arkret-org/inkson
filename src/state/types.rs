@@ -590,6 +590,10 @@ pub struct PendingAccountHandoff {
     pub principal_server_url: String,
     pub gate_account_base: String,
     pub request_id: String,
+    /// Authenticated service-account handle used only for UI display and
+    /// local artifact naming. It is not principal identity evidence.
+    #[serde(default)]
+    pub account_handle: String,
     pub holder_jkt: String,
     pub audience: String,
     pub expires_at: DateTime<Utc>,
