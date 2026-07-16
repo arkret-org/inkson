@@ -12,7 +12,11 @@
 //! rebuild. Inkson supplies only its secure grant store, DPoP factory, and UI
 //! result mapping.
 
-use std::sync::{Arc, Mutex, OnceLock, PoisonError};
+#[cfg(target_arch = "wasm32")]
+use std::rc::Rc;
+#[cfg(not(target_arch = "wasm32"))]
+use std::sync::OnceLock;
+use std::sync::{Arc, Mutex, PoisonError};
 
 use anyhow::Context as _;
 use arkret_sdk::http_client::{Auth, ClientBuilder};
@@ -243,16 +247,36 @@ impl SessionGrantRuntime {
     }
 }
 
-static SESSION_GRANT_RUNTIME: OnceLock<SessionGrantRuntime> = OnceLock::new();
+#[cfg(not(target_arch = "wasm32"))]
+type SessionGrantRuntimeHandle = Arc<SessionGrantRuntime>;
 
-fn session_grant_runtime() -> &'static SessionGrantRuntime {
-    SESSION_GRANT_RUNTIME.get_or_init(SessionGrantRuntime::default)
+#[cfg(target_arch = "wasm32")]
+type SessionGrantRuntimeHandle = Rc<SessionGrantRuntime>;
+
+#[cfg(not(target_arch = "wasm32"))]
+static SESSION_GRANT_RUNTIME: OnceLock<SessionGrantRuntimeHandle> = OnceLock::new();
+
+#[cfg(target_arch = "wasm32")]
+thread_local! {
+    static SESSION_GRANT_RUNTIME: SessionGrantRuntimeHandle =
+        Rc::new(SessionGrantRuntime::default());
+}
+
+fn session_grant_runtime() -> SessionGrantRuntimeHandle {
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        SESSION_GRANT_RUNTIME
+            .get_or_init(|| Arc::new(SessionGrantRuntime::default()))
+            .clone()
+    }
+    #[cfg(target_arch = "wasm32")]
+    {
+        SESSION_GRANT_RUNTIME.with(Clone::clone)
+    }
 }
 
 pub fn reset_session_grant_runtime() {
-    if let Some(runtime) = SESSION_GRANT_RUNTIME.get() {
-        runtime.reset();
-    }
+    session_grant_runtime().reset();
 }
 
 /// Outcome the refresh harness returns to the caller.
@@ -324,8 +348,8 @@ pub(crate) async fn provide_authenticated_session(
     let device_handle =
         crate::identity::account_auth::grant_dpop::load_or_recover_device_key(&mut store)?
             .context("session grant has no durable DPoP device key")?;
-    let provider =
-        session_transport_provider(session_grant_runtime(), &grant, &device_handle).await?;
+    let runtime = session_grant_runtime();
+    let provider = session_transport_provider(runtime.as_ref(), &grant, &device_handle).await?;
     let client = provider
         .provide()
         .await
@@ -355,8 +379,8 @@ pub(crate) async fn refresh_authenticated_session_after_unauthorized(
     let device_handle =
         crate::identity::account_auth::grant_dpop::load_or_recover_device_key(&mut store)?
             .context("session grant has no durable DPoP device key")?;
-    let provider =
-        session_transport_provider(session_grant_runtime(), &grant, &device_handle).await?;
+    let runtime = session_grant_runtime();
+    let provider = session_transport_provider(runtime.as_ref(), &grant, &device_handle).await?;
     if let Err(error) = provider.refresh_after_unauthorized().await {
         let error = anyhow::Error::from(error).context("session grant refresh");
         if crate::api_error::is_terminal_session_grant_refresh_error(&error) {

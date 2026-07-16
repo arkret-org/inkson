@@ -453,6 +453,7 @@ pub(super) fn RouteSurface(state: RouteSurfaceState) -> Element {
                             account_did,
                             device_id,
                             config_store,
+                            account_primary_handle,
                         }
                     },
                     Route::Quarantine => rsx! {

@@ -17,8 +17,6 @@
 //! `did:webvh`. The authoritative `subject_id` / `recipient_service_id` must
 //! be taken from the Directory `resolve_handle` response (verified claim
 //! subject + member delivery binding) and never from this parser.
-use unicode_normalization::UnicodeNormalization;
-
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ParsedUserHandle {
     pub localpart: String,
@@ -89,29 +87,6 @@ pub fn principal_did_from_identifier(input: &str) -> Option<String> {
     None
 }
 
-/// Client-side wrapper around the SDK's canonical localpart normalizer.
-pub fn detect_handle_homograph_risk(localpart: &str) -> Option<HandleHomographRisk> {
-    arkret_sdk::models::normalize_handle_localpart(localpart)
-        .is_err()
-        .then_some(HandleHomographRisk)
-}
-
-/// Marker returned when the SDK rejects a candidate localpart as unsafe.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct HandleHomographRisk;
-
-impl HandleHomographRisk {
-    /// Human-readable label for the inline warning.
-    pub fn script_label(&self) -> String {
-        "confusable localpart".to_owned()
-    }
-}
-
-/// Returns `true` when the input is not already NFC-normalized.
-pub fn handle_will_be_nfc_normalised(localpart: &str) -> bool {
-    localpart.nfc().ne(localpart.chars())
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -149,40 +124,6 @@ mod tests {
         assert!(parse_user_handle("alice.example.com").is_none());
         // R3.1: arkret:// URI form is retired.
         assert!(parse_user_handle("arkret://example.com/users/alice").is_none());
-    }
-
-    #[test]
-    fn pure_ascii_handle_has_no_homograph_risk() {
-        assert!(detect_handle_homograph_risk("alice").is_none());
-        assert!(detect_handle_homograph_risk("a.b_c+d~e-f").is_none());
-        assert!(detect_handle_homograph_risk("123abc").is_none());
-    }
-
-    #[test]
-    fn latin_plus_cyrillic_is_flagged() {
-        // 'е' is U+0435 Cyrillic small letter ie.
-        let risk = detect_handle_homograph_risk("alicе").expect("flagged");
-        assert_eq!(risk.script_label(), "confusable localpart");
-    }
-
-    #[test]
-    fn latin_plus_greek_is_flagged() {
-        // 'α' is U+03B1 Greek small letter alpha.
-        let risk = detect_handle_homograph_risk("aliceα").expect("flagged");
-        assert_eq!(risk.script_label(), "confusable localpart");
-    }
-
-    #[test]
-    fn pure_cyrillic_is_rejected_by_sdk_normalizer() {
-        assert!(detect_handle_homograph_risk("алиса").is_some());
-    }
-
-    #[test]
-    fn nfc_check_flags_combining_marks() {
-        // 'e' + combining acute accent (U+0301) is NFD; NFC would be
-        // 'é' (U+00E9). The decomposed form is what the helper detects.
-        assert!(handle_will_be_nfc_normalised("e\u{0301}"));
-        assert!(!handle_will_be_nfc_normalised("alice"));
     }
 
     #[test]
