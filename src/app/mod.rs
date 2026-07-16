@@ -911,6 +911,8 @@ fn AppBootstrap() -> Element {
     );
     let login_navigator = navigator;
     let callback_navigator = navigator;
+    let login_onboarding_navigator = navigator;
+    let callback_onboarding_navigator = navigator;
     let mut login_bootstrap_pending = bootstrap_pending;
     let mut callback_bootstrap_pending = bootstrap_pending;
     let mut login_session_boot_state = session_boot_state;
@@ -955,6 +957,9 @@ fn AppBootstrap() -> Element {
                                         let _ = callback_navigator.push(destination);
                                     }
                                 },
+                                on_onboarding: move |_| {
+                                    let _ = callback_onboarding_navigator.push(Route::Onboarding);
+                                },
                             }
                         },
                         AuthSurface::Register => rsx! {
@@ -998,6 +1003,9 @@ fn AppBootstrap() -> Element {
                                     if login_redirect_to_dashboard {
                                         let _ = login_navigator.push(Route::Dashboard);
                                     }
+                                },
+                                on_onboarding: move |_| {
+                                    let _ = login_onboarding_navigator.push(Route::Onboarding);
                                 },
                             }
                         },

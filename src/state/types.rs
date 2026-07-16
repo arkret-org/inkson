@@ -586,12 +586,33 @@ pub struct CachedMlsGovernanceProof {
 /// Recovery words and every derived private seed are deliberately absent; a
 /// resumed bootstrap must ask the user to re-enter the cold recovery secret.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PendingAccountHandoff {
+    pub principal_server_url: String,
+    pub gate_account_base: String,
+    pub request_id: String,
+    pub holder_jkt: String,
+    pub audience: String,
+    pub expires_at: DateTime<Utc>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub lease_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub lease_fence: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub lease_expires_at: Option<DateTime<Utc>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub retry_after_ms: Option<u64>,
+    pub device_id: String,
+    pub enrollment_authority_did: String,
+    pub trust_domain: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PendingPrincipalRegistration {
     pub principal_server_url: String,
     pub gate_account_base: String,
-    pub registration_id: String,
-    pub handle: String,
-    pub email: String,
+    pub handoff_request_id: String,
+    pub lease_id: String,
+    pub lease_fence: u64,
     pub device_id: String,
     pub enrollment_authority_did: String,
     pub trust_domain: String,
@@ -609,6 +630,8 @@ pub struct PendingPrincipalRegistration {
     pub bootstrap_create_event_id: String,
     pub bootstrap_created_at: String,
     pub bootstrap_hlc: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub binding_receipt: Option<Value>,
     pub stage: PendingPrincipalRegistrationStage,
 }
 
@@ -616,7 +639,7 @@ pub struct PendingPrincipalRegistration {
 #[serde(rename_all = "snake_case")]
 pub enum PendingPrincipalRegistrationStage {
     CustodyConfirmed,
-    DidBound,
+    BindingRegistered,
     BootstrapAccepted,
 }
 
@@ -738,6 +761,10 @@ pub struct ClientLocalState {
     /// Account Authority refresh endpoint when it nears expiry.
     #[serde(default)]
     pub session_grant: Option<PersistedSessionGrant>,
+    /// Public account-handoff and lease metadata. The opaque handoff grant is
+    /// stored separately as a session credential in the secure key store.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pending_account_handoff: Option<PendingAccountHandoff>,
     /// Resumable public registration draft. This never contains the Recovery
     /// Key or derived private material.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -1165,6 +1192,7 @@ impl Default for ClientLocalState {
             read_cursors: BTreeMap::new(),
             session_grant: None,
             pending_principal_registration: None,
+            pending_account_handoff: None,
             telemetry_log: Vec::new(),
             mls_snapshots: BTreeMap::new(),
             mls_receive_recovery_snapshots: BTreeMap::new(),

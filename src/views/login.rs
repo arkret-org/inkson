@@ -2,7 +2,10 @@ use arkret_sdk::http_client::{Auth, ClientBuilder};
 use chrono::Utc;
 use dioxus::prelude::*;
 use dioxus_router::Link;
-use garth::{LoginKind, OidcLogin, SessionEngine, SessionGrantState};
+use garth::{
+    AccountHandoffDisposition, LoginKind, OidcAccountHandoffInput, PreRegistrationHandoffLogin,
+    SessionEngine, SessionGrantState,
+};
 
 use crate::components::UiIcon;
 use crate::config::{
@@ -14,8 +17,7 @@ use crate::identity::account_auth::{
     capture_current_browser_callback_url, clear_persisted_oidc_scaffold,
     extract_authorization_code_from_callback, extract_error_description_from_callback,
     extract_error_from_callback, extract_state_from_callback, fetch_oidc_discovery,
-    oidc_request_canonical_digest, open_oidc_authorize_url, persist_oidc_scaffold,
-    restore_oidc_scaffold,
+    open_oidc_authorize_url, persist_oidc_scaffold, restore_oidc_scaffold,
 };
 use crate::state::{LocalStateStore, PersistedSessionGrant};
 use crate::transport::TransportClient;
@@ -36,6 +38,11 @@ struct CompletedLogin {
     /// Persisted principal session grant. This is the live credential for
     /// `/_arkret/self/*`; refresh rotates this grant before its own expiry.
     session_grant: Option<PersistedSessionGrant>,
+}
+
+enum OidcCallbackOutcome {
+    Login(CompletedLogin),
+    Onboarding,
 }
 
 // Process-global OIDC-callback completion guard. `callback_started` below is a
@@ -64,6 +71,7 @@ pub fn LoginPanel(
     personal_handles_status: Signal<String>,
     auto_capture_callback: bool,
     on_login: EventHandler<()>,
+    on_onboarding: EventHandler<()>,
 ) -> Element {
     // A4 — base_url / state_store from session context instead of props.
     let mut base_url = crate::app::SessionContext::get().base_url;
@@ -107,7 +115,13 @@ pub fn LoginPanel(
         let callback_device = device_id();
         let result = finish_oidc_callback(callback_device, state_store_write).await;
         match result {
-            Ok(completed) => {
+            Ok(OidcCallbackOutcome::Onboarding) => {
+                auth_status.set(
+                    "Account authenticated. Continue identity custody and binding.".to_owned(),
+                );
+                on_onboarding.call(());
+            }
+            Ok(OidcCallbackOutcome::Login(completed)) => {
                 let principal_server_url = normalize_server_url(&completed.principal_server_url);
                 let server_changed = {
                     let previous = normalize_server_url(&base_url());
@@ -550,7 +564,7 @@ fn interactive_sign_in_context(persisted_actor: &str, persisted_device: &str) ->
     )
 }
 
-fn persist_completed_login_dpop_key(
+pub(crate) fn persist_completed_login_dpop_key(
     store: &mut LocalStateStore,
     secure_store: &dyn crate::secure_key_store::SecureKeyStore,
     actor: &str,
@@ -714,7 +728,7 @@ fn format_sign_in_discovery_error(principal_server_url: &str, error: &anyhow::Er
 async fn finish_oidc_callback(
     device_fallback: String,
     mut state_store: SyncSignal<LocalStateStore>,
-) -> Result<CompletedLogin, String> {
+) -> Result<OidcCallbackOutcome, String> {
     let callback_url = capture_current_browser_callback_url()
         .map_err(|error| format!("Could not read callback URL: {error}"))?;
     let scaffold = restore_oidc_scaffold()
@@ -754,7 +768,6 @@ async fn finish_oidc_callback(
     let sdk_base_url =
         crate::identity::session_refresh::sdk_base_url_from_gate_account_base(&gate_account_base)
             .map_err(|error| format!("Invalid Account Authority base: {error}"))?;
-    let actor_hint = scaffold.principal_actor_id.trim().to_owned();
     let device = if scaffold.device_id.trim().is_empty() {
         device_fallback.trim().to_owned()
     } else {
@@ -780,52 +793,134 @@ async fn finish_oidc_callback(
     if scaffold.issuer.trim().is_empty() {
         return Err("Sign-in state is missing the OIDC issuer.".to_owned());
     }
-    // Session grants are explicitly principal-bound. A callback scaffold that
-    // lost the principal binding must fail closed instead of asking coauth to
-    // infer a different identity from the OIDC subject.
-    if actor_hint.is_empty() {
-        return Err("Sign-in state is missing the principal DID binding.".to_owned());
-    }
-    let principal_id = arkret_sdk::Did::new(actor_hint.clone())
-        .map_err(|error| format!("invalid principal_id DID: {error}"))?;
     let device_id = arkret_sdk::DeviceId::new(device.clone())
         .map_err(|error| format!("invalid device_id: {error}"))?;
     let principal_audience = arkret_sdk::Did::new(scaffold.principal_audience.trim().to_owned())
         .map_err(|error| format!("invalid Principal Server audience DID: {error}"))?;
-    let request_canonical_digest = oidc_request_canonical_digest(
-        &scaffold.issuer,
-        &scaffold.client_id,
-        &authorization_code,
-        &returned_state,
-    )
-    .map_err(|error| format!("OIDC session-grant digest failed: {error}"))?;
     let http = ClientBuilder::new(sdk_base_url)
         .allow_insecure_localhost()
         .auth(Auth::Dpop(dpop_handle.sdk_dpop_proof_only_auth()))
         .build()
-        .map_err(|error| format!("Build Account Authority session client failed: {error}"))?;
-    let session_engine = SessionEngine::new(http);
+        .map_err(|error| format!("Build Account Authority handoff client failed: {error}"))?;
+    let authority_description = http
+        .describe()
+        .await
+        .map_err(|error| format!("Account Authority describe failed: {error}"))?;
+    let handoff_request = garth::oidc_account_handoff_request(
+        OidcAccountHandoffInput {
+            request_id: arkret_sdk::RequestId::new(arkret_sdk::identifiers::new_prefixed_uuid7(
+                "ak:request:",
+            ))
+            .map_err(|error| format!("account handoff request id failed: {error}"))?,
+            audience: principal_audience.clone(),
+            issuer: scaffold.issuer.clone(),
+            client_id: scaffold.client_id.clone(),
+            redirect_uri: scaffold.callback_uri.clone(),
+            state: returned_state,
+            nonce: scaffold.expected_nonce.clone(),
+            authorization_code,
+            code_verifier: scaffold.code_verifier.clone(),
+        },
+        |bytes| dpop_handle.sign_protocol_bytes(bytes),
+    )
+    .map_err(|error| format!("Account handoff request failed: {error}"))?;
+    let handoff = http
+        .auth_create_account_handoff(&handoff_request)
+        .await
+        .map_err(|error| format!("Account Authority handoff failed: {error}"))?;
+    let disposition = garth::account_handoff_disposition(&handoff)
+        .map_err(|error| format!("Account handoff outcome failed validation: {error}"))?;
+    if let AccountHandoffDisposition::IdentityCreationActive(lease) = &disposition {
+        crate::identity::account_auth::persist_account_handoff_grant(
+            &handoff.account_handoff_grant,
+        )
+        .await
+        .map_err(|error| format!("Persist account handoff credential failed: {error}"))?;
+        state_store
+            .write()
+            .set_pending_account_handoff(Some(crate::state::PendingAccountHandoff {
+                principal_server_url,
+                gate_account_base,
+                request_id: handoff.request_id.to_string(),
+                holder_jkt: dpop_handle.jkt().to_owned(),
+                audience: principal_audience.to_string(),
+                expires_at: handoff.expires_at,
+                lease_id: Some(lease.lease_id.clone()),
+                lease_fence: Some(lease.fence),
+                lease_expires_at: Some(lease.expires_at),
+                retry_after_ms: None,
+                device_id: device,
+                enrollment_authority_did: authority_description.service_id.to_string(),
+                trust_domain: authority_description.trust_domain.to_string(),
+            }))
+            .map_err(|error| format!("Persist public handoff checkpoint failed: {error}"))?;
+        let _ = clear_persisted_oidc_scaffold();
+        return Ok(OidcCallbackOutcome::Onboarding);
+    }
+    if let AccountHandoffDisposition::IdentityCreationBusy { retry_after_ms } = disposition {
+        crate::identity::account_auth::persist_account_handoff_grant(
+            &handoff.account_handoff_grant,
+        )
+        .await
+        .map_err(|error| format!("Persist account handoff credential failed: {error}"))?;
+        state_store
+            .write()
+            .set_pending_account_handoff(Some(crate::state::PendingAccountHandoff {
+                principal_server_url,
+                gate_account_base,
+                request_id: handoff.request_id.to_string(),
+                holder_jkt: dpop_handle.jkt().to_owned(),
+                audience: principal_audience.to_string(),
+                expires_at: handoff.expires_at,
+                lease_id: None,
+                lease_fence: None,
+                lease_expires_at: None,
+                retry_after_ms: Some(retry_after_ms),
+                device_id: device,
+                enrollment_authority_did: authority_description.service_id.to_string(),
+                trust_domain: authority_description.trust_domain.to_string(),
+            }))
+            .map_err(|error| format!("Persist busy handoff checkpoint failed: {error}"))?;
+        let _ = clear_persisted_oidc_scaffold();
+        return Ok(OidcCallbackOutcome::Onboarding);
+    }
+    let AccountHandoffDisposition::Bound { principal_id } = disposition else {
+        unreachable!("active and busy handoff outcomes returned above")
+    };
+    let session_request = garth::pre_registration_session_grant_request(
+        principal_id,
+        Some(device_id),
+        Vec::new(),
+        &handoff.account_handoff_grant,
+        principal_audience,
+        Utc::now() + chrono::Duration::minutes(5),
+        |bytes| dpop_handle.sign_protocol_bytes(bytes),
+    )
+    .map_err(|error| format!("Pre-registration session request failed: {error}"))?;
+    let handoff_http = ClientBuilder::new(
+        crate::identity::session_refresh::sdk_base_url_from_gate_account_base(
+            &scaffold.gate_account_base,
+        )
+        .map_err(|error| format!("Invalid Account Authority base: {error}"))?,
+    )
+    .allow_insecure_localhost()
+    .auth(Auth::Dpop(dpop_handle.sdk_account_handoff_auth(
+        handoff.account_handoff_grant.clone(),
+    )))
+    .build()
+    .map_err(|error| format!("Build handoff session client failed: {error}"))?;
+    let session_engine = SessionEngine::new(handoff_http);
     session_engine
         .login(
-            LoginKind::Oidc(OidcLogin {
-                principal_id,
-                device_id: Some(device_id),
-                requested_scope: Vec::new(),
-                challenge: String::new(),
-                request_canonical_digest,
-                audience: principal_audience,
-                issuer: scaffold.issuer.clone(),
-                client_id: scaffold.client_id.clone(),
-                redirect_uri: scaffold.callback_uri.clone(),
-                state: returned_state.clone(),
-                nonce: scaffold.expected_nonce.clone(),
-                authorization_code: authorization_code.clone(),
-                code_verifier: scaffold.code_verifier.clone(),
+            LoginKind::PreRegistrationHandoff(PreRegistrationHandoffLogin {
+                request: session_request,
             }),
             Utc::now(),
         )
         .await
-        .map_err(|error| format!("Account Authority session-grant issue failed: {error}"))?;
+        .map_err(|error| {
+            format!("Account Authority handoff session-grant issue failed: {error}")
+        })?;
     let session_grant = session_engine
         .current_state()
         .ok_or_else(|| "Account Authority session-grant issue did not yield state.".to_owned())?;
@@ -908,7 +1003,9 @@ async fn finish_oidc_callback(
         &resolved_device,
     );
 
-    Ok(CompletedLogin {
+    let _ = crate::identity::account_auth::clear_account_handoff_grant();
+    let _ = state_store.write().set_pending_account_handoff(None);
+    Ok(OidcCallbackOutcome::Login(CompletedLogin {
         principal_server_url: principal_target,
         actor: canonical_actor,
         personal_handle,
@@ -917,7 +1014,7 @@ async fn finish_oidc_callback(
         // The grant JWT is now the live credential carried in the `token` signal.
         session_credential: session_grant.grant_jwt.clone(),
         session_grant: Some(persisted_session_grant),
-    })
+    }))
 }
 
 fn persisted_session_grant_from_state(

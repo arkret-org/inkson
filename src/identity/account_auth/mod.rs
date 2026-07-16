@@ -5,6 +5,7 @@ mod authority;
 mod authorize;
 mod callback;
 pub mod grant_dpop;
+mod handoff;
 mod proof;
 mod util;
 
@@ -15,6 +16,7 @@ pub use api::fetch_oidc_discovery;
 pub use authority::*;
 pub use authorize::*;
 pub use callback::*;
+pub use handoff::*;
 pub use proof::*;
 pub(crate) use util::*;
 

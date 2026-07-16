@@ -114,6 +114,7 @@ pub(super) fn RouteSurface(state: RouteSurfaceState) -> Element {
                             personal_handles_status,
                             auto_capture_callback: false,
                             on_login: move |_| { let _ = navigator.push(Route::Dashboard); },
+                            on_onboarding: move |_| { let _ = navigator.push(Route::Onboarding); },
                         }
                     },
                     Route::AuthCallback => rsx! {
@@ -128,6 +129,7 @@ pub(super) fn RouteSurface(state: RouteSurfaceState) -> Element {
                             personal_handles_status,
                             auto_capture_callback: true,
                             on_login: move |_| { let _ = navigator.push(Route::Dashboard); },
+                            on_onboarding: move |_| { let _ = navigator.push(Route::Onboarding); },
                         }
                     },
                     Route::Register => rsx! {
@@ -450,6 +452,7 @@ pub(super) fn RouteSurface(state: RouteSurfaceState) -> Element {
                             token,
                             account_did,
                             device_id,
+                            config_store,
                         }
                     },
                     Route::Quarantine => rsx! {
