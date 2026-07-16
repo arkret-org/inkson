@@ -3295,7 +3295,7 @@ pub fn SettingsPanel(
                             "data-testid": "language-en",
                             onclick: move |_| {
                                 locale.set(Locale::En);
-                                state_store.write().save_private_data(&account_did(), "locale", Locale::En.code());
+                                state_store.write().set_device_pref("locale", Locale::En.code());
                             },
                             "English"
                         }
@@ -3304,7 +3304,7 @@ pub fn SettingsPanel(
                             "data-testid": "language-zh",
                             onclick: move |_| {
                                 locale.set(Locale::Zh);
-                                state_store.write().save_private_data(&account_did(), "locale", Locale::Zh.code());
+                                state_store.write().set_device_pref("locale", Locale::Zh.code());
                             },
                             "中文"
                         }
@@ -3313,7 +3313,7 @@ pub fn SettingsPanel(
                             "data-testid": "language-ar",
                             onclick: move |_| {
                                 locale.set(Locale::Ar);
-                                state_store.write().save_private_data(&account_did(), "locale", Locale::Ar.code());
+                                state_store.write().set_device_pref("locale", Locale::Ar.code());
                             },
                             "العربية"
                         }

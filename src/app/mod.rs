@@ -231,9 +231,9 @@ fn AppBootstrap() -> Element {
         realm_tree_nodes_from_sync_realms(&initial_local_state.realm_tree_projections);
     let initial_sidebar_width = load_sidebar_width_preference(&initial_state_store);
     let initial_locale = initial_state_store
-        .load_private_data(&initial_config.account_did, "locale")
+        .device_pref("locale")
         .map(|code| Locale::from_code(&code))
-        .unwrap_or_default();
+        .unwrap_or_else(Locale::platform_preferred);
     let initial_theme = initial_state_store
         .load_private_data(&initial_config.account_did, "theme")
         .filter(|theme| matches!(theme.as_str(), "light" | "night" | "system"))

@@ -224,6 +224,7 @@ fn state_and_nonce_diverge_for_same_caller() {
         "",
         "device-aaaa-1111",
         "https://principal.example/api",
+        "en",
     )
     .unwrap();
     let bundle_b = build_oidc_authorize_scaffold(
@@ -233,6 +234,7 @@ fn state_and_nonce_diverge_for_same_caller() {
         "",
         "device-aaaa-1111",
         "https://principal.example/api",
+        "en",
     )
     .unwrap();
     assert_ne!(bundle_a.state, bundle_b.state);
@@ -251,6 +253,7 @@ fn bundle_challenge_is_s256_of_verifier_when_supported() {
         "",
         "device-bbbb-2222",
         "https://principal.example/api",
+        "en",
     )
     .unwrap();
     let authorize_url = url::Url::parse(&bundle.authorize_url).unwrap();
@@ -275,6 +278,7 @@ fn authorize_scaffold_rejects_plain_only_pkce_discovery() {
         "",
         "device-plain-only",
         "https://principal.example/api",
+        "en",
     )
     .unwrap_err();
     assert!(error.to_string().contains("PKCE S256"));
@@ -290,6 +294,7 @@ fn authorize_url_forces_reauthentication() {
         "",
         "device-cccc-3333",
         "https://principal.example/api",
+        "zh",
     )
     .unwrap();
     let parsed = Url::parse(&bundle.authorize_url).unwrap();
@@ -309,6 +314,14 @@ fn authorize_url_forces_reauthentication() {
             .1,
         "0"
     );
+    assert_eq!(
+        parsed
+            .query_pairs()
+            .find(|(key, _)| key == "ui_locales")
+            .unwrap()
+            .1,
+        "zh"
+    );
 }
 
 #[test]
@@ -320,6 +333,7 @@ fn authorize_url_carries_login_hint_when_known_account_selected() {
         "chris",
         "device-known-account",
         "https://principal.example/api",
+        "en",
     )
     .unwrap();
     let parsed = Url::parse(&bundle.authorize_url).unwrap();
@@ -344,6 +358,7 @@ fn authorize_url_requests_standard_and_device_scope() {
         "",
         "device-dddd-4444",
         "https://principal.example/api",
+        "en",
     )
     .unwrap();
     let parsed = Url::parse(&bundle.authorize_url).unwrap();
@@ -374,6 +389,7 @@ fn authorize_url_falls_back_to_native_client_id() {
         "",
         "device-eeee-5555",
         "https://principal.example/api",
+        "en",
     )
     .unwrap();
     assert_eq!(bundle.client_id, INKSON_OIDC_CLIENT_ID);

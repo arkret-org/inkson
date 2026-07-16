@@ -67,6 +67,7 @@ pub fn LoginPanel(
     // A4 — base_url / state_store from session context instead of props.
     let mut base_url = crate::app::SessionContext::get().base_url;
     let state_store = crate::app::SessionContext::get().state_store;
+    let i18n = use_context::<crate::i18n::I18nSignal>();
     let session = use_context::<crate::runtime::services::RuntimeServices>()
         .session
         .clone();
@@ -221,6 +222,7 @@ pub fn LoginPanel(
     // grant-binding key, not the E2EE device identity.
     let launch_sign_in = move || {
         let principal = base_url();
+        let ui_locale = i18n.read().0.code().to_owned();
         let (principal_binding, device) = interactive_sign_in_context(&account_did(), &device_id());
         device_id.set(device.clone());
         let mut reset_state_store = state_store;
@@ -264,7 +266,14 @@ pub fn LoginPanel(
             ) {
                 tracing::warn!(%error, "persist bootstrap device_id for sign-in failed");
             }
-            match start_oidc_strand(&principal, device.trim(), "", principal_binding.as_str()).await
+            match start_oidc_strand(
+                &principal,
+                device.trim(),
+                "",
+                principal_binding.as_str(),
+                &ui_locale,
+            )
+            .await
             {
                 Ok(()) => {}
                 Err(error) => {
@@ -276,17 +285,23 @@ pub fn LoginPanel(
     };
 
     rsx! {
-        Card { class: "auth-panel", "data-testid": "login-panel", role: "region", "aria-label": "Login",
+        Card { class: "auth-panel", "data-testid": "login-panel", role: "region", "aria-label": crate::i18n::tr("login.title"),
             div { class: "auth-brand",
                 div { class: "auth-logo", "C" }
                 div {
-                    h1 { if auto_capture_callback { "Completing sign in" } else { "Sign in" } }
+                    h1 {
+                        if auto_capture_callback {
+                            {crate::i18n::tr("login.completing")}
+                        } else {
+                            {crate::i18n::tr("login.title")}
+                        }
+                    }
                     p { "Arkret" }
                 }
             }
 
             div { class: "auth-form",
-                Label { html_for: "login-server-url-input", "Principal server" }
+                Label { html_for: "login-server-url-input", {crate::i18n::tr("login.principal_server")} }
                 // Inkson is a neutral client: this is a free-text Principal
                 // Server URL the user can edit to point at ANY server. The
                 // custom-styled dropdown below offers the configured presets
@@ -298,7 +313,7 @@ pub fn LoginPanel(
                     Input {
                         id: "login-server-url-input",
                         "data-testid": "login-server-url",
-                        "aria-label": "Principal server URL",
+                        "aria-label": crate::i18n::tr("login.principal_server_url"),
                         autocomplete: "off",
                         value: "{base_url}",
                         disabled: is_busy(),
@@ -313,7 +328,7 @@ pub fn LoginPanel(
                         r#type: "button",
                         class: "auth-combobox-toggle",
                         "data-testid": "login-server-options-toggle",
-                        "aria-label": "Show preset servers",
+                        "aria-label": crate::i18n::tr("login.show_preset_servers"),
                         "aria-expanded": if server_menu_open() { "true" } else { "false" },
                         disabled: is_busy(),
                         onclick: move |_| server_menu_open.toggle(),
@@ -328,7 +343,7 @@ pub fn LoginPanel(
                             class: "auth-combobox-menu",
                             "data-testid": "login-server-options",
                             role: "listbox",
-                            "aria-label": "Preset servers",
+                            "aria-label": crate::i18n::tr("login.preset_servers"),
                             for option_url in principal_server_options.iter() {
                                 button {
                                     key: "{option_url}",
@@ -379,7 +394,11 @@ pub fn LoginPanel(
                         let mut go = launch_sign_in;
                         go();
                     },
-                    if is_busy() { "Working..." } else { "Continue" }
+                    if is_busy() {
+                        {crate::i18n::tr("login.working")}
+                    } else {
+                        {crate::i18n::tr("login.continue")}
+                    }
                 }
 
                 if !auth_status().is_empty() {
@@ -410,13 +429,18 @@ pub fn LoginPanel(
                         session_status != "signed-out" || !jkt_display.is_empty();
                     let device_label = short_protocol_id(&device_value);
                     let jkt_label = short_protocol_id(&jkt_display);
+                    let session_status_label = crate::i18n::tr(match session_status {
+                        "signed-in" => "login.status.signed_in",
+                        "session-expired" => "login.status.session_expired",
+                        _ => "login.status.signed_out",
+                    });
                     rsx! {
                         if show_session_diagnostics {
                             div { class: "auth-session-state", "data-testid": "session-state-card",
                                 div {
                                     "data-testid": "session-status",
                                     "data-status": session_status,
-                                    "{session_status}"
+                                    "{session_status_label}"
                                 }
                                 div {
                                     "data-testid": "session-device-id",
@@ -475,7 +499,7 @@ pub fn LoginPanel(
                                         });
                                         }
                                     },
-                                    "Refresh now"
+                                    {crate::i18n::tr("login.refresh_now")}
                                 }
                             }
                         }
@@ -580,6 +604,7 @@ pub(crate) async fn start_oidc_strand(
     device_id: &str,
     login_hint: &str,
     principal_actor_id: &str,
+    ui_locale: &str,
 ) -> Result<(), String> {
     // T1.Y1 — discover the Account Authority + auth methods from the Principal
     // Server's root `/_arkret/describe` (service-surface §2.5.1).
@@ -609,6 +634,7 @@ pub(crate) async fn start_oidc_strand(
         login_hint,
         device_id,
         &resolver.principal_audience,
+        ui_locale,
     )
     .map_err(|error| format!("Sign-in URL preparation failed: {error}"))?;
 

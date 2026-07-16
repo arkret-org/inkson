@@ -24,6 +24,7 @@ pub fn build_oidc_authorize_scaffold(
     login_hint: &str,
     device_id: &str,
     principal_audience: &str,
+    ui_locale: &str,
 ) -> anyhow::Result<OidcScaffoldBundle> {
     let client_id = method
         .client_id
@@ -46,6 +47,7 @@ pub fn build_oidc_authorize_scaffold(
         login_hint,
         device_id,
         principal_audience,
+        ui_locale,
         &state,
         &nonce,
         &code_challenge,
@@ -76,6 +78,7 @@ fn build_standard_authorize_url(
     login_hint: &str,
     device_id: &str,
     principal_audience: &str,
+    ui_locale: &str,
     state: &str,
     nonce: &str,
     code_challenge: &str,
@@ -125,6 +128,9 @@ fn build_standard_authorize_url(
             query.append_pair("login_hint", login_hint);
         }
         query.append_pair("resource", principal_audience);
+        if !ui_locale.trim().is_empty() {
+            query.append_pair("ui_locales", ui_locale.trim());
+        }
         // OIDC Core §3.1.2.1: force re-prompt so an app-level logout is not
         // silently undone by a live IdP SSO cookie.
         query.append_pair("prompt", "login");

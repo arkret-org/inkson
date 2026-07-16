@@ -54,6 +54,22 @@ impl Locale {
         }
     }
 
+    /// Resolve the platform UI locale for first launch. A persisted Inkson
+    /// preference takes precedence at the app-shell layer; this is only the
+    /// fallback used when the user has not selected a language yet.
+    pub fn platform_preferred() -> Self {
+        #[cfg(target_arch = "wasm32")]
+        {
+            return web_sys::window()
+                .and_then(|window| window.navigator().language())
+                .map(|language| Self::from_code(&language))
+                .unwrap_or_default();
+        }
+
+        #[cfg(not(target_arch = "wasm32"))]
+        Self::default()
+    }
+
     pub fn direction(&self) -> TextDirection {
         match self {
             Locale::Ar => TextDirection::Rtl,

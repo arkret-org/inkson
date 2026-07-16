@@ -272,6 +272,16 @@ pub fn chinese_translations() -> TranslationDict {
     dict.set("login.continue", "继续");
     dict.set("login.working", "处理中...");
     dict.set("login.signed_in_as", "已登录为");
+    dict.set("login.title", "登录");
+    dict.set("login.completing", "正在完成登录");
+    dict.set("login.principal_server", "主体服务器");
+    dict.set("login.principal_server_url", "主体服务器地址");
+    dict.set("login.show_preset_servers", "显示预设服务器");
+    dict.set("login.preset_servers", "预设服务器");
+    dict.set("login.status.signed_out", "未登录");
+    dict.set("login.status.session_expired", "会话已过期");
+    dict.set("login.status.signed_in", "已登录");
+    dict.set("login.refresh_now", "立即刷新");
 
     dict.set("dashboard.home", "主页");
     dict.set("dashboard.notifications_label", "通知");
