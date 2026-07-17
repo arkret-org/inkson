@@ -469,12 +469,12 @@ pub fn build_managed_agent_pcr_create_event(
         .get_mut("object")
         .ok_or_else(|| anyhow::anyhow!("managed Agent PCR create payload omits object"))?;
     patch_object(payload_object);
-    let effect_object = event
-        .effects
-        .first_mut()
-        .and_then(|effect| effect.op.value.as_mut())
-        .ok_or_else(|| anyhow::anyhow!("managed Agent PCR create effect omits Realm object"))?;
-    patch_object(effect_object);
+    event.effects = vec![
+        arkret_sdk::identity::managed_agent_principal_control_create_effect(
+            &event.realm_id,
+            event.actor_seq,
+        )?,
+    ];
     event.executed_by = Some(
         arkret_sdk::Did::new(controller_id.to_owned())
             .map_err(|error| anyhow::anyhow!("invalid managed Agent controller DID: {error}"))?,
@@ -1286,9 +1286,18 @@ mod notary_derivation_tests {
             event.actor_id.as_str()
         );
         assert_eq!(
-            event.effects[0].op.value.as_ref().unwrap(),
-            &event.payload["object"]
+            event.effects[0].cell.as_str(),
+            arkret_sdk::identity::MANAGED_AGENT_PRINCIPAL_CONTROL_CREATE_CELL
         );
+        assert_eq!(
+            event.effects[0].op.op_type,
+            arkret_sdk::LatticeOpType::Append
+        );
+        assert_eq!(
+            event.effects[0].op.value.as_ref(),
+            Some(&Value::String(event.realm_id.to_string()))
+        );
+        assert_eq!(event.effects[0].op.issuer_seq, Some(event.actor_seq));
     }
 
     #[test]
