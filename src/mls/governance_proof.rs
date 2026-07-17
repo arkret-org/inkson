@@ -663,6 +663,14 @@ fn verify_request_binding(
 mod tests {
     use super::*;
 
+    fn temp_state_path(name: &str) -> std::path::PathBuf {
+        let stamp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("time")
+            .as_nanos();
+        std::env::temp_dir().join(format!("inkson-{name}-{stamp}.json"))
+    }
+
     fn frontier_event(actor: &str) -> arkret_sdk::Event {
         arkret_sdk::Event::new(
             "ak.member.state",
@@ -752,6 +760,36 @@ mod tests {
         assert!(!governance_projection_pending(
             &arkret_sdk::Error::Protocol("member cell is still Bottom".to_owned(),)
         ));
+    }
+
+    #[test]
+    fn incomplete_chunk_acquisition_survives_state_store_restart() {
+        let path = temp_state_path("mls-governance-acquisition");
+        let realm_id = "ak:realm:01904100-0000-7000-8000-000000000001";
+        let request;
+        let expected_chunk;
+        {
+            let mut writer = crate::state::LocalStateStore::with_path(path.clone());
+            seed_test_governance_proof(&mut writer, realm_id, None, "dGVzdC1tbHM", 0, 1);
+            request = proof_request(&writer, realm_id, None, "dGVzdC1tbHM", 0, 1).unwrap();
+            let materialized = writer
+                .cached_mls_governance_proof(&request, chrono::Utc::now())
+                .unwrap()
+                .expect("seeded materialized proof");
+            expected_chunk = arkret_sdk::build_mls_governance_proof_chunks(&request, &materialized)
+                .unwrap()
+                .remove(0);
+            writer
+                .persist_mls_governance_acquisition_chunk(&request, &expected_chunk)
+                .unwrap();
+        }
+
+        let reader = crate::state::LocalStateStore::with_path(path.clone());
+        let resumed = reader
+            .cached_mls_governance_acquisition(&request)
+            .expect("restart reloads incomplete acquisition");
+        assert_eq!(resumed, vec![expected_chunk]);
+        let _ = std::fs::remove_file(path);
     }
 }
 
