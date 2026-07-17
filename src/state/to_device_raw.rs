@@ -238,26 +238,73 @@ impl LocalStateStore {
             .to_device_inbox
             .retain(|message| !to_device_message_expired(message, now));
         let pruned_expired = before_retain != self.cached.to_device_inbox.len();
-        let mut seen: BTreeSet<String> = self
-            .cached
-            .to_device_inbox
-            .iter()
-            .map(to_device_message_dedup_key)
-            .collect();
+        let receipts_before_retain = self.cached.to_device_receipts.len();
+        self.cached
+            .to_device_receipts
+            .retain(|_, receipt| receipt.expires_at > now);
+        let pruned_receipts = receipts_before_retain != self.cached.to_device_receipts.len();
+        for persisted in &self.cached.to_device_inbox {
+            let key = to_device_message_dedup_key(persisted);
+            if let (Ok(digest), Some(expires_at)) = (
+                arkret_sdk::canonical::canonical_sha256(persisted),
+                to_device_message_expiry(persisted),
+            ) {
+                self.cached
+                    .to_device_receipts
+                    .entry(key)
+                    .or_insert(DeviceMessageReceipt {
+                        canonical_digest: digest,
+                        expires_at,
+                    });
+            }
+        }
         let mut inserted = 0;
         let mut read_cursor_updated = false;
+        let mut conflict = None;
         for message in messages {
             let Ok(message) = serde_json::to_value(message) else {
                 continue;
             };
-            read_cursor_updated |= self.ingest_read_cursor_update_message(&message);
             if to_device_message_expired(&message, now) {
                 continue;
             }
             let key = to_device_message_dedup_key(&message);
-            if !seen.insert(key) {
-                continue;
+            let Some(expires_at) = to_device_message_expiry(&message) else {
+                conflict = Some(format!("device_message_conflict: invalid expiry for {key}"));
+                break;
+            };
+            let Ok(digest) = arkret_sdk::canonical::canonical_sha256(&message) else {
+                conflict = Some(format!(
+                    "device_message_conflict: canonicalization failed for {key}"
+                ));
+                break;
+            };
+            match self.cached.to_device_receipts.get(&key) {
+                Some(existing) if existing.canonical_digest == digest => continue,
+                Some(_) => {
+                    conflict = Some(format!(
+                        "device_message_conflict: envelope changed for {key}"
+                    ));
+                    break;
+                }
+                None => {
+                    if self.cached.to_device_receipts.len() >= TO_DEVICE_RECEIPTS_MAX {
+                        conflict = Some(
+                            "device_message_receipt_capacity: durable receipt capacity exhausted"
+                                .to_owned(),
+                        );
+                        break;
+                    }
+                    self.cached.to_device_receipts.insert(
+                        key,
+                        DeviceMessageReceipt {
+                            canonical_digest: digest,
+                            expires_at,
+                        },
+                    );
+                }
             }
+            read_cursor_updated |= self.ingest_read_cursor_update_message(&message);
             self.cached.to_device_inbox.push(message);
             inserted += 1;
         }
@@ -269,8 +316,12 @@ impl LocalStateStore {
         if overflow > 0 {
             self.cached.to_device_inbox.drain(0..overflow);
         }
-        if inserted > 0 || pruned_expired || overflow > 0 || read_cursor_updated {
+        if inserted > 0 || pruned_expired || pruned_receipts || overflow > 0 || read_cursor_updated
+        {
             let _ = self.flush();
+        }
+        if let Some(conflict) = conflict {
+            *self.lock_persist_health() = Some(conflict);
         }
         inserted
     }

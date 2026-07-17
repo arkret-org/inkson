@@ -734,6 +734,7 @@ fn realm_bootstrap_payloads_match_spec_schema() {
 #[test]
 fn device_message_envelope_matches_schema_v1() {
     let envelope = build_device_message_envelope(
+        "ak:device_message:01904100-0000-7000-8000-000000000001",
         "did:web:alice.example",
         "ak:device:01904100-0000-7000-8000-0000000000aa",
         "ak.key.verification.request",
@@ -751,6 +752,7 @@ fn device_message_envelope_matches_schema_v1() {
             "messages": {
                 "did:web:alice.example": {
                     "ak:device:01904100-0000-7000-8000-0000000000aa": {
+                        "message_id": "ak:device_message:01904100-0000-7000-8000-000000000001",
                         "kind": "ak.key.verification.request",
                         "expires_at": "2026-04-26T00:10:00Z",
                         "content": {
@@ -771,6 +773,7 @@ fn device_message_envelope_matches_schema_v1() {
 #[test]
 fn device_message_envelope_accepts_minimal_content() {
     let envelope = build_device_message_envelope(
+        "ak:device_message:01904100-0000-7000-8000-000000000002",
         "did:web:bob.example",
         "ak:device:01904100-0000-7000-8000-0000000000bb",
         "ak.key.verification.done",
@@ -780,6 +783,10 @@ fn device_message_envelope_accepts_minimal_content() {
     .expect("device message envelope builds");
     let envelope = serde_json::to_value(envelope).expect("device message envelope serializes");
     let inner = &envelope["messages"]["did:web:bob.example"]["ak:device:01904100-0000-7000-8000-0000000000bb"];
+    assert_eq!(
+        inner["message_id"],
+        "ak:device_message:01904100-0000-7000-8000-000000000002"
+    );
     assert_eq!(inner["kind"], "ak.key.verification.done");
     assert_eq!(inner["expires_at"], "2026-04-26T00:10:00Z");
     assert_eq!(inner["content"]["transaction_id"], "verify-done-001");

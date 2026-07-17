@@ -339,6 +339,7 @@ fn local_state_store_ingests_read_cursor_update_to_device() {
     let path = temp_state_path("read-cursor-update");
     let mut store = LocalStateStore::with_path(path.clone());
     store.ingest_to_device_messages(&[serde_json::from_value(serde_json::json!({
+        "message_id": "ak:device_message:01904100-0000-7000-8000-000000000005",
         "kind": "ak.read_cursor.update",
         "sender_principal_id": "did:webvh:z6mkfixture:alice.example",
         "sender_device_id": "ak:device:01904100-0000-7000-8000-000000000001",
@@ -377,6 +378,67 @@ fn local_state_store_ingests_read_cursor_update_to_device() {
         marker.body.position.event_id,
         "ak:event:01904100-0000-7000-8000-000000000004"
     );
+}
+
+#[test]
+fn local_state_store_durably_deduplicates_device_message_envelopes() {
+    let path = temp_state_path("device-message-dedup");
+    let message: arkret_sdk::DeviceMessageEnvelope = serde_json::from_value(serde_json::json!({
+    "message_id": "ak:device_message:0196419b-0000-7000-8000-000000000071",
+    "kind": "ak.key.verification.request",
+    "sender_principal_id": "did:webvh:z6mkfixture:alice.example",
+    "sender_device_id": "ak:device:0196419b-0000-7000-8000-000000000001",
+    "recipient_principal_id": "did:webvh:z6mkfixture:alice.example",
+    "recipient_device_id": "ak:device:0196419b-0000-7000-8000-000000000002",
+    "sent_at": "2026-07-17T00:00:00Z",
+    "expires_at": "2099-07-17T00:10:00Z",
+    "content": {
+        "from_device": "ak:device:0196419b-0000-7000-8000-000000000001",
+        "pairing_code": "123456"
+    }
+    }))
+    .unwrap();
+
+    let mut writer = LocalStateStore::with_path(path.clone());
+    assert_eq!(writer.ingest_to_device_messages(&[message.clone()]), 1);
+    assert_eq!(writer.ingest_to_device_messages(&[message.clone()]), 0);
+    assert_eq!(writer.to_device_inbox().len(), 1);
+    assert_eq!(writer.load().to_device_receipts.len(), 1);
+    assert_eq!(
+        writer.dismiss_pairing_to_device_message(
+            "ak:device:0196419b-0000-7000-8000-000000000001",
+            "123456",
+        ),
+        1
+    );
+
+    let mut reopened = LocalStateStore::with_path(path);
+    assert_eq!(reopened.ingest_to_device_messages(&[message]), 0);
+    assert!(reopened.to_device_inbox().is_empty());
+
+    let conflicting: arkret_sdk::DeviceMessageEnvelope =
+        serde_json::from_value(serde_json::json!({
+        "message_id": "ak:device_message:0196419b-0000-7000-8000-000000000071",
+        "kind": "ak.key.verification.request",
+        "sender_principal_id": "did:webvh:z6mkfixture:alice.example",
+        "sender_device_id": "ak:device:0196419b-0000-7000-8000-000000000001",
+        "recipient_principal_id": "did:webvh:z6mkfixture:alice.example",
+        "recipient_device_id": "ak:device:0196419b-0000-7000-8000-000000000002",
+        "sent_at": "2026-07-17T00:00:00Z",
+        "expires_at": "2099-07-17T00:10:00Z",
+        "content": {
+            "from_device": "ak:device:0196419b-0000-7000-8000-000000000001",
+            "pairing_code": "654321"
+        }
+        }))
+        .unwrap();
+    assert_eq!(reopened.ingest_to_device_messages(&[conflicting]), 0);
+    assert!(
+        reopened
+            .persist_error()
+            .is_some_and(|error| error.contains("device_message_conflict"))
+    );
+    assert!(reopened.to_device_inbox().is_empty());
 }
 
 #[test]

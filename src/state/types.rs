@@ -22,6 +22,12 @@ pub struct RawOperationRecord {
     pub payload: Value,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DeviceMessageReceipt {
+    pub canonical_digest: String,
+    pub expires_at: DateTime<Utc>,
+}
+
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RealmLifecycleState {
     #[serde(default)]
@@ -694,6 +700,12 @@ pub struct ClientLocalState {
     /// plus transaction/request ids where present.
     #[serde(default)]
     pub to_device_inbox: Vec<Value>,
+    /// Durable canonical-envelope digest keyed by
+    /// `(sender_principal_id, sender_device_id, message_id)`.
+    /// The receipt is written in the same state snapshot as the inbox entry,
+    /// before any protocol-specific handler runs.
+    #[serde(default)]
+    pub to_device_receipts: BTreeMap<String, DeviceMessageReceipt>,
     #[serde(default)]
     pub notification_client_state: BTreeMap<String, NotificationClientState>,
     /// Per-realm watch level overrides (spec
@@ -1182,6 +1194,7 @@ impl Default for ClientLocalState {
             presence_visibility: PresenceVisibility::Public,
             presence_preference: PresencePreferenceState::default(),
             to_device_inbox: Vec::new(),
+            to_device_receipts: BTreeMap::new(),
             notification_client_state: BTreeMap::new(),
             realm_watch_levels: BTreeMap::new(),
             muted_notification_kinds: BTreeMap::new(),

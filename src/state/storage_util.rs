@@ -10,61 +10,33 @@
 use super::*;
 
 pub(crate) fn to_device_message_dedup_key(message: &Value) -> String {
-    let kind = message
-        .get("kind")
-        .or_else(|| message.get("type"))
-        .and_then(Value::as_str)
-        .unwrap_or("");
     let sender = message
         .get("sender_principal_id")
-        .or_else(|| message.get("sender"))
         .and_then(Value::as_str)
         .unwrap_or("");
     let sender_device = message
         .get("sender_device_id")
         .and_then(Value::as_str)
         .unwrap_or("");
-    let recipient = message
-        .get("recipient_principal_id")
-        .or_else(|| message.get("recipient"))
+    let message_id = message
+        .get("message_id")
         .and_then(Value::as_str)
         .unwrap_or("");
-    let recipient_device = message
-        .get("recipient_device_id")
-        .or_else(|| message.get("device_id"))
-        .and_then(Value::as_str)
-        .unwrap_or("");
-    let content = message
-        .get("content")
-        .or_else(|| message.get("payload"))
-        .unwrap_or(&Value::Null);
-    let transaction = content
-        .get("transaction_id")
-        .or_else(|| content.get("request_id"))
-        .or_else(|| content.get("operation_id"))
-        .or_else(|| content.get("event_id"))
-        .or_else(|| content.get("pairing_code"))
-        .or_else(|| message.get("request_id"))
-        .or_else(|| message.get("transaction_id"))
-        .or_else(|| message.get("operation_id"))
-        .or_else(|| message.get("event_id"))
-        .and_then(Value::as_str)
-        .unwrap_or("");
-    if !transaction.is_empty() {
-        return format!(
-            "{kind}|{sender}|{sender_device}|{recipient}|{recipient_device}|{transaction}"
-        );
-    }
-    serde_json::to_string(message).unwrap_or_else(|_| format!("{kind}|{sender}|{recipient}"))
+    format!("{sender}|{sender_device}|{message_id}")
 }
 
 pub(crate) fn to_device_message_expired(message: &Value, now: DateTime<Utc>) -> bool {
+    to_device_message_expiry(message)
+        .map(|expires_at| expires_at <= now)
+        .unwrap_or(false)
+}
+
+pub(crate) fn to_device_message_expiry(message: &Value) -> Option<DateTime<Utc>> {
     message
         .get("expires_at")
         .and_then(Value::as_str)
         .and_then(|value| DateTime::parse_from_rfc3339(value).ok())
-        .map(|expires_at| expires_at.with_timezone(&Utc) <= now)
-        .unwrap_or(false)
+        .map(|expires_at| expires_at.with_timezone(&Utc))
 }
 
 pub(crate) fn read_scope_for_cursor(realm_id: &str, topic_id: Option<&str>) -> ReadScope {

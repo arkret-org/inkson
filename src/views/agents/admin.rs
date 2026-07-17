@@ -35,6 +35,10 @@ use crate::ui::switch::Switch;
 use crate::ui::textarea::Textarea;
 use crate::views::helpers::short_protocol_id;
 
+fn normalize_agent_slug(value: &str) -> String {
+    value.trim().to_ascii_lowercase()
+}
+
 fn agent_field(agent: &AgentView, key: &str) -> String {
     match key {
         "agent_id" => agent.agent.agent_id.to_string(),
@@ -152,6 +156,12 @@ fn replace_agent_directory(rows: &mut Vec<AgentView>, directory_rows: Vec<AgentV
 #[cfg(test)]
 mod directory_refresh_tests {
     use super::*;
+
+    #[test]
+    fn agent_slug_input_is_trimmed_and_lowercased() {
+        assert_eq!(normalize_agent_slug(" AA "), "aa");
+        assert_eq!(normalize_agent_slug("Summary_V2"), "summary_v2");
+    }
 
     #[test]
     fn directory_refresh_updates_status_without_dropping_loaded_details() {
@@ -750,7 +760,9 @@ pub fn PersonalAgentAdminPanel(token: Signal<String>) -> Element {
                                     "data-testid": "agent-admin-provision-agent-slug",
                                     placeholder: "Slug (required)",
                                     value: "{new_agent_slug}",
-                                    oninput: move |event: FormEvent| new_agent_slug.set(event.value()),
+                                    oninput: move |event: FormEvent| {
+                                        new_agent_slug.set(normalize_agent_slug(&event.value()));
+                                    },
                                 }
                                 div { class: "agent-admin-section-head",
                                     strong { "Avatar" }
@@ -853,9 +865,15 @@ pub fn PersonalAgentAdminPanel(token: Signal<String>) -> Element {
                                         onclick: {
                                             let base = base_url.clone();
                                             move |_| {
-                                                let slug_value = new_agent_slug().trim().to_owned();
+                                                let slug_value = normalize_agent_slug(&new_agent_slug());
                                                 if slug_value.is_empty() {
                                                     last_op_status.set("Slug is required.".to_owned());
+                                                    return;
+                                                }
+                                                if let Err(error) =
+                                                    arkret_sdk::models::validate_agent_slug(&slug_value)
+                                                {
+                                                    last_op_status.set(format!("Slug is invalid: {error}"));
                                                     return;
                                                 }
                                                 let content_presets = provision_presets.read().clone();

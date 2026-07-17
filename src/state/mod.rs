@@ -49,6 +49,7 @@ fn account_state_key(did: &str) -> String {
 /// `RAW_OPERATIONS_MAX` records, dropping the oldest first.
 const RAW_OPERATIONS_MAX: usize = 512;
 const TO_DEVICE_INBOX_MAX: usize = 512;
+const TO_DEVICE_RECEIPTS_MAX: usize = 4096;
 
 // Structural split: client-state data types (RawOperationRecord,
 // ClientLocalState, MlsReceiveOverlay, the persisted-record structs, ...)

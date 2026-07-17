@@ -5677,6 +5677,7 @@ mod tests {
         snapshot.epoch = 1;
         store.save_mls_snapshot(realm.to_owned(), snapshot);
         store.ingest_to_device_messages(&[serde_json::from_value(json!({
+            "message_id": "ak:device_message:0196419b-0000-7000-8000-000000000003",
             "kind": "ak.mls.welcome",
             "sender_principal_id": PROVIDER_DID,
             "sender_device_id": PROVIDER_DEVICE,

@@ -1130,12 +1130,15 @@ fn space_cell(cell_family: &str, space_id: &str) -> String {
 /// Pure function so the wire shape is testable without a live HTTP
 /// client; used by [`TransportClient::send_device_message_envelope`] (R3).
 pub fn build_device_message_envelope(
+    message_id: &str,
     target_actor: &str,
     target_device_id: &str,
     kind: &str,
     expires_at: &str,
     content: serde_json::Value,
 ) -> anyhow::Result<arkret_sdk::models::DeviceMessagesSendRequestBody> {
+    let message_id = arkret_sdk::DeviceMessageId::new(message_id.to_owned())
+        .map_err(|err| anyhow::anyhow!("invalid device-message message_id: {err}"))?;
     let target_actor = arkret_sdk::Did::new(target_actor.to_owned())
         .map_err(|err| anyhow::anyhow!("invalid device-message target actor: {err}"))?;
     let target_device_id = arkret_sdk::DeviceId::new(target_device_id.to_owned())
@@ -1145,6 +1148,7 @@ pub fn build_device_message_envelope(
         .with_timezone(&chrono::Utc);
 
     let target = arkret_sdk::models::DeviceMessageTarget {
+        message_id,
         kind: arkret_sdk::ProtocolKind::new(kind)
             .map_err(|err| anyhow::anyhow!("invalid device-message kind: {err}"))?,
         content: content

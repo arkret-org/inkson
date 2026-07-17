@@ -274,7 +274,8 @@ test("account settings split account/server info and surface personal agents", a
   await expect(page.getByTestId("agent-admin-provision-display-name")).toHaveCount(0);
   await expect(page.getByTestId("agent-admin-provision-avatar")).toBeVisible();
   await expect(page.getByTestId("agent-admin-provision-button")).toBeDisabled();
-  await page.getByTestId("agent-admin-provision-agent-slug").fill("summary");
+  await page.getByTestId("agent-admin-provision-agent-slug").fill("Summary");
+  await expect(page.getByTestId("agent-admin-provision-agent-slug")).toHaveValue("summary");
   await expect(page.getByTestId("agent-admin-provision-avatar-preview")).toHaveClass(
     /generated-avatar/,
   );

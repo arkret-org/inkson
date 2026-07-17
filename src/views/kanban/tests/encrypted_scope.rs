@@ -171,6 +171,7 @@ fn encrypted_private_patch_reports_unusable_pending_local_welcome() {
 
     let mut state = temp_state_store("pending-local-welcome");
     state.ingest_to_device_messages(&[serde_json::from_value(json!({
+        "message_id": "ak:device_message:01904100-0000-7000-8000-0000000000e1",
         "kind": "ak.mls.welcome",
         "sender_principal_id": "did:web:alice.example",
         "sender_device_id": "ak:device:01904100-0000-7000-8000-0000000000a1",
@@ -235,6 +236,7 @@ fn encrypted_private_patch_applies_pending_welcome_with_key_package_state() {
 
     let mut state = temp_state_store("pending-local-welcome-with-state");
     state.ingest_to_device_messages(&[serde_json::from_value(json!({
+        "message_id": "ak:device_message:01904100-0000-7000-8000-0000000000e2",
         "kind": "ak.mls.welcome",
         "sender_principal_id": "did:web:alice.example",
         "sender_device_id": "ak:device:01904100-0000-7000-8000-0000000000a1",
