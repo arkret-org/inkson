@@ -192,7 +192,7 @@ mod tests {
             "executed_by": "did:webvh:example:auth-server",
             "authorization_ref": "did:webvh:example:users:alice#device-enrollment",
             "actor_seq": 3,
-            "created_at": "2026-06-17T00:00:00Z",
+            "created_at": "2026-06-17T00:00:00.000Z",
             "hlc": "019641370000-0000-12345678",
             "prev_refs": [],
             "payload": {
@@ -212,7 +212,7 @@ mod tests {
                 "alg": "EdDSA",
                 "verification_method": "did:webvh:example:auth-server#enroll-key-1",
                 "event_digest": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
-                "created_at": "2026-06-17T00:00:00Z",
+                "created_at": "2026-06-17T00:00:00.000Z",
                 "domain": "did:webvh:example:auth-server",
                 "audience": "did:webvh:soland.example",
                 "jws": "ey.ey.sig"
@@ -240,7 +240,7 @@ mod tests {
             "executed_by": "did:web:auth.local.host",
             "authorization_ref": "did:web:first.example#device-enrollment",
             "actor_seq": 1,
-            "created_at": "2026-06-22T00:00:00Z",
+            "created_at": "2026-06-22T00:00:00.000Z",
             "hlc": "019641370000-0000-12345678",
             "prev_refs": [],
             "refs": [],
@@ -261,7 +261,7 @@ mod tests {
                 "alg": "EdDSA",
                 "verification_method": "did:web:auth.local.host#enroll-key-1",
                 "event_digest": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
-                "created_at": "2026-06-22T00:00:00Z",
+                "created_at": "2026-06-22T00:00:00.000Z",
                 "domain": "did:web:auth.local.host",
                 "audience": "did:web:server.local",
                 "jws": "ey.ey.sig"

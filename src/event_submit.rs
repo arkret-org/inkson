@@ -1448,7 +1448,7 @@ mod tests {
             "realm_id": "ak:realm:01904100-0000-7000-8000-000000000001",
             "actor_id": actor_id,
             "actor_seq": 1,
-            "created_at": "2026-05-19T00:00:00Z",
+            "created_at": "2026-05-19T00:00:00.000Z",
             "hlc": "01970e589d21-0001-a13f9c2e",
             "prev_refs": [],
             "payload": {
@@ -1472,7 +1472,7 @@ mod tests {
             "realm_id": realm_id,
             "actor_id": actor_id,
             "actor_seq": 1,
-            "created_at": "2026-05-19T00:00:00Z",
+            "created_at": "2026-05-19T00:00:00.000Z",
             "hlc": "01970e589d21-0001-a13f9c2e",
             "prev_refs": [],
             "payload": {},
@@ -1730,7 +1730,7 @@ mod tests {
             "alg": "EdDSA",
             "verification_method": "did:web:alice.example#device-1",
             "event_digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-            "created_at": "2026-05-19T00:00:00Z",
+            "created_at": "2026-05-19T00:00:00.000Z",
             "jws": "header.payload.signature"
         });
         if let Some(domain) = domain {
@@ -1745,7 +1745,7 @@ mod tests {
             "realm_id": "ak:realm:01904100-0000-7000-8000-000000000001",
             "actor_id": "did:web:alice.example",
             "actor_seq": 1,
-            "created_at": "2026-05-19T00:00:00Z",
+            "created_at": "2026-05-19T00:00:00.000Z",
             "hlc": "01970e589d21-0001-a13f9c2e",
             "prev_refs": [],
             "payload": {

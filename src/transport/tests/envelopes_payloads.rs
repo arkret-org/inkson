@@ -284,9 +284,7 @@ fn space_bootstrap_events_use_canonical_create_and_facet_kinds() {
     );
     assert_eq!(
         create.payload["object"]["created_at"].as_str().unwrap(),
-        create
-            .created_at
-            .to_rfc3339_opts(chrono::SecondsFormat::Secs, true),
+        arkret_sdk::canonical::format_timestamp_millis_canonical(create.created_at),
         "Realm create cross-field semantic validation requires matching timestamps",
     );
     assert_eq!(create.payload["object"]["default_join_rule"], "invite");

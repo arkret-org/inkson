@@ -154,7 +154,7 @@ mod tests {
             "realm_id": "ak:realm:01904100-0000-7000-8000-000000000001",
             "actor_id": "did:web:alice.example",
             "actor_seq": 1,
-            "created_at": "2026-05-19T00:00:00Z",
+            "created_at": "2026-05-19T00:00:00.000Z",
             "hlc": "01970e589d21-0001-a13f9c2e",
             "prev_refs": [],
             "payload": {"kind": "ak.content.text", "body": "hi"},

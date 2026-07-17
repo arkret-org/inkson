@@ -14,12 +14,9 @@ use crate::realm_defaults::{
     RECOMMENDED_REALM_ENCRYPTION_FLOOR, RECOMMENDED_REALM_ENCRYPTION_PROFILE,
 };
 
-/// RFC3339 timestamp in the canonical wire form soland's
-/// `canonical::validate_timestamp_canonical` accepts: exactly
-/// `YYYY-MM-DDTHH:MM:SSZ` (20 chars, UTC `Z` suffix, NO fractional
-/// seconds - spec encoding.md section 3.5).
+/// Canonical Event timestamp: UTC with exactly three millisecond digits.
 fn event_timestamp() -> String {
-    crate::clock::now_rfc3339_secs()
+    crate::clock::now_rfc3339_millis()
 }
 
 fn set_sdk_event_created_at(event: &mut arkret_sdk::Event, created_at: &str) -> anyhow::Result<()> {

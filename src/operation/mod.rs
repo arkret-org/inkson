@@ -249,9 +249,7 @@ impl OperationBuilder {
                     .map_err(|err| anyhow::anyhow!("invalid prev_refs event id: {err}"))
             })
             .collect::<anyhow::Result<Vec<_>>>()?;
-        let created_at = chrono::DateTime::parse_from_rfc3339(&crate::clock::now_rfc3339_secs())
-            .map_err(|err| anyhow::anyhow!("event timestamp is not canonical RFC3339: {err}"))?
-            .with_timezone(&chrono::Utc);
+        let created_at = crate::clock::now_utc_millis();
         Ok(arkret_sdk::Event {
             event_id: arkret_sdk::EventId::new(format!("ak:event:{}", uuid_v7()))
                 .map_err(|err| anyhow::anyhow!("generated event_id is invalid: {err}"))?,

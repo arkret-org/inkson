@@ -1,7 +1,7 @@
 //! Client-authored principal registration and resumable bootstrap checkpoint.
 
 use anyhow::{Context as _, anyhow};
-use chrono::{SecondsFormat, Timelike as _, Utc};
+use chrono::{Timelike as _, Utc};
 use url::Url;
 
 use crate::state::{
@@ -80,7 +80,7 @@ pub fn prepare_registration_checkpoint(
         recovery_key_fingerprint: crate::recovery_crypto::fingerprint_recovery_key(recovery_key),
         did_operation: serde_json::to_value(draft.submit_body)?,
         bootstrap_create_event_id,
-        bootstrap_created_at: created_at.to_rfc3339_opts(SecondsFormat::Secs, true),
+        bootstrap_created_at: arkret_sdk::canonical::format_timestamp_millis_canonical(created_at),
         bootstrap_hlc,
         binding_receipt: None,
         stage: PendingPrincipalRegistrationStage::CustodyConfirmed,
@@ -326,6 +326,10 @@ mod tests {
         assert!(!persisted.contains("root_seed"));
         assert!(!persisted.contains("recovery_proof_seed"));
         assert!(!persisted.contains("backup_hpke_private"));
+        arkret_sdk::canonical::validate_timestamp_millis_canonical(
+            &checkpoint.bootstrap_created_at,
+        )
+        .unwrap();
         validate_checkpoint_recovery_key(&checkpoint, &recovery_key).unwrap();
 
         let another_key = crate::recovery_crypto::generate_recovery_key().unwrap();

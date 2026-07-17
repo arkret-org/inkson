@@ -519,6 +519,10 @@ mod personal_agent_tests {
         assert_eq!(event.payload["agent_id"], agent);
         assert_eq!(event.payload["verification_method"], verification_method);
         assert_eq!(event.payload["public_key_digest"], runtime_digest.as_str());
+        let event_wire = serde_json::to_value(&event).unwrap();
+        let event_created_at = event_wire["created_at"].as_str().unwrap();
+        assert_eq!(event_created_at.len(), 24);
+        arkret_sdk::canonical::validate_timestamp_millis_canonical(event_created_at).unwrap();
         event.payload["issued_at"]
             .as_str()
             .unwrap()
