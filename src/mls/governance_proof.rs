@@ -663,6 +663,14 @@ fn verify_request_binding(
 mod tests {
     use super::*;
 
+    fn temp_state_path(name: &str) -> std::path::PathBuf {
+        let stamp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("time")
+            .as_nanos();
+        std::env::temp_dir().join(format!("inkson-{name}-{stamp}.json"))
+    }
+
     fn frontier_event(actor: &str) -> arkret_sdk::Event {
         arkret_sdk::Event::new(
             "ak.member.state",
@@ -752,6 +760,73 @@ mod tests {
         assert!(!governance_projection_pending(
             &arkret_sdk::Error::Protocol("member cell is still Bottom".to_owned(),)
         ));
+    }
+
+    #[test]
+    fn incomplete_chunk_acquisition_survives_state_store_restart() {
+        let path = temp_state_path("mls-governance-acquisition");
+        let realm_id = "ak:realm:01904100-0000-7000-8000-000000000001";
+        let request;
+        let expected_chunk;
+        {
+            let mut writer = crate::state::LocalStateStore::with_path(path.clone());
+            let anchor = arkret_sdk::SealId::new(
+                "ak:seal:sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            )
+            .unwrap();
+            writer.pin_mls_governance_anchor(realm_id, &anchor).unwrap();
+            seed_test_governance_proof(&mut writer, realm_id, None, "dGVzdC1tbHM", 0, 1);
+            request = proof_request(&writer, realm_id, None, "dGVzdC1tbHM", 0, 1).unwrap();
+            let mut materialized = writer
+                .cached_mls_governance_proof(&request, chrono::Utc::now())
+                .unwrap()
+                .expect("seeded materialized proof");
+            let root = arkret_sdk::Hash::new(format!("sha256:{}", "11".repeat(32))).unwrap();
+            materialized.seal_path = vec![arkret_sdk::Seal {
+                id: anchor.clone(),
+                realm_id: request.realm_id.clone(),
+                predecessor_refs: Vec::new(),
+                delta: Vec::new(),
+                control_event_set_root: root.clone(),
+                state_root: root.clone(),
+                completeness_root: root.clone(),
+                notary_seq: 0,
+                data_view_root: None,
+                data_event_set_root: None,
+                availability_root: None,
+                coverage_scope: None,
+                covered_event_digests: Vec::new(),
+                previous_state_root: None,
+                previous_digest_algorithm: None,
+                notary_signature: arkret_sdk::NotarySig::Single(arkret_sdk::MoveSignature {
+                    alg: "EdDSA".to_owned(),
+                    verification_method: "did:web:notary.example#key-1".to_owned(),
+                    payload_digest: root,
+                    created_at: chrono::Utc::now(),
+                    jws: "AAAA.BBBB.CCCC".to_owned(),
+                }),
+                sealed_at: chrono::Utc::now(),
+                hlc: arkret_sdk::Hlc::new("01980b44cc01-0000-aabbccdd").unwrap(),
+                kind: arkret_sdk::SealKind::Compaction,
+            }];
+            materialized.frontier_events = vec![frontier_event("did:webvh:zfixture:alice.example")];
+            expected_chunk = arkret_sdk::build_mls_governance_proof_chunks(&request, &materialized)
+                .unwrap()
+                .remove(0);
+            writer
+                .persist_mls_governance_acquisition_chunk(&request, &expected_chunk)
+                .unwrap();
+        }
+
+        let reader = crate::state::LocalStateStore::with_path(path.clone());
+        let resumed = reader
+            .cached_mls_governance_acquisition(&request)
+            .expect("restart reloads incomplete acquisition");
+        assert_eq!(
+            serde_json::to_value(&resumed).unwrap(),
+            serde_json::to_value([expected_chunk]).unwrap()
+        );
+        let _ = std::fs::remove_file(path);
     }
 }
 

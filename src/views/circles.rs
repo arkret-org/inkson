@@ -427,7 +427,7 @@ pub fn CirclesPanel(
                                             title: create_title().trim().to_owned(),
                                             summary: (!create_summary().trim().is_empty()).then(|| create_summary().trim().to_owned()),
                                             directory_visibility: Some(arkret_sdk::CircleDirectoryVisibility::Members),
-                                            join_rule: Some(arkret_sdk::CircleJoinRule::Open),
+                                            join_rule: Some(arkret_sdk::CircleJoinRule::Public),
                                             history_visibility: Some(arkret_sdk::HistoryVisibility::Joined),
                                             content_encryption_floor: None,
                                             metadata_encryption_floor: None,

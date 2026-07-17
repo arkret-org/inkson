@@ -7,7 +7,7 @@
 pub use arkret_sdk::{
     FileTransferAad, FileTransferAccess, FileTransferAccessVisibility, FileTransferEncryption,
     FileTransferKeyDelivery, FileTransferKeyEnvelope, FileTransferKeyMessage, FileTransferRecord,
-    FileTransferState,
+    FileTransferStatus,
 };
 use base64::Engine as _;
 use base64::engine::general_purpose::{STANDARD as BASE64_STANDARD, URL_SAFE_NO_PAD};
@@ -380,7 +380,7 @@ pub fn file_transfer_items_from_account_data(
     let mut items = entries
         .iter()
         .filter_map(|entry| file_transfer_item_from_account_data(entry, crypto).ok())
-        .filter(|item| item.record.state != FileTransferState::Deleted)
+        .filter(|item| item.record.status != FileTransferStatus::Deleted)
         .collect::<Vec<_>>();
     items.sort_by(|left, right| {
         right
@@ -513,7 +513,7 @@ impl PreparedFileTransfer {
             created_at: self.created_at,
             updated_hlc: self.updated_hlc,
             retention_expires_at: self.retention_expires_at,
-            state: FileTransferState::Available,
+            status: FileTransferStatus::Available,
         };
         record
             .validate()
@@ -586,7 +586,7 @@ impl PreparedFileTransfer {
             created_at: self.created_at,
             updated_hlc: self.updated_hlc,
             retention_expires_at: self.retention_expires_at,
-            state: FileTransferState::Available,
+            status: FileTransferStatus::Available,
         };
         record
             .validate()
