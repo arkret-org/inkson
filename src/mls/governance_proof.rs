@@ -131,7 +131,9 @@ pub(crate) async fn fetch_proof_bundle(
             state_store
                 .write()
                 .clear_mls_governance_acquisition(&first_request)?;
-            return Err("MLS governance proof service changed manifest during acquisition".to_owned());
+            return Err(
+                "MLS governance proof service changed manifest during acquisition".to_owned(),
+            );
         }
         state_store
             .write()
