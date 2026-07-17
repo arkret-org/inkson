@@ -770,12 +770,46 @@ mod tests {
         let expected_chunk;
         {
             let mut writer = crate::state::LocalStateStore::with_path(path.clone());
+            let anchor = arkret_sdk::SealId::new(
+                "ak:seal:sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            )
+            .unwrap();
+            writer.pin_mls_governance_anchor(realm_id, &anchor).unwrap();
             seed_test_governance_proof(&mut writer, realm_id, None, "dGVzdC1tbHM", 0, 1);
             request = proof_request(&writer, realm_id, None, "dGVzdC1tbHM", 0, 1).unwrap();
-            let materialized = writer
+            let mut materialized = writer
                 .cached_mls_governance_proof(&request, chrono::Utc::now())
                 .unwrap()
                 .expect("seeded materialized proof");
+            let root = arkret_sdk::Hash::new(format!("sha256:{}", "11".repeat(32))).unwrap();
+            materialized.seal_path = vec![arkret_sdk::Seal {
+                id: anchor.clone(),
+                realm_id: request.realm_id.clone(),
+                predecessor_refs: Vec::new(),
+                delta: Vec::new(),
+                control_event_set_root: root.clone(),
+                state_root: root.clone(),
+                completeness_root: root.clone(),
+                notary_seq: 0,
+                data_view_root: None,
+                data_event_set_root: None,
+                availability_root: None,
+                coverage_scope: None,
+                covered_event_digests: Vec::new(),
+                previous_state_root: None,
+                previous_digest_algorithm: None,
+                notary_signature: arkret_sdk::NotarySig::Single(arkret_sdk::MoveSignature {
+                    alg: "EdDSA".to_owned(),
+                    verification_method: "did:web:notary.example#key-1".to_owned(),
+                    payload_digest: root,
+                    created_at: chrono::Utc::now(),
+                    jws: "AAAA.BBBB.CCCC".to_owned(),
+                }),
+                sealed_at: chrono::Utc::now(),
+                hlc: arkret_sdk::Hlc::new("01980b44cc01-0000-aabbccdd").unwrap(),
+                kind: arkret_sdk::SealKind::Compaction,
+            }];
+            materialized.frontier_events = vec![frontier_event("did:webvh:zfixture:alice.example")];
             expected_chunk = arkret_sdk::build_mls_governance_proof_chunks(&request, &materialized)
                 .unwrap()
                 .remove(0);
@@ -788,7 +822,10 @@ mod tests {
         let resumed = reader
             .cached_mls_governance_acquisition(&request)
             .expect("restart reloads incomplete acquisition");
-        assert_eq!(resumed, vec![expected_chunk]);
+        assert_eq!(
+            serde_json::to_value(&resumed).unwrap(),
+            serde_json::to_value([expected_chunk]).unwrap()
+        );
         let _ = std::fs::remove_file(path);
     }
 }
