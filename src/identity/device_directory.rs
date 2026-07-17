@@ -571,29 +571,61 @@ pub fn verify_proof_value(
     actor_id: &str,
     public_key: &PublicKeyMaterial,
 ) -> bool {
-    let proof: arkret_sdk::Proof = match serde_json::from_value(proof_value.clone()) {
-        Ok(proof) => proof,
-        Err(_) => return false,
-    };
-    // §5.1: the verification_method controller DID MUST equal envelope actor_id.
-    if verification_method_controller(&proof.verification_method) != actor_id {
-        return false;
+    verify_proof_value_for_signer(
+        envelope_without_proof,
+        proof_value,
+        actor_id,
+        actor_id,
+        public_key,
+    )
+}
+
+/// Verify a detached Event proof whose signing principal differs from the
+/// envelope actor (for example, a controller device executing an Agent Event).
+/// `signer_id` binds the verification-method controller and device-directory
+/// key; `binding_actor_id` is the immutable Event `actor_id` included in the
+/// signed proof transcript. Keeping them separate prevents either identity
+/// from being substituted for the other on delegated authoring paths.
+pub fn verify_proof_value_for_signer(
+    envelope_without_proof: &serde_json::Value,
+    proof_value: &serde_json::Value,
+    signer_id: &str,
+    binding_actor_id: &str,
+    public_key: &PublicKeyMaterial,
+) -> bool {
+    verify_proof_value_for_signer_result(
+        envelope_without_proof,
+        proof_value,
+        signer_id,
+        binding_actor_id,
+        public_key,
+    )
+    .is_ok()
+}
+
+pub fn verify_proof_value_for_signer_result(
+    envelope_without_proof: &serde_json::Value,
+    proof_value: &serde_json::Value,
+    signer_id: &str,
+    binding_actor_id: &str,
+    public_key: &PublicKeyMaterial,
+) -> Result<(), String> {
+    let proof: arkret_sdk::Proof = serde_json::from_value(proof_value.clone())
+        .map_err(|error| format!("decode Event proof: {error}"))?;
+    if verification_method_controller(&proof.verification_method) != signer_id {
+        return Err("Event proof verification-method controller differs from signer".to_owned());
     }
-    let did = match arkret_sdk::Did::new(actor_id.to_owned()) {
-        Ok(did) => did,
-        Err(_) => return false,
-    };
-    let canonical_bytes = match crate::canonical::canonical_json_bytes(envelope_without_proof) {
-        Ok(bytes) => bytes,
-        Err(_) => return false,
-    };
+    let did = arkret_sdk::Did::new(binding_actor_id.to_owned())
+        .map_err(|error| format!("invalid Event binding actor DID: {error}"))?;
+    let canonical_bytes = crate::canonical::canonical_json_bytes(envelope_without_proof)
+        .map_err(|error| format!("canonicalize Event proof envelope: {error}"))?;
     arkret_sdk::signatures::verify_eddsa_detached_jws_proof(
         &proof,
         &canonical_bytes,
         &did,
         public_key,
     )
-    .is_ok()
+    .map_err(|error| error.to_string())
 }
 
 /// Maximum accepted age of an ephemeral (call-signal) proof's `created_at`

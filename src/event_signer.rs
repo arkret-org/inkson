@@ -383,6 +383,30 @@ impl InksonEventSigner {
             .map_err(|error| EventSignerError::Backend(error.to_string()))
     }
 
+    /// Sign a managed Agent PCR Seal as the controller device named by the
+    /// Agent DID's accepted delegation. The wire signer is rebound to the
+    /// controller DID and the authenticated `<controller>#<device_id>` method.
+    pub fn sign_managed_agent_pcr_event_seal(
+        &self,
+        controller_id: &arkret_sdk::Did,
+        events: &[arkret_sdk::Event],
+        predecessor: Option<&arkret_sdk::Seal>,
+        hlc: arkret_sdk::Hlc,
+    ) -> Result<arkret_sdk::Seal, EventSignerError> {
+        let device_id = self.device_id.as_deref().ok_or_else(|| {
+            EventSignerError::Encoding(
+                "managed Agent PCR Seal requires a bound device_id".to_owned(),
+            )
+        })?;
+        let signer = InksonMoveSignerAdapter {
+            owner: self,
+            did: controller_id.clone(),
+            verification_method: format!("{controller_id}#{device_id}"),
+        };
+        arkret_sdk::identity::build_managed_agent_pcr_event_seal(events, predecessor, hlc, &signer)
+            .map_err(|error| EventSignerError::Backend(error.to_string()))
+    }
+
     /// Produce a detached JWS (`<b64u header>..<b64u sig>`) over `bytes`
     /// using the active backend, matching the alg-only protected header
     /// shape [`Self::sign_envelope_with_context`] uses. Control-plane

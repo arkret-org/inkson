@@ -276,6 +276,7 @@ fn build_managed_pcr_backup_body(
     controller_id: &str,
     device_id: &str,
     recovery_public_key: &[u8],
+    recovery_key_ref: &str,
     recovery_policy_ref: (&str, u64),
     backup_id: &str,
     series_id: &str,
@@ -311,7 +312,6 @@ fn build_managed_pcr_backup_body(
         "items": plaintext_items
     });
     let plaintext_bytes = crate::canonical::canonical_json_bytes(&plaintext)?;
-    let recovery_key_ref = format!("{controller_id}#recovery");
     let contents = items
         .iter()
         .map(|item| {
@@ -330,7 +330,7 @@ fn build_managed_pcr_backup_body(
         controller_id,
         device_id,
         recovery_public_key,
-        &recovery_key_ref,
+        recovery_key_ref,
         crate::key_backup::BackupClass::MlsHistory,
         "managed_agent_pcr",
         &contents,
@@ -350,6 +350,56 @@ fn build_managed_pcr_backup_body(
     Ok(body)
 }
 
+fn current_controller_backup_hpke_key_ref(
+    active_policy: &crate::recovery_strand::ActiveRecoveryPolicy,
+    controller_id: &str,
+    recovery_public_key: &[u8],
+    evaluated_at: chrono::DateTime<chrono::Utc>,
+) -> anyhow::Result<String> {
+    let policy = active_policy.policy.as_ref().ok_or_else(|| {
+        anyhow::anyhow!("active controller recovery policy omitted its signed key configuration")
+    })?;
+    policy.validate()?;
+    if active_policy.principal_id.as_str() != controller_id
+        || policy.principal_id != active_policy.principal_id
+        || policy.policy_id != active_policy.policy_id
+        || policy.version != active_policy.version
+    {
+        anyhow::bail!("active controller recovery policy summary differs from its signed body");
+    }
+    let matches = policy
+        .recovery_key_agreements
+        .as_deref()
+        .unwrap_or_default()
+        .iter()
+        .filter(|entry| {
+            entry.usage == arkret_sdk::models::RecoveryKeyAgreementUse::BackupHpke
+                && entry.revoked_at.is_none()
+                && entry.not_before <= evaluated_at
+                && entry.expires_at > evaluated_at
+                && entry
+                    .hpke_suites
+                    .contains(&arkret_sdk::models::RecoveryHpkeSuite::X25519ChaCha20Poly1305)
+        })
+        .filter_map(|entry| {
+            let encoded =
+                arkret_sdk::decode_multibase_base58btc(entry.public_key_multibase.as_str()).ok()?;
+            let (codec, header_len) = arkret_sdk::decode_multicodec_varint(&encoded)?;
+            (codec == 0xec && encoded.get(header_len..) == Some(recovery_public_key))
+                .then_some(entry.key_agreement_ref.as_str().to_owned())
+        })
+        .collect::<Vec<_>>();
+    match matches.as_slice() {
+        [recipient] => Ok(recipient.clone()),
+        [] => anyhow::bail!(
+            "local Recovery Key does not match a current backup HPKE key agreement in the active controller recovery policy"
+        ),
+        _ => anyhow::bail!(
+            "active controller recovery policy ambiguously maps the local Recovery Key to multiple backup HPKE key agreements"
+        ),
+    }
+}
+
 fn build_active_mls_history_series_event(
     controller_id: &str,
     series_id: &str,
@@ -359,7 +409,7 @@ fn build_active_mls_history_series_event(
 ) -> anyhow::Result<arkret_sdk::Event> {
     let signer = crate::event_signer::active_signer()
         .ok_or_else(|| anyhow::anyhow!("active controller signer is required"))?;
-    let issued_at = crate::clock::now_utc();
+    let issued_at = arkret_sdk::canonical::format_timestamp_canonical(crate::clock::now_utc());
     let mut payload = json!({
         "schema": crate::key_backup::KEY_BACKUP_ACTIVE_SERIES_SCHEMA,
         "actor_id": controller_id,
@@ -576,6 +626,57 @@ async fn collect_current_managed_pcr_backup_items(
     Ok(items.into_values().collect())
 }
 
+fn has_managed_agent_pcr_create(events: &[arkret_sdk::Event]) -> bool {
+    events.iter().any(|event| {
+        event.kind.as_str() == arkret_sdk::events::EventKind::REALM_CREATE
+            && event.effects.iter().any(|effect| {
+                effect.cell.as_str()
+                    == arkret_sdk::identity::MANAGED_AGENT_PRINCIPAL_CONTROL_CREATE_CELL
+            })
+    })
+}
+
+fn accepted_seal_from_governance_bundle(
+    bundle: &arkret_sdk::MaterializedMlsGovernanceProofBundle,
+) -> anyhow::Result<arkret_sdk::Seal> {
+    bundle
+        .seal_path
+        .iter()
+        .find(|seal| seal.id == bundle.accepted_seal_id)
+        .cloned()
+        .ok_or_else(|| {
+            anyhow::anyhow!(
+                "Agent PCR governance proof omits its accepted Seal {}",
+                bundle.accepted_seal_id
+            )
+        })
+}
+
+async fn submit_managed_agent_pcr_seal(
+    http: &arkret_sdk::http_client::Client,
+    signer: &crate::event_signer::InksonEventSigner,
+    controller_id: &arkret_sdk::Did,
+    device_id: &str,
+    realm_id: &str,
+    events: &[arkret_sdk::Event],
+    predecessor: Option<&arkret_sdk::Seal>,
+) -> anyhow::Result<arkret_sdk::Seal> {
+    let hlc =
+        crate::signing_stamp::issue_protocol_hlc(controller_id.as_str(), device_id, realm_id)?;
+    let seal = signer
+        .sign_managed_agent_pcr_event_seal(controller_id, events, predecessor, hlc)
+        .map_err(|error| anyhow::anyhow!(error.to_string()))?;
+    let expected_digests = seal.delta.clone();
+    let outcome = http.events_submit_seal(&seal).await?;
+    if outcome.seal_id != seal.id
+        || outcome.accepted_event_digests != expected_digests
+        || outcome.post_state_root != seal.state_root
+    {
+        anyhow::bail!("Principal Server returned a mismatched managed Agent PCR Seal outcome");
+    }
+    Ok(seal)
+}
+
 /// Complete the client-owned half of `agent_provision`: create the Agent PCR,
 /// generate its epoch-0 MLS state locally, publish a controller-owned managed
 /// recovery envelope, and select that envelope's series from the controller
@@ -601,6 +702,7 @@ pub(crate) async fn bootstrap_provisioned_agent(
         signer.as_ref(),
         signer_account_scope.as_deref(),
     )?;
+    let controller_did = arkret_sdk::Did::new(controller_id.clone())?;
     let agent_id = agent_id.as_str();
     let realm_id = realm_id.as_str();
     let submitter = api.event_submitter()?;
@@ -617,19 +719,41 @@ pub(crate) async fn bootstrap_provisioned_agent(
         return Ok(());
     }
 
+    let mut accepted_events = submitter.backfill(realm_id).await?.events;
+    if !has_managed_agent_pcr_create(&accepted_events) {
+        let describe = submitter.events_describe().await?;
+        let create = crate::event_builders::build_managed_agent_pcr_create_event(
+            realm_id,
+            agent_id,
+            &controller_id,
+            controller_authorization_ref,
+            describe.trust_domain.as_str(),
+        )?;
+        submitter.submit_sdk_event(&create).await?;
+        accepted_events = submitter.backfill(realm_id).await?.events;
+    }
+    if !has_managed_agent_pcr_create(&accepted_events) {
+        anyhow::bail!("Principal Server did not expose the accepted managed Agent PCR genesis");
+    }
+
     let initial_frontier = match submitter.events_frontier_realm_seal_view(realm_id).await {
         Ok(frontier) => frontier,
         Err(error) if sdk_not_found(&error) => {
-            let describe = submitter.events_describe().await?;
-            let create = crate::event_builders::build_managed_agent_pcr_create_event(
+            let seal = submit_managed_agent_pcr_seal(
+                &http,
+                signer.as_ref(),
+                &controller_did,
+                &device_id,
                 realm_id,
-                agent_id,
-                &controller_id,
-                controller_authorization_ref,
-                describe.trust_domain.as_str(),
-            )?;
-            submitter.submit_sdk_event(&create).await?;
-            submitter.events_frontier_realm_seal_view(realm_id).await?
+                &accepted_events,
+                None,
+            )
+            .await?;
+            let frontier = submitter.events_frontier_realm_seal_view(realm_id).await?;
+            if frontier.seal_id != seal.id || frontier.state_root != seal.state_root {
+                anyhow::bail!("accepted managed Agent PCR root Seal differs from its frontier");
+            }
+            frontier
         }
         Err(error) => return Err(error),
     };
@@ -652,9 +776,14 @@ pub(crate) async fn bootstrap_provisioned_agent(
         0,
     )
     .map_err(anyhow::Error::msg)?;
-    crate::mls::governance_proof::fetch_verify_and_cache_proof(api, state_store, &proof_request)
-        .await
-        .map_err(anyhow::Error::msg)?;
+    let proof_bundle = crate::mls::governance_proof::fetch_verify_and_cache_proof_bundle(
+        api,
+        state_store,
+        &proof_request,
+    )
+    .await
+    .map_err(anyhow::Error::msg)?;
+    let initial_seal = accepted_seal_from_governance_bundle(&proof_bundle)?;
 
     let secure_store = crate::secure_key_store::default_secure_key_store("inkson");
     let existing_genesis = submitter.find_mls_genesis_event_id(realm_id).await?;
@@ -667,13 +796,7 @@ pub(crate) async fn bootstrap_provisioned_agent(
                 "Agent PCR MLS genesis exists, but this controller device has no local private group state"
             );
         }
-        let observed = submitter.events_frontier_realm_seal_view(realm_id).await?;
-        if previous_seal_id == Some(observed.seal_id.as_str()) {
-            wait_for_agent_pcr_frontier(&submitter, realm_id, Some(observed.seal_id.as_str()))
-                .await?
-        } else {
-            observed
-        }
+        submitter.events_frontier_realm_seal_view(realm_id).await?
     } else {
         let summary = {
             let mut store = state_store.write();
@@ -735,12 +858,27 @@ pub(crate) async fn bootstrap_provisioned_agent(
             }
             Err(error) => return Err(error),
         }
-        wait_for_agent_pcr_frontier(
+        accepted_events = submitter.backfill(realm_id).await?.events;
+        let successor = submit_managed_agent_pcr_seal(
+            &http,
+            signer.as_ref(),
+            &controller_did,
+            &device_id,
+            realm_id,
+            &accepted_events,
+            Some(&initial_seal),
+        )
+        .await?;
+        let frontier = wait_for_agent_pcr_frontier(
             &submitter,
             realm_id,
             Some(initial_frontier.seal_id.as_str()),
         )
-        .await?
+        .await?;
+        if frontier.seal_id != successor.id || frontier.state_root != successor.state_root {
+            anyhow::bail!("accepted managed Agent PCR successor Seal differs from its frontier");
+        }
+        frontier
     };
     state_store.write().set_realm_seal_view(
         realm_id.to_owned(),
@@ -768,6 +906,12 @@ pub(crate) async fn bootstrap_provisioned_agent(
     let active_policy = crate::recovery_strand::fetch_active_recovery_policy(api)
         .await?
         .ok_or_else(|| anyhow::anyhow!("active controller recovery policy is unavailable"))?;
+    let recovery_key_ref = current_controller_backup_hpke_key_ref(
+        &active_policy,
+        &controller_id,
+        &recovery_public_key,
+        crate::clock::now_utc(),
+    )?;
     let binding = ManagedPrincipalBinding {
         managed_principal_id: arkret_sdk::Did::new(agent_id.to_owned())?,
         controller_id: arkret_sdk::Did::new(controller_id.clone())?,
@@ -811,6 +955,7 @@ pub(crate) async fn bootstrap_provisioned_agent(
         &controller_id,
         &device_id,
         &recovery_public_key,
+        &recovery_key_ref,
         (active_policy.policy_id.as_str(), active_policy.version),
         &backup_id,
         &series_target.series_id,
@@ -850,6 +995,78 @@ mod tests {
         assert_eq!(
             controller_signer_device_id(controller_id, &signer, Some(controller_id)).unwrap(),
             TEST_DEVICE_ID
+        );
+    }
+
+    #[test]
+    fn managed_backup_selects_exact_current_policy_hpke_ref_by_key_bytes() {
+        let controller = "did:web:alice.example";
+        let recipient = format!("{controller}#backup-hpke-7");
+        let (_private_key, public_key) = crate::hpke_backup::derive_recovery_keypair_from_entropy(
+            &[29_u8; crate::recovery_crypto::RECOVERY_KEY_BYTES],
+        )
+        .unwrap();
+        let public_multikey = crate::identity::did_key::encode_x25519_multibase(&public_key);
+        let issued_at = chrono::DateTime::parse_from_rfc3339("2026-07-17T00:00:00Z")
+            .unwrap()
+            .with_timezone(&chrono::Utc);
+        let expires_at = chrono::DateTime::parse_from_rfc3339("2036-07-17T00:00:00Z")
+            .unwrap()
+            .with_timezone(&chrono::Utc);
+        let policy_id = "ak:policy:01964137-0000-7000-8000-000000000071";
+        let policy: crate::recovery_strand::ActiveRecoveryPolicy = serde_json::from_value(json!({
+            "policy_id": policy_id,
+            "principal_id": controller,
+            "version": 1,
+            "trust_domain": "ak:trust_domain:example.org",
+            "allowed_proof_kinds": ["principal_signing"],
+            "issued_at": issued_at,
+            "accepted_at": issued_at,
+            "policy": {
+                "schema": "ak.schema.recovery_policy.v1",
+                "policy_id": policy_id,
+                "principal_id": controller,
+                "version": 1,
+                "supersedes": null,
+                "trust_domain": "ak:trust_domain:example.org",
+                "allowed_proof_kinds": ["principal_signing"],
+                "recovery_key_agreements": [{
+                    "key_agreement_ref": recipient,
+                    "alg": "X25519",
+                    "public_key_multibase": public_multikey,
+                    "hpke_suites": ["ak.hpke_x25519_aead_chacha20poly1305.v1"],
+                    "use": "backup_hpke",
+                    "not_before": issued_at,
+                    "expires_at": expires_at
+                }],
+                "issued_at": issued_at,
+                "auth_data": {
+                    "verification_method": format!("{controller}#device"),
+                    "signature_algorithm": "Ed25519",
+                    "signature": "fixture",
+                    "signed_fields": [
+                        "schema", "policy_id", "principal_id", "version", "supersedes",
+                        "trust_domain", "allowed_proof_kinds", "recovery_key_agreements",
+                        "issued_at"
+                    ]
+                }
+            }
+        }))
+        .unwrap();
+        let evaluated_at = chrono::DateTime::parse_from_rfc3339("2026-07-18T00:00:00Z")
+            .unwrap()
+            .with_timezone(&chrono::Utc);
+
+        assert_eq!(
+            current_controller_backup_hpke_key_ref(&policy, controller, &public_key, evaluated_at,)
+                .unwrap(),
+            recipient
+        );
+        let mut other_key = public_key.clone();
+        other_key[0] ^= 0xff;
+        assert!(
+            current_controller_backup_hpke_key_ref(&policy, controller, &other_key, evaluated_at,)
+                .is_err()
         );
     }
 
@@ -991,6 +1208,7 @@ mod tests {
             "did:web:alice.example",
             "ak:device:01964137-0000-7000-8000-000000000001",
             &public_key,
+            "did:web:alice.example#backup-hpke-0",
             ("ak:policy:01964137-0000-7000-8000-000000000013", 1),
             backup_id,
             series_id,
@@ -1043,6 +1261,7 @@ mod tests {
             "did:web:alice.example",
             "ak:device:01964137-0000-7000-8000-000000000001",
             &public_key,
+            "did:web:alice.example#backup-hpke-0",
             ("ak:policy:01964137-0000-7000-8000-000000000013", 1),
             successor_id,
             series_id,
@@ -1147,6 +1366,7 @@ mod tests {
             controller_id,
             device_id,
             &recovery_public_key,
+            "did:web:alice.example#backup-hpke-0",
             ("ak:recovery_policy:01964137-0000-7000-8000-000000000095", 3),
             history_backup_id,
             history_series_id,
