@@ -48,6 +48,33 @@ struct MlsHistorySeriesTarget {
     publish_pointer: Option<(u64, Vec<String>)>,
 }
 
+fn controller_signer_device_id(
+    controller_id: &str,
+    signer: &crate::event_signer::InksonEventSigner,
+    signer_account_scope: Option<&str>,
+) -> anyhow::Result<String> {
+    let normalized_scope = signer_account_scope
+        .map(str::trim)
+        .filter(|scope| !scope.is_empty());
+    let signer_binding_matches = match normalized_scope {
+        Some(scope) => scope == controller_id,
+        None => signer.signer_did() == controller_id,
+    };
+    if !signer_binding_matches {
+        anyhow::bail!(
+            "active signer is not bound to controller {} (signer DID: {}, account scope: {})",
+            controller_id,
+            signer.signer_did(),
+            normalized_scope.unwrap_or("unavailable")
+        );
+    }
+    signer
+        .device_id()
+        .filter(|device| !device.trim().is_empty())
+        .map(ToOwned::to_owned)
+        .ok_or_else(|| anyhow::anyhow!("active controller device id is unavailable"))
+}
+
 fn sdk_not_found(error: &anyhow::Error) -> bool {
     matches!(
         error.downcast_ref::<arkret_sdk::Error>(),
@@ -568,18 +595,12 @@ pub(crate) async fn bootstrap_provisioned_agent(
         .ok_or_else(|| anyhow::anyhow!("active controller DID is unavailable"))?;
     let signer = crate::event_signer::active_signer()
         .ok_or_else(|| anyhow::anyhow!("active controller signer is unavailable"))?;
-    if signer.signer_did() != controller_id {
-        anyhow::bail!(
-            "active signer DID {} does not match controller {}",
-            signer.signer_did(),
-            controller_id
-        );
-    }
-    let device_id = signer
-        .device_id()
-        .filter(|device| !device.trim().is_empty())
-        .ok_or_else(|| anyhow::anyhow!("active controller device id is unavailable"))?
-        .to_owned();
+    let signer_account_scope = crate::secure_key_store::active_device_seed_scope();
+    let device_id = controller_signer_device_id(
+        &controller_id,
+        signer.as_ref(),
+        signer_account_scope.as_deref(),
+    )?;
     let agent_id = agent_id.as_str();
     let realm_id = realm_id.as_str();
     let submitter = api.event_submitter()?;
@@ -807,6 +828,72 @@ pub(crate) async fn bootstrap_provisioned_agent(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    const TEST_DEVICE_ID: &str = "ak:device:01964137-0000-7000-8000-000000000001";
+
+    #[test]
+    fn controller_signer_accepts_account_scoped_device_did_key() {
+        let controller_id = "did:web:alice.example";
+        let signer = crate::event_signer::build_ed25519_device_signer(
+            [31_u8; 32],
+            "did:key:z6MkhDeviceSigningKey",
+            TEST_DEVICE_ID,
+        );
+
+        assert_eq!(
+            controller_signer_device_id(controller_id, &signer, Some(controller_id)).unwrap(),
+            TEST_DEVICE_ID
+        );
+    }
+
+    #[test]
+    fn controller_signer_rejects_device_key_from_another_account_scope() {
+        let signer = crate::event_signer::build_ed25519_device_signer(
+            [32_u8; 32],
+            "did:key:z6MkhOtherDeviceSigningKey",
+            TEST_DEVICE_ID,
+        );
+
+        let error = controller_signer_device_id(
+            "did:web:alice.example",
+            &signer,
+            Some("did:web:bob.example"),
+        )
+        .unwrap_err();
+
+        assert!(error.to_string().contains("is not bound to controller"));
+    }
+
+    #[test]
+    fn controller_signer_rejects_controller_did_when_account_scope_differs() {
+        let controller_id = "did:web:alice.example";
+        let signer = crate::event_signer::build_ed25519_device_signer(
+            [34_u8; 32],
+            controller_id,
+            TEST_DEVICE_ID,
+        );
+
+        let error =
+            controller_signer_device_id(controller_id, &signer, Some("did:web:bob.example"))
+                .unwrap_err();
+
+        assert!(error.to_string().contains("is not bound to controller"));
+    }
+
+    #[test]
+    fn controller_signer_accepts_controller_identified_external_signer() {
+        let controller_id = "did:web:alice.example";
+        let signer = crate::event_signer::build_ed25519_device_signer(
+            [33_u8; 32],
+            controller_id,
+            TEST_DEVICE_ID,
+        );
+
+        assert_eq!(
+            controller_signer_device_id(controller_id, &signer, None).unwrap(),
+            TEST_DEVICE_ID
+        );
+    }
 
     #[test]
     fn active_series_successor_retains_all_prior_series_ids() {

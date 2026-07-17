@@ -1062,7 +1062,7 @@ pub fn PersonalAgentAdminPanel(token: Signal<String>) -> Element {
                                     "badge amber"
                                 };
                                 let pairing_label = if !selected_pcr_recovery_ready {
-                                    "Recovery setup"
+                                    "Recovery required"
                                 } else if selected_pairing_is_expired {
                                     "Expired"
                                 } else {
@@ -1124,7 +1124,11 @@ pub fn PersonalAgentAdminPanel(token: Signal<String>) -> Element {
                                             div {
                                                 class: "agent-admin-status",
                                                 "data-testid": "agent-admin-pcr-recovery-pending",
-                                                "Runtime pairing stays hidden until this device creates the Agent PCR MLS state and publishes its controller-owned recovery backup."
+                                                if selected_pairing_is_expired {
+                                                    "This pairing expired before the Agent's encrypted control state was backed up. Set up recovery on this device first; then you can issue a fresh pairing code. This step does not pair a runtime."
+                                                } else {
+                                                    "Back up this Agent's encrypted control state before connecting a runtime. The controller can then restore the Agent if its runtime or keys are lost."
+                                                }
                                             }
                                             div { class: "actions",
                                                 Button {
@@ -1184,7 +1188,7 @@ pub fn PersonalAgentAdminPanel(token: Signal<String>) -> Element {
                                                             });
                                                         }
                                                     },
-                                                    "Finish recovery setup"
+                                                    "Set up recovery"
                                                 }
                                             }
                                         }
