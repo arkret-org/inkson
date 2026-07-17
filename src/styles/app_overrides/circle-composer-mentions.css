@@ -65,8 +65,7 @@
   color: var(--accent-ink);
 }
 
-.message-failure-icon,
-.message-status-icon {
+.message-status-icon{
   display: inline-grid;
   place-items: center;
   color: var(--danger-ink);
@@ -222,8 +221,7 @@
   animation: message-send-spin 760ms linear infinite;
 }
 
-.chat-revision-stack,
-.chat-redact-confirm {
+.chat-redact-confirm{
   display: grid;
   gap: 6px;
   padding: 8px;
@@ -355,32 +353,8 @@
 }
 
 .discussion-shell.embedded .discussion-composer > .actions > button:not([data-testid="send-chat-button"]),
-.discussion-shell.embedded .compose-security-panel,
-.discussion-shell.embedded [data-testid="send-e2ee-move-button"] {
+.discussion-shell.embedded [data-testid="send-e2ee-move-button"]{
   display: none;
-}
-
-.compose-security-panel {
-  width: 100%;
-}
-
-.compose-security-panel > summary {
-  width: max-content;
-  cursor: pointer;
-  color: var(--text-2);
-  font-size: 12px;
-  font-weight: 700;
-}
-
-.compose-security-grid {
-  display: grid;
-  grid-template-columns: minmax(180px, 1fr) auto auto minmax(160px, 1fr) minmax(120px, 0.8fr) auto auto;
-  gap: 8px;
-  margin-top: 8px;
-}
-
-.compose-security-grid input {
-  min-width: 0;
 }
 
 .discussion-status {
@@ -582,8 +556,7 @@
   }
 
   .discussion-details-panel,
-  .discussion-left-rail,
-  .discussion-right-rail {
+.discussion-left-rail{
     display: none;
   }
 
@@ -813,20 +786,6 @@
   font-weight: 700;
 }
 
-.auth-passkey {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 8px;
-  min-width: 0;
-}
-
-.auth-passkey .primary,
-.auth-passkey .secondary {
-  width: 100%;
-  min-width: 0;
-  box-shadow: none;
-}
-
 .auth-session-state {
   display: grid;
   grid-template-columns: minmax(0, 1fr);
@@ -885,51 +844,6 @@
   display: grid;
   grid-template-columns: 1fr 1fr;
   gap: 8px;
-}
-
-.auth-mode-grid {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 8px;
-}
-
-.auth-mode-button {
-  min-height: 58px;
-  align-items: flex-start;
-  justify-content: center;
-}
-
-.auth-mode-button.active {
-  border-color: var(--accent);
-  color: var(--accent);
-  background: color-mix(in srgb, var(--accent) 9%, var(--surface));
-}
-
-.auth-result {
-  display: grid;
-  gap: 6px;
-  padding: 10px;
-  border: 1px solid var(--border);
-  border-radius: 6px;
-  background: var(--surface-2);
-  overflow-wrap: anywhere;
-}
-
-.auth-result strong {
-  font-size: 12px;
-  color: var(--text-3);
-}
-
-.auth-checkline {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  font-size: 13px;
-  color: var(--text-2);
-}
-
-.auth-checkline input {
-  width: auto;
 }
 
 .shell.app {
@@ -1075,31 +989,6 @@
   margin-top: var(--sidebar-group-gap);
 }
 
-.sidebar-nav-group-title {
-  margin: 0 8px 2px;
-  color: var(--nav-label);
-  font-size: 10px;
-  font-weight: 700;
-  letter-spacing: 0.08em;
-  display: flex;
-  align-items: center;
-}
-
-.sidebar-nav-group-title .add {
-  margin-left: auto;
-  width: 16px;
-  height: 16px;
-  border-radius: 4px;
-  display: grid;
-  place-items: center;
-  color: inherit;
-}
-
-.sidebar-nav-group-title .add:hover {
-  background: var(--hover);
-  color: var(--nav-text);
-}
-
 .sidebar-nav-item {
   width: 100%;
   min-height: 40px;
@@ -1130,13 +1019,6 @@
 
 .sidebar-nav-item.is-dim {
   color: var(--nav-muted);
-}
-
-.sidebar-nav-item.is-cross-org {
-  border-color: color-mix(in srgb, var(--warning) 42%, var(--accent-2));
-  background:
-    linear-gradient(135deg, color-mix(in srgb, var(--accent) 12%, var(--surface)), color-mix(in srgb, var(--accent-2) 10%, var(--surface))),
-    var(--nav-soft);
 }
 .sidebar-scope-toggle {
   display: grid;
@@ -1328,7 +1210,6 @@
 }
 
 .sidebar-nav-item .badge,
-.sidebar-nav-item .pill,
-.sidebar-nav-item .kbd-tag {
+.sidebar-nav-item .pill{
   justify-self: end;
 }

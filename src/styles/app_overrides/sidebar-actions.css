@@ -181,8 +181,7 @@
 }
 
 .sidebar-collapse-toggle,
-.panel-collapse-toggle,
-.theme-toggle-button {
+.theme-toggle-button{
   flex: 0 0 auto;
 }
 
@@ -454,10 +453,6 @@
   .workspace-header .topbar-current-surface {
     display: inline-flex;
   }
-
-  .workspace-header .topbar-context-pill.muted {
-    display: none;
-  }
 }
 
 @container workspace-header (max-width: 700px) {
@@ -472,29 +467,9 @@
   }
 }
 
-.topbar-context-pill {
-  flex: 0 0 auto;
-  border: 1px solid var(--border);
-  border-radius: 999px;
-  padding: 3px 8px;
-  color: var(--text-2);
-  background: var(--surface-2);
-  font-size: 11px;
-  font-weight: 700;
-}
-
-.topbar-context-pill.muted {
-  color: var(--text-3);
-  background: transparent;
-}
-
 .workspace-header .actions .btn,
 .workspace-header .actions .pill {
   height: 34px;
-}
-
-.topbar-create-button .topbar-new-space-label {
-  display: inline;
 }
 
 .workspace-header .actions .btn {
@@ -616,8 +591,7 @@
   padding: 12px;
 }
 
-.notifications-drawer-panel .toolbar-row,
-.notifications-drawer-panel .section-tools {
+.notifications-drawer-panel .toolbar-row{
   align-items: center;
 }
 
@@ -626,8 +600,7 @@
 }
 
 .notifications-drawer-panel .toolbar-row,
-.notifications-drawer-panel .section-tools,
-.notifications-drawer-panel .icon-actions {
+.notifications-drawer-panel .icon-actions{
   justify-content: flex-start;
 }
 
@@ -721,26 +694,14 @@
 }
 
 .shell.app.sidebar-collapsed .sidebar-header .product-meta,
-.shell.app.sidebar-collapsed .sidebar-context .grow,
-.shell.app.sidebar-collapsed .sidebar-context .pill,
-.shell.app.sidebar-collapsed .sidebar-context .mini,
-.shell.app.sidebar-collapsed .ak-connect-section,
 .shell.app.sidebar-collapsed .server-switch-title,
 .shell.app.sidebar-collapsed .server-switch-state,
 .shell.app.sidebar-collapsed .server-switch-menu,
-.shell.app.sidebar-collapsed .sidebar-nav-group-title,
 .shell.app.sidebar-collapsed .sidebar-tab-toolbar,
 .shell.app.sidebar-collapsed .sidebar-nav-item .grow,
 .shell.app.sidebar-collapsed .sidebar-nav-item .badge,
-.shell.app.sidebar-collapsed .sidebar-nav-item .pill,
-.shell.app.sidebar-collapsed .sidebar-nav-item .kbd-tag,
-.shell.app.sidebar-collapsed .sidebar-status {
+.shell.app.sidebar-collapsed .sidebar-nav-item .pill{
   display: none;
-}
-
-.shell.app.sidebar-collapsed .sidebar-context {
-  margin-inline: 8px;
-  padding: 6px;
 }
 
 .shell.app.sidebar-collapsed .server-switch {
@@ -787,10 +748,6 @@
 
 .shell.app.sidebar-collapsed .sidebar-row-menu-host {
   display: none;
-}
-
-.ak-connect-section {
-  padding-top: 0;
 }
 
 .server-switch {
@@ -865,8 +822,7 @@
   white-space: nowrap;
 }
 
-.server-switch-title .id,
-.server-option-meta {
+.server-switch-title .id{
   overflow: hidden;
   color: var(--nav-muted);
   font-size: 11px;
@@ -920,20 +876,7 @@
   background: color-mix(in srgb, var(--accent) 13%, var(--nav-soft));
 }
 
-.ak-connect-form {
-  display: grid;
-  gap: 8px;
-  padding: 0 10px 10px;
-}
-
-.ak-connect-form .actions {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 8px;
-}
-
-.ak-server-input,
-.workspace-header .search input {
+.workspace-header .search input{
   width: 100%;
   min-width: 0;
   border: 1px solid var(--border);
@@ -941,19 +884,6 @@
   background: var(--surface);
   color: var(--text);
   font: inherit;
-}
-
-.ak-server-input {
-  padding: 7px 9px;
-  font-size: 12px;
-}
-
-.ak-server-input:focus,
-.server-connect input:focus {
-  outline: none;
-  border-color: var(--accent);
-  background: color-mix(in srgb, var(--accent) 4%, var(--surface));
-  box-shadow: none;
 }
 
 .primary,
@@ -999,17 +929,12 @@
   vertical-align: -2px;
 }
 
-.section-tools,
 .icon-actions,
-.toolbar-row {
+.toolbar-row{
   display: flex;
   align-items: center;
   gap: 8px;
   min-width: 0;
-}
-
-.section-tools {
-  justify-content: flex-end;
 }
 
 .toolbar-row {
@@ -1070,17 +995,6 @@
   background: var(--surface);
   color: var(--text);
   box-shadow: inset 0 -2px 0 var(--accent);
-}
-
-.quick-nav--icons {
-  grid-template-columns: repeat(3, 32px);
-  justify-content: start;
-}
-
-.quick-nav--icons .quick-nav__item {
-  width: 32px;
-  height: 32px;
-  padding: 0;
 }
 
 .account-menu-wrap {

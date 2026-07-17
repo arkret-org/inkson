@@ -104,34 +104,6 @@ pub fn build_relation_delete(realm_id: &str, actor: &str, relation_id: &str) -> 
     .body(json!({"relation_id": relation_id}))
 }
 
-/// Build a `ak.container.move_item` operation. Payload shape mirrors
-/// `container_position_payload`: `container_ref`, `source_ref`, `target_ref`,
-/// and the new ordering `rank`.
-pub fn build_container_move_item(
-    realm_id: &str,
-    actor: &str,
-    container_ref: &str,
-    source_ref: &str,
-    target_ref: &str,
-    rank: &str,
-) -> anyhow::Result<OperationBuilder> {
-    let body = serde_json::to_value(arkret_sdk::ContainerPositionPayload {
-        source_ref: source_ref.to_owned(),
-        target_ref: target_ref.to_owned(),
-        container_ref: container_ref.to_owned(),
-        relation_kind: None,
-        rank: rank.to_owned(),
-    })
-    .map_err(|err| anyhow::anyhow!("container_position_payload serialize: {err}"))?;
-    Ok(OperationBuilder::new(
-        realm_id,
-        actor,
-        arkret_sdk::events::kinds::EventKind::ContainerMoveItem,
-    )
-    .target_ref(container_ref)
-    .body(body))
-}
-
 /// Build a `ak.container.rebalance` operation. The required position fields
 /// remain at top level; `items` carries optional profile-specific batch detail.
 pub fn build_container_rebalance(
@@ -223,32 +195,6 @@ mod tests {
         assert_eq!(op.payload["kind"], "contains");
         assert_eq!(op.payload["from_ref"], "ak:strand:f1");
         assert_eq!(op.payload["to_ref"], "ak:strand:f2");
-    }
-
-    #[test]
-    fn container_move_item_uses_spec_position_payload() {
-        let op = build_container_move_item(
-            "ak:realm:0196419b-0000-7000-8000-0000000000ac",
-            "did:web:alice",
-            "ak:space:0196419b-0000-7000-8000-000000000001",
-            "ak:strand:f1",
-            "ak:strand:f1",
-            "r0",
-        )
-        .expect("builds")
-        .build("node");
-        assert_eq!(op.kind.as_str(), "ak.container.move_item");
-        assert_eq!(
-            op.local_target_ref(),
-            Some("ak:space:0196419b-0000-7000-8000-000000000001")
-        );
-        assert_eq!(
-            op.payload["container_ref"],
-            "ak:space:0196419b-0000-7000-8000-000000000001"
-        );
-        assert_eq!(op.payload["source_ref"], "ak:strand:f1");
-        assert_eq!(op.payload["target_ref"], "ak:strand:f1");
-        assert_eq!(op.payload["rank"], "r0");
     }
 
     #[test]

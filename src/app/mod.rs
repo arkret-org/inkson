@@ -177,10 +177,9 @@ const APP_OVERRIDES: &str = concat!(
 /// `#[css_module]` styles. Values come from the inkson green palette (yoface
 /// tokens.css matches inkson design.css), so this keeps the existing
 /// `var(--dark,...)` / `var(--light,...)` and `[data-theme]` switches and the
-/// current inkson green appearance. This replaces the vendored
-/// `assets/dx-components-theme.css` black/white defaults. Injection order stays
-/// before the three existing style blocks so later design.css/app_overrides can
-/// override these tokens.
+/// current inkson green appearance. Injection order stays before the three
+/// existing style blocks so later design.css/app_overrides can override these
+/// tokens.
 const DXC_THEME: &str = yoface::TOKENS_CSS;
 // CSS-module class hashes include the component source path. Keep the shared
 // button stylesheet available through yoface's stable `dx-button` class so a

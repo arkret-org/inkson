@@ -187,10 +187,6 @@
   grid-template-columns: 48px minmax(0, 1fr);
 }
 
-.card-detail-discussion-section {
-  min-height: 0;
-}
-
 .discussion-shell.embedded,
 .discussion-shell.embedded.left-collapsed,
 .discussion-shell.embedded.right-collapsed,
@@ -257,8 +253,7 @@
   box-shadow: none;
 }
 
-.discussion-details-panel,
-.discussion-right-rail {
+.discussion-details-panel{
   grid-column: 3;
   grid-row: 1 / span 2;
 }
@@ -289,12 +284,6 @@
   min-width: 0;
 }
 
-.context-help-row {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-}
-
 .discussion-title-row h1,
 .discussion-title-row h2 {
   margin: 0;
@@ -316,13 +305,6 @@
   min-width: 0;
   display: grid;
   gap: 4px;
-}
-
-.discussion-topic {
-  max-width: 62ch;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
 }
 
 .discussion-head-actions {
@@ -429,13 +411,6 @@
   gap: 6px;
 }
 
-.discussion-new {
-  display: grid;
-  gap: 8px;
-  padding: 12px;
-  border-top: 1px solid var(--border);
-}
-
 .discussion-subhead {
   display: flex;
   align-items: center;
@@ -446,10 +421,6 @@
   font-weight: 800;
   text-transform: uppercase;
   letter-spacing: 0;
-}
-
-.discussion-create-button {
-  justify-content: center;
 }
 
 .mention-suggestions {
@@ -483,8 +454,7 @@
   flex: 1 1 auto;
 }
 
-.mention-suggestion,
-.mention-suggestion-item {
+.mention-suggestion{
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -501,9 +471,7 @@
 }
 
 .mention-suggestion:hover,
-.mention-suggestion:focus-visible,
-.mention-suggestion-item:hover,
-.mention-suggestion-item:focus-visible {
+.mention-suggestion:focus-visible{
   background: var(--surface-2, color-mix(in srgb, var(--accent) 10%, transparent));
   outline: none;
 }

@@ -125,7 +125,6 @@ body {
   color: var(--ak-ink);
 }
 .search input:not([type="checkbox"]):not([type="radio"]),
-.topbar-search input:not([type="checkbox"]):not([type="radio"]),
 .settings input:not([type="checkbox"]):not([type="radio"]),
 .workflow-form input:not([type="checkbox"]):not([type="radio"]),
 .composer textarea,
@@ -135,14 +134,13 @@ body {
 .settings textarea,
 .settings select,
 .workflow-form textarea,
-.workflow-form select {
+.workflow-form select{
   border-color: var(--ak-line-strong);
   border-radius: 10px;
   background: var(--ak-surface);
   color: var(--ak-ink);
 }
 .search input:not([type="checkbox"]):not([type="radio"]):focus,
-.topbar-search input:not([type="checkbox"]):not([type="radio"]):focus,
 .auth-form input:not([type="checkbox"]):not([type="radio"]):focus,
 .settings input:not([type="checkbox"]):not([type="radio"]):focus,
 .workflow-form input:not([type="checkbox"]):not([type="radio"]):focus,
@@ -153,7 +151,7 @@ body {
 .settings textarea:focus,
 .settings select:focus,
 .workflow-form textarea:focus,
-.workflow-form select:focus {
+.workflow-form select:focus{
   border-color: var(--ak-brand);
   background: color-mix(in srgb, var(--ak-brand) 4%, var(--ak-surface));
   box-shadow: none;
@@ -277,57 +275,6 @@ body {
   font-size: 10px;
   line-height: 1;
 }
-.dashboard-layout {
-  display: grid;
-  grid-template-columns: minmax(0, 1.2fr) minmax(320px, 0.8fr);
-  gap: 12px;
-}
-.home-hero {
-  overflow: hidden;
-  background:
-    radial-gradient(circle at 12% 0%, rgba(43, 107, 79, 0.18), transparent 34%),
-    radial-gradient(circle at 90% 10%, rgba(165, 107, 19, 0.12), transparent 30%),
-    var(--ak-surface);
-}
-.home-hero-title {
-  font-size: 30px;
-  line-height: 1.08;
-}
-.home-hero-copy {
-  max-width: 760px;
-  color: var(--ak-muted);
-  font-size: 14px;
-  line-height: 1.55;
-}
-.home-card-list {
-  display: grid;
-  gap: 10px;
-}
-.home-card-list.compact {
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-}
-.home-realm-card {
-  border-color: var(--ak-line);
-  background: linear-gradient(180deg, rgba(255,255,255,0.96), rgba(248,250,252,0.94));
-  color: var(--ak-ink);
-}
-.home-realm-card .entity-title {
-  color: var(--ak-ink);
-}
-.home-realm-card .card-meta,
-.home-realm-card .muted {
-  color: var(--ak-muted);
-}
-.home-realm-card.cross-org {
-  border-color: rgba(58, 138, 103, 0.34);
-  background: linear-gradient(135deg, rgba(236, 247, 239, 0.94), rgba(248, 244, 232, 0.92));
-}
-.home-badges {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-  margin-top: 4px;
-}
 .nested-card {
   background: rgba(248, 250, 252, 0.76);
 }
@@ -377,19 +324,6 @@ body {
 
 .board-toolbar-main {
   justify-content: flex-start;
-}
-
-.board-title-block {
-  display: grid;
-  gap: 2px;
-  min-width: 180px;
-  flex: 1 1 auto;
-}
-
-.board-kicker {
-  display: flex;
-  justify-content: flex-start;
-  gap: 8px;
 }
 
 .board-toolbar-controls,
@@ -745,11 +679,6 @@ body {
   flex-basis: 24px;
   border-radius: 6px;
 }
-.board-column-meta {
-  margin-top: 2px;
-  font-size: 12px;
-  color: var(--ak-muted);
-}
 .board-column-actions {
   display: flex;
   justify-content: flex-end;
@@ -1047,21 +976,6 @@ body {
   flex-wrap: wrap;
   gap: 6px;
   min-width: 0;
-}
-.card-detail-status-dot {
-  width: 16px;
-  height: 16px;
-  margin-top: 5px;
-  border: 2px solid var(--text-3);
-  border-radius: 999px;
-}
-.card-detail-id {
-  max-width: 720px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  font-family: var(--font-mono);
-  font-size: 11px;
 }
 .card-detail-close {
   flex: 0 0 auto;

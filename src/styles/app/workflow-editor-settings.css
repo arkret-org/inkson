@@ -1,82 +1,4 @@
-.card-rich-editor .toastui-editor-defaultUI-toolbar button:focus-visible {
-  outline: none;
-  box-shadow: 0 0 0 3px rgba(125,211,252,0.18);
-}
-.card-rich-editor .toastui-editor-mode-switch {
-  height: 34px;
-  padding: 4px 8px;
-  background: var(--editor-bg-soft);
-  border-top: 1px solid var(--editor-line);
-  text-align: right;
-}
-.card-rich-editor .toastui-editor-mode-switch .tab-item {
-  width: auto;
-  min-width: 86px;
-  height: 24px;
-  margin: 0 0 0 4px;
-  border: 1px solid transparent;
-  border-radius: 6px;
-  background: transparent;
-  color: var(--editor-muted);
-  line-height: 22px;
-}
-.card-rich-editor .toastui-editor-mode-switch .tab-item.active {
-  border-color: var(--editor-line-strong);
-  background: var(--editor-bg-raised);
-  color: var(--editor-ink);
-}
-.card-rich-editor .toastui-editor-defaultUI .toastui-editor-md-tab-container {
-  height: 38px;
-  background: var(--editor-bg-soft);
-  border-color: var(--editor-line);
-}
-.card-rich-editor .toastui-editor-md-tab-container .toastui-editor-tabs {
-  margin-left: 10px;
-}
-.card-rich-editor .toastui-editor-md-tab-container .tab-item {
-  width: auto;
-  min-width: 72px;
-  height: 28px;
-  margin-top: 10px;
-  border-color: var(--editor-line);
-  border-radius: 6px 6px 0 0;
-  background: color-mix(in srgb, var(--editor-bg-soft) 84%, var(--editor-bg-raised) 16%);
-  color: var(--editor-muted);
-  line-height: 27px;
-}
-.card-rich-editor .toastui-editor-md-tab-container .tab-item.active {
-  border-bottom-color: var(--editor-bg);
-  background: var(--editor-bg);
-  color: var(--editor-ink);
-}
-.card-rich-editor .toastui-editor-popup,
-.card-rich-editor .toastui-editor-dropdown-toolbar {
-  border-color: var(--editor-line);
-  background: var(--editor-bg-soft);
-  color: var(--editor-ink);
-  box-shadow: 0 12px 32px rgba(0,0,0,0.28);
-}
-.card-rich-editor .toastui-editor-popup-body label,
-.card-rich-editor .toastui-editor-popup-body .toastui-editor-table-description {
-  color: var(--editor-ink);
-}
-.card-rich-editor .toastui-editor-popup-body input[type="text"],
-.card-rich-editor .toastui-editor-popup-add-image .toastui-editor-file-name {
-  border-color: var(--editor-line);
-  background: var(--editor-bg);
-  color: var(--editor-ink);
-}
-.card-rich-editor .toastui-editor-popup-body input[type="text"]:focus {
-  outline: 1px solid var(--editor-accent);
-}
-.card-rich-editor .toastui-editor-popup-add-image .toastui-editor-tabs .tab-item {
-  color: var(--editor-muted);
-  border-bottom-color: var(--editor-line);
-}
-.card-rich-editor .toastui-editor-popup-add-image .toastui-editor-tabs .tab-item.active {
-  color: var(--editor-accent);
-  border-bottom-color: var(--editor-accent);
-}
+
 .card-detail-form-actions {
   display: flex;
   justify-content: flex-end;
@@ -134,10 +56,6 @@
     border-top: 1px solid var(--border, var(--ak-line));
   }
 }
-.chat-message-row {
-  padding: 10px 12px;
-  gap: 8px;
-}
 .chat-message-actions {
   opacity: 0;
   visibility: hidden;
@@ -194,19 +112,6 @@
     overflow: hidden;
   }
 
-  .workspace-body > .settings-page .settings-nav-search {
-    margin: 0;
-  }
-
-  .workspace-body > .settings-page .settings-nav-list {
-    min-height: 0;
-    align-content: start;
-    overflow-x: hidden;
-    overflow-y: auto;
-    padding-right: 4px;
-    scrollbar-gutter: stable;
-  }
-
   .workspace-body > .realm-settings .settings-sidebar-column {
     height: 100%;
     min-height: 0;
@@ -241,27 +146,6 @@
   display: grid;
   gap: 6px;
 }
-.settings-nav-search {
-  margin: 0 0 8px 0;
-}
-.settings-nav-search-input {
-  width: 100%;
-  box-sizing: border-box;
-  padding: 7px 10px;
-  border: 1px solid var(--border, var(--ak-border));
-  border-radius: 8px;
-  background: var(--surface-2, var(--ak-surface));
-  color: var(--text, var(--ak-ink));
-  font-size: 13px;
-}
-.settings-nav-search-input:focus {
-  outline: none;
-  border-color: var(--accent, var(--ak-accent));
-}
-.settings-nav-empty {
-  padding: 8px 4px;
-  font-size: 12px;
-}
 .settings-nav-group-label {
   margin: 0 0 2px 4px;
   color: var(--text-3, var(--ak-muted));
@@ -284,10 +168,6 @@
 }
 .settings-content-title-row .help-tip {
   flex: 0 0 auto;
-}
-.settings-nav-list {
-  display: grid;
-  gap: 8px;
 }
 .settings-nav-divider {
   height: 1px;
@@ -460,10 +340,6 @@
   gap: 12px;
   align-content: start;
 }
-.setup-review-column {
-  position: sticky;
-  top: 12px;
-}
 .setup-step-list {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
@@ -569,14 +445,6 @@
   flex-wrap: wrap;
   gap: 6px;
 }
-.setup-action-grid {
-  display: grid;
-  gap: 8px;
-}
-.setup-action-grid .primary,
-.setup-action-grid .secondary {
-  width: 100%;
-}
 .setup-nav-actions {
   justify-content: flex-end;
   margin-top: 4px;
@@ -585,10 +453,8 @@
   grid-column: 1 / -1;
 }
 @media (max-width: 900px) {
-  .dashboard-layout { grid-template-columns: 1fr; }
   .board-grid { margin-inline: -4px; padding-inline: 4px; }
   .board-column { flex-basis: min(82vw, 320px); width: min(82vw, 320px); min-width: min(82vw, 320px); }
-  .home-card-list.compact { grid-template-columns: 1fr; }
   .settings-shell,
   .settings-card-grid,
   .settings-inline-form,
@@ -610,7 +476,6 @@
   .invite-locator-url-field {
     min-height: 128px;
   }
-  .setup-review-column { position: static; }
 }
 @media (max-width: 1100px) {
   .setup-shell,

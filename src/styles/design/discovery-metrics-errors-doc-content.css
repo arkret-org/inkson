@@ -287,13 +287,6 @@
 .bar.danger > span { background: var(--danger); }
 
 .dot-online  { width: 8px; height: 8px; border-radius: 50%; background: var(--success); display: inline-block; }
-.dot-offline { width: 8px; height: 8px; border-radius: 50%; background: var(--text-3); display: inline-block; }
-.dot-busy    { width: 8px; height: 8px; border-radius: 50%; background: var(--warning); display: inline-block; }
-
-.foot-note {
-  color: var(--text-3);
-  font-size: 11px;
-}
 
 /* ===== 19. ERROR / EMPTY STATES =================================== */
 
@@ -390,14 +383,6 @@
 .toast-host .toast .toast-body { flex: 1; min-width: 0; }
 .toast-host .toast .toast-body p { margin: 0; overflow-wrap: anywhere; }
 .toast-host .toast .toast-severity-icon { display: inline-flex; margin-top: 1px; }
-.toast--success { border-left: 3px solid var(--success); }
-.toast--success .toast-severity-icon { color: var(--success); }
-.toast--info { border-left: 3px solid var(--info); }
-.toast--info .toast-severity-icon { color: var(--info); }
-.toast--warning { border-left: 3px solid var(--warning); }
-.toast--warning .toast-severity-icon { color: var(--warning); }
-.toast--error { border-left: 3px solid var(--danger); }
-.toast--error .toast-severity-icon { color: var(--danger); }
 .toast-host .toast-overflow { align-self: flex-end; pointer-events: auto; }
 
 .app-banner {
@@ -408,10 +393,6 @@
   text-align: center;
   font-size: 13px;
   border-bottom: 1px solid var(--warning);
-}
-.app-banner--offline {
-  background: var(--warning-soft);
-  color: var(--warning-ink);
 }
 
 .did-resolution-health-banner {
@@ -646,8 +627,7 @@
   box-shadow: var(--shadow-md);
 }
 
-.modal-overlay,
-.publish-to-source-modal-backdrop {
+.modal-overlay{
   position: fixed;
   inset: 0;
   z-index: var(--layer-modal);
@@ -691,25 +671,6 @@
   overflow: auto;
   padding: 16px;
 }
-
-/* ===== 20. DOC PAGE (workflows.md / errors.md rendered) =========== */
-.doc-page {
-  max-width: 920px;
-  margin: 0 auto;
-  padding: 40px 32px 96px;
-  line-height: 1.65;
-}
-.doc-page h1 { font-size: 30px; margin: 0 0 10px; letter-spacing: -0.015em; }
-.doc-page h2 { font-size: 20px; margin: 32px 0 12px; letter-spacing: -0.01em; padding-top: 16px; border-top: 1px solid var(--border-faint); }
-.doc-page h3 { font-size: 16px; margin: 22px 0 8px; }
-.doc-page h4 { font-size: 13px; margin: 16px 0 6px; text-transform: uppercase; letter-spacing: 0.05em; color: var(--text-3); }
-.doc-page p { color: var(--text); font-size: 14px; }
-.doc-page ul, .doc-page ol { padding-left: 22px; }
-.doc-page li { margin-bottom: 4px; }
-.doc-page code { background: var(--surface-2); padding: 1px 5px; border-radius: 3px; font-size: 12px; }
-.doc-page pre { background: var(--proto-bg); color: var(--proto-fg); padding: 14px 16px; border-radius: var(--radius); font-size: 12px; overflow-x: auto; }
-.doc-page pre code { background: transparent; padding: 0; color: inherit; }
-.doc-page blockquote { border-left: 3px solid var(--accent); padding: 8px 16px; margin: 12px 0; color: var(--text-2); font-style: italic; background: var(--surface-2); border-radius: 0 6px 6px 0; }
 
 /* ===== 21. CONTENT RENDERER (A3) ================================== */
 /* Shared shell around every rich message body. Stays neutral so it

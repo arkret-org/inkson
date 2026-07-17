@@ -250,24 +250,6 @@
   color: var(--danger-ink);
 }
 
-.status.sidebar-status {
-  margin: 0 10px 10px;
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  padding: 10px;
-  color: var(--text-2);
-  background: var(--surface-2);
-}
-
-.status.sidebar-status .entity-title {
-  color: var(--text);
-  font-size: 12px;
-}
-
-.status.sidebar-status .actions {
-  gap: 6px;
-}
-
 .main.workspace {
   padding: 0;
   display: flex;
@@ -618,12 +600,6 @@ label.avatar-upload-button .ui-icon {
 .workspace-manage-actions {
   justify-content: flex-end;
   gap: 8px;
-}
-
-.workspace-manage-status {
-  border-left: 3px solid color-mix(in srgb, var(--accent) 58%, var(--border));
-  color: var(--text-2);
-  overflow-wrap: anywhere;
 }
 
 .workspace-manage-list-card {

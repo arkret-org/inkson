@@ -284,14 +284,6 @@
 .card-detail-discussion-panel.is-hidden {
   display: none;
 }
-.card-detail-synthesis-empty {
-  color: var(--text-3, var(--ak-muted));
-  font-size: 13px;
-  display: grid;
-  gap: 10px;
-  justify-items: center;
-  text-align: center;
-}
 .card-synthesis-track {
   width: 100%;
   max-width: none;
@@ -464,44 +456,6 @@
   min-width: 0;
   display: grid;
   gap: 5px;
-}
-.card-detail-side-actions .secondary {
-  min-height: 34px;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  gap: 6px;
-  border-radius: 8px;
-  box-shadow: none;
-}
-.card-detail-side-actions {
-  display: flex;
-  align-items: center;
-  flex-wrap: wrap;
-  gap: 6px;
-}
-.card-detail-side-actions .secondary {
-  width: 100%;
-}
-.card-detail-visibility-note,
-.card-detail-policy-note {
-  display: grid;
-  gap: 6px;
-  padding: 10px 12px;
-  border: 1px solid var(--border, var(--ak-line));
-  border-radius: 8px;
-  background: color-mix(in srgb, var(--warning-soft) 28%, var(--surface));
-}
-.card-detail-visibility-note {
-  grid-template-columns: auto minmax(0, 1fr);
-  align-items: center;
-  color: var(--text-2, var(--ak-muted));
-}
-.card-detail-policy-note > div:first-child {
-  display: flex;
-  justify-content: space-between;
-  gap: 8px;
-  align-items: center;
 }
 .card-detail-side-section h3 {
   margin: 0 0 4px;

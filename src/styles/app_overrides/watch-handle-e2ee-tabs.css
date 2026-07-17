@@ -49,23 +49,6 @@
   background: color-mix(in srgb, var(--accent, #1f6b4f) 18%, transparent);
   font-weight: 600;
 }
-
-/* T7.3: handle reassigned badge + binding context */
-.handle-reassigned-badge {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  background: rgba(198, 73, 64, 0.14);
-  color: #a23a32;
-  border: 1px solid rgba(198, 73, 64, 0.32);
-  border-radius: 4px;
-  padding: 1px 6px;
-  font-size: 11px;
-  font-weight: 600;
-  letter-spacing: 0.02em;
-  text-transform: uppercase;
-  cursor: help;
-}
 .binding-context {
   font-size: 12px;
   color: var(--muted, #627065);
@@ -89,9 +72,6 @@
   color: var(--muted, #627065);
   font-style: italic;
 }
-.crypto-status-failed {
-  color: #a23a32;
-}
 .crypto-status-key-missing {
   color: #8a5a10;
 }
@@ -101,15 +81,6 @@
 .discussion-message.is-crypto-pending .msg-content {
   opacity: 0.55;
   filter: grayscale(0.4);
-}
-.crypto-status-action {
-  background: transparent;
-  border: 0;
-  color: var(--accent, #1f6b4f);
-  text-decoration: underline;
-  cursor: pointer;
-  padding: 0;
-  font-size: 12px;
 }
 
 /* T7.5: tabbed right panel + mobile drawer */
