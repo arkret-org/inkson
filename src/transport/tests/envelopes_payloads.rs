@@ -13,7 +13,7 @@ use crate::event_builders::{
 use crate::operation::OperationBuilder;
 use crate::realm_defaults::RECOMMENDED_REALM_ENCRYPTION_FLOOR;
 use crate::realm_helpers::{
-    canonical_space_join_rule_v1, patch_touches_create_locked_encryption_profile,
+    patch_touches_create_locked_encryption_profile, validate_join_rule_v1,
 };
 use crate::state::projection_views::{
     LifecycleProjectionView, SpaceContainerProjectionView, StrandProjectionView,
@@ -225,10 +225,10 @@ fn presence_envelope_rejects_non_canonical_state_and_bad_status_message() {
 
 #[test]
 fn canonical_space_join_rule_keeps_v1_invite_value() {
-    assert_eq!(canonical_space_join_rule_v1("open"), "public");
-    assert_eq!(canonical_space_join_rule_v1("request"), "knock");
-    assert_eq!(canonical_space_join_rule_v1("invite_only"), "invite");
-    assert_eq!(canonical_space_join_rule_v1("invite"), "invite");
+    assert!(validate_join_rule_v1("open").is_err());
+    assert!(validate_join_rule_v1("request").is_err());
+    assert!(validate_join_rule_v1("invite_only").is_err());
+    assert_eq!(validate_join_rule_v1("invite").unwrap(), "invite");
 }
 
 #[test]

@@ -3,12 +3,12 @@ use serde_json::Value;
 use crate::models::{RealmJoinCandidate, ResolveRealmOutcome};
 use crate::operation::trim_realm_id;
 
-pub(crate) fn canonical_space_join_rule_v1(join_rule: &str) -> &str {
+pub(crate) fn validate_join_rule_v1(join_rule: &str) -> anyhow::Result<&str> {
     match join_rule {
-        "open" => "public",
-        "request" => "knock",
-        "invite_only" => "invite",
-        value => value,
+        "public" | "invite" | "knock" | "restricted" | "knock_restricted" | "closed" => {
+            Ok(join_rule)
+        }
+        _ => Err(anyhow::anyhow!("unsupported current-v1 join_rule: {join_rule}")),
     }
 }
 

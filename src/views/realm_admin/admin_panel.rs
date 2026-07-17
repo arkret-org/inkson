@@ -37,7 +37,7 @@ pub fn RealmAdminPanel(
     let mut metadata_avatar_blob_ref = use_signal(String::new);
     let mut metadata_alias = use_signal(String::new);
     let mut metadata_loaded_for = use_signal(String::new);
-    let mut join_rule = use_signal(|| "open".to_owned());
+    let mut join_rule = use_signal(|| "public".to_owned());
     let mut principal_admission_enabled = use_signal(|| false);
     let mut principal_admission_methods = use_signal(|| "did:webvh".to_owned());
     let mut principal_admission_allowed_dids = use_signal(String::new);
@@ -762,9 +762,9 @@ pub fn RealmAdminPanel(
                 div { class: "event-head", span { "Join Policy" } span { "access control" } }
                 div { class: "actions",
                     Button {
-                        variant: if join_rule() == "open" { ButtonVariant::Primary } else { ButtonVariant::Secondary },
-                        onclick: move |_| join_rule.set("open".to_owned()),
-                        "Open"
+                        variant: if join_rule() == "public" { ButtonVariant::Primary } else { ButtonVariant::Secondary },
+                        onclick: move |_| join_rule.set("public".to_owned()),
+                        "Public"
                     }
                     Button {
                         variant: if join_rule() == "invite" { ButtonVariant::Primary } else { ButtonVariant::Secondary },
@@ -772,9 +772,9 @@ pub fn RealmAdminPanel(
                         "Invite"
                     }
                     Button {
-                        variant: if join_rule() == "request" { ButtonVariant::Primary } else { ButtonVariant::Secondary },
-                        onclick: move |_| join_rule.set("request".to_owned()),
-                        "Request"
+                        variant: if join_rule() == "knock" { ButtonVariant::Primary } else { ButtonVariant::Secondary },
+                        onclick: move |_| join_rule.set("knock".to_owned()),
+                        "Knock"
                     }
                     Button {
                         variant: if join_rule() == "restricted" { ButtonVariant::Primary } else { ButtonVariant::Secondary },

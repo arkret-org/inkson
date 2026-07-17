@@ -86,9 +86,8 @@ impl JoinRuleUi for JoinRule {
 
 fn join_rule_from_str_loose(value: &str) -> JoinRule {
     match value {
-        "public" | "open" => JoinRule::Public,
+        "public" => JoinRule::Public,
         "knock" => JoinRule::Knock,
-        "request" => JoinRule::Knock,
         "knock_restricted" => JoinRule::KnockRestricted,
         "restricted" => JoinRule::Restricted,
         "closed" => JoinRule::Closed,
@@ -191,7 +190,7 @@ mod tests {
     fn join_rule_loose_parse_falls_back_to_invite() {
         assert_eq!(join_rule_from_str_loose("garbage"), JoinRule::Invite);
         assert_eq!(join_rule_from_str_loose("knock"), JoinRule::Knock);
-        assert_eq!(join_rule_from_str_loose("open"), JoinRule::Public);
+        assert_eq!(join_rule_from_str_loose("open"), JoinRule::Invite);
     }
 
     #[test]

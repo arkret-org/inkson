@@ -22,7 +22,7 @@ use crate::event_submit::EventSubmitter;
 use crate::models::{RealmCreateResult, RealmPolicyResult, SpaceCreateResult, SubmitEventResult};
 use crate::operation::{EventKind, ak_ops, uuid_v7};
 use crate::realm_helpers::{
-    canonical_space_join_rule_v1, patch_touches_create_locked_encryption_profile,
+    patch_touches_create_locked_encryption_profile, validate_join_rule_v1,
 };
 
 /// Build + submit the spec-canonical `ak.realm.create` event bundle
@@ -75,7 +75,7 @@ pub async fn create_realm(
     }
 
     let realm_id = format!("ak:realm:{}", uuid_v7());
-    let join_rule = canonical_space_join_rule_v1(join_rule);
+    let join_rule = validate_join_rule_v1(join_rule)?;
     let notary_did = submitter.service_id().await?;
     let events = build_realm_bootstrap_events(
         &realm_id,
@@ -310,7 +310,7 @@ pub async fn set_realm_policy_events(
             "restricted history_visibility requires ak.realm.history_sharing_policy; use build_realm_history_sharing_policy_event before emitting the visibility change"
         ));
     }
-    let join_rule = canonical_space_join_rule_v1(join_rule);
+    let join_rule = validate_join_rule_v1(join_rule)?;
     let mut events = vec![
         build_realm_state_event(
             realm_id,
