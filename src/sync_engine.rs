@@ -36,7 +36,6 @@
 //! `InksonAccountPostCommit` retains product-only invite, MLS, call and
 //! to-device work after that durability boundary.
 
-use std::cell::Cell;
 #[cfg(test)]
 use std::cell::RefCell;
 use std::collections::BTreeSet;
@@ -53,7 +52,7 @@ use garth::{ClientEvent, ClientProjector};
 use serde_json::{Value, json};
 
 use crate::api_error::{is_auth_expired_error, is_terminal_session_grant_error};
-use crate::models::{AccountSyncStep, DeviceMessagesGetOutcome, RealmTreeNodeKind};
+use crate::models::{AccountSyncStep, RealmTreeNodeKind};
 use crate::runtime::projection::{ClientProjectionEvent, ProjectionSink, SyncStatusEvent};
 use crate::state::{LocalSealView, LocalStateStore, RawOperationRecord};
 use crate::transport::TransportClient;
@@ -92,34 +91,6 @@ impl ConnectionState {
 const BACKOFF_FLOOR: Duration = Duration::from_secs(1);
 const BACKOFF_CEILING: Duration = Duration::from_secs(60);
 
-/// Minimum pause between successful iterations. Insurance against
-/// servers that return account subscribe catch-up immediately; without
-/// this, an `Ok -> loop -> Ok -> loop` cycle spins at network RTT and
-/// floods the browser network panel with identical snapshots.
-///
-/// Inkson currently folds each NDJSON response with `Response::bytes()`,
-/// so it cannot yet keep the spec's long-lived account stream open
-/// (YOU-01-010 residual: wasm needs a web-sys ReadableStream frame reader
-/// before this can become a resident stream). Every frame of each response IS consumed and the
-/// cursor advances to the response's last cursor-bearing frame, so the
-/// poll only bounds realtime latency, not catchup correctness. Keep the
-/// fallback poll interval human-scale until the client switches to a
-/// true frame reader.
-const MIN_INTER_ITERATION_MS: u64 = 5_000;
-
-/// How many successful delta iterations may pass before the engine
-/// re-pulls `GET /_arkret/self/authz/invites`.
-///
-/// Pending invites are low-churn, so refetching the full list on *every*
-/// sync delta (~`MIN_INTER_ITERATION_MS` apart) just floods the network
-/// panel with identical responses — the symptom of the original
-/// "`invites` keeps firing" report. We refresh at most once per this many
-/// deltas (≈30s at the 5s poll floor) and additionally force a refresh on
-/// every full sync (login / reconnect / cursor reset) so a fresh session
-/// always lands with current invites. Between refreshes the engine passes
-/// `None` to `apply_response`, which preserves the last merged invite
-/// projection rather than clearing it.
-const INVITES_REFRESH_EVERY_N_DELTAS: u32 = 6;
 const TO_DEVICE_PAGE_LIMIT: u32 = 1000;
 const MAX_TO_DEVICE_BACKFILL_PAGES: usize = 32;
 
@@ -339,6 +310,21 @@ impl AccountStepCommitter for InksonAccountCommitter {
                     "account stream update has no validated cursor".to_owned(),
                 )
             })?;
+            if !step.initial && account_updates_are_empty(&step.updates) {
+                // A bounded long-poll timeout carries only
+                // frontier+catchup_complete. Persist the resume cursor, but do
+                // not publish a fake business update that remounts resources
+                // and fans out viewer/backups/invites requests.
+                self.ctx
+                    .state_store
+                    .write(|store| store.save_sync_cursor(cursor));
+                if let Some(error) = self.ctx.state_store.read(LocalStateStore::persist_error) {
+                    return Err(arkret_sdk::Error::Protocol(format!(
+                        "persist idle account stream cursor: {error}"
+                    )));
+                }
+                return Ok(AccountCommitOutcome::Committed);
+            }
             let response = AccountSyncStep::from_updates(cursor, step.updates.clone())?;
             apply_response(&response, step.initial, &self.ctx, None);
             if let Some(error) = self.ctx.state_store.read(LocalStateStore::persist_error) {
@@ -346,16 +332,11 @@ impl AccountStepCommitter for InksonAccountCommitter {
                     "persist account stream step: {error}"
                 )));
             }
-            Ok(
-                if to_device_batch_allows_cursor_advance(
-                    &response.updates.to_device,
-                    response.updates.to_device_limited,
-                ) {
-                    AccountCommitOutcome::Committed
-                } else {
-                    AccountCommitOutcome::Replay
-                },
-            )
+            // client-sync.md §10.1: account stream cursor advancement is
+            // independent of to-device ACK. The raw envelopes are now durable
+            // in the local inbox, so the account checkpoint may advance even
+            // when queue pagination or kind-specific handling follows.
+            Ok(AccountCommitOutcome::Committed)
         }
     }
 }
@@ -364,7 +345,39 @@ struct InksonAccountPostCommit {
     ctx: SyncEngineContext,
     generation: crate::runtime::input::ValueReader<u64>,
     start_generation: u64,
-    deltas_since_invites: Cell<u32>,
+}
+
+fn account_updates_are_empty(updates: &arkret_sdk::SyncUpdates) -> bool {
+    updates.realm_updates.is_empty()
+        && updates.malformed_realms.is_empty()
+        && updates.to_device.is_empty()
+        && updates.to_device_ack_token.is_none()
+        && !updates.to_device_limited
+        && updates.to_device_next_cursor.is_none()
+        && !updates.to_device_lost
+        && updates.device_lists.changed.is_empty()
+        && updates.device_lists.left.is_empty()
+        && updates.presence.is_empty()
+        && updates.account_data.is_empty()
+        && updates.notifications.is_empty()
+        && !updates.partial
+}
+
+fn should_bootstrap_invites(initial: bool) -> bool {
+    // Invites are part of the initial account projection. Live changes arrive
+    // through the account/events subscribe planes; a steady-state GET loop
+    // would create a third, protocol-divergent source of truth.
+    initial
+}
+
+fn to_device_backfill_cursor(updates: &arkret_sdk::SyncUpdates) -> Option<String> {
+    // client-sync.md §10.0: account subscribe is the primary receive path.
+    // The standalone queue endpoint is only a continuation path when the
+    // account frame explicitly reports a limited batch.
+    updates
+        .to_device_limited
+        .then(|| updates.to_device_next_cursor.clone())
+        .flatten()
 }
 
 impl InksonAccountPostCommit {
@@ -394,6 +407,9 @@ impl AccountPostCommitHook<arkret_sdk::http_client::Client> for InksonAccountPos
             if !self.active() {
                 return Ok(AccountPostCommitOutcome::Continue);
             }
+            if !step.initial && account_updates_are_empty(&step.updates) {
+                return Ok(AccountPostCommitOutcome::Continue);
+            }
             let cursor = step.cursor.clone().ok_or_else(|| {
                 arkret_sdk::Error::Protocol("account post-commit step has no cursor".to_owned())
             })?;
@@ -419,12 +435,13 @@ impl AccountPostCommitHook<arkret_sdk::http_client::Client> for InksonAccountPos
                 }
             }
 
-            let refresh_invites =
-                step.initial || self.deltas_since_invites.get() >= INVITES_REFRESH_EVERY_N_DELTAS;
-            if refresh_invites {
+            // `/authz/invites` is an initial/bootstrap projection only. Live
+            // membership and invite changes arrive on the account/events
+            // subscribe planes; maintaining a third periodic poll loop here
+            // violates the sync protocol and amplifies every account delta.
+            if should_bootstrap_invites(step.initial) {
                 match crate::transport::account::invites(http).await {
                     Ok(invites) => {
-                        self.deltas_since_invites.set(0);
                         let invite_notifications = invites
                             .invites
                             .into_iter()
@@ -448,9 +465,6 @@ impl AccountPostCommitHook<arkret_sdk::http_client::Client> for InksonAccountPos
                     }
                     Err(error) => tracing::debug!(?error, "invite refresh deferred"),
                 }
-            } else {
-                self.deltas_since_invites
-                    .set(self.deltas_since_invites.get().saturating_add(1));
             }
 
             route_inbound_call_signals(&api, &response, &self.ctx).await;
@@ -470,9 +484,6 @@ impl AccountPostCommitHook<arkret_sdk::http_client::Client> for InksonAccountPos
             }
             prefetch_member_identity_proof_keys(&api, &response, self.ctx.did_cache.clone()).await;
             if let Err(error) = process_to_device_delivery(&api, &response, &self.ctx).await {
-                return Ok(self.classify_error(error));
-            }
-            if let Err(error) = poll_device_message_queue(&api, &self.ctx).await {
                 return Ok(self.classify_error(error));
             }
 
@@ -529,7 +540,6 @@ pub async fn run_sync_engine(
         ctx: ctx.clone(),
         generation,
         start_generation,
-        deltas_since_invites: Cell::new(INVITES_REFRESH_EVERY_N_DELTAS),
     };
     let result = ctx
         .client_runtime
@@ -541,7 +551,9 @@ pub async fn run_sync_engine(
             AccountStepHandlers::new(&committer, &hook),
             &SyncLoopControl::new(),
             RunOptions {
-                beat: Duration::from_millis(MIN_INTER_ITERATION_MS),
+                // Successful bounded polls reconnect immediately. The server
+                // owns the 30-second idle wait window.
+                beat: Duration::ZERO,
                 min_backoff: BACKOFF_FLOOR,
                 max_backoff: BACKOFF_CEILING,
                 jitter_ratio: 0.2,
@@ -1398,11 +1410,10 @@ async fn process_to_device_delivery(
 ) -> anyhow::Result<()> {
     let key_clients = crate::transport::EndpointClients::from_http(api.sdk_http_client()?);
     let keys = key_clients.keys();
-    let mut ack_safe_prefix = to_device_batch_all_ack_safe(&response.updates.to_device)
-        && ctx
-            .state_store
-            .read(|store| store.persist_error().is_none());
-    if ack_safe_prefix
+    let mut durable_prefix = ctx
+        .state_store
+        .read(|store| store.persist_error().is_none());
+    if durable_prefix
         && !response.updates.to_device.is_empty()
         && let Some(ack_token) = response.updates.to_device_ack_token.as_deref()
     {
@@ -1410,11 +1421,7 @@ async fn process_to_device_delivery(
         keys.ack_device_messages(ack_token).await?;
     }
 
-    let mut next_cursor = if response.updates.to_device_limited {
-        response.updates.to_device_next_cursor.clone()
-    } else {
-        None
-    };
+    let mut next_cursor = to_device_backfill_cursor(&response.updates);
     let mut page_count = 0usize;
     while let Some(cursor) = next_cursor {
         page_count += 1;
@@ -1431,10 +1438,10 @@ async fn process_to_device_delivery(
             store.ingest_to_device_messages(&messages);
             store.persist_error().is_none()
         });
-        if !persisted || !to_device_batch_all_ack_safe(&messages) {
-            ack_safe_prefix = false;
+        if !persisted {
+            durable_prefix = false;
         }
-        if ack_safe_prefix
+        if durable_prefix
             && !messages.is_empty()
             && let Some(ack_token) = page.ack_token.as_deref()
         {
@@ -1458,76 +1465,14 @@ async fn process_to_device_delivery(
     Ok(())
 }
 
-async fn poll_device_message_queue(
-    api: &TransportClient,
-    ctx: &SyncEngineContext,
-) -> anyhow::Result<()> {
-    let key_clients = crate::transport::EndpointClients::from_http(api.sdk_http_client()?);
-    let keys = key_clients.keys();
-    let first_page = keys.receive_device_messages().await?;
-    ingest_device_message_pages(&keys, first_page, ctx).await
-}
-
-async fn ingest_device_message_pages(
-    keys: &crate::transport::KeysEndpoints<'_>,
-    first_page: DeviceMessagesGetOutcome,
-    ctx: &SyncEngineContext,
-) -> anyhow::Result<()> {
-    let mut page = first_page;
-    let mut page_count = 0usize;
-    loop {
-        let messages = page.messages.clone();
-        let persisted = ctx.state_store.write(|store| {
-            store.ingest_to_device_messages(&messages);
-            store.persist_error().is_none()
-        });
-        if persisted
-            && to_device_batch_all_ack_safe(&messages)
-            && !messages.is_empty()
-            && let Some(ack_token) = page.ack_token.as_deref()
-        {
-            await_account_state_durable(ctx, "polled to-device batch before ACK").await?;
-            keys.ack_device_messages(ack_token).await?;
-        }
-        if !(page.has_more || page.limited) {
-            break;
-        }
-        page_count += 1;
-        if page_count > MAX_TO_DEVICE_BACKFILL_PAGES {
-            anyhow::bail!(
-                "to-device poll exceeded {MAX_TO_DEVICE_BACKFILL_PAGES} pages without finishing"
-            );
-        }
-        let Some(cursor) = page.next_cursor.clone() else {
-            anyhow::bail!("to-device poll page reported more data without next_cursor");
-        };
-        page = keys
-            .receive_device_messages_page(Some(&cursor), Some(TO_DEVICE_PAGE_LIMIT))
-            .await?;
-    }
-    ctx.projection_sink
-        .projection(ClientProjectionEvent::DeviceQueue {
-            pending: ctx
-                .state_store
-                .read(|store| store.load().to_device_inbox.len()),
-        });
-    Ok(())
-}
-
-fn to_device_batch_all_ack_safe(messages: &[arkret_sdk::DeviceMessageEnvelope]) -> bool {
-    messages.iter().all(|message| {
-        let kind = message.kind.as_str();
-        kind.starts_with("ak.key.verification.")
-            || kind == crate::mls::secret_share::SECRET_SHARE_KIND_REQUEST
-            || kind == "ak.realm_key.request"
-    })
-}
-
 fn to_device_batch_allows_cursor_advance(
-    messages: &[arkret_sdk::DeviceMessageEnvelope],
-    limited: bool,
+    _messages: &[arkret_sdk::DeviceMessageEnvelope],
+    _limited: bool,
 ) -> bool {
-    !limited && to_device_batch_all_ack_safe(messages)
+    // Cursor position and to-device deletion are deliberately independent.
+    // This predicate is retained at projection call sites to document that
+    // all durably-ingested batches, including limited pages, may checkpoint.
+    true
 }
 
 fn sync_realm_state_events(body: &Value) -> Vec<Value> {
@@ -2286,6 +2231,34 @@ mod tests {
         }
     }
 
+    #[test]
+    fn frontier_only_account_step_is_projection_empty() {
+        let mut response = empty_response("ak:cursor:idle");
+        assert!(account_updates_are_empty(&response.updates));
+
+        response.updates.partial = true;
+        assert!(!account_updates_are_empty(&response.updates));
+    }
+
+    #[test]
+    fn steady_state_sync_does_not_poll_invites() {
+        assert!(should_bootstrap_invites(true));
+        assert!(!should_bootstrap_invites(false));
+    }
+
+    #[test]
+    fn standalone_to_device_pull_requires_limited_account_batch() {
+        let mut response = empty_response("ak:cursor:to-device");
+        response.updates.to_device_next_cursor = Some("ak:cursor:page-2".to_owned());
+        assert_eq!(to_device_backfill_cursor(&response.updates), None);
+
+        response.updates.to_device_limited = true;
+        assert_eq!(
+            to_device_backfill_cursor(&response.updates).as_deref(),
+            Some("ak:cursor:page-2")
+        );
+    }
+
     fn temp_store(tag: &str) -> LocalStateStore {
         let path = std::env::temp_dir().join(format!(
             "inkson-engine-{tag}-{}.json",
@@ -2588,31 +2561,23 @@ mod tests {
     }
 
     #[test]
-    fn to_device_ack_safe_batches_exclude_key_material() {
-        assert!(to_device_batch_all_ack_safe(&[]));
-        assert!(to_device_batch_all_ack_safe(&[
-            to_device_message("ak.key.verification.request"),
-            to_device_message(crate::mls::secret_share::SECRET_SHARE_KIND_REQUEST),
-            to_device_message("ak.realm_key.request"),
-        ]));
+    fn durable_to_device_batches_do_not_block_account_cursor() {
         assert!(to_device_batch_allows_cursor_advance(
             &[to_device_message("ak.key.verification.request")],
             false,
         ));
-        assert!(!to_device_batch_allows_cursor_advance(
+        assert!(to_device_batch_allows_cursor_advance(
             &[to_device_message("ak.key.verification.request")],
             true,
         ));
-
-        assert!(!to_device_batch_all_ack_safe(&[to_device_message(
-            "ak.mls.welcome"
-        )]));
-        assert!(!to_device_batch_all_ack_safe(&[to_device_message(
-            crate::mls::secret_share::SECRET_SHARE_KIND_SEND,
-        )]));
-        assert!(!to_device_batch_all_ack_safe(&[to_device_message(
-            "ak.future.secret.material"
-        )]));
+        assert!(to_device_batch_allows_cursor_advance(
+            &[to_device_message("ak.mls.welcome")],
+            false,
+        ));
+        assert!(to_device_batch_allows_cursor_advance(
+            &[to_device_message("ak.future.secret.material")],
+            false,
+        ));
     }
 
     #[test]

@@ -16,7 +16,7 @@ pub mod realm_write;
 
 pub use blob::BlobEndpoints;
 pub use context::{RequestContext, TransportClient};
-pub use endpoints::{EndpointClients, KeysEndpoints};
+pub use endpoints::EndpointClients;
 pub use media::MediaEndpoints;
 
 #[cfg(test)]
