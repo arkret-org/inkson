@@ -31,8 +31,32 @@ pub fn OnboardingPanel(
     account_primary_handle: Signal<String>,
 ) -> Element {
     let state_store = crate::app::SessionContext::get().state_store;
-    let pending_handoff = state_store.read().pending_account_handoff();
-    let pending_registration = state_store.read().pending_principal_registration();
+    // Checkpoints are routing inputs only when this surface mounts. Do not
+    // subscribe the parent to every durable stage write: an uninterrupted
+    // child flow keeps the Recovery Key in memory and must remain mounted while
+    // its background bootstrap advances. A real remount (reload/restart) reads
+    // the latest checkpoint and intentionally enters the resume surface.
+    let (pending_handoff, pending_registration) = {
+        let store = state_store.peek();
+        (
+            store.pending_account_handoff(),
+            store.pending_principal_registration(),
+        )
+    };
+
+    if pending_registration.is_some() {
+        return rsx! {
+            div { class: "timeline onboarding-flow", "data-testid": "onboarding-panel",
+                PendingPrincipalBootstrap {
+                    token,
+                    account_did,
+                    device_id,
+                    config_store,
+                    account_primary_handle,
+                }
+            }
+        };
+    }
 
     if pending_handoff.is_some() {
         return rsx! {
@@ -44,14 +68,6 @@ pub fn OnboardingPanel(
                     config_store,
                     account_primary_handle,
                 }
-            }
-        };
-    }
-
-    if pending_registration.is_some() {
-        return rsx! {
-            div { class: "timeline onboarding-flow", "data-testid": "onboarding-panel",
-                PendingPrincipalBootstrap { token, account_did, device_id }
             }
         };
     }
@@ -392,16 +408,27 @@ async fn create_bind_and_bootstrap_identity(
     // still has the user-confirmed key in memory. Switching to the generic
     // resume panel here made a successful, uninterrupted setup appear to ask
     // for the same 24 words twice.
-    let checkpoint = if let Some(checkpoint) = state_store.read().pending_principal_registration() {
-        if checkpoint.handoff_request_id != handoff.request_id {
-            anyhow::bail!("a different identity setup is already pending");
-        }
+    let stored_checkpoint = state_store.read().pending_principal_registration();
+    let checkpoint = if let Some(checkpoint) = stored_checkpoint
+        .as_ref()
+        .filter(|checkpoint| checkpoint.handoff_request_id == handoff.request_id)
+    {
         crate::identity::principal_registration::validate_checkpoint_recovery_key(
-            &checkpoint,
+            checkpoint,
             recovery_key,
         )?;
-        checkpoint
+        checkpoint.clone()
     } else {
+        if let Some(checkpoint) = stored_checkpoint.as_ref()
+            && !can_replace_checkpoint_for_new_handoff(checkpoint, handoff)
+        {
+            anyhow::bail!("a different identity setup is already pending");
+        }
+        // A re-authentication always has a fresh handoff request id. If the old
+        // checkpoint never advanced past local custody confirmation, the server
+        // has not accepted its binding and the newly-issued active handoff proves
+        // the account is still unbound. Replace that stale local draft with one
+        // derived from the Recovery Key currently shown on this page.
         let checkpoint = crate::identity::principal_registration::prepare_registration_checkpoint(
             handoff,
             device,
@@ -515,6 +542,16 @@ async fn create_bind_and_bootstrap_identity(
     Ok((actor, device.to_owned(), grant_jwt))
 }
 
+fn can_replace_checkpoint_for_new_handoff(
+    checkpoint: &crate::state::PendingPrincipalRegistration,
+    handoff: &crate::state::PendingAccountHandoff,
+) -> bool {
+    checkpoint.stage == crate::state::PendingPrincipalRegistrationStage::CustodyConfirmed
+        && checkpoint.handoff_request_id != handoff.request_id
+        && handoff.lease_id.is_some()
+        && handoff.lease_fence.is_some()
+}
+
 async fn finish_principal_setup(
     registration: &crate::state::PendingPrincipalRegistration,
     recovery_key: &str,
@@ -621,9 +658,11 @@ async fn finish_principal_setup(
 
 #[component]
 fn PendingPrincipalBootstrap(
-    token: Signal<String>,
-    account_did: Signal<String>,
-    device_id: Signal<String>,
+    mut token: Signal<String>,
+    mut account_did: Signal<String>,
+    mut device_id: Signal<String>,
+    config_store: Signal<crate::config::LocalConfigStore>,
+    mut account_primary_handle: Signal<String>,
 ) -> Element {
     let base_url = crate::app::SessionContext::base_url_string();
     let state_store = crate::app::SessionContext::get().state_store;
@@ -688,25 +727,55 @@ fn PendingPrincipalBootstrap(
                             let session = token();
                             let actor = account_did();
                             let device = device_id();
-                            if actor != registration.did || device != registration.device_id {
+                            let resumes_before_binding = registration.stage
+                                == crate::state::PendingPrincipalRegistrationStage::CustodyConfirmed;
+                            if !resumes_before_binding
+                                && (actor != registration.did || device != registration.device_id)
+                            {
                                 status.set("This saved setup belongs to a different account or device.".to_owned());
                                 return;
                             }
                             busy.set(true);
                             status.set("Finishing setup…".to_owned());
                             spawn(async move {
-                                match finish_principal_setup(
-                                    &registration,
-                                    &supplied_key,
-                                    &base,
-                                    &session,
-                                    &actor,
-                                    &device,
-                                    state_store,
-                                )
-                                .await
-                                {
-                                    Ok(_) => {
+                                let result = if resumes_before_binding {
+                                    let handoff = state_store.read().pending_account_handoff();
+                                    match handoff {
+                                        Some(handoff) => create_bind_and_bootstrap_identity(
+                                            &handoff,
+                                            &supplied_key,
+                                            &registration.device_id,
+                                            &base,
+                                            config_store,
+                                            state_store,
+                                        )
+                                        .await
+                                        .map(|completed| (completed, Some(handoff.account_handle))),
+                                        None => Err(anyhow::anyhow!(
+                                            "the account handoff is unavailable; sign in again"
+                                        )),
+                                    }
+                                } else {
+                                    finish_principal_setup(
+                                        &registration,
+                                        &supplied_key,
+                                        &base,
+                                        &session,
+                                        &actor,
+                                        &device,
+                                        state_store,
+                                    )
+                                    .await
+                                    .map(|_| ((actor, device, session), None))
+                                };
+                                match result {
+                                    Ok(((completed_actor, completed_device, completed_session), handle)) => {
+                                        if let Some(handle) = handle {
+                                            account_primary_handle.set(handle);
+                                        }
+                                        account_did.set(completed_actor);
+                                        device_id.set(completed_device);
+                                        token.set(completed_session);
                                         recovery_key.set(String::new());
                                         status.set(String::new());
                                         complete.set(true);
@@ -765,5 +834,62 @@ mod tests {
             ),
             "arkret-recovery-key-alice.txt"
         );
+    }
+
+    #[test]
+    fn stale_custody_checkpoint_can_follow_a_fresh_active_handoff() {
+        let recovery_key = crate::recovery_crypto::generate_recovery_key().unwrap();
+        let old_handoff = test_handoff(
+            "ak:request:019f0000-0000-7000-8000-000000000010",
+            Some("lease-1"),
+            Some(1),
+        );
+        let mut checkpoint =
+            crate::identity::principal_registration::prepare_registration_checkpoint(
+                &old_handoff,
+                &old_handoff.device_id,
+                &recovery_key,
+            )
+            .unwrap();
+        let new_handoff = test_handoff(
+            "ak:request:019f0000-0000-7000-8000-000000000011",
+            Some("lease-1"),
+            Some(1),
+        );
+
+        assert!(can_replace_checkpoint_for_new_handoff(
+            &checkpoint,
+            &new_handoff
+        ));
+
+        checkpoint.stage = crate::state::PendingPrincipalRegistrationStage::BindingRegistered;
+        assert!(!can_replace_checkpoint_for_new_handoff(
+            &checkpoint,
+            &new_handoff
+        ));
+    }
+
+    fn test_handoff(
+        request_id: &str,
+        lease_id: Option<&str>,
+        lease_fence: Option<u64>,
+    ) -> crate::state::PendingAccountHandoff {
+        crate::state::PendingAccountHandoff {
+            principal_server_url: "https://principal.example".to_owned(),
+            gate_account_base: "https://auth.example/_arkret/gate/account".to_owned(),
+            request_id: request_id.to_owned(),
+            account_handle: "alice:auth.example".to_owned(),
+            holder_jkt: "holder-jkt".to_owned(),
+            audience: "did:webvh:z6mkfixture:principal.example".to_owned(),
+            expires_at: chrono::Utc::now() + chrono::Duration::minutes(10),
+            lease_id: lease_id.map(ToOwned::to_owned),
+            lease_fence,
+            lease_expires_at: Some(chrono::Utc::now() + chrono::Duration::minutes(15)),
+            retry_after_ms: None,
+            device_id: "ak:device:019f0000-0000-7000-8000-000000000001".to_owned(),
+            enrollment_authority_did: "did:key:z6MkrJVnaZkeFzdQyKjzgRHjhBfE6ZscXDFHq8T7TYNy9v1t"
+                .to_owned(),
+            trust_domain: "ak:trust-domain:test".to_owned(),
+        }
     }
 }
