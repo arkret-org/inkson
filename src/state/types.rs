@@ -588,6 +588,16 @@ pub struct CachedMlsGovernanceProof {
     pub verified_at: DateTime<Utc>,
 }
 
+/// Durable, not-yet-verified chunk acquisition. Chunks remain inert JSON until
+/// the SDK authenticates the complete manifest and materializes every range.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct MlsGovernanceProofAcquisition {
+    pub proof_request_digest: arkret_sdk::Hash,
+    pub bundle_digest: arkret_sdk::Hash,
+    pub chunks: BTreeMap<u32, Value>,
+    pub updated_at: DateTime<Utc>,
+}
+
 /// Public-only checkpoint for a client-authored principal registration.
 /// Recovery words and every derived private seed are deliberately absent; a
 /// resumed bootstrap must ask the user to re-enter the cold recovery secret.
@@ -846,6 +856,11 @@ pub struct ClientLocalState {
     /// are invalidated when sync observes a different accepted Seal head.
     #[serde(default)]
     pub mls_governance_proofs: BTreeMap<String, CachedMlsGovernanceProof>,
+    /// Incomplete MLS governance proof chunks, keyed by proof identity digest.
+    /// These are resumable transport state only and never authorize an epoch.
+    #[serde(default)]
+    pub mls_governance_proof_acquisitions:
+        BTreeMap<String, MlsGovernanceProofAcquisition>,
     /// First-use pins for Realm governance proof chains. A different anchor is
     /// never accepted implicitly; explicit recovery/re-pin UI is required.
     #[serde(default)]
@@ -1221,6 +1236,7 @@ impl Default for ClientLocalState {
             mls_genesis_emitted: BTreeSet::new(),
             mls_genesis_policy_root: BTreeMap::new(),
             mls_governance_proofs: BTreeMap::new(),
+            mls_governance_proof_acquisitions: BTreeMap::new(),
             mls_governance_trust_anchors: BTreeMap::new(),
             mls_private_plaintext: BTreeMap::new(),
             mls_decrypted_plaintext: BTreeMap::new(),

@@ -47,7 +47,7 @@ pub(crate) fn proof_request(
         },
     };
     let request = arkret_sdk::MlsGovernanceProofRequest {
-        realm_id,
+        realm_id: realm_id.clone(),
         effective_scope,
         mls_group_id: mls_group_id.into(),
         previous_epoch,
@@ -546,7 +546,10 @@ pub(crate) fn seed_test_governance_proof(
     let bundle = arkret_sdk::MaterializedMlsGovernanceProofBundle {
         bundle_version: arkret_sdk::MLS_GOVERNANCE_PROOF_BUNDLE_VERSION,
         proof_request_digest: request.proof_request_digest().unwrap(),
-        bundle_digest: root.clone(),
+        bundle_digest: arkret_sdk::Hash::new(
+            "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        )
+        .unwrap(),
         materialization_profile: arkret_sdk::MLS_GOVERNANCE_COMPLETE_MATERIALIZATION_PROFILE
             .to_owned(),
         realm_id: request.realm_id.clone(),
