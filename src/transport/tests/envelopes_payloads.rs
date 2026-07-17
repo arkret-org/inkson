@@ -12,9 +12,7 @@ use crate::event_builders::{
 };
 use crate::operation::OperationBuilder;
 use crate::realm_defaults::RECOMMENDED_REALM_ENCRYPTION_FLOOR;
-use crate::realm_helpers::{
-    patch_touches_create_locked_encryption_profile, validate_join_rule_v1,
-};
+use crate::realm_helpers::{patch_touches_create_locked_encryption_profile, validate_join_rule_v1};
 use crate::state::projection_views::{
     LifecycleProjectionView, SpaceContainerProjectionView, StrandProjectionView,
 };

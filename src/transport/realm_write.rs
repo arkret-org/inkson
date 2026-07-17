@@ -21,9 +21,7 @@ use crate::event_builders::{
 use crate::event_submit::EventSubmitter;
 use crate::models::{RealmCreateResult, RealmPolicyResult, SpaceCreateResult, SubmitEventResult};
 use crate::operation::{EventKind, ak_ops, uuid_v7};
-use crate::realm_helpers::{
-    patch_touches_create_locked_encryption_profile, validate_join_rule_v1,
-};
+use crate::realm_helpers::{patch_touches_create_locked_encryption_profile, validate_join_rule_v1};
 
 /// Build + submit the spec-canonical `ak.realm.create` event bundle
 /// (and its facet follow-ups) via `ak.self.events.command.submit`
