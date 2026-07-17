@@ -250,7 +250,7 @@ fn FileTransferRow(
                         span { " / " }
                         span { "{format_size(item.record.plaintext_size_bytes)}" }
                         span { " / " }
-                        span { "{state_label(&item.record.state)}" }
+                        span { "{status_label(&item.record.status)}" }
                     }
                 }
             }
@@ -404,12 +404,12 @@ fn status_class(value: &str) -> &'static str {
     }
 }
 
-fn state_label(state: &crate::file_transfer::FileTransferState) -> &'static str {
-    match state {
-        crate::file_transfer::FileTransferState::Available => "available",
-        crate::file_transfer::FileTransferState::Downloaded => "downloaded",
-        crate::file_transfer::FileTransferState::Dismissed => "dismissed",
-        crate::file_transfer::FileTransferState::Deleted => "deleted",
+fn status_label(status: &crate::file_transfer::FileTransferStatus) -> &'static str {
+    match status {
+        crate::file_transfer::FileTransferStatus::Available => "available",
+        crate::file_transfer::FileTransferStatus::Downloaded => "downloaded",
+        crate::file_transfer::FileTransferStatus::Dismissed => "dismissed",
+        crate::file_transfer::FileTransferStatus::Deleted => "deleted",
     }
 }
 

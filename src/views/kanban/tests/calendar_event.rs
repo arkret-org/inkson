@@ -10,7 +10,7 @@ fn calendar_patch_sets_schedule_recurrence_profile_and_private_location_path() {
         start: "2026-06-20T09:00:00Z".to_owned(),
         end: "2026-06-20T10:00:00Z".to_owned(),
         timezone: "Asia/Shanghai".to_owned(),
-        recurrence_frequency: "WEEKLY".to_owned(),
+        recurrence_frequency: "weekly".to_owned(),
         recurrence_interval: "1".to_owned(),
         recurrence_by_day: "MO, WE".to_owned(),
         location: "Board room".to_owned(),
@@ -39,9 +39,9 @@ fn calendar_patch_sets_schedule_recurrence_profile_and_private_location_path() {
     assert_eq!(
         patch["metadata.fields.recurrence"]["value"],
         json!({
-            "frequency": "WEEKLY",
+            "frequency": "weekly",
             "interval": 1,
-            "by_day": ["MO", "WE"]
+            "by_day": [{"day": "mo"}, {"day": "we"}]
         })
     );
     assert_eq!(
@@ -101,9 +101,9 @@ fn calendar_projection_reads_schedule_and_plain_location() {
         (
             "recurrence".to_owned(),
             json!({
-                "frequency": "WEEKLY",
+                "frequency": "weekly",
                 "interval": 1,
-                "by_day": ["MO", "WE"]
+                "by_day": [{"day": "mo"}, {"day": "we"}]
             }),
         ),
         ("location".to_owned(), json!({ "title": "Board room" })),
@@ -132,7 +132,7 @@ fn calendar_projection_reads_schedule_and_plain_location() {
     assert_eq!(card.calendar.start, "2026-06-20T09:00:00Z");
     assert_eq!(card.calendar.end, "2026-06-20T10:00:00Z");
     assert_eq!(card.calendar.timezone, "Asia/Shanghai");
-    assert_eq!(card.calendar.recurrence_frequency, "WEEKLY");
+    assert_eq!(card.calendar.recurrence_frequency, "weekly");
     assert_eq!(card.calendar.recurrence_interval, "1");
     assert_eq!(card.calendar.recurrence_by_day, "MO, WE");
     assert_eq!(card.calendar.location, "Board room");
@@ -146,7 +146,7 @@ fn calendar_overlay_merges_partial_direct_schedule_patch() {
         start: "2026-06-20T09:00:00Z".to_owned(),
         end: "2026-06-20T10:00:00Z".to_owned(),
         timezone: "Asia/Shanghai".to_owned(),
-        recurrence_frequency: "WEEKLY".to_owned(),
+        recurrence_frequency: "weekly".to_owned(),
         recurrence_interval: "1".to_owned(),
         recurrence_by_day: "MO, WE".to_owned(),
         location: "Board room".to_owned(),
@@ -185,7 +185,7 @@ fn calendar_overlay_merges_partial_direct_schedule_patch() {
     assert_eq!(calendar.start, "2026-06-20T11:00:00Z");
     assert_eq!(calendar.end, "2026-06-20T10:00:00Z");
     assert_eq!(calendar.timezone, "Asia/Shanghai");
-    assert_eq!(calendar.recurrence_frequency, "WEEKLY");
+    assert_eq!(calendar.recurrence_frequency, "weekly");
     assert_eq!(calendar.recurrence_by_day, "MO, WE");
     assert_eq!(calendar.location, "Board room");
 }

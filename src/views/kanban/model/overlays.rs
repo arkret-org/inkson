@@ -618,7 +618,7 @@ fn apply_calendar_field_overlay(
         current.recurrence_interval = next.recurrence_interval.clone();
         current.recurrence_by_day = next.recurrence_by_day.clone();
         current.recurrence_count = next.recurrence_count.clone();
-        current.recurrence_expires_at = next.recurrence_expires_at.clone();
+        current.recurrence_until = next.recurrence_until.clone();
     }
     if touched_fields.contains_key("location") {
         current.location = next.location.clone();

@@ -322,9 +322,9 @@ fn CalendarScheduleEditForm(
                     id: "card-detail-calendar-until-input",
                     class: "input",
                     "data-testid": "card-detail-calendar-until-input",
-                    value: "{calendar().recurrence_expires_at}",
-                    placeholder: "2026-12-31T23:59:59Z",
-                    oninput: move |event: FormEvent| update_calendar_draft(calendar, |draft| draft.recurrence_expires_at = event.value()),
+                    value: "{calendar().recurrence_until}",
+                    placeholder: "2026-12-31T23:59:59",
+                    oninput: move |event: FormEvent| update_calendar_draft(calendar, |draft| draft.recurrence_until = event.value()),
                 }
             }
             div { class: "field",

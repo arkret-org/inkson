@@ -14,7 +14,7 @@ pub(crate) struct CalendarCardFields {
     pub(crate) recurrence_interval: String,
     pub(crate) recurrence_by_day: String,
     pub(crate) recurrence_count: String,
-    pub(crate) recurrence_expires_at: String,
+    pub(crate) recurrence_until: String,
     pub(crate) location: String,
     pub(crate) location_locked: bool,
 }
@@ -29,7 +29,7 @@ impl CalendarCardFields {
             || !self.recurrence_interval.trim().is_empty()
             || !self.recurrence_by_day.trim().is_empty()
             || !self.recurrence_count.trim().is_empty()
-            || !self.recurrence_expires_at.trim().is_empty()
+            || !self.recurrence_until.trim().is_empty()
             || !self.location.trim().is_empty()
             || self.location_locked
     }
@@ -43,7 +43,7 @@ impl CalendarCardFields {
             || !self.recurrence_interval.trim().is_empty()
             || !self.recurrence_by_day.trim().is_empty()
             || !self.recurrence_count.trim().is_empty()
-            || !self.recurrence_expires_at.trim().is_empty()
+            || !self.recurrence_until.trim().is_empty()
             || !self.location.trim().is_empty()
     }
 
@@ -62,8 +62,8 @@ impl CalendarCardFields {
         if !self.recurrence_count.trim().is_empty() {
             parts.push(format!("{} times", self.recurrence_count.trim()));
         }
-        if !self.recurrence_expires_at.trim().is_empty() {
-            parts.push(format!("until {}", self.recurrence_expires_at.trim()));
+        if !self.recurrence_until.trim().is_empty() {
+            parts.push(format!("until {}", self.recurrence_until.trim()));
         }
         parts.join(" · ")
     }
@@ -113,7 +113,7 @@ pub(crate) fn calendar_fields_from_metadata(
             .and_then(Value::as_array)
             .map(|days| {
                 days.iter()
-                    .filter_map(Value::as_str)
+                    .filter_map(|day| day.get("day").and_then(Value::as_str))
                     .collect::<Vec<_>>()
                     .join(", ")
             })
@@ -123,8 +123,8 @@ pub(crate) fn calendar_fields_from_metadata(
             .and_then(Value::as_u64)
             .map(|value| value.to_string())
             .unwrap_or_default(),
-        recurrence_expires_at: recurrence
-            .and_then(|value| value.get("expires_at"))
+        recurrence_until: recurrence
+            .and_then(|value| value.get("until"))
             .and_then(Value::as_str)
             .unwrap_or_default()
             .to_owned(),
@@ -325,7 +325,7 @@ fn recurrence_from_card(
         || !calendar.recurrence_interval.trim().is_empty()
         || !calendar.recurrence_by_day.trim().is_empty()
         || !calendar.recurrence_count.trim().is_empty()
-        || !calendar.recurrence_expires_at.trim().is_empty();
+        || !calendar.recurrence_until.trim().is_empty();
     if !has_recurrence {
         return Ok(None);
     }
@@ -338,26 +338,30 @@ fn recurrence_from_card(
     {
         return Err("recurrence count must be between 1 and 10000".to_owned());
     }
-    let expires_at = calendar.recurrence_expires_at.trim();
-    let expires_at = if expires_at.is_empty() {
+    let until = calendar.recurrence_until.trim();
+    let until = if until.is_empty() {
         None
     } else {
-        if !expires_at.ends_with('Z') {
-            return Err("recurrence expires_at must end in Z".to_owned());
+        if until.ends_with('Z') || until.contains('+') {
+            return Err("recurrence until must not contain a UTC offset or Z suffix".to_owned());
         }
-        chrono::DateTime::parse_from_rfc3339(expires_at)
-            .map_err(|err| format!("recurrence expires_at must be RFC3339: {err}"))?;
-        Some(expires_at.to_owned())
+        chrono::NaiveDateTime::parse_from_str(until, "%Y-%m-%dT%H:%M:%S%.f")
+            .map_err(|err| format!("recurrence until must be a local date-time: {err}"))?;
+        Some(until.to_owned())
     };
-    if count.is_some() && expires_at.is_some() {
-        return Err("recurrence count and expires_at are mutually exclusive".to_owned());
+    if count.is_some() && until.is_some() {
+        return Err("recurrence count and until are mutually exclusive".to_owned());
     }
     Ok(Some(arkret_sdk::CalendarRecurrence {
         frequency,
         interval,
         by_day,
+        by_month: None,
+        by_month_day: None,
+        by_set_position: None,
+        first_day_of_week: None,
         count,
-        expires_at,
+        until,
     }))
 }
 
@@ -378,7 +382,9 @@ fn parse_recurrence_frequency(value: &str) -> Result<arkret_sdk::RecurrenceFrequ
     }
 }
 
-fn parse_recurrence_weekdays(value: &str) -> Result<Vec<arkret_sdk::RecurrenceWeekday>, String> {
+fn parse_recurrence_weekdays(
+    value: &str,
+) -> Result<Vec<arkret_sdk::CalendarRecurrenceDay>, String> {
     let mut days = Vec::new();
     for day in value
         .split(',')
@@ -394,6 +400,10 @@ fn parse_recurrence_weekdays(value: &str) -> Result<Vec<arkret_sdk::RecurrenceWe
             "SA" => arkret_sdk::RecurrenceWeekday::Sa,
             "SU" => arkret_sdk::RecurrenceWeekday::Su,
             _ => return Err(format!("unsupported recurrence weekday {day}")),
+        };
+        let parsed = arkret_sdk::CalendarRecurrenceDay {
+            day: parsed,
+            nth_of_period: None,
         };
         if !days.contains(&parsed) {
             days.push(parsed);
