@@ -69,6 +69,10 @@ pub struct AccountHealthInputs {
     pub recovery_check_complete: bool,
 
     pub needs_device_authorization: bool,
+    /// Another active device exists and can actually approve a pairing request.
+    /// A first device without a control-stream bootstrap must return to
+    /// onboarding; showing the multi-device pairing prompt is a dead end.
+    pub account_has_other_devices: bool,
     pub needs_mls_unlock: bool,
     pub needs_mls_backup: bool,
     pub needs_mls_recovery_setup: bool,
@@ -102,7 +106,7 @@ pub fn resolve(i: AccountHealthInputs) -> AccountHealthPrompt {
     // Priority 1: device authorization is the only thing that can run before
     // the device-state probe completes; it must not depend on
     // `sync_bootstrap_complete`. Once known to be needed, it pre-empts all else.
-    if i.device_check_complete && i.needs_device_authorization {
+    if i.device_check_complete && i.needs_device_authorization && i.account_has_other_devices {
         return AccountHealthPrompt::DeviceAuthorization;
     }
     // While the device probe is still running, or the device still needs
@@ -194,6 +198,7 @@ mod tests {
     fn device_authorization_preempts_everything() {
         let i = AccountHealthInputs {
             needs_device_authorization: true,
+            account_has_other_devices: true,
             needs_mls_unlock: true,
             needs_mls_backup: true,
             needs_mls_recovery_setup: true,
@@ -202,6 +207,17 @@ mod tests {
             ..healthy()
         };
         assert_eq!(resolve(i), AccountHealthPrompt::DeviceAuthorization);
+    }
+
+    #[test]
+    fn first_device_never_gets_a_multi_device_pairing_prompt() {
+        let i = AccountHealthInputs {
+            needs_device_authorization: true,
+            account_has_other_devices: false,
+            ..healthy()
+        };
+
+        assert_eq!(resolve(i), AccountHealthPrompt::None);
     }
 
     #[test]

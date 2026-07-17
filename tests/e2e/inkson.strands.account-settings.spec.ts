@@ -92,7 +92,7 @@ test("account menu keeps account handle when handle directory returns an empty p
   expect(handleDirectoryRequests).toBeGreaterThan(0);
 });
 
-test("settings language selector mirrors shell direction for RTL locales", async ({ page }) => {
+test("settings language selector offers only English and Chinese", async ({ page }) => {
   await openSettings(page);
   await page.getByTestId("settings-nav-item-theme").click();
   await expect(page.getByTestId("language-settings")).toBeVisible();
@@ -101,15 +101,18 @@ test("settings language selector mirrors shell direction for RTL locales", async
   await page.getByTestId("theme-system").click();
   await expect(page.getByTestId("client-shell")).toHaveAttribute("data-theme", "system");
 
-  await page.getByTestId("language-ar").click();
-  await expect(page.getByTestId("client-shell")).toHaveAttribute("dir", "rtl");
-  await expect(page.getByTestId("client-shell")).toHaveAttribute("data-direction", "rtl");
-  await expect(page.getByTestId("client-shell")).toHaveAttribute("data-locale", "ar");
-  await expect(page.getByTestId("text-direction")).toContainText("rtl");
+  await expect(page.getByTestId("language-ar")).toHaveCount(0);
+  await expect(page.getByTestId("current-language")).toHaveCount(0);
+  await page.getByTestId("language-zh").click();
+  await expect(page.getByTestId("client-shell")).toHaveAttribute("dir", "ltr");
+  await expect(page.getByTestId("client-shell")).toHaveAttribute("data-direction", "ltr");
+  await expect(page.getByTestId("client-shell")).toHaveAttribute("data-locale", "zh");
+  await expect(page.getByTestId("text-direction")).toContainText("ltr");
 
   await page.reload({ waitUntil: "domcontentloaded" });
   await expect(page.getByTestId("client-shell")).toBeVisible({ timeout: 120_000 });
-  await expect(page.getByTestId("client-shell")).toHaveAttribute("dir", "rtl");
+  await expect(page.getByTestId("client-shell")).toHaveAttribute("dir", "ltr");
+  await expect(page.getByTestId("client-shell")).toHaveAttribute("data-locale", "zh");
 
   await openSettings(page);
   await page.getByTestId("settings-nav-item-theme").click();

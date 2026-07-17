@@ -67,6 +67,15 @@ fn locale_direction_matches_layout_expectations() {
 }
 
 #[test]
+fn product_ui_locale_is_limited_to_english_and_chinese() {
+    assert_eq!(Locale::En.product_ui(), Locale::En);
+    assert_eq!(Locale::Zh.product_ui(), Locale::Zh);
+    for locale in [Locale::Ar, Locale::Es, Locale::Ja, Locale::Fr] {
+        assert_eq!(locale.product_ui(), Locale::En);
+    }
+}
+
+#[test]
 fn translation_lookup_fallback() {
     let mut dicts = HashMap::new();
     let en = english_translations();

@@ -70,6 +70,17 @@ impl Locale {
         Self::default()
     }
 
+    /// Languages exposed by the product UI are intentionally limited to
+    /// English and Chinese. Keep the secondary locale variants available to
+    /// protocol/formatting callers, but never restore an old secondary-locale
+    /// preference into the interactive shell.
+    pub fn product_ui(self) -> Self {
+        match self {
+            Self::Zh => Self::Zh,
+            Self::En | Self::Ar | Self::Es | Self::Ja | Self::Fr => Self::En,
+        }
+    }
+
     pub fn direction(&self) -> TextDirection {
         match self {
             Locale::Ar => TextDirection::Rtl,

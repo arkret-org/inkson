@@ -231,7 +231,8 @@ fn AppBootstrap() -> Element {
     let initial_locale = initial_state_store
         .device_pref("locale")
         .map(|code| Locale::from_code(&code))
-        .unwrap_or_else(Locale::platform_preferred);
+        .unwrap_or_else(Locale::platform_preferred)
+        .product_ui();
     let initial_theme = initial_state_store
         .load_private_data(&initial_config.account_did, "theme")
         .filter(|theme| matches!(theme.as_str(), "light" | "night" | "system"))
@@ -1042,6 +1043,7 @@ fn AppBootstrap() -> Element {
             on_onboarding_route: matches!(&content_route, Route::Onboarding),
             recovery_check_complete: account_recovery_configured.is_some(),
             needs_device_authorization: needs_device_authorization(),
+            account_has_other_devices: account_has_other_devices(),
             needs_mls_unlock: needs_mls_unlock(),
             needs_mls_backup: needs_mls_backup(),
             needs_mls_recovery_setup: needs_mls_recovery_setup(),

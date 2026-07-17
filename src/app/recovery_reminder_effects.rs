@@ -82,6 +82,7 @@ pub(super) fn RecoveryReminderEffects(state: RecoveryReminderEffectState) -> Ele
                     on_onboarding_route,
                     recovery_check_complete: account_recovery_configured.is_some(),
                     needs_device_authorization: needs_device_authorization(),
+                    account_has_other_devices: account_has_other_devices(),
                     needs_mls_unlock: needs_mls_unlock(),
                     needs_mls_backup: needs_mls_backup(),
                     needs_mls_recovery_setup: needs_mls_recovery_setup(),

@@ -578,7 +578,6 @@ pub fn SettingsPanel(
     let realm_watch_overrides = state_store.read().realm_watch_levels();
     let known_realms = known_realm_options(&state_store.read());
     let active_locale = locale();
-    let active_locale_code = active_locale.code();
     let active_direction = active_locale.direction().as_str();
     let push_registration = state_store.read().push_registration();
     let push_label = crate::push::push_status_label(push_registration.as_ref());
@@ -3311,17 +3310,7 @@ pub fn SettingsPanel(
                             },
                             "中文"
                         }
-                        Button {
-                            variant: if active_locale == Locale::Ar { ButtonVariant::Primary } else { ButtonVariant::Secondary },
-                            "data-testid": "language-ar",
-                            onclick: move |_| {
-                                locale.set(Locale::Ar);
-                                state_store.write().set_device_pref("locale", Locale::Ar.code());
-                            },
-                            "العربية"
-                        }
                     }
-                    div { class: "muted", "data-testid": "current-language", "Current: {active_locale_code}" }
                 }
                         }
                     }
