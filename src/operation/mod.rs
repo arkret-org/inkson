@@ -118,6 +118,7 @@ pub struct OperationBuilder {
     seal_basis: Option<SealBasis>,
     requirements: Option<EventRequirements>,
     redacts: Option<arkret_sdk::EventId>,
+    created_at: Option<chrono::DateTime<chrono::Utc>>,
 }
 
 impl OperationBuilder {
@@ -138,6 +139,7 @@ impl OperationBuilder {
             seal_basis: None,
             requirements: None,
             redacts: None,
+            created_at: None,
         }
     }
 
@@ -198,6 +200,16 @@ impl OperationBuilder {
         self
     }
 
+    /// Pin the Event to an exact authoring instant.
+    ///
+    /// The SDK constructor normalizes this value to the protocol's fixed
+    /// millisecond Event profile. Callers use this when a payload object and
+    /// its containing Event must carry the same timestamp.
+    pub fn created_at(mut self, created_at: chrono::DateTime<chrono::Utc>) -> Self {
+        self.created_at = Some(created_at);
+        self
+    }
+
     #[allow(clippy::expect_used)]
     pub fn redacts(mut self, redacts: impl Into<String>) -> Self {
         let redacts = redacts.into();
@@ -249,51 +261,43 @@ impl OperationBuilder {
                     .map_err(|err| anyhow::anyhow!("invalid prev_refs event id: {err}"))
             })
             .collect::<anyhow::Result<Vec<_>>>()?;
-        let created_at = crate::clock::now_utc_millis();
-        Ok(arkret_sdk::Event {
-            event_id: arkret_sdk::EventId::new(format!("ak:event:{}", uuid_v7()))
-                .map_err(|err| anyhow::anyhow!("generated event_id is invalid: {err}"))?,
-            kind: self.op_type,
-            realm_id: arkret_sdk::RealmId::new(realm_id)
-                .map_err(|err| anyhow::anyhow!("invalid realm_id: {err}"))?,
-            effective_scope: None,
-            actor_id: arkret_sdk::Did::new(self.actor)
-                .map_err(|err| anyhow::anyhow!("invalid actor_id DID: {err}"))?,
-            executed_by: self
-                .executed_by
-                .map(arkret_sdk::Did::new)
-                .transpose()
-                .map_err(|err| anyhow::anyhow!("invalid executed_by DID: {err}"))?,
-            authorization_ref: self.authorization_ref,
-            actor_kind: None,
-            // The unsigned builder carries only a schema-valid placeholder.
-            // EventSubmitter replaces both stamp fields from Garth's durable
-            // allocator after observing the server actor frontier and before
-            // attaching any proof.
-            actor_seq: 1,
+        let realm_id = arkret_sdk::RealmId::new(realm_id)
+            .map_err(|err| anyhow::anyhow!("invalid realm_id: {err}"))?;
+        let actor_id = arkret_sdk::Did::new(self.actor)
+            .map_err(|err| anyhow::anyhow!("invalid actor_id DID: {err}"))?;
+        let hlc = arkret_sdk::Hlc::new("000000000000-0000-00000000")
+            .map_err(|err| anyhow::anyhow!("placeholder HLC is invalid: {err}"))?;
+        let created_at = self.created_at.unwrap_or_else(crate::clock::now_utc_millis);
+        let mut event = arkret_sdk::Event::new_at(
+            self.op_type.as_str(),
+            realm_id,
+            actor_id,
+            1,
+            hlc,
+            self.body,
             created_at,
-            hlc: arkret_sdk::Hlc::new("000000000000-0000-00000000")
-                .map_err(|err| anyhow::anyhow!("placeholder HLC is invalid: {err}"))?,
-            prev_refs,
-            refs: self.refs,
-            payload: serde_json::from_value(self.body)
-                .map_err(|err| anyhow::anyhow!("event payload must be an object: {err}"))?,
-            preconditions: self.preconditions,
-            effects: self.effects,
-            seal_ref: self
-                .seal_ref
-                .map(arkret_sdk::SealId::new)
-                .transpose()
-                .map_err(|err| anyhow::anyhow!("invalid seal_ref: {err}"))?,
-            auth_context: None,
-            seal_basis: self.seal_basis,
-            requirements: self.requirements.unwrap_or_default(),
-            redacts: self.redacts,
-            applet_id: None,
-            external_ref: None,
-            unsigned,
-            proofs: Vec::new(),
-        })
+        )
+        .map_err(|err| anyhow::anyhow!("SDK Event construction failed: {err}"))?;
+        event.prev_refs = prev_refs;
+        event.refs = self.refs;
+        event.preconditions = self.preconditions;
+        event.effects = self.effects;
+        event.seal_ref = self
+            .seal_ref
+            .map(arkret_sdk::SealId::new)
+            .transpose()
+            .map_err(|err| anyhow::anyhow!("invalid seal_ref: {err}"))?;
+        event.seal_basis = self.seal_basis;
+        event.requirements = self.requirements.unwrap_or_default();
+        event.redacts = self.redacts;
+        event.executed_by = self
+            .executed_by
+            .map(arkret_sdk::Did::new)
+            .transpose()
+            .map_err(|err| anyhow::anyhow!("invalid executed_by DID: {err}"))?;
+        event.authorization_ref = self.authorization_ref;
+        event.unsigned = unsigned;
+        Ok(event)
     }
 }
 

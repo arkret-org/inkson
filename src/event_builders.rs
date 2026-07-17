@@ -14,16 +14,13 @@ use crate::realm_defaults::{
     RECOMMENDED_REALM_ENCRYPTION_FLOOR, RECOMMENDED_REALM_ENCRYPTION_PROFILE,
 };
 
-/// Canonical Event timestamp: UTC with exactly three millisecond digits.
-fn event_timestamp() -> String {
-    crate::clock::now_rfc3339_millis()
+/// Event authoring instant normalized to the protocol's millisecond profile.
+fn event_timestamp() -> chrono::DateTime<chrono::Utc> {
+    crate::clock::now_utc_millis()
 }
 
-fn set_sdk_event_created_at(event: &mut arkret_sdk::Event, created_at: &str) -> anyhow::Result<()> {
-    event.created_at = chrono::DateTime::parse_from_rfc3339(created_at)
-        .map_err(|err| anyhow::anyhow!("event timestamp is not canonical RFC3339: {err}"))?
-        .with_timezone(&chrono::Utc);
-    Ok(())
+fn event_timestamp_wire(created_at: chrono::DateTime<chrono::Utc>) -> String {
+    arkret_sdk::canonical::format_timestamp_millis_canonical(created_at)
 }
 
 fn cell_ref(cell: &str) -> anyhow::Result<arkret_sdk::CellRef> {
@@ -333,7 +330,7 @@ pub fn build_realm_create_event(
         "notary_profile": notary_profile,
         "digest_algorithm": digest_algorithm,
         "notary": notary,
-        "created_at": created_at_for_object,
+        "created_at": event_timestamp_wire(created_at_for_object),
     });
     // §2.10 content scheme (capability axis): MLS-backed realms default to the
     // history-shareable `mls-exporter-aead-v1` scheme so a late joiner CAN be
@@ -387,7 +384,7 @@ pub fn build_realm_create_event(
     let realm_body = arkret_sdk::ObjectCreatePayload::new(object.clone())
         .to_value()
         .map_err(|e| anyhow::anyhow!("ak.realm.create payload serialize: {e}"))?;
-    let mut event = OperationBuilder::new(
+    OperationBuilder::new(
         realm_id,
         actor_id,
         arkret_sdk::events::kinds::EventKind::RealmCreate,
@@ -397,9 +394,8 @@ pub fn build_realm_create_event(
     .preconditions(preconditions)
     .effects(effects)
     .requirements(event_requirements_with_schema("ak.schema.realm.v1"))
-    .build_sdk_event("inkson")?;
-    set_sdk_event_created_at(&mut event, &created_at_for_object)?;
-    Ok(event)
+    .created_at(created_at_for_object)
+    .build_sdk_event("inkson")
 }
 
 /// Build the create-locked Principal Control Realm genesis for a managed
@@ -694,7 +690,7 @@ pub fn build_space_create_event(
         .map_err(|e| anyhow::anyhow!("ak.space.create object serialize: {e}"))?;
     // Preserve the envelope timestamp on the wire object (SDK defaults
     // `created_at` to construction time).
-    object["created_at"] = Value::String(created_at.clone());
+    object["created_at"] = Value::String(event_timestamp_wire(created_at));
 
     let cell = space_cell("ak.component.space.create.v1", space_id);
     let preconditions = vec![head_eq_precondition(&cell, Value::Null)?];
@@ -702,7 +698,7 @@ pub fn build_space_create_event(
     let space_body = arkret_sdk::ObjectCreatePayload::new(object.clone())
         .to_value()
         .map_err(|e| anyhow::anyhow!("ak.space.create payload serialize: {e}"))?;
-    let mut event = OperationBuilder::new(
+    OperationBuilder::new(
         realm_id,
         actor_id,
         arkret_sdk::events::kinds::EventKind::SpaceCreate,
@@ -712,9 +708,8 @@ pub fn build_space_create_event(
     .preconditions(preconditions)
     .effects(effects)
     .requirements(event_requirements_with_schema("ak.schema.space.v1"))
-    .build_sdk_event("inkson")?;
-    set_sdk_event_created_at(&mut event, &created_at)?;
-    Ok(event)
+    .created_at(created_at)
+    .build_sdk_event("inkson")
 }
 
 /// Build a Space lifecycle event (`ak.space.archive` /
@@ -779,14 +774,13 @@ pub fn build_space_lifecycle_event(
         Value::String(next_state.to_owned()),
         None,
     )?];
-    let mut event = OperationBuilder::new(realm_id, actor_id, kind)
+    OperationBuilder::new(realm_id, actor_id, kind)
         .target_ref(space_id)
         .body(body)
         .preconditions(preconditions)
         .effects(effects)
-        .build_sdk_event("inkson")?;
-    set_sdk_event_created_at(&mut event, &created_at)?;
-    Ok(event)
+        .created_at(created_at)
+        .build_sdk_event("inkson")
 }
 
 /// Build a Realm facet state event (`ak.realm.join_rule`,
@@ -836,13 +830,12 @@ pub fn build_realm_state_event(
     } else {
         json!({ "value": value })
     };
-    let mut event = OperationBuilder::new(realm_id, actor_id, kind)
+    OperationBuilder::new(realm_id, actor_id, kind)
         .body(body)
         .preconditions(preconditions)
         .effects(effects)
-        .build_sdk_event("inkson")?;
-    set_sdk_event_created_at(&mut event, &created_at)?;
-    Ok(event)
+        .created_at(created_at)
+        .build_sdk_event("inkson")
 }
 
 /// Build a `ak.realm.archive` lifecycle facet event. Realm archive is a
@@ -863,16 +856,15 @@ pub fn build_realm_archive_event(
     }
     let payload = typed.to_value()?;
     let effects = vec![set_effect(&cell, payload.clone())?];
-    let mut event = OperationBuilder::new(
+    OperationBuilder::new(
         realm_id,
         actor_id,
         arkret_sdk::events::kinds::EventKind::RealmArchive,
     )
     .body(payload)
     .effects(effects)
-    .build_sdk_event("inkson")?;
-    set_sdk_event_created_at(&mut event, &created_at)?;
-    Ok(event)
+    .created_at(created_at)
+    .build_sdk_event("inkson")
 }
 
 /// Build a `ak.realm.destroy` terminal lifecycle event.
@@ -893,16 +885,15 @@ pub fn build_realm_destroy_event(
     // :false).
     let payload = arkret_sdk::RealmDestroyPayload::new(reason).to_value()?;
     let effects = vec![set_effect(&cell, payload.clone())?];
-    let mut event = OperationBuilder::new(
+    OperationBuilder::new(
         realm_id,
         actor_id,
         arkret_sdk::events::kinds::EventKind::RealmDestroy,
     )
     .body(payload)
     .effects(effects)
-    .build_sdk_event("inkson")?;
-    set_sdk_event_created_at(&mut event, &created_at)?;
-    Ok(event)
+    .created_at(created_at)
+    .build_sdk_event("inkson")
 }
 
 pub fn build_realm_history_sharing_policy_event(
@@ -970,7 +961,7 @@ pub fn build_plaintext_visible_services_event(
     let effects = vec![set_effect(&cell, body_value.clone())?];
     // Builder takes `Value` by move; reuse the value we already built for
     // the effect rather than cloning `services` a second time.
-    let mut event = OperationBuilder::new(
+    let event = OperationBuilder::new(
         realm_id,
         actor_id,
         arkret_sdk::events::kinds::EventKind::RealmPlaintextVisibleServices,
@@ -978,8 +969,8 @@ pub fn build_plaintext_visible_services_event(
     .body(body_value)
     .preconditions(preconditions)
     .effects(effects)
+    .created_at(created_at)
     .build_sdk_event("inkson")?;
-    set_sdk_event_created_at(&mut event, &created_at)?;
     Ok(Some(event))
 }
 
@@ -1179,7 +1170,7 @@ pub fn build_signed_device_verification_proof(
         "from_device": from_device,
         "target_device": target_device,
         "method": method,
-        "created_at": event_timestamp(),
+        "created_at": event_timestamp_wire(event_timestamp()),
     });
     if let Some(sas_decimal) = sas_decimal {
         body["sas_decimal"] = json!(sas_decimal);

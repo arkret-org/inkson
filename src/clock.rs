@@ -34,10 +34,6 @@ pub(crate) fn now_utc_millis() -> DateTime<Utc> {
     arkret_sdk::canonical::normalize_timestamp_millis_canonical(now_utc())
 }
 
-pub(crate) fn now_rfc3339_millis() -> String {
-    arkret_sdk::canonical::format_timestamp_millis_canonical(now_utc())
-}
-
 /// RFC3339 (seconds precision) timestamp `minutes` into the future. Used to
 /// stamp `DeviceMessageEnvelope.expires_at`, which `device-lifecycle.md` §7
 /// makes a required to-device queue field (default cap 24h; verification and

@@ -94,6 +94,24 @@ fn operation_builder_generates_valid_envelope() {
 }
 
 #[test]
+fn operation_builder_delegates_event_time_normalization_to_the_sdk() {
+    let op = OperationBuilder::new(
+        "ak:realm:0196419b-0000-7000-8000-0000000000aa",
+        "did:web:alice",
+        arkret_sdk::events::kinds::EventKind::MessageCreate,
+    )
+    .body(json!({"content": {"kind": "ak.content.text", "body": "hello"}}))
+    .created_at("2026-07-18T10:20:30.987654Z".parse().unwrap())
+    .build_sdk_event("test_node")
+    .unwrap();
+
+    assert_eq!(
+        serde_json::to_value(op).unwrap()["created_at"],
+        json!("2026-07-18T10:20:30.987Z")
+    );
+}
+
+#[test]
 fn operation_round_trip_serde() {
     let op = OperationBuilder::new(
         "ak:realm:0196419b-0000-7000-8000-0000000000ab",

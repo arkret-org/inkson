@@ -405,6 +405,10 @@ fn plaintext_realm_create_does_not_claim_e2ee_floors() {
     assert_eq!(envelope.payload["object"]["encryption_profile"], "none");
     assert!(envelope.payload["object"]["content_encryption_floor"].is_null());
     assert!(envelope.payload["object"]["metadata_encryption_floor"].is_null());
+    assert_eq!(
+        envelope.payload["object"]["created_at"],
+        serde_json::to_value(&envelope).unwrap()["created_at"]
+    );
 }
 
 #[test]
@@ -654,6 +658,10 @@ fn space_create_payload_matches_spec_schema() {
         None,
     )
     .unwrap();
+    assert_eq!(
+        event.payload["object"]["created_at"],
+        serde_json::to_value(&event).unwrap()["created_at"]
+    );
     let catalog = arkret_sdk::schema::event_payload_validator_catalog().unwrap();
     if catalog
         .missing_payload_validators_for(std::iter::once(event.kind.as_str()))
