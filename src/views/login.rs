@@ -256,14 +256,30 @@ pub fn LoginPanel(
                 return;
             }
             let secure_store = crate::secure_key_store::default_secure_key_store("inkson");
-            if let Err(error) =
-                crate::secure_key_store::reset_device_seed_scope_for_signin(secure_store.as_ref())
-            {
-                tracing::warn!(%error, "reset device seed scope for sign-in failed");
+            let resume_account_handoff = {
+                let store = reset_state_store.read();
+                pending_account_handoff_matches_dpop(
+                    store.pending_account_handoff().as_ref(),
+                    store.dpop_device_key().as_ref(),
+                )
+            };
+            if resume_account_handoff {
+                // An unfinished identity-creation lease is fenced to this DPoP
+                // holder. Rotating the key here makes the same browser look like
+                // another device and leaves it stuck behind its own lease until
+                // expiry. Re-authentication for this one resumable flow is a
+                // soft continuation, so retain the holder key.
+                crate::secure_key_store::set_active_device_seed_scope(None);
+            } else {
+                if let Err(error) = crate::secure_key_store::reset_device_seed_scope_for_signin(
+                    secure_store.as_ref(),
+                ) {
+                    tracing::warn!(%error, "reset device seed scope for sign-in failed");
+                }
+                // Drop the cached DPoP record so the grant-binding key is rebuilt from
+                // the freshly-rotated grant-binding seed.
+                reset_state_store.write().set_dpop_device_key(None);
             }
-            // Drop the cached DPoP record so the grant-binding key is rebuilt from
-            // the freshly-rotated grant-binding seed.
-            reset_state_store.write().set_dpop_device_key(None);
             // Pre-DID: record the sign-in device id as the pending login so the
             // bootstrap wrap_seed / secrets land under the
             // `pending.<device_id>` namespace until the principal DID resolves
@@ -532,6 +548,24 @@ pub fn LoginPanel(
             }
         }
     }
+}
+
+fn pending_account_handoff_matches_dpop(
+    handoff: Option<&crate::state::PendingAccountHandoff>,
+    dpop: Option<&crate::state::DpopDeviceKeyRecord>,
+) -> bool {
+    account_handoff_holder_matches_dpop_jkt(
+        handoff.map(|handoff| handoff.holder_jkt.as_str()),
+        dpop.map(|dpop| dpop.jkt.as_str()),
+    )
+}
+
+fn account_handoff_holder_matches_dpop_jkt(
+    holder_jkt: Option<&str>,
+    dpop_jkt: Option<&str>,
+) -> bool {
+    matches!((holder_jkt, dpop_jkt), (Some(holder_jkt), Some(dpop_jkt))
+        if !holder_jkt.trim().is_empty() && holder_jkt == dpop_jkt)
 }
 
 fn persist_completed_login_state(
@@ -1207,6 +1241,20 @@ mod tests {
             unbound.is_empty(),
             "first registration must not infer a principal DID"
         );
+    }
+
+    #[test]
+    fn unfinished_account_handoff_reuses_only_its_bound_dpop_key() {
+        assert!(account_handoff_holder_matches_dpop_jkt(
+            Some("same-holder"),
+            Some("same-holder")
+        ));
+        assert!(!account_handoff_holder_matches_dpop_jkt(
+            Some("lease-holder"),
+            Some("rotated-holder")
+        ));
+        assert!(!account_handoff_holder_matches_dpop_jkt(Some(""), Some("")));
+        assert!(!account_handoff_holder_matches_dpop_jkt(None, Some("key")));
     }
 
     #[test]

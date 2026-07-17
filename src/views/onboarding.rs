@@ -123,8 +123,8 @@ fn PendingAccountIdentityCreation(
         let retry_after_seconds = retry_after_ms.div_ceil(1_000).max(1);
         return rsx! {
             div { class: "event onboarding-card onboarding-centered", "data-testid": "identity-creation-busy",
-                h2 { "Setup is open on another device" }
-                p { class: "muted", "Continue there, or try again in about {retry_after_seconds} seconds." }
+                h2 { "Setup is already in progress" }
+                p { class: "muted", "Continue in the open setup, or wait about {retry_after_seconds} seconds and then sign in again on this device." }
                 Link { class: "secondary", to: Route::Login, "Sign in again" }
             }
         };
@@ -387,64 +387,106 @@ async fn create_bind_and_bootstrap_identity(
     config_store: Signal<crate::config::LocalConfigStore>,
     mut state_store: SyncSignal<crate::state::LocalStateStore>,
 ) -> anyhow::Result<(String, String, String)> {
-    let checkpoint = crate::identity::principal_registration::prepare_registration_checkpoint(
-        handoff,
-        device,
-        recovery_key,
-    )?;
-    let barrier = {
-        let mut store = state_store.write();
-        store.set_pending_principal_registration(Some(checkpoint.clone()))?;
-        store.begin_durable_flush()?
-    };
-    barrier.wait().await?;
-
-    let dpop = {
-        let mut store = state_store.write();
-        crate::identity::account_auth::grant_dpop::ensure_device_key(&mut store)?
-    };
-    let completion = crate::identity::principal_registration::complete_account_handoff_binding(
-        handoff,
-        &checkpoint,
-        recovery_key,
-        &dpop,
-    )
-    .await?;
-    let actor = completion.session_grant.principal_id.to_string();
-    let grant_jwt = completion.session_grant.grant_jwt.clone();
-    let persisted_grant = crate::state::PersistedSessionGrant {
-        grant_jwt: grant_jwt.clone(),
-        session_private_key_pem: completion.session_private_key_pem,
-        grant_id: completion.session_grant.grant_id.to_string(),
-        audience: completion.session_grant.audience.to_string(),
-        principal_id: actor.clone(),
-        device_id: device.to_owned(),
-        principal_server_url: handoff.principal_server_url.clone(),
-        grant_expires_at: Some(completion.session_grant.expires_at),
-        stored_at: chrono::Utc::now(),
-    };
-    let secure_store = crate::secure_key_store::default_secure_key_store("inkson");
-    crate::secure_key_store::adopt_device_seed_scope_on_login(secure_store.as_ref(), &actor)?;
-    let mut accepted = checkpoint;
-    accepted.binding_receipt = Some(serde_json::to_value(completion.binding_receipt)?);
-    accepted.stage = crate::state::PendingPrincipalRegistrationStage::BindingRegistered;
-    {
-        let mut store = state_store.write();
-        store.adopt_pending_login(&actor);
-        crate::views::login::persist_completed_login_dpop_key(
-            &mut store,
-            secure_store.as_ref(),
-            &actor,
+    // Keep the handoff panel mounted while the durable registration advances.
+    // The checkpoint deliberately contains no Recovery Key, but this component
+    // still has the user-confirmed key in memory. Switching to the generic
+    // resume panel here made a successful, uninterrupted setup appear to ask
+    // for the same 24 words twice.
+    let checkpoint = if let Some(checkpoint) = state_store.read().pending_principal_registration() {
+        if checkpoint.handoff_request_id != handoff.request_id {
+            anyhow::bail!("a different identity setup is already pending");
+        }
+        crate::identity::principal_registration::validate_checkpoint_recovery_key(
+            &checkpoint,
+            recovery_key,
+        )?;
+        checkpoint
+    } else {
+        let checkpoint = crate::identity::principal_registration::prepare_registration_checkpoint(
+            handoff,
             device,
-            &completion.dpop_device_key,
+            recovery_key,
+        )?;
+        let barrier = {
+            let mut store = state_store.write();
+            store.set_pending_principal_registration(Some(checkpoint.clone()))?;
+            store.begin_durable_flush()?
+        };
+        barrier.wait().await?;
+        checkpoint
+    };
+
+    let (registration, actor, grant_jwt) = if checkpoint.stage
+        == crate::state::PendingPrincipalRegistrationStage::CustodyConfirmed
+    {
+        let dpop = {
+            let mut store = state_store.write();
+            crate::identity::account_auth::grant_dpop::ensure_device_key(&mut store)?
+        };
+        let completion = crate::identity::principal_registration::complete_account_handoff_binding(
+            handoff,
+            &checkpoint,
+            recovery_key,
+            &dpop,
         )
-        .map_err(anyhow::Error::msg)?;
-        store.set_pending_principal_registration(Some(accepted.clone()))?;
-        store.set_pending_account_handoff(None)?;
-        store.set_session_grant(Some(persisted_grant));
-        store.register_known_account(&actor);
-    }
-    crate::identity::account_auth::clear_account_handoff_grant()?;
+        .await?;
+        let actor = completion.session_grant.principal_id.to_string();
+        let grant_jwt = completion.session_grant.grant_jwt.clone();
+        let persisted_grant = crate::state::PersistedSessionGrant {
+            grant_jwt: grant_jwt.clone(),
+            session_private_key_pem: completion.session_private_key_pem,
+            grant_id: completion.session_grant.grant_id.to_string(),
+            audience: completion.session_grant.audience.to_string(),
+            principal_id: actor.clone(),
+            device_id: device.to_owned(),
+            principal_server_url: handoff.principal_server_url.clone(),
+            grant_expires_at: Some(completion.session_grant.expires_at),
+            stored_at: chrono::Utc::now(),
+        };
+        let secure_store = crate::secure_key_store::default_secure_key_store("inkson");
+        crate::secure_key_store::adopt_device_seed_scope_on_login(secure_store.as_ref(), &actor)?;
+        let mut accepted = checkpoint;
+        accepted.binding_receipt = Some(serde_json::to_value(completion.binding_receipt)?);
+        accepted.stage = crate::state::PendingPrincipalRegistrationStage::BindingRegistered;
+        {
+            let mut store = state_store.write();
+            store.adopt_pending_login(&actor);
+            crate::views::login::persist_completed_login_dpop_key(
+                &mut store,
+                secure_store.as_ref(),
+                &actor,
+                device,
+                &completion.dpop_device_key,
+            )
+            .map_err(anyhow::Error::msg)?;
+            store.set_pending_principal_registration(Some(accepted.clone()))?;
+            // Do not clear pending_account_handoff yet. Keeping it until
+            // finish_principal_setup succeeds keeps this component (and its
+            // in-memory Recovery Key) alive through the background work.
+            store.set_session_grant(Some(persisted_grant));
+            store.register_known_account(&actor);
+        }
+        (accepted, actor, grant_jwt)
+    } else {
+        // A previous attempt completed the one-shot account binding but
+        // failed later. Retry only the resumable bootstrap; re-registering
+        // the already-bound DID would consume the handoff twice.
+        let persisted_grant = state_store
+            .read()
+            .session_grant()
+            .filter(|grant| {
+                grant.principal_id == checkpoint.did && grant.device_id == checkpoint.device_id
+            })
+            .ok_or_else(|| {
+                anyhow::anyhow!("the saved setup session is unavailable; sign in again")
+            })?;
+        (
+            checkpoint.clone(),
+            checkpoint.did.clone(),
+            persisted_grant.grant_jwt,
+        )
+    };
+
     crate::views::helpers::persist_config(
         config_store,
         handoff.principal_server_url.clone(),
@@ -454,7 +496,7 @@ async fn create_bind_and_bootstrap_identity(
     );
 
     finish_principal_setup(
-        &accepted,
+        &registration,
         recovery_key,
         base_url,
         &grant_jwt,
@@ -463,6 +505,12 @@ async fn create_bind_and_bootstrap_identity(
         state_store,
     )
     .await?;
+
+    // Only now is the uninterrupted flow allowed to leave the handoff panel.
+    // If bootstrap fails, both the current in-memory key and the durable public
+    // checkpoint remain available for a safe retry.
+    state_store.write().set_pending_account_handoff(None)?;
+    crate::identity::account_auth::clear_account_handoff_grant()?;
 
     Ok((actor, device.to_owned(), grant_jwt))
 }

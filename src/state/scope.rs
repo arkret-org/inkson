@@ -280,10 +280,19 @@ impl LocalStateStore {
         if did.is_empty() {
             return false;
         }
-        let pending_registration = self
-            .read_account_state(ANONYMOUS_ACCOUNT_NAMESPACE)
-            .and_then(|state| state.pending_principal_registration)
+        let anonymous_onboarding = self.read_account_state(ANONYMOUS_ACCOUNT_NAMESPACE);
+        let pending_registration = anonymous_onboarding
+            .as_ref()
+            .and_then(|state| state.pending_principal_registration.clone())
             .filter(|registration| registration.did == did);
+        let pending_account_handoff = anonymous_onboarding
+            .as_ref()
+            .and_then(|state| state.pending_account_handoff.clone())
+            .filter(|handoff| {
+                pending_registration.as_ref().is_some_and(|registration| {
+                    registration.handoff_request_id == handoff.request_id
+                })
+            });
         let is_returning_account = self.read_root().known_dids.iter().any(|known| known == did)
             || self.read_account_state(did).is_some();
         // Clear pending namespace pin before the seed-scope adopt re-homes it,
@@ -294,10 +303,12 @@ impl LocalStateStore {
         self.switch_active_account(did);
         if let Some(registration) = pending_registration {
             self.cached.pending_principal_registration = Some(registration);
+            self.cached.pending_account_handoff = pending_account_handoff;
             if self.flush().is_ok()
                 && let Some(mut anonymous) = self.read_account_state(ANONYMOUS_ACCOUNT_NAMESPACE)
             {
                 anonymous.pending_principal_registration = None;
+                anonymous.pending_account_handoff = None;
                 let _ = self.write_account_state(ANONYMOUS_ACCOUNT_NAMESPACE, &anonymous);
             }
         }

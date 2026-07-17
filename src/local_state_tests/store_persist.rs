@@ -876,3 +876,60 @@ fn adopt_pending_login_preserves_returning_account_entry() {
     // marker is adopted.
     assert_eq!(store.load().sync_cursor.as_deref(), Some("sx:alice"));
 }
+
+#[test]
+fn adopt_pending_login_moves_the_unfinished_handoff_with_its_registration() {
+    let path = temp_state_path("pending-onboarding-handoff");
+    let mut store = LocalStateStore::with_path(path);
+    let device = "ak:device:019f0000-0000-7000-8000-000000000001";
+    let handoff = PendingAccountHandoff {
+        principal_server_url: "https://principal.example".to_owned(),
+        gate_account_base: "https://auth.example/_arkret/gate/account".to_owned(),
+        request_id: "ak:request:019f0000-0000-7000-8000-000000000000".to_owned(),
+        account_handle: "alice:auth.example".to_owned(),
+        holder_jkt: "holder-jkt".to_owned(),
+        audience: "did:webvh:z6mkfixture:principal.example".to_owned(),
+        expires_at: chrono::Utc::now() + chrono::Duration::minutes(10),
+        lease_id: Some("lease-1".to_owned()),
+        lease_fence: Some(1),
+        lease_expires_at: Some(chrono::Utc::now() + chrono::Duration::minutes(15)),
+        retry_after_ms: None,
+        device_id: device.to_owned(),
+        enrollment_authority_did: "did:key:z6MkrJVnaZkeFzdQyKjzgRHjhBfE6ZscXDFHq8T7TYNy9v1t"
+            .to_owned(),
+        trust_domain: "ak:trust-domain:test".to_owned(),
+    };
+    let recovery_key = crate::recovery_crypto::generate_recovery_key().unwrap();
+    let checkpoint = crate::identity::principal_registration::prepare_registration_checkpoint(
+        &handoff,
+        device,
+        &recovery_key,
+    )
+    .unwrap();
+    let did = checkpoint.did.clone();
+
+    store
+        .set_pending_account_handoff(Some(handoff.clone()))
+        .unwrap();
+    store
+        .set_pending_principal_registration(Some(checkpoint))
+        .unwrap();
+    store.begin_pending_login(device, Some(&handoff.holder_jkt));
+
+    store.adopt_pending_login(&did);
+
+    assert_eq!(
+        store
+            .pending_account_handoff()
+            .as_ref()
+            .map(|pending| pending.request_id.as_str()),
+        Some(handoff.request_id.as_str())
+    );
+    assert_eq!(
+        store
+            .pending_principal_registration()
+            .as_ref()
+            .map(|pending| pending.did.as_str()),
+        Some(did.as_str())
+    );
+}
