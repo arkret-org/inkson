@@ -346,7 +346,7 @@ fn local_state_store_ingests_read_cursor_update_to_device() {
         "recipient_principal_id": "did:webvh:z6mkfixture:alice.example",
         "recipient_device_id": "ak:device:01904100-0000-7000-8000-000000000001",
         "sent_at": "2026-06-24T00:00:00Z",
-        "expires_at": "2026-06-25T00:00:00Z",
+        "expires_at": "2099-06-25T00:00:00Z",
         "content": {
             "schema": "ak.schema.read_cursor.v1",
             "actor_id": "did:web:alice.example",

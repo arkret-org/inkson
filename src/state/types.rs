@@ -859,8 +859,7 @@ pub struct ClientLocalState {
     /// Incomplete MLS governance proof chunks, keyed by proof identity digest.
     /// These are resumable transport state only and never authorize an epoch.
     #[serde(default)]
-    pub mls_governance_proof_acquisitions:
-        BTreeMap<String, MlsGovernanceProofAcquisition>,
+    pub mls_governance_proof_acquisitions: BTreeMap<String, MlsGovernanceProofAcquisition>,
     /// First-use pins for Realm governance proof chains. A different anchor is
     /// never accepted implicitly; explicit recovery/re-pin UI is required.
     #[serde(default)]

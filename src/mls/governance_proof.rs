@@ -65,7 +65,7 @@ pub(crate) fn proof_request(
             })
             .ok_or_else(|| {
                 format!(
-                    "MLS governance proof requires a locally trusted Seal anchor for {realm_id}"
+                    "MLS governance proof requires a locally trusted Seal anchor for {realm_id}; operation remains decryption_pending (state_mismatch)"
                 )
             })?,
         chunk_index: 0,
@@ -131,7 +131,9 @@ pub(crate) async fn fetch_proof_bundle(
             state_store
                 .write()
                 .clear_mls_governance_acquisition(&first_request)?;
-            return Err("MLS governance proof service changed manifest during acquisition".to_owned());
+            return Err(
+                "MLS governance proof service changed manifest during acquisition".to_owned(),
+            );
         }
         state_store
             .write()
@@ -555,6 +557,13 @@ pub(crate) fn seed_test_governance_proof(
     previous_epoch: u64,
     next_epoch: u64,
 ) -> arkret_sdk::MlsGovernanceBindingPayload {
+    let anchor = arkret_sdk::SealId::new(
+        "ak:seal:sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    )
+    .unwrap();
+    state_store
+        .pin_mls_governance_anchor(realm_id, &anchor)
+        .unwrap();
     let request = proof_request(
         state_store,
         realm_id,
@@ -604,10 +613,6 @@ pub(crate) fn seed_test_governance_proof(
         _ => panic!("unsupported effective scope in MLS governance test fixture"),
     }
     .unwrap();
-    let anchor = arkret_sdk::SealId::new(
-        "ak:seal:sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
-    )
-    .unwrap();
     let bundle = arkret_sdk::MaterializedMlsGovernanceProofBundle {
         bundle_version: arkret_sdk::MLS_GOVERNANCE_PROOF_BUNDLE_VERSION,
         proof_request_digest: request.proof_request_digest().unwrap(),
@@ -628,9 +633,6 @@ pub(crate) fn seed_test_governance_proof(
         control_state: Vec::new(),
         frontier_events: Vec::new(),
     };
-    state_store
-        .pin_mls_governance_anchor(realm_id, &anchor)
-        .unwrap();
     state_store
         .cache_verified_mls_governance_proof(request, &bundle)
         .unwrap();
