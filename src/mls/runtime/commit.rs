@@ -62,6 +62,7 @@ pub fn force_epoch_rotation_commit_for_effective_scope(
     let mut group = crate::mls::persistence::restore_envelope(&snapshot, &secret, epoch_floor)
         .map_err(|err| MlsRuntimeError::SnapshotRestore(err.to_string()))?;
     let proof_request = crate::mls::governance_proof::proof_request(
+        state_store,
         realm_id,
         circle,
         group.group_id(),
@@ -126,6 +127,7 @@ pub fn build_mls_remove_commit_for_effective_scope(
     let mut group = crate::mls::persistence::restore_envelope(&snapshot, &secret, epoch_floor)
         .map_err(|err| MlsRuntimeError::SnapshotRestore(err.to_string()))?;
     let proof_request = crate::mls::governance_proof::proof_request(
+        state_store,
         realm_id,
         circle,
         group.group_id(),
@@ -209,6 +211,7 @@ pub fn build_add_member_commit_for_effective_scope(
     let mut group = crate::mls::persistence::restore_envelope(&snapshot, &secret, epoch_floor)
         .map_err(|err| MlsRuntimeError::SnapshotRestore(err.to_string()))?;
     let proof_request = crate::mls::governance_proof::proof_request(
+        state_store,
         realm_id,
         circle,
         group.group_id(),
@@ -274,6 +277,7 @@ pub fn build_add_members_commit_for_effective_scope(
     let mut group = crate::mls::persistence::restore_envelope(&snapshot, &secret, epoch_floor)
         .map_err(|err| MlsRuntimeError::SnapshotRestore(err.to_string()))?;
     let proof_request = crate::mls::governance_proof::proof_request(
+        state_store,
         realm_id,
         circle,
         group.group_id(),

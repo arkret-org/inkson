@@ -24,6 +24,7 @@ impl DidResolver for StaticProofDidResolver {
 }
 
 pub(crate) fn proof_request(
+    state_store: &crate::state::LocalStateStore,
     realm_id: &str,
     circle_id: Option<&str>,
     mls_group_id: impl Into<String>,
@@ -53,6 +54,22 @@ pub(crate) fn proof_request(
         next_epoch,
         binding_profile: arkret_sdk::MLS_GOVERNANCE_BINDING_FULL_PROFILE.to_owned(),
         reducer_profile: "ak.reducer.v1".to_owned(),
+        trusted_anchor_seal_id: state_store
+            .trusted_mls_governance_anchor(realm_id.as_str())
+            .or_else(|| {
+                state_store
+                    .seal_view_for_realm(realm_id.as_str())
+                    .frontier
+                    .first()
+                    .and_then(|anchor| arkret_sdk::SealId::new(anchor.clone()).ok())
+            })
+            .ok_or_else(|| {
+                format!(
+                    "MLS governance proof requires a locally trusted Seal anchor for {realm_id}"
+                )
+            })?,
+        chunk_index: 0,
+        expected_bundle_digest: None,
     };
     request
         .validate()
@@ -63,14 +80,14 @@ pub(crate) fn proof_request(
 pub(crate) async fn fetch_proof_bundle(
     api: &crate::transport::TransportClient,
     request: &arkret_sdk::MlsGovernanceProofRequest,
-) -> Result<arkret_sdk::MlsGovernanceProofBundle, String> {
+) -> Result<arkret_sdk::MaterializedMlsGovernanceProofBundle, String> {
     const MAX_PROJECTION_ATTEMPTS: u32 = 8;
 
     let http = api
         .sdk_http_client()
         .map_err(|error| format!("build MLS governance proof client: {error}"))?;
     for attempt in 0..MAX_PROJECTION_ATTEMPTS {
-        match http.mls_governance_proof(request).await {
+        match http.mls_governance_proof_complete(request).await {
             Ok(bundle) => return Ok(bundle),
             Err(error)
                 if attempt + 1 < MAX_PROJECTION_ATTEMPTS
@@ -95,6 +112,7 @@ fn governance_projection_pending(error: &arkret_sdk::Error) -> bool {
 }
 
 pub(crate) fn welcome_proof_requests(
+    state_store: &crate::state::LocalStateStore,
     messages: &serde_json::Value,
 ) -> Result<Vec<arkret_sdk::MlsGovernanceProofRequest>, String> {
     let Some(entries) = messages
@@ -122,6 +140,7 @@ pub(crate) fn welcome_proof_requests(
             serde_json::from_value(binding_value.clone())
                 .map_err(|error| format!("decode MLS Welcome governance_binding: {error}"))?;
         let request = proof_request(
+            state_store,
             binding.realm_id().as_str(),
             binding.circle_id().map(|circle_id| circle_id.as_str()),
             binding.mls_group_id(),
@@ -168,9 +187,7 @@ pub(crate) async fn fetch_verify_and_cache_proof(
             .write()
             .set_realm_seal_view(request.realm_id.as_str(), observed_view);
     }
-    let trusted_anchor = existing_pin
-        .clone()
-        .unwrap_or_else(|| bundle.trust_anchor_seal_id.clone());
+    let trusted_anchor = request.trusted_anchor_seal_id.clone();
 
     let authority = crate::identity::did_resolver::ResolverDidAnchor::from_profile(
         crate::identity::did_resolver::DeploymentProfile::PersonalNode,
@@ -200,7 +217,8 @@ pub(crate) async fn fetch_verify_and_cache_proof(
     verify_proof_bundle(request, &bundle, &trusted_anchor, &resolver)?;
     let mut store = state_store.write();
     if existing_pin.is_none() {
-        store.pin_mls_governance_anchor(request.realm_id.as_str(), &bundle.trust_anchor_seal_id)?;
+        store
+            .pin_mls_governance_anchor(request.realm_id.as_str(), &bundle.trusted_anchor_seal_id)?;
     }
     store.cache_verified_mls_governance_proof(request.clone(), &bundle)?;
     Ok(bundle.governance_binding)
@@ -246,7 +264,7 @@ async fn resolve_proof_signer_document(
 
 fn bundle_intersects_local_seal_view(
     state_store: &crate::state::LocalStateStore,
-    bundle: &arkret_sdk::MlsGovernanceProofBundle,
+    bundle: &arkret_sdk::MaterializedMlsGovernanceProofBundle,
 ) -> bool {
     let view = state_store.seal_view_for_realm(bundle.realm_id.as_str());
     bundle_intersects_seal_view(&view, bundle)
@@ -254,7 +272,7 @@ fn bundle_intersects_local_seal_view(
 
 fn bundle_intersects_seal_view(
     view: &crate::state::LocalSealView,
-    bundle: &arkret_sdk::MlsGovernanceProofBundle,
+    bundle: &arkret_sdk::MaterializedMlsGovernanceProofBundle,
 ) -> bool {
     let local_heads = view
         .frontier
@@ -281,7 +299,7 @@ fn bundle_intersects_seal_view(
 }
 
 pub(crate) fn authority_proof_signer_dids(
-    bundle: &arkret_sdk::MlsGovernanceProofBundle,
+    bundle: &arkret_sdk::MaterializedMlsGovernanceProofBundle,
 ) -> Result<BTreeSet<arkret_sdk::Did>, String> {
     let mut signers = BTreeSet::new();
     for seal in &bundle.seal_path {
@@ -323,7 +341,7 @@ pub(crate) fn authority_proof_signer_dids(
 }
 
 fn event_device_proof_pairs(
-    bundle: &arkret_sdk::MlsGovernanceProofBundle,
+    bundle: &arkret_sdk::MaterializedMlsGovernanceProofBundle,
 ) -> Result<BTreeSet<(String, String)>, String> {
     let mut pairs = BTreeSet::new();
     for event in &bundle.frontier_events {
@@ -368,7 +386,7 @@ fn event_device_proof_pair(
 
 pub(crate) fn verify_proof_bundle<R>(
     request: &arkret_sdk::MlsGovernanceProofRequest,
-    bundle: &arkret_sdk::MlsGovernanceProofBundle,
+    bundle: &arkret_sdk::MaterializedMlsGovernanceProofBundle,
     trusted_anchor: &arkret_sdk::SealId,
     resolver: &R,
 ) -> Result<arkret_sdk::VerifiedMlsGovernanceProof, String>
@@ -457,7 +475,7 @@ pub(crate) fn cached_verified_binding(
     let pinned = state_store
         .trusted_mls_governance_anchor(request.realm_id.as_str())
         .ok_or_else(|| "MLS governance trust anchor is not pinned".to_owned())?;
-    if pinned != bundle.trust_anchor_seal_id {
+    if pinned != bundle.trusted_anchor_seal_id {
         return Err("cached MLS governance proof no longer matches the pinned anchor".to_owned());
     }
     Ok(bundle.governance_binding)
@@ -473,6 +491,7 @@ pub(crate) fn seed_test_governance_proof(
     next_epoch: u64,
 ) -> arkret_sdk::MlsGovernanceBindingPayload {
     let request = proof_request(
+        state_store,
         realm_id,
         circle_id,
         mls_group_id,
@@ -524,15 +543,17 @@ pub(crate) fn seed_test_governance_proof(
         "ak:seal:sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
     )
     .unwrap();
-    let bundle = arkret_sdk::MlsGovernanceProofBundle {
+    let bundle = arkret_sdk::MaterializedMlsGovernanceProofBundle {
         bundle_version: arkret_sdk::MLS_GOVERNANCE_PROOF_BUNDLE_VERSION,
+        proof_request_digest: request.proof_request_digest().unwrap(),
+        bundle_digest: root.clone(),
         materialization_profile: arkret_sdk::MLS_GOVERNANCE_COMPLETE_MATERIALIZATION_PROFILE
             .to_owned(),
         realm_id: request.realm_id.clone(),
         effective_scope: request.effective_scope.clone(),
         reducer_profile: request.reducer_profile.clone(),
         governance_binding: binding.clone(),
-        trust_anchor_seal_id: anchor.clone(),
+        trusted_anchor_seal_id: anchor.clone(),
         accepted_seal_id: anchor.clone(),
         seal_path: Vec::new(),
         covered_event_digests: Vec::new(),
@@ -665,7 +686,7 @@ mod tests {
 }
 
 fn target_notary_value(
-    bundle: &arkret_sdk::MlsGovernanceProofBundle,
+    bundle: &arkret_sdk::MaterializedMlsGovernanceProofBundle,
 ) -> Result<arkret_sdk::NotaryValue, String> {
     let expected = format!(
         "ak:cell:ak.component.notary.v1:{}",

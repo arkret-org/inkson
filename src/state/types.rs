@@ -582,7 +582,7 @@ pub struct SnapshotSyncStatus {
 pub struct CachedMlsGovernanceProof {
     pub request: arkret_sdk::MlsGovernanceProofRequest,
     pub governance_binding: arkret_sdk::MlsGovernanceBindingPayload,
-    pub trust_anchor_seal_id: arkret_sdk::SealId,
+    pub trusted_anchor_seal_id: arkret_sdk::SealId,
     pub accepted_seal_id: arkret_sdk::SealId,
     pub bundle: Value,
     pub verified_at: DateTime<Utc>,

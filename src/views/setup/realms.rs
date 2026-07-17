@@ -925,6 +925,7 @@ pub(super) fn RealmsSection(
                                                                 },
                                                             );
                                                             let genesis_proof_request = match crate::mls::governance_proof::proof_request(
+                                                                &state_store.read(),
                                                                 &realm_id,
                                                                 None,
                                                                 arkret_sdk::base64url_encode(realm_id.as_bytes()),

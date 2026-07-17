@@ -1036,6 +1036,7 @@ fn verify_welcome_governance_binding(
         );
     }
     let request = crate::mls::governance_proof::proof_request(
+        state_store,
         realm_id,
         binding.circle_id().map(|circle_id| circle_id.as_str()),
         binding.mls_group_id(),
@@ -1554,6 +1555,7 @@ fn self_update_with_verified_governance_binding(
     group: &mut arkret_sdk::ArkretMlsGroup,
 ) -> Result<arkret_sdk::MlsCommitEnvelope, MlsRuntimeError> {
     let request = crate::mls::governance_proof::proof_request(
+        state_store,
         realm_id,
         None,
         group.group_id(),

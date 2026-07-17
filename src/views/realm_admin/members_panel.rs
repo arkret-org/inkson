@@ -3132,9 +3132,15 @@ async fn ensure_mls_genesis_frontier_for_invite(
             "local epoch-0 MLS snapshot is not available; create or restore this device's MLS state before inviting into an encrypted Realm"
         )
     })?;
-    let genesis_request =
-        crate::mls::governance_proof::proof_request(realm_id, None, summary.group_id.clone(), 0, 0)
-            .map_err(anyhow::Error::msg)?;
+    let genesis_request = crate::mls::governance_proof::proof_request(
+        &state_store.read(),
+        realm_id,
+        None,
+        summary.group_id.clone(),
+        0,
+        0,
+    )
+    .map_err(anyhow::Error::msg)?;
     crate::mls::governance_proof::fetch_verify_and_cache_proof(api, state_store, &genesis_request)
         .await
         .map_err(anyhow::Error::msg)?;
@@ -3198,6 +3204,7 @@ async fn ensure_mls_governance_proof_for_next_commit(
             anyhow::anyhow!("local MLS snapshot is unavailable for governance proof request")
         })?;
         crate::mls::governance_proof::proof_request(
+            &store,
             realm_id,
             None,
             snapshot.group_id,

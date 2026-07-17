@@ -237,6 +237,7 @@ pub(crate) fn build_creator_mls_genesis_event_for_effective_scope(
     let event_id_typed = arkret_sdk::EventId::new(event_id.clone())
         .map_err(|err| format!("invalid MLS genesis event id: {err:?}"))?;
     let request = crate::mls::governance_proof::proof_request(
+        state_store,
         realm_id,
         circle,
         summary.group_id.clone(),
@@ -397,6 +398,7 @@ fn mls_commit_event_from_store_for_effective_scope_with_membership_frontier(
         }
     }
     let request = crate::mls::governance_proof::proof_request(
+        state_store,
         realm_id,
         circle,
         commit_envelope.group_id.clone(),

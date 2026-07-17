@@ -215,6 +215,7 @@ pub(crate) fn build_secure_send(
             let commit_event_id_typed = arkret_sdk::EventId::new(commit_event_id.clone())
                 .map_err(|err| format!("MLS commit event id invalid: {err:?}"))?;
             let proof_request = crate::mls::governance_proof::proof_request(
+                &state_store.read(),
                 realm_id,
                 None,
                 real_commit_envelope.group_id.clone(),

@@ -4,11 +4,10 @@ const MLS_GOVERNANCE_PROOF_CACHE_MAX: usize = 16;
 const MLS_GOVERNANCE_PROOF_CACHE_TTL_MINUTES: i64 = 5;
 
 fn proof_cache_key(request: &arkret_sdk::MlsGovernanceProofRequest) -> Result<String, String> {
-    crate::canonical::canonical_sha256(
-        &serde_json::to_value(request)
-            .map_err(|error| format!("serialize MLS governance proof request: {error}"))?,
-    )
-    .map_err(|error| format!("hash MLS governance proof request: {error}"))
+    request
+        .proof_request_digest()
+        .map(|digest| digest.to_string())
+        .map_err(|error| format!("hash MLS governance proof identity: {error}"))
 }
 
 impl LocalStateStore {
@@ -43,7 +42,7 @@ impl LocalStateStore {
     pub fn cache_verified_mls_governance_proof(
         &mut self,
         request: arkret_sdk::MlsGovernanceProofRequest,
-        bundle: &arkret_sdk::MlsGovernanceProofBundle,
+        bundle: &arkret_sdk::MaterializedMlsGovernanceProofBundle,
     ) -> Result<(), String> {
         self.ensure_cached_loaded();
         let pinned = self
@@ -51,14 +50,14 @@ impl LocalStateStore {
             .mls_governance_trust_anchors
             .get(request.realm_id.as_str())
             .ok_or_else(|| "MLS governance trust anchor is not pinned".to_owned())?;
-        if pinned != &bundle.trust_anchor_seal_id {
+        if pinned != &bundle.trusted_anchor_seal_id {
             return Err("MLS governance proof trust anchor differs from the local pin".to_owned());
         }
         let key = proof_cache_key(&request)?;
         let entry = CachedMlsGovernanceProof {
             request,
             governance_binding: bundle.governance_binding.clone(),
-            trust_anchor_seal_id: bundle.trust_anchor_seal_id.clone(),
+            trusted_anchor_seal_id: bundle.trusted_anchor_seal_id.clone(),
             accepted_seal_id: bundle.accepted_seal_id.clone(),
             bundle: serde_json::to_value(bundle)
                 .map_err(|error| format!("serialize verified MLS governance proof: {error}"))?,
@@ -85,7 +84,7 @@ impl LocalStateStore {
         &self,
         request: &arkret_sdk::MlsGovernanceProofRequest,
         now: DateTime<Utc>,
-    ) -> Result<Option<arkret_sdk::MlsGovernanceProofBundle>, String> {
+    ) -> Result<Option<arkret_sdk::MaterializedMlsGovernanceProofBundle>, String> {
         let key = proof_cache_key(request)?;
         let state = self.load();
         let Some(entry) = state.mls_governance_proofs.get(&key) else {

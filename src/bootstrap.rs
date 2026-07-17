@@ -643,8 +643,11 @@ pub(crate) async fn bootstrap_mls_welcome_for_realm(
         serde_json::to_value(&messages).map_err(|error| format!("device messages: {error}"))?;
     let api = crate::transport::auth::authed_api(&base_url, session_credential.clone())
         .map_err(|error| format!("MLS governance proof client: {error}"))?;
-    let proof_requests = crate::mls::governance_proof::welcome_proof_requests(&messages_value)?;
-    if !proof_requests.is_empty() {
+    let has_welcome = messages
+        .messages
+        .iter()
+        .any(|message| message.kind == "ak.mls.welcome");
+    if has_welcome {
         let seal_view = api
             .event_submitter()
             .map_err(|error| format!("MLS governance proof frontier client: {error}"))?
@@ -660,6 +663,8 @@ pub(crate) async fn bootstrap_mls_welcome_for_realm(
             },
         );
     }
+    let proof_requests =
+        crate::mls::governance_proof::welcome_proof_requests(&state_store.read(), &messages_value)?;
     for request in proof_requests {
         crate::mls::governance_proof::fetch_verify_and_cache_proof(&api, state_store, &request)
             .await?;

@@ -76,8 +76,9 @@ pub fn ensure_creator_mls_snapshot_for_effective_scope(
         .map_err(|err| MlsRuntimeError::Identity(format!("{err:?}")))?;
     let group_seed = circle.unwrap_or(realm);
     let group_id = arkret_sdk::base64url_encode(group_seed.as_bytes());
-    let proof_request = crate::mls::governance_proof::proof_request(realm, circle, group_id, 0, 0)
-        .map_err(MlsRuntimeError::Genesis)?;
+    let proof_request =
+        crate::mls::governance_proof::proof_request(state_store, realm, circle, group_id, 0, 0)
+            .map_err(MlsRuntimeError::Genesis)?;
     let governance_binding =
         crate::mls::governance_proof::cached_verified_binding(state_store, &proof_request)
             .map_err(MlsRuntimeError::Genesis)?;
@@ -163,9 +164,15 @@ pub fn initial_mls_snapshot_summary_from_existing_for_effective_scope(
     let group = crate::mls::persistence::restore_envelope(&snapshot, &secret, 0)
         .map_err(|err| MlsRuntimeError::Genesis(format!("restore epoch-0 snapshot: {err}")))?;
     let group_id = group.group_id();
-    let proof_request =
-        crate::mls::governance_proof::proof_request(realm, circle, group_id.clone(), 0, 0)
-            .map_err(MlsRuntimeError::Genesis)?;
+    let proof_request = crate::mls::governance_proof::proof_request(
+        state_store,
+        realm,
+        circle,
+        group_id.clone(),
+        0,
+        0,
+    )
+    .map_err(MlsRuntimeError::Genesis)?;
     let expected_binding =
         crate::mls::governance_proof::cached_verified_binding(state_store, &proof_request)
             .map_err(MlsRuntimeError::Genesis)?;
