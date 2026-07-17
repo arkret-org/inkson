@@ -79,15 +79,80 @@ pub(crate) fn proof_request(
 
 pub(crate) async fn fetch_proof_bundle(
     api: &crate::transport::TransportClient,
+    mut state_store: dioxus::prelude::SyncSignal<crate::state::LocalStateStore>,
     request: &arkret_sdk::MlsGovernanceProofRequest,
 ) -> Result<arkret_sdk::MaterializedMlsGovernanceProofBundle, String> {
-    const MAX_PROJECTION_ATTEMPTS: u32 = 8;
-
     let http = api
         .sdk_http_client()
         .map_err(|error| format!("build MLS governance proof client: {error}"))?;
+    let mut first_request = request.clone();
+    first_request.chunk_index = 0;
+    first_request.expected_bundle_digest = None;
+    let first = fetch_proof_chunk_with_retry(&http, &first_request).await?;
+    let mut chunks = state_store
+        .read()
+        .cached_mls_governance_acquisition(&first_request)
+        .unwrap_or_default();
+    let cached_matches = chunks.first().is_some_and(|cached| {
+        cached.bundle_digest == first.bundle_digest
+            && cached.proof_request_digest == first.proof_request_digest
+            && cached.chunk_manifest == first.chunk_manifest
+    });
+    if !cached_matches {
+        state_store
+            .write()
+            .clear_mls_governance_acquisition(&first_request)?;
+        chunks.clear();
+        chunks.push(first.clone());
+        state_store
+            .write()
+            .persist_mls_governance_acquisition_chunk(&first_request, &first)?;
+    }
+    let chunk_count = first.chunk_manifest.chunk_count as usize;
+    if chunks.len() > chunk_count {
+        state_store
+            .write()
+            .clear_mls_governance_acquisition(&first_request)?;
+        chunks = vec![first.clone()];
+        state_store
+            .write()
+            .persist_mls_governance_acquisition_chunk(&first_request, &first)?;
+    }
+    for chunk_index in chunks.len()..chunk_count {
+        let mut next_request = first_request.clone();
+        next_request.chunk_index = chunk_index as u32;
+        next_request.expected_bundle_digest = Some(first.bundle_digest.clone());
+        let chunk = fetch_proof_chunk_with_retry(&http, &next_request).await?;
+        if chunk.chunk.chunk_index() != chunk_index as u32
+            || chunk.bundle_digest != first.bundle_digest
+            || chunk.proof_request_digest != first.proof_request_digest
+            || chunk.chunk_manifest != first.chunk_manifest
+        {
+            state_store
+                .write()
+                .clear_mls_governance_acquisition(&first_request)?;
+            return Err("MLS governance proof service changed manifest during acquisition".to_owned());
+        }
+        state_store
+            .write()
+            .persist_mls_governance_acquisition_chunk(&first_request, &chunk)?;
+        chunks.push(chunk);
+    }
+    let materialized = arkret_sdk::assemble_mls_governance_proof_chunks(&first_request, &chunks)
+        .map_err(|error| format!("assemble MLS governance proof chunks: {error}"))?;
+    state_store
+        .write()
+        .clear_mls_governance_acquisition(&first_request)?;
+    Ok(materialized)
+}
+
+async fn fetch_proof_chunk_with_retry(
+    http: &arkret_sdk::Client,
+    request: &arkret_sdk::MlsGovernanceProofRequest,
+) -> Result<arkret_sdk::MlsGovernanceProofBundle, String> {
+    const MAX_PROJECTION_ATTEMPTS: u32 = 8;
     for attempt in 0..MAX_PROJECTION_ATTEMPTS {
-        match http.mls_governance_proof_complete(request).await {
+        match http.mls_governance_proof(request).await {
             Ok(bundle) => return Ok(bundle),
             Err(error)
                 if attempt + 1 < MAX_PROJECTION_ATTEMPTS
@@ -96,7 +161,7 @@ pub(crate) async fn fetch_proof_bundle(
                 let delay_ms = (100_u64 << attempt).min(1_000);
                 crate::runtime_helpers::sleep_for(std::time::Duration::from_millis(delay_ms)).await;
             }
-            Err(error) => return Err(format!("fetch MLS governance proof: {error}")),
+            Err(error) => return Err(format!("fetch MLS governance proof chunk: {error}")),
         }
     }
     unreachable!("bounded governance proof retry loop always returns")
@@ -159,7 +224,7 @@ pub(crate) async fn fetch_verify_and_cache_proof(
     mut state_store: dioxus::prelude::SyncSignal<crate::state::LocalStateStore>,
     request: &arkret_sdk::MlsGovernanceProofRequest,
 ) -> Result<arkret_sdk::MlsGovernanceBindingPayload, String> {
-    let bundle = fetch_proof_bundle(api, request).await?;
+    let bundle = fetch_proof_bundle(api, state_store, request).await?;
     let existing_pin = state_store
         .read()
         .trusted_mls_governance_anchor(request.realm_id.as_str());
