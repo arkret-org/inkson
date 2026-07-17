@@ -9,8 +9,8 @@ use crate::ui::button::{Button, ButtonVariant};
 use crate::ui::dialog::Dialog;
 use crate::views::agents::{
     bootstrap_provisioned_agent, build_agent_key_authorize_event_for_pairing,
-    parse_runtime_key_approval_request, runtime_key_pairing_error_message,
-    summarize_runtime_key_approval_request,
+    build_requested_scope_disclosure_for_pairing, parse_runtime_key_approval_request,
+    runtime_key_pairing_error_message, summarize_runtime_key_approval_request,
 };
 use crate::views::helpers::short_protocol_id;
 
@@ -195,7 +195,7 @@ pub fn AgentRuntimeApprovalPrompt(token: Signal<String>, account_did: Signal<Str
             "data-testid": "agent-runtime-approval-modal",
             "aria-labelledby": "agent-runtime-approval-title",
             "aria-label": "An agent runtime is requesting access to your account",
-            div { class: "modal event",
+            div { class: "modal event agent-runtime-approval-dialog",
                 div { class: "modal-head event-head",
                     h3 { id: "agent-runtime-approval-title", "Agent runtime approval requested" }
                     span { class: "muted", "agent pairing" }
@@ -335,6 +335,7 @@ pub fn AgentRuntimeApprovalPrompt(token: Signal<String>, account_did: Signal<Str
                             let api_token = token();
                             let request_key = approve_request.request_key.clone();
                             let key_state = approve_request.key_state.clone();
+                            let approval_agent_id = approve_request.agent_id.clone();
                             status.set("Approving agent runtime...".to_owned());
                             approving.set(true);
                             spawn(async move {
@@ -375,8 +376,17 @@ pub fn AgentRuntimeApprovalPrompt(token: Signal<String>, account_did: Signal<Str
                                                 &key_state,
                                                 &body,
                                             )?;
-                                        let pair_request =
-                                            body.into_pair_request(authorize_event.clone());
+                                        let requested_scope_disclosure =
+                                            build_requested_scope_disclosure_for_pairing(
+                                                &controller,
+                                                &service_id,
+                                                &key_state,
+                                                &body,
+                                            )?;
+                                        let pair_request = body.into_pair_request(
+                                            requested_scope_disclosure,
+                                            authorize_event.clone(),
+                                        );
                                         let outcome = api
                                             .event_submitter()?
                                             .agent_key_pair_with_authorize_event(
@@ -421,6 +431,11 @@ pub fn AgentRuntimeApprovalPrompt(token: Signal<String>, account_did: Signal<Str
                                         });
                                     }
                                     Err(err) => {
+                                        tracing::warn!(
+                                            error = %err.display(),
+                                            agent_id = %approval_agent_id,
+                                            "agent runtime approval failed"
+                                        );
                                         status.set(format!(
                                             "Runtime key approval failed. {}",
                                             runtime_key_pairing_error_message(err.display())

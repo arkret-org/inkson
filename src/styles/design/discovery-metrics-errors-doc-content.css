@@ -533,6 +533,24 @@
   letter-spacing: 0.18em;
 }
 
+/* Keep approval diagnostics inside the consent surface at every viewport. */
+.agent-runtime-approval-dialog {
+  width: min(560px, calc(100vw - 32px));
+  max-width: calc(100vw - 32px);
+  overflow-x: hidden;
+}
+.agent-runtime-approval-dialog .modal-head,
+.agent-runtime-approval-dialog .modal-body,
+.agent-runtime-approval-dialog .modal-foot,
+.agent-runtime-approval-dialog [data-testid="agent-runtime-approval-status"] {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+.agent-runtime-approval-dialog .modal-foot {
+  flex-wrap: wrap;
+}
+
 .mls-recovery-modal {
   width: min(640px, calc(100vw - 32px));
   background: var(--surface-solid, var(--surface));

@@ -75,11 +75,14 @@ fn controller_signer_device_id(
         .ok_or_else(|| anyhow::anyhow!("active controller device id is unavailable"))
 }
 
-fn sdk_not_found(error: &anyhow::Error) -> bool {
-    matches!(
-        error.downcast_ref::<arkret_sdk::Error>(),
-        Some(arkret_sdk::Error::Api { status: 404, .. })
-    )
+fn managed_agent_initial_seal_required(error: &anyhow::Error) -> bool {
+    match error.downcast_ref::<arkret_sdk::Error>() {
+        Some(arkret_sdk::Error::Api { status: 404, .. }) => true,
+        Some(arkret_sdk::Error::Api { status: 503, error }) => {
+            error.code() == "frontier_unavailable"
+        }
+        _ => false,
+    }
 }
 
 fn next_mls_history_pointer(
@@ -738,7 +741,7 @@ pub(crate) async fn bootstrap_provisioned_agent(
 
     let initial_frontier = match submitter.events_frontier_realm_seal_view(realm_id).await {
         Ok(frontier) => frontier,
-        Err(error) if sdk_not_found(&error) => {
+        Err(error) if managed_agent_initial_seal_required(&error) => {
             let seal = submit_managed_agent_pcr_seal(
                 &http,
                 signer.as_ref(),
@@ -982,6 +985,37 @@ mod tests {
     use super::*;
 
     const TEST_DEVICE_ID: &str = "ak:device:01964137-0000-7000-8000-000000000001";
+
+    fn api_error(status: u16, code: &str) -> anyhow::Error {
+        anyhow::Error::new(arkret_sdk::Error::Api {
+            status,
+            error: Box::new(arkret_sdk::models::ErrorEnvelope::new(code, "test error")),
+        })
+    }
+
+    #[test]
+    fn managed_agent_initial_seal_accepts_missing_frontier_states() {
+        assert!(managed_agent_initial_seal_required(&api_error(
+            404,
+            "not_found"
+        )));
+        assert!(managed_agent_initial_seal_required(&api_error(
+            503,
+            "frontier_unavailable"
+        )));
+    }
+
+    #[test]
+    fn managed_agent_initial_seal_does_not_hide_other_api_failures() {
+        assert!(!managed_agent_initial_seal_required(&api_error(
+            503,
+            "service_unavailable"
+        )));
+        assert!(!managed_agent_initial_seal_required(&api_error(
+            403,
+            "capability_denied"
+        )));
+    }
 
     #[test]
     fn controller_signer_accepts_account_scoped_device_did_key() {

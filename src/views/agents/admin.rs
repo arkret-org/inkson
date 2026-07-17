@@ -39,6 +39,14 @@ fn normalize_agent_slug(value: &str) -> String {
     value.trim().to_ascii_lowercase()
 }
 
+pub(super) fn should_offer_pairing_renewal(pcr_recovery_ready: bool, status: &str) -> bool {
+    pcr_recovery_ready
+        && matches!(
+            status,
+            "pending_runtime_key" | "pairing_expired" | "active" | "paused"
+        )
+}
+
 fn agent_field(agent: &AgentView, key: &str) -> String {
     match key {
         "agent_id" => agent.agent.agent_id.to_string(),
@@ -583,6 +591,8 @@ pub fn PersonalAgentAdminPanel(token: Signal<String>) -> Element {
     // on an active/paused agent): the existing key keeps working until the
     // new pairing completes, then is superseded.
     let selected_is_replaceable = matches!(selected_status.as_str(), "active" | "paused");
+    let selected_can_renew_pairing =
+        should_offer_pairing_renewal(selected_pcr_recovery_ready, &selected_status);
     let selected_should_show_pairing_card = (matches!(
         selected_status.as_str(),
         "pending_runtime_key" | "pairing_expired"
@@ -1227,7 +1237,7 @@ pub fn PersonalAgentAdminPanel(token: Signal<String>) -> Element {
                                                 }
                                             }
                                         }
-                                        if selected_pcr_recovery_ready && selected_pairing_is_expired {
+                                        if selected_can_renew_pairing {
                                             div { class: "actions",
                                                 Button {
                                                     variant: ButtonVariant::Primary,

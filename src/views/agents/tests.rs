@@ -5,60 +5,29 @@ mod personal_agent_tests {
     use super::super::*;
     use crate::views::agents::model::{
         build_agent_key_authorize_event_for_pairing, build_agent_pairing_deep_link,
-        build_agent_pairing_handoff_token, parse_runtime_key_approval_request,
-        render_agent_pairing_qr_svg, runtime_key_pairing_error_message,
-        summarize_runtime_key_approval_request,
+        build_agent_pairing_handoff_token, build_requested_scope_disclosure_for_pairing,
+        parse_runtime_key_approval_request, render_agent_pairing_qr_svg,
+        runtime_key_pairing_error_message, summarize_runtime_key_approval_request,
     };
 
-    fn requested_scope_disclosure_json(
-        agent_id: &str,
-        controller_id: &str,
-        service_id: &str,
-        requested_scope: arkret_sdk::AgentKeyScope,
-    ) -> serde_json::Value {
-        let agent_id = arkret_sdk::Did::new(agent_id.to_owned()).unwrap();
-        let controller_id = arkret_sdk::Did::new(controller_id.to_owned()).unwrap();
-        let issued_at = chrono::DateTime::parse_from_rfc3339("2026-07-06T00:10:00.000Z")
-            .unwrap()
-            .with_timezone(&chrono::Utc);
-        let requested_scope_digest =
-            arkret_sdk::agent_requested_scope_digest(&agent_id, &controller_id, &requested_scope)
-                .unwrap();
-        let mut disclosure = arkret_sdk::AgentRequestedScopeDisclosure {
-            schema: arkret_sdk::AGENT_REQUESTED_SCOPE_DISCLOSURE_SCHEMA.to_owned(),
-            request_id: arkret_sdk::RequestId::new(
-                "ak:request:01999999-0000-7000-8000-00000000feed".to_owned(),
-            )
-            .unwrap(),
-            agent_id,
-            controller_id,
-            requested_scope,
-            requested_scope_digest,
-            verifier_did: arkret_sdk::Did::new(service_id.to_owned()).unwrap(),
-            audience: arkret_sdk::NonEmptyString::new(
-                "ak.gate.account.command.pair_agent_key",
-            )
-            .unwrap(),
-            challenge: arkret_sdk::NonEmptyString::new(
-                "agent_pairing_request:01999999-0000-7000-8000-00000000feed",
-            )
-            .unwrap(),
-            issued_at,
-            expires_at: issued_at + chrono::Duration::minutes(5),
-            proofs: vec![arkret_sdk::Proof {
-                kind: "detached_jws".to_owned(),
-                alg: "EdDSA".to_owned(),
-                verification_method: "did:web:controller.example#key-1".to_owned(),
-                event_digest: arkret_sdk::Hash::new(format!("sha256:{}", "0".repeat(64)))
-                    .unwrap(),
-                created_at: issued_at,
-                domain: None,
-                audience: None,
-                jws: "eyJhbGciOiJFZERTQSJ9..AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQ".to_owned(),
-            }],
-        };
-        disclosure.proofs[0].event_digest = disclosure.payload_digest().unwrap();
-        serde_json::to_value(disclosure).unwrap()
+    #[test]
+    fn pairing_renewal_is_available_before_an_open_request_expires() {
+        assert!(super::super::admin::should_offer_pairing_renewal(
+            true,
+            "pending_runtime_key"
+        ));
+        assert!(super::super::admin::should_offer_pairing_renewal(
+            true,
+            "pairing_expired"
+        ));
+        assert!(!super::super::admin::should_offer_pairing_renewal(
+            false,
+            "pending_runtime_key"
+        ));
+        assert!(!super::super::admin::should_offer_pairing_renewal(
+            true,
+            "deactivated"
+        ));
     }
 
     #[test]
@@ -405,7 +374,6 @@ mod personal_agent_tests {
     #[test]
     fn runtime_key_request_summary_exposes_sdk_fingerprint() {
         let verification_method = "did:web:agents.example:summary#runtime-key-1";
-        let scope = requested_scope_for_presets(&[], &AgentServiceScopePreset::DEFAULTS).unwrap();
         let raw = serde_json::json!({
             "pairing_request_id": "agent_pairing_request:01999999-0000-7000-8000-00000000feed",
             "agent_id": "did:web:agents.example:summary",
@@ -423,12 +391,6 @@ mod personal_agent_tests {
                 "expires_at": "2026-07-06T00:15:00.000Z",
                 "signature": arkret_sdk::base64url_encode([1u8; 64]),
             },
-            "requested_scope_disclosure": requested_scope_disclosure_json(
-                "did:web:agents.example:summary",
-                "did:web:controller.example",
-                "did:web:arkret.example",
-                scope,
-            ),
         })
         .to_string();
         let summary = summarize_runtime_key_approval_request(&raw).unwrap();
@@ -461,6 +423,7 @@ mod personal_agent_tests {
         assert!(
             runtime_key_pairing_error_message("database unavailable").contains("Server rejected")
         );
+        assert!(!runtime_key_pairing_error_message("database unavailable").contains("Detail:"));
     }
 
     #[test]
@@ -494,7 +457,7 @@ mod personal_agent_tests {
             "status": "pending_runtime_key",
             "pairing_request_id": "agent_pairing_request:01999999-0000-7000-8000-00000000feed",
             "pairing_code": "12345678",
-            "pairing_expires_at": "2026-07-06T00:15:00.000Z",
+            "pairing_expires_at": "2026-07-06T00:15:00.000123Z",
             "requested_scope": scope,
         });
         let raw = serde_json::json!({
@@ -514,20 +477,26 @@ mod personal_agent_tests {
                 "expires_at": "2026-07-06T00:15:00.000Z",
                 "signature": arkret_sdk::base64url_encode([1u8; 64]),
             },
-            "requested_scope_disclosure": requested_scope_disclosure_json(
-                agent,
-                controller,
-                service_id,
-                scope,
-            ),
         })
         .to_string();
         let request = parse_runtime_key_approval_request(&raw).unwrap();
+
+        let disclosure = build_requested_scope_disclosure_for_pairing(
+            controller, service_id, &key_state, &request,
+        )
+        .unwrap();
 
         let event = build_agent_key_authorize_event_for_pairing(
             controller, service_id, &key_state, &request,
         )
         .unwrap();
+
+        assert_eq!(disclosure.agent_id.as_str(), agent);
+        assert_eq!(disclosure.controller_id.as_str(), controller);
+        assert_eq!(
+            disclosure.requested_scope,
+            serde_json::from_value(key_state["requested_scope"].clone()).unwrap()
+        );
 
         let runtime_digest =
             arkret_sdk::agent_runtime_public_key_digest(&request.public_key).unwrap();
