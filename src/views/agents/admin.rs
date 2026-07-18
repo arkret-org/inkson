@@ -1275,7 +1275,7 @@ pub fn PersonalAgentAdminPanel(token: Signal<String>, controller_id: String) -> 
                                                         slug: slug_value.clone(),
                                                         avatar_blob_ref: avatar_blob_ref.clone(),
                                                         requested_scope: requested_scope.clone(),
-                                                        provision_events: signed_events,
+                                                        provision_events: Box::new(signed_events),
                                                         pairing_ttl_ms: None,
                                                     };
                                                     let outcome = match with_authed_sdk_client(
