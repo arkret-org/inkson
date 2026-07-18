@@ -481,7 +481,7 @@ fn inkson_accepts_server_contract_payloads() {
 
     let error = decode_arkret_error(
         StatusCode::CONFLICT,
-        br#"{"ok":false,"error":{"code":"expected_head_mismatch","message":"expected_head mismatch","retry_after_ms":null}}"#,
+        br#"{"ok":false,"error":{"code":"expected_head_mismatch","message":"expected_head mismatch","retry_after_ms":null},"request_id":"ak:request:server-contract"}"#,
     );
     assert_eq!(error.code(), "expected_head_mismatch");
     assert_eq!(error.message(), "expected_head mismatch");
@@ -884,8 +884,9 @@ fn bare_401_does_not_count_as_session_loss() {
     // soft_logged_out —
     // should drop the session.
     for code in ["auth_expired", "unauthenticated", "soft_logged_out"] {
-        let body =
-            format!(r#"{{"ok":false,"error":{{"code":"{code}","message":"unknown token"}}}}"#);
+        let body = format!(
+            r#"{{"ok":false,"error":{{"code":"{code}","message":"unknown token"}},"request_id":"ak:request:server-contract"}}"#
+        );
         let envelope: anyhow::Error = TransportClientError {
             status: StatusCode::UNAUTHORIZED,
             error: decode_arkret_error(StatusCode::UNAUTHORIZED, body.as_bytes()),
@@ -901,7 +902,7 @@ fn bare_401_does_not_count_as_session_loss() {
         status: StatusCode::UNAUTHORIZED,
         error: decode_arkret_error(
             StatusCode::UNAUTHORIZED,
-            br#"{"ok":false,"error":{"code":"rate_limited","message":"slow down"}}"#,
+            br#"{"ok":false,"error":{"code":"rate_limited","message":"slow down"},"request_id":"ak:request:server-contract"}"#,
         ),
     }
     .into();
@@ -909,10 +910,9 @@ fn bare_401_does_not_count_as_session_loss() {
 }
 
 /// Regression: `decode_arkret_error` MUST tolerate the current
-/// on-the-wire shapes (canonical wrapped and plain envelope without
-/// `request_id`) and synthesise a stable `http_status` envelope when
-/// none match. A regression here silently degrades every error message
-/// in the UI.
+/// on-the-wire shapes (canonical wrapped and direct envelopes) and synthesise
+/// a stable `http_status` envelope when none match. A regression here silently
+/// degrades every error message in the UI.
 #[test]
 fn decoder_handles_all_envelope_shapes() {
     // 1. Canonical wrapped: { "error": ErrorEnvelope }. Extra hints (e.g. the cell ref the server
@@ -920,7 +920,7 @@ fn decoder_handles_all_envelope_shapes() {
     //    surface them.
     let wrapped = decode_arkret_error(
         StatusCode::CONFLICT,
-        br#"{"ok":false,"error":{"code":"expected_head_mismatch","message":"head mismatch","retry_after_ms":250,"details":{"cell":"ak:cell:ak.component.strand.position.v1:demo"}}}"#,
+        br#"{"error":{"ok":false,"error":{"code":"expected_head_mismatch","message":"head mismatch","retry_after_ms":250,"details":{"cell":"ak:cell:ak.component.strand.position.v1:demo"}},"request_id":"ak:request:server-contract-wrapped"}}"#,
     );
     assert_eq!(wrapped.code(), "expected_head_mismatch");
     assert_eq!(wrapped.retry_after_ms(), Some(250));
@@ -929,10 +929,10 @@ fn decoder_handles_all_envelope_shapes() {
         "ak:cell:ak.component.strand.position.v1:demo"
     );
 
-    // 2. Plain envelope without `request_id`.
+    // 2. Direct canonical envelope.
     let plain = decode_arkret_error(
         StatusCode::BAD_REQUEST,
-        br#"{"ok":false,"error":{"code":"invalid_param","message":"bad did"}}"#,
+        br#"{"ok":false,"error":{"code":"invalid_param","message":"bad did"},"request_id":"ak:request:server-contract-direct"}"#,
     );
     assert_eq!(plain.code(), "invalid_param");
 
