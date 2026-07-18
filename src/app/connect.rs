@@ -228,7 +228,7 @@ pub(super) fn redirect_to_login(navigator: Navigator) {
 fn attach_current_session_material(
     api: TransportClient,
     store: &mut crate::state::LocalStateStore,
-) -> TransportClient {
+) -> anyhow::Result<TransportClient> {
     match crate::identity::account_auth::grant_dpop::load_or_recover_device_key(store) {
         Ok(Some(handle)) => api.with_dpop_device(handle),
         Ok(None) => {
@@ -236,7 +236,7 @@ fn attach_current_session_material(
                 target: "session_boot",
                 "session DPoP device key unavailable; self-path requests will be rejected until sign-in refreshes the device key"
             );
-            api
+            Ok(api)
         }
         Err(error) => {
             tracing::warn!(
@@ -244,7 +244,7 @@ fn attach_current_session_material(
                 %error,
                 "session DPoP device key load/recovery failed"
             );
-            api
+            Ok(api)
         }
     }
 }
@@ -255,7 +255,7 @@ fn current_base_api(
 ) -> anyhow::Result<TransportClient> {
     let api = TransportClient::unauthenticated(base)?;
     let mut store = state_store.write();
-    Ok(attach_current_session_material(api, &mut store))
+    attach_current_session_material(api, &mut store)
 }
 
 fn current_authed_api(
@@ -916,17 +916,17 @@ pub(super) fn connect(base: String, actor: String, device: String, ctx: ConnectC
                         })
                         .map(|grant| grant.device_id)
                 };
-                if let Some(grant_device) = grant_device {
-                    if grant_device != device {
-                        tracing::warn!(
-                            target: "session_boot",
-                            stale = %device,
-                            grant_device = %grant_device,
-                            "connect: replacing boot device_id with session-grant device_id"
-                        );
-                        device = grant_device.clone();
-                        device_id_signal.set(grant_device);
-                    }
+                if let Some(grant_device) = grant_device
+                    && grant_device != device
+                {
+                    tracing::warn!(
+                        target: "session_boot",
+                        stale = %device,
+                        grant_device = %grant_device,
+                        "connect: replacing boot device_id with session-grant device_id"
+                    );
+                    device = grant_device.clone();
+                    device_id_signal.set(grant_device);
                 }
                 {
                     let secure_store = crate::secure_key_store::default_secure_key_store("inkson");

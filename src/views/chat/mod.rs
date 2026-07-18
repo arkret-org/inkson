@@ -1047,10 +1047,13 @@ pub fn ChatPanel(
                                                 {
                                                     object.insert("fields".to_owned(), json!({}));
                                                 }
-                                                let fields = object
+                                                let Some(fields) = object
                                                     .get_mut("fields")
                                                     .and_then(Value::as_object_mut)
-                                                    .expect("fields was initialized as an object");
+                                                else {
+                                                    status_msg.set("Could not create Strand: fields is not an object".to_owned());
+                                                    return;
+                                                };
                                                 fields.insert("category".to_owned(), json!(category.clone()));
                                                 fields.insert("has_synthesis".to_owned(), json!(create_card));
                                                 object.insert("rank".to_owned(), json!(rank.clone()));

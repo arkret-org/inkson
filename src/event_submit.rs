@@ -1253,7 +1253,7 @@ fn cba_cell_family(cell: &str) -> anyhow::Result<&str> {
     })?;
     let rest = cell
         .strip_prefix("ak:cell:")
-        .expect("validated CellRef has ak:cell: prefix");
+        .ok_or_else(|| anyhow::anyhow!("validated CellRef is missing the ak:cell: prefix"))?;
     let (family, subject) = rest
         .split_once(':')
         .ok_or_else(|| anyhow::anyhow!("effects[].cell must include family and subject"))?;

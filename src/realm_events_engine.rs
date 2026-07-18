@@ -87,28 +87,19 @@ struct RealmIngestProjector {
 }
 
 impl ClientProjector for RealmIngestProjector {
-    fn project(
-        &self,
-        batch: Vec<ClientEvent>,
-    ) -> impl std::future::Future<Output = arkret_sdk::Result<()>> + '_ {
-        async move {
-            if !batch.is_empty() {
-                let changed = self.state_store.write(|store| {
-                    crate::sync_engine::ingest_kanban_events(store, &self.realm_id, &batch)
-                        + crate::sync_engine::ingest_message_events(store, &self.realm_id, &batch)
-                        + crate::sync_engine::ingest_membership_events(
-                            store,
-                            &self.realm_id,
-                            &batch,
-                        )
-                });
-                if changed > 0 {
-                    self.realm_live_epoch
-                        .update(|epoch| *epoch = epoch.wrapping_add(1));
-                }
+    async fn project(&self, batch: Vec<ClientEvent>) -> arkret_sdk::Result<()> {
+        if !batch.is_empty() {
+            let changed = self.state_store.write(|store| {
+                crate::sync_engine::ingest_kanban_events(store, &self.realm_id, &batch)
+                    + crate::sync_engine::ingest_message_events(store, &self.realm_id, &batch)
+                    + crate::sync_engine::ingest_membership_events(store, &self.realm_id, &batch)
+            });
+            if changed > 0 {
+                self.realm_live_epoch
+                    .update(|epoch| *epoch = epoch.wrapping_add(1));
             }
-            Ok(())
         }
+        Ok(())
     }
 }
 

@@ -116,26 +116,23 @@ impl TransportClient {
         Self::new(base_url, RequestContext::new(""))
     }
 
-    pub fn with_bearer(mut self, credential: impl Into<String>) -> Self {
+    pub fn with_bearer(mut self, credential: impl Into<String>) -> anyhow::Result<Self> {
         self.context.credential = credential.into();
         Self::new(self.base_url.as_str(), self.context)
-            .expect("rebuilding an already validated transport must succeed")
     }
 
     pub fn with_dpop_device(
         mut self,
         handle: crate::identity::account_auth::grant_dpop::DpopHandle,
-    ) -> Self {
+    ) -> anyhow::Result<Self> {
         self.context.dpop = Some(handle);
         Self::new(self.base_url.as_str(), self.context)
-            .expect("rebuilding an already validated transport must succeed")
     }
 
-    pub fn with_wait_for(mut self, cursor: impl Into<String>) -> Self {
+    pub fn with_wait_for(mut self, cursor: impl Into<String>) -> anyhow::Result<Self> {
         let cursor = cursor.into();
         self.context.cursor = (!cursor.trim().is_empty()).then_some(cursor);
         Self::new(self.base_url.as_str(), self.context)
-            .expect("rebuilding an already validated transport must succeed")
     }
 
     pub(crate) fn sdk_http_client(&self) -> anyhow::Result<arkret_sdk::http_client::Client> {

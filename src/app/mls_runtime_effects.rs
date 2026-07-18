@@ -360,7 +360,7 @@ pub(super) fn MlsRuntimeEffects(state: MlsRuntimeEffectState) -> Element {
                 .then(|| {
                     share_context_realm_id
                         .clone()
-                        .unwrap_or_else(|| selected_realm_id())
+                        .unwrap_or_else(&*selected_realm_id)
                 })
                 .filter(|realm_id| !realm_id.trim().is_empty());
             let description = server_description();

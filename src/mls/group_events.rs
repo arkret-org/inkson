@@ -392,10 +392,10 @@ fn mls_commit_event_from_store_for_effective_scope_with_membership_frontier(
             .into_iter()
             .collect::<std::collections::BTreeSet<_>>()
     });
-    if let Some(requested) = explicit_membership_frontier.as_ref() {
-        if requested.is_empty() {
-            return Err("MLS Remove governance frontier must not be empty".to_owned());
-        }
+    if let Some(requested) = explicit_membership_frontier.as_ref()
+        && requested.is_empty()
+    {
+        return Err("MLS Remove governance frontier must not be empty".to_owned());
     }
     let request = crate::mls::governance_proof::proof_request(
         state_store,

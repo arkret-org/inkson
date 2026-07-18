@@ -596,15 +596,13 @@ pub fn projection_realm_id_for_known_node(
         if projection_realm_id != node.id || node.kind == RealmTreeNodeKind::Realm {
             return Some(projection_realm_id.to_owned());
         }
-        if let Some(parent) = node
-            .parent_space_id
-            .as_deref()
-            .map(str::trim)
-            .filter(|parent| !parent.is_empty())
         {
+            let parent = node
+                .parent_space_id
+                .as_deref()
+                .map(str::trim)
+                .filter(|parent| !parent.is_empty())?;
             current = parent;
-        } else {
-            return None;
         }
     }
 
@@ -977,7 +975,7 @@ impl From<arkret_sdk::models::DirectoryHandleResolutionOutcome> for ResolveHandl
             handle: outcome.handle,
             did_document: None,
             verified: outcome.verified,
-            claims: outcome.claims.into(),
+            claims: outcome.claims,
             audience: outcome.audience,
             member_delivery_binding: outcome.member_delivery_binding,
             handle_claim: outcome.handle_claim,
@@ -1124,7 +1122,7 @@ impl<'de> Deserialize<'de> for SubmitEventResult {
     }
 }
 
-/// Round R2/R3 (T02) — server response shape for the
+// Round R2/R3 (T02) — server response shape for the
 // The `POST /_arkret/self/ephemeral` channel is fire-and-forget; its response
 // decodes into the SDK's authoritative `arkret_sdk::EphemeralSubmitOutcome`
 // (`accepted`, `dispatched_to`, `server_received_at`). The former inkson-local

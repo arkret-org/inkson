@@ -1342,10 +1342,11 @@ fn verified_org_relationships(org: &Value) -> Vec<String> {
             }
             // expired statements lose the badge. `expires_at` is an RFC3339
             // string; absence means no expiry.
-            if let Some(expires_at) = entry.get("expires_at").and_then(|value| value.as_str()) {
-                if !expires_at.is_empty() && expires_at <= now.as_str() {
-                    continue;
-                }
+            if let Some(expires_at) = entry.get("expires_at").and_then(|value| value.as_str())
+                && !expires_at.is_empty()
+                && expires_at <= now.as_str()
+            {
+                continue;
             }
             if !out.iter().any(|existing| existing == relationship) {
                 out.push(relationship.to_owned());

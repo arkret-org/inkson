@@ -15,9 +15,8 @@
 //!
 //!   * [`super::LocalStorageSecureKeyStore`] refuses Ed25519 seed keys.
 //!   * [`load_signing_seed`] / [`store_signing_seed`] require [`super::IndexedDbSecureKeyStore`] on
-//!     wasm32.
-//! Before the async IndexedDB/SubtleCrypto upgrade completes, browser
-//! signer bootstrap fails closed and ProofMode remains Production.
+//!     wasm32. Before the async IndexedDB/SubtleCrypto upgrade completes, browser signer bootstrap
+//!     fails closed and ProofMode remains Production.
 
 use std::sync::RwLock;
 
@@ -270,17 +269,17 @@ pub fn adopt_device_seed_scope_on_login(
     if account.is_empty() {
         return Ok(());
     }
-    if load_signing_seed_scoped(store, Some(account))?.is_none() {
-        if let Some(material) = load_signing_seed_scoped(store, None)? {
-            store_signing_seed_scoped(store, Some(account), &material.seed)?;
-        }
+    if load_signing_seed_scoped(store, Some(account))?.is_none()
+        && let Some(material) = load_signing_seed_scoped(store, None)?
+    {
+        store_signing_seed_scoped(store, Some(account), &material.seed)?;
     }
     delete_signing_seed_scoped(store, None)?;
 
-    if load_device_id_scoped(store, Some(account))?.is_none() {
-        if let Some(bootstrap_device_id) = load_device_id_scoped(store, None)? {
-            store_device_id_scoped(store, Some(account), &bootstrap_device_id)?;
-        }
+    if load_device_id_scoped(store, Some(account))?.is_none()
+        && let Some(bootstrap_device_id) = load_device_id_scoped(store, None)?
+    {
+        store_device_id_scoped(store, Some(account), &bootstrap_device_id)?;
     }
     delete_device_id_scoped(store, None)?;
 

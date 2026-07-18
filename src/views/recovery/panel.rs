@@ -92,7 +92,6 @@ pub fn RecoveryPanel(
 
     {
         let actor_key = actor_key.clone();
-        let state_store = state_store;
         use_effect(move || {
             let next = load_state(&state_store, &actor_key);
             if recovery_key_fp() != next.recovery_key_fingerprint {

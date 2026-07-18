@@ -921,7 +921,6 @@ pub(super) fn ChatComposer(controller: ChatController, context: ChatComposerCont
                             let realm = selected_realm_id.clone();
                             let actor = account_did.clone();
                             let own_controller_handle = own_controller_handle.clone();
-                            let navigator = navigator.clone();
                             move |_| {
                                 let own_controller_handle = own_controller_handle.clone();
                                 let body = chat_draft().trim().to_owned();
@@ -971,7 +970,7 @@ pub(super) fn ChatComposer(controller: ChatController, context: ChatComposerCont
                                     let mut resolved_mentions = mentions;
                                     let participants_for_sidecar =
                                         participants_for_plaintext_sidecar.clone();
-                                    let navigator = navigator.clone();
+                                    let navigator = navigator;
                                     spawn(async move {
                                         for mention in resolve_agent_selector_mentions(
                                             &base,
@@ -1256,7 +1255,6 @@ pub(super) fn ChatComposer(controller: ChatController, context: ChatComposerCont
                             let own_controller_handle = own_controller_handle.clone();
                             let selected_strand = selected_channel_value.clone();
                             let pending_mls_binding = selected_realm_pending_mls_binding;
-                            let navigator = navigator.clone();
                             move |_| {
                                 let own_controller_handle = own_controller_handle.clone();
                                 if pending_mls_binding {
@@ -1309,7 +1307,7 @@ pub(super) fn ChatComposer(controller: ChatController, context: ChatComposerCont
                                     let mut resolved_mentions = mentions;
                                     let participants_for_sidecar =
                                         participants_for_encrypted_sidecar.clone();
-                                    let navigator = navigator.clone();
+                                    let navigator = navigator;
                                     spawn(async move {
                                         for mention in resolve_agent_selector_mentions(
                                             &base,

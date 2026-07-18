@@ -46,10 +46,10 @@ impl crate::transport::TransportClient {
 
         let mut routed = crate::transport::TransportClient::unauthenticated(endpoint)?;
         if !self.context().credential.trim().is_empty() {
-            routed = routed.with_bearer(self.context().credential.clone());
+            routed = routed.with_bearer(self.context().credential.clone())?;
         }
         if let Some(sync_token) = self.context().cursor.as_deref() {
-            routed = routed.with_wait_for(sync_token.to_owned());
+            routed = routed.with_wait_for(sync_token.to_owned())?;
         }
         routed.event_submitter()?.submit_sdk_event(event).await
     }

@@ -300,44 +300,37 @@ struct InksonAccountCommitter {
 }
 
 impl AccountStepCommitter for InksonAccountCommitter {
-    fn commit<'a>(
-        &'a self,
-        step: &'a AccountStreamStep,
-    ) -> impl std::future::Future<Output = arkret_sdk::Result<AccountCommitOutcome>> + 'a {
-        async move {
-            let cursor = step.cursor.clone().ok_or_else(|| {
-                arkret_sdk::Error::Protocol(
-                    "account stream update has no validated cursor".to_owned(),
-                )
-            })?;
-            if !step.initial && account_updates_are_empty(&step.updates) {
-                // A bounded long-poll timeout carries only
-                // frontier+catchup_complete. Persist the resume cursor, but do
-                // not publish a fake business update that remounts resources
-                // and fans out viewer/backups/invites requests.
-                self.ctx
-                    .state_store
-                    .write(|store| store.save_sync_cursor(cursor));
-                if let Some(error) = self.ctx.state_store.read(LocalStateStore::persist_error) {
-                    return Err(arkret_sdk::Error::Protocol(format!(
-                        "persist idle account stream cursor: {error}"
-                    )));
-                }
-                return Ok(AccountCommitOutcome::Committed);
-            }
-            let response = AccountSyncStep::from_updates(cursor, step.updates.clone())?;
-            apply_response(&response, step.initial, &self.ctx, None);
+    async fn commit(&self, step: &AccountStreamStep) -> arkret_sdk::Result<AccountCommitOutcome> {
+        let cursor = step.cursor.clone().ok_or_else(|| {
+            arkret_sdk::Error::Protocol("account stream update has no validated cursor".to_owned())
+        })?;
+        if !step.initial && account_updates_are_empty(&step.updates) {
+            // A bounded long-poll timeout carries only
+            // frontier+catchup_complete. Persist the resume cursor, but do
+            // not publish a fake business update that remounts resources
+            // and fans out viewer/backups/invites requests.
+            self.ctx
+                .state_store
+                .write(|store| store.save_sync_cursor(cursor));
             if let Some(error) = self.ctx.state_store.read(LocalStateStore::persist_error) {
                 return Err(arkret_sdk::Error::Protocol(format!(
-                    "persist account stream step: {error}"
+                    "persist idle account stream cursor: {error}"
                 )));
             }
-            // client-sync.md §10.1: account stream cursor advancement is
-            // independent of to-device ACK. The raw envelopes are now durable
-            // in the local inbox, so the account checkpoint may advance even
-            // when queue pagination or kind-specific handling follows.
-            Ok(AccountCommitOutcome::Committed)
+            return Ok(AccountCommitOutcome::Committed);
         }
+        let response = AccountSyncStep::from_updates(cursor, step.updates.clone())?;
+        apply_response(&response, step.initial, &self.ctx, None);
+        if let Some(error) = self.ctx.state_store.read(LocalStateStore::persist_error) {
+            return Err(arkret_sdk::Error::Protocol(format!(
+                "persist account stream step: {error}"
+            )));
+        }
+        // client-sync.md §10.1: account stream cursor advancement is
+        // independent of to-device ACK. The raw envelopes are now durable
+        // in the local inbox, so the account checkpoint may advance even
+        // when queue pagination or kind-specific handling follows.
+        Ok(AccountCommitOutcome::Committed)
     }
 }
 
@@ -398,111 +391,108 @@ impl InksonAccountPostCommit {
 }
 
 impl AccountPostCommitHook<arkret_sdk::http_client::Client> for InksonAccountPostCommit {
-    fn post_commit<'a>(
-        &'a self,
-        http: &'a arkret_sdk::http_client::Client,
-        step: &'a AccountStreamStep,
-    ) -> impl std::future::Future<Output = arkret_sdk::Result<AccountPostCommitOutcome>> + 'a {
-        async move {
-            if !self.active() {
-                return Ok(AccountPostCommitOutcome::Continue);
-            }
-            if !step.initial && account_updates_are_empty(&step.updates) {
-                return Ok(AccountPostCommitOutcome::Continue);
-            }
-            let cursor = step.cursor.clone().ok_or_else(|| {
-                arkret_sdk::Error::Protocol("account post-commit step has no cursor".to_owned())
-            })?;
-            let response = AccountSyncStep::from_updates(cursor, step.updates.clone())?;
-            let api = TransportClient::from_http(
-                http.clone(),
-                crate::transport::RequestContext::new(self.ctx.token.get()),
-            );
-
-            if !self.ctx.account_did.trim().is_empty() {
-                let submitter = crate::event_submit::EventSubmitter::new(http.clone());
-                if let Err(error) = submitter.drain_outbound(self.ctx.account_did.trim()).await {
-                    tracing::debug!(
-                        ?error,
-                        "account post-commit deferred durable outbound drain"
-                    );
-                }
-                if let Err(error) = submitter
-                    .drain_mls_outbound(self.ctx.account_did.trim(), self.ctx.state_store.clone())
-                    .await
-                {
-                    tracing::debug!(?error, "account post-commit deferred MLS outbound drain");
-                }
-            }
-
-            // `/authz/invites` is an initial/bootstrap projection only. Live
-            // membership and invite changes arrive on the account/events
-            // subscribe planes; maintaining a third periodic poll loop here
-            // violates the sync protocol and amplifies every account delta.
-            if should_bootstrap_invites(step.initial) {
-                match crate::transport::account::invites(http).await {
-                    Ok(invites) => {
-                        let invite_notifications = invites
-                            .invites
-                            .into_iter()
-                            .filter_map(|invite| serde_json::to_value(invite).ok())
-                            .collect::<Vec<_>>();
-                        self.ctx.state_store.write(|store| {
-                            store.batch(|store| {
-                                apply_notification_projection(
-                                    store,
-                                    &response,
-                                    step.initial,
-                                    Some(invite_notifications),
-                                );
-                            });
-                        });
-                    }
-                    Err(error) if is_auth_expired_error(&error) => {
-                        return Ok(AccountPostCommitOutcome::Unauthorized {
-                            reason: Some(error.to_string()),
-                        });
-                    }
-                    Err(error) => tracing::debug!(?error, "invite refresh deferred"),
-                }
-            }
-
-            route_inbound_call_signals(&api, &response, &self.ctx).await;
-            let state_store_for_profiles = self.ctx.state_store.clone();
-            if prefetch_persistent_event_sender_keys(
-                &api,
-                &response,
-                self.ctx.did_cache.clone(),
-                |realm_id| {
-                    state_store_for_profiles
-                        .read(|store| store.realm_projection_is_minimal_metadata(realm_id))
-                },
-            )
-            .await
-            {
-                refresh_projection_events_from_sync_response(&response, step.initial, &self.ctx);
-            }
-            prefetch_member_identity_proof_keys(&api, &response, self.ctx.did_cache.clone()).await;
-            if let Err(error) = process_to_device_delivery(&api, &response, &self.ctx).await {
-                return Ok(self.classify_error(error));
-            }
-
-            let realm_ids = response
-                .realm_projections
-                .keys()
-                .cloned()
-                .collect::<Vec<_>>();
-            run_circle_scope_rotate_pass(
-                self.start_generation,
-                self.generation.clone(),
-                &self.ctx,
-                &realm_ids,
-            )
-            .await;
-            run_idle_self_update_pass(self.start_generation, self.generation.clone(), &self.ctx)
-                .await;
-            Ok(AccountPostCommitOutcome::Continue)
+    async fn post_commit(
+        &self,
+        http: &arkret_sdk::http_client::Client,
+        step: &AccountStreamStep,
+    ) -> arkret_sdk::Result<AccountPostCommitOutcome> {
+        if !self.active() {
+            return Ok(AccountPostCommitOutcome::Continue);
         }
+        if !step.initial && account_updates_are_empty(&step.updates) {
+            return Ok(AccountPostCommitOutcome::Continue);
+        }
+        let cursor = step.cursor.clone().ok_or_else(|| {
+            arkret_sdk::Error::Protocol("account post-commit step has no cursor".to_owned())
+        })?;
+        let response = AccountSyncStep::from_updates(cursor, step.updates.clone())?;
+        let api = TransportClient::from_http(
+            http.clone(),
+            crate::transport::RequestContext::new(self.ctx.token.get()),
+        );
+
+        if !self.ctx.account_did.trim().is_empty() {
+            let submitter = crate::event_submit::EventSubmitter::new(http.clone());
+            if let Err(error) = submitter.drain_outbound(self.ctx.account_did.trim()).await {
+                tracing::debug!(
+                    ?error,
+                    "account post-commit deferred durable outbound drain"
+                );
+            }
+            if let Err(error) = submitter
+                .drain_mls_outbound(self.ctx.account_did.trim(), self.ctx.state_store.clone())
+                .await
+            {
+                tracing::debug!(?error, "account post-commit deferred MLS outbound drain");
+            }
+        }
+
+        // `/authz/invites` is an initial/bootstrap projection only. Live
+        // membership and invite changes arrive on the account/events
+        // subscribe planes; maintaining a third periodic poll loop here
+        // violates the sync protocol and amplifies every account delta.
+        if should_bootstrap_invites(step.initial) {
+            match crate::transport::account::invites(http).await {
+                Ok(invites) => {
+                    let invite_notifications = invites
+                        .invites
+                        .into_iter()
+                        .filter_map(|invite| serde_json::to_value(invite).ok())
+                        .collect::<Vec<_>>();
+                    self.ctx.state_store.write(|store| {
+                        store.batch(|store| {
+                            apply_notification_projection(
+                                store,
+                                &response,
+                                step.initial,
+                                Some(invite_notifications),
+                            );
+                        });
+                    });
+                }
+                Err(error) if is_auth_expired_error(&error) => {
+                    return Ok(AccountPostCommitOutcome::Unauthorized {
+                        reason: Some(error.to_string()),
+                    });
+                }
+                Err(error) => tracing::debug!(?error, "invite refresh deferred"),
+            }
+        }
+
+        route_inbound_call_signals(&api, &response, &self.ctx).await;
+        let state_store_for_profiles = self.ctx.state_store.clone();
+        if prefetch_persistent_event_sender_keys(
+            &api,
+            &response,
+            self.ctx.did_cache.clone(),
+            |realm_id| {
+                state_store_for_profiles
+                    .read(|store| store.realm_projection_is_minimal_metadata(realm_id))
+            },
+        )
+        .await
+        {
+            refresh_projection_events_from_sync_response(&response, step.initial, &self.ctx);
+        }
+        prefetch_member_identity_proof_keys(&api, &response, self.ctx.did_cache.clone()).await;
+        if let Err(error) = process_to_device_delivery(&api, &response, &self.ctx).await {
+            return Ok(self.classify_error(error));
+        }
+
+        let realm_ids = response
+            .realm_projections
+            .keys()
+            .cloned()
+            .collect::<Vec<_>>();
+        run_circle_scope_rotate_pass(
+            self.start_generation,
+            self.generation.clone(),
+            &self.ctx,
+            &realm_ids,
+        )
+        .await;
+        run_idle_self_update_pass(self.start_generation, self.generation.clone(), &self.ctx).await;
+        Ok(AccountPostCommitOutcome::Continue)
     }
 }
 
@@ -970,7 +960,7 @@ async fn prefetch_member_identity_proof_keys(
     did_cache: crate::runtime::input::ValueCell<crate::identity::did_resolver::DidResolutionCache>,
 ) -> bool {
     let mut pairs = BTreeSet::<(String, String)>::new();
-    for (_realm_id, body) in &response.realm_projections {
+    for body in response.realm_projections.values() {
         collect_member_identity_proof_devices_from_value(body, 0, &mut pairs);
     }
     prefetch_persistent_event_sender_key_pairs(api, pairs.into_iter().collect(), did_cache).await

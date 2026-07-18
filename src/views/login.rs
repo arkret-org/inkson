@@ -41,7 +41,7 @@ struct CompletedLogin {
 }
 
 enum OidcCallbackOutcome {
-    Login(CompletedLogin),
+    Login(Box<CompletedLogin>),
     Onboarding,
 }
 
@@ -205,7 +205,7 @@ pub fn LoginPanel(
                     let resolved_handle = completed
                         .personal_handle
                         .clone()
-                        .unwrap_or_else(|| account_primary_handle());
+                        .unwrap_or_else(&*account_primary_handle);
                     let mut store = state_store_write.write();
                     if !resolved_handle.trim().is_empty() {
                         store.set_primary_handle(&resolved_handle);
@@ -1000,7 +1000,8 @@ async fn finish_oidc_callback(
     let authed_principal = principal
         .clone()
         .with_bearer(session_grant.grant_jwt.clone())
-        .with_dpop_device(dpop_handle.clone());
+        .and_then(|client| client.with_dpop_device(dpop_handle.clone()))
+        .map_err(|error| format!("Could not build the authenticated Principal client: {error}"))?;
     let account =
         async { crate::transport::account::account_me(&authed_principal.sdk_http_client()?).await }
             .await
@@ -1057,7 +1058,7 @@ async fn finish_oidc_callback(
 
     let _ = crate::identity::account_auth::clear_account_handoff_grant();
     let _ = state_store.write().set_pending_account_handoff(None);
-    Ok(OidcCallbackOutcome::Login(CompletedLogin {
+    Ok(OidcCallbackOutcome::Login(Box::new(CompletedLogin {
         principal_server_url: principal_target,
         actor: canonical_actor,
         personal_handle,
@@ -1066,7 +1067,7 @@ async fn finish_oidc_callback(
         // The grant JWT is now the live credential carried in the `token` signal.
         session_credential: session_grant.grant_jwt.clone(),
         session_grant: Some(persisted_session_grant),
-    }))
+    })))
 }
 
 fn persisted_session_grant_from_state(

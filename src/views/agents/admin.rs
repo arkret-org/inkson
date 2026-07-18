@@ -678,7 +678,6 @@ pub fn PersonalAgentAdminPanel(token: Signal<String>) -> Element {
                             {
                                 let filter_value = filter.to_owned();
                                 let is_active_filter = active_agent_filter == filter;
-                                let navigator = navigator.clone();
                                 let filter_class = if is_active_filter {
                                     "agent-admin-filter-button active"
                                 } else {

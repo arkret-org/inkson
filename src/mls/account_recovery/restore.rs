@@ -395,10 +395,8 @@ pub async fn fetch_mls_restore_payload_with_unlock_proof(
             .and_then(Value::as_str)
             .unwrap_or_default()
             .to_owned();
-        if is_mls_history_backup(&entry) {
-            if !mls_history_tails.contains(backup_id.as_str()) {
-                continue;
-            }
+        if is_mls_history_backup(&entry) && !mls_history_tails.contains(backup_id.as_str()) {
+            continue;
         }
         if is_mls_private_plaintext_backup(&entry)
             && private_plaintext_tail_id.as_deref() != Some(backup_id.as_str())

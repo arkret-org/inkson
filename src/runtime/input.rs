@@ -25,8 +25,10 @@ impl<T> ValueReader<T> {
 pub struct ValueCell<T> {
     read: ValueReader<T>,
     write: Rc<dyn Fn(T)>,
-    update: Rc<dyn Fn(&mut dyn FnMut(&mut T))>,
+    update: Rc<ValueUpdater<T>>,
 }
+
+type ValueUpdater<T> = dyn Fn(&mut dyn FnMut(&mut T));
 
 impl<T> ValueCell<T> {
     pub fn new(
@@ -52,7 +54,10 @@ impl<T> ValueCell<T> {
     pub fn update(&self, update: impl FnOnce(&mut T)) {
         let mut update = Some(update);
         (self.update)(&mut |value| {
-            update.take().expect("value update called exactly once")(value);
+            let Some(update) = update.take() else {
+                unreachable!("value update callback invoked more than once");
+            };
+            update(value);
         });
     }
 }
@@ -105,19 +110,29 @@ impl StateStoreHandle {
         let mut read = Some(read);
         let mut result = None;
         (self.read)(&mut |store| {
-            result = Some(read.take().expect("store read called exactly once")(store));
+            let Some(read) = read.take() else {
+                unreachable!("store read callback invoked more than once");
+            };
+            result = Some(read(store));
         });
-        result.expect("state-store adapter must invoke its read callback")
+        match result {
+            Some(result) => result,
+            None => unreachable!("state-store adapter did not invoke its read callback"),
+        }
     }
 
     pub fn write<R>(&self, write: impl FnOnce(&mut LocalStateStore) -> R) -> R {
         let mut write = Some(write);
         let mut result = None;
         (self.write)(&mut |store| {
-            result = Some(write.take().expect("store write called exactly once")(
-                store,
-            ));
+            let Some(write) = write.take() else {
+                unreachable!("store write callback invoked more than once");
+            };
+            result = Some(write(store));
         });
-        result.expect("state-store adapter must invoke its write callback")
+        match result {
+            Some(result) => result,
+            None => unreachable!("state-store adapter did not invoke its write callback"),
+        }
     }
 }

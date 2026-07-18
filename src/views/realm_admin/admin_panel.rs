@@ -934,7 +934,6 @@ pub fn RealmAdminPanel(
                             let realm = selected_realm_id.clone();
                             let actor_account_did = account_did.clone();
                             let device = device_id.clone();
-                            let state_store = state_store;
                             move |_| {
                                 let base = base.clone();
                                 let realm = realm.clone();

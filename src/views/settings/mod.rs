@@ -1427,8 +1427,8 @@ pub fn SettingsPanel(
                 }
 
                             storage::E2eeStorageManagement {
-                                account_did: account_did.clone(),
-                                device_id: device_id.clone(),
+                                account_did: account_did,
+                                device_id: device_id,
                             }
 
                             details { class: "event", "data-testid": "storage-risks",

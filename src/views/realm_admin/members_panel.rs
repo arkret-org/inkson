@@ -1885,8 +1885,8 @@ pub(crate) async fn submit_mls_admission_for_invitee(
     // the retained history_secret(s) to every recovery recipient right after the
     // admission commit advances the epoch and before any (future) GC. inkson
     // never GCs history_secrets, so this only needs to be eager, not blocking.
-    if state_store.read().realm_durability_is_rrk_active(&realm_id) {
-        if let Err(err) = seal_history_to_recovery_recipients(
+    if state_store.read().realm_durability_is_rrk_active(&realm_id)
+        && let Err(err) = seal_history_to_recovery_recipients(
             api,
             state_store,
             realm_id.clone(),
@@ -1894,13 +1894,12 @@ pub(crate) async fn submit_mls_admission_for_invitee(
             device_id.clone(),
         )
         .await
-        {
-            tracing::warn!(
-                realm = %short_protocol_id(&realm_id),
-                error = %err,
-                "RRK eager seal pass failed after admission commit; history_secret retained for retry"
-            );
-        }
+    {
+        tracing::warn!(
+            realm = %short_protocol_id(&realm_id),
+            error = %err,
+            "RRK eager seal pass failed after admission commit; history_secret retained for retry"
+        );
     }
     // Proactive provider push of `ak.realm_key.share` at admission time would
     // need the invitee device's HPKE public key. The claimed KeyPackage's
@@ -2368,7 +2367,7 @@ pub(crate) async fn seal_history_to_recovery_recipients(
     for outcome in outcomes {
         match outcome {
             crate::mls::durability::RecipientSealOutcome::Sealed { event, .. } => {
-                events.push(event);
+                events.push(*event);
             }
             crate::mls::durability::RecipientSealOutcome::Unverified {
                 recipient_id,
@@ -2911,7 +2910,7 @@ pub(crate) async fn reconcile_mls_admissions_for_realm(
         realm = %short_protocol_id(&realm_id),
         pending = %pending
             .iter()
-            .map(|d| short_protocol_id(d))
+            .map(short_protocol_id)
             .collect::<Vec<_>>()
             .join(","),
         group_members = group_member_dids.len(),

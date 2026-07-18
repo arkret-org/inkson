@@ -212,7 +212,7 @@ impl ChatController {
         let next = (self.reaction_picker)()
             .filter(|current| current != &message_id)
             .map(|_| message_id.clone())
-            .or_else(|| Some(message_id));
+            .or(Some(message_id));
         if (self.reaction_picker)() == next {
             self.reaction_picker.set(None);
         } else {

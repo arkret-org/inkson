@@ -121,7 +121,7 @@ pub(super) fn KanbanEffects(
                     base_url,
                     token,
                     realm_id,
-                    operation,
+                    *operation,
                     scope_security_encrypted,
                     state_store,
                     board_status,

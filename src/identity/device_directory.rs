@@ -656,7 +656,7 @@ fn ephemeral_proof_created_at_fresh(
     let age = now
         .signed_duration_since(parsed.with_timezone(&chrono::Utc))
         .num_seconds();
-    age <= EPHEMERAL_PROOF_MAX_AGE_SECS && age >= -EPHEMERAL_PROOF_MAX_FUTURE_SKEW_SECS
+    (-EPHEMERAL_PROOF_MAX_FUTURE_SKEW_SECS..=EPHEMERAL_PROOF_MAX_AGE_SECS).contains(&age)
 }
 
 /// Verify an ephemeral call-signal envelope's `proof` (single object).

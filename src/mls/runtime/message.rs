@@ -252,20 +252,19 @@ fn try_history_decrypt_standalone(
 /// Persisting into the provider's own `history_secrets` lets a past epoch's key
 /// survive an app restart (OpenMLS could not re-derive it once the group has
 /// advanced past that epoch).
+type RetainedRealmHistorySecret = (
+    u64,
+    zeroize::Zeroizing<Vec<u8>>,
+    crate::state::PendingHistorySecrets,
+);
+
 pub(crate) fn derive_and_retain_realm_history_secret(
     state_store: &crate::state::LocalStateStore,
     secure_store: &dyn SecureKeyStore,
     realm_id: &str,
     actor_id: &str,
     device_id: &str,
-) -> Result<
-    Option<(
-        u64,
-        zeroize::Zeroizing<Vec<u8>>,
-        crate::state::PendingHistorySecrets,
-    )>,
-    MlsRuntimeError,
-> {
+) -> Result<Option<RetainedRealmHistorySecret>, MlsRuntimeError> {
     let Some(snapshot) = state_store.mls_snapshot_for(realm_id) else {
         return Ok(None);
     };
@@ -283,14 +282,16 @@ pub(crate) fn derive_and_retain_realm_history_secret(
     if history_secret.is_empty() {
         return Ok(None);
     }
-    let pending = state_store
+    let Some(pending) = state_store
         .prepare_history_secrets(
             secure_store,
             realm_id.to_owned(),
             [(epoch, history_secret.to_vec())],
         )
         .map_err(MlsRuntimeError::DeviceSecret)?
-        .expect("non-empty history secret creates a pending durable write");
+    else {
+        return Ok(None);
+    };
     Ok(Some((epoch, history_secret, pending)))
 }
 

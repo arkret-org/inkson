@@ -136,7 +136,7 @@ impl AuthenticatedTransportFactory for InksonAuthenticatedTransportFactory {
     fn refresh_options(
         &self,
         state: &SessionGrantState,
-        fallback: &SessionRefreshOptions,
+        _fallback: &SessionRefreshOptions,
     ) -> arkret_sdk::Result<SessionRefreshOptions> {
         self.refresh_transport
             .replace(self.build_account_client(state)?);
@@ -150,7 +150,6 @@ impl AuthenticatedTransportFactory for InksonAuthenticatedTransportFactory {
             device_id: state.device_id.clone(),
             proof: Some(proof),
             expected_dpop_jkt: Some(self.device_handle.jkt().to_owned()),
-            ..fallback.clone()
         })
     }
 }

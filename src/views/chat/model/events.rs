@@ -1878,16 +1878,18 @@ fn sync_presence_event_is_live(event: &Value, now: chrono::DateTime<chrono::Utc>
         .is_some_and(|expires_at| expires_at > now)
 }
 
+pub(crate) type PresenceMaps = (
+    std::collections::BTreeMap<String, String>,
+    std::collections::BTreeMap<String, String>,
+    std::collections::BTreeMap<String, String>,
+);
+
 pub(crate) fn presence_maps_from_sync_events(
     events: &[Value],
     participants: &[String],
     account_did: &str,
     account_label: &str,
-) -> Option<(
-    std::collections::BTreeMap<String, String>,
-    std::collections::BTreeMap<String, String>,
-    std::collections::BTreeMap<String, String>,
-)> {
+) -> Option<PresenceMaps> {
     if events.is_empty() {
         return None;
     }

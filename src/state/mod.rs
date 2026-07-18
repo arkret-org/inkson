@@ -724,7 +724,7 @@ impl LocalStateStore {
                     state.session_grant = None;
                 }
             }
-            return Some(state);
+            Some(state)
         }
         #[cfg(test)]
         Some(state)

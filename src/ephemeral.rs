@@ -357,10 +357,10 @@ pub(crate) fn attach_broadcast_ephemeral_proof(
 
     // event_digest covers the canonical envelope bytes without `proof`.
     let mut unsigned_envelope = serde_json::to_value(&*envelope)?;
-    unsigned_envelope
-        .as_object_mut()
-        .expect("EphemeralEnvelope serializes as an object")
-        .remove("proof");
+    let Some(unsigned_object) = unsigned_envelope.as_object_mut() else {
+        anyhow::bail!("serialized EphemeralEnvelope is not an object");
+    };
+    unsigned_object.remove("proof");
     let canonical_bytes = arkret_sdk::signatures::proof::EventProofBuilder::new()
         .canonical_bytes(&unsigned_envelope)
         .map_err(|err| anyhow::anyhow!("{kind} canonical encoding failed: {err}"))?;

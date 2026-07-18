@@ -41,7 +41,7 @@ impl InksonOutboundStore {
                     store
                 }
             };
-            return Ok(Self { inner });
+            Ok(Self { inner })
         }
         #[cfg(target_arch = "wasm32")]
         {

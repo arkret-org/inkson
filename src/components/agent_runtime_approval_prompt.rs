@@ -46,7 +46,6 @@ pub fn AgentRuntimeApprovalPrompt(token: Signal<String>, account_did: Signal<Str
     let state_store = crate::app::SessionContext::get().state_store;
 
     {
-        let base_url = base_url;
         let token = token;
         use_effect(move || {
             let projection = state_store.read().notification_projection();
@@ -93,7 +92,6 @@ pub fn AgentRuntimeApprovalPrompt(token: Signal<String>, account_did: Signal<Str
     }
 
     {
-        let base_url = base_url;
         let token = token;
         use_future(move || async move {
             loop {

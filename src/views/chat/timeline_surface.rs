@@ -90,8 +90,6 @@ pub(super) fn ChatTimeline(controller: ChatController, context: ChatTimelineCont
         promote_discussion_draft: _,
         promoted_targets,
         blocked_show_anyway,
-        create_dialog_open: _,
-        presence_labels: _,
         ..
     } = controller;
 

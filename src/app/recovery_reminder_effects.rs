@@ -49,7 +49,6 @@ pub(super) fn RecoveryReminderEffects(state: RecoveryReminderEffectState) -> Ele
         // docs/user-strands-key-lifecycle.md §3/S1.
         let mut recovery_key_setup_prompt = recovery_key_setup_prompt;
         let mut recovery_auto_prompt_fired = recovery_auto_prompt_fired;
-        let state_store = state_store;
         use_effect(move || {
             if recovery_auto_prompt_fired() || recovery_key_setup_prompt() {
                 return;
