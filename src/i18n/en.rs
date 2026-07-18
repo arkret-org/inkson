@@ -1355,11 +1355,6 @@ fn add_feedback_keys(dict: &mut TranslationDict) {
     dict.set("feedback.copied_did", "DID copied");
     dict.set("feedback.copied_handles", "Handles copied");
     dict.set("feedback.copied_device_id", "Device ID copied");
-    dict.set("feedback.copied_invite_url", "Invite locator URL copied");
-    dict.set(
-        "feedback.invite_locator_refreshed",
-        "Invite locator refreshed",
-    );
     dict.set("feedback.avatar_updated", "Avatar updated");
     dict.set("feedback.mimi_failed", "MIMI request failed");
     dict.set("feedback.notification_kind_enabled", "{label} enabled");

@@ -234,82 +234,6 @@
 .settings-account-identity-grid {
   margin-top: 12px;
 }
-.invite-locator-card {
-  gap: 12px;
-}
-.invite-locator-head {
-  align-items: center;
-}
-.invite-locator-head-actions {
-  display: flex;
-  align-items: center;
-  justify-content: flex-end;
-  gap: 8px;
-  flex-wrap: wrap;
-  min-width: 0;
-  letter-spacing: 0;
-}
-.invite-locator-expiry {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  height: 2rem;
-  padding: 0 9px;
-  border: 1px solid color-mix(in srgb, var(--border) 82%, transparent);
-  border-radius: 999px;
-  background: color-mix(in srgb, var(--surface-2) 76%, transparent);
-  color: var(--text-2);
-  font-size: 11px;
-  font-weight: 700;
-  letter-spacing: 0.02em;
-  white-space: nowrap;
-}
-.invite-locator-action {
-  letter-spacing: 0;
-}
-.invite-locator-action .ui-icon {
-  width: 14px;
-  height: 14px;
-}
-.invite-locator-panel {
-  display: grid;
-  grid-template-columns: minmax(250px, 0.74fr) minmax(240px, 1.26fr);
-  min-width: 0;
-  overflow: hidden;
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  background: color-mix(in srgb, var(--surface-2) 78%, var(--surface));
-}
-.invite-locator-qr-pane,
-.invite-locator-url-pane {
-  display: grid;
-  align-content: start;
-  gap: 10px;
-  min-width: 0;
-  padding: 16px;
-}
-.invite-locator-qr-pane {
-  justify-items: stretch;
-  border-right: 1px solid color-mix(in srgb, var(--border) 82%, transparent);
-}
-.invite-locator-card .qr-image {
-  justify-self: center;
-  margin: 0;
-  border-color: color-mix(in srgb, var(--border) 78%, transparent);
-}
-.invite-locator-pane-label {
-  color: var(--text-3);
-  font-size: 11px;
-  font-weight: 700;
-  letter-spacing: 0.05em;
-}
-.invite-locator-url-field {
-  width: 100%;
-  min-height: 202px;
-  box-sizing: border-box;
-  resize: none;
-  overflow: auto;
-}
 .setup-shell {
   display: grid;
   grid-template-columns: minmax(0, 1.15fr) minmax(320px, 0.85fr);
@@ -459,23 +383,6 @@
   .settings-card-grid,
   .settings-inline-form,
   .settings-list-row { grid-template-columns: 1fr; }
-  .invite-locator-head {
-    align-items: flex-start;
-  }
-  .invite-locator-head-actions {
-    justify-content: flex-start;
-    width: 100%;
-  }
-  .invite-locator-panel {
-    grid-template-columns: 1fr;
-  }
-  .invite-locator-qr-pane {
-    border-right: 0;
-    border-bottom: 1px solid color-mix(in srgb, var(--border) 82%, transparent);
-  }
-  .invite-locator-url-field {
-    min-height: 128px;
-  }
 }
 @media (max-width: 1100px) {
   .setup-shell,

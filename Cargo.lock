@@ -163,6 +163,7 @@ dependencies = [
  "arkret-ffi",
  "arkret-http-client",
  "arkret-keystore",
+ "arkret-network-policy",
  "arkret-server",
  "arkret-signatures",
  "arkret-state",
@@ -304,6 +305,14 @@ dependencies = [
  "secret-service",
  "security-framework",
  "windows 0.62.2",
+]
+
+[[package]]
+name = "arkret-network-policy"
+version = "0.3.0"
+dependencies = [
+ "thiserror 2.0.18",
+ "url",
 ]
 
 [[package]]

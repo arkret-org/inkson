@@ -1265,8 +1265,6 @@ fn add_feedback_keys_zh(dict: &mut TranslationDict) {
     dict.set("feedback.copied_did", "已复制 DID");
     dict.set("feedback.copied_handles", "已复制 Handle");
     dict.set("feedback.copied_device_id", "已复制设备 ID");
-    dict.set("feedback.copied_invite_url", "已复制邀请链接");
-    dict.set("feedback.invite_locator_refreshed", "邀请链接已刷新");
     dict.set("feedback.avatar_updated", "头像已更新");
     dict.set("feedback.mimi_failed", "MIMI 请求失败");
     dict.set("feedback.notification_kind_enabled", "已启用:{label}");
