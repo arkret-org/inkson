@@ -5,6 +5,7 @@
 //! (Realm remarks). Stored under `ak.contacts.actor.<did>` and
 //! `ak.contacts.realm.<realm_id>` respectively.
 
+use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
 /// Wire-key for an actor-private Realm remark per
@@ -78,13 +79,13 @@ pub struct RealmRemark {
     /// snapshot at write time; UI can warn on takeover / org drift.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub verified_owning_organizations_at_save: Vec<String>,
-    /// Spec §3.7 `saved_at` / `updated_at` — RFC 3339 timestamps. Optional
-    /// here because v1 clients populate them via `chrono::Utc::now()` at the
-    /// edit site rather than relying on the server clock.
+    /// Spec §3.7 `saved_at` / `updated_at` — RFC 3339 timestamps.
+    /// `saved_at` is mandatory on the wire; the serde default only migrates
+    /// older local state written before that requirement was enforced here.
+    #[serde(default = "default_saved_at")]
+    pub saved_at: DateTime<Utc>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub saved_at: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub updated_at: Option<String>,
+    pub updated_at: Option<DateTime<Utc>>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -106,6 +107,10 @@ fn default_remark_version() -> u32 {
     1
 }
 
+fn default_saved_at() -> DateTime<Utc> {
+    Utc::now()
+}
+
 fn is_false(b: &bool) -> bool {
     !*b
 }
@@ -120,6 +125,7 @@ impl RealmRemark {
                 id: realm_id.into(),
             },
             local_name: local_name.into(),
+            saved_at: Utc::now(),
             ..Self::default()
         }
     }
@@ -134,7 +140,7 @@ impl RealmRemark {
         realm_id: impl Into<String>,
         existing: Option<&Self>,
         pinned: bool,
-        updated_at: Option<String>,
+        updated_at: Option<DateTime<Utc>>,
     ) -> Self {
         let realm_id = realm_id.into();
         let mut next = existing
@@ -150,9 +156,6 @@ impl RealmRemark {
         next.pinned = pinned;
 
         if let Some(updated_at) = updated_at {
-            if next.saved_at.is_none() && !next.is_empty() {
-                next.saved_at = Some(updated_at.clone());
-            }
             next.updated_at = Some(updated_at);
         }
 

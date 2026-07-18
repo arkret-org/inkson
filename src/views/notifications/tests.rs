@@ -150,8 +150,8 @@ mod tests {
                     realm_id: realm_id.to_owned(),
                     read_scope,
                     position: ReadCursorPosition {
-                        event_id: cursor_event.to_owned(),
-                        hlc: "019041000000-0001-device".to_owned(),
+                        event_id: arkret_sdk::EventId::new(cursor_event).unwrap(),
+                        hlc: arkret_sdk::Hlc::new("019041000000-0001-deadbeef").unwrap(),
                     },
                 },
                 actor: "did:web:bob.example".to_owned(),

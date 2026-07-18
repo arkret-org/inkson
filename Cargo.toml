@@ -145,16 +145,8 @@ chrono = {workspace = true}
 # `RealEd25519` proof-mode path. Without it the SDK signatures module is
 # canonical-bytes-only and the active-write signing path has nothing to
 # call into.
-# C33.2: OS-keychain handoff for `secure_key_store::KeyringSecureKeyStore`.
-# Routes to macOS Keychain Services / freedesktop Secret Service / Windows
-# Credential Manager via the platform-feature flags on stable native
-# targets. Mobile host-bridge types remain behind target cfgs, but no
-# iOS/Android artifact is part of the local 1.0 milestone.
-#
-# Pinned to 3.6.x because the 4.x line moved its public API to
-# `keyring-core` (the 4.x `keyring` crate itself is now a CLI / sample
-# wrapper without the classic `Entry` type). 3.6 stays the supported
-# library surface for direct programmatic access.
+# Desktop secure storage delegates to the SDK's canonical platform backend;
+# Inkson only adapts `KeyStore` to garth's `SecureKeyStore` contract.
 # F-OS-NOTIFY-1 (2026-05-19): native desktop notifications. `notify-rust`
 # bridges to macOS Notification Center, Linux freedesktop notifications,
 # and Windows Toast notifications behind a single API. Skipped on the
@@ -171,10 +163,9 @@ chrono = {workspace = true}
 # NOTE: arkret-sdk `default = []` (types-only) since the F-06 default-feature
 # narrowing; this client must opt into every runtime feature it uses
 # explicitly (mls/device-runtime/... previously arrived via the old default).
-arkret-sdk = {workspace = true,features = ["client", "mls", "full-surface", "applet-runtime", "device-runtime", "sync-runtime", "timeline-runtime", "signer"]}
+arkret-sdk = {workspace = true,features = ["client", "mls", "full-surface", "applet-runtime", "device-runtime", "sync-runtime", "timeline-runtime", "signer", "keystore-macos", "keystore-linux", "keystore-windows"]}
 garth = {path = "../garth",default-features = false,features = ["native"]}
 dioxus = {workspace = true,features = ["desktop", "web"]}
-keyring = {workspace = true,features = ["apple-native", "windows-native", "linux-native"]}
 notify-rust = {workspace = true}
 reqwest = {workspace = true,default-features = false,features = ["json", "multipart", "rustls", "stream", "form"]}
 sentry = {workspace = true,default-features = false,features = ["backtrace", "contexts", "panic", "reqwest", "rustls"]}
@@ -349,7 +340,6 @@ x25519-dalek = "2.0.1"
 image = {version = "0.25.10",default-features = false}
 js-sys = "0.3"
 jsonschema = {version = "0.46.5",default-features = false}
-keyring = "3.6.3"
 notify-rust = "4.17"
 pulldown-cmark = {version = "0.13",default-features = false}
 qrcode = {version = "0.14",default-features = false}

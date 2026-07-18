@@ -88,6 +88,10 @@ jobs:
         working-directory: inkson
         run: npm ci
 
+      - name: Verify vendored asset integrity
+        working-directory: inkson
+        run: node scripts/verify_vendored_assets.mjs
+
       - name: Install Dioxus CLI
         run: cargo install dioxus-cli --version "${DIOXUS_CLI_VERSION}" --locked
 

@@ -2572,16 +2572,11 @@ pub fn SettingsPanel(
                                                         let next_pinned = !remark.pinned;
                                                         move |_| {
                                                             let id = id.clone();
-                                                            let now_rfc3339 = chrono::Utc::now()
-                                                                .to_rfc3339_opts(
-                                                                    chrono::SecondsFormat::Secs,
-                                                                    true,
-                                                                );
                                                             let next = crate::account_data::RealmRemark::with_pinned_preserving_fields(
                                                                 id.clone(),
                                                                 Some(&existing),
                                                                 next_pinned,
-                                                                Some(now_rfc3339),
+                                                                Some(chrono::Utc::now()),
                                                             );
                                                             state_store
                                                                 .write()
@@ -2618,13 +2613,7 @@ pub fn SettingsPanel(
                                                                 .unwrap_or_default();
                                                             let mut next = existing.clone();
                                                             next.local_name = next_name.trim().to_owned();
-                                                            next.updated_at = Some(
-                                                                chrono::Utc::now()
-                                                                    .to_rfc3339_opts(
-                                                                        chrono::SecondsFormat::Secs,
-                                                                        true,
-                                                                    ),
-                                                            );
+                                                            next.updated_at = Some(chrono::Utc::now());
                                                             state_store
                                                                 .write()
                                                                 .set_realm_remark(id.clone(), next.clone());
@@ -2719,14 +2708,13 @@ pub fn SettingsPanel(
                                     crate::components::feedback::toast_error("feedback.invalid_realm_id", vec![], None);
                                     return;
                                 }
-                                let now_rfc3339 = chrono::Utc::now()
-                                    .to_rfc3339_opts(chrono::SecondsFormat::Secs, true);
+                                let now = chrono::Utc::now();
                                 let mut remark = crate::account_data::RealmRemark::new(
                                     realm_id.clone(),
                                     local_name.clone(),
                                 );
-                                remark.saved_at = Some(now_rfc3339.clone());
-                                remark.updated_at = Some(now_rfc3339);
+                                remark.saved_at = now;
+                                remark.updated_at = Some(now);
                                 state_store
                                     .write()
                                     .set_realm_remark(realm_id.clone(), remark.clone());

@@ -163,6 +163,7 @@ fn realm_remark_serialises_minimal_payload() {
     );
     assert_eq!(wire["local_name"], "Acme · Eng");
     assert_eq!(wire["version"], 1);
+    assert!(wire["saved_at"].is_string());
     assert!(wire.get("note").is_none());
     assert!(wire.get("pinned").is_none());
     assert!(wire.get("tags").is_none());
@@ -209,15 +210,15 @@ fn realm_remark_pinned_builder_preserves_private_fields() {
         pinned: false,
         verified_title_at_save: Some("Engineering".to_owned()),
         verified_owning_organizations_at_save: vec!["did:web:acme.example".to_owned()],
-        saved_at: Some("2026-06-01T00:00:00Z".to_owned()),
-        updated_at: Some("2026-06-01T00:00:00Z".to_owned()),
+        saved_at: "2026-06-01T00:00:00Z".parse().unwrap(),
+        updated_at: Some("2026-06-01T00:00:00Z".parse().unwrap()),
     };
 
     let next = RealmRemark::with_pinned_preserving_fields(
         realm_id,
         Some(&existing),
         true,
-        Some("2026-06-06T00:00:00Z".to_owned()),
+        Some("2026-06-06T00:00:00Z".parse().unwrap()),
     );
 
     assert!(next.pinned);
@@ -230,7 +231,10 @@ fn realm_remark_pinned_builder_preserves_private_fields() {
         existing.verified_owning_organizations_at_save
     );
     assert_eq!(next.saved_at, existing.saved_at);
-    assert_eq!(next.updated_at.as_deref(), Some("2026-06-06T00:00:00Z"));
+    assert_eq!(
+        next.updated_at,
+        Some("2026-06-06T00:00:00Z".parse().unwrap())
+    );
 }
 
 #[test]
@@ -240,7 +244,7 @@ fn realm_remark_unpin_builder_can_tombstone_empty_remark() {
         realm_id,
         None,
         true,
-        Some("2026-06-06T00:00:00Z".to_owned()),
+        Some("2026-06-06T00:00:00Z".parse().unwrap()),
     );
     assert!(!existing.is_empty());
 
@@ -248,7 +252,7 @@ fn realm_remark_unpin_builder_can_tombstone_empty_remark() {
         realm_id,
         Some(&existing),
         false,
-        Some("2026-06-06T00:01:00Z".to_owned()),
+        Some("2026-06-06T00:01:00Z".parse().unwrap()),
     );
 
     assert!(!next.pinned);

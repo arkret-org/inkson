@@ -41,24 +41,11 @@ pub(crate) fn to_device_message_expiry(message: &Value) -> Option<DateTime<Utc>>
 
 pub(crate) fn read_scope_for_cursor(realm_id: &str, topic_id: Option<&str>) -> ReadScope {
     match topic_id.map(str::trim).filter(|topic| !topic.is_empty()) {
-        Some(topic) if topic.starts_with("ak:thread:") => ReadScope {
-            kind: "thread".to_owned(),
-            container_ref: Some(topic.to_owned()),
-            track_name: None,
-            track_scope: None,
-        },
-        Some(topic) if topic.starts_with("ak:strand:") => ReadScope {
-            kind: "strand".to_owned(),
-            container_ref: Some(topic.to_owned()),
-            track_name: Some("discussion".to_owned()),
-            track_scope: None,
-        },
-        _ => ReadScope {
-            kind: "strand".to_owned(),
-            container_ref: Some(default_strand_id_for_realm(realm_id)),
-            track_name: Some("discussion".to_owned()),
-            track_scope: None,
-        },
+        Some(topic) if topic.starts_with("ak:thread:") => ReadScope::thread(topic),
+        Some(topic) if topic.starts_with("ak:strand:") => {
+            ReadScope::strand(topic, Some("discussion"))
+        }
+        _ => ReadScope::strand(default_strand_id_for_realm(realm_id), Some("discussion")),
     }
 }
 
@@ -106,11 +93,7 @@ pub(crate) fn read_cursor_key(realm_id: &str, read_scope: &ReadScope) -> String 
         realm_id,
         read_scope.kind.as_str(),
         read_scope.container_ref.as_deref().unwrap_or(""),
-        read_scope
-            .track_name
-            .as_deref()
-            .or(read_scope.track_scope.as_deref())
-            .unwrap_or("")
+        read_scope.track.as_deref().unwrap_or("")
     )
 }
 

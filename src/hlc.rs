@@ -18,10 +18,10 @@ use std::fmt;
 
 use arkret_sdk::Hlc as SdkHlc;
 use arkret_sdk::hlc::{parse_hlc, validate_hlc_format};
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
 /// A Hybrid Logical Clock timestamp.
-#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub struct Hlc {
     /// 48-bit millisecond physical timestamp.
     pub physical_ms: u64,
@@ -29,6 +29,26 @@ pub struct Hlc {
     pub logical: u32,
     /// 32-bit node identifier hash.
     pub node_id: u32,
+}
+
+impl Serialize for Hlc {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        let encoded = self.try_encode().map_err(serde::ser::Error::custom)?;
+        serializer.serialize_str(&encoded)
+    }
+}
+
+impl<'de> Deserialize<'de> for Hlc {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let encoded = String::deserialize(deserializer)?;
+        Self::parse(&encoded).map_err(serde::de::Error::custom)
+    }
 }
 
 impl Hlc {
@@ -135,6 +155,15 @@ mod tests {
     fn display_matches_encode() {
         let hlc = Hlc::from_parts(1000, 0, 42);
         assert_eq!(hlc.to_string(), hlc.encode());
+    }
+
+    #[test]
+    fn serde_uses_the_canonical_wire_string() {
+        let hlc = Hlc::from_parts(0x0001_8ef0_1234, 0x0005, 0xdead_beef);
+        let json = serde_json::to_string(&hlc).unwrap();
+        assert_eq!(json, "\"00018ef01234-0005-deadbeef\"");
+        assert_eq!(serde_json::from_str::<Hlc>(&json).unwrap(), hlc);
+        assert!(serde_json::from_str::<Hlc>(r#"{"physical_ms": 1}"#).is_err());
     }
 
     #[test]

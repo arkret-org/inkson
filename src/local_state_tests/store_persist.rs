@@ -294,12 +294,9 @@ fn local_state_store_persists_private_read_cursors() {
 
     assert_eq!(marker.marker_type, "ak.read_cursor.advance");
     assert_eq!(marker.body.realm_id, REALM_ID);
-    assert_eq!(marker.body.position.event_id, EVENT_ID);
-    assert_eq!(marker.body.read_scope.kind, "strand");
-    assert_eq!(
-        marker.body.read_scope.track_name.as_deref(),
-        Some("discussion")
-    );
+    assert_eq!(marker.body.position.event_id.as_str(), EVENT_ID);
+    assert_eq!(marker.body.read_scope.kind.as_str(), "strand");
+    assert_eq!(marker.body.read_scope.track.as_deref(), Some("discussion"));
     assert_eq!(
         marker.ak_read_cursor_operation(),
         serde_json::json!({
@@ -331,7 +328,7 @@ fn local_state_store_persists_private_read_cursors() {
     assert_eq!(persisted.body.id, marker.body.id);
     assert_eq!(persisted.actor, "did:web:alice.example");
     assert_eq!(persisted.device_id, DEVICE_ID);
-    assert_eq!(persisted.body.position.event_id, EVENT_ID);
+    assert_eq!(persisted.body.position.event_id.as_str(), EVENT_ID);
 }
 
 #[test]
@@ -359,7 +356,7 @@ fn local_state_store_ingests_read_cursor_update_to_device() {
             },
             "position": {
                 "event_id": "ak:event:01904100-0000-7000-8000-000000000004",
-                "hlc": "019041000000-0001-device"
+                "hlc": "019041000000-0001-deadbeef"
             },
             "updated_at": "2026-06-24T00:00:00Z"
         }
@@ -375,7 +372,7 @@ fn local_state_store_ingests_read_cursor_update_to_device() {
         .expect("read cursor update persisted");
     assert_eq!(marker.actor, "did:web:alice.example");
     assert_eq!(
-        marker.body.position.event_id,
+        marker.body.position.event_id.as_str(),
         "ak:event:01904100-0000-7000-8000-000000000004"
     );
 }
@@ -474,7 +471,8 @@ fn local_state_store_keeps_thread_read_cursors_separate() {
             .expect("topic marker")
             .body
             .position
-            .event_id,
+            .event_id
+            .as_str(),
         TOPIC_EVENT_ID
     );
     assert_eq!(
@@ -483,7 +481,8 @@ fn local_state_store_keeps_thread_read_cursors_separate() {
             .expect("thread marker")
             .body
             .position
-            .event_id,
+            .event_id
+            .as_str(),
         THREAD_EVENT_ID
     );
 }

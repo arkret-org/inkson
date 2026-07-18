@@ -170,12 +170,11 @@ pub(super) fn toggle_sidebar_realm_pin(
     base_url: String,
     api_token: String,
 ) {
-    let now_rfc3339 = chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Secs, true);
     let next = crate::account_data::RealmRemark::with_pinned_preserving_fields(
         realm_id.clone(),
         existing.as_ref(),
         next_pinned,
-        Some(now_rfc3339),
+        Some(chrono::Utc::now()),
     );
     state_store
         .write()

@@ -11,7 +11,7 @@
 //!
 //! | Target          | Default backend         | Notes |
 //! |-----------------|-------------------------|-------|
-//! | macOS / Linux / Windows | [`KeyringSecureKeyStore`] | Uses the `keyring` crate (Keychain / Secret Service / Credential Manager). |
+//! | macOS / Linux / Windows | [`KeyringSecureKeyStore`] | Uses the SDK-selected Keychain / Secret Service / Credential Manager backend. |
 //! | wasm32          | [`LocalStorageSecureKeyStore`] for low-value first-paint secrets, then [`IndexedDbSecureKeyStore`] after async initialization | Ed25519 signing seeds, account MLS secrets, and session credentials require the IndexedDB + non-extractable SubtleCrypto tier and fail closed before initialization. |
 //! | iOS / Android   | [`HostBridgeSecureKeyStore`] when the host installs a bridge; otherwise [`MemorySecureKeyStore`] | Mobile artifacts are outside the local 1.0 milestone. |
 use std::sync::Arc;
@@ -369,7 +369,7 @@ pub fn unwrap_secret(
 ///
 /// | Target          | Backend |
 /// |-----------------|---------|
-/// | macOS / Linux / Windows | [`KeyringSecureKeyStore`] |
+/// | macOS / Linux / Windows | [`KeyringSecureKeyStore`] (SDK platform backend) |
 /// | Android         | [`AndroidKeystoreSecureKeyStore`] when a host bridge is installed; otherwise [`MemorySecureKeyStore`] |
 /// | iOS             | [`IosKeychainSecureKeyStore`] when a host bridge is installed; otherwise [`MemorySecureKeyStore`] |
 /// | wasm32          | [`LocalStorageSecureKeyStore`] for non-signing sync fallback; [`IndexedDbSecureKeyStore`] after async initialization |

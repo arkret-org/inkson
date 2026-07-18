@@ -352,7 +352,7 @@ fn default_secure_key_store_returns_a_usable_backend() {
         target_os = "macos",
         target_os = "windows",
     )) {
-        assert_eq!(name, "keyring");
+        assert_eq!(name, "sdk_platform_key_store");
     } else if cfg!(target_os = "android") {
         assert_eq!(name, "android-keystore");
     } else if cfg!(target_os = "ios") {
@@ -367,7 +367,7 @@ fn default_secure_key_store_returns_a_usable_backend() {
 fn keyring_store_exposes_service_name() {
     let store = KeyringSecureKeyStore::new("inkson.test.unit");
     assert_eq!(store.service_name(), "inkson.test.unit");
-    assert_eq!(store.backend_name(), "keyring");
+    assert_eq!(store.backend_name(), "sdk_platform_key_store");
 }
 
 /// Android Keystore store constructed against an explicit in-memory

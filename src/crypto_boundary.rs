@@ -10,7 +10,7 @@
 //!
 //! | Target | At-rest representation |
 //! |--------|-------------------------|
-//! | macOS / Linux / Windows | [`crate::secure_key_store::KeyringSecureKeyStore`] (`keyring` crate: Keychain / Secret Service / Credential Manager). |
+//! | macOS / Linux / Windows | [`crate::secure_key_store::KeyringSecureKeyStore`] (SDK-selected Keychain / Secret Service / Credential Manager backend). |
 //! | wasm32 | [`crate::secure_key_store::IndexedDbSecureKeyStore`] with a non-extractable SubtleCrypto AES-GCM wrapping key. LocalStorage seed read/write is refused and historical seed entries are deleted during upgrade. |
 //! | iOS / Android | [`crate::secure_key_store::HostBridgeSecureKeyStore`] when the embedding host registers a bridge. |
 //!

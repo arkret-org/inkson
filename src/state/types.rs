@@ -1,6 +1,7 @@
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 
 use arkret_sdk::EncryptedPayload;
+pub use arkret_sdk::{ReadCursorPosition, ReadCursorScope as ReadScope};
 use chime::PushRegistrationState;
 use chrono::{DateTime, Utc};
 use ed25519_dalek::SigningKey;
@@ -73,28 +74,6 @@ pub struct MemberHandleCacheEntry {
     pub cache_expires_at: DateTime<Utc>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub member_display_state_digest: Option<String>,
-}
-
-/// Structurally identical, pending merge (05-5): the fields match
-/// `discovery::ReadMarkerScope`; these should later converge into a
-/// single read_scope type.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct ReadScope {
-    pub kind: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub container_ref: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub track_name: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub track_scope: Option<String>,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct ReadCursorPosition {
-    pub event_id: String,
-    pub hlc: String,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]

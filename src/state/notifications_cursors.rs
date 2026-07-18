@@ -63,9 +63,8 @@ impl LocalStateStore {
         let topic_id = topic_id.filter(|topic| !topic.trim().is_empty());
         let read_scope = read_scope_for_cursor(&realm_id, topic_id.as_deref());
         let position = ReadCursorPosition {
-            event_id,
-            hlc: crate::signing_stamp::issue_protocol_hlc(&actor, &device_id, &realm_id)?
-                .to_string(),
+            event_id: arkret_sdk::EventId::new(event_id)?,
+            hlc: crate::signing_stamp::issue_protocol_hlc(&actor, &device_id, &realm_id)?,
         };
         let marker = ReadMarkerRecord {
             marker_type: "ak.read_cursor.advance".to_owned(),

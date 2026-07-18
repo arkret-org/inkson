@@ -366,13 +366,13 @@ fn read_cursor_covers_notification_at(
             && read_scope_covers_notification(
                 realm_id,
                 strand_id,
-                &marker.body.read_scope.kind,
+                marker.body.read_scope.kind.as_str(),
                 marker.body.read_scope.container_ref.as_deref(),
             )
             && read_cursor_position_covers_event(
                 source_event_id,
                 notification_timestamp,
-                &marker.body.position.event_id,
+                marker.body.position.event_id.as_str(),
                 target_timestamp_by_event,
             )
     })
