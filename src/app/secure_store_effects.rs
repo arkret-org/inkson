@@ -42,31 +42,9 @@ pub(super) fn SecureStoreEffects(state: SecureStoreEffectState) -> Element {
             match crate::secure_key_store::initialize_wasm_secure_key_store_async("inkson").await {
                 Ok(Some(secure_store)) => {
                     #[cfg(feature = "wasm-localstorage-secrets-test")]
-                    {
-                        let injected = inject_test_session_grant(
-                            &mut state_store_for_secure_upgrade,
-                            config_store_for_secure_upgrade,
-                            &base_url_for_secure_upgrade(),
-                            &account_did_for_secure_upgrade(),
-                            &device_id_for_secure_upgrade(),
-                            secure_store.as_ref(),
-                        )
-                        .or_else(|| {
-                            inject_test_session_credential(
-                                config_store_for_secure_upgrade,
-                                &base_url_for_secure_upgrade(),
-                                &account_did_for_secure_upgrade(),
-                                &device_id_for_secure_upgrade(),
-                            )
-                        });
-                        if let Some(credential) = injected {
-                            token_for_secure_upgrade.set(credential);
-                        }
-                        apply_test_session_grant_expiry_override(
-                            &mut state_store_for_secure_upgrade,
-                            secure_store.as_ref(),
-                        );
-                    }
+                    state_store_for_secure_upgrade
+                        .write()
+                        .switch_active_account(&account_did_for_secure_upgrade());
                     tracing::debug!(target: "secure_store", "secure store upgrade: Ok(Some) — IndexedDb tier installed");
                     // Phase 2: one-time migration of legacy localStorage account
                     // blobs into the IndexedDB encrypted entries store, then
@@ -133,6 +111,36 @@ pub(super) fn SecureStoreEffects(state: SecureStoreEffectState) -> Element {
                                 tracing::warn!(?error, "IndexedDB E2EE state encode failed");
                             }
                         }
+                    }
+                    #[cfg(feature = "wasm-localstorage-secrets-test")]
+                    {
+                        // Test fixtures are live startup writes. Apply them only
+                        // after the durable account snapshot is authoritative;
+                        // otherwise the asynchronous IndexedDB writer can race
+                        // hydration and lose a resumable registration checkpoint.
+                        let injected = inject_test_session_grant(
+                            &mut state_store_for_secure_upgrade,
+                            config_store_for_secure_upgrade,
+                            &base_url_for_secure_upgrade(),
+                            &account_did_for_secure_upgrade(),
+                            &device_id_for_secure_upgrade(),
+                            secure_store.as_ref(),
+                        )
+                        .or_else(|| {
+                            inject_test_session_credential(
+                                config_store_for_secure_upgrade,
+                                &base_url_for_secure_upgrade(),
+                                &account_did_for_secure_upgrade(),
+                                &device_id_for_secure_upgrade(),
+                            )
+                        });
+                        if let Some(credential) = injected {
+                            token_for_secure_upgrade.set(credential);
+                        }
+                        apply_test_session_grant_expiry_override(
+                            &mut state_store_for_secure_upgrade,
+                            secure_store.as_ref(),
+                        );
                     }
                     let loaded_config = config_store_for_secure_upgrade
                         .read()

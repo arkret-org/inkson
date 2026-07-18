@@ -24,6 +24,7 @@ enum IdentityChoice {
 
 #[component]
 pub fn OnboardingPanel(
+    secure_store_ready: bool,
     token: Signal<String>,
     account_did: Signal<String>,
     device_id: Signal<String>,
@@ -31,6 +32,16 @@ pub fn OnboardingPanel(
     account_primary_handle: Signal<String>,
 ) -> Element {
     let state_store = crate::app::SessionContext::get().state_store;
+    if !secure_store_ready {
+        return rsx! {
+            div { class: "timeline onboarding-flow", "data-testid": "onboarding-panel",
+                div { class: "event onboarding-card",
+                    h2 { "Restoring identity setup" }
+                    p { class: "muted", "Loading this account's saved setup…" }
+                }
+            }
+        };
+    }
     // Checkpoints are routing inputs only when this surface mounts. Do not
     // subscribe the parent to every durable stage write: an uninterrupted
     // child flow keeps the Recovery Key in memory and must remain mounted while

@@ -247,6 +247,13 @@ pub(super) fn inject_test_session_grant(
             return None;
         }
     };
+    // The browser fixture starts with the account DID already present in the
+    // config signals, but a fresh LocalStateStore can still be scoped to the
+    // anonymous namespace. Defensively select the fixture account before
+    // persisting so connect() observes the grant and resumable registration in
+    // the same account scope. SecureStoreEffects also selects this scope before
+    // hydration so the durable snapshot is loaded from the correct namespace.
+    state_store.write().switch_active_account(account_did);
     if let Some(value) = parsed.get("pending_principal_registration").cloned() {
         match serde_json::from_value::<crate::state::PendingPrincipalRegistration>(value) {
             Ok(registration) if registration.did == account_did => {
