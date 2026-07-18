@@ -108,6 +108,10 @@ pub struct SyncEngineContext {
     /// background `self_update_commit`. Sourced from the active profile config
     /// (same value the chat / realm-admin send paths use).
     pub device_id: String,
+    /// Writable app-level device id. A sync response that revokes this local
+    /// device rotates the live value before session invalidation persists the
+    /// login form state, so the revoked id cannot be resurrected on re-login.
+    pub live_device_id: crate::runtime::input::ValueCell<String>,
     pub selected_realm_id: crate::runtime::input::ValueReader<String>,
     /// Monotonic UI projection revision for Realm-backed views. Account-sync
     /// ingestion bumps this even when cursor checkpointing is deliberately
@@ -1185,6 +1189,12 @@ fn proof_sender_device_from_verification_method(
         })
 }
 
+fn rotate_live_device_id_after_revocation(
+    live_device_id: &crate::runtime::input::ValueCell<String>,
+) {
+    live_device_id.set(crate::config::new_device_id());
+}
+
 /// Apply an account subscribe response: persist projections (server-authoritatively
 /// reconciled when full-sync), hydrate Seal views + account-data, and
 /// publish derived UI signals (realm tree nodes / event projections / device queue /
@@ -1220,6 +1230,7 @@ pub fn apply_response(
 
     if response_revokes_local_device(response, &account_did, &ctx.device_id) {
         state_store.write(|store| store.clear_device_scoped());
+        rotate_live_device_id_after_revocation(&ctx.live_device_id);
         ctx.session
             .invalidate("this device was revoked by an accepted control event");
         return;
@@ -2193,9 +2204,32 @@ pub(crate) fn apply_account_data_entries(
 
 #[cfg(test)]
 mod tests {
+    use std::cell::RefCell;
+    use std::rc::Rc;
+
     use serde_json::{Value, json};
 
     use super::*;
+
+    #[test]
+    fn local_device_revocation_rotates_the_live_device_id() {
+        let revoked = "ak:device:0196419b-0000-7000-8000-000000000001".to_owned();
+        let value = Rc::new(RefCell::new(revoked.clone()));
+        let read_value = value.clone();
+        let write_value = value.clone();
+        let update_value = value.clone();
+        let live_device_id = crate::runtime::input::ValueCell::new(
+            move || read_value.borrow().clone(),
+            move |replacement| *write_value.borrow_mut() = replacement,
+            move |update| update(&mut update_value.borrow_mut()),
+        );
+
+        rotate_live_device_id_after_revocation(&live_device_id);
+
+        let replacement = live_device_id.get();
+        assert_ne!(replacement, revoked);
+        assert!(crate::config::is_valid_device_id(&replacement));
+    }
 
     fn empty_response(cursor: &str) -> AccountSyncStep {
         AccountSyncStep {

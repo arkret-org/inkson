@@ -52,6 +52,7 @@ pub(super) fn SyncEffects(
             state_store: runtime_adapter::state_store_handle(state_store),
             account_did: account_did(),
             device_id: device_id(),
+            live_device_id: runtime_adapter::value_cell(device_id),
             selected_realm_id: runtime_adapter::value_reader(selected_realm_id),
             realm_live_epoch: runtime_adapter::value_cell(realm_live_epoch),
             did_cache: runtime_adapter::value_cell(did_cache),
