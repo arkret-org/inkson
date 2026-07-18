@@ -341,25 +341,44 @@ impl LocalStateStore {
         self.flush()
     }
 
-    /// G3.Y0 — hard logout: wipe everything `clear_account_scoped`
-    /// would wipe, PLUS the device DPoP key, push registration, and
-    /// local identity. The next sign-in rotates the grant-binding key (`cnf.jkt`);
-    /// account-scoped E2EE device identity is kept by the caller's soft
-    /// logout/config path.
+    /// Clear state after this device is explicitly revoked or reset.
     ///
     /// Distinct from `clear_account_scoped` (which is the soft path —
     /// session expired, server-switch, account-change). The split is
     /// the public surface for the G3.Y0 soft-vs-hard logout contract:
-    /// soft keeps device material so the user can re-authenticate on
-    /// the same `cnf.jkt`; hard rotates the device key.
+    /// soft keeps device material so the user can re-authenticate; this path
+    /// deletes the revoked Event-signing identity and the independent DPoP key.
     pub fn clear_device_scoped(&mut self) {
         #[cfg(not(test))]
         {
             let secure_store = crate::secure_key_store::default_secure_key_store("inkson");
-            let _ = secure_store.delete_secret(
-                &crate::secure_key_store::account_scoped_device_key(Self::SECURE_DPOP_DEVICE_KEY),
-            );
+            self.clear_device_scoped_with_secure_store(secure_store.as_ref());
+            return;
         }
+        #[cfg(test)]
+        self.clear_device_scoped_state();
+    }
+
+    pub fn clear_device_scoped_with_secure_store(
+        &mut self,
+        secure_store: &dyn crate::secure_key_store::SecureKeyStore,
+    ) {
+        let account = self.active_account_did();
+        let _ =
+            secure_store.delete_secret(&crate::secure_key_store::account_scoped_device_key_for(
+                Self::SECURE_DPOP_DEVICE_KEY,
+                account.as_deref(),
+            ));
+        let _ = secure_store.delete_secret(Self::SECURE_IDENTITY_KEY);
+        let _ = crate::secure_key_store::delete_grant_binding_seed(secure_store);
+        if let Some(account) = account.as_deref() {
+            let _ = crate::secure_key_store::delete_device_identity_scope(secure_store, account);
+        }
+        crate::event_signer::clear_active_device_signer();
+        self.clear_device_scoped_state();
+    }
+
+    fn clear_device_scoped_state(&mut self) {
         self.ensure_cached_loaded();
         *self.lock_mls_receive_overlay() = MlsReceiveOverlay::default();
         // E7: reset the account-scoped cursor overlay alongside the receive

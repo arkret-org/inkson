@@ -770,6 +770,13 @@ fn active_slot() -> &'static std::sync::RwLock<Option<Arc<InksonEventSigner>>> {
     ACTIVE_SIGNER.get_or_init(|| std::sync::RwLock::new(None))
 }
 
+/// Drop the process-local device Event signer after an accepted local-device
+/// revoke/reset. The next enrollment must load freshly generated device
+/// identity material instead of continuing to sign with the revoked key.
+pub fn clear_active_device_signer() {
+    *active_slot().write().unwrap_or_else(|err| err.into_inner()) = None;
+}
+
 /// Install `signer` as the process-wide active signer. Returns `true`
 /// on first install. Subsequent calls leave the current signer in place;
 /// callers that intentionally rotate the device signer must use
@@ -1541,6 +1548,18 @@ mod tests {
         assert_eq!(status.algorithm, "EdDSA");
         assert_eq!(status.mode_tag, "ed25519");
         assert!(status.last_signed_at.is_none());
+    }
+
+    #[test]
+    fn explicit_device_reset_drops_the_active_event_signer() {
+        let _guard = reset();
+        let signer = Arc::new(build_ed25519_signer([5_u8; 32], "did:web:alice.example"));
+        install_active_signer(signer);
+        assert!(signer_status().is_some());
+
+        clear_active_device_signer();
+
+        assert!(signer_status().is_none());
     }
 
     #[test]

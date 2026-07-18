@@ -123,7 +123,11 @@ pub fn wrap_seed_namespace(service_name: &str) -> String {
 /// unchanged in the bootstrap scope. The account segment uses the same
 /// URL-safe-base64 sanitisation as [`signing_seed_key_for`].
 pub fn account_scoped_device_key(base: &str) -> String {
-    match active_device_seed_scope() {
+    account_scoped_device_key_for(base, active_device_seed_scope().as_deref())
+}
+
+pub fn account_scoped_device_key_for(base: &str, scope: Option<&str>) -> String {
+    match scope.map(str::trim).filter(|value| !value.is_empty()) {
         Some(account) => format!("{base}.{}", URL_SAFE_NO_PAD.encode(account.as_bytes())),
         None => base.to_owned(),
     }
@@ -254,6 +258,18 @@ pub fn delete_signing_seed_scoped(
     scope: Option<&str>,
 ) -> Result<(), SecureKeyStoreError> {
     store.delete_secret(&signing_seed_key_for(scope))
+}
+
+/// Delete the account-scoped Event-signing seed and device id after an
+/// explicit local-device revoke/reset. Interactive sign-in must not call this:
+/// ordinary reauthentication preserves device identity and rotates only the
+/// independent grant-binding key.
+pub fn delete_device_identity_scope(
+    store: &dyn SecureKeyStore,
+    account: &str,
+) -> Result<(), SecureKeyStoreError> {
+    delete_signing_seed_scoped(store, Some(account))?;
+    delete_device_id_scoped(store, Some(account))
 }
 
 /// On login completion (the resolved principal DID is now known), select that

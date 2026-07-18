@@ -91,3 +91,66 @@ fn local_identity_record_tamper_detection_regenerates() {
         "regenerated identity is fresh, not the tampered original"
     );
 }
+
+#[test]
+fn explicit_device_reset_deletes_identity_keys_but_signin_reset_does_not() {
+    let path = temp_state_path("explicit-device-reset");
+    let secure = crate::secure_key_store::MemorySecureKeyStore::new();
+    let account = "did:web:alice.example";
+    let old_signing_seed = [41_u8; 32];
+    let old_grant_binding = [42_u8; 32];
+    let old_device_id = "ak:device:01904100-0000-7000-8000-000000000001";
+    crate::secure_key_store::store_signing_seed_scoped(&secure, Some(account), &old_signing_seed)
+        .unwrap();
+    crate::secure_key_store::store_device_id_scoped(&secure, Some(account), old_device_id).unwrap();
+    crate::secure_key_store::store_grant_binding_seed(&secure, &old_grant_binding).unwrap();
+
+    let mut store = LocalStateStore::with_path(path);
+    store.switch_active_account(account);
+    let old_local_identity = store
+        .ensure_local_identity_with_secure_store(&secure)
+        .unwrap();
+    let dpop_key = crate::secure_key_store::account_scoped_device_key_for(
+        LocalStateStore::SECURE_DPOP_DEVICE_KEY,
+        Some(account),
+    );
+    secure
+        .store_secret(&dpop_key, "cached-dpop-record")
+        .unwrap();
+
+    store.clear_device_scoped_with_secure_store(&secure);
+
+    assert!(
+        crate::secure_key_store::load_signing_seed_scoped(&secure, Some(account))
+            .unwrap()
+            .is_none()
+    );
+    assert!(
+        crate::secure_key_store::load_device_id_scoped(&secure, Some(account))
+            .unwrap()
+            .is_none()
+    );
+    assert!(
+        crate::secure_key_store::load_grant_binding_seed(&secure)
+            .unwrap()
+            .is_none()
+    );
+    assert!(secure.get_secret(&dpop_key).unwrap().is_none());
+    assert!(
+        secure
+            .get_secret(LocalStateStore::SECURE_IDENTITY_KEY)
+            .unwrap()
+            .is_none()
+    );
+
+    let new_signing_seed =
+        crate::secure_key_store::ensure_signing_seed_scoped(&secure, Some(account)).unwrap();
+    let new_local_identity = store
+        .ensure_local_identity_with_secure_store(&secure)
+        .unwrap();
+    assert_ne!(new_signing_seed.seed, old_signing_seed);
+    assert_ne!(
+        new_local_identity.signing_key.to_bytes(),
+        old_local_identity.signing_key.to_bytes()
+    );
+}
