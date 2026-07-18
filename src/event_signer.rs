@@ -807,6 +807,38 @@ pub fn active_signer() -> Option<Arc<InksonEventSigner>> {
     guard.clone()
 }
 
+#[cfg(test)]
+static ACTIVE_SIGNER_TEST_MUTEX: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+/// Serializes unit tests that temporarily replace the process-wide signer.
+/// Production code never takes this lock.
+#[cfg(test)]
+pub(crate) struct ActiveSignerTestGuard {
+    previous: Option<Arc<InksonEventSigner>>,
+    _lock: std::sync::MutexGuard<'static, ()>,
+}
+
+#[cfg(test)]
+impl ActiveSignerTestGuard {
+    pub(crate) fn replace(signer: Option<Arc<InksonEventSigner>>) -> Self {
+        let lock = ACTIVE_SIGNER_TEST_MUTEX
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
+        let previous = replace_active_signer(signer);
+        Self {
+            previous,
+            _lock: lock,
+        }
+    }
+}
+
+#[cfg(test)]
+impl Drop for ActiveSignerTestGuard {
+    fn drop(&mut self) {
+        let _ = replace_active_signer(self.previous.take());
+    }
+}
+
 /// True when an active signer is installed and the active proof mode
 /// expects real signing. Used by the submit guard to decide whether to
 /// auto-sign an envelope that was built unsigned.
@@ -946,24 +978,8 @@ mod tests {
     const TEST_REALM_ID: &str = "ak:realm:01964137-0000-7000-8000-000000000001";
     const TEST_DEVICE_ID: &str = "ak:device:01964137-0000-7000-8000-000000000001";
 
-    /// Same per-process guard pattern operation.rs uses — proof-mode
-    /// and active-signer state is global so concurrent tests would
-    /// race.
-    static TEST_MUTEX: std::sync::Mutex<()> = std::sync::Mutex::new(());
-
     fn reset() -> impl Drop {
-        let guard = TEST_MUTEX.lock().unwrap_or_else(|e| e.into_inner());
-        let _ = replace_active_signer(None);
-        // Hold the lock for the lifetime of the returned guard so
-        // sibling tests cannot race the global signer slot. The lock
-        // guard is kept inside the struct rather than dropped early.
-        struct Reset(#[allow(dead_code)] std::sync::MutexGuard<'static, ()>);
-        impl Drop for Reset {
-            fn drop(&mut self) {
-                let _ = replace_active_signer(None);
-            }
-        }
-        Reset(guard)
+        ActiveSignerTestGuard::replace(None)
     }
 
     #[test]

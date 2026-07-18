@@ -16,6 +16,7 @@ use crate::state::LocalStateStore;
 
 const PCR_BOOTSTRAP_WAIT_ATTEMPTS: usize = 120;
 const PCR_BOOTSTRAP_WAIT_INTERVAL: Duration = Duration::from_millis(250);
+const PCR_RECOVERY_PROJECTION_WAIT_ATTEMPTS: usize = 18;
 const ACTIVE_SERIES_SIGNED_FIELDS: &[&str] = &[
     "schema",
     "actor_id",
@@ -46,6 +47,73 @@ struct MlsHistorySeriesTarget {
     series_seq: u64,
     previous_tail: Option<Value>,
     publish_pointer: Option<(u64, Vec<String>)>,
+}
+
+enum MlsHistoryRecoveryPlan {
+    Reuse {
+        backup_id: String,
+        series_id: String,
+        publish_pointer: Option<(u64, Vec<String>)>,
+    },
+    Write(MlsHistorySeriesTarget),
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+enum ControllerBackupTrustAnchor {
+    SskGeneration(u64),
+    DeviceGeneration {
+        authorize_event_id: String,
+        generation_ref: String,
+    },
+}
+
+async fn current_controller_backup_trust_anchor(
+    http: &arkret_sdk::http_client::Client,
+    controller_id: &str,
+    device_id: &str,
+) -> anyhow::Result<ControllerBackupTrustAnchor> {
+    let controller = arkret_sdk::Did::new(controller_id.to_owned())?;
+    let device = arkret_sdk::DeviceId::new(device_id.to_owned())?;
+    let outcome = crate::transport::keys::query_keys(http, controller_id, device_id).await?;
+    let record = outcome
+        .device_keys
+        .get(&controller)
+        .and_then(|devices| devices.get(&device))
+        .ok_or_else(|| anyhow::anyhow!("active controller device is absent from keys/query"))?;
+    let generation = outcome.device_generations.get(&controller);
+    if !record.is_usable_in_generation(generation) {
+        anyhow::bail!("active controller device is not usable in the current trust generation");
+    }
+    match (
+        record.cross_signing_binding.as_ref(),
+        generation,
+        record.authorized_generation_ref.as_ref(),
+        record.device_authorize_event_id.as_ref(),
+    ) {
+        (Some(binding), None, None, _) => {
+            let publish = outcome.cross_signing.get(&controller).ok_or_else(|| {
+                anyhow::anyhow!("keys/query omitted the current cross-signing publish")
+            })?;
+            if publish.generation.get() != binding.ssk_generation {
+                anyhow::bail!("device binding generation differs from the current SSK generation");
+            }
+            Ok(ControllerBackupTrustAnchor::SskGeneration(
+                binding.ssk_generation,
+            ))
+        }
+        (None, Some(generation), Some(device_generation), Some(authorize_event_id))
+            if generation.device_generation_status
+                == arkret_sdk::DeviceGenerationStatus::Active
+                && device_generation.as_str()
+                    == generation.current_device_generation_ref.as_str() =>
+        {
+            Ok(ControllerBackupTrustAnchor::DeviceGeneration {
+                authorize_event_id: authorize_event_id.to_string(),
+                generation_ref: generation.current_device_generation_ref.to_string(),
+            })
+        }
+        _ => anyhow::bail!("active controller device trust model is mixed or incomplete"),
+    }
 }
 
 fn controller_signer_device_id(
@@ -112,47 +180,51 @@ fn next_mls_history_pointer(
 async fn current_mls_history_active_series(
     submitter: &crate::event_submit::EventSubmitter,
     controller_id: &str,
+    highest_seen: Option<u64>,
 ) -> anyhow::Result<Option<MlsHistoryActiveSeries>> {
     let controller = arkret_sdk::Did::new(controller_id.to_owned())?;
     let realm_id = arkret_sdk::principal_control_realm_id(&controller);
     let backfill = submitter.backfill(realm_id.as_str()).await?;
-    let mut records = backfill
+    let mut current = None::<arkret_sdk::KeyBackupActiveSeriesHead>;
+    for event in backfill
         .events
         .iter()
         .filter(|event| event.kind.as_str() == "ak.key_backup.active_series")
-        .filter_map(|event| {
-            let payload = &event.payload;
-            (payload.get("actor_id").and_then(Value::as_str) == Some(controller_id)
-                && payload.get("backup_class").and_then(Value::as_str) == Some("mls_history"))
-            .then(|| MlsHistoryActiveSeries {
-                series_id: payload
-                    .get("active_series_id")
-                    .and_then(Value::as_str)
-                    .unwrap_or_default()
-                    .to_owned(),
-                pointer_version: payload
-                    .get("series_pointer_version")
-                    .and_then(Value::as_u64)
-                    .unwrap_or_default(),
-                previous_series_ids: payload
-                    .get("previous_series_ids")
-                    .and_then(Value::as_array)
-                    .into_iter()
-                    .flatten()
-                    .filter_map(Value::as_str)
-                    .map(ToOwned::to_owned)
-                    .collect(),
-            })
-        })
-        .collect::<Vec<_>>();
-    records.sort_by_key(|record| record.pointer_version);
-    let Some(current) = records.pop() else {
-        return Ok(None);
-    };
-    if current.pointer_version == 0 || current.series_id.is_empty() {
-        anyhow::bail!("current mls_history active-series record is malformed");
+    {
+        let record = serde_json::from_value::<arkret_sdk::KeyBackupActiveSeries>(
+            serde_json::to_value(&event.payload)?,
+        )
+        .map_err(|error| anyhow::anyhow!("accepted active-series Event is invalid: {error}"))?;
+        if record.actor_id.as_str() != controller_id
+            || record.backup_class != crate::key_backup::BackupClass::MlsHistory
+        {
+            continue;
+        }
+        current = Some(
+            arkret_sdk::validate_key_backup_active_series_transition(current.as_ref(), &record)
+                .map_err(|error| {
+                    anyhow::anyhow!("accepted active-series chain is not canonical: {error}")
+                })?,
+        );
     }
-    Ok(Some(current))
+    if highest_seen.is_some_and(|highest| {
+        current
+            .as_ref()
+            .map(|head| head.series_pointer_version)
+            .unwrap_or_default()
+            < highest
+    }) {
+        anyhow::bail!("backup_frontier_stale");
+    }
+    Ok(current.map(|head| MlsHistoryActiveSeries {
+        series_id: head.active_series_id.to_string(),
+        pointer_version: head.series_pointer_version,
+        previous_series_ids: head
+            .previous_series_ids
+            .iter()
+            .map(ToString::to_string)
+            .collect(),
+    }))
 }
 
 fn recovery_policy_matches(backup: &Value, recovery_policy_ref: (&str, u64)) -> bool {
@@ -172,14 +244,31 @@ fn backup_contains_managed_pcr_items(backup: &Value) -> bool {
         .any(|item| item.get("managed_principal_binding").is_some())
 }
 
+fn backup_contains_exact_managed_binding(
+    backup: &Value,
+    expected: &ManagedPrincipalBinding,
+) -> bool {
+    backup
+        .get("contents")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(|item| item.get("managed_principal_binding"))
+        .filter_map(|binding| {
+            serde_json::from_value::<ManagedPrincipalBinding>(binding.clone()).ok()
+        })
+        .any(|binding| &binding == expected)
+}
+
 async fn resolve_mls_history_series_target(
     api: &crate::transport::TransportClient,
-    submitter: &crate::event_submit::EventSubmitter,
     list_payload: &Value,
+    current: Option<MlsHistoryActiveSeries>,
     controller_id: &str,
     device_id: &str,
     recovery_policy_ref: (&str, u64),
-) -> anyhow::Result<MlsHistorySeriesTarget> {
+    expected_binding: &ManagedPrincipalBinding,
+) -> anyhow::Result<MlsHistoryRecoveryPlan> {
     if list_payload
         .get("has_more")
         .and_then(Value::as_bool)
@@ -189,7 +278,6 @@ async fn resolve_mls_history_series_target(
             "key-backup list is paginated; refusing to construct an incomplete mls_history tail"
         );
     }
-    let current = current_mls_history_active_series(submitter, controller_id).await?;
     let mls_backups = list_payload
         .get("backups")
         .and_then(Value::as_array)
@@ -204,15 +292,116 @@ async fn resolve_mls_history_series_target(
         .map(ToOwned::to_owned)
         .collect::<BTreeSet<_>>();
 
+    let mut exact_tails = mls_backups
+        .iter()
+        .copied()
+        .filter(|backup| {
+            recovery_policy_matches(backup, recovery_policy_ref)
+                && backup_contains_exact_managed_binding(backup, expected_binding)
+        })
+        .collect::<Vec<_>>();
+    exact_tails.sort_by(|left, right| {
+        left.get("created_at")
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .cmp(
+                right
+                    .get("created_at")
+                    .and_then(Value::as_str)
+                    .unwrap_or_default(),
+            )
+            .then_with(|| {
+                left.get("series_seq")
+                    .and_then(Value::as_u64)
+                    .unwrap_or_default()
+                    .cmp(
+                        &right
+                            .get("series_seq")
+                            .and_then(Value::as_u64)
+                            .unwrap_or_default(),
+                    )
+            })
+            .then_with(|| {
+                left.get("backup_id")
+                    .and_then(Value::as_str)
+                    .unwrap_or_default()
+                    .cmp(
+                        right
+                            .get("backup_id")
+                            .and_then(Value::as_str)
+                            .unwrap_or_default(),
+                    )
+            })
+    });
+    exact_tails.retain(|candidate| {
+        let series_id = candidate.get("series_id").and_then(Value::as_str);
+        let sequence = candidate.get("series_seq").and_then(Value::as_u64);
+        mls_backups.iter().all(|other| {
+            other.get("series_id").and_then(Value::as_str) != series_id
+                || other.get("series_seq").and_then(Value::as_u64) <= sequence
+        })
+    });
+
+    if let Some(current) = current.as_ref()
+        && let Some(tail) = exact_tails.iter().rev().find(|backup| {
+            backup.get("series_id").and_then(Value::as_str) == Some(current.series_id.as_str())
+        })
+    {
+        let backup_id = tail
+            .get("backup_id")
+            .and_then(Value::as_str)
+            .ok_or_else(|| anyhow::anyhow!("active mls_history tail omitted backup_id"))?;
+        return Ok(MlsHistoryRecoveryPlan::Reuse {
+            backup_id: backup_id.to_owned(),
+            series_id: current.series_id.clone(),
+            publish_pointer: None,
+        });
+    }
+
+    let orphan_tails = exact_tails
+        .iter()
+        .filter(|backup| {
+            current.as_ref().is_none_or(|active| {
+                backup.get("series_id").and_then(Value::as_str) != Some(active.series_id.as_str())
+            })
+        })
+        .collect::<Vec<_>>();
+    if orphan_tails.len() > 1 {
+        anyhow::bail!(
+            "multiple unpublished mls_history attempts cover the same managed frontier; refusing to infer a canonical series from timestamps"
+        );
+    }
+    if let Some(orphan) = orphan_tails.first() {
+        let backup_id = orphan
+            .get("backup_id")
+            .and_then(Value::as_str)
+            .ok_or_else(|| anyhow::anyhow!("reusable mls_history tail omitted backup_id"))?;
+        let series_id = orphan
+            .get("series_id")
+            .and_then(Value::as_str)
+            .ok_or_else(|| anyhow::anyhow!("reusable mls_history tail omitted series_id"))?;
+        let other_series = known_series_ids
+            .iter()
+            .filter(|known| known.as_str() != series_id)
+            .cloned();
+        let (pointer_version, previous_series_ids) =
+            next_mls_history_pointer(current.as_ref(), other_series)?;
+        return Ok(MlsHistoryRecoveryPlan::Reuse {
+            backup_id: backup_id.to_owned(),
+            series_id: series_id.to_owned(),
+            publish_pointer: Some((pointer_version, previous_series_ids)),
+        });
+    }
+
     let Some(current) = current else {
         let (pointer_version, previous_series_ids) =
             next_mls_history_pointer(None, known_series_ids)?;
-        return Ok(MlsHistorySeriesTarget {
+        return Ok(MlsHistoryRecoveryPlan::Write(MlsHistorySeriesTarget {
             series_id: format!("ak:backup_series:{}", uuid_v7()),
             series_seq: 0,
             previous_tail: None,
             publish_pointer: Some((pointer_version, previous_series_ids)),
-        });
+        }));
     };
     let tail_metadata = mls_backups
         .into_iter()
@@ -236,12 +425,12 @@ async fn resolve_mls_history_series_target(
     {
         let (pointer_version, previous_series_ids) =
             next_mls_history_pointer(Some(&current), known_series_ids)?;
-        return Ok(MlsHistorySeriesTarget {
+        return Ok(MlsHistoryRecoveryPlan::Write(MlsHistorySeriesTarget {
             series_id: format!("ak:backup_series:{}", uuid_v7()),
             series_seq: 0,
             previous_tail: None,
             publish_pointer: Some((pointer_version, previous_series_ids)),
-        });
+        }));
     }
 
     let tail = if tail_metadata
@@ -265,12 +454,12 @@ async fn resolve_mls_history_series_target(
         .unwrap_or_default()
         .checked_add(1)
         .ok_or_else(|| anyhow::anyhow!("mls_history series sequence overflow"))?;
-    Ok(MlsHistorySeriesTarget {
+    Ok(MlsHistoryRecoveryPlan::Write(MlsHistorySeriesTarget {
         series_id: current.series_id,
         series_seq,
         previous_tail: Some(tail),
         publish_pointer: None,
-    })
+    }))
 }
 
 fn build_managed_pcr_backup_body(
@@ -285,6 +474,7 @@ fn build_managed_pcr_backup_body(
     series_id: &str,
     series_seq: u64,
     previous_series_tail: Option<&Value>,
+    trust_anchor: &ControllerBackupTrustAnchor,
 ) -> anyhow::Result<Value> {
     if items.is_empty() {
         anyhow::bail!("managed Agent PCR backup requires at least one current Agent item");
@@ -344,12 +534,30 @@ fn build_managed_pcr_backup_body(
     )?;
     body["frontier_ref"] = json!({
         "frontier_digest": envelope_frontier.frontier_digest,
-        "seal_ref": envelope_frontier.seal_ref,
-        "ssk_generation": crate::key_backup::DEFAULT_SSK_GENERATION
+        "seal_ref": envelope_frontier.seal_ref
     });
+    let auth_anchor = match trust_anchor {
+        ControllerBackupTrustAnchor::SskGeneration(generation) => {
+            body["frontier_ref"]["ssk_generation"] = json!(generation);
+            crate::key_backup::KeyBackupDeviceTrustAnchor::SskGeneration(*generation)
+        }
+        ControllerBackupTrustAnchor::DeviceGeneration {
+            authorize_event_id,
+            generation_ref,
+        } => {
+            body["frontier_ref"]["device_generation_ref"] = json!(generation_ref);
+            crate::key_backup::KeyBackupDeviceTrustAnchor::DeviceAuthorizeEventId(
+                authorize_event_id.clone(),
+            )
+        }
+    };
     crate::key_backup::validate_key_backup_plaintext_binding(&body, &plaintext)
         .map_err(anyhow::Error::msg)?;
-    crate::key_backup::sign_key_backup_with_active_device(&mut body, device_id)?;
+    crate::key_backup::sign_key_backup_with_active_device_and_trust_anchor(
+        &mut body,
+        device_id,
+        Some(auth_anchor),
+    )?;
     Ok(body)
 }
 
@@ -409,6 +617,7 @@ fn build_active_mls_history_series_event(
     pointer_version: u64,
     previous_series_ids: &[String],
     frontier: &arkret_sdk::RealmSealFrontierView,
+    trust_anchor: &ControllerBackupTrustAnchor,
 ) -> anyhow::Result<arkret_sdk::Event> {
     let signer = crate::event_signer::active_signer()
         .ok_or_else(|| anyhow::anyhow!("active controller signer is required"))?;
@@ -422,18 +631,29 @@ fn build_active_mls_history_series_event(
         "previous_series_ids": previous_series_ids,
         "frontier_ref": {
             "frontier_digest": frontier.control_event_set_root,
-            "seal_ref": frontier.seal_id,
-            "ssk_generation": crate::key_backup::DEFAULT_SSK_GENERATION
+            "seal_ref": frontier.seal_id
         },
         "issued_at": issued_at,
         "auth_data": {
             "verification_method": signer.verification_method(),
             "signature_algorithm": "Ed25519",
             "signature": "pending",
-            "signed_fields": ACTIVE_SERIES_SIGNED_FIELDS,
-            "ssk_generation": crate::key_backup::DEFAULT_SSK_GENERATION
+            "signed_fields": ACTIVE_SERIES_SIGNED_FIELDS
         }
     });
+    match trust_anchor {
+        ControllerBackupTrustAnchor::SskGeneration(generation) => {
+            payload["frontier_ref"]["ssk_generation"] = json!(generation);
+            payload["auth_data"]["ssk_generation"] = json!(generation);
+        }
+        ControllerBackupTrustAnchor::DeviceGeneration {
+            authorize_event_id,
+            generation_ref,
+        } => {
+            payload["frontier_ref"]["device_generation_ref"] = json!(generation_ref);
+            payload["auth_data"]["device_authorize_event_id"] = json!(authorize_event_id);
+        }
+    }
     let mut unsigned = payload.clone();
     unsigned["auth_data"]
         .as_object_mut()
@@ -472,22 +692,60 @@ async fn wait_for_agent_pcr_frontier(
     anyhow::bail!("Agent PCR Seal did not cover MLS genesis before the bootstrap deadline")
 }
 
-async fn verify_agent_pcr_recovery_ready(
+fn agent_pcr_recovery_matches(
+    state: &AgentPcrRecoveryState,
+    expected_backup_id: &str,
+    expected_frontier: &ManagedFrontierRef,
+) -> bool {
+    matches!(
+        state,
+        AgentPcrRecoveryState::Ready {
+            backup_id,
+            managed_frontier_ref,
+            ..
+        } if backup_id.as_str() == expected_backup_id
+            && managed_frontier_ref == expected_frontier
+    )
+}
+
+async fn wait_for_agent_pcr_recovery_ready(
     http: &arkret_sdk::http_client::Client,
     agent_id: &str,
+    expected_backup_id: &str,
+    expected_frontier: &ManagedFrontierRef,
 ) -> anyhow::Result<()> {
-    let view = http.agent_get(agent_id).await?;
-    let Some(key_state) = view.key_state.as_ref() else {
-        anyhow::bail!("Agent details omitted PCR recovery state after setup");
-    };
-    match &key_state.pcr_recovery {
-        AgentPcrRecoveryState::Ready { .. } => Ok(()),
-        AgentPcrRecoveryState::Pending => anyhow::bail!(
-            "Agent recovery backup was published, but the server still reports setup pending"
+    let mut last_state = None;
+    for attempt in 0..PCR_RECOVERY_PROJECTION_WAIT_ATTEMPTS {
+        let view = http.agent_get(agent_id).await?;
+        let Some(key_state) = view.key_state.as_ref() else {
+            anyhow::bail!("Agent details omitted PCR recovery state after setup");
+        };
+        if agent_pcr_recovery_matches(
+            &key_state.pcr_recovery,
+            expected_backup_id,
+            expected_frontier,
+        ) {
+            return Ok(());
+        }
+        last_state = Some(key_state.pcr_recovery.clone());
+        if attempt + 1 < PCR_RECOVERY_PROJECTION_WAIT_ATTEMPTS {
+            // Agent details are an asynchronously maintained projection. Back
+            // off to avoid turning normal projection lag into a request storm.
+            let delay_ms = (250_u64 << attempt.min(3)).min(2_000);
+            crate::runtime_helpers::sleep_for(Duration::from_millis(delay_ms)).await;
+        }
+    }
+    match last_state {
+        Some(AgentPcrRecoveryState::Pending) => anyhow::bail!(
+            "Agent recovery backup was accepted, but its recovery projection remained pending"
         ),
-        AgentPcrRecoveryState::Stale { .. } => anyhow::bail!(
-            "Agent recovery backup was published, but the server reports that it does not cover the current Agent state"
+        Some(AgentPcrRecoveryState::Stale { .. }) => anyhow::bail!(
+            "Agent recovery backup was accepted, but its recovery projection did not catch up to the published Agent frontier"
         ),
+        Some(AgentPcrRecoveryState::Ready { .. }) => anyhow::bail!(
+            "Agent recovery projection became ready for a different backup or Agent frontier"
+        ),
+        None => anyhow::bail!("Agent recovery projection was unavailable after setup"),
     }
 }
 
@@ -712,6 +970,8 @@ pub(crate) async fn bootstrap_provisioned_agent(
     let realm_id = realm_id.as_str();
     let submitter = api.event_submitter()?;
     let http = api.sdk_http_client()?;
+    let trust_anchor =
+        current_controller_backup_trust_anchor(&http, &controller_id, &device_id).await?;
 
     if previous_seal_id.is_none()
         && http
@@ -897,26 +1157,9 @@ pub(crate) async fn bootstrap_provisioned_agent(
         .read()
         .mls_snapshot_for(realm_id)
         .ok_or_else(|| anyhow::anyhow!("Agent PCR MLS snapshot was not persisted"))?;
-    let snapshot_secret = crate::mls::runtime::load_device_snapshot_secret(
-        secure_store.as_ref(),
-        agent_id,
-        &device_id,
-    )
-    .map_err(|error| anyhow::anyhow!("load Agent PCR snapshot secret: {error}"))?;
-    let state_bytes = crate::mls::persistence::decrypt_envelope(&snapshot, &snapshot_secret)
-        .map_err(|error| anyhow::anyhow!("open Agent PCR MLS snapshot for recovery: {error}"))?;
-    let recovery_public_key =
-        crate::views::recovery::local_recovery_public_key(&state_store.read(), &controller_id)
-            .ok_or_else(|| anyhow::anyhow!("local recovery public key is unavailable"))?;
     let active_policy = crate::recovery_strand::fetch_active_recovery_policy(api)
         .await?
         .ok_or_else(|| anyhow::anyhow!("active controller recovery policy is unavailable"))?;
-    let recovery_key_ref = current_controller_backup_hpke_key_ref(
-        &active_policy,
-        &controller_id,
-        &recovery_public_key,
-        crate::clock::now_utc(),
-    )?;
     let binding = ManagedPrincipalBinding {
         managed_principal_id: arkret_sdk::Did::new(agent_id.to_owned())?,
         controller_id: arkret_sdk::Did::new(controller_id.clone())?,
@@ -929,6 +1172,93 @@ pub(crate) async fn bootstrap_provisioned_agent(
         },
     };
     let envelope_frontier = binding.managed_frontier_ref.clone();
+    let list_payload = crate::mls::account_recovery::fetch_mls_restore_payload(api).await?;
+    let highest_seen = state_store
+        .read()
+        .key_backup_active_series_highest_seen(&controller_id, "mls_history");
+    let current =
+        current_mls_history_active_series(&submitter, &controller_id, highest_seen).await?;
+    if let Some(current) = current.as_ref() {
+        let persist = {
+            let mut state = state_store.write();
+            state.observe_key_backup_active_series_version(
+                &controller_id,
+                "mls_history",
+                current.pointer_version,
+            )?;
+            state.begin_durable_flush()?
+        };
+        persist.wait().await?;
+    }
+    let recovery_plan = resolve_mls_history_series_target(
+        api,
+        &list_payload,
+        current,
+        &controller_id,
+        &device_id,
+        (active_policy.policy_id.as_str(), active_policy.version),
+        &binding,
+    )
+    .await?;
+
+    let series_target = match recovery_plan {
+        MlsHistoryRecoveryPlan::Reuse {
+            backup_id,
+            series_id,
+            publish_pointer,
+        } => {
+            if let Some((pointer_version, previous_series_ids)) = publish_pointer {
+                let controller_realm_id = arkret_sdk::principal_control_realm_id(&controller_did);
+                let controller_frontier = submitter
+                    .events_frontier_realm_seal_view(controller_realm_id.as_str())
+                    .await?;
+                let active_series = build_active_mls_history_series_event(
+                    &controller_id,
+                    &series_id,
+                    pointer_version,
+                    &previous_series_ids,
+                    &controller_frontier,
+                    &trust_anchor,
+                )?;
+                submitter.submit_sdk_event(&active_series).await?;
+                let persist = {
+                    let mut state = state_store.write();
+                    state.observe_key_backup_active_series_version(
+                        &controller_id,
+                        "mls_history",
+                        pointer_version,
+                    )?;
+                    state.begin_durable_flush()?
+                };
+                persist.wait().await?;
+            }
+            return wait_for_agent_pcr_recovery_ready(
+                &http,
+                agent_id,
+                &backup_id,
+                &envelope_frontier,
+            )
+            .await;
+        }
+        MlsHistoryRecoveryPlan::Write(series_target) => series_target,
+    };
+    let snapshot_secret = crate::mls::runtime::load_device_snapshot_secret(
+        secure_store.as_ref(),
+        agent_id,
+        &device_id,
+    )
+    .map_err(|error| anyhow::anyhow!("load Agent PCR snapshot secret: {error}"))?;
+    let state_bytes = crate::mls::persistence::decrypt_envelope(&snapshot, &snapshot_secret)
+        .map_err(|error| anyhow::anyhow!("open Agent PCR MLS snapshot for recovery: {error}"))?;
+    let recovery_public_key =
+        crate::views::recovery::local_recovery_public_key(&state_store.read(), &controller_id)
+            .ok_or_else(|| anyhow::anyhow!("local recovery public key is unavailable"))?;
+    let recovery_key_ref = current_controller_backup_hpke_key_ref(
+        &active_policy,
+        &controller_id,
+        &recovery_public_key,
+        crate::clock::now_utc(),
+    )?;
     let managed_items = collect_current_managed_pcr_backup_items(
         &http,
         &submitter,
@@ -941,16 +1271,6 @@ pub(crate) async fn bootstrap_provisioned_agent(
             state_bytes,
             binding: Some(binding),
         },
-    )
-    .await?;
-    let list_payload = crate::mls::account_recovery::fetch_mls_restore_payload(api).await?;
-    let series_target = resolve_mls_history_series_target(
-        api,
-        &submitter,
-        &list_payload,
-        &controller_id,
-        &device_id,
-        (active_policy.policy_id.as_str(), active_policy.version),
     )
     .await?;
     let backup_id = format!("ak:backup:{}", uuid_v7());
@@ -966,23 +1286,41 @@ pub(crate) async fn bootstrap_provisioned_agent(
         &series_target.series_id,
         series_target.series_seq,
         series_target.previous_tail.as_ref(),
+        &trust_anchor,
     )?;
     api.put_key_backup(&backup_id, backup).await?;
 
     if let Some((pointer_version, previous_series_ids)) = series_target.publish_pointer {
+        let controller_realm_id = arkret_sdk::principal_control_realm_id(&controller_did);
+        let controller_frontier = submitter
+            .events_frontier_realm_seal_view(controller_realm_id.as_str())
+            .await?;
         let active_series = build_active_mls_history_series_event(
             &controller_id,
             &series_target.series_id,
             pointer_version,
             &previous_series_ids,
-            &frontier,
+            &controller_frontier,
+            &trust_anchor,
         )?;
         submitter.submit_sdk_event(&active_series).await?;
+        let persist = {
+            let mut state = state_store.write();
+            state.observe_key_backup_active_series_version(
+                &controller_id,
+                "mls_history",
+                pointer_version,
+            )?;
+            state.begin_durable_flush()?
+        };
+        persist.wait().await?;
     }
-    // Every preceding write has already returned an accepted outcome. A
-    // pending/stale projection cannot be advanced by repeatedly GETting this
-    // resource, so verify once and surface the actionable state to the UI.
-    verify_agent_pcr_recovery_ready(&http, agent_id).await
+    // Backup storage and the controller active-series Event are accepted
+    // before the Agent directory projection necessarily observes both. Wait
+    // for the exact backup/frontier pair published above instead of treating
+    // normal projection lag as a failed setup (or accepting an older ready
+    // projection).
+    wait_for_agent_pcr_recovery_ready(&http, agent_id, &backup_id, &envelope_frontier).await
 }
 
 #[cfg(test)]
@@ -1176,6 +1514,48 @@ mod tests {
     }
 
     #[test]
+    fn recovery_ready_must_match_the_just_published_backup_and_frontier() {
+        let frontier = ManagedFrontierRef {
+            frontier_digest: arkret_sdk::Hash::new(
+                "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            )
+            .unwrap(),
+            seal_ref: "ak:seal:01964137-0000-7000-8000-000000000001".to_owned(),
+            mls_epoch: 0,
+        };
+        let ready = AgentPcrRecoveryState::Ready {
+            backup_id: arkret_sdk::BackupId::new(
+                "ak:backup:01964137-0000-7000-8000-000000000002".to_owned(),
+            )
+            .unwrap(),
+            series_id: arkret_sdk::BackupSeriesId::new(
+                "ak:backup_series:01964137-0000-7000-8000-000000000003".to_owned(),
+            )
+            .unwrap(),
+            series_seq: 0,
+            managed_frontier_ref: frontier.clone(),
+        };
+
+        assert!(agent_pcr_recovery_matches(
+            &ready,
+            "ak:backup:01964137-0000-7000-8000-000000000002",
+            &frontier,
+        ));
+        assert!(!agent_pcr_recovery_matches(
+            &ready,
+            "ak:backup:01964137-0000-7000-8000-000000000004",
+            &frontier,
+        ));
+        let mut newer_frontier = frontier.clone();
+        newer_frontier.mls_epoch = 1;
+        assert!(!agent_pcr_recovery_matches(
+            &ready,
+            "ak:backup:01964137-0000-7000-8000-000000000002",
+            &newer_frontier,
+        ));
+    }
+
+    #[test]
     fn managed_pcr_backup_round_trips_bound_plaintext_keybag() {
         let snapshot = crate::mls::persistence::encrypt_state(
             "ak:realm:01964137-0000-7000-8000-000000000099",
@@ -1253,6 +1633,7 @@ mod tests {
             series_id,
             0,
             None,
+            &ControllerBackupTrustAnchor::SskGeneration(1),
         )
         .unwrap();
 
@@ -1306,6 +1687,7 @@ mod tests {
             series_id,
             1,
             Some(&body),
+            &ControllerBackupTrustAnchor::SskGeneration(1),
         )
         .unwrap();
         assert_eq!(successor["series_seq"], 1);
@@ -1411,6 +1793,7 @@ mod tests {
             history_series_id,
             0,
             None,
+            &ControllerBackupTrustAnchor::SskGeneration(1),
         )
         .unwrap();
         let account =

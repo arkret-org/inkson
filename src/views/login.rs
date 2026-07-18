@@ -1106,13 +1106,22 @@ mod tests {
             .expect("seed scope test lock")
     }
 
-    struct SeedScopeReset;
+    struct SeedScopeReset {
+        _signer: crate::event_signer::ActiveSignerTestGuard,
+    }
+
+    impl SeedScopeReset {
+        fn new() -> Self {
+            Self {
+                _signer: crate::event_signer::ActiveSignerTestGuard::replace(None),
+            }
+        }
+    }
 
     impl Drop for SeedScopeReset {
         fn drop(&mut self) {
             crate::secure_key_store::set_active_device_seed_scope(None);
             crate::secure_key_store::set_pending_login_device_id(None);
-            let _ = crate::event_signer::replace_active_signer(None);
         }
     }
 
@@ -1195,7 +1204,7 @@ mod tests {
     #[test]
     fn oidc_callback_restores_bootstrap_device_seed_scope() {
         let _lock = seed_scope_test_lock();
-        let _reset = SeedScopeReset;
+        let _reset = SeedScopeReset::new();
         crate::secure_key_store::set_active_device_seed_scope(Some("did:web:old.example"));
 
         restore_oidc_callback_device_seed_scope("ak:device:01964137-0000-7000-8000-000000000001");
@@ -1261,7 +1270,7 @@ mod tests {
     #[test]
     fn completed_login_dpop_key_preserves_returning_account_key_material() {
         let _lock = seed_scope_test_lock();
-        let _reset = SeedScopeReset;
+        let _reset = SeedScopeReset::new();
         let mut store = crate::state::isolated_store_for_tests("completed-login-dpop-key");
         let secure_store = crate::secure_key_store::MemorySecureKeyStore::default();
         let actor = "did:web:alice.example";
@@ -1269,7 +1278,6 @@ mod tests {
         let old_seed = [3_u8; 32];
         let new_record = dpop_record_for_seed([7_u8; 32]);
 
-        let _ = crate::event_signer::replace_active_signer(None);
         crate::secure_key_store::store_signing_seed_scoped(&secure_store, Some(actor), &old_seed)
             .expect("old account seed");
 

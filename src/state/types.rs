@@ -645,6 +645,11 @@ pub enum PendingPrincipalRegistrationStage {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ClientLocalState {
     pub sync_cursor: Option<String>,
+    /// Highest verified `ak.key_backup.active_series` pointer observed per
+    /// `(actor_id, backup_class)`. This is rollback protection, not a cache:
+    /// a complete server response below this floor must fail closed.
+    #[serde(default)]
+    pub key_backup_active_series_highest_seen: BTreeMap<String, u64>,
     /// Per-realm `ak.self.events.stream.subscribe` resume cursors, keyed by
     /// realm id. Kept PHYSICALLY SEPARATE from the account-aggregate
     /// `sync_cursor`: the realm events stream and the account stream are
@@ -1172,6 +1177,7 @@ impl Default for ClientLocalState {
     fn default() -> Self {
         Self {
             sync_cursor: None,
+            key_backup_active_series_highest_seen: BTreeMap::new(),
             realm_events_cursors: BTreeMap::new(),
             realm_scan_cursors: BTreeMap::new(),
             device_message_cursors: BTreeMap::new(),

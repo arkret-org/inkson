@@ -1004,12 +1004,6 @@ mod tests {
 
     #[test]
     fn genesis_recovery_policy_for_session_device_reuses_active_device_key() {
-        static TEST_MUTEX: std::sync::Mutex<()> = std::sync::Mutex::new(());
-        let _guard = TEST_MUTEX
-            .lock()
-            .unwrap_or_else(|poison| poison.into_inner());
-        let _previous = crate::event_signer::replace_active_signer(None);
-
         let principal_id = "did:webvh:zQmExample:local.host:webvh:01kv0q5a7cfrxa69d5vmtyz72f";
         let device_id = "ak:device:01964137-0000-7000-8000-000000000001";
         let seed = [42u8; 32];
@@ -1018,7 +1012,8 @@ mod tests {
             "did:key:zlocal-device",
             device_id,
         ));
-        crate::event_signer::replace_active_signer(Some(device_signer));
+        let _signer_guard =
+            crate::event_signer::ActiveSignerTestGuard::replace(Some(device_signer));
 
         let policy = build_signed_genesis_recovery_policy_for_session_device(
             principal_id,
@@ -1057,8 +1052,6 @@ mod tests {
         let verifying_key = SigningKey::from_bytes(&seed).verifying_key();
         ed25519_dalek::Verifier::verify(&verifying_key, &bytes, &signature)
             .expect("policy must be signed by the active device key");
-
-        crate::event_signer::replace_active_signer(None);
     }
 
     #[test]

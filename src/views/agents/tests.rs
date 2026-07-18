@@ -428,15 +428,6 @@ mod personal_agent_tests {
 
     #[test]
     fn runtime_key_authorize_event_binds_request_and_scope() {
-        struct ActiveSignerGuard(Option<std::sync::Arc<crate::event_signer::InksonEventSigner>>);
-
-        impl Drop for ActiveSignerGuard {
-            fn drop(&mut self) {
-                let previous = self.0.take();
-                let _ = crate::event_signer::replace_active_signer(previous);
-            }
-        }
-
         let controller = "did:web:controller.example";
         let service_id = "did:web:arkret.example";
         let agent = "did:web:agents.example:summary";
@@ -446,8 +437,7 @@ mod personal_agent_tests {
             controller,
             "ak:device:01964137-0000-7000-8000-000000000007",
         ));
-        let _signer_guard =
-            ActiveSignerGuard(crate::event_signer::replace_active_signer(Some(signer)));
+        let _signer_guard = crate::event_signer::ActiveSignerTestGuard::replace(Some(signer));
         let scope = requested_scope_for_presets(&[], &AgentServiceScopePreset::DEFAULTS).unwrap();
         let key_state = serde_json::json!({
             "agent_id": agent,

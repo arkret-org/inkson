@@ -19,13 +19,13 @@ fn event_timestamp() -> chrono::DateTime<chrono::Utc> {
     crate::clock::now_utc_millis()
 }
 
-/// Canonical timestamp for ordinary payload/object `*_at` fields.
+/// Canonical timestamp for payload/object fields that bind an Event instant.
 ///
-/// Event envelopes and Event proofs use the dedicated three-digit millisecond
-/// profile through the SDK. Payload objects keep the canonical seconds profile
-/// required by the generic content/schema gate.
+/// Create payloads must carry `payload.object.created_at == Event.created_at`.
+/// Both values therefore use the Event profile's fixed three-digit millisecond
+/// representation.
 fn payload_timestamp_wire(created_at: chrono::DateTime<chrono::Utc>) -> String {
-    arkret_sdk::canonical::format_timestamp_canonical(created_at)
+    arkret_sdk::canonical::format_timestamp_millis_canonical(created_at)
 }
 
 fn cell_ref(cell: &str) -> anyhow::Result<arkret_sdk::CellRef> {
@@ -1281,13 +1281,12 @@ mod notary_derivation_tests {
         let object_created_at = event.payload["object"]["created_at"]
             .as_str()
             .expect("managed PCR object created_at");
-        assert!(arkret_sdk::canonical::validate_timestamp_canonical(object_created_at).is_ok());
-        assert!(!object_created_at.contains('.'));
         assert!(
-            arkret_sdk::canonical::validate_timestamp_millis_canonical(
-                &arkret_sdk::canonical::format_timestamp_millis_canonical(event.created_at)
-            )
-            .is_ok()
+            arkret_sdk::canonical::validate_timestamp_millis_canonical(object_created_at).is_ok()
+        );
+        assert_eq!(
+            object_created_at,
+            arkret_sdk::canonical::format_timestamp_millis_canonical(event.created_at)
         );
         assert_eq!(
             event.effects[0].cell.as_str(),

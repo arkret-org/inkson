@@ -449,23 +449,13 @@ fn clear_key_backup_unlock_memory() {
 
 #[cfg(test)]
 mod tests {
-    use std::sync::{Arc, Mutex};
+    use std::sync::Arc;
 
     use super::*;
-    use crate::event_signer::{build_ed25519_signer, replace_active_signer};
-
-    static TEST_MUTEX: Mutex<()> = Mutex::new(());
+    use crate::event_signer::{ActiveSignerTestGuard, build_ed25519_signer, replace_active_signer};
 
     fn reset_signer() -> impl Drop {
-        let guard = TEST_MUTEX.lock().unwrap_or_else(|error| error.into_inner());
-        let _ = replace_active_signer(None);
-        struct Reset(#[allow(dead_code)] std::sync::MutexGuard<'static, ()>);
-        impl Drop for Reset {
-            fn drop(&mut self) {
-                let _ = replace_active_signer(None);
-            }
-        }
-        Reset(guard)
+        ActiveSignerTestGuard::replace(None)
     }
 
     #[test]

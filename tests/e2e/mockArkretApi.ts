@@ -334,6 +334,66 @@ export async function mockArkretApi(
     created_at: "2026-07-05T00:00:00Z",
     updated_at: "2026-07-06T00:10:00Z",
   });
+  if (personalAgentPairingExpiresAt.startsWith("2000-")) {
+    const expiredAgentId = "did:web:agents.example:summary";
+    const expiredRealmId =
+      "ak:realm:01964137-0000-7000-8000-000000000005";
+    const expiredScope = {
+      actions: [
+        "ak.event.read",
+        "ak.message.create",
+        "ak.reaction.add",
+        "ak.self.events.stream.subscribe",
+        "ak.self.events.query.scan",
+        "ak.self.events.command.submit",
+      ],
+      resources: [
+        {
+          kind: "operation",
+          operation: "ak.self.events.stream.subscribe",
+        },
+      ],
+    };
+    const expiredScopeDigest = canonicalSha256({
+      agent_id: expiredAgentId,
+      controller_id: accountPrincipalId,
+      kind: "ak.agent.requested_scope_commitment.v1",
+      requested_scope: expiredScope,
+    });
+    personalAgents.set(expiredAgentId, {
+      agent_id: expiredAgentId,
+      slug: "summary",
+      status: "pairing_expired",
+      created_at: "2026-07-06T00:00:00Z",
+      updated_at: "2026-07-06T00:10:00Z",
+    });
+    personalAgentKeyStates.set(expiredAgentId, {
+      agent_id: expiredAgentId,
+      controller_id: accountPrincipalId,
+      principal_control_realm_id: expiredRealmId,
+      controller_authorization_ref: `${expiredAgentId}#managed-controller`,
+      status: "pairing_expired",
+      pcr_recovery: {
+        status: "ready",
+        backup_id: "ak:backup:01964137-0000-7000-8000-0000000000b1",
+        series_id: "ak:backup_series:01964137-0000-7000-8000-0000000000b2",
+        series_seq: 1,
+        managed_frontier_ref: {
+          frontier_digest:
+            "sha256:2222222222222222222222222222222222222222222222222222222222222222",
+          seal_ref:
+            "ak:seal:sha256:1111111111111111111111111111111111111111111111111111111111111111",
+          mls_epoch: 0,
+        },
+      },
+      pairing_request_id: "pair-expired-1",
+      pairing_code: "246810",
+      pairing_expires_at: personalAgentPairingExpiresAt,
+      requested_scope: expiredScope,
+      requested_scope_digest: expiredScopeDigest,
+    });
+    personalAgentGrants.set(expiredAgentId, []);
+  }
   const eventRealmId = (event: Record<string, unknown>) =>
     String(event.realm_id ?? "");
   const accountDeviceSummaries = () =>
@@ -589,6 +649,7 @@ export async function mockArkretApi(
             account_authority: {
               origin: "https://auth.local.host",
               gate_account_base: "https://auth.local.host/_arkret/gate/account",
+              enrollment_authority_did: ENROLLMENT_AUTHORITY_DID,
             },
             methods: [
               {
@@ -731,6 +792,7 @@ export async function mockArkretApi(
           account_authority: {
             origin: "https://auth.local.host",
             gate_account_base: "https://auth.local.host/_arkret/gate/account",
+            enrollment_authority_did: ENROLLMENT_AUTHORITY_DID,
           },
           methods: [
             {
@@ -748,11 +810,21 @@ export async function mockArkretApi(
             },
           ],
         },
-        limits: { storage: "memory" },
-        rate_limit_policy: { writes_per_minute: 120 },
+        limits: { x_storage: "memory" },
+        rate_limit_policy: {
+          policy_version: "1",
+          entries: [
+            {
+              endpoint: "*",
+              rate_limit_scope: "service",
+              window_seconds: 60,
+              max_requests: 120,
+            },
+          ],
+        },
         plaintext_visibility: {
-          default: "e2ee",
-          allowed_services: ["did:web:server.local"],
+          max_visibility: "none",
+          notes: "E2EE-only mock: no plaintext-visible service surface.",
         },
         implemented_features: [],
         claimed_profiles: [],
@@ -899,6 +971,43 @@ export async function mockArkretApi(
     }
 
     if (
+      url.pathname === "/_arkret/self/events/frontier" &&
+      route.request().method() === "GET"
+    ) {
+      const actorId = url.searchParams.get("actor_id");
+      if (actorId) {
+        return json(route, {
+          frontier: {
+            actor_id: actorId,
+            actor_seq: 0,
+          },
+        });
+      }
+      const realmId = url.searchParams.get("realm_id");
+      if (realmId) {
+        return json(route, {
+          frontier: {
+            realm_id: realmId,
+            seal_id:
+              "ak:seal:sha256:1111111111111111111111111111111111111111111111111111111111111111",
+            control_event_set_root:
+              "sha256:2222222222222222222222222222222222222222222222222222222222222222",
+            state_root:
+              "sha256:3333333333333333333333333333333333333333333333333333333333333333",
+          },
+        });
+      }
+      return json(
+        route,
+        {
+          ok: false,
+          error: { code: "invalid_param", message: "frontier selector is required" },
+        },
+        400,
+      );
+    }
+
+    if (
       url.pathname === "/_arkret/self/events/describe" &&
       route.request().method() === "GET"
     ) {
@@ -921,6 +1030,7 @@ export async function mockArkretApi(
           account_authority: {
             origin: "https://auth.local.host",
             gate_account_base: "https://auth.local.host/_arkret/gate/account",
+            enrollment_authority_did: ENROLLMENT_AUTHORITY_DID,
           },
           methods: [
             {
@@ -938,11 +1048,21 @@ export async function mockArkretApi(
             },
           ],
         },
-        limits: { storage: "memory" },
-        rate_limit_policy: { writes_per_minute: 120 },
+        limits: { x_storage: "memory" },
+        rate_limit_policy: {
+          policy_version: "1",
+          entries: [
+            {
+              endpoint: "*",
+              rate_limit_scope: "service",
+              window_seconds: 60,
+              max_requests: 120,
+            },
+          ],
+        },
         plaintext_visibility: {
-          default: "e2ee",
-          allowed_services: ["did:web:server.local"],
+          max_visibility: "none",
+          notes: "E2EE-only mock: no plaintext-visible service surface.",
         },
         implemented_features: [],
         claimed_profiles: [],
@@ -950,8 +1070,6 @@ export async function mockArkretApi(
         experimental_features: [],
         compat_surfaces: [],
         development_mode: true,
-        // Strict typed EventId — must be a canonical ak:event:<uuidv7>.
-        frontier: ["ak:event:0196419b-0000-7000-8000-00000000e2e0"],
       });
     }
 
@@ -2017,7 +2135,47 @@ export async function mockArkretApi(
       url.pathname === "/_arkret/self/keys/query" &&
       route.request().method() === "POST"
     ) {
-      return json(route, { device_keys: {}, failures: {} });
+      const body = ((await contractRequestBody(route)) ?? {}) as Record<
+        string,
+        unknown
+      >;
+      const requestedDeviceKeys =
+        typeof body.device_keys === "object" && body.device_keys !== null
+          ? (body.device_keys as Record<string, unknown>)
+          : {};
+      const requestedPrincipalId =
+        Object.keys(requestedDeviceKeys)[0] ?? accountPrincipalId;
+      const requestedDevices = requestedDeviceKeys[requestedPrincipalId];
+      const requestedDeviceId =
+        Array.isArray(requestedDevices) && typeof requestedDevices[0] === "string"
+          ? requestedDevices[0]
+          : currentDeviceId;
+      const generationRef = "did-version-e2e-1";
+      return json(route, {
+        device_keys: {
+          [requestedPrincipalId]: {
+            [requestedDeviceId]: {
+              algorithms: {},
+              device_status: "active",
+              enrollment_authority_binding: {
+                kind: "service_attested",
+                authority_did: ENROLLMENT_AUTHORITY_DID,
+                authorization_ref: `${requestedPrincipalId}#enrollment-authority`,
+              },
+              device_authorize_event_id:
+                "ak:event:01964137-0000-7000-8000-00000000a601",
+              authorized_generation_ref: generationRef,
+            },
+          },
+        },
+        failures: [],
+        device_generations: {
+          [requestedPrincipalId]: {
+            current_device_generation_ref: generationRef,
+            device_generation_status: "active",
+          },
+        },
+      });
     }
 
     if (
@@ -2086,7 +2244,6 @@ export async function mockArkretApi(
         string,
         unknown
       >;
-      personalAgentCounter += 1;
       const slug =
         typeof body.slug === "string" && body.slug.trim()
           ? body.slug.trim()
@@ -2101,9 +2258,14 @@ export async function mockArkretApi(
           400,
         );
       }
-      const agentId = `did:web:agents.example:${slug}`;
+      const phase = typeof body.phase === "string" ? body.phase : "";
+      const agentId =
+        phase === "commit" && typeof body.agent_id === "string"
+          ? body.agent_id
+          : `did:web:agents.example:${slug}`;
       const principalControlRealmId =
         "ak:realm:01964137-0000-7000-8000-000000000005";
+      const controllerRealmId = DEMO_REALM;
       const controllerAuthorizationRef = `${agentId}#managed-controller`;
       const requestedScopeDigest = canonicalSha256({
         agent_id: agentId,
@@ -2111,6 +2273,27 @@ export async function mockArkretApi(
         kind: "ak.agent.requested_scope_commitment.v1",
         requested_scope: body.requested_scope,
       });
+      if (phase === "prepare") {
+        personalAgentCounter += 1;
+        return json(route, {
+          status: "awaiting_controller_events",
+          agent_id: agentId,
+          principal_control_realm_id: principalControlRealmId,
+          controller_realm_id: controllerRealmId,
+          controller_authorization_ref: controllerAuthorizationRef,
+          requested_scope_digest: requestedScopeDigest,
+        });
+      }
+      if (phase !== "commit") {
+        return json(
+          route,
+          {
+            ok: false,
+            error: { code: "invalid_param", message: "phase must be prepare or commit" },
+          },
+          400,
+        );
+      }
       const agent = {
         agent_id: agentId,
         ...(typeof body.display_name === "string"
@@ -2123,8 +2306,6 @@ export async function mockArkretApi(
         status: "pending_runtime_key",
         created_at: "2026-07-06T00:00:00Z",
         updated_at: "2026-07-06T00:00:00Z",
-        requested_scope: body.requested_scope,
-        controller_id: accountPrincipalId,
       };
       const keyState = {
         agent_id: agentId,
@@ -2143,6 +2324,7 @@ export async function mockArkretApi(
       personalAgentKeyStates.set(agentId, keyState);
       personalAgentGrants.set(agentId, []);
       return json(route, {
+        status: "complete",
         agent_id: agentId,
         principal_control_realm_id: principalControlRealmId,
         controller_authorization_ref: controllerAuthorizationRef,

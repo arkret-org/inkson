@@ -493,9 +493,7 @@ test("expired personal agent pairing renews in place with a fresh handle", async
 
   await gotoAndDismissRecovery(page, "/settings/agents");
   await expect(page.getByTestId("personal-agent-admin")).toBeVisible();
-  await page.getByTestId("agent-admin-create-open-button").click();
-  await page.getByTestId("agent-admin-provision-agent-slug").fill("summary");
-  await page.getByTestId("agent-admin-provision-button").click();
+  await page.getByTestId("agent-admin-row").filter({ hasText: "summary" }).click();
   await expect(page.getByTestId("agent-admin-pairing-card")).toBeVisible();
   await expect(page.getByTestId("agent-admin-pairing-card")).toContainText("Expired");
   await expect(page.getByTestId("agent-admin-pairing-bootstrap-json")).toHaveCount(0);

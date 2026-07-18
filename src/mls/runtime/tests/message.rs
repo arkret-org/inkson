@@ -23,22 +23,18 @@ async fn commit_pending_history(
 }
 
 #[cfg(not(target_arch = "wasm32"))]
-struct ActiveSignerGuard(Option<std::sync::Arc<crate::event_signer::InksonEventSigner>>);
+struct ActiveSignerGuard {
+    _guard: crate::event_signer::ActiveSignerTestGuard,
+}
 
 #[cfg(not(target_arch = "wasm32"))]
 impl ActiveSignerGuard {
     fn install(seed: [u8; 32], signer_did: &str) -> Self {
         let signer =
             std::sync::Arc::new(crate::event_signer::build_ed25519_signer(seed, signer_did));
-        Self(crate::event_signer::replace_active_signer(Some(signer)))
-    }
-}
-
-#[cfg(not(target_arch = "wasm32"))]
-impl Drop for ActiveSignerGuard {
-    fn drop(&mut self) {
-        let previous = self.0.take();
-        let _ = crate::event_signer::replace_active_signer(previous);
+        Self {
+            _guard: crate::event_signer::ActiveSignerTestGuard::replace(Some(signer)),
+        }
     }
 }
 

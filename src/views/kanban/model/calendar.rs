@@ -114,6 +114,7 @@ pub(crate) fn calendar_fields_from_metadata(
             .map(|days| {
                 days.iter()
                     .filter_map(|day| day.get("day").and_then(Value::as_str))
+                    .map(str::to_ascii_uppercase)
                     .collect::<Vec<_>>()
                     .join(", ")
             })

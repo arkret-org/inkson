@@ -8,9 +8,10 @@
 use std::time::Duration;
 
 use arkret_sdk::models::{
-    AgentDeactivateRequestBody, AgentKeyScope, AgentLifecycleState, AgentPauseRequestBody,
-    AgentPcrRecoveryState, AgentProjection, AgentProvisionOutcome, AgentProvisionRequestBody,
-    AgentRenewPairingOutcome, AgentResumeRequestBody, AgentStatus, AgentView, KeyState,
+    AgentDeactivateRequestBody, AgentKeyScope, AgentLifecycleState, AgentPairingMode,
+    AgentPauseRequestBody, AgentPcrRecoveryState, AgentProjection, AgentProvisionOutcome,
+    AgentProvisionRequestBody, AgentRenewPairingOutcome, AgentResumeRequestBody, AgentStatus,
+    AgentView, KeyState,
 };
 use dioxus::prelude::*;
 use dioxus_primitives::checkbox::CheckboxState;
@@ -242,6 +243,123 @@ mod directory_refresh_tests {
         )));
         assert!(!pairing_material_can_be_exposed(None));
     }
+
+    fn test_pairing_view(status: AgentStatus) -> AgentView {
+        let agent_id = arkret_sdk::Did::new("did:web:agents.example:summary").unwrap();
+        let controller_id = arkret_sdk::Did::new("did:web:alice.example").unwrap();
+        let scope = requested_scope_for_presets(
+            &[AgentGrantPreset::Read],
+            &AgentServiceScopePreset::DEFAULTS,
+        )
+        .unwrap();
+        let scope_digest =
+            arkret_sdk::agent_requested_scope_digest(&agent_id, &controller_id, &scope).unwrap();
+        AgentView {
+            agent: test_agent_projection(status),
+            status,
+            grants: Vec::new(),
+            key_state: Some(KeyState {
+                agent_id,
+                controller_id,
+                principal_control_realm_id: arkret_sdk::RealmId::new(
+                    "ak:realm:01964137-0000-7000-8000-000000000001".to_owned(),
+                )
+                .unwrap(),
+                controller_authorization_ref: "did:web:agents.example:summary#managed-controller"
+                    .to_owned(),
+                status,
+                pcr_recovery: AgentPcrRecoveryState::Pending,
+                requested_scope: scope,
+                requested_scope_digest: scope_digest,
+                pairing_request_id: None,
+                pairing_code: None,
+                pairing_expires_at: None,
+                approval_request_id: None,
+                pending_runtime_key_request: None,
+                approval_requested_at: None,
+                authorized_event_ref: None,
+                active_authorizations: Vec::new(),
+            }),
+        }
+    }
+
+    fn test_renew_outcome(mode: AgentPairingMode) -> AgentRenewPairingOutcome {
+        let row = test_pairing_view(match mode {
+            AgentPairingMode::Bootstrap => AgentStatus::PairingExpired,
+            AgentPairingMode::Replacement => AgentStatus::Active,
+        });
+        let key_state = row.key_state.unwrap();
+        AgentRenewPairingOutcome {
+            agent_id: key_state.agent_id,
+            principal_control_realm_id: key_state.principal_control_realm_id,
+            controller_authorization_ref: key_state.controller_authorization_ref,
+            requested_scope_digest: key_state.requested_scope_digest,
+            pcr_recovery: AgentPcrRecoveryState::Ready {
+                backup_id: arkret_sdk::BackupId::new(
+                    "ak:backup:01964137-0000-7000-8000-000000000002".to_owned(),
+                )
+                .unwrap(),
+                series_id: arkret_sdk::BackupSeriesId::new(
+                    "ak:backup_series:01964137-0000-7000-8000-000000000003".to_owned(),
+                )
+                .unwrap(),
+                series_seq: 0,
+                managed_frontier_ref: arkret_sdk::ManagedFrontierRef {
+                    frontier_digest: arkret_sdk::Hash::new(
+                        "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                    )
+                    .unwrap(),
+                    seal_ref:
+                        "ak:seal:sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+                            .to_owned(),
+                    mls_epoch: 0,
+                },
+            },
+            pairing_mode: mode,
+            pairing_request_id: "pairing-request-2".to_owned(),
+            pairing_code: Some("fresh-code".to_owned()),
+            expires_at: chrono::DateTime::parse_from_rfc3339("2026-07-18T01:00:00Z")
+                .unwrap()
+                .with_timezone(&chrono::Utc),
+        }
+    }
+
+    #[test]
+    fn bootstrap_renewal_reopens_expired_agent_and_exposes_fresh_material() {
+        let mut rows = vec![test_pairing_view(AgentStatus::PairingExpired)];
+        let outcome = test_renew_outcome(AgentPairingMode::Bootstrap);
+        let now = chrono::DateTime::parse_from_rfc3339("2026-07-18T00:00:00Z")
+            .unwrap()
+            .with_timezone(&chrono::Utc);
+
+        apply_renewed_pairing(&mut rows, outcome.agent_id.as_str(), &outcome, now).unwrap();
+
+        assert_eq!(rows[0].status, AgentStatus::PendingRuntimeKey);
+        let key_state = rows[0].key_state.as_ref().unwrap();
+        assert_eq!(key_state.pairing_code.as_deref(), Some("fresh-code"));
+        assert!(key_state.pcr_recovery.is_ready());
+    }
+
+    #[test]
+    fn replacement_renewal_preserves_active_lifecycle_and_existing_key() {
+        let mut rows = vec![test_pairing_view(AgentStatus::Active)];
+        let outcome = test_renew_outcome(AgentPairingMode::Replacement);
+        let now = chrono::DateTime::parse_from_rfc3339("2026-07-18T00:00:00Z")
+            .unwrap()
+            .with_timezone(&chrono::Utc);
+
+        apply_renewed_pairing(&mut rows, outcome.agent_id.as_str(), &outcome, now).unwrap();
+
+        assert_eq!(rows[0].status, AgentStatus::Active);
+        assert_eq!(
+            rows[0].key_state.as_ref().unwrap().status,
+            AgentStatus::Active
+        );
+        assert_eq!(
+            rows[0].key_state.as_ref().unwrap().pairing_code.as_deref(),
+            Some("fresh-code")
+        );
+    }
 }
 
 fn update_agent_status(rows: &mut [AgentView], id: &str, status: AgentStatus) {
@@ -253,25 +371,86 @@ fn update_agent_status(rows: &mut [AgentView], id: &str, status: AgentStatus) {
     }
 }
 
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+enum PairingActionPhase {
+    #[default]
+    Idle,
+    RepairingRecovery,
+    IssuingPairing,
+    RefreshingAgent,
+}
+
 fn apply_renewed_pairing(
     rows: &mut [AgentView],
     renewed_agent_id: &str,
     outcome: &AgentRenewPairingOutcome,
-) {
-    for row in rows.iter_mut() {
-        if agent_id(row) != renewed_agent_id {
-            continue;
-        }
-        row.status = AgentStatus::PendingRuntimeKey;
-        row.agent.status = AgentStatus::PendingRuntimeKey;
-        if let Some(key_state) = row.key_state.as_mut() {
+    now: chrono::DateTime<chrono::Utc>,
+) -> Result<(), &'static str> {
+    if outcome.agent_id.as_str() != renewed_agent_id {
+        return Err("renewed pairing response identifies a different Agent");
+    }
+    if !outcome.pcr_recovery.is_ready() {
+        return Err("renewed pairing did not preserve ready Agent recovery coverage");
+    }
+    if outcome.pairing_request_id.trim().is_empty() {
+        return Err("renewed pairing response omitted the pairing request id");
+    }
+    if outcome
+        .pairing_code
+        .as_deref()
+        .is_none_or(|code| code.trim().is_empty())
+    {
+        return Err("renewed pairing response omitted the new pairing code");
+    }
+    if outcome.expires_at <= now {
+        return Err("renewed pairing response already expired");
+    }
+    let row = rows
+        .iter_mut()
+        .find(|row| agent_id(row) == renewed_agent_id)
+        .ok_or("renewed Agent is missing from the local directory")?;
+    let key_state = row
+        .key_state
+        .as_mut()
+        .ok_or("renewed Agent details are not loaded")?;
+    if key_state.agent_id != outcome.agent_id
+        || key_state.principal_control_realm_id != outcome.principal_control_realm_id
+        || key_state.controller_authorization_ref != outcome.controller_authorization_ref
+        || key_state.requested_scope_digest != outcome.requested_scope_digest
+    {
+        return Err("renewed pairing response does not match the loaded Agent binding");
+    }
+    match outcome.pairing_mode {
+        AgentPairingMode::Bootstrap
+            if matches!(
+                row.status,
+                AgentStatus::PendingRuntimeKey | AgentStatus::PairingExpired
+            ) =>
+        {
+            row.status = AgentStatus::PendingRuntimeKey;
+            row.agent.status = AgentStatus::PendingRuntimeKey;
             key_state.status = AgentStatus::PendingRuntimeKey;
-            key_state.pcr_recovery = outcome.pcr_recovery.clone();
-            key_state.pairing_request_id = Some(outcome.pairing_request_id.clone());
-            key_state.pairing_code = outcome.pairing_code.clone();
-            key_state.pairing_expires_at = Some(outcome.expires_at);
+        }
+        AgentPairingMode::Replacement
+            if matches!(row.status, AgentStatus::Active | AgentStatus::Paused) =>
+        {
+            // Replacement pairing is deliberately non-disruptive: the
+            // accepted runtime key and lifecycle state remain authoritative
+            // until the fresh one-time handle is consumed.
+            key_state.status = row.status;
+        }
+        AgentPairingMode::Bootstrap => {
+            return Err("bootstrap pairing response conflicts with the loaded Agent status");
+        }
+        AgentPairingMode::Replacement => {
+            return Err("replacement pairing response conflicts with the loaded Agent status");
         }
     }
+    key_state.pcr_recovery = outcome.pcr_recovery.clone();
+    key_state.pairing_request_id = Some(outcome.pairing_request_id.clone());
+    key_state.pairing_code = outcome.pairing_code.clone();
+    key_state.pairing_expires_at = Some(outcome.expires_at);
+    Ok(())
 }
 
 async fn renew_agent_pairing(
@@ -373,6 +552,19 @@ fn spawn_refresh_agents(
     });
 }
 
+async fn fetch_agent_details(
+    base: &str,
+    api_token: &str,
+    id: &str,
+) -> Result<AgentView, crate::transport::auth::ApiCallError> {
+    let id = id.to_owned();
+    with_authed_sdk_client(base, api_token.to_owned(), move |http| {
+        let id = id.clone();
+        async move { http.agent_get(&id).await.map_err(anyhow::Error::from) }
+    })
+    .await
+}
+
 fn spawn_load_agent_details(
     base: String,
     api_token: String,
@@ -384,12 +576,7 @@ fn spawn_load_agent_details(
         if id.trim().is_empty() {
             return;
         }
-        match with_authed_sdk_client(&base, api_token, move |http| {
-            let id = id.clone();
-            async move { http.agent_get(&id).await.map_err(anyhow::Error::from) }
-        })
-        .await
-        {
+        match fetch_agent_details(&base, &api_token, &id).await {
             Ok(view) => {
                 agents.with_mut(|rows| upsert_agent_view(rows, view));
             }
@@ -489,6 +676,7 @@ pub fn PersonalAgentAdminPanel(token: Signal<String>, controller_id: String) -> 
     let mut last_op_status = use_signal(String::new);
     let mut copied_pairing_url = use_signal(String::new);
     let mut pairing_action_agent_id = use_signal(String::new);
+    let mut pairing_action_phase = use_signal(PairingActionPhase::default);
     let state_store = crate::app::SessionContext::get().state_store;
     let approval_projection_version = use_memo(move || {
         let mut ids = state_store
@@ -630,6 +818,7 @@ pub fn PersonalAgentAdminPanel(token: Signal<String>, controller_id: String) -> 
     let any_pairing_action_in_flight = !active_pairing_action_id.is_empty();
     let selected_pairing_action_in_flight =
         !selected_id_now.is_empty() && active_pairing_action_id == selected_id_now;
+    let selected_pairing_action_phase = pairing_action_phase();
     let selected_has_pairing_handle =
         !selected_pairing_request_id.is_empty() && !selected_pairing_code.is_empty();
     // Runtime replacement re-pairing (`ak.self.agent.command.renew_pairing`
@@ -1342,6 +1531,7 @@ pub fn PersonalAgentAdminPanel(token: Signal<String>, controller_id: String) -> 
                                                                 return;
                                                             }
                                                             pairing_action_agent_id.set(agent_id.to_string());
+                                                            pairing_action_phase.set(PairingActionPhase::RepairingRecovery);
                                                             let base = base.clone();
                                                             let api_token = token();
                                                             let slug = slug.clone();
@@ -1366,6 +1556,7 @@ pub fn PersonalAgentAdminPanel(token: Signal<String>, controller_id: String) -> 
                                                                 match result {
                                                                     Ok(()) => {
                                                                         if pairing_expired {
+                                                                            pairing_action_phase.set(PairingActionPhase::IssuingPairing);
                                                                             let renewed_agent_id = agent_id.to_string();
                                                                             match renew_agent_pairing(
                                                                                 base.clone(),
@@ -1375,21 +1566,59 @@ pub fn PersonalAgentAdminPanel(token: Signal<String>, controller_id: String) -> 
                                                                             .await
                                                                             {
                                                                                 Ok(outcome) => {
-                                                                                    agents.with_mut(|rows| {
+                                                                                    let applied = agents.with_mut(|rows| {
                                                                                         apply_renewed_pairing(
                                                                                             rows,
                                                                                             &renewed_agent_id,
                                                                                             &outcome,
+                                                                                            crate::clock::now_utc(),
                                                                                         )
                                                                                     });
-                                                                                    last_op_status.set(format!(
-                                                                                        "Ready to pair {}. Scan the new QR or copy the new link; the old one is dead.",
-                                                                                        if slug.trim().is_empty() {
-                                                                                            short_protocol_id(&renewed_agent_id)
-                                                                                        } else {
-                                                                                            slug.clone()
+                                                                                    match applied {
+                                                                                        Ok(()) => last_op_status.set(format!(
+                                                                                            "Ready to pair {}. Scan the new QR or copy the new link; the old one is dead.",
+                                                                                            if slug.trim().is_empty() {
+                                                                                                short_protocol_id(&renewed_agent_id)
+                                                                                            } else {
+                                                                                                slug.clone()
+                                                                                            }
+                                                                                        )),
+                                                                                        Err(reason) => {
+                                                                                            last_op_status.set(format!(
+                                                                                                "A new pairing code was created, but the Agent view could not display it: {reason}. Refreshing details…"
+                                                                                            ));
+                                                                                            pairing_action_phase.set(PairingActionPhase::RefreshingAgent);
+                                                                                            match fetch_agent_details(
+                                                                                                &base,
+                                                                                                &api_token,
+                                                                                                &renewed_agent_id,
+                                                                                            )
+                                                                                            .await
+                                                                                            {
+                                                                                                Ok(view) => {
+                                                                                                    let mut refreshed = vec![view];
+                                                                                                    match apply_renewed_pairing(
+                                                                                                        &mut refreshed,
+                                                                                                        &renewed_agent_id,
+                                                                                                        &outcome,
+                                                                                                        crate::clock::now_utc(),
+                                                                                                    ) {
+                                                                                                        Ok(()) => {
+                                                                                                            agents.with_mut(|rows| upsert_agent_view(rows, refreshed.remove(0)));
+                                                                                                            last_op_status.set("Pairing code loaded from the authoritative Agent view.".to_owned());
+                                                                                                        }
+                                                                                                        Err(reason) => last_op_status.set(format!(
+                                                                                                            "The authoritative Agent view still cannot display the new pairing code: {reason}"
+                                                                                                        )),
+                                                                                                    }
+                                                                                                }
+                                                                                                Err(error) => last_op_status.set(format!(
+                                                                                                    "A new pairing code was created, but refreshing the Agent view failed: {}",
+                                                                                                    error.display()
+                                                                                                )),
+                                                                                            }
                                                                                         }
-                                                                                    ));
+                                                                                    }
                                                                                 }
                                                                                 Err(err) => last_op_status.set(format!(
                                                                                     "Setup finished, but creating a new pairing code failed: {}",
@@ -1416,11 +1645,16 @@ pub fn PersonalAgentAdminPanel(token: Signal<String>, controller_id: String) -> 
                                                                     )),
                                                                 }
                                                                 pairing_action_agent_id.set(String::new());
+                                                                pairing_action_phase.set(PairingActionPhase::Idle);
                                                             });
                                                         }
                                                     },
                                                     if selected_pairing_action_in_flight {
-                                                        if selected_pairing_is_expired { "Pairing…" } else { "Finishing…" }
+                                                        match selected_pairing_action_phase {
+                                                            PairingActionPhase::IssuingPairing => "Creating code…",
+                                                            PairingActionPhase::RefreshingAgent => "Refreshing Agent…",
+                                                            _ => "Repairing recovery…",
+                                                        }
                                                     } else if selected_pairing_is_expired {
                                                         "Pair again"
                                                     } else {
@@ -1483,14 +1717,15 @@ pub fn PersonalAgentAdminPanel(token: Signal<String>, controller_id: String) -> 
                                                                 return;
                                                             }
                                                             pairing_action_agent_id.set(renew_agent_id.clone());
+                                                            pairing_action_phase.set(PairingActionPhase::IssuingPairing);
                                                             let base = base.clone();
                                                             let api_token = token();
                                                             let renewed_agent_id = renew_agent_id.clone();
                                                             let slug = renew_slug.clone();
                                                             spawn(async move {
                                                                 let outcome = match renew_agent_pairing(
-                                                                    base,
-                                                                    api_token,
+                                                                    base.clone(),
+                                                                    api_token.clone(),
                                                                     renewed_agent_id.clone(),
                                                                 )
                                                                 .await {
@@ -1501,6 +1736,7 @@ pub fn PersonalAgentAdminPanel(token: Signal<String>, controller_id: String) -> 
                                                                             err.display()
                                                                         ));
                                                                         pairing_action_agent_id.set(String::new());
+                                                                        pairing_action_phase.set(PairingActionPhase::Idle);
                                                                         return;
                                                                     }
                                                                 };
@@ -1508,18 +1744,61 @@ pub fn PersonalAgentAdminPanel(token: Signal<String>, controller_id: String) -> 
                                                                 // card re-renders immediately; the
                                                                 // detail effect refetch reconciles with
                                                                 // the server view afterwards.
-                                                                agents.with_mut(|rows| {
-                                                                    apply_renewed_pairing(rows, &renewed_agent_id, &outcome)
+                                                                let applied = agents.with_mut(|rows| {
+                                                                    apply_renewed_pairing(
+                                                                        rows,
+                                                                        &renewed_agent_id,
+                                                                        &outcome,
+                                                                        crate::clock::now_utc(),
+                                                                    )
                                                                 });
-                                                                last_op_status.set(format!(
-                                                                    "Pairing renewed for {}. Scan the new QR or copy the new link; the old one is dead.",
-                                                                    if slug.trim().is_empty() {
-                                                                        short_protocol_id(&renewed_agent_id)
-                                                                    } else {
-                                                                        slug.clone()
+                                                                match applied {
+                                                                    Ok(()) => last_op_status.set(format!(
+                                                                        "Pairing renewed for {}. Scan the new QR or copy the new link; the old one is dead.",
+                                                                        if slug.trim().is_empty() {
+                                                                            short_protocol_id(&renewed_agent_id)
+                                                                        } else {
+                                                                            slug.clone()
+                                                                        }
+                                                                    )),
+                                                                    Err(reason) => {
+                                                                        last_op_status.set(format!(
+                                                                            "A new pairing code was created, but the Agent view could not display it: {reason}. Refreshing details…"
+                                                                        ));
+                                                                        pairing_action_phase.set(PairingActionPhase::RefreshingAgent);
+                                                                        match fetch_agent_details(
+                                                                            &base,
+                                                                            &api_token,
+                                                                            &renewed_agent_id,
+                                                                        )
+                                                                        .await
+                                                                        {
+                                                                            Ok(view) => {
+                                                                                let mut refreshed = vec![view];
+                                                                                match apply_renewed_pairing(
+                                                                                    &mut refreshed,
+                                                                                    &renewed_agent_id,
+                                                                                    &outcome,
+                                                                                    crate::clock::now_utc(),
+                                                                                ) {
+                                                                                    Ok(()) => {
+                                                                                        agents.with_mut(|rows| upsert_agent_view(rows, refreshed.remove(0)));
+                                                                                        last_op_status.set("Pairing code loaded from the authoritative Agent view.".to_owned());
+                                                                                    }
+                                                                                    Err(reason) => last_op_status.set(format!(
+                                                                                        "The authoritative Agent view still cannot display the new pairing code: {reason}"
+                                                                                    )),
+                                                                                }
+                                                                            }
+                                                                            Err(error) => last_op_status.set(format!(
+                                                                                "A new pairing code was created, but refreshing the Agent view failed: {}",
+                                                                                error.display()
+                                                                            )),
+                                                                        }
                                                                     }
-                                                                ));
+                                                                }
                                                                 pairing_action_agent_id.set(String::new());
+                                                                pairing_action_phase.set(PairingActionPhase::Idle);
                                                             });
                                                         }
                                                     },

@@ -17,6 +17,7 @@ pub mod mls_recovery;
 pub mod storage;
 
 mod account_data;
+mod invite_locator;
 mod profile_helpers;
 mod sections;
 mod widgets;
@@ -27,6 +28,7 @@ use dioxus::prelude::*;
 use dioxus_primitives::checkbox::CheckboxState;
 use dioxus_router::Link;
 use dioxus_router::hooks::use_route;
+use invite_locator::*;
 use profile_helpers::*;
 use sections::*;
 use serde_json::{Map, Value, json};
@@ -46,6 +48,7 @@ use crate::ui::input::Input;
 use crate::ui::label::Label;
 use crate::ui::select::{Select, SelectOption};
 use crate::ui::slider::Slider;
+use crate::ui::textarea::Textarea;
 use crate::views::helpers::{display_name_for_did, short_protocol_id};
 use crate::workflows::blocked_release_workflows;
 
@@ -581,6 +584,55 @@ pub fn SettingsPanel(
     let push_registration = state_store.read().push_registration();
     let push_label = crate::push::push_status_label(push_registration.as_ref());
     let has_session = !token().trim().is_empty();
+    let mut invite_locator_subject = use_signal(String::new);
+    let mut invite_locator_id = use_signal(String::new);
+    let mut invite_locator_token = use_signal(String::new);
+    let mut invite_locator_status = use_signal(String::new);
+    {
+        let current_account = account_did();
+        let current_token = token();
+        let current_base_url = base_url();
+        use_effect(move || {
+            if current_account.trim().is_empty() || current_token.trim().is_empty() {
+                invite_locator_subject.set(String::new());
+                invite_locator_id.set(String::new());
+                invite_locator_token.set(String::new());
+                return;
+            }
+            if current_account == invite_locator_subject() {
+                return;
+            }
+            invite_locator_subject.set(current_account.clone());
+            invite_locator_id.set(String::new());
+            invite_locator_token.set(String::new());
+            invite_locator_status.set("Issuing secure locator…".to_owned());
+            let base = current_base_url.clone();
+            let api_token = current_token.clone();
+            spawn(async move {
+                match with_authed_sdk_client(&base, api_token, |client| async move {
+                    issue_invite_locator(client).await
+                })
+                .await
+                {
+                    Ok(outcome) => {
+                        invite_locator_id.set(outcome.locator_id);
+                        invite_locator_token.set(outcome.locator_token);
+                        invite_locator_status.set(String::new());
+                    }
+                    Err(error) => {
+                        invite_locator_status
+                            .set(format!("Invite locator unavailable: {}", error.display()));
+                    }
+                }
+            });
+        });
+    }
+    let invite_locator_url = if has_session && !invite_locator_token().trim().is_empty() {
+        build_invite_locator_url(&base_url(), &invite_locator_token())
+    } else {
+        String::new()
+    };
+    let invite_locator_qr_svg = render_invite_locator_qr_svg(&invite_locator_url);
     let principal_label = if has_session {
         account_did()
     } else {
@@ -1250,6 +1302,108 @@ pub fn SettingsPanel(
                                                 UiIcon { name: "copy" }
                                             }
                                         }
+                                    }
+                                }
+                            }
+
+                            div { class: "event settings-card-span-2 invite-locator-card", "data-testid": "settings-invite-locator-card",
+                                div { class: "event-head invite-locator-head",
+                                    span { "Invite locator" }
+                                    if has_session {
+                                        div { class: "invite-locator-head-actions",
+                                            span { class: "invite-locator-expiry", "15 min" }
+                                            Button {
+                                                variant: ButtonVariant::Secondary,
+                                                size: ButtonSize::Sm,
+                                                class: "btn invite-locator-action",
+                                                "data-testid": "settings-invite-locator-copy",
+                                                onclick: {
+                                                    let invite_url = invite_locator_url.clone();
+                                                    move |_| {
+                                                        copy_text_to_clipboard(&invite_url);
+                                                        crate::components::feedback::toast_success("feedback.copied_invite_url", vec![]);
+                                                    }
+                                                },
+                                                UiIcon { name: "copy" }
+                                                span { "Copy URL" }
+                                            }
+                                            Button {
+                                                variant: ButtonVariant::Secondary,
+                                                size: ButtonSize::Sm,
+                                                class: "btn invite-locator-action",
+                                                "data-testid": "settings-invite-locator-refresh",
+                                                onclick: move |_| {
+                                                    let base = base_url();
+                                                    let api_token = token();
+                                                    let old_locator_id = invite_locator_id();
+                                                    invite_locator_status.set("Rotating secure locator…".to_owned());
+                                                    spawn(async move {
+                                                        let result = with_authed_sdk_client(&base, api_token, |client| async move {
+                                                            if old_locator_id.is_empty() {
+                                                                issue_invite_locator(client).await
+                                                            } else {
+                                                                rotate_invite_locator(client, old_locator_id).await
+                                                            }
+                                                        }).await;
+                                                        match result {
+                                                            Ok(outcome) => {
+                                                                invite_locator_id.set(outcome.locator_id);
+                                                                invite_locator_token.set(outcome.locator_token);
+                                                                invite_locator_status.set(String::new());
+                                                                crate::components::feedback::toast_success("feedback.invite_locator_refreshed", vec![]);
+                                                            }
+                                                            Err(error) => invite_locator_status.set(format!("Invite locator refresh failed: {}", error.display())),
+                                                        }
+                                                    });
+                                                },
+                                                UiIcon { name: "refresh" }
+                                                span { "Refresh" }
+                                            }
+                                        }
+                                    } else {
+                                        span { "offline" }
+                                    }
+                                }
+                                if has_session {
+                                    if !invite_locator_status().is_empty() {
+                                        div { class: "muted", "data-testid": "settings-invite-locator-status", "{invite_locator_status}" }
+                                    }
+                                    div { class: "invite-locator-panel",
+                                        div { class: "invite-locator-qr-pane",
+                                            strong { class: "invite-locator-pane-label", "QR" }
+                                            if invite_locator_qr_svg.is_empty() {
+                                                div {
+                                                    class: "muted",
+                                                    "data-testid": "settings-invite-locator-qr-empty",
+                                                    "QR unavailable"
+                                                }
+                                            } else {
+                                                div {
+                                                    class: "qr-image",
+                                                    "data-testid": "settings-invite-locator-qr",
+                                                    role: "img",
+                                                    "aria-label": "Invite locator QR code",
+                                                    dangerous_inner_html: "{invite_locator_qr_svg}",
+                                                }
+                                            }
+                                        }
+                                        div { class: "invite-locator-url-pane",
+                                            strong { class: "invite-locator-pane-label", "URL" }
+                                            Textarea {
+                                                id: "settings-invite-locator-url-input",
+                                                class: "mono invite-locator-url-field",
+                                                "data-testid": "settings-invite-locator-url",
+                                                readonly: true,
+                                                rows: "7",
+                                                value: "{invite_locator_url}",
+                                            }
+                                        }
+                                    }
+                                } else {
+                                    div {
+                                        class: "muted",
+                                        "data-testid": "settings-invite-locator-signed-out",
+                                        "Sign in to show invite locator"
                                     }
                                 }
                             }

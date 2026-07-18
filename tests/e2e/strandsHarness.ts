@@ -4,6 +4,7 @@ import { mockArkretApi } from "./mockArkretApi";
 export const DEMO_REALM = "ak:realm:0196419b-0000-7000-8000-000000000000";
 export const CHILD_REALM = "ak:realm:01launchchild0000000000000";
 const DEFAULT_SERVER_URL = "https://local.host";
+const DEFAULT_SERVER_AUDIENCE = "did:web:server.local";
 const DEFAULT_ACCOUNT_DID = "did:web:alice.example";
 const DEFAULT_DEVICE_ID = "ak:device:01964137-0000-7000-8000-0000000000a1";
 const DEFAULT_SESSION_CREDENTIAL = "sx:e2e-token";
@@ -154,7 +155,7 @@ function sessionInjectionRecord(
   return {
     grant_jwt: DEFAULT_SESSION_CREDENTIAL,
     grant_id: "ak:grant:0196419b-0000-7000-8000-00000000e2e1",
-    audience: DEFAULT_SERVER_URL,
+    audience: DEFAULT_SERVER_AUDIENCE,
     dpop_seed_b64url: DEFAULT_DPOP_SEED_B64URL,
     ...overrides,
   };
@@ -194,12 +195,19 @@ export async function writeSessionGrantInjection(
 ) {
   await addSessionGrantInjection(page, overrides);
   await page.evaluate(
-    ({ record, injectionKey }) => {
+    ({ record, injectionKey, defaults }) => {
+      const current = localStorage.getItem("inkson.config.v1");
+      const parsed = current ? JSON.parse(current) : {};
+      localStorage.setItem(
+        "inkson.config.v1",
+        JSON.stringify({ ...defaults, ...parsed, account_did: defaults.account_did }),
+      );
       localStorage.setItem(injectionKey, JSON.stringify(record));
     },
     {
       record: sessionInjectionRecord(overrides),
       injectionKey: TEST_SESSION_INJECTION_KEY,
+      defaults: defaultLocalConfig,
     },
   );
 }
