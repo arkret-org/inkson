@@ -472,21 +472,23 @@ async fn wait_for_agent_pcr_frontier(
     anyhow::bail!("Agent PCR Seal did not cover MLS genesis before the bootstrap deadline")
 }
 
-async fn wait_for_agent_pcr_recovery_ready(
+async fn verify_agent_pcr_recovery_ready(
     http: &arkret_sdk::http_client::Client,
     agent_id: &str,
 ) -> anyhow::Result<()> {
-    for _ in 0..PCR_BOOTSTRAP_WAIT_ATTEMPTS {
-        if let Ok(view) = http.agent_get(agent_id).await
-            && view.key_state.as_ref().is_some_and(|state| {
-                matches!(state.pcr_recovery, AgentPcrRecoveryState::Ready { .. })
-            })
-        {
-            return Ok(());
-        }
-        crate::runtime_helpers::sleep_for(PCR_BOOTSTRAP_WAIT_INTERVAL).await;
+    let view = http.agent_get(agent_id).await?;
+    let Some(key_state) = view.key_state.as_ref() else {
+        anyhow::bail!("Agent details omitted PCR recovery state after setup");
+    };
+    match &key_state.pcr_recovery {
+        AgentPcrRecoveryState::Ready { .. } => Ok(()),
+        AgentPcrRecoveryState::Pending => anyhow::bail!(
+            "Agent recovery backup was published, but the server still reports setup pending"
+        ),
+        AgentPcrRecoveryState::Stale { .. } => anyhow::bail!(
+            "Agent recovery backup was published, but the server reports that it does not cover the current Agent state"
+        ),
     }
-    anyhow::bail!("Agent PCR recovery projection did not become ready before the deadline")
 }
 
 async fn collect_current_managed_pcr_backup_items(
@@ -977,7 +979,10 @@ pub(crate) async fn bootstrap_provisioned_agent(
         )?;
         submitter.submit_sdk_event(&active_series).await?;
     }
-    wait_for_agent_pcr_recovery_ready(&http, agent_id).await
+    // Every preceding write has already returned an accepted outcome. A
+    // pending/stale projection cannot be advanced by repeatedly GETting this
+    // resource, so verify once and surface the actionable state to the UI.
+    verify_agent_pcr_recovery_ready(&http, agent_id).await
 }
 
 #[cfg(test)]
