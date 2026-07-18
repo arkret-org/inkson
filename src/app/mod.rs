@@ -1116,6 +1116,7 @@ fn AppBootstrap() -> Element {
                 account_did,
                 sync_generation,
                 session_boot_state,
+                on_onboarding_route: matches!(&content_route, Route::Onboarding),
             }
             MlsRecoveryEffects {
                 state: MlsRecoveryEffectState {
@@ -1131,6 +1132,7 @@ fn AppBootstrap() -> Element {
                     device_id,
                     sync_generation,
                     session_boot_state,
+                    on_onboarding_route: matches!(&content_route, Route::Onboarding),
                 }
             }
             RecoveryReminderEffects {

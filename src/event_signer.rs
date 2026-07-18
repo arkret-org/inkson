@@ -283,6 +283,32 @@ impl InksonEventSigner {
         Ok(signature.to_bytes().to_vec())
     }
 
+    /// Adapt the session device key as an authenticated principal signer.
+    ///
+    /// The locally stored key can have a `did:key` identity while the server
+    /// session binds that same key to `<principal>#<device_id>`. Protocol
+    /// authoring that commits to the account principal must use the latter
+    /// identity, not the local key DID.
+    pub(crate) fn move_signer_adapter_for_principal(
+        &self,
+        principal_id: &Did,
+    ) -> Result<impl MoveSigner + '_, EventSignerError> {
+        let verification_method = match self.device_id.as_deref() {
+            Some(device_id) => format!("{principal_id}#{device_id}"),
+            None if self.signer_did == principal_id.as_str() => self.verification_method.clone(),
+            None => {
+                return Err(EventSignerError::Encoding(format!(
+                    "principal-bound signing for {principal_id} requires a bound device_id"
+                )));
+            }
+        };
+        Ok(InksonMoveSignerAdapter {
+            owner: self,
+            did: principal_id.clone(),
+            verification_method,
+        })
+    }
+
     /// `"ed25519"` for the in-process seed signer, `"external"` for
     /// SDK-trait delegated backends. Surfaced by the settings UI badge.
     pub fn mode_tag(&self) -> &'static str {
@@ -966,6 +992,24 @@ mod tests {
         );
         assert_eq!(signer.algorithm(), "EdDSA");
         assert_eq!(signer.mode_tag(), "ed25519");
+    }
+
+    #[test]
+    fn principal_move_signer_uses_authenticated_account_did_not_local_key_did() {
+        let _g = reset();
+        let signer =
+            build_ed25519_device_signer([19u8; 32], "did:key:zlocal-device-key", TEST_DEVICE_ID);
+        let controller = Did::new("did:web:controller.example").unwrap();
+
+        let adapter = signer
+            .move_signer_adapter_for_principal(&controller)
+            .unwrap();
+
+        assert_eq!(adapter.signer_did(), &controller);
+        assert_eq!(
+            adapter.verification_method_id(),
+            format!("{controller}#{TEST_DEVICE_ID}")
+        );
     }
 
     #[test]

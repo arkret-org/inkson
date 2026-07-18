@@ -19,8 +19,13 @@ fn event_timestamp() -> chrono::DateTime<chrono::Utc> {
     crate::clock::now_utc_millis()
 }
 
-fn event_timestamp_wire(created_at: chrono::DateTime<chrono::Utc>) -> String {
-    arkret_sdk::canonical::format_timestamp_millis_canonical(created_at)
+/// Canonical timestamp for ordinary payload/object `*_at` fields.
+///
+/// Event envelopes and Event proofs use the dedicated three-digit millisecond
+/// profile through the SDK. Payload objects keep the canonical seconds profile
+/// required by the generic content/schema gate.
+fn payload_timestamp_wire(created_at: chrono::DateTime<chrono::Utc>) -> String {
+    arkret_sdk::canonical::format_timestamp_canonical(created_at)
 }
 
 fn cell_ref(cell: &str) -> anyhow::Result<arkret_sdk::CellRef> {
@@ -330,7 +335,7 @@ pub fn build_realm_create_event(
         "notary_profile": notary_profile,
         "digest_algorithm": digest_algorithm,
         "notary": notary,
-        "created_at": event_timestamp_wire(created_at_for_object),
+        "created_at": payload_timestamp_wire(created_at_for_object),
     });
     // §2.10 content scheme (capability axis): MLS-backed realms default to the
     // history-shareable `mls-exporter-aead-v1` scheme so a late joiner CAN be
@@ -690,7 +695,7 @@ pub fn build_space_create_event(
         .map_err(|e| anyhow::anyhow!("ak.space.create object serialize: {e}"))?;
     // Preserve the envelope timestamp on the wire object (SDK defaults
     // `created_at` to construction time).
-    object["created_at"] = Value::String(event_timestamp_wire(created_at));
+    object["created_at"] = Value::String(payload_timestamp_wire(created_at));
 
     let cell = space_cell("ak.component.space.create.v1", space_id);
     let preconditions = vec![head_eq_precondition(&cell, Value::Null)?];
@@ -1170,7 +1175,7 @@ pub fn build_signed_device_verification_proof(
         "from_device": from_device,
         "target_device": target_device,
         "method": method,
-        "created_at": event_timestamp_wire(event_timestamp()),
+        "created_at": payload_timestamp_wire(event_timestamp()),
     });
     if let Some(sas_decimal) = sas_decimal {
         body["sas_decimal"] = json!(sas_decimal);
@@ -1272,6 +1277,17 @@ mod notary_derivation_tests {
         assert_eq!(
             event.payload["object"]["notary"]["did"],
             event.actor_id.as_str()
+        );
+        let object_created_at = event.payload["object"]["created_at"]
+            .as_str()
+            .expect("managed PCR object created_at");
+        assert!(arkret_sdk::canonical::validate_timestamp_canonical(object_created_at).is_ok());
+        assert!(!object_created_at.contains('.'));
+        assert!(
+            arkret_sdk::canonical::validate_timestamp_millis_canonical(
+                &arkret_sdk::canonical::format_timestamp_millis_canonical(event.created_at)
+            )
+            .is_ok()
         );
         assert_eq!(
             event.effects[0].cell.as_str(),
