@@ -137,9 +137,6 @@ pub async fn ensure_wasm_secure_key_store_ready(
     if let Some(store) = WASM_INDEXEDDB_SECURE_KEY_STORE.get() {
         return Ok(store.clone());
     }
-    if wasm_localstorage_secret_downgrade_enabled() {
-        return Ok(default_secure_key_store(service_name));
-    }
     // `Some(store)` is the `+ Send + Sync` trait object; `Ok(store)` coerces it
     // down to the bare `Arc<dyn SecureKeyStore>` return type at the argument site.
     match initialize_wasm_secure_key_store_async(service_name).await? {
