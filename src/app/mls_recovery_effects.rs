@@ -14,6 +14,7 @@ pub(super) struct MlsRecoveryEffectState {
     pub device_id: Signal<String>,
     pub sync_generation: Signal<u64>,
     pub session_boot_state: Signal<SessionBootState>,
+    pub on_onboarding_route: bool,
 }
 
 #[component]
@@ -31,6 +32,7 @@ pub(super) fn MlsRecoveryEffects(state: MlsRecoveryEffectState) -> Element {
         device_id,
         sync_generation,
         session_boot_state,
+        on_onboarding_route,
     } = state;
     let SessionContext {
         state_store,
@@ -50,6 +52,14 @@ pub(super) fn MlsRecoveryEffects(state: MlsRecoveryEffectState) -> Element {
         let secure_store_ready_for_detection = secure_store_bootstrap_ready;
         let account_recovery_configured_for_detection = account_recovery_configured;
         use_effect(move || {
+            if on_onboarding_route {
+                needs_mls_unlock.set(false);
+                needs_mls_backup.set(false);
+                needs_mls_recovery_setup.set(false);
+                restore_payload_cache.set(None);
+                seen_detection_key.set(None);
+                return;
+            }
             if !secure_store_ready_for_detection() {
                 return;
             }
@@ -130,6 +140,11 @@ pub(super) fn MlsRecoveryEffects(state: MlsRecoveryEffectState) -> Element {
             // flipping. Remove once the driver is fixed.
             tracing::debug!(target: "recovery_diag", key = %detection_key, "mls_unlock detection re-fetch (backups)");
             let seen_detection_key_for_result = seen_detection_key;
+            let should_wait_for_projection = should_wait_for_backup_projection(
+                has_local_account_secret,
+                has_local_mls_snapshot,
+                has_encrypted_realm_projection,
+            );
 
             spawn(async move {
                 let actor_for_sidecar_restore = actor.clone();
@@ -138,7 +153,15 @@ pub(super) fn MlsRecoveryEffects(state: MlsRecoveryEffectState) -> Element {
                     &base,
                     session.clone(),
                     |api| async move {
-                        let payload = crate::mls::account_recovery::fetch_mls_restore_payload_after_projection(&api).await?;
+                        let payload = if should_wait_for_projection {
+                            crate::mls::account_recovery::fetch_mls_restore_payload_after_projection(&api).await?
+                        } else {
+                            // A brand-new account has no MLS material whose
+                            // projection could be racing. One list is enough;
+                            // the encrypted-state inputs in the detection key
+                            // will schedule a retry if that changes later.
+                            crate::mls::account_recovery::fetch_mls_restore_payload(&api).await?
+                        };
                         let history_payload_for_local_restore = if has_local_account_secret {
                             Some(
                                 crate::mls::account_recovery::fetch_mls_history_restore_payload_with_unlock_proof(
@@ -314,4 +337,29 @@ pub(super) fn MlsRecoveryEffects(state: MlsRecoveryEffectState) -> Element {
     }
 
     rsx! {}
+}
+
+fn should_wait_for_backup_projection(
+    has_local_account_secret: bool,
+    has_local_mls_snapshot: bool,
+    has_encrypted_realm_projection: bool,
+) -> bool {
+    has_local_account_secret || has_local_mls_snapshot || has_encrypted_realm_projection
+}
+
+#[cfg(test)]
+mod tests {
+    use super::should_wait_for_backup_projection;
+
+    #[test]
+    fn brand_new_account_does_not_poll_for_nonexistent_mls_backups() {
+        assert!(!should_wait_for_backup_projection(false, false, false));
+    }
+
+    #[test]
+    fn existing_encryption_state_allows_a_bounded_projection_retry() {
+        assert!(should_wait_for_backup_projection(true, false, false));
+        assert!(should_wait_for_backup_projection(false, true, false));
+        assert!(should_wait_for_backup_projection(false, false, true));
+    }
 }

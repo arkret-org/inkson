@@ -104,17 +104,13 @@ fn client_core_message_decode_golden_matches_inkson_ingest() {
         .collect();
     assert!(matches!(
         &decoded[0],
-        arkret_sdk::DecodedInbound::Message(arkret_sdk::DecodedMessage {
-            payload: arkret_sdk::MessageEventPayload::Create(_),
-            ..
-        })
+        arkret_sdk::DecodedInbound::Message(message)
+            if matches!(&message.payload, arkret_sdk::MessageEventPayload::Create(_))
     ));
     assert!(matches!(
         &decoded[1],
-        arkret_sdk::DecodedInbound::Message(arkret_sdk::DecodedMessage {
-            payload: arkret_sdk::MessageEventPayload::ReactionAdd(_),
-            ..
-        })
+        arkret_sdk::DecodedInbound::Message(message)
+            if matches!(&message.payload, arkret_sdk::MessageEventPayload::ReactionAdd(_))
     ));
 
     let event_values: Vec<_> = events

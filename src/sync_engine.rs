@@ -204,8 +204,8 @@ fn push_decoded_account_event(
     event: arkret_sdk::Event,
 ) {
     match decoder.decode_event(event) {
-        DecodedInbound::Message(message) => batch.push(ClientEvent::Message(message)),
-        DecodedInbound::Event(event) => batch.push(ClientEvent::Event(event)),
+        DecodedInbound::Message(message) => batch.push(ClientEvent::Message(*message)),
+        DecodedInbound::Event(event) => batch.push(ClientEvent::Event(*event)),
     }
 }
 

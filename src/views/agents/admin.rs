@@ -9,8 +9,8 @@ use std::time::Duration;
 
 use arkret_sdk::models::{
     AgentDeactivateRequestBody, AgentKeyScope, AgentLifecycleState, AgentPauseRequestBody,
-    AgentPcrRecoveryState, AgentProjection, AgentProvisionRequestBody, AgentResumeRequestBody,
-    AgentStatus, AgentView, KeyState,
+    AgentPcrRecoveryState, AgentProjection, AgentProvisionOutcome, AgentProvisionRequestBody,
+    AgentResumeRequestBody, AgentStatus, AgentView, KeyState,
 };
 use dioxus::prelude::*;
 use dioxus_primitives::checkbox::CheckboxState;
@@ -21,12 +21,12 @@ use yoface::utils::dom::copy_text_to_clipboard;
 use super::model::{
     AgentGrantPreset, AgentServiceScopePreset, agent_state_badge_class, agent_state_label,
     agent_status_wire, agent_view_from_directory_row, build_agent_pairing_deep_link,
-    build_agent_pairing_handoff_token, is_pairing_request_expired, render_agent_pairing_qr_svg,
-    requested_scope_for_presets,
+    build_agent_pairing_handoff_token, build_agent_provision_event_drafts,
+    is_pairing_request_expired, render_agent_pairing_qr_svg, requested_scope_for_presets,
 };
 use crate::components::UiIcon;
 use crate::routes::Route;
-use crate::transport::auth::{with_authed_api, with_authed_sdk_client};
+use crate::transport::auth::{with_authed_api, with_authed_sdk_client, with_event_submitter};
 use crate::ui::button::{Button, ButtonSize, ButtonVariant};
 use crate::ui::checkbox::Checkbox;
 use crate::ui::dialog::Dialog;
@@ -423,7 +423,7 @@ fn spawn_set_agent_enabled(
 }
 
 #[component]
-pub fn PersonalAgentAdminPanel(token: Signal<String>) -> Element {
+pub fn PersonalAgentAdminPanel(token: Signal<String>, controller_id: String) -> Element {
     // A4 — base_url from session context instead of a prop.
     let base_url = crate::app::SessionContext::base_url_string();
     let navigator = use_navigator();
@@ -873,6 +873,7 @@ pub fn PersonalAgentAdminPanel(token: Signal<String>) -> Element {
                                         disabled: new_agent_slug().trim().is_empty(),
                                         onclick: {
                                             let base = base_url.clone();
+                                            let controller_id = controller_id.clone();
                                             move |_| {
                                                 let slug_value = normalize_agent_slug(&new_agent_slug());
                                                 if slug_value.is_empty() {
@@ -891,6 +892,17 @@ pub fn PersonalAgentAdminPanel(token: Signal<String>) -> Element {
                                                     last_op_status.set("Select at least one runtime service surface.".to_owned());
                                                     return;
                                                 }
+                                                let controller_id = match arkret_sdk::Did::new(
+                                                    controller_id.trim().to_owned(),
+                                                ) {
+                                                    Ok(controller_id) => controller_id,
+                                                    Err(error) => {
+                                                        last_op_status.set(format!(
+                                                            "Create failed: signed-in controller DID is invalid: {error}"
+                                                        ));
+                                                        return;
+                                                    }
+                                                };
                                                 let requested_scope = match requested_scope_for_presets(
                                                     &content_presets,
                                                     &service_scopes,
@@ -905,18 +917,17 @@ pub fn PersonalAgentAdminPanel(token: Signal<String>) -> Element {
                                                     new_agent_avatar_blob_ref(),
                                                 )
                                                 .ok();
-                                                let body = AgentProvisionRequestBody {
+                                                let body = AgentProvisionRequestBody::Prepare {
                                                     display_name: None,
                                                     slug: slug_value.clone(),
                                                     avatar_blob_ref: avatar_blob_ref.clone(),
                                                     requested_scope: requested_scope.clone(),
-                                                    accountability: None,
                                                     pairing_ttl_ms: None,
                                                 };
                                                 let base = base.clone();
                                                 let api_token = token();
                                                 spawn(async move {
-                                                    let outcome = match with_authed_sdk_client(
+                                                    let preparation = match with_authed_sdk_client(
                                                         &base,
                                                         api_token.clone(),
                                                         move |http| {
@@ -926,11 +937,136 @@ pub fn PersonalAgentAdminPanel(token: Signal<String>) -> Element {
                                                     )
                                                     .await
                                                     {
-                                                        Ok(outcome) => outcome,
+                                                        Ok(AgentProvisionOutcome::AwaitingControllerEvents {
+                                                            agent_id,
+                                                            principal_control_realm_id,
+                                                            controller_realm_id,
+                                                            controller_authorization_ref,
+                                                            requested_scope_digest,
+                                                        }) => (
+                                                            agent_id,
+                                                            principal_control_realm_id,
+                                                            controller_realm_id,
+                                                            controller_authorization_ref,
+                                                            requested_scope_digest,
+                                                        ),
+                                                        Ok(AgentProvisionOutcome::Complete { .. }) => {
+                                                            last_op_status.set(
+                                                                "Create failed: prepare returned a completed allocation"
+                                                                    .to_owned(),
+                                                            );
+                                                            return;
+                                                        }
                                                         Err(err) => {
                                                             last_op_status.set(format!(
                                                                 "Create failed: {}",
                                                                 err.display()
+                                                            ));
+                                                            return;
+                                                        }
+                                                    };
+                                                    let (
+                                                        allocated_agent_id,
+                                                        principal_control_realm_id,
+                                                        controller_realm_id,
+                                                        _controller_authorization_ref,
+                                                        requested_scope_digest,
+                                                    ) = preparation;
+                                                    let observed_digest = match arkret_sdk::agent_requested_scope_digest(
+                                                        &allocated_agent_id,
+                                                        &controller_id,
+                                                        &requested_scope,
+                                                    ) {
+                                                        Ok(digest) => digest,
+                                                        Err(error) => {
+                                                            last_op_status.set(format!(
+                                                                "Create failed: requested scope digest: {error}"
+                                                            ));
+                                                            return;
+                                                        }
+                                                    };
+                                                    if observed_digest != requested_scope_digest {
+                                                        last_op_status.set(
+                                                            "Create failed: server allocation scope digest mismatch"
+                                                                .to_owned(),
+                                                        );
+                                                        return;
+                                                    }
+                                                    let drafts = match build_agent_provision_event_drafts(
+                                                        &controller_id,
+                                                        &controller_realm_id,
+                                                        &allocated_agent_id,
+                                                        &slug_value,
+                                                    ) {
+                                                        Ok(events) => events,
+                                                        Err(error) => {
+                                                            last_op_status.set(format!(
+                                                                "Create failed: author provision Events: {error}"
+                                                            ));
+                                                            return;
+                                                        }
+                                                    };
+                                                    let signed_events = match with_event_submitter(
+                                                        &base,
+                                                        api_token.clone(),
+                                                        move |submitter| async move {
+                                                            let events = submitter
+                                                                .prepare_sdk_events_batch(vec![
+                                                                    drafts.accountability_grant,
+                                                                    drafts.selector_claim,
+                                                                ])
+                                                                .await?;
+                                                            let mut events = events.into_iter();
+                                                            Ok(arkret_sdk::AgentProvisionEvents {
+                                                                accountability_grant: events.next().expect("two prepared Events"),
+                                                                selector_claim: events.next().expect("two prepared Events"),
+                                                            })
+                                                        },
+                                                    )
+                                                    .await
+                                                    {
+                                                        Ok(events) => events,
+                                                        Err(error) => {
+                                                            last_op_status.set(format!(
+                                                                "Create failed: sign provision Events: {}",
+                                                                error.display()
+                                                            ));
+                                                            return;
+                                                        }
+                                                    };
+                                                    let commit = AgentProvisionRequestBody::Commit {
+                                                        agent_id: allocated_agent_id,
+                                                        principal_control_realm_id,
+                                                        display_name: None,
+                                                        slug: slug_value.clone(),
+                                                        avatar_blob_ref: avatar_blob_ref.clone(),
+                                                        requested_scope: requested_scope.clone(),
+                                                        provision_events: signed_events,
+                                                        pairing_ttl_ms: None,
+                                                    };
+                                                    let outcome = match with_authed_sdk_client(
+                                                        &base,
+                                                        api_token.clone(),
+                                                        move |http| async move {
+                                                            http.agent_provision(&commit)
+                                                                .await
+                                                                .map_err(anyhow::Error::from)
+                                                        },
+                                                    )
+                                                    .await
+                                                    {
+                                                        Ok(AgentProvisionOutcome::Complete { outcome }) => outcome,
+                                                        Ok(AgentProvisionOutcome::AwaitingControllerEvents { .. }) => {
+                                                            last_op_status.set(
+                                                                "Create failed: commit returned another preparation"
+                                                                    .to_owned(),
+                                                            );
+                                                            return;
+                                                        }
+                                                        Err(error) => {
+                                                            last_op_status.set(format!(
+                                                                "Create failed: {}",
+                                                                error.display()
                                                             ));
                                                             return;
                                                         }

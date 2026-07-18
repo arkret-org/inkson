@@ -274,7 +274,7 @@ mod personal_agent_tests {
 
     #[test]
     fn bootstrap_serializes_spec_six_fields_without_scope_or_private_key() {
-        let outcome = arkret_sdk::AgentProvisionOutcome {
+        let outcome = arkret_sdk::AgentProvisionComplete {
             agent_id: arkret_sdk::Did::new("did:web:agents.example:summary").unwrap(),
             principal_control_realm_id: arkret_sdk::RealmId::new(
                 "ak:realm:01964137-0000-7000-8000-000000000005",
@@ -319,7 +319,7 @@ mod personal_agent_tests {
 
     #[test]
     fn deep_link_is_https_universal_link_wrapping_a_short_pairing_token() {
-        let outcome = arkret_sdk::AgentProvisionOutcome {
+        let outcome = arkret_sdk::AgentProvisionComplete {
             agent_id: arkret_sdk::Did::new("did:web:agents.example:summary").unwrap(),
             principal_control_realm_id: arkret_sdk::RealmId::new(
                 "ak:realm:01964137-0000-7000-8000-000000000005",

@@ -1375,6 +1375,7 @@ pub fn SettingsPanel(
                     if active_section == SettingsSection::Agents {
                         crate::views::agents::PersonalAgentAdminPanel {
                             token,
+                            controller_id: account_did(),
                         }
                     }
 

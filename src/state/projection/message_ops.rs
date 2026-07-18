@@ -254,7 +254,7 @@ mod tests {
             .try_decode_event(event)
             .unwrap();
         let client_event = match decoded {
-            arkret_sdk::DecodedInbound::Message(message) => garth::ClientEvent::Message(message),
+            arkret_sdk::DecodedInbound::Message(message) => garth::ClientEvent::Message(*message),
             other => panic!("expected message, got {other:?}"),
         };
 

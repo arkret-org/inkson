@@ -122,7 +122,6 @@ fn PendingAccountIdentityCreation(
     account_primary_handle: Signal<String>,
 ) -> Element {
     let state_store = crate::app::SessionContext::get().state_store;
-    let handoff = state_store.read().pending_account_handoff();
     let mut choice = use_signal(IdentityChoice::default);
     let mut recovery_key = use_signal(String::new);
     let mut confirmation = use_signal(String::new);
@@ -130,6 +129,29 @@ fn PendingAccountIdentityCreation(
     let mut busy = use_signal(|| false);
     let mut complete = use_signal(|| false);
     let mut status = use_signal(String::new);
+
+    // Completion clears the durable handoff/checkpoint. Render the success
+    // surface from component-local state before reading either checkpoint so
+    // their cleanup cannot transiently (or permanently, if the scoped task is
+    // cancelled) turn the final onboarding page into an empty node.
+    if complete() {
+        return rsx! {
+            div { class: "event onboarding-card", "data-testid": "account-handoff-onboarding",
+                SetupProgress { current: 3 }
+                div { class: "onboarding-finished", "data-testid": "onboarding-complete",
+                    div { class: "onboarding-finish-mark", "aria-hidden": "true", "✓" }
+                    h2 { "Identity ready" }
+                    p { class: "muted", "Your account, this device, and recovery backup are ready." }
+                    if !status().is_empty() {
+                        div { class: "form-hint-warn", role: "status", "{status}" }
+                    }
+                    Link { class: "primary", to: Route::Dashboard, "Continue" }
+                }
+            }
+        };
+    }
+
+    let handoff = state_store.read().pending_account_handoff();
 
     let Some(handoff) = handoff else {
         return rsx! {};
@@ -160,9 +182,7 @@ fn PendingAccountIdentityCreation(
         };
     }
 
-    let current_step = if complete() {
-        3
-    } else if choice() == IdentityChoice::Create {
+    let current_step = if choice() == IdentityChoice::Create {
         2
     } else {
         1
@@ -173,14 +193,7 @@ fn PendingAccountIdentityCreation(
         div { class: "event onboarding-card", "data-testid": "account-handoff-onboarding",
             SetupProgress { current: current_step }
 
-            if complete() {
-                div { class: "onboarding-finished", "data-testid": "onboarding-complete",
-                    div { class: "onboarding-finish-mark", "aria-hidden": "true", "✓" }
-                    h2 { "Identity ready" }
-                    p { class: "muted", "Your account, this device, and recovery backup are ready." }
-                    Link { class: "primary", to: Route::Dashboard, "Continue" }
-                }
-            } else if choice() == IdentityChoice::Choose {
+            if choice() == IdentityChoice::Choose {
                 div { class: "onboarding-heading",
                     span { class: "eyebrow", "Step 1" }
                     h2 { "Choose your identity" }
@@ -362,6 +375,11 @@ fn PendingAccountIdentityCreation(
                                         confirmation.set(String::new());
                                         status.set(String::new());
                                         complete.set(true);
+                                        if let Err(error) = clear_completed_principal_setup(state_store).await {
+                                            status.set(format!(
+                                                "Setup finished, but local cleanup failed: {error}"
+                                            ));
+                                        }
                                     }
                                     Err(error) => {
                                         status.set(format!("Setup could not finish: {error}"));
@@ -533,13 +551,21 @@ async fn create_bind_and_bootstrap_identity(
     )
     .await?;
 
-    // Only now is the uninterrupted flow allowed to leave the handoff panel.
-    // If bootstrap fails, both the current in-memory key and the durable public
-    // checkpoint remain available for a safe retry.
-    state_store.write().set_pending_account_handoff(None)?;
-    crate::identity::account_auth::clear_account_handoff_grant()?;
-
     Ok((actor, device.to_owned(), grant_jwt))
+}
+
+async fn clear_completed_principal_setup(
+    mut state_store: SyncSignal<crate::state::LocalStateStore>,
+) -> anyhow::Result<()> {
+    let barrier = {
+        let mut store = state_store.write();
+        store.set_pending_principal_registration(None)?;
+        store.set_pending_account_handoff(None)?;
+        store.begin_durable_flush()?
+    };
+    barrier.wait().await?;
+    crate::identity::account_auth::clear_account_handoff_grant()?;
+    Ok(())
 }
 
 fn can_replace_checkpoint_for_new_handoff(
@@ -647,12 +673,6 @@ async fn finish_principal_setup(
         recovery_key,
     )
     .ok_or_else(|| anyhow::anyhow!("save public recovery metadata failed"))?;
-    let barrier = {
-        let mut store = state_store.write();
-        store.set_pending_principal_registration(None)?;
-        store.begin_durable_flush()?
-    };
-    barrier.wait().await?;
     Ok(backup_id)
 }
 
@@ -666,11 +686,29 @@ fn PendingPrincipalBootstrap(
 ) -> Element {
     let base_url = crate::app::SessionContext::base_url_string();
     let state_store = crate::app::SessionContext::get().state_store;
-    let checkpoint = state_store.read().pending_principal_registration();
     let mut recovery_key = use_signal(String::new);
     let mut busy = use_signal(|| false);
     let mut complete = use_signal(|| false);
     let mut status = use_signal(String::new);
+
+    if complete() {
+        return rsx! {
+            div { class: "event onboarding-card", "data-testid": "pending-principal-bootstrap",
+                SetupProgress { current: 3 }
+                div { class: "onboarding-finished", "data-testid": "onboarding-complete",
+                    div { class: "onboarding-finish-mark", "aria-hidden": "true", "✓" }
+                    h2 { "Identity ready" }
+                    p { class: "muted", "Your account and this device are ready." }
+                    if !status().is_empty() {
+                        div { class: "form-hint-warn", role: "status", "{status}" }
+                    }
+                    Link { class: "primary", to: Route::Dashboard, "Continue" }
+                }
+            }
+        };
+    }
+
+    let checkpoint = state_store.read().pending_principal_registration();
 
     let Some(registration) = checkpoint else {
         return rsx! {};
@@ -679,44 +717,36 @@ fn PendingPrincipalBootstrap(
 
     rsx! {
         div { class: "event onboarding-card", "data-testid": "pending-principal-bootstrap",
-            SetupProgress { current: if complete() { 3 } else { 2 } }
-            if complete() {
-                div { class: "onboarding-finished",
-                    div { class: "onboarding-finish-mark", "aria-hidden": "true", "✓" }
-                    h2 { "Identity ready" }
-                    p { class: "muted", "Your account and this device are ready." }
-                    Link { class: "primary", to: Route::Dashboard, "Continue" }
+            SetupProgress { current: 2 }
+            div { class: "onboarding-heading",
+                span { class: "eyebrow", "Continue setup" }
+                h2 { "Enter your Recovery Key" }
+                p { class: "muted", "Use the same 24 words you saved for {did_label}." }
+            }
+            div { class: "workflow-form onboarding-confirmation",
+                Label { html_for: "bootstrap-recovery-key", "Recovery Key" }
+                Textarea {
+                    id: "bootstrap-recovery-key",
+                    "data-testid": "bootstrap-recovery-key",
+                    rows: "4",
+                    autocomplete: "off",
+                    value: "{recovery_key}",
+                    disabled: busy(),
+                    placeholder: "Enter all 24 words",
+                    oninput: move |event: FormEvent| recovery_key.set(event.value()),
                 }
-            } else {
-                div { class: "onboarding-heading",
-                    span { class: "eyebrow", "Continue setup" }
-                    h2 { "Enter your Recovery Key" }
-                    p { class: "muted", "Use the same 24 words you saved for {did_label}." }
+            }
+            if !status().is_empty() {
+                div {
+                    class: if busy() { "muted" } else { "form-hint-warn" },
+                    role: "status",
+                    "aria-live": "polite",
+                    "data-testid": "bootstrap-status",
+                    "{status}"
                 }
-                div { class: "workflow-form onboarding-confirmation",
-                    Label { html_for: "bootstrap-recovery-key", "Recovery Key" }
-                    Textarea {
-                        id: "bootstrap-recovery-key",
-                        "data-testid": "bootstrap-recovery-key",
-                        rows: "4",
-                        autocomplete: "off",
-                        value: "{recovery_key}",
-                        disabled: busy(),
-                        placeholder: "Enter all 24 words",
-                        oninput: move |event: FormEvent| recovery_key.set(event.value()),
-                    }
-                }
-                if !status().is_empty() {
-                    div {
-                        class: if busy() { "muted" } else { "form-hint-warn" },
-                        role: "status",
-                        "aria-live": "polite",
-                        "data-testid": "bootstrap-status",
-                        "{status}"
-                    }
-                }
-                div { class: "onboarding-footer-actions is-end",
-                    Button {
+            }
+            div { class: "onboarding-footer-actions is-end",
+                Button {
                         variant: ButtonVariant::Primary,
                         "data-testid": "bootstrap-submit",
                         disabled: busy() || recovery_key().trim().is_empty(),
@@ -779,6 +809,11 @@ fn PendingPrincipalBootstrap(
                                         recovery_key.set(String::new());
                                         status.set(String::new());
                                         complete.set(true);
+                                        if let Err(error) = clear_completed_principal_setup(state_store).await {
+                                            status.set(format!(
+                                                "Setup finished, but local cleanup failed: {error}"
+                                            ));
+                                        }
                                     }
                                     Err(error) => {
                                         status.set(format!("Setup could not finish: {error}"));
@@ -788,7 +823,6 @@ fn PendingPrincipalBootstrap(
                             });
                         },
                         if busy() { "Finishing…" } else { "Continue" }
-                    }
                 }
             }
         }

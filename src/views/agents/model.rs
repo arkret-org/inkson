@@ -10,13 +10,47 @@ use arkret_sdk::models::{
 use arkret_sdk::{
     AgentKeyApprovalEvidence, AgentKeyApprovalEvidenceKind, AgentKeyAuthorizePayload,
     AgentKeyAuthorizePayloadRuntimeAttestation, AgentKeyPairRequestBody, AgentKeySupersession,
-    AgentPairingBootstrap, AgentRequestedScopeDisclosure, Did, DidUrl, Event, EventId,
-    GrantConstraint, GrantConstraintEffect, GrantConstraintSubtype, GrantConstraintType, Hash,
-    NonEmptyJsonObject, NonEmptyString, Proof, PublicKey, RealmId, RequestId,
+    AgentPairingBootstrap, AgentProvisionEvents, AgentRequestedScopeDisclosure, Did, DidUrl, Event,
+    EventId, GrantConstraint, GrantConstraintEffect, GrantConstraintSubtype, GrantConstraintType,
+    Hash, NonEmptyJsonObject, NonEmptyString, Proof, PublicKey, RealmId, RequestId,
 };
 use chrono::Utc;
 use serde::Deserialize;
 use serde_json::{Value, json};
+
+pub fn build_agent_provision_event_drafts(
+    controller_id: &Did,
+    controller_realm_id: &RealmId,
+    agent_id: &Did,
+    agent_slug: &str,
+) -> anyhow::Result<AgentProvisionEvents> {
+    let signer = crate::event_signer::active_signer()
+        .ok_or_else(|| anyhow::anyhow!("no active controller signer"))?;
+    let created_at = crate::clock::now_utc();
+    let accountability_hlc = crate::signing_stamp::issue_protocol_hlc_for_active_device(
+        controller_id.as_str(),
+        controller_realm_id.as_str(),
+    )?;
+    let selector_hlc = crate::signing_stamp::issue_protocol_hlc_for_active_device(
+        controller_id.as_str(),
+        controller_realm_id.as_str(),
+    )?;
+    let move_signer = signer.move_signer_adapter_for_principal(controller_id)?;
+    Ok(arkret_sdk::agent::build_agent_provision_event_drafts(
+        controller_id,
+        controller_realm_id,
+        agent_id,
+        agent_slug,
+        arkret_sdk::agent::AgentProvisionEventDraftOptions {
+            created_at,
+            accountability_actor_seq: 0,
+            accountability_hlc,
+            selector_actor_seq: 0,
+            selector_hlc,
+        },
+        &move_signer,
+    )?)
+}
 
 // ─────────────────────────────────────────────────────────────────────
 // AKP-0008 / AKP-0009 — Envelope `actor_kind` reducer-stamped
@@ -304,7 +338,7 @@ pub fn requested_scope_for_presets(
 pub fn build_agent_pairing_bootstrap_json(
     base_url: &str,
     service_id: &str,
-    outcome: &arkret_sdk::AgentProvisionOutcome,
+    outcome: &arkret_sdk::AgentProvisionComplete,
 ) -> serde_json::Result<String> {
     let base_url = base_url.trim_end_matches('/');
     let bootstrap = AgentPairingBootstrap {

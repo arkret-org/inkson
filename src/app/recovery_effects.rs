@@ -12,6 +12,7 @@ pub(super) fn AccountRecoveryEffects(
     account_did: Signal<String>,
     sync_generation: Signal<u64>,
     session_boot_state: Signal<SessionBootState>,
+    on_onboarding_route: bool,
 ) -> Element {
     let SessionContext {
         state_store,
@@ -21,6 +22,14 @@ pub(super) fn AccountRecoveryEffects(
     let session_coordinator = runtime_services.session.clone();
 
     use_effect(move || {
+        if on_onboarding_route {
+            // The onboarding flow owns recovery publication and its progress
+            // UI. Probing the same backup collection here races that flow and
+            // turns its final transition into redundant network traffic.
+            account_recovery_configured.set(None);
+            account_recovery_detection_key_seen.set(None);
+            return;
+        }
         let base = base_url();
         let credential = token();
         let actor = account_did();
