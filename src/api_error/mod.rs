@@ -38,9 +38,7 @@ struct ApiErrorBody {
 ///
 ///   1. The canonical wrapped shape `{ "error": ErrorEnvelope }` (what our principal server emits
 ///      when its inner handler bubbles a typed envelope through the outer `ApiErrorBody`).
-///   2. A bare envelope `{ "ok": false, "error": { code, message }, request_id? }` — same shape, no
-///      wrapping. The SDK's [`ErrorEnvelope`] requires `request_id`, so we tolerate its absence via
-///      a local shadow type that defaults it to `"unknown"`.
+///   2. The canonical bare envelope `{ "ok": false, "error": { code, message }, request_id }`.
 ///
 /// If none match, we synthesise a minimal envelope tagged
 /// `ak.error.http_status` so downstream code always has something
@@ -53,49 +51,10 @@ struct ApiErrorBody {
 /// obligations array (per `authz/policy-server.md` §3) is pulled from
 /// the envelope's `details["obligations"]` slot if present.
 pub fn decode_arkret_error(status: StatusCode, bytes: &[u8]) -> ErrorEnvelope {
-    #[derive(Deserialize)]
-    struct PlainEnvelope {
-        #[serde(default)]
-        ok: bool,
-        error: arkret_sdk::ErrorDetail,
-        #[serde(default = "default_request_id")]
-        request_id: String,
-    }
-    fn default_request_id() -> String {
-        "unknown".to_owned()
-    }
-    impl From<PlainEnvelope> for ErrorEnvelope {
-        fn from(value: PlainEnvelope) -> Self {
-            ErrorEnvelope {
-                ok: value.ok,
-                error: value.error,
-                request_id: value.request_id,
-            }
-        }
-    }
-    #[derive(Deserialize)]
-    struct WrappedPlainEnvelope {
-        error: PlainEnvelope,
-        #[serde(default)]
-        request_id: Option<String>,
-    }
-    impl From<WrappedPlainEnvelope> for ErrorEnvelope {
-        fn from(value: WrappedPlainEnvelope) -> Self {
-            let mut envelope: ErrorEnvelope = value.error.into();
-            if envelope.request_id == "unknown"
-                && let Some(request_id) = value.request_id
-            {
-                envelope.request_id = request_id;
-            }
-            envelope
-        }
-    }
     let envelope = if let Ok(body) = serde_json::from_slice::<ApiErrorBody>(bytes) {
         body.error
-    } else if let Ok(wrapped_plain) = serde_json::from_slice::<WrappedPlainEnvelope>(bytes) {
-        wrapped_plain.into()
-    } else if let Ok(plain) = serde_json::from_slice::<PlainEnvelope>(bytes) {
-        plain.into()
+    } else if let Ok(plain) = serde_json::from_slice::<ErrorEnvelope>(bytes) {
+        plain
     } else {
         ErrorEnvelope::new(
             "http_status",

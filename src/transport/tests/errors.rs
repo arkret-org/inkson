@@ -17,10 +17,10 @@ fn sdk_api_error(status: StatusCode, body: &'static [u8]) -> anyhow::Error {
 }
 
 #[test]
-fn decodes_wrapped_arkret_error_envelope() {
+fn decodes_bare_arkret_error_envelope() {
     let decoded = decode_arkret_error(
         StatusCode::CONFLICT,
-        br#"{"ok":false,"error":{"code":"expected_head_mismatch","message":"expected_head mismatch","retry_after_ms":250,"details":{"scope":"repo"}}}"#,
+        br#"{"ok":false,"error":{"code":"expected_head_mismatch","message":"expected_head mismatch","retry_after_ms":250,"details":{"scope":"repo"}},"request_id":"ak:request:test"}"#,
     );
     assert_eq!(decoded.code(), "expected_head_mismatch");
     assert_eq!(decoded.message(), "expected_head mismatch");
@@ -32,7 +32,7 @@ fn decodes_wrapped_arkret_error_envelope() {
 fn decodes_plain_error_envelope_and_falls_back() {
     let decoded = decode_arkret_error(
         StatusCode::BAD_REQUEST,
-        br#"{"ok":false,"error":{"code":"invalid_param","message":"invalid did"}}"#,
+        br#"{"ok":false,"error":{"code":"invalid_param","message":"invalid did"},"request_id":"ak:request:test"}"#,
     );
     assert_eq!(decoded.code(), "invalid_param");
 
@@ -63,10 +63,10 @@ fn decodes_canonical_error_envelope_with_request_id() {
 }
 
 #[test]
-fn decodes_wrapped_error_envelope_without_inner_request_id() {
+fn decodes_wrapped_canonical_error_envelope() {
     let decoded = decode_arkret_error(
         StatusCode::UNAUTHORIZED,
-        br#"{"ok":false,"error":{"ok":false,"error":{"code":"auth_expired","message":"session expired"}},"request_id":"ak:request:01964137-0000-7000-8000-000000000011"}"#,
+        br#"{"error":{"ok":false,"error":{"code":"auth_expired","message":"session expired"},"request_id":"ak:request:01964137-0000-7000-8000-000000000011"}}"#,
     );
 
     assert_eq!(decoded.code(), "auth_expired");
@@ -81,37 +81,37 @@ fn decodes_wrapped_error_envelope_without_inner_request_id() {
 fn sdk_api_errors_use_same_classifiers() {
     let rate_limited = sdk_api_error(
         StatusCode::TOO_MANY_REQUESTS,
-        br#"{"ok":false,"error":{"code":"rate_limited","message":"slow down","retry_after_ms":250}}"#,
+        br#"{"ok":false,"error":{"code":"rate_limited","message":"slow down","retry_after_ms":250},"request_id":"ak:request:test"}"#,
     );
     assert_eq!(rate_limited_retry_after(&rate_limited), Some(250));
 
     let snapshot_missing = sdk_api_error(
         StatusCode::NOT_FOUND,
-        br#"{"ok":false,"error":{"code":"unrecognized_endpoint","message":"snapshot head unavailable"}}"#,
+        br#"{"ok":false,"error":{"code":"unrecognized_endpoint","message":"snapshot head unavailable"},"request_id":"ak:request:test"}"#,
     );
     assert!(is_snapshot_unavailable_error(&snapshot_missing));
 
     let invalid_cursor = sdk_api_error(
         StatusCode::BAD_REQUEST,
-        br#"{"ok":false,"error":{"code":"invalid_param","message":"invalid cursor"}}"#,
+        br#"{"ok":false,"error":{"code":"invalid_param","message":"invalid cursor"},"request_id":"ak:request:test"}"#,
     );
     assert!(is_invalid_cursor_error(&invalid_cursor));
 
     let auth_expired = sdk_api_error(
         StatusCode::UNAUTHORIZED,
-        br#"{"ok":false,"error":{"code":"auth_expired","message":"session expired"}}"#,
+        br#"{"ok":false,"error":{"code":"auth_expired","message":"session expired"},"request_id":"ak:request:test"}"#,
     );
     assert!(is_auth_expired_error(&auth_expired));
 
     let revoked_session_grant = sdk_api_error(
         StatusCode::FORBIDDEN,
-        br#"{"ok":false,"error":{"code":"capability_denied","message":"session grant is not active: revoked"}}"#,
+        br#"{"ok":false,"error":{"code":"capability_denied","message":"session grant is not active: revoked"},"request_id":"ak:request:test"}"#,
     );
     assert!(is_terminal_session_grant_error(&revoked_session_grant));
 
     let unsupported_endpoint = sdk_api_error(
         StatusCode::NOT_IMPLEMENTED,
-        br#"{"ok":false,"error":{"code":"not_implemented","message":"account_data unavailable"}}"#,
+        br#"{"ok":false,"error":{"code":"not_implemented","message":"account_data unavailable"},"request_id":"ak:request:test"}"#,
     );
     assert_eq!(
         unsupported_endpoint_status(&unsupported_endpoint),
@@ -120,19 +120,19 @@ fn sdk_api_errors_use_same_classifiers() {
 
     let actor_frontier_absent = sdk_api_error(
         StatusCode::NOT_FOUND,
-        br#"{"ok":false,"error":{"code":"not_found","message":"actor frontier not found"}}"#,
+        br#"{"ok":false,"error":{"code":"not_found","message":"actor frontier not found"},"request_id":"ak:request:test"}"#,
     );
     assert!(is_actor_frontier_absent_error(&actor_frontier_absent));
 
     let actor_seq_cas = sdk_api_error(
         StatusCode::CONFLICT,
-        br#"{"ok":false,"error":{"code":"cas_conflict","message":"actor_seq is behind the accepted frontier"}}"#,
+        br#"{"ok":false,"error":{"code":"cas_conflict","message":"actor_seq is behind the accepted frontier"},"request_id":"ak:request:test"}"#,
     );
     assert!(is_actor_seq_cas_conflict_error(&actor_seq_cas));
 
     let consumed_refresh_grant = sdk_api_error(
         StatusCode::BAD_REQUEST,
-        br#"{"ok":false,"error":{"code":"grant_already_consumed","message":"session grant already consumed"}}"#,
+        br#"{"ok":false,"error":{"code":"grant_already_consumed","message":"session grant already consumed"},"request_id":"ak:request:test"}"#,
     );
     assert!(is_terminal_session_grant_refresh_error(
         &consumed_refresh_grant
@@ -149,7 +149,7 @@ fn recognizes_device_not_authorized_errors() {
         status: StatusCode::FORBIDDEN,
         error: decode_arkret_error(
             StatusCode::FORBIDDEN,
-            br#"{"ok":false,"error":{"code":"device_not_authorized","message":"key backup write requires the authenticated session device to be verified"}}"#,
+            br#"{"ok":false,"error":{"code":"device_not_authorized","message":"key backup write requires the authenticated session device to be verified"},"request_id":"ak:request:test"}"#,
         ),
     }
     .into();
@@ -163,7 +163,7 @@ fn recognizes_device_not_authorized_errors() {
         status: StatusCode::CONFLICT,
         error: decode_arkret_error(
             StatusCode::CONFLICT,
-            br#"{"ok":false,"error":{"code":"recovery_policy_device_not_authorized","message":"recovery policy genesis requires an authorized device for did:webvh:..."}}"#,
+            br#"{"ok":false,"error":{"code":"recovery_policy_device_not_authorized","message":"recovery policy genesis requires an authorized device for did:webvh:..."},"request_id":"ak:request:test"}"#,
         ),
     }
     .into();
@@ -176,7 +176,7 @@ fn recognizes_device_not_authorized_errors() {
         status: StatusCode::FORBIDDEN,
         error: decode_arkret_error(
             StatusCode::FORBIDDEN,
-            br#"{"ok":false,"error":{"code":"device_enrollment_authority_not_designated","message":"no enrollment authority designated"}}"#,
+            br#"{"ok":false,"error":{"code":"device_enrollment_authority_not_designated","message":"no enrollment authority designated"},"request_id":"ak:request:test"}"#,
         ),
     }
     .into();
@@ -189,7 +189,7 @@ fn recognizes_device_not_authorized_errors() {
         status: StatusCode::FORBIDDEN,
         error: decode_arkret_error(
             StatusCode::FORBIDDEN,
-            br#"{"ok":false,"error":{"code":"capability_denied","message":"not a member"}}"#,
+            br#"{"ok":false,"error":{"code":"capability_denied","message":"not a member"},"request_id":"ak:request:test"}"#,
         ),
     }
     .into();
@@ -202,7 +202,7 @@ fn recognizes_auth_expired_errors() {
         status: StatusCode::UNAUTHORIZED,
         error: decode_arkret_error(
             StatusCode::UNAUTHORIZED,
-            br#"{"ok":false,"error":{"code":"auth_expired","message":"session expired"}}"#,
+            br#"{"ok":false,"error":{"code":"auth_expired","message":"session expired"},"request_id":"ak:request:test"}"#,
         ),
     }
     .into();
@@ -223,8 +223,9 @@ fn recognizes_auth_expired_errors() {
 
     // Registry session-loss aliases for the same condition should all trigger.
     for code in ["unauthenticated", "soft_logged_out"] {
-        let body =
-            format!(r#"{{"ok":false,"error":{{"code":"{code}","message":"unknown token"}}}}"#);
+        let body = format!(
+            r#"{{"ok":false,"error":{{"code":"{code}","message":"unknown token"}},"request_id":"ak:request:test"}}"#
+        );
         let aliased: anyhow::Error = TransportClientError {
             status: StatusCode::UNAUTHORIZED,
             error: decode_arkret_error(StatusCode::UNAUTHORIZED, body.as_bytes()),
@@ -239,7 +240,7 @@ fn recognizes_auth_expired_errors() {
         status: StatusCode::UNAUTHORIZED,
         error: decode_arkret_error(
             StatusCode::UNAUTHORIZED,
-            br#"{"ok":false,"error":{"code":"rate_limited","message":"slow down"}}"#,
+            br#"{"ok":false,"error":{"code":"rate_limited","message":"slow down"},"request_id":"ak:request:test"}"#,
         ),
     }
     .into();
@@ -249,7 +250,7 @@ fn recognizes_auth_expired_errors() {
         status: StatusCode::FORBIDDEN,
         error: decode_arkret_error(
             StatusCode::FORBIDDEN,
-            br#"{"ok":false,"error":{"code":"auth_expired","message":"session expired"}}"#,
+            br#"{"ok":false,"error":{"code":"auth_expired","message":"session expired"},"request_id":"ak:request:test"}"#,
         ),
     }
     .into();
@@ -259,7 +260,7 @@ fn recognizes_auth_expired_errors() {
         status: StatusCode::FORBIDDEN,
         error: decode_arkret_error(
             StatusCode::FORBIDDEN,
-            br#"{"ok":false,"error":{"code":"capability_denied","message":"session grant is not active: revoked"}}"#,
+            br#"{"ok":false,"error":{"code":"capability_denied","message":"session grant is not active: revoked"},"request_id":"ak:request:test"}"#,
         ),
     }
     .into();
@@ -270,7 +271,7 @@ fn recognizes_auth_expired_errors() {
         status: StatusCode::FORBIDDEN,
         error: decode_arkret_error(
             StatusCode::FORBIDDEN,
-            br#"{"ok":false,"error":{"code":"capability_denied","message":"actor is not a member of the event Space"}}"#,
+            br#"{"ok":false,"error":{"code":"capability_denied","message":"actor is not a member of the event Space"},"request_id":"ak:request:test"}"#,
         ),
     }
     .into();
@@ -286,7 +287,7 @@ fn recognizes_plaintext_visibility_policy_errors() {
         status: StatusCode::FORBIDDEN,
         error: decode_arkret_error(
             StatusCode::FORBIDDEN,
-            br#"{"ok":false,"error":{"code":"policy_denied","message":"private plaintext message operations require this service in plaintext_visible_services"}}"#,
+            br#"{"ok":false,"error":{"code":"policy_denied","message":"private plaintext message operations require this service in plaintext_visible_services"},"request_id":"ak:request:test"}"#,
         ),
     }
     .into();
@@ -296,7 +297,7 @@ fn recognizes_plaintext_visibility_policy_errors() {
         status: StatusCode::FORBIDDEN,
         error: decode_arkret_error(
             StatusCode::FORBIDDEN,
-            br#"{"ok":false,"error":{"code":"capability_denied","message":"private plaintext message operations require this service in plaintext_visible_services"}}"#,
+            br#"{"ok":false,"error":{"code":"capability_denied","message":"private plaintext message operations require this service in plaintext_visible_services"},"request_id":"ak:request:test"}"#,
         ),
     }
     .into();
@@ -306,7 +307,7 @@ fn recognizes_plaintext_visibility_policy_errors() {
         status: StatusCode::FORBIDDEN,
         error: decode_arkret_error(
             StatusCode::FORBIDDEN,
-            br#"{"ok":false,"error":{"code":"policy_denied","message":"only the space owner can update policy"}}"#,
+            br#"{"ok":false,"error":{"code":"policy_denied","message":"only the space owner can update policy"},"request_id":"ak:request:test"}"#,
         ),
     }
     .into();
