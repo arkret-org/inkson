@@ -101,6 +101,6 @@ pub fn push_register_view_from_chime_response(
     PushRegisterView {
         ok: response.ok,
         registration_id: response.registration_id,
-        expires_at: response.expires_at,
+        expires_at: response.expires_at.map(|value| value.to_rfc3339()),
     }
 }

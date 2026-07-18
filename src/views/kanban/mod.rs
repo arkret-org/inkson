@@ -793,12 +793,6 @@ pub fn KanbanPanel(
             cols
         }
     });
-    // Cap-Gate-2: consume the app-level CapabilityEngine context so the
-    // Archive / Restore buttons can pre-gate themselves. When the engine
-    // carries no grants for the actor the gate stays open (inkson still
-    // trusts the server). Cap-Gate-3 (below) computes the per-button
-    // gate inside the render path.
-    let capability_engine = use_context::<Signal<crate::capability::CapabilityEngine>>();
     let selected_board_space_id_value = selected_board_space_id();
     let selected_board_space_id_label = short_protocol_id(&selected_board_space_id_value);
     let board_view_id_value = board_view_id();
@@ -1911,13 +1905,6 @@ pub fn KanbanPanel(
                                 }
                                 div { class: "board-card-footer",
                                     {
-                                        let gate = capability_gate_for_strand(
-                                            &capability_engine,
-                                            &account_did,
-                                            &selected_board_space_id(),
-                                            &card.id,
-                                            "ak.strand.archive",
-                                        );
                                         // Block archive until the card's create
                                         // event is server-acked. The SDK reducer
                                         // `ak.strand.archive active` for
@@ -1927,20 +1914,16 @@ pub fn KanbanPanel(
                                         // the user to wait for the draft to settle.
                                         let card_settled = displayed_card_state(card, &projected_strand_ids)
                                             .is_settled();
-                                        let archive_enabled = gate.enabled && card_settled;
+                                        let archive_enabled = card_settled;
                                         let title_text = if !card_settled {
                                             crate::i18n::tr("kanban.archive_draft_blocked")
-                                        } else if gate.enabled {
-                                            "Archive this card (ak.strand.archive)".to_owned()
                                         } else {
-                                            format!("Archive gated: {}", gate.reason)
+                                            "Archive this card (ak.strand.archive)".to_owned()
                                         };
                                         let testid_state = if !card_settled {
                                             "draft"
-                                        } else if gate.enabled {
-                                            "open"
                                         } else {
-                                            "denied"
+                                            "open"
                                         };
                                         rsx! {
                                             Button {
@@ -2124,26 +2107,14 @@ pub fn KanbanPanel(
                         }
                         div { class: "board-column-actions",
                         {
-                            let gate = capability_gate_for_space_container(
-                                &capability_engine,
-                                &account_did,
-                                &column.id,
-                                "ak.space.archive",
-                            );
-                            let title_text = if gate.enabled {
-                                "Archive this list (ak.space.archive)".to_owned()
-                            } else {
-                                format!("Archive gated: {}", gate.reason)
-                            };
-                            let testid_state = if gate.enabled { "open" } else { "denied" };
+                            let title_text = "Archive this list (ak.space.archive)".to_owned();
                             rsx! {
                                 Button {
                                     variant: ButtonVariant::Secondary,
                                     class: "kanban-inline-action",
                                     "data-testid": "list-archive-button",
                                     "data-space-container-id": "{column.id}",
-                                    "data-cap-gate": testid_state,
-                                    disabled: !gate.enabled,
+                                    "data-cap-gate": "open",
                                     title: title_text,
                                     onclick: {
                                         // Archiving a list hides all of its cards
@@ -2208,25 +2179,13 @@ pub fn KanbanPanel(
                                         span { class: "entity-title", "{column.title}" }
                                         span { "rank {column.rank} / {column.cards.len()} card(s)" }
                                         {
-                                            let gate = capability_gate_for_space_container(
-                                                &capability_engine,
-                                                &account_did,
-                                                &column.id,
-                                                "ak.space.restore",
-                                            );
-                                            let title_text = if gate.enabled {
-                                                "Restore this list (ak.space.restore)".to_owned()
-                                            } else {
-                                                format!("Restore gated: {}", gate.reason)
-                                            };
-                                            let testid_state = if gate.enabled { "open" } else { "denied" };
+                                            let title_text = "Restore this list (ak.space.restore)".to_owned();
                                             rsx! {
                                                 Button {
                                                     variant: ButtonVariant::Secondary,
                                                     "data-testid": "list-restore-button",
                                                     "data-space-container-id": "{column.id}",
-                                                    "data-cap-gate": testid_state,
-                                                    disabled: !gate.enabled,
+                                                    "data-cap-gate": "open",
                                                     title: title_text,
                                                     onclick: {
                                                         let base = base_url.clone();
@@ -2313,26 +2272,13 @@ pub fn KanbanPanel(
                                         }
                                         span { "from list: {row.column_title}" }
                                         {
-                                            let gate = capability_gate_for_strand(
-                                                &capability_engine,
-                                                &account_did,
-                                                &selected_board_space_id(),
-                                                &row.card.id,
-                                                "ak.strand.restore",
-                                            );
-                                            let title_text = if gate.enabled {
-                                                "Restore this card (ak.strand.restore)".to_owned()
-                                            } else {
-                                                format!("Restore gated: {}", gate.reason)
-                                            };
-                                            let testid_state = if gate.enabled { "open" } else { "denied" };
+                                            let title_text = "Restore this card (ak.strand.restore)".to_owned();
                                             rsx! {
                                                 Button {
                                                     variant: ButtonVariant::Secondary,
                                                     "data-testid": "card-restore-button",
                                                     "data-strand-id": "{row.card.id}",
-                                                    "data-cap-gate": testid_state,
-                                                    disabled: !gate.enabled,
+                                                    "data-cap-gate": "open",
                                                     title: title_text,
                                                     onclick: {
                                                         let base = base_url.clone();

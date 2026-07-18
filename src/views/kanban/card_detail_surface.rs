@@ -39,7 +39,6 @@ pub(super) fn CardDetail(controller: KanbanController, context: CardDetailContex
     let state_store = crate::app::SessionContext::get().state_store;
     let navigator = use_navigator();
     let route = use_route::<Route>();
-    let capability_engine = use_context::<Signal<crate::capability::CapabilityEngine>>();
     let mut owned_agent_slugs = use_signal(BTreeMap::<String, String>::new);
     let mut owned_agent_sync_key_seen = use_signal(String::new);
     let mut member_mention_request =
@@ -433,13 +432,6 @@ pub(super) fn CardDetail(controller: KanbanController, context: CardDetailContex
                                                             } else {
                                                                 "ak.strand.restore"
                                                             };
-                                                            let gate = capability_gate_for_strand(
-                                                                &capability_engine,
-                                                                &account_did,
-                                                                &selected_board_space_id(),
-                                                                &card.id,
-                                                                action,
-                                                            );
                                                             let label = if target == StrandLifecycleState::Archived {
                                                                 crate::i18n::tr("kanban.archive_action")
                                                             } else {
@@ -450,12 +442,7 @@ pub(super) fn CardDetail(controller: KanbanController, context: CardDetailContex
                                                             } else {
                                                                 "card-detail-restore-button"
                                                             };
-                                                            let title_text = if gate.enabled {
-                                                                format!("{label} this card ({action})")
-                                                            } else {
-                                                                format!("{label} gated: {}", gate.reason)
-                                                            };
-                                                            let testid_state = if gate.enabled { "open" } else { "denied" };
+                                                            let title_text = format!("{label} this card ({action})");
                                                             let action_navigator = navigator;
                                                             let action_board_route = board_route_after_close.clone();
                                                             rsx! {
@@ -464,8 +451,7 @@ pub(super) fn CardDetail(controller: KanbanController, context: CardDetailContex
                                                                     class: "card-detail-action-menu-item",
                                                                     "data-testid": testid,
                                                                     "data-strand-id": "{card.id}",
-                                                                    "data-cap-gate": testid_state,
-                                                                    disabled: !gate.enabled,
+                                                                    "data-cap-gate": "open",
                                                                     title: title_text,
                                                                     onclick: {
                                                                         let base = base_url.clone();

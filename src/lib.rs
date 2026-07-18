@@ -23,7 +23,6 @@ pub mod avatar_crop;
 pub mod blob;
 pub mod build_info;
 pub mod canonical;
-pub mod capability;
 pub mod card_comments;
 /// AKP-0007 P3B.2 — Circle UX types, scope picker, error-code mapping.
 /// `Circle` is the intra-Realm cryptographic sub-boundary (strict

@@ -365,17 +365,6 @@ fn AppBootstrap() -> Element {
     let i18n_signal = use_context_provider::<crate::i18n::I18nSignal>(|| {
         crate::i18n::init_i18n_with_locale(initial_locale)
     });
-    // Cap-Gate-1: shared `Signal<CapabilityEngine>` for UI-side pre-gates.
-    // Starts empty; views call `engine.ui_gate(...)` which returns an open
-    // gate when no grants for the subject are loaded yet, so the existing
-    // "trust the server" behavior is preserved until something hydrates
-    // grants. The capability-grant hydrate path is a follow-up — once
-    // `ak.capability.grant` projection events ship, the post-login strand
-    // will `engine.write().add_grant(...)` and the kanban Archive /
-    // Restore buttons will start gating themselves.
-    use_context_provider::<Signal<crate::capability::CapabilityEngine>>(|| {
-        Signal::new(crate::capability::CapabilityEngine::new())
-    });
     // D0 — server-administrator signal sourced from
     // `AccountView.is_server_admin` (the server's configured admin principal
     // set), provided via context so operator-only surfaces (organization
@@ -387,7 +376,7 @@ fn AppBootstrap() -> Element {
     //
     // Mount point note: inkson app state is a set of scattered `use_signal`
     // handles rather than one aggregate struct, so this follows the same
-    // minimal-intrusion pattern as `CapabilityEngine`: provide a shared
+    // minimal-intrusion pattern: provide a shared
     // `Signal<DidResolutionCache>` with `use_context_provider`.
     //   * Authority resolution sites can fetch it via `use_context::<Signal<DidResolutionCache>>()`
     //     and use `did_resolver::resolve_with_cache` for cache-first resolution.

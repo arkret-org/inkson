@@ -534,55 +534,6 @@ pub(super) fn strand_lifecycle_from_wire(state: &str) -> StrandLifecycleState {
     }
 }
 
-/// Cap-Gate-3: helper that reads the app-provided `CapabilityEngine`
-/// signal and returns the UI gate for a Space-container-scoped action. Wraps
-/// `engine.read().ui_gate(...)` so kanban callers don't have to spell
-/// out the `UiResourceRef` / `UiCapabilityEvalContext` every time.
-pub(super) fn capability_gate_for_space_container(
-    engine: &Signal<crate::capability::CapabilityEngine>,
-    actor: &str,
-    space_container_id: &str,
-    action: &str,
-) -> crate::capability::CapabilityGate {
-    let resource = crate::capability::UiResourceRef {
-        space_id: Some(space_container_id.to_owned()),
-        object_ref: Some(space_container_id.to_owned()),
-        object_type: Some("space_container".to_owned()),
-        ..Default::default()
-    };
-    let ctx = crate::capability::UiCapabilityEvalContext {
-        space_id: Some(space_container_id.to_owned()),
-        space_container_id: Some(space_container_id.to_owned()),
-        action: Some(action.to_owned()),
-        ..Default::default()
-    };
-    engine.read().ui_gate(actor, action, &resource, &ctx)
-}
-
-/// Cap-Gate-3 sibling at the Strand object layer.
-pub(super) fn capability_gate_for_strand(
-    engine: &Signal<crate::capability::CapabilityEngine>,
-    actor: &str,
-    board_space_id: &str,
-    strand_id: &str,
-    action: &str,
-) -> crate::capability::CapabilityGate {
-    let board_space_id = board_space_id.trim();
-    let resource_space_id = (!board_space_id.is_empty()).then(|| board_space_id.to_owned());
-    let resource = crate::capability::UiResourceRef {
-        space_id: resource_space_id.clone(),
-        object_ref: Some(strand_id.to_owned()),
-        object_type: Some("Strand".to_owned()),
-        ..Default::default()
-    };
-    let ctx = crate::capability::UiCapabilityEvalContext {
-        space_id: resource_space_id,
-        action: Some(action.to_owned()),
-        ..Default::default()
-    };
-    engine.read().ui_gate(actor, action, &resource, &ctx)
-}
-
 /// Dispatch a `ak.space.archive` or `ak.space.restore` operation against
 /// the given list (container Space) and mark the local row pending while
 /// the column's `SpaceContainerLifecycleState` in the UI signal. Spec:
