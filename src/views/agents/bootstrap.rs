@@ -1250,9 +1250,10 @@ pub(crate) async fn bootstrap_provisioned_agent(
     .map_err(|error| anyhow::anyhow!("load Agent PCR snapshot secret: {error}"))?;
     let state_bytes = crate::mls::persistence::decrypt_envelope(&snapshot, &snapshot_secret)
         .map_err(|error| anyhow::anyhow!("open Agent PCR MLS snapshot for recovery: {error}"))?;
-    let recovery_public_key =
-        crate::views::recovery::local_recovery_public_key(&state_store.read(), &controller_id)
-            .ok_or_else(|| anyhow::anyhow!("local recovery public key is unavailable"))?;
+    let recovery_public_key = crate::views::recovery::local_recovery_public_key_result(
+        &state_store.read(),
+        &controller_id,
+    )?;
     let recovery_key_ref = current_controller_backup_hpke_key_ref(
         &active_policy,
         &controller_id,

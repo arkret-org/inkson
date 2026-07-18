@@ -684,6 +684,10 @@ async fn finish_principal_setup(
         recovery_key,
     )
     .ok_or_else(|| anyhow::anyhow!("save public recovery metadata failed"))?;
+    crate::views::recovery::local_recovery_public_key_result(&state_store.read(), actor)
+        .map_err(|error| anyhow::anyhow!("verify public recovery metadata: {error}"))?;
+    let recovery_metadata_barrier = state_store.read().begin_durable_flush()?;
+    recovery_metadata_barrier.wait().await?;
     Ok(backup_id)
 }
 
