@@ -410,6 +410,16 @@ impl AccountSyncStep {
         Self::from_updates(cursor, updates)
     }
 
+    pub fn from_batch_with_ephemeral_device_key_resolver(
+        batch: arkret_sdk::AccountSubscribeBatch,
+        resolver: &dyn arkret_sdk::EphemeralDeviceKeyResolver,
+    ) -> arkret_sdk::Result<Self> {
+        let cursor = batch.cursor.clone();
+        let mut processor = arkret_sdk::SyncResponseProcessor::new();
+        let updates = processor.process_with_ephemeral_key_resolver(batch, resolver)?;
+        Self::from_updates(cursor, updates)
+    }
+
     pub fn from_updates(
         cursor: String,
         updates: arkret_sdk::SyncUpdates,

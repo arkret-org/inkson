@@ -274,11 +274,12 @@ struct AccountTransportProvider {
 }
 
 impl TransportProvider for AccountTransportProvider {
-    type Transport = arkret_sdk::http_client::Client;
+    type Transport = crate::client_core::InksonAccountTransport;
 
     async fn provide(&self) -> arkret_sdk::Result<Self::Transport> {
         crate::identity::session_refresh::provide_authenticated_sdk_client(&self.ctx.base_url)
             .await
+            .map(crate::client_core::InksonAccountTransport::new)
             .map_err(|error| arkret_sdk::Error::Protocol(error.to_string()))
     }
 
@@ -394,12 +395,13 @@ impl InksonAccountPostCommit {
     }
 }
 
-impl AccountPostCommitHook<arkret_sdk::http_client::Client> for InksonAccountPostCommit {
+impl AccountPostCommitHook<crate::client_core::InksonAccountTransport> for InksonAccountPostCommit {
     async fn post_commit(
         &self,
-        http: &arkret_sdk::http_client::Client,
+        transport: &crate::client_core::InksonAccountTransport,
         step: &AccountStreamStep,
     ) -> arkret_sdk::Result<AccountPostCommitOutcome> {
+        let http = transport.http();
         if !self.active() {
             return Ok(AccountPostCommitOutcome::Continue);
         }
@@ -1277,7 +1279,8 @@ pub fn apply_response(
                 let projection_changes =
                     ingest_kanban_state_events_from_projection(store, id, body)
                         + ingest_discussion_state_events_from_projection(store, id, body)
-                        + ingest_message_events_from_projection(store, id, body);
+                        + ingest_message_events_from_projection(store, id, body)
+                        + ingest_moderation_events_from_projection(store, id, body);
                 if projection_changes > 0 {
                     realm_projection_changed = true;
                 }
@@ -1541,6 +1544,46 @@ fn ingest_message_events_from_projection(
     body: &Value,
 ) -> usize {
     ingest_message_projection_events(store, realm_id, &sync_realm_timeline_events(body))
+}
+
+fn ingest_moderation_events_from_projection(
+    store: &mut LocalStateStore,
+    realm_id: &str,
+    body: &Value,
+) -> usize {
+    ingest_moderation_projection_events(store, realm_id, &sync_realm_state_events(body))
+}
+
+pub(crate) fn ingest_moderation_projection_events(
+    store: &mut LocalStateStore,
+    realm_id: &str,
+    events: &[Value],
+) -> usize {
+    let records = crate::state::projection::moderation_ops::moderation_operations_from_events(
+        realm_id, events,
+    );
+    let mut changed = 0;
+    for record in records {
+        if store.upsert_raw_operation(record.operation_id, record.realm_id, record.payload) {
+            changed += 1;
+        }
+    }
+    changed
+}
+
+pub(crate) fn ingest_moderation_events(
+    store: &mut LocalStateStore,
+    events: &[garth::ClientEvent],
+) -> usize {
+    let records =
+        crate::state::projection::moderation_ops::moderation_operations_from_client_events(events);
+    let mut changed = 0;
+    for record in records {
+        if store.upsert_raw_operation(record.operation_id, record.realm_id, record.payload) {
+            changed += 1;
+        }
+    }
+    changed
 }
 
 fn discussion_state_control_event_kind(event: &Value) -> Option<&str> {

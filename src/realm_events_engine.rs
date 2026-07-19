@@ -93,6 +93,7 @@ impl ClientProjector for RealmIngestProjector {
                 crate::sync_engine::ingest_kanban_events(store, &self.realm_id, &batch)
                     + crate::sync_engine::ingest_message_events(store, &self.realm_id, &batch)
                     + crate::sync_engine::ingest_membership_events(store, &self.realm_id, &batch)
+                    + crate::sync_engine::ingest_moderation_events(store, &batch)
             });
             if changed > 0 {
                 self.realm_live_epoch

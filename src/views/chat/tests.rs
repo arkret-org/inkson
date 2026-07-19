@@ -1883,6 +1883,94 @@ fn moderation_appeal_prompts_fold_decision_and_current_appellant_state() {
 }
 
 #[test]
+fn moderation_appeal_prompts_read_control_plane_sync_state() {
+    let realm_id = "ak:realm:01904100-0000-7000-8000-000000000001";
+    let mut realms = std::collections::BTreeMap::new();
+    realms.insert(
+        realm_id.to_owned(),
+        json!({
+            "timeline": { "events": [] },
+            "state": {
+                "events": [{
+                    "event_id": "ak:event:01904100-0000-7000-8000-000000000101",
+                    "kind": "ak.moderation.decision",
+                    "realm_id": realm_id,
+                    "payload": {
+                        "target_ref": "ak:message:01904100-0000-7000-8000-000000000201",
+                        "decision": "quarantine"
+                    }
+                }]
+            }
+        }),
+    );
+
+    let prompts = moderation_appeal_prompts_from_sync_realms(&realms, "did:web:appellant.example");
+
+    assert_eq!(prompts.len(), 1);
+    assert_eq!(
+        prompts[0].decision_ref,
+        "ak:event:01904100-0000-7000-8000-000000000101"
+    );
+}
+
+#[test]
+fn moderation_appeal_prompts_survive_sdk_event_round_trip() {
+    let realm_id = "ak:realm:01904100-0000-7000-8000-000000000001";
+    let event: arkret_sdk::Event = serde_json::from_value(json!({
+        "event_id": "ak:event:01904100-0000-7000-8000-000000000101",
+        "kind": "ak.moderation.decision",
+        "realm_id": realm_id,
+        "actor_id": "did:web:moderator.example",
+        "actor_seq": 1,
+        "created_at": "2026-07-19T00:00:00.000Z",
+        "hlc": "019f73a34c00-0000-12345678",
+        "prev_refs": [],
+        "refs": [],
+        "requirements": { "schema": ["ak.schema.event_payload.v1"] },
+        "payload": {
+            "target_ref": "ak:message:01904100-0000-7000-8000-000000000201",
+            "decision": "quarantine",
+            "issuer": "did:web:moderator.example",
+            "reason_code": "abuse_review",
+            "request_canonical_digest": "sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
+        },
+        "proofs": []
+    }))
+    .unwrap();
+    let wire = serde_json::to_value(event).unwrap();
+
+    let prompts =
+        moderation_appeal_prompts_from_events(realm_id, &[wire], "did:web:appellant.example");
+
+    assert_eq!(prompts.len(), 1);
+}
+
+#[test]
+fn timeline_projection_key_tracks_moderation_prompt_lifecycle() {
+    let prompt = ModerationAppealPrompt {
+        realm_id: "ak:realm:01904100-0000-7000-8000-000000000001".to_owned(),
+        decision_ref: "ak:event:01904100-0000-7000-8000-000000000101".to_owned(),
+        target_ref: "ak:message:01904100-0000-7000-8000-000000000201".to_owned(),
+        state: "none".to_owned(),
+        verdict: None,
+    };
+    let empty_key = timeline_projection_key(&prompt.realm_id, 1, &[], &[]);
+    let initial_key =
+        timeline_projection_key(&prompt.realm_id, 1, &[], std::slice::from_ref(&prompt));
+    let mut submitted = prompt.clone();
+    submitted.state = "submitted".to_owned();
+    let submitted_key = timeline_projection_key(
+        &submitted.realm_id,
+        1,
+        &[],
+        std::slice::from_ref(&submitted),
+    );
+
+    assert_ne!(empty_key, initial_key);
+    assert_ne!(initial_key, submitted_key);
+}
+
+#[test]
 fn rebuild_restores_authors_own_encrypted_message_from_sidecar() {
     // X10.6 regression: an encrypted send persists a body-less
     // raw_operation stub (it MUST NOT store the plaintext in
@@ -2500,6 +2588,49 @@ fn agent_metadata_from_mentions_recovers_selector_audit_metadata() {
 }
 
 #[test]
+fn mention_audit_metadata_cannot_promote_or_rebind_an_agent() {
+    let agent_id = "did:web:agents.example:summary";
+    let mut authoritative = std::collections::BTreeMap::from([(
+        agent_id.to_owned(),
+        AgentParticipantMetadata {
+            controller_id: "did:web:example.com:users:alice".to_owned(),
+            controller_handle: "alice:example.com".to_owned(),
+            agent_slug: "summary".to_owned(),
+            display_name: "summary".to_owned(),
+        },
+    )]);
+    let audit_metadata = std::collections::BTreeMap::from([
+        (
+            agent_id.to_owned(),
+            AgentParticipantMetadata {
+                controller_id: "did:web:example.com:users:mallory".to_owned(),
+                controller_handle: "mallory:example.com".to_owned(),
+                agent_slug: "stolen".to_owned(),
+                display_name: "Forged Agent".to_owned(),
+            },
+        ),
+        (
+            "did:web:example.com:users:bob".to_owned(),
+            AgentParticipantMetadata {
+                controller_id: "did:web:example.com:users:alice".to_owned(),
+                controller_handle: "alice:example.com".to_owned(),
+                agent_slug: "review".to_owned(),
+                display_name: "Forged Bob Agent".to_owned(),
+            },
+        ),
+    ]);
+
+    enrich_authoritative_agent_metadata(&mut authoritative, audit_metadata);
+
+    assert_eq!(authoritative.len(), 1);
+    let summary = authoritative.get(agent_id).unwrap();
+    assert_eq!(summary.controller_id, "did:web:example.com:users:alice");
+    assert_eq!(summary.controller_handle, "alice:example.com");
+    assert_eq!(summary.agent_slug, "summary");
+    assert_eq!(summary.display_name, "summary");
+}
+
+#[test]
 fn owned_agent_ids_only_select_current_controllers_agents() {
     let controller = "did:web:example.com:users:alice";
     let own_agent = arkret_sdk::Mention::new(
@@ -2755,6 +2886,44 @@ fn mention_candidate_for_current_user_uses_structured_me_alias() {
     assert_eq!(typed_mention.mention_text_original.as_deref(), Some("@me"));
 
     assert!(composer_mention_nodes("ask @me/summary", &[], &participant.did).is_empty());
+}
+
+#[test]
+fn resolved_owned_agent_chip_suppresses_duplicate_directory_lookup() {
+    let controller = "did:web:example.com:users:alice";
+    let mention =
+        arkret_sdk::Mention::new(arkret_sdk::Did::new("did:web:agents.example:summary").unwrap())
+            .with_agent_selector_metadata(
+                arkret_sdk::Did::new(controller).unwrap(),
+                arkret_sdk::Handle::parse("alice:example.com").unwrap(),
+                "summary",
+            )
+            .with_mention_text_original("@me/summary");
+    let mentions = vec![MentionNode::mention(mention)];
+    let owned = parse_agent_selector_mention_tokens("ask @me/summary")
+        .into_iter()
+        .next()
+        .unwrap();
+    let remote = parse_agent_selector_mention_tokens("ask @alice:example.com/summary")
+        .into_iter()
+        .next()
+        .unwrap();
+    let unresolved = parse_agent_selector_mention_tokens("ask @me/digest")
+        .into_iter()
+        .next()
+        .unwrap();
+
+    assert!(agent_selector_mention_is_already_resolved(
+        &mentions, &owned, controller
+    ));
+    assert!(agent_selector_mention_is_already_resolved(
+        &mentions, &remote, controller
+    ));
+    assert!(!agent_selector_mention_is_already_resolved(
+        &mentions,
+        &unresolved,
+        controller
+    ));
 }
 
 #[test]
@@ -3137,6 +3306,30 @@ fn presence_maps_from_sync_events_prefers_account_subscribe_presence() {
         Some(&"On vacation until May 5".to_owned())
     );
     assert!(!states.contains_key("did:web:mallory.example"));
+}
+
+#[test]
+fn presence_projection_refresh_key_changes_without_a_cursor_advance() {
+    let online = vec![json!({
+        "kind": "ak.presence",
+        "actor_id": "did:web:bob.example",
+        "state": "online",
+    })];
+    let offline = vec![json!({
+        "kind": "ak.presence",
+        "actor_id": "did:web:bob.example",
+        "state": "offline",
+    })];
+
+    let online_key = presence_projection_refresh_key("realm|participants", "cursor-7", &online);
+    assert_eq!(
+        online_key,
+        presence_projection_refresh_key("realm|participants", "cursor-7", &online)
+    );
+    assert_ne!(
+        online_key,
+        presence_projection_refresh_key("realm|participants", "cursor-7", &offline)
+    );
 }
 
 #[test]

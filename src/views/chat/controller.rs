@@ -43,6 +43,7 @@ pub(super) enum ChatProjectionEvent {
     ReplaceMessages(Vec<ChatMessage>),
     MergePollCards(Vec<crate::messaging::polls::PollCard>),
     MergeModerationPrompts(Vec<ModerationAppealPrompt>),
+    ReplaceModerationPrompts(Vec<ModerationAppealPrompt>),
     AccountDisplayName(String),
 }
 
@@ -119,6 +120,9 @@ impl ChatProjectionSink {
                     &mut self.0.moderation_appeal_prompts.write(),
                     prompts,
                 );
+            }
+            ChatProjectionEvent::ReplaceModerationPrompts(prompts) => {
+                self.0.moderation_appeal_prompts.set(prompts);
             }
             ChatProjectionEvent::AccountDisplayName(name) => {
                 self.0.account_display_name.set(name);

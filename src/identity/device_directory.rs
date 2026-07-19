@@ -75,7 +75,13 @@ use crate::transport::TransportClient;
 /// device-key trust. Returning `None` (unresolvable / disallowed method / no
 /// evidence) makes [`verify_tier2_chain`] fail-closed — exactly the §8.2 rule
 /// "missing → MUST treat as unverified".
-pub trait DidAnchor {
+#[cfg(not(target_arch = "wasm32"))]
+pub type DidAnchorFuture<'a> =
+    std::pin::Pin<Box<dyn std::future::Future<Output = bool> + Send + 'a>>;
+#[cfg(target_arch = "wasm32")]
+pub type DidAnchorFuture<'a> = std::pin::Pin<Box<dyn std::future::Future<Output = bool> + 'a>>;
+
+pub trait DidAnchor: Send + Sync {
     fn resolve_did_document(&self, actor: &Did) -> Option<DidDocument>;
 
     /// P3.2b: asynchronously fetch + ingest `actor`'s DID document so a
@@ -94,7 +100,7 @@ pub trait DidAnchor {
         &'a self,
         http: &'a reqwest::Client,
         actor: &'a Did,
-    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = bool> + 'a>> {
+    ) -> DidAnchorFuture<'a> {
         let _ = (http, actor);
         Box::pin(async { true })
     }
@@ -661,7 +667,7 @@ fn ephemeral_proof_created_at_fresh(
 
 /// Verify an ephemeral call-signal envelope's `proof` (single object).
 ///
-/// Strips the top-level `proof` field, then delegates to [`verify_proof_value`].
+/// Decodes the typed envelope, then delegates to the SDK's ephemeral verifier.
 /// Returns `false` (fail-closed) when the envelope carries no `actor_id` or no
 /// `proof`, or when the proof's `created_at` is stale/absent (replay window).
 pub fn verify_ephemeral_envelope_proof(
@@ -677,10 +683,6 @@ pub fn verify_ephemeral_envelope_proof_at(
     public_key: &PublicKeyMaterial,
     now: chrono::DateTime<chrono::Utc>,
 ) -> bool {
-    let actor_id = match envelope.get("actor_id").and_then(|v| v.as_str()) {
-        Some(actor) => actor.to_owned(),
-        None => return false,
-    };
     let proof_value = match envelope.get("proof") {
         Some(proof) => proof.clone(),
         None => return false,
@@ -689,11 +691,13 @@ pub fn verify_ephemeral_envelope_proof_at(
     if !ephemeral_proof_created_at_fresh(&proof_value, now) {
         return false;
     }
-    let mut without_proof = envelope.clone();
-    if let Some(object) = without_proof.as_object_mut() {
-        object.remove("proof");
-    }
-    verify_proof_value(&without_proof, &proof_value, &actor_id, public_key)
+    let Ok(typed_envelope) =
+        serde_json::from_value::<arkret_sdk::EphemeralEnvelope>(envelope.clone())
+    else {
+        return false;
+    };
+    arkret_sdk::signatures::verify_eddsa_detached_jws_ephemeral_proof(&typed_envelope, public_key)
+        .is_ok()
 }
 
 /// Verify a persistent Event envelope's `proofs` (array). The envelope passes

@@ -1688,16 +1688,20 @@ pub(crate) fn moderation_appeal_prompts_from_sync_realms(
 ) -> Vec<ModerationAppealPrompt> {
     let mut prompts = Vec::new();
     for (realm_id, body) in realms {
-        let Some(wire_events) = body
-            .get("timeline")
-            .and_then(|projection| projection.get("events"))
-            .and_then(Value::as_array)
-        else {
-            continue;
-        };
+        // Moderation decisions and appeal lifecycle events are sealed control-plane
+        // cells, so the account stream projects them through `state.events`. Keep
+        // accepting timeline copies for profiles that also expose the raw event there.
+        let wire_events = ["state", "timeline"]
+            .into_iter()
+            .filter_map(|section| body.get(section))
+            .filter_map(|projection| projection.get("events"))
+            .filter_map(Value::as_array)
+            .flatten()
+            .cloned()
+            .collect::<Vec<_>>();
         prompts.extend(moderation_appeal_prompts_from_events(
             realm_id,
-            wire_events,
+            &wire_events,
             appellant,
         ));
     }
@@ -1883,6 +1887,20 @@ pub(crate) type PresenceMaps = (
     std::collections::BTreeMap<String, String>,
     std::collections::BTreeMap<String, String>,
 );
+
+pub(crate) fn presence_projection_refresh_key(
+    scope: &str,
+    cursor: &str,
+    events: &[Value],
+) -> String {
+    use std::hash::{Hash, Hasher};
+
+    let mut projection = std::collections::hash_map::DefaultHasher::new();
+    serde_json::to_vec(events)
+        .unwrap_or_default()
+        .hash(&mut projection);
+    format!("{scope}|{cursor}|{:016x}", projection.finish())
+}
 
 pub(crate) fn presence_maps_from_sync_events(
     events: &[Value],

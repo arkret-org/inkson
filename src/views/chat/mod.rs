@@ -89,10 +89,46 @@ fn moderation_prompt_state(prompt: &ModerationAppealPrompt) -> AppealState {
     }
 }
 
+fn timeline_projection_key(
+    selected_realm_id: &str,
+    realm_live_epoch: u64,
+    visible_messages: &[ChatMessage],
+    visible_moderation_appeal_prompts: &[ModerationAppealPrompt],
+) -> String {
+    use std::hash::{Hash, Hasher};
+
+    let mut projection = std::collections::hash_map::DefaultHasher::new();
+    selected_realm_id.hash(&mut projection);
+    realm_live_epoch.hash(&mut projection);
+    for message in visible_messages {
+        message.id.hash(&mut projection);
+        message.protocol_message_id.hash(&mut projection);
+        message.strand_id.hash(&mut projection);
+        message.realm_id.hash(&mut projection);
+        message.body.hash(&mut projection);
+        message.timestamp.hash(&mut projection);
+        message.reply_to.hash(&mut projection);
+        message.reactions.hash(&mut projection);
+        message.edited.hash(&mut projection);
+        message.redacted.hash(&mut projection);
+        message.pending.hash(&mut projection);
+        message.failed.hash(&mut projection);
+    }
+    for prompt in visible_moderation_appeal_prompts {
+        prompt.realm_id.hash(&mut projection);
+        prompt.decision_ref.hash(&mut projection);
+        prompt.target_ref.hash(&mut projection);
+        prompt.state.hash(&mut projection);
+        prompt.verdict.hash(&mut projection);
+    }
+    format!("{:016x}", projection.finish())
+}
+
 async fn resolve_agent_selector_mentions(
     base_url: &str,
     api_token: String,
     wait_for_sync_token: Option<String>,
+    already_resolved: &[MentionNode],
     body: &str,
     realm_id: &str,
     requester: &str,
@@ -107,6 +143,9 @@ async fn resolve_agent_selector_mentions(
     };
     let mut mentions = Vec::new();
     for token in tokens {
+        if agent_selector_mention_is_already_resolved(already_resolved, &token, requester) {
+            continue;
+        }
         let controller_handle = if token.controller_handle == "me" {
             let Some(handle) = own_controller_handle
                 .map(str::trim)
@@ -143,6 +182,31 @@ async fn resolve_agent_selector_mentions(
         mentions.push(MentionNode::mention(mention));
     }
     mentions
+}
+
+fn agent_selector_mention_is_already_resolved(
+    mentions: &[MentionNode],
+    token: &crate::views::helpers::AgentSelectorMentionToken,
+    requester: &str,
+) -> bool {
+    mentions
+        .iter()
+        .filter_map(MentionNode::as_mention)
+        .any(|mention| {
+            if mention.agent_slug_at_time.as_deref() != Some(token.agent_slug.as_str()) {
+                return false;
+            }
+            if token.controller_handle == "me" {
+                return mention
+                    .controller_subject_id
+                    .as_ref()
+                    .is_some_and(|controller| controller.as_str() == requester);
+            }
+            mention
+                .controller_handle_at_time
+                .as_ref()
+                .is_some_and(|handle| handle.to_string() == token.controller_handle)
+        })
 }
 
 fn owned_agent_ids_from_mentions(mentions: &[MentionNode], controller_id: &str) -> Vec<String> {
@@ -631,37 +695,22 @@ pub fn ChatPanel(
         })
         .cloned()
         .collect::<Vec<_>>();
-    // Dioxus may retain the child timeline across context-backed signal updates.  Key the
-    // projection boundary by the actual visible message state so reaction/revision/redaction
-    // folds cannot leave a memoized child rendering an older snapshot.
-    let timeline_projection_key = {
-        use std::hash::{Hash, Hasher};
-
-        let mut projection = std::collections::hash_map::DefaultHasher::new();
-        selected_realm_id.hash(&mut projection);
-        realm_live_epoch().hash(&mut projection);
-        for message in &visible_messages {
-            message.id.hash(&mut projection);
-            message.protocol_message_id.hash(&mut projection);
-            message.strand_id.hash(&mut projection);
-            message.realm_id.hash(&mut projection);
-            message.body.hash(&mut projection);
-            message.timestamp.hash(&mut projection);
-            message.reply_to.hash(&mut projection);
-            message.reactions.hash(&mut projection);
-            message.edited.hash(&mut projection);
-            message.redacted.hash(&mut projection);
-            message.pending.hash(&mut projection);
-            message.failed.hash(&mut projection);
-        }
-        format!("{:016x}", projection.finish())
-    };
     let visible_moderation_appeal_prompts = moderation_appeal_prompts()
         .into_iter()
         .filter(|prompt| {
             selected_realm_id.trim().is_empty() || prompt.realm_id == selected_realm_id
         })
         .collect::<Vec<_>>();
+    let visible_moderation_appeal_prompt_count = visible_moderation_appeal_prompts.len();
+    // Dioxus may retain the child timeline across context-backed signal updates. Key the
+    // projection boundary by every visible timeline row so message and moderation lifecycle
+    // folds cannot leave a memoized child rendering an older snapshot.
+    let timeline_projection_key = timeline_projection_key(
+        &selected_realm_id,
+        realm_live_epoch(),
+        &visible_messages,
+        &visible_moderation_appeal_prompts,
+    );
     // AKP-0007 P3B.2.4 — per-strand Circle-scope lookup used by the
     // message accent rail. We index by `strand_id` once instead of
     // searching the `channels` Vec for every rendered message.
@@ -710,23 +759,22 @@ pub fn ChatPanel(
         .iter()
         .find(|participant| participant.is_self && !participant.is_agent)
         .and_then(mention_label_for_participant);
-    // Mark agents referenced by structured mentions, then enrich any current
-    // Realm member that is in the controller-owned agent inventory. The latter
-    // is what makes a never-before-mentioned own agent available immediately
-    // as an @me/<slug> picker row.
+    // Agent identity comes from the controller-owned inventory. Mention
+    // selector fields are persistent audit snapshots and may only enrich an
+    // already-authoritative agent; they never promote an arbitrary DID to an
+    // agent. This keeps the roster fail-closed when profile, selector-claim,
+    // and accountability evidence is unavailable.
     {
-        let mut agent_metadata = agent_metadata_from_mentions(&all_messages_snapshot);
-        upsert_agent_participants(&mut participants, &agent_metadata, &account_did);
-        for (agent_id, metadata) in owned_agent_metadata(
+        let mut agent_metadata = owned_agent_metadata(
             &owned_agent_slugs(),
             &account_did,
             own_controller_handle.as_deref(),
-        ) {
-            agent_metadata
-                .entry(agent_id)
-                .and_modify(|existing| merge_agent_metadata(existing, metadata.clone()))
-                .or_insert(metadata);
-        }
+        );
+        enrich_authoritative_agent_metadata(
+            &mut agent_metadata,
+            agent_metadata_from_mentions(&all_messages_snapshot),
+        );
+        upsert_agent_participants(&mut participants, &agent_metadata, &account_did);
         annotate_agent_participants_with_metadata(&mut participants, &agent_metadata);
     }
     let participants_for_messages = participants.clone();
@@ -802,9 +850,12 @@ pub fn ChatPanel(
         && visible_message_count == 0
         && !token().trim().is_empty()
         && !initial_sync_finished();
-
     rsx! {
-        div { class: "{shell_class}", "data-testid": "chat-panel", "data-chat-mode": if direct_mode { "direct" } else { "collaboration" },
+        div {
+            class: "{shell_class}",
+            "data-testid": "chat-panel",
+            "data-chat-mode": if direct_mode { "direct" } else { "collaboration" },
+            "data-moderation-appeal-count": "{visible_moderation_appeal_prompt_count}",
             ChatEffects {
                 controller,
                 account_did: account_did.clone(),

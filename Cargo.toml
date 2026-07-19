@@ -19,6 +19,19 @@ strip = "debuginfo"
 # for this profile is the standard workaround.
 incremental = false
 
+# cotest serves the web output as static files rather than through `dx serve`.
+# Disable debug assertions so dioxus-web does not embed its devtools WebSocket
+# client in that bundle; failed `/_dioxus` reconnect callbacks can otherwise
+# corrupt the long-lived wasm instance. Keep the wasm-dev optimization/linker
+# settings without invoking release-only wasm-opt in the offline harness.
+[profile.joint-e2e]
+inherits = "dev"
+opt-level = 1
+debug = 0
+strip = "debuginfo"
+incremental = false
+debug-assertions = false
+
 [features]
 # No default features. `OperationBuilder::build()` always emits
 # `proofs: Vec::new()` (there is NO placeholder proof), and the runtime

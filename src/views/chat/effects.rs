@@ -400,13 +400,22 @@ pub(super) fn ChatEffects(
             if cursor.trim().is_empty() || cursor == "-" {
                 return;
             }
-            let next_sync_key = format!("{presence_sync_key}|{cursor}");
+            // `presence_projection` is written through the reactive state-store
+            // handle. The account cursor can already have been published by a
+            // concurrent sync path, though, so cursor alone cannot invalidate a
+            // previously rendered offline fallback. Read the projection before
+            // the dedup guard and include its content in the refresh key.
+            let snapshot = state_store.read().load();
+            let next_sync_key = presence_projection_refresh_key(
+                &presence_sync_key,
+                &cursor,
+                &snapshot.presence_projection,
+            );
             if presence_sync_key_seen.peek().as_str() == next_sync_key {
                 return;
             }
             presence_sync_key_seen.set(next_sync_key);
 
-            let snapshot = state_store.read().load();
             let active_typing = typing_actor_snapshot_from_sync_realms(
                 &snapshot.realm_tree_projections,
                 &realm,
@@ -673,10 +682,10 @@ pub(super) fn ChatEffects(
                 return;
             }
             local_timeline_sync_key_seen.set(sync_key);
-            let next_messages = {
+            let (next_messages, next_moderation_appeal_prompts) = {
                 let store = state_store.read();
                 let snapshot = store.load();
-                chat_messages_from_local_state_with_sidecar(
+                let messages = chat_messages_from_local_state_with_sidecar(
                     &snapshot,
                     Some(&store),
                     Some((
@@ -686,11 +695,26 @@ pub(super) fn ChatEffects(
                 )
                 .into_iter()
                 .filter(|message| message.realm_id == realm)
-                .collect::<Vec<_>>()
+                .collect::<Vec<_>>();
+                let moderation_events = snapshot
+                    .raw_operations
+                    .iter()
+                    .filter(|record| record.realm_id.as_deref() == Some(realm.as_str()))
+                    .map(|record| record.payload.clone())
+                    .collect::<Vec<_>>();
+                let prompts = moderation_appeal_prompts_from_events(
+                    &realm,
+                    &moderation_events,
+                    &account_did_for_local_timeline,
+                );
+                (messages, prompts)
             };
             if !next_messages.is_empty() {
                 event_sink.emit(ChatProjectionEvent::MergeMessages(next_messages));
             }
+            event_sink.emit(ChatProjectionEvent::ReplaceModerationPrompts(
+                next_moderation_appeal_prompts,
+            ));
         });
     }
 

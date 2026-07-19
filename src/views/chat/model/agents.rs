@@ -99,6 +99,17 @@ pub(crate) fn agent_metadata_from_mentions(
     out
 }
 
+pub(crate) fn enrich_authoritative_agent_metadata(
+    authoritative: &mut std::collections::BTreeMap<String, AgentParticipantMetadata>,
+    audit_metadata: std::collections::BTreeMap<String, AgentParticipantMetadata>,
+) {
+    for (agent_id, metadata) in audit_metadata {
+        if let Some(existing) = authoritative.get_mut(&agent_id) {
+            merge_agent_metadata(existing, metadata);
+        }
+    }
+}
+
 pub(crate) fn upsert_agent_participants(
     participants: &mut Vec<SpaceParticipant>,
     agent_metadata: &std::collections::BTreeMap<String, AgentParticipantMetadata>,
