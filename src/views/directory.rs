@@ -100,7 +100,17 @@ fn organization_preview_value(preview: arkret_sdk::models::OrganizationPreview) 
 }
 
 fn actor_preview_value(preview: arkret_sdk::models::ActorPreview) -> Value {
-    serde_json::to_value(preview).unwrap_or(Value::Null)
+    let mut value = serde_json::to_value(preview).unwrap_or(Value::Null);
+    // The SDK wire model correctly names the canonical identifier `actor_id`,
+    // while this view's local rendering model historically uses `did` for
+    // keys, titles and actions. Keep that translation at the typed boundary
+    // instead of making every renderer understand two shapes.
+    if let Some(object) = value.as_object_mut()
+        && let Some(actor_id) = object.remove("actor_id")
+    {
+        object.insert("did".to_owned(), actor_id);
+    }
+    value
 }
 
 #[component]
@@ -1518,6 +1528,26 @@ mod tests {
     use serde_json::json;
 
     use super::*;
+
+    #[test]
+    fn actor_preview_maps_canonical_actor_id_to_rendered_did() {
+        let preview = arkret_sdk::models::ActorPreview {
+            actor_id: arkret_sdk::Did::new("did:web:alice.example".to_owned()).unwrap(),
+            handle: Some("alice:example.com".to_owned()),
+            display_name: Some("Alice".to_owned()),
+            organization_did: None,
+            avatar_blob_ref: None,
+            as_of: chrono::Utc::now(),
+            source_refs: Vec::new(),
+            policy_revision: "test".to_owned(),
+            stale: None,
+            divergent: None,
+        };
+
+        let rendered = actor_preview_value(preview);
+        assert_eq!(rendered["did"], "did:web:alice.example");
+        assert!(rendered.get("actor_id").is_none());
+    }
 
     #[test]
     fn declared_only_org_gets_no_verified_badge() {
