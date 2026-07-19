@@ -93,6 +93,7 @@ async fn resolve_agent_selector_mentions(
     base_url: &str,
     api_token: String,
     wait_for_sync_token: Option<String>,
+    already_resolved: &[MentionNode],
     body: &str,
     realm_id: &str,
     requester: &str,
@@ -107,6 +108,9 @@ async fn resolve_agent_selector_mentions(
     };
     let mut mentions = Vec::new();
     for token in tokens {
+        if agent_selector_mention_is_already_resolved(already_resolved, &token, requester) {
+            continue;
+        }
         let controller_handle = if token.controller_handle == "me" {
             let Some(handle) = own_controller_handle
                 .map(str::trim)
@@ -143,6 +147,31 @@ async fn resolve_agent_selector_mentions(
         mentions.push(MentionNode::mention(mention));
     }
     mentions
+}
+
+fn agent_selector_mention_is_already_resolved(
+    mentions: &[MentionNode],
+    token: &crate::views::helpers::AgentSelectorMentionToken,
+    requester: &str,
+) -> bool {
+    mentions
+        .iter()
+        .filter_map(MentionNode::as_mention)
+        .any(|mention| {
+            if mention.agent_slug_at_time.as_deref() != Some(token.agent_slug.as_str()) {
+                return false;
+            }
+            if token.controller_handle == "me" {
+                return mention
+                    .controller_subject_id
+                    .as_ref()
+                    .is_some_and(|controller| controller.as_str() == requester);
+            }
+            mention
+                .controller_handle_at_time
+                .as_ref()
+                .is_some_and(|handle| handle.to_string() == token.controller_handle)
+        })
 }
 
 fn owned_agent_ids_from_mentions(mentions: &[MentionNode], controller_id: &str) -> Vec<String> {
