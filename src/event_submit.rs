@@ -1251,6 +1251,7 @@ fn cba_exempt_reducer_kind(kind: &arkret_sdk::events::kinds::EventKind) -> bool 
         arkret_sdk::events::kinds::EventKind::RealmCreate
             | arkret_sdk::events::kinds::EventKind::MemberState
             | arkret_sdk::events::kinds::EventKind::RealmDiscovery
+            | arkret_sdk::events::kinds::EventKind::RealmHistorySharingPolicy
             | arkret_sdk::events::kinds::EventKind::RealmHistoryVisibility
             | arkret_sdk::events::kinds::EventKind::RealmJoinRule
             | arkret_sdk::events::kinds::EventKind::RealmPlaintextVisibleServices
@@ -1368,6 +1369,13 @@ mod tests {
     use serde_json::json;
 
     use super::*;
+
+    #[test]
+    fn realm_history_sharing_policy_is_exempt_during_genesis_bootstrap() {
+        assert!(cba_exempt_reducer_kind(
+            &arkret_sdk::events::kinds::EventKind::RealmHistorySharingPolicy
+        ));
+    }
 
     fn test_authoring_generation() -> crate::identity::authoring_generation::AuthoringGeneration {
         crate::identity::authoring_generation::AuthoringGeneration {
