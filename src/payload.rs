@@ -1,8 +1,8 @@
 use serde::Serialize;
 use serde_json::Value;
 
-pub(crate) fn sdk_payload_value(
-    result: arkret_sdk::Result<Value>,
+pub(crate) fn sdk_payload_value<E: std::fmt::Display>(
+    result: Result<Value, E>,
     context: &str,
 ) -> anyhow::Result<Value> {
     result.map_err(|err| anyhow::anyhow!("{context}: {err}"))

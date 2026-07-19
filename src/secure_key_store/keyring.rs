@@ -4,7 +4,7 @@
 
 use std::fmt;
 
-use arkret_sdk::{KeyStore, durable_platform_keystore};
+use arkret_sdk::{KeyBytes, KeyStore, KeyStoreError, durable_platform_keystore};
 use garth::{SdkKeyStoreSecureAdapter, SecretBytes, SecureKeyStoreBackendInfo};
 
 use super::{SecureKeyStore, SecureKeyStoreError};
@@ -19,19 +19,19 @@ impl fmt::Debug for PlatformKeyStore {
 }
 
 impl KeyStore for PlatformKeyStore {
-    fn load(&self, id: &str) -> arkret_sdk::Result<arkret_sdk::KeyBytes> {
+    fn load(&self, id: &str) -> Result<KeyBytes, KeyStoreError> {
         self.0.load(id)
     }
 
-    fn store(&self, id: &str, key: &[u8]) -> arkret_sdk::Result<()> {
+    fn store(&self, id: &str, key: &[u8]) -> Result<(), KeyStoreError> {
         self.0.store(id, key)
     }
 
-    fn list(&self) -> arkret_sdk::Result<Vec<String>> {
+    fn list(&self) -> Result<Vec<String>, KeyStoreError> {
         self.0.list()
     }
 
-    fn delete(&self, id: &str) -> arkret_sdk::Result<()> {
+    fn delete(&self, id: &str) -> Result<(), KeyStoreError> {
         self.0.delete(id)
     }
 }

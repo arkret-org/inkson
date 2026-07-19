@@ -49,13 +49,13 @@ fn parse_sdk_handle(input: &str) -> arkret_sdk::Result<arkret_sdk::models::Handl
     let trimmed = input.trim();
     let body = trimmed.strip_prefix('@').unwrap_or(trimmed);
     if body.starts_with("acct:") {
-        return arkret_sdk::models::Handle::from_acct(body);
+        return arkret_sdk::models::Handle::from_acct(body).map_err(Into::into);
     }
     if body.contains('@') {
         let acct = format!("acct:{body}");
-        return arkret_sdk::models::Handle::from_acct(&acct);
+        return arkret_sdk::models::Handle::from_acct(&acct).map_err(Into::into);
     }
-    arkret_sdk::models::Handle::parse(body)
+    arkret_sdk::models::Handle::parse(body).map_err(Into::into)
 }
 
 fn parsed_from_sdk_handle(handle: arkret_sdk::models::Handle) -> ParsedUserHandle {
