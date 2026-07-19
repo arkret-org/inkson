@@ -37,9 +37,30 @@ test("kanban card detail embeds discussion without boundary copy", async ({ page
   await expect(page.getByTestId("chat-panel")).toBeVisible();
   await expect(page.getByTestId("open-primary-discussion")).toHaveCount(0);
   await detailPopup.getByTestId("card-detail-sidebar-tab-members").click();
-  const firstMemberMention = detailPopup.getByTestId("card-detail-member-mention-button").first();
-  await expect(firstMemberMention).toBeVisible();
-  await firstMemberMention.click();
+  const memberGroup = detailPopup.getByTestId("card-detail-member-group");
+  const selfMention = memberGroup
+    .getByTestId("card-detail-member-mention-button")
+    .filter({ hasText: "ME" });
+  const agentRow = memberGroup.getByTestId("card-detail-agent-row");
+  const agentMention = agentRow.getByTestId("card-detail-member-mention-button");
+  await expect(selfMention).toContainText("alice:local.host");
+  await expect(selfMention).not.toContainText("did:web:alice.example");
+  await expect(agentRow.getByTestId("card-detail-member-agent-badge")).toHaveText("Agent");
+  await expect(agentRow.getByTestId("card-detail-member-agent-selector")).toHaveText(
+    "@me/assistant",
+  );
+  const selfMentionBox = await selfMention.boundingBox();
+  const agentMentionBox = await agentMention.boundingBox();
+  if (!selfMentionBox || !agentMentionBox) {
+    throw new Error("member hierarchy rows were not measurable");
+  }
+  expect(agentMentionBox.x).toBeGreaterThan(selfMentionBox.x);
+
+  await agentMention.click();
+  await expect(detailPopup.getByTestId("chat-input")).toHaveValue("@me/assistant ");
+  await detailPopup.getByTestId("mention-chip").getByRole("button").click();
+  await detailPopup.getByTestId("chat-input").fill("");
+  await selfMention.click();
   await expect(detailPopup.getByTestId("chat-input")).toHaveValue("@me ");
   await expect(detailPopup.getByTestId("chat-input")).toBeFocused();
   const popupBox = await detailPopup.boundingBox();

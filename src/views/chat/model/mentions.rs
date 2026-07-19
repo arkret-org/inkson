@@ -69,19 +69,8 @@ pub(crate) fn is_local_handle_label(label: &str, base_url: &str) -> bool {
         || handle_domain.ends_with(&format!(".{server_domain}"))
 }
 
-pub(crate) fn account_handle_display_from_server(
-    account_handle: &str,
-    server_url: &str,
-) -> Option<String> {
-    let trimmed = account_handle.trim().trim_start_matches('@').trim();
-    if trimmed.is_empty() {
-        return None;
-    }
-    if let Some(handle) = mention_handle_label_from_value(trimmed) {
-        return Some(handle);
-    }
-    let server_domain = local_server_domain(server_url)?;
-    mention_handle_label_from_value(&format!("{trimmed}:{server_domain}"))
+pub(crate) fn normalize_account_handle(account_handle: &str) -> Option<String> {
+    mention_handle_label_from_value(account_handle.trim().trim_start_matches('@').trim())
 }
 
 pub(crate) fn is_leading_mention_punct(ch: char) -> bool {

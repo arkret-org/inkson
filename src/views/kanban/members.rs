@@ -6,130 +6,21 @@ use super::json_path_string;
 use super::model::*;
 use crate::operation::trim_realm_id;
 use crate::state::{LocalStateStore, RawOperationRecord};
-use crate::views::helpers::{display_name_for_did, handle_display_from_did, short_protocol_id};
+use crate::views::helpers::display_name_for_did;
+#[cfg(test)]
+pub(super) use crate::views::member_display::member_label as member_display_label;
+pub(super) use crate::views::member_display::{
+    RealmMemberRow, member_lookup_subject as member_handle_lookup_subject,
+    owned_agent_slug as owned_agent_slug_for_row, realm_member_roster,
+    verified_inline_handle as member_inline_handle_label,
+};
 
-/// Per-member entry harvested from a cached Realm projection.
-///
-/// R3.2 (arkret-spec @ b56cab1) — roster entries MUST NOT carry raw
-/// handle / display fields. Identity resolution happens by following
-/// `identity_event_ids[]` (or inline `identity_events[]`) and applying
-/// the SDK's `effective_identity_events` helper. Handle strings only ever
-/// appear inside signed `ak.schema.handle_claim.v1` evidence.
-///
-/// `actor_id` is the actor DID. `membership` is `join` / `invite` /
-/// `knock`. `identity_event_ids` are the effective
-/// `ak.member.identity.update` event ids (after replacement edges).
-/// `member_display_state_digest` is the roster display cache key (R3.2
-/// rename of the prior `identity_state_digest`; now folds the visible
-/// handle-claim digest set). `subject_id` is the disclosed principal DID
-/// — present only when the server disclosed it (gates the handle-claim
-/// evidence fields per the R3.2 roster dependentRequired rule).
-#[derive(Clone, Debug, PartialEq)]
-pub(super) struct RealmMemberRow {
-    /// Actor DID.
-    pub actor_id: String,
-    pub membership: Option<String>,
-    pub identity_event_ids: Vec<String>,
-    pub member_display_state_digest: Option<String>,
-    /// R3.2 roster — disclosed principal/holder DID. `None` when the
-    /// server did not disclose it (then the handle-claim fields are also
-    /// absent). Drives §3.2.1 primary-handle selection + the
-    /// "Why am I seeing this handle?" panel.
-    pub subject_id: Option<String>,
-    pub handle_claims: Vec<Value>,
-    pub handle_claims_limited: bool,
-}
-
-/// Pick the best UI label for a roster row.
-///
-/// R3.2: prefer visible handle-claim evidence, then a fresh
-/// `list_handles_for_subject` cache entry, then a materialized subject DID
-/// display fallback. If no handle-shaped label is available, use the
-/// resolved [`MemberIdentity`] display (via the SDK's effective-set
-/// helper), then a compact actor-DID fallback so long `did:webvh:...`
-/// strings don't overflow.
-///
-/// `identity` is the current effective [`MemberIdentity`] for this row
-/// (when one has been decrypted + verified). [`None`] means the row is
-/// `decryption_pending` or no identity event has been observed yet — in
-/// either case we render the compact DID instead of a raw `did:...`.
-pub(super) fn member_display_label(
-    row: &RealmMemberRow,
-    identity: Option<&arkret_sdk::MemberIdentity>,
-    cached_primary_handle: Option<&str>,
-) -> String {
-    if let Some(handle) = member_inline_handle_label(row) {
-        return handle;
-    }
-    if let Some(handle) = cached_primary_handle.and_then(crate::identity::handle::parse_user_handle)
-    {
-        return handle.display;
-    }
-    if let Some(handle) = member_fallback_handle_label(row) {
-        return handle;
-    }
-    if let Some(identity) = identity {
-        // R3.2: `MemberIdentity` no longer carries handle fields. The
-        // verified handle (if any) comes from running §3.2.1 over the
-        // roster handle-claim set; that resolution happens in the mention
-        // / member-detail render path (see `render_member_handle`). The
-        // roster row label falls back to the disclosed display name.
-        let name = identity.display_profile.display_name.trim();
-        if !name.is_empty() {
-            return name.to_owned();
-        }
-    }
-    short_protocol_id(&row.actor_id)
-}
-
-pub(super) fn member_inline_handle_label(row: &RealmMemberRow) -> Option<String> {
-    let subject = row.subject_id.as_deref().unwrap_or(row.actor_id.as_str());
-    row.handle_claims.iter().find_map(|claim| {
-        let claim_subject = json_path_string(Some(claim), &["subject"])
-            .or_else(|| json_path_string(Some(claim), &["subject_id"]))?;
-        if claim_subject.trim() != subject {
-            return None;
-        }
-        let binding_state = json_path_string(Some(claim), &["binding_state"])
-            .unwrap_or_else(|| "verified".to_owned());
-        if !matches!(binding_state.as_str(), "verified" | "active") {
-            return None;
-        }
-        json_path_string(Some(claim), &["handle"])
-            .and_then(|raw| crate::identity::handle::parse_user_handle(&raw).map(|h| h.display))
-    })
-}
-
-pub(super) fn member_fallback_handle_label(row: &RealmMemberRow) -> Option<String> {
-    row.subject_id
-        .as_deref()
-        .and_then(handle_display_from_did)
-        .or_else(|| handle_display_from_did(&row.actor_id))
-}
-
-pub(super) fn member_handle_lookup_subject(
-    row: &RealmMemberRow,
-    identity: Option<&arkret_sdk::MemberIdentity>,
-) -> Option<String> {
-    if let Some(subject) = row
-        .subject_id
-        .as_deref()
-        .map(str::trim)
-        .filter(|subject| subject.starts_with("did:"))
-        .filter(|subject| !subject.is_empty())
-    {
-        return Some(subject.to_owned());
-    }
-    if let Some(identity) = identity {
-        return Some(identity.subject_id.as_str().to_owned());
-    }
-    // The roster may omit `subject_id` while the current server still uses
-    // the visible actor DID as the principal DID. This lookup is
-    // Realm-scoped, display-only, and Directory-enforced; if the actor is a
-    // pairwise/private DID the response should simply be empty and cached
-    // briefly as a negative display lookup.
-    let actor = row.actor_id.trim();
-    actor.starts_with("did:").then(|| actor.to_owned())
+pub(super) fn card_member_is_current_account(row: &RealmMemberRow, account_did: &str) -> bool {
+    actor_is_current_account(&row.actor_id, account_did)
+        || row
+            .subject_id
+            .as_deref()
+            .is_some_and(|subject_id| actor_is_current_account(subject_id, account_did))
 }
 
 pub(super) fn member_roster_realm_context(
@@ -167,139 +58,6 @@ pub(super) fn member_handle_fetch_key(
 pub(super) struct CardAuthorDisplayContext<'a> {
     pub realm_id: &'a str,
     pub member_rows: &'a [RealmMemberRow],
-}
-
-/// Collect the sorted roster of realm members from a cached space
-/// projection. R3.2 roster wire shape per
-/// `account-subscribe-frame.schema.json#/$defs/member_roster_entry`:
-/// `{actor_id, membership, subject_id?, identity_event_ids?,
-/// member_display_state_digest?, identity_events?, handle_claim_digests?,
-/// handle_claims?, handle_claims_limited?}`. The four handle-claim /
-/// identity-event evidence fields are disclosure-gated on `subject_id`;
-/// when the server omits `subject_id` it omits them all (we just treat
-/// them as `None`).
-pub(super) fn realm_member_roster(projection: Option<&Value>) -> Vec<RealmMemberRow> {
-    let Some(root) = projection else {
-        return Vec::new();
-    };
-    let mut rows: BTreeMap<String, RealmMemberRow> = BTreeMap::new();
-    let sources: [&Value; 2] = [root, root.get("summary").unwrap_or(root)];
-    for source in sources {
-        for key in [
-            "members",
-            "participants",
-            "owners",
-            "admins",
-            "admin_dids",
-            "owner",
-            "created_by",
-            "creator",
-        ] {
-            collect_member_rows(source.get(key), &mut rows);
-        }
-    }
-    rows.into_values().collect()
-}
-
-pub(super) fn collect_member_rows(
-    value: Option<&Value>,
-    out: &mut BTreeMap<String, RealmMemberRow>,
-) {
-    let Some(value) = value else { return };
-    match value {
-        Value::Array(items) => {
-            for item in items {
-                collect_member_rows(Some(item), out);
-            }
-        }
-        Value::Object(map) => {
-            let actor_id = map
-                .get("actor_id")
-                .and_then(|child| child.as_str())
-                .map(str::trim)
-                .filter(|value| !value.is_empty())
-                .map(ToOwned::to_owned);
-            let membership = map
-                .get("membership")
-                .and_then(|child| child.as_str())
-                .map(str::trim)
-                .filter(|value| !value.is_empty())
-                .map(ToOwned::to_owned);
-            let identity_event_ids: Vec<String> = map
-                .get("identity_event_ids")
-                .and_then(|child| child.as_array())
-                .map(|items| {
-                    items
-                        .iter()
-                        .filter_map(|item| item.as_str().map(str::trim).filter(|s| !s.is_empty()))
-                        .map(ToOwned::to_owned)
-                        .collect()
-                })
-                .unwrap_or_default();
-            // R3.2 roster rename: `identity_state_digest` →
-            // `member_display_state_digest` (no pre-R3.2 compat).
-            let member_display_state_digest = map
-                .get("member_display_state_digest")
-                .and_then(|child| child.as_str())
-                .map(str::trim)
-                .filter(|value| !value.is_empty())
-                .map(ToOwned::to_owned);
-            // R3.2 roster: disclosed principal/holder DID. Gates the
-            // inline handle-claim evidence. dependentRequired is enforced
-            // server-side; here we simply read what was disclosed.
-            let subject_id = map
-                .get("subject_id")
-                .and_then(|child| child.as_str())
-                .map(str::trim)
-                .filter(|value| !value.is_empty())
-                .map(ToOwned::to_owned);
-            let handle_claims = map
-                .get("handle_claims")
-                .and_then(Value::as_array)
-                .map(|items| items.to_vec())
-                .unwrap_or_default();
-            let handle_claims_limited = map
-                .get("handle_claims_limited")
-                .and_then(Value::as_bool)
-                .unwrap_or(false);
-            if let Some(actor_id) = actor_id {
-                let candidate = RealmMemberRow {
-                    actor_id: actor_id.clone(),
-                    membership: membership.clone(),
-                    identity_event_ids: identity_event_ids.clone(),
-                    member_display_state_digest: member_display_state_digest.clone(),
-                    subject_id: subject_id.clone(),
-                    handle_claims: handle_claims.clone(),
-                    handle_claims_limited,
-                };
-                match out.entry(actor_id) {
-                    std::collections::btree_map::Entry::Vacant(entry) => {
-                        entry.insert(candidate);
-                    }
-                    std::collections::btree_map::Entry::Occupied(mut entry) => {
-                        let existing = entry.get_mut();
-                        if existing.membership.is_none() {
-                            existing.membership = membership;
-                        }
-                        if existing.identity_event_ids.is_empty() {
-                            existing.identity_event_ids = identity_event_ids;
-                        }
-                        if existing.member_display_state_digest.is_none() {
-                            existing.member_display_state_digest = member_display_state_digest;
-                        }
-                        if existing.subject_id.is_none() {
-                            existing.subject_id = subject_id;
-                        }
-                        if existing.handle_claims.is_empty() {
-                            existing.handle_claims = handle_claims;
-                        }
-                        existing.handle_claims_limited |= handle_claims_limited;
-                    }
-                }
-            }
-        }
-        _ => {}
-    }
 }
 
 #[cfg(test)]
@@ -409,22 +167,10 @@ pub(super) fn member_display_label_for_actor(
                 .map(str::trim)
                 .is_some_and(|subject| subject == actor_id)
     })?;
-    let identity = state_store.resolved_member_identity(realm_id, &row.actor_id);
-    let cached_handle =
-        member_handle_lookup_subject(row, identity.as_ref()).and_then(|subject_id| {
-            state_store
-                .cached_member_handle_lookup(
-                    &subject_id,
-                    Some(realm_id),
-                    row.member_display_state_digest.as_deref(),
-                )
-                .and_then(|entry| entry.primary_handle)
-        });
-    Some(member_display_label(
-        row,
-        identity.as_ref(),
-        cached_handle.as_deref(),
-    ))
+    Some(
+        crate::views::member_display::resolve_member_display(state_store, realm_id, row, None)
+            .label,
+    )
 }
 
 pub(super) fn bare_member_row(actor_id: String) -> RealmMemberRow {

@@ -9,72 +9,6 @@ pub(crate) fn normalize_participant_id(value: &str) -> Option<String> {
     }
 }
 
-pub(crate) fn participant_id_from_state_key(value: &str) -> Option<String> {
-    let trimmed = value.trim();
-    if let Some(index) = trimmed.find("did:") {
-        normalize_participant_id(&trimmed[index..])
-    } else {
-        None
-    }
-}
-
-pub(crate) fn participant_role_from_str(
-    value: Option<&str>,
-    fallback: SpaceParticipantRole,
-) -> SpaceParticipantRole {
-    match value
-        .unwrap_or_default()
-        .trim()
-        .to_ascii_lowercase()
-        .as_str()
-    {
-        "owner" => SpaceParticipantRole::Owner,
-        "admin" | "administrator" => SpaceParticipantRole::Admin,
-        _ => fallback,
-    }
-}
-
-pub(crate) fn participant_id_from_value(value: &Value) -> Option<String> {
-    if let Some(raw) = value.as_str() {
-        return normalize_participant_id(raw);
-    }
-
-    let object = value.as_object()?;
-    [
-        "did",
-        "account_did",
-        "member",
-        "user",
-        "actor",
-        "actor_id",
-        "subject",
-        "state_key",
-        "id",
-        "identifier",
-    ]
-    .iter()
-    .find_map(|key| object.get(*key).and_then(participant_id_from_value))
-}
-
-pub(crate) fn participant_id_from_member_value(value: &Value) -> Option<String> {
-    if let Some(raw) = value.as_str() {
-        return normalize_participant_id(raw);
-    }
-
-    let object = value.as_object()?;
-    [
-        "did",
-        "account_did",
-        "member",
-        "user",
-        "actor",
-        "actor_id",
-        "subject",
-    ]
-    .iter()
-    .find_map(|key| object.get(*key).and_then(participant_id_from_member_value))
-}
-
 pub(crate) fn clean_participant_display_name(value: &str, did: Option<&str>) -> Option<String> {
     let trimmed = value.trim();
     if trimmed.is_empty() || trimmed.starts_with("did:") || did == Some(trimmed) {
@@ -82,50 +16,6 @@ pub(crate) fn clean_participant_display_name(value: &str, did: Option<&str>) -> 
     } else {
         Some(trimmed.to_owned())
     }
-}
-
-pub(crate) fn participant_display_name_from_value(
-    value: &Value,
-    did: Option<&str>,
-) -> Option<(String, u8)> {
-    let object = value.as_object()?;
-    for (rank, keys) in [
-        (
-            0,
-            ["remark", "note", "local_name", "contact_name"].as_slice(),
-        ),
-        (
-            1,
-            [
-                "display_name",
-                "displayName",
-                "nickname",
-                "alias",
-                "preferred_name",
-            ]
-            .as_slice(),
-        ),
-        (2, ["name", "handle", "username"].as_slice()),
-    ] {
-        if let Some(name) = keys
-            .iter()
-            .find_map(|key| object.get(*key).and_then(Value::as_str))
-            .and_then(|raw| clean_participant_display_name(raw, did))
-        {
-            return Some((name, rank));
-        }
-    }
-
-    [
-        "profile", "account", "member", "user", "actor", "subject", "details",
-    ]
-    .iter()
-    .find_map(|key| {
-        object
-            .get(*key)
-            .filter(|child| child.is_object())
-            .and_then(|child| participant_display_name_from_value(child, did))
-    })
 }
 
 pub(crate) fn mention_handle_label_from_value(value: &str) -> Option<String> {
@@ -136,104 +26,13 @@ pub(crate) fn mention_handle_label_from_value(value: &str) -> Option<String> {
     crate::identity::handle::parse_user_handle(trimmed).map(|handle| handle.display)
 }
 
-pub(crate) fn participant_handle_label_from_value(
-    value: &Value,
-    did: Option<&str>,
-) -> Option<String> {
-    let object = value.as_object()?;
-    if let Some(label) = participant_inline_handle_claim_label(object.get("handle_claims"), did) {
-        return Some(label);
-    }
-    object
-        .get("handle")
-        .and_then(Value::as_str)
-        .filter(|raw| did != Some(raw.trim()))
-        .and_then(mention_handle_label_from_value)
-        .or_else(|| {
-            [
-                "profile", "account", "member", "user", "actor", "subject", "details",
-            ]
-            .iter()
-            .find_map(|key| {
-                object
-                    .get(*key)
-                    .filter(|child| child.is_object())
-                    .and_then(|child| participant_handle_label_from_value(child, did))
-            })
-        })
-}
-
-fn participant_inline_handle_claim_label(
-    claims: Option<&Value>,
-    did: Option<&str>,
-) -> Option<String> {
-    let did = did?.trim();
-    if did.is_empty() {
-        return None;
-    }
-    claims?.as_array()?.iter().find_map(|claim| {
-        let claim_subject = claim
-            .get("subject")
-            .or_else(|| claim.get("subject_id"))
-            .and_then(Value::as_str)?;
-        if claim_subject.trim() != did {
-            return None;
-        }
-        let binding_state = claim
-            .get("binding_state")
-            .and_then(Value::as_str)
-            .unwrap_or("verified");
-        if !matches!(binding_state, "verified" | "active") {
-            return None;
-        }
-        claim
-            .get("handle")
-            .and_then(Value::as_str)
+pub(crate) fn mention_label_for_participant(participant: &SpaceParticipant) -> Option<String> {
+    participant.handle_label.clone().or_else(|| {
+        participant
+            .display_name
+            .as_deref()
             .and_then(mention_handle_label_from_value)
     })
-}
-
-pub(crate) fn mention_label_for_participant(participant: &SpaceParticipant) -> Option<String> {
-    participant
-        .handle_label
-        .clone()
-        .or_else(|| {
-            participant
-                .display_name
-                .as_deref()
-                .and_then(mention_handle_label_from_value)
-        })
-        .or_else(|| crate::views::helpers::handle_display_from_did(&participant.did))
-}
-
-pub(crate) fn apply_cached_participant_handle_labels(
-    participants: &mut [SpaceParticipant],
-    state_store: &LocalStateStore,
-    realm_id: &str,
-    account_did: &str,
-    account_display_label: &str,
-    base_url: &str,
-) {
-    for participant in participants {
-        if participant.handle_label.is_some() {
-            continue;
-        }
-        let account_handle = (participant.did.trim() == account_did.trim())
-            .then(|| {
-                account_handle_display_from_server(account_display_label, base_url).or_else(|| {
-                    state_store
-                        .primary_handle_for_did(&participant.did)
-                        .and_then(|handle| mention_handle_label_from_value(&handle))
-                })
-            })
-            .flatten();
-        let cached_handle = state_store
-            .cached_member_handle_lookup(&participant.did, Some(realm_id), None)
-            .or_else(|| state_store.cached_member_handle_lookup(&participant.did, None, None))
-            .and_then(|entry| entry.primary_handle)
-            .and_then(|handle| mention_handle_label_from_value(&handle));
-        participant.handle_label = account_handle.or(cached_handle);
-    }
 }
 
 pub(crate) fn upsert_participant(
@@ -252,9 +51,6 @@ pub(crate) fn upsert_participant(
         .iter_mut()
         .find(|candidate| candidate.did == did)
     {
-        if role.rank() < existing.role.rank() {
-            existing.role = role;
-        }
         existing.is_self |= is_self;
         if let Some((display_name, rank)) = display_name
             && (existing.display_name.is_none() || rank < existing.display_name_rank)
@@ -360,194 +156,57 @@ pub(crate) fn participant_roster_rows(
     rows
 }
 
-pub(crate) fn collect_participant_field(
-    value: &Value,
-    key: &str,
-    role: SpaceParticipantRole,
-    account_did: &str,
-    participants: &mut Vec<SpaceParticipant>,
-) {
-    let Some(field) = value.get(key) else {
-        return;
-    };
-
-    if let Some(items) = field.as_array() {
-        for item in items {
-            let item_role = item
-                .get("role")
-                .and_then(Value::as_str)
-                .map(|raw_role| participant_role_from_str(Some(raw_role), role))
-                .unwrap_or(role);
-            if let Some(did) = participant_id_from_value(item) {
-                upsert_participant(
-                    participants,
-                    &did,
-                    item_role,
-                    account_did,
-                    participant_display_name_from_value(item, Some(&did)),
-                    participant_handle_label_from_value(item, Some(&did)),
-                );
-            }
-        }
-    } else if let Some(did) = participant_id_from_value(field) {
-        upsert_participant(
-            participants,
-            &did,
-            role,
-            account_did,
-            participant_display_name_from_value(field, Some(&did)),
-            participant_handle_label_from_value(field, Some(&did)),
-        );
-    }
-}
-
-pub(crate) fn collect_state_participants(
-    projection: &Value,
-    account_did: &str,
-    participants: &mut Vec<SpaceParticipant>,
-) {
-    let state_events = projection
-        .get("state")
-        .and_then(Value::as_array)
-        .into_iter()
-        .flatten()
-        .chain(
-            projection
-                .get("state")
-                .and_then(|state| state.get("events"))
-                .and_then(Value::as_array)
-                .into_iter()
-                .flatten(),
-        );
-    let state: Vec<&Value> = state_events.collect();
-    if state.is_empty() {
-        return;
-    }
-
-    for item in state {
-        let kind = item
-            .get("kind")
-            .or_else(|| item.get("type"))
-            .and_then(Value::as_str)
-            .unwrap_or_default()
-            .to_ascii_lowercase();
-        let state_key = item
-            .get("state_key")
-            .or_else(|| item.get("key"))
-            .and_then(Value::as_str)
-            .unwrap_or_default();
-        let body = item
-            .get("content")
-            .or_else(|| item.get("value"))
-            .or_else(|| item.get("body"))
-            .unwrap_or(item);
-
-        let did = participant_id_from_state_key(state_key)
-            .or_else(|| participant_id_from_member_value(body))
-            .or_else(|| participant_id_from_member_value(item));
-        if !kind.contains("member") && did.is_none() {
-            continue;
-        }
-
-        let role = participant_role_from_str(
-            body.get("role")
-                .or_else(|| item.get("role"))
-                .and_then(Value::as_str),
-            SpaceParticipantRole::Member,
-        );
-        if let Some(did) = did {
-            let display_name = participant_display_name_from_value(body, Some(&did))
-                .or_else(|| participant_display_name_from_value(item, Some(&did)));
-            let handle_label = participant_handle_label_from_value(body, Some(&did))
-                .or_else(|| participant_handle_label_from_value(item, Some(&did)));
-            upsert_participant(
-                participants,
-                &did,
-                role,
-                account_did,
-                display_name,
-                handle_label,
-            );
-        }
-    }
-}
-
 pub(crate) fn space_participants(
     projection: Option<&Value>,
+    state_store: &LocalStateStore,
+    realm_id: &str,
     account_did: &str,
+    account_primary_handle: Option<&str>,
 ) -> Vec<SpaceParticipant> {
     let mut participants = Vec::new();
 
-    if let Some(projection) = projection {
-        for key in ["owner", "created_by", "creator"] {
-            collect_participant_field(
-                projection,
-                key,
-                SpaceParticipantRole::Owner,
-                account_did,
-                &mut participants,
-            );
+    for row in crate::views::member_display::realm_member_roster(projection) {
+        let is_self = row.actor_id.trim() == account_did.trim()
+            || row.subject_id.as_deref().map(str::trim) == Some(account_did.trim());
+        let display = crate::views::member_display::resolve_member_display(
+            state_store,
+            realm_id,
+            &row,
+            is_self.then_some(account_primary_handle).flatten(),
+        );
+        upsert_participant(
+            &mut participants,
+            &row.actor_id,
+            SpaceParticipantRole::Member,
+            account_did,
+            display.display_name.map(|name| (name, 1)),
+            display.primary_handle,
+        );
+        if is_self
+            && let Some(participant) = participants
+                .iter_mut()
+                .find(|participant| participant.did == row.actor_id)
+        {
+            participant.is_self = true;
         }
-        for key in ["owners", "admins", "admin_dids"] {
-            collect_participant_field(
-                projection,
-                key,
-                SpaceParticipantRole::Admin,
-                account_did,
-                &mut participants,
-            );
-        }
-        for key in ["members", "participants"] {
-            collect_participant_field(
-                projection,
-                key,
-                SpaceParticipantRole::Member,
-                account_did,
-                &mut participants,
-            );
-        }
-
-        if let Some(summary) = projection.get("summary") {
-            for key in ["owner", "created_by", "creator"] {
-                collect_participant_field(
-                    summary,
-                    key,
-                    SpaceParticipantRole::Owner,
-                    account_did,
-                    &mut participants,
-                );
-            }
-            for key in ["owners", "admins", "admin_dids"] {
-                collect_participant_field(
-                    summary,
-                    key,
-                    SpaceParticipantRole::Admin,
-                    account_did,
-                    &mut participants,
-                );
-            }
-            for key in ["members", "participants"] {
-                collect_participant_field(
-                    summary,
-                    key,
-                    SpaceParticipantRole::Member,
-                    account_did,
-                    &mut participants,
-                );
-            }
-        }
-
-        collect_state_participants(projection, account_did, &mut participants);
     }
 
-    if !account_did.trim().is_empty() {
+    if !account_did.trim().is_empty() && !participants.iter().any(|participant| participant.is_self)
+    {
+        let account_handle = account_primary_handle
+            .and_then(mention_handle_label_from_value)
+            .or_else(|| {
+                state_store
+                    .primary_handle_for_did(account_did)
+                    .and_then(|handle| mention_handle_label_from_value(&handle))
+            });
         upsert_participant(
             &mut participants,
             account_did,
             SpaceParticipantRole::Member,
             account_did,
             None,
-            None,
+            account_handle,
         );
     }
 
@@ -555,7 +214,6 @@ pub(crate) fn space_participants(
         right
             .is_self
             .cmp(&left.is_self)
-            .then_with(|| left.role.rank().cmp(&right.role.rank()))
             .then_with(|| left.did.cmp(&right.did))
     });
     participants
@@ -624,17 +282,7 @@ pub(crate) fn participant_sender_label(participant: &SpaceParticipant) -> Option
 }
 
 pub(crate) fn participant_handle_label(participant: &SpaceParticipant) -> Option<String> {
-    participant
-        .handle_label
-        .clone()
-        .or_else(|| crate::views::helpers::handle_display_from_did(&participant.did))
-}
-
-fn display_name_is_handle_localpart(display_name: &str, handle_label: &str) -> bool {
-    let Some(localpart) = handle_label.split(':').next() else {
-        return false;
-    };
-    display_name.trim().eq_ignore_ascii_case(localpart.trim())
+    participant.handle_label.clone()
 }
 
 pub(crate) fn participant_roster_display_label(
@@ -654,14 +302,14 @@ pub(crate) fn agent_controller_label(
     participants: &[SpaceParticipant],
 ) -> Option<String> {
     let metadata = participant.agent_metadata.as_ref()?;
-    if !metadata.controller_handle.trim().is_empty() {
-        return Some(metadata.controller_handle.clone());
-    }
     participants
         .iter()
         .find(|candidate| candidate.did == metadata.controller_id)
         .and_then(participant_sender_label)
-        .or_else(|| crate::views::helpers::handle_display_from_did(&metadata.controller_id))
+        .or_else(|| {
+            (!metadata.controller_handle.trim().is_empty())
+                .then(|| metadata.controller_handle.clone())
+        })
         .or_else(|| {
             (!metadata.controller_id.trim().is_empty())
                 .then(|| short_principal_label(&metadata.controller_id))
@@ -841,28 +489,15 @@ pub(crate) fn sender_display_label(
         let account_did = account_did.trim();
         let own_participant = participants
             .iter()
-            .find(|participant| participant.did == account_did);
-        let did_handle_label = crate::views::helpers::handle_display_from_did(account_did);
+            .find(|participant| participant.is_self && !participant.is_agent);
         let account_display_name =
-            clean_participant_display_name(account_display_name, Some(account_did)).filter(
-                |label| {
-                    did_handle_label
-                        .as_deref()
-                        .is_none_or(|handle| !display_name_is_handle_localpart(label, handle))
-                },
-            );
-        let participant_display_name = own_participant
-            .and_then(|participant| participant.display_name.clone())
-            .filter(|label| {
-                did_handle_label
-                    .as_deref()
-                    .is_none_or(|handle| !display_name_is_handle_localpart(label, handle))
-            });
+            clean_participant_display_name(account_display_name, Some(account_did));
+        let participant_display_name =
+            own_participant.and_then(|participant| participant.display_name.clone());
         return own_participant
             .and_then(|participant| participant.handle_label.clone())
             .or(account_display_name)
             .or(participant_display_name)
-            .or(did_handle_label)
             .unwrap_or_else(|| {
                 if account_did.is_empty() {
                     "inkson".to_owned()
@@ -875,7 +510,6 @@ pub(crate) fn sender_display_label(
         .iter()
         .find(|participant| participant.did == sender.trim())
         .and_then(participant_sender_label)
-        .or_else(|| crate::views::helpers::handle_display_from_did(sender))
         .unwrap_or_else(|| short_principal_label(sender))
 }
 

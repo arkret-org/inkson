@@ -176,11 +176,7 @@ pub(super) fn DiscussionParticipantRow(
                 }
                 div { class: "participant-badges",
                     span {
-                        class: match participant.role {
-                            SpaceParticipantRole::Owner => "badge participant-badge admin",
-                            SpaceParticipantRole::Admin => "badge participant-badge admin",
-                            SpaceParticipantRole::Member => "badge participant-badge member",
-                        },
+                        class: "badge participant-badge member",
                         "{participant.role.label()}"
                     }
                 }

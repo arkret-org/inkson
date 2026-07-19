@@ -22,7 +22,7 @@
 use dioxus::prelude::*;
 
 use crate::mls::durability::durability_mode_label;
-use crate::views::helpers::{handle_display_from_did, short_protocol_id};
+use crate::views::helpers::short_protocol_id;
 
 /// Per-recipient verification status for the disclosure list.
 #[derive(Clone, PartialEq, Eq)]
@@ -90,8 +90,7 @@ pub fn DurabilityDisclosureBanner(realm_id: String) -> Element {
                 .into_iter()
                 .map(|check| {
                     if check.verified {
-                        let display = handle_display_from_did(&check.principal_did)
-                            .unwrap_or_else(|| short_protocol_id(&check.principal_did));
+                        let display = short_protocol_id(&check.principal_did);
                         RecipientVerification::Verified {
                             recipient_id: check.recipient_id,
                             principal_did: check.principal_did,

@@ -14,9 +14,7 @@ use crate::ui::button::{Button, ButtonSize, ButtonVariant};
 use crate::ui::checkbox::Checkbox;
 use crate::ui::input::Input;
 use crate::ui::label::Label;
-use crate::views::helpers::{
-    active_sync_token, display_name_for_did, handle_display_from_did, short_protocol_id,
-};
+use crate::views::helpers::{active_sync_token, display_name_for_did, short_protocol_id};
 
 /// Number of member rows the list renders per page. The member list is
 /// hydrated from the full local sync projection (which can hold tens of
@@ -180,7 +178,7 @@ impl MemberProfile {
 }
 
 fn member_identity_fallback_label(did: &str) -> String {
-    handle_display_from_did(did).unwrap_or_else(|| short_protocol_id(did))
+    short_protocol_id(did)
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -334,59 +332,12 @@ fn mention_state_from_entries(
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum ProjectedMemberRole {
-    Member,
-    Admin,
-    Owner,
-}
-
-impl ProjectedMemberRole {
-    fn from_projection_key(key: &str) -> Self {
-        match key {
-            "owner" | "created_by" | "creator" => Self::Owner,
-            "admins" | "admin_dids" => Self::Admin,
-            _ => Self::Member,
-        }
-    }
-}
-
 fn trimmed_string(value: Option<&Value>) -> Option<String> {
     value
         .and_then(Value::as_str)
         .map(str::trim)
         .filter(|value| !value.is_empty())
         .map(ToOwned::to_owned)
-}
-
-fn projection_path_string(
-    map: &serde_json::Map<String, Value>,
-    paths: &[&[&str]],
-) -> Option<String> {
-    for path in paths {
-        let Some((first, rest)) = path.split_first() else {
-            continue;
-        };
-        let Some(mut current) = map.get(*first) else {
-            continue;
-        };
-        let mut found = true;
-        for segment in rest {
-            if let Some(next) = current.get(*segment) {
-                current = next;
-            } else {
-                found = false;
-                break;
-            }
-        }
-        if !found {
-            continue;
-        }
-        if let Some(value) = trimmed_string(Some(current)) {
-            return Some(value);
-        }
-    }
-    None
 }
 
 fn push_unique(out: &mut Vec<String>, value: impl Into<String>) {
@@ -406,159 +357,6 @@ fn normalize_handle_label(raw: &str) -> Option<String> {
     crate::identity::handle::parse_user_handle(raw)
         .map(|handle| handle.display)
         .or_else(|| Some(raw.to_owned()))
-}
-
-fn collect_string_values(value: Option<&Value>, out: &mut Vec<String>) {
-    let Some(value) = value else { return };
-    match value {
-        Value::String(raw) => {
-            if let Some(label) = normalize_handle_label(raw) {
-                push_unique(out, label);
-            }
-        }
-        Value::Array(items) => {
-            for item in items {
-                collect_string_values(Some(item), out);
-            }
-        }
-        Value::Object(map) => {
-            for key in [
-                "handle",
-                "primary_handle",
-                "verified_handle",
-                "value",
-                "uri",
-            ] {
-                if let Some(label) = map
-                    .get(key)
-                    .and_then(Value::as_str)
-                    .and_then(normalize_handle_label)
-                {
-                    push_unique(out, label);
-                }
-            }
-        }
-        _ => {}
-    }
-}
-
-fn collect_handle_claims(value: Option<&Value>, subject_id: Option<&str>, out: &mut Vec<String>) {
-    let Some(value) = value else { return };
-    let Some(items) = value.as_array() else {
-        return;
-    };
-    for claim in items {
-        let claim_subject = trimmed_string(
-            claim
-                .get("subject")
-                .or_else(|| claim.get("subject_id"))
-                .or_else(|| claim.get("holder")),
-        );
-        if let (Some(expected), Some(actual)) = (subject_id, claim_subject.as_deref())
-            && expected.trim() != actual.trim()
-        {
-            continue;
-        }
-        let binding_state = claim
-            .get("binding_state")
-            .and_then(Value::as_str)
-            .unwrap_or("verified");
-        if !matches!(binding_state, "verified" | "active") {
-            continue;
-        }
-        if let Some(label) = claim
-            .get("handle")
-            .and_then(Value::as_str)
-            .and_then(normalize_handle_label)
-        {
-            push_unique(out, label);
-        }
-    }
-}
-
-fn collect_member_handles(
-    map: &serde_json::Map<String, Value>,
-    subject_id: Option<&str>,
-) -> Vec<String> {
-    let mut handles = Vec::new();
-    for key in ["handle", "primary_handle", "verified_handle"] {
-        if let Some(label) = map
-            .get(key)
-            .and_then(Value::as_str)
-            .and_then(normalize_handle_label)
-        {
-            push_unique(&mut handles, label);
-        }
-    }
-    for key in ["handles", "handle_uris"] {
-        collect_string_values(map.get(key), &mut handles);
-    }
-    collect_handle_claims(map.get("handle_claims"), subject_id, &mut handles);
-    for container in ["profile", "identity", "display", "metadata"] {
-        if let Some(Value::Object(child)) = map.get(container) {
-            for key in ["handle", "primary_handle", "verified_handle", "handles"] {
-                collect_string_values(child.get(key), &mut handles);
-            }
-            collect_handle_claims(child.get("handle_claims"), subject_id, &mut handles);
-        }
-    }
-    handles
-}
-
-fn profile_from_projected_member_object(
-    map: &serde_json::Map<String, Value>,
-    role: ProjectedMemberRole,
-    fallback_actor_id: Option<&str>,
-) -> Option<MemberProfile> {
-    let actor_id = trimmed_string(
-        map.get("actor_id")
-            .or_else(|| map.get("did"))
-            .or_else(|| map.get("principal_id")),
-    )
-    .or_else(|| {
-        fallback_actor_id
-            .map(str::trim)
-            .filter(|value| !value.is_empty())
-            .map(ToOwned::to_owned)
-    })?;
-    let subject_id = trimmed_string(
-        map.get("subject_id")
-            .or_else(|| map.get("subject"))
-            .or_else(|| map.get("holder")),
-    );
-    let mut profile = MemberProfile::bare(actor_id);
-    profile.subject_id = subject_id;
-    profile.invite_id = trimmed_string(map.get("invite_id").or_else(|| map.get("id")));
-    profile.display_name = projection_path_string(
-        map,
-        &[
-            &["display_name"],
-            &["profile", "display_name"],
-            &["identity", "display_name"],
-            &["display_profile", "display_name"],
-            &["member_identity", "display_profile", "display_name"],
-        ],
-    );
-    profile.avatar_blob_ref = projection_path_string(
-        map,
-        &[
-            &["avatar_blob_ref"],
-            &["profile", "avatar_blob_ref"],
-            &["identity", "avatar_blob_ref"],
-            &["display_profile", "avatar_blob_ref"],
-            &["member_identity", "display_profile", "avatar_blob_ref"],
-        ],
-    )
-    .and_then(|value| arkret_sdk::BlobRef::new(value).ok());
-    profile.handles = collect_member_handles(map, profile.subject_id.as_deref());
-    profile.membership = trimmed_string(map.get("membership").or_else(|| map.get("state")));
-    profile.member_display_state_digest = trimmed_string(map.get("member_display_state_digest"));
-    profile.is_owner = role == ProjectedMemberRole::Owner;
-    profile.is_admin = matches!(
-        role,
-        ProjectedMemberRole::Admin | ProjectedMemberRole::Owner
-    );
-    Some(profile)
 }
 
 fn merge_member_profile(target: &mut MemberProfile, incoming: MemberProfile) {
@@ -624,133 +422,6 @@ fn upsert_member_profile(out: &mut BTreeMap<String, MemberProfile>, profile: Mem
     }
 }
 
-fn collect_projected_member_profiles(
-    value: Option<&Value>,
-    role: ProjectedMemberRole,
-    out: &mut BTreeMap<String, MemberProfile>,
-) {
-    let Some(value) = value else { return };
-    match value {
-        Value::String(actor_id) => {
-            let mut profile = MemberProfile::bare(actor_id.trim().to_owned());
-            profile.is_owner = role == ProjectedMemberRole::Owner;
-            profile.is_admin = matches!(
-                role,
-                ProjectedMemberRole::Admin | ProjectedMemberRole::Owner
-            );
-            upsert_member_profile(out, profile);
-        }
-        Value::Array(items) => {
-            for item in items {
-                collect_projected_member_profiles(Some(item), role, out);
-            }
-        }
-        Value::Object(map) => {
-            if let Some(profile) = profile_from_projected_member_object(map, role, None) {
-                upsert_member_profile(out, profile);
-                return;
-            }
-            for (key, child) in map {
-                if key.starts_with("did:") {
-                    let profile = child
-                        .as_object()
-                        .and_then(|child_map| {
-                            profile_from_projected_member_object(child_map, role, Some(key))
-                        })
-                        .unwrap_or_else(|| {
-                            let mut profile = MemberProfile::bare(key.clone());
-                            profile.is_owner = role == ProjectedMemberRole::Owner;
-                            profile.is_admin = matches!(
-                                role,
-                                ProjectedMemberRole::Admin | ProjectedMemberRole::Owner
-                            );
-                            profile
-                        });
-                    upsert_member_profile(out, profile);
-                }
-                collect_projected_member_profiles(Some(child), role, out);
-            }
-        }
-        _ => {}
-    }
-}
-
-fn member_inline_handle_label(profile: &MemberProfile) -> Option<String> {
-    profile.handles.first().cloned()
-}
-
-fn member_handle_lookup_subject(profile: &MemberProfile) -> Option<String> {
-    if let Some(subject) = profile
-        .subject_id
-        .as_deref()
-        .map(str::trim)
-        .filter(|value| value.starts_with("did:"))
-        .filter(|value| !value.is_empty())
-    {
-        return Some(subject.to_owned());
-    }
-    let actor = profile.actor_id.trim();
-    actor.starts_with("did:").then(|| actor.to_owned())
-}
-
-fn enrich_member_profile_from_store(
-    store: &LocalStateStore,
-    realm_id: &str,
-    profile: &mut MemberProfile,
-) {
-    if let Some(identity) = store.resolved_member_identity(realm_id, &profile.actor_id) {
-        if profile.subject_id.is_none() {
-            profile.subject_id = Some(identity.subject_id.as_str().to_owned());
-        }
-        if profile.display_name.is_none() {
-            let display_name = identity.display_profile.display_name.trim();
-            if !display_name.is_empty() {
-                profile.display_name = Some(display_name.to_owned());
-            }
-        }
-        if profile.avatar_blob_ref.is_none() {
-            profile.avatar_blob_ref = identity.display_profile.avatar_blob_ref.clone();
-        }
-    }
-    if let Some(subject_id) = member_handle_lookup_subject(profile)
-        && member_inline_handle_label(profile).is_none()
-        && let Some(entry) = store.cached_member_handle_lookup(
-            &subject_id,
-            Some(realm_id),
-            profile.member_display_state_digest.as_deref(),
-        )
-        && let Some(handle) = entry.primary_handle
-        && let Some(label) = normalize_handle_label(&handle)
-    {
-        push_unique(&mut profile.handles, label);
-    }
-    if member_inline_handle_label(profile).is_none()
-        && let Some(handle) = profile
-            .subject_id
-            .as_deref()
-            .and_then(handle_display_from_did)
-            .or_else(|| handle_display_from_did(&profile.actor_id))
-    {
-        push_unique(&mut profile.handles, handle);
-    }
-    if let Some(remark) = store.contact_remark(&profile.actor_id) {
-        let local_name = remark.local_name.trim();
-        if !local_name.is_empty() {
-            profile.remark_name = Some(local_name.to_owned());
-        }
-        let note = remark.note.trim();
-        if !note.is_empty() {
-            profile.remark_note = Some(note.to_owned());
-        }
-    }
-    if profile.display_name.is_none() && profile.handles.is_empty() {
-        let fallback = display_name_for_did(store, &profile.actor_id);
-        if fallback != short_protocol_id(&profile.actor_id) {
-            profile.display_name = Some(fallback);
-        }
-    }
-}
-
 fn projected_member_profiles_for_realm(
     store: &LocalStateStore,
     realm_id: &str,
@@ -758,21 +429,17 @@ fn projected_member_profiles_for_realm(
     let state = store.load();
     let mut rows = BTreeMap::<String, MemberProfile>::new();
     if let Some(projection) = state.realm_tree_projections.get(realm_id) {
-        let sources = [Some(projection), projection.get("summary")];
-        for key in [
-            "members",
-            "participants",
-            "owners",
-            "admins",
-            "admin_dids",
-            "owner",
-            "created_by",
-            "creator",
-        ] {
-            let role = ProjectedMemberRole::from_projection_key(key);
-            for source in sources.into_iter().flatten() {
-                collect_projected_member_profiles(source.get(key), role, &mut rows);
-            }
+        for row in crate::views::member_display::realm_member_roster(Some(projection)) {
+            let display =
+                crate::views::member_display::resolve_member_display(store, realm_id, &row, None);
+            let mut profile = MemberProfile::bare(row.actor_id);
+            profile.subject_id = display.subject_id;
+            profile.display_name = display.display_name;
+            profile.avatar_blob_ref = display.avatar_blob_ref;
+            profile.handles = display.primary_handle.into_iter().collect();
+            profile.membership = row.membership;
+            profile.member_display_state_digest = row.member_display_state_digest;
+            upsert_member_profile(&mut rows, profile);
         }
     }
     let invitee_by_invite_id =
@@ -800,7 +467,12 @@ fn projected_member_profiles_for_realm(
     }
     let mut out: Vec<MemberProfile> = rows.into_values().collect();
     for profile in &mut out {
-        enrich_member_profile_from_store(store, realm_id, profile);
+        if let Some(remark) = store.contact_remark(&profile.actor_id) {
+            profile.remark_name =
+                (!remark.local_name.trim().is_empty()).then(|| remark.local_name.trim().to_owned());
+            profile.remark_note =
+                (!remark.note.trim().is_empty()).then(|| remark.note.trim().to_owned());
+        }
     }
     out
 }
@@ -3785,12 +3457,16 @@ pub fn RealmMembersPanel(
                                                         let api_token = token();
                                                         // Resolve the (did, consent_ref) pairs up front so the
                                                         // async task doesn't borrow the rendered rows.
-                                                        let targets: Vec<(String, String)> = invite_contacts
+                                                        let targets: Vec<(String, Option<String>, String)> = invite_contacts
                                                             .read()
                                                             .iter()
                                                             .filter(|c| selected_contacts.read().contains(&c.peer))
                                                             .filter_map(|c| {
-                                                                c.invite_consent_ref().map(|r| (c.peer.clone(), r.to_owned()))
+                                                                c.invite_consent_ref().map(|r| (
+                                                                    c.peer.clone(),
+                                                                    c.peer_service_id.clone(),
+                                                                    r.to_owned(),
+                                                                ))
                                                             })
                                                             .collect();
                                                         if targets.is_empty() {
@@ -3819,9 +3495,15 @@ pub fn RealmMembersPanel(
                                                             let mut mls_ok = 0_usize;
                                                             let mut ok_invites =
                                                                 Vec::<(String, String, String)>::new();
-                                                            for (did, consent_ref) in targets {
+                                                            for (did, recipient_service_id, consent_ref) in targets {
                                                                 match api
-                                                                    .invite_contact_to_realm(&realm, &actor, &did, &consent_ref)
+                                                                    .invite_contact_to_realm(
+                                                                        &realm,
+                                                                        &actor,
+                                                                        &did,
+                                                                        recipient_service_id.as_deref(),
+                                                                        &consent_ref,
+                                                                    )
                                                                     .await
                                                                 {
                                                                     Ok((event_id, invite_id)) => {
@@ -5026,7 +4708,7 @@ mod tests {
     }
 
     #[test]
-    fn projected_member_profiles_read_display_handles_and_roles() {
+    fn projected_member_profiles_use_only_verified_canonical_identity_fields() {
         let realm_id = "ak:realm:test";
         let mut store = temp_store("projected-profiles");
         store.save_realm_tree_projection(
@@ -5054,16 +4736,10 @@ mod tests {
             .iter()
             .find(|profile| profile.actor_id == "did:web:alice.example")
             .expect("alice profile exists");
-        assert_eq!(alice.display_name.as_deref(), Some("Alice"));
+        assert_eq!(alice.display_name, None);
         assert_eq!(alice.handles, vec!["alice:acme.example"]);
-        assert_eq!(
-            alice.avatar_blob_ref.as_ref().map(ToString::to_string),
-            Some(
-                "ak:blob:sha256:01015dc8af66d01f557ea63f13538f1964848840a350c5311d1efc8ad138bb91"
-                    .to_owned()
-            )
-        );
-        assert!(alice.is_admin);
+        assert_eq!(alice.avatar_blob_ref, None);
+        assert!(!alice.is_admin);
     }
 
     #[test]
@@ -5144,7 +4820,7 @@ mod tests {
     }
 
     #[test]
-    fn projected_join_membership_overrides_earlier_pending_projection() {
+    fn projected_duplicate_member_keeps_first_roster_entry() {
         let realm_id = "ak:realm:test";
         let mut store = temp_store("pending-then-joined-membership");
         store.save_realm_tree_projection(
@@ -5166,10 +4842,10 @@ mod tests {
         let profiles = projected_member_profiles_for_realm(&store, realm_id);
         let (active, pending) = split_member_profiles(profiles);
 
-        assert_eq!(active.len(), 1);
-        assert_eq!(active[0].actor_id, "did:web:bob.example");
-        assert_eq!(active[0].membership.as_deref(), Some("join"));
-        assert!(pending.is_empty());
+        assert!(active.is_empty());
+        assert_eq!(pending.len(), 1);
+        assert_eq!(pending[0].actor_id, "did:web:bob.example");
+        assert_eq!(pending[0].membership.as_deref(), Some("invite"));
     }
 
     #[test]

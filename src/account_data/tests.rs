@@ -567,8 +567,8 @@ fn blocklist_entries_parse_canonical_account_data_body() {
     assert_eq!(entries[0].kind, "actor");
     assert_eq!(entries[0].reason.as_deref(), Some("harassment"));
     assert_eq!(
-        entries[0].blocked_at.as_deref(),
-        Some("2026-05-29T00:00:00Z")
+        chrono::DateTime::parse_from_rfc3339(entries[0].blocked_at.as_deref().unwrap()).unwrap(),
+        chrono::DateTime::parse_from_rfc3339("2026-05-29T00:00:00Z").unwrap()
     );
     // Domain target: kind preserved, value normalized (lower-cased),
     // applies_to + expires_at round-tripped.
@@ -576,8 +576,8 @@ fn blocklist_entries_parse_canonical_account_data_body() {
     assert_eq!(entries[1].did, "example.com");
     assert_eq!(entries[1].applies_to, vec!["dm", "calls"]);
     assert_eq!(
-        entries[1].expires_at.as_deref(),
-        Some("2026-07-01T00:00:00Z")
+        chrono::DateTime::parse_from_rfc3339(entries[1].expires_at.as_deref().unwrap()).unwrap(),
+        chrono::DateTime::parse_from_rfc3339("2026-07-01T00:00:00Z").unwrap()
     );
 }
 

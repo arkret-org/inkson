@@ -5,6 +5,7 @@ pub(super) struct CardDetailContext {
     pub base_url: String,
     pub plaintext_service_id: String,
     pub account_did: String,
+    pub account_primary_handle: String,
     pub device_id: String,
     pub selected_realm_id: String,
     pub projection_realm_id: String,
@@ -19,11 +20,95 @@ pub(super) struct CardDetailContext {
 }
 
 #[component]
+fn CardMemberMentionRow(
+    did: String,
+    label: String,
+    #[props(default)] is_self: bool,
+    agent_slug: Option<String>,
+    #[props(default)] in_strand: bool,
+    #[props(default)] grouped: bool,
+    member_mention_request: Signal<Option<crate::views::chat::MentionInsertRequest>>,
+    #[props(default)] children: Element,
+) -> Element {
+    let dot_class = if in_strand {
+        "card-detail-actor-dot participant"
+    } else {
+        "card-detail-actor-dot"
+    };
+    let dot_title = if in_strand {
+        "Participated in this Strand"
+    } else {
+        "Realm member"
+    };
+    let mention_agent_slug = agent_slug.clone();
+    let agent_selector = agent_slug.as_ref().map(|slug| format!("me/{slug}"));
+    let row_class = format!(
+        "card-detail-actor-row{}{}",
+        if agent_slug.is_some() {
+            " participant-agent-row"
+        } else if grouped {
+            " card-detail-member-group"
+        } else {
+            ""
+        },
+        if in_strand { " participant" } else { "" },
+    );
+    let test_id = if agent_slug.is_some() {
+        Some("card-detail-agent-row")
+    } else if grouped {
+        Some("card-detail-member-group")
+    } else {
+        None
+    };
+
+    rsx! {
+        div {
+            class: "{row_class}",
+            "data-testid": test_id,
+            "data-member-did": "{did}",
+            "data-agent-slug": agent_slug.as_deref(),
+            "data-strand-participant": "{in_strand}",
+            button {
+                r#type: "button",
+                class: "card-detail-actor-mention-button",
+                "data-testid": "card-detail-member-mention-button",
+                "aria-label": "Mention {label}",
+                onclick: {
+                    let mention_target = did.clone();
+                    move |_| {
+                        member_mention_request.set(Some(
+                            crate::views::chat::MentionInsertRequest::new(
+                                mention_target.clone(),
+                                mention_agent_slug.clone(),
+                            ),
+                        ));
+                    }
+                },
+                span { class: "{dot_class}", title: "{dot_title}", "aria-label": "{dot_title}" }
+                ActorIdentityLabel {
+                    label: label.clone(),
+                    title: Some(did.clone()),
+                    class: Some("card-detail-actor-did".to_owned()),
+                    test_id: Some("card-detail-member".to_owned()),
+                    self_badge_test_id: None,
+                    agent_badge_test_id: None,
+                    is_self,
+                    agent_slug: agent_slug.clone(),
+                    agent_selector,
+                }
+            }
+            {children}
+        }
+    }
+}
+
+#[component]
 pub(super) fn CardDetail(controller: KanbanController, context: CardDetailContext) -> Element {
     let CardDetailContext {
         base_url,
         plaintext_service_id,
         account_did,
+        account_primary_handle,
         device_id,
         selected_realm_id,
         projection_realm_id,
@@ -39,41 +124,28 @@ pub(super) fn CardDetail(controller: KanbanController, context: CardDetailContex
     let state_store = crate::app::SessionContext::get().state_store;
     let navigator = use_navigator();
     let route = use_route::<Route>();
-    let mut owned_agent_slugs = use_signal(BTreeMap::<String, String>::new);
-    let mut owned_agent_sync_key_seen = use_signal(String::new);
-    let mut member_mention_request =
+    let member_mention_request =
         use_signal(|| Option::<crate::views::chat::MentionInsertRequest>::None);
-    {
+    let owned_agent_inventory = use_resource({
         let base = base_url.clone();
-        let account = account_did.clone();
-        use_effect(move || {
-            let api_token = token();
-            let request_key = account.trim().to_owned();
-            if account.trim().is_empty()
-                || api_token.trim().is_empty()
-                || owned_agent_sync_key_seen.peek().as_str() == request_key
-            {
-                return;
-            }
-            owned_agent_sync_key_seen.set(request_key.clone());
-            owned_agent_slugs.set(BTreeMap::new());
+        move || {
             let base = base.clone();
-            spawn(async move {
-                let result = with_authed_sdk_client(&base, api_token, |http| async move {
+            let api_token = token();
+            async move {
+                if api_token.trim().is_empty() {
+                    return Err("authenticated Agent inventory is unavailable".to_owned());
+                }
+                with_authed_sdk_client(&base, api_token, |http| async move {
                     let list = http.agent_list().await?;
                     Ok::<_, anyhow::Error>(crate::views::agents::mentionable_owned_agent_slugs(
                         list.agents,
                     ))
                 })
-                .await;
-                if owned_agent_sync_key_seen.peek().as_str() == request_key
-                    && let Ok(agents) = result
-                {
-                    owned_agent_slugs.set(agents);
-                }
-            });
-        });
-    }
+                .await
+                .map_err(|error| error.display())
+            }
+        }
+    });
     let KanbanController {
         board_space_options: _,
         selected_board_space_id,
@@ -1313,6 +1385,8 @@ pub(super) fn CardDetail(controller: KanbanController, context: CardDetailContex
                                                 )
                                                 .into_iter()
                                                 .collect();
+                                                let owned_agent_inventory_snapshot =
+                                                    owned_agent_inventory.read().clone();
                                                 let active_sidebar_tab = card_detail_sidebar_tab();
                                                 let details_tab_class = if active_sidebar_tab == CardDetailSidebarTab::Details {
                                                     "card-detail-tab active"
@@ -2181,132 +2255,91 @@ pub(super) fn CardDetail(controller: KanbanController, context: CardDetailContex
                                                                 div { "No members yet for this Realm." }
                                                             }
                                                         } else {
-                                                            ul {
-                                                                class: "card-detail-actor-list",
-                                                                "data-testid": "card-detail-realm-members",
-                                                                for row in realm_member_rows.iter() {
+                                                            match owned_agent_inventory_snapshot.as_ref() {
+                                                                None => rsx! {
+                                                                    div { class: "card-detail-empty", "data-testid": "card-detail-member-identities-pending",
+                                                                        "Loading member identities…"
+                                                                    }
+                                                                },
+                                                                Some(Err(_)) => rsx! {
+                                                                    div { class: "card-detail-empty", "data-testid": "card-detail-member-identities-error",
+                                                                        "Member identities are temporarily unavailable."
+                                                                    }
+                                                                },
+                                                                Some(Ok(owned_agent_slugs)) => rsx! {
                                                                     {
-                                                                        let did = row.actor_id.clone();
-                                                                        // R3.1 MID-6 — pull the resolved
-                                                                        // MemberIdentity from the
-                                                                        // `ak.member.identity.update` event
-                                                                        // store. `None` means either no
-                                                                        // identity event has been observed
-                                                                        // `ak.member.identitytive event is
-                                                                        // still `decryption_pending` (MLS
-                                                                        // epoch missing — MID-4 stub).
-                                                                        // member_display_label falls back to
-                                                                        // handle-shaped DID display, then a
-                                                                        // compact DID.
-                                                                        // TODO(R4): swap the decryption-pending
-                                                                        // branch for an explicit muted
-                                                                        // placeholder string instead of the
-                                                                        // bare DID.
-                                                                        let store = state_store.read();
-                                                                        let identity =
-                                                                            store.resolved_member_identity(&realm_context, &did);
-                                                                        let cached_handle = member_handle_lookup_subject(
-                                                                            row,
-                                                                            identity.as_ref(),
-                                                                        )
-                                                                        .and_then(|subject_id| {
-                                                                            store
-                                                                                .cached_member_handle_lookup(
-                                                                                    &subject_id,
-                                                                                    Some(&realm_context),
-                                                                                    row.member_display_state_digest.as_deref(),
-                                                                                )
-                                                                                .and_then(|entry| entry.primary_handle)
+                                                                        let mut members = Vec::new();
+                                                                        let mut agents = Vec::new();
+                                                                        for row in &realm_member_rows {
+                                                                            if let Some(slug) = owned_agent_slug_for_row(row, owned_agent_slugs) {
+                                                                                agents.push((row, slug));
+                                                                            } else {
+                                                                                members.push(row);
+                                                                            }
+                                                                        }
+                                                                        members.sort_by_key(|row| !card_member_is_current_account(row, &account_did));
+                                                                        agents.sort_by_key(|(row, slug)| (*slug, row.actor_id.as_str()));
+                                                                        let has_controller = members.iter().any(|row| {
+                                                                            card_member_is_current_account(row, &account_did)
                                                                         });
-                                                                        let label = member_display_label(
-                                                                            row,
-                                                                            identity.as_ref(),
-                                                                            cached_handle.as_deref(),
-                                                                        );
-                                                                        let owned_agent_slug_index =
-                                                                            owned_agent_slugs.read();
-                                                                        let agent_slug = owned_agent_slug_index
-                                                                            .get(&did)
-                                                                            .or_else(|| {
-                                                                                row.subject_id
-                                                                                    .as_ref()
-                                                                                    .and_then(|subject_id| {
-                                                                                        owned_agent_slug_index
-                                                                                            .get(subject_id)
-                                                                                    })
-                                                                            })
-                                                                            .cloned();
-                                                                        let identity_label = agent_slug
-                                                                            .clone()
-                                                                            .unwrap_or(label);
-                                                                        let mention_agent_slug = agent_slug.clone();
-                                                                        let is_self = actor_is_current_account(
-                                                                            &did,
-                                                                            &account_did,
-                                                                        ) || row
-                                                                            .subject_id
-                                                                            .as_deref()
-                                                                            .is_some_and(|subject_id| {
-                                                                                actor_is_current_account(
-                                                                                    subject_id,
-                                                                                    &account_did,
-                                                                                )
-                                                                            });
-                                                                        let in_strand = participant_set.contains(&did);
-                                                                        let row_class = if in_strand {
-                                                                            "card-detail-actor-row participant"
-                                                                        } else {
-                                                                            "card-detail-actor-row"
-                                                                        };
-                                                                        let dot_class = if in_strand {
-                                                                            "card-detail-actor-dot participant"
-                                                                        } else {
-                                                                            "card-detail-actor-dot"
-                                                                        };
-                                                                        let dot_title = if in_strand {
-                                                                            "Participated in this Strand"
-                                                                        } else {
-                                                                            "Realm member"
-                                                                        };
-                                                                        rsx! {
-                                                                            li {
-                                                                                key: "{did}",
-                                                                                class: "{row_class}",
-                                                                                "data-strand-participant": "{in_strand}",
-                                                                                button {
-                                                                                    r#type: "button",
-                                                                                    class: "card-detail-actor-mention-button",
-                                                                                    "data-testid": "card-detail-member-mention-button",
-                                                                                    "aria-label": "Mention {identity_label}",
-                                                                                    onclick: {
-                                                                                        let mention_target = did.clone();
-                                                                                        let mention_agent_slug = mention_agent_slug.clone();
-                                                                                        move |_| {
-                                                                                            member_mention_request.set(Some(
-                                                                                                crate::views::chat::MentionInsertRequest::new(
-                                                                                                    mention_target.clone(),
-                                                                                                    mention_agent_slug.clone(),
-                                                                                                ),
-                                                                                            ));
-                                                                                        }
-                                                                                    },
-                                                                                    span { class: "{dot_class}", title: "{dot_title}", "aria-label": "{dot_title}" }
-                                                                                    ActorIdentityLabel {
-                                                                                        label: identity_label.clone(),
-                                                                                        title: Some(did.clone()),
-                                                                                        class: Some("card-detail-actor-did".to_owned()),
-                                                                                        test_id: Some("card-detail-member".to_owned()),
-                                                                                        self_badge_test_id: None,
-                                                                                        agent_badge_test_id: None,
+                                                                        rsx! { div {
+                                                                        class: "card-detail-actor-list",
+                                                                        "data-testid": "card-detail-realm-members",
+                                                                        for row in members {
+                                                                            {
+                                                                                let did = row.actor_id.clone();
+                                                                                let is_self = card_member_is_current_account(row, &account_did);
+                                                                                let store = state_store.read();
+                                                                                let label = crate::views::member_display::resolve_member_display(
+                                                                                    &store,
+                                                                                    &realm_context,
+                                                                                    row,
+                                                                                    is_self.then_some(account_primary_handle.as_str()),
+                                                                                ).label;
+                                                                                let in_strand = participant_set.contains(&did);
+                                                                                rsx! {
+                                                                                    CardMemberMentionRow {
+                                                                                        key: "{did}",
+                                                                                        did,
+                                                                                        label,
                                                                                         is_self,
-                                                                                        agent_slug,
-                                                                                        agent_selector: None,
+                                                                                        agent_slug: None,
+                                                                                        in_strand,
+                                                                                        grouped: is_self && !agents.is_empty(),
+                                                                                        member_mention_request,
+                                                                                        if is_self && !agents.is_empty() {
+                                                                                            div { class: "participant-agent-children",
+                                                                                                for (agent, slug) in &agents {
+                                                                                                    CardMemberMentionRow {
+                                                                                                        key: "{agent.actor_id}",
+                                                                                                        did: agent.actor_id.clone(),
+                                                                                                        label: (*slug).to_owned(),
+                                                                                                        agent_slug: Some((*slug).to_owned()),
+                                                                                                        in_strand: participant_set.contains(&agent.actor_id),
+                                                                                                        member_mention_request,
+                                                                                                    }
+                                                                                                }
+                                                                                            }
+                                                                                        }
                                                                                     }
                                                                                 }
                                                                             }
                                                                         }
+                                                                        if !has_controller {
+                                                                            for (agent, slug) in agents {
+                                                                                CardMemberMentionRow {
+                                                                                    key: "{agent.actor_id}",
+                                                                                    did: agent.actor_id.clone(),
+                                                                                    label: slug.to_owned(),
+                                                                                    agent_slug: Some(slug.to_owned()),
+                                                                                    in_strand: participant_set.contains(&agent.actor_id),
+                                                                                    member_mention_request,
+                                                                                }
+                                                                            }
+                                                                        }
+                                                                    } }
                                                                     }
-                                                                }
+                                                                },
                                                             }
                                                         }
                                                     }

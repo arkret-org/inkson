@@ -1,5 +1,3 @@
-use std::collections::BTreeSet;
-
 use serde_json::Value;
 
 use crate::models::RealmTreeNodeKind;
@@ -124,70 +122,15 @@ pub(crate) fn metadata_subject_for(store: &LocalStateStore, subject_id: &str) ->
     }
 }
 
-fn push_projected_member_id(id: &str, out: &mut Vec<String>, seen: &mut BTreeSet<String>) {
-    let id = id.trim();
-    if id.is_empty() || !seen.insert(id.to_owned()) {
-        return;
-    }
-    out.push(id.to_owned());
-}
-
-fn collect_projected_member_ids(
-    value: Option<&Value>,
-    out: &mut Vec<String>,
-    seen: &mut BTreeSet<String>,
-) {
-    let Some(value) = value else { return };
-    match value {
-        Value::String(id) => push_projected_member_id(id, out, seen),
-        Value::Array(items) => {
-            for item in items {
-                collect_projected_member_ids(Some(item), out, seen);
-            }
-        }
-        Value::Object(map) => {
-            if let Some(id) = map
-                .get("actor_id")
-                .or_else(|| map.get("did"))
-                .and_then(Value::as_str)
-            {
-                push_projected_member_id(id, out, seen);
-                return;
-            }
-            for (key, child) in map {
-                if key.starts_with("did:") {
-                    push_projected_member_id(key, out, seen);
-                }
-                collect_projected_member_ids(Some(child), out, seen);
-            }
-        }
-        _ => {}
-    }
-}
-
 pub(crate) fn projected_members_for_realm(store: &LocalStateStore, realm_id: &str) -> Vec<String> {
     let state = store.load();
     let Some(projection) = state.realm_tree_projections.get(realm_id) else {
         return Vec::new();
     };
-    let sources = [Some(projection), projection.get("summary")];
-    let mut out = Vec::new();
-    let mut seen = BTreeSet::new();
-    for key in [
-        "members",
-        "participants",
-        "owners",
-        "admins",
-        "admin_dids",
-        "owner",
-        "created_by",
-        "creator",
-    ] {
-        for source in sources.into_iter().flatten() {
-            collect_projected_member_ids(source.get(key), &mut out, &mut seen);
-        }
-    }
-    out
+    crate::views::member_display::realm_member_roster(Some(projection))
+        .into_iter()
+        .map(|row| row.actor_id)
+        .collect()
 }
 
 #[cfg(test)]
@@ -211,14 +154,14 @@ mod tests {
         assert_eq!(
             projected_members_for_realm(&store, realm_id),
             vec![
-                "did:web:alice.example".to_owned(),
-                "did:web:agent.example".to_owned()
+                "did:web:agent.example".to_owned(),
+                "did:web:alice.example".to_owned()
             ]
         );
     }
 
     #[test]
-    fn projected_members_reads_owner_and_admin_projection_sources() {
+    fn projected_members_ignores_noncanonical_projection_sources() {
         let realm_id = "ak:realm:test";
         let mut store = LocalStateStore::default();
         store.save_realm_tree_projection(
@@ -233,13 +176,6 @@ mod tests {
             }),
         );
 
-        assert_eq!(
-            projected_members_for_realm(&store, realm_id),
-            vec![
-                "did:web:member.example".to_owned(),
-                "did:web:admin.example".to_owned(),
-                "did:web:owner.example".to_owned(),
-            ]
-        );
+        assert!(projected_members_for_realm(&store, realm_id).is_empty());
     }
 }

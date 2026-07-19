@@ -98,14 +98,43 @@ fn realm_member_roster_ignores_bare_did_strings() {
 }
 
 #[test]
-fn member_display_label_prefers_handle_shaped_user_label() {
+fn realm_member_roster_reads_only_root_members() {
+    let projection = json!({
+        "summary": {
+            "members": [{ "actor_id": "did:web:summary-member.example" }],
+            "participants": [{ "actor_id": "did:web:participant.example" }]
+        },
+        "owners": [{ "actor_id": "did:web:owner.example" }],
+        "members": [{ "actor_id": "did:web:canonical.example" }]
+    });
+
+    let rows = realm_member_roster(Some(&projection));
+    assert_eq!(rows.len(), 1);
+    assert_eq!(rows[0].actor_id, "did:web:canonical.example");
+}
+
+#[test]
+fn realm_member_roster_keeps_first_duplicate_actor_entry() {
+    let projection = json!({
+        "members": [
+            { "actor_id": "did:web:alice.example", "membership": "join" },
+            { "actor_id": "did:web:alice.example", "membership": "invite" }
+        ]
+    });
+
+    let rows = realm_member_roster(Some(&projection));
+    assert_eq!(rows.len(), 1);
+    assert_eq!(rows[0].membership.as_deref(), Some("join"));
+}
+
+#[test]
+fn member_display_label_uses_identity_name_when_no_verified_handle_exists() {
     use arkret_sdk::{
         DisplayProfile, MemberIdentity, MemberIdentityProof, MemberIdentitySignatureAlgorithm,
     };
 
     // R3.2: `MemberIdentity` discloses subject_id + display_profile
-    // only; the roster label still prefers a handle-shaped label when
-    // roster handle evidence or a materialized subject DID exposes one.
+    // only. A materialized DID path is not itself verified handle evidence.
     let identity = MemberIdentity {
         schema: arkret_sdk::MEMBER_IDENTITY_SCHEMA.to_owned(),
         realm_id: arkret_sdk::RealmId::new("ak:realm:01904100-0000-7000-8000-000000000001")
@@ -138,10 +167,7 @@ fn member_display_label_prefers_handle_shaped_user_label() {
         handle_claims: Vec::new(),
         handle_claims_limited: false,
     };
-    assert_eq!(
-        member_display_label(&row, Some(&identity), None),
-        "alice:acme.example"
-    );
+    assert_eq!(member_display_label(&row, Some(&identity), None), "Alice");
 
     // Decryption-pending / no MemberIdentity → fall back to compact DID.
     let bare = RealmMemberRow {
@@ -187,6 +213,43 @@ fn member_display_label_prefers_inline_verified_handle_claim() {
 }
 
 #[test]
+fn member_display_label_rejects_unverified_or_noncanonical_handle_claims() {
+    let row = RealmMemberRow {
+        actor_id: "did:webvh:zQmPairwiseActor".to_owned(),
+        membership: Some("join".to_owned()),
+        identity_event_ids: vec![],
+        member_display_state_digest: None,
+        subject_id: Some("did:key:z6MkPrincipal".to_owned()),
+        handle_claims: vec![
+            json!({
+                "subject": "did:key:z6MkPrincipal",
+                "handle": "pending:acme.example",
+                "binding_state": "pending"
+            }),
+            json!({
+                "subject_id": "did:key:z6MkPrincipal",
+                "handle": "legacy:acme.example",
+                "binding_state": "verified"
+            }),
+        ],
+        handle_claims_limited: false,
+    };
+
+    assert!(member_inline_handle_label(&row).is_none());
+
+    let undisclosed = RealmMemberRow {
+        subject_id: None,
+        handle_claims: vec![json!({
+            "subject": "did:webvh:zQmPairwiseActor",
+            "handle": "hidden:acme.example",
+            "binding_state": "verified"
+        })],
+        ..row
+    };
+    assert!(member_inline_handle_label(&undisclosed).is_none());
+}
+
+#[test]
 fn member_display_label_uses_cached_directory_primary_handle() {
     let row = RealmMemberRow {
         actor_id: "did:webvh:zQmPrincipal".to_owned(),
@@ -205,7 +268,7 @@ fn member_display_label_uses_cached_directory_primary_handle() {
 }
 
 #[test]
-fn member_handle_lookup_subject_falls_back_to_actor_id() {
+fn member_handle_lookup_requires_disclosed_or_verified_subject() {
     let row = RealmMemberRow {
         actor_id: "did:webvh:zQmPrincipal".to_owned(),
         membership: Some("join".to_owned()),
@@ -216,10 +279,7 @@ fn member_handle_lookup_subject_falls_back_to_actor_id() {
         handle_claims_limited: false,
     };
 
-    assert_eq!(
-        member_handle_lookup_subject(&row, None).as_deref(),
-        Some("did:webvh:zQmPrincipal")
-    );
+    assert!(member_handle_lookup_subject(&row, None).is_none());
 }
 
 #[test]

@@ -88,7 +88,7 @@ fn handle_matches_identity(handle: &str, identity: &str) -> bool {
     let Some(parsed) = crate::identity::handle::parse_user_handle(handle) else {
         return false;
     };
-    let Some(display) = handle_display_from_did(identity) else {
+    let Some(display) = materialized_did_handle_shape(identity) else {
         return false;
     };
     crate::identity::handle::parse_user_handle(&display)
@@ -97,7 +97,7 @@ fn handle_matches_identity(handle: &str, identity: &str) -> bool {
 
 fn materialized_did_avatar_seed(value: &str) -> Option<String> {
     let trimmed = value.trim();
-    if let Some(display) = handle_display_from_did(trimmed) {
+    if let Some(display) = materialized_did_handle_shape(trimmed) {
         return handle_avatar_seed(&display);
     }
     let without_prefix = trimmed
@@ -207,17 +207,9 @@ pub fn active_sync_token(sync_cursor: impl AsRef<str>) -> Option<String> {
     normalize_wait_for_sync_token(sync_cursor.as_ref())
 }
 
-/// Derive the canonical display handle from a DID produced by
-/// [`crate::identity::handle::parse_user_handle`].
-///
-/// This is a display-only fallback for common materialized subject shapes:
-/// `did:web:<domain>:users:<localpart>` and
-/// `did:webvh:<scid>:<domain>:users:<localpart>`. Verified handle display
-/// still comes from signed `ak.schema.handle_claim.v1` evidence or
-/// `ak.find.directory.query.list_handles_for_subject`; this helper only keeps UI
-/// rows readable while soland's roster handle-claim inline path is still
-/// being wired.
-pub fn handle_display_from_did(did: &str) -> Option<String> {
+/// Extract a stable avatar seed from the path shape of a materialized DID.
+/// This is never identity evidence and must not be used as a displayed handle.
+fn materialized_did_handle_shape(did: &str) -> Option<String> {
     let (without_prefix, method) = did
         .trim()
         .strip_prefix("did:web:")
@@ -255,19 +247,14 @@ pub fn handle_display_from_did(did: &str) -> Option<String> {
 /// chat headers, @mention popovers, directory rows, verify-device peer
 /// labels, and message-author lines stay consistent.
 ///
-/// The `did` argument falls back to a handle-shaped display label when
-/// the DID is the materialized form of a Arkret user handle, then to a
-/// compact display-only protocol id. Use the original DID for inputs,
-/// copies, routes, and protocol payloads.
+/// The DID is never interpreted as identity metadata. Without a verified
+/// handle or an actor-private remark, callers receive a compact protocol id.
 pub fn display_name_for_did(state_store: &crate::state::LocalStateStore, did: &str) -> String {
     if let Some(handle) = state_store
         .cached_member_handle_lookup(did, None, None)
         .and_then(|entry| entry.primary_handle)
         .and_then(|handle| crate::identity::handle::parse_user_handle(&handle).map(|h| h.display))
     {
-        return handle;
-    }
-    if let Some(handle) = handle_display_from_did(did) {
         return handle;
     }
     match state_store.contact_remark(did) {
@@ -828,20 +815,20 @@ mod tests {
     }
 
     #[test]
-    fn handle_display_from_did_recovers_materialized_user_handle() {
+    fn materialized_did_handle_shape_supports_avatar_seeding() {
         assert_eq!(
-            handle_display_from_did("did:web:acme.example:users:alice").as_deref(),
+            materialized_did_handle_shape("did:web:acme.example:users:alice").as_deref(),
             Some("alice:acme.example")
         );
         assert_eq!(
-            handle_display_from_did("did:web:acme.example%3A8443:users:bob").as_deref(),
+            materialized_did_handle_shape("did:web:acme.example%3A8443:users:bob").as_deref(),
             Some("bob:acme.example:8443")
         );
         assert_eq!(
-            handle_display_from_did("did:webvh:zQmScid:acme.example:users:carol").as_deref(),
+            materialized_did_handle_shape("did:webvh:zQmScid:acme.example:users:carol").as_deref(),
             Some("carol:acme.example")
         );
-        assert!(handle_display_from_did("did:web:alice.example").is_none());
-        assert!(handle_display_from_did("did:webvh:zQmScid:acme.example").is_none());
+        assert!(materialized_did_handle_shape("did:web:alice.example").is_none());
+        assert!(materialized_did_handle_shape("did:webvh:zQmScid:acme.example").is_none());
     }
 }

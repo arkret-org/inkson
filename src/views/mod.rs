@@ -56,6 +56,7 @@ pub mod global_search;
 pub mod helpers;
 pub mod kanban;
 pub mod login;
+pub(crate) mod member_display;
 /// P3 — moderation reviewer workbench (decision/lift + appeal review/decide/
 /// close). Admin-scope reviewer surface, mounted as the RealmAdmin
 /// `Moderation` section; drives the daily-governance `moderation_*` /

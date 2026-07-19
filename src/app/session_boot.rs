@@ -247,6 +247,21 @@ pub(super) fn inject_test_session_grant(
             return None;
         }
     };
+    let account_did = if account_did.trim().is_empty() {
+        parsed
+            .get("principal_id")
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+    } else {
+        account_did
+    };
+    if arkret_sdk::Did::new(account_did.to_owned()).is_err() {
+        tracing::warn!(
+            principal_id = %account_did,
+            "test session injection skipped: principal_id is not a valid DID"
+        );
+        return None;
+    }
     // The browser fixture starts with the account DID already present in the
     // config signals, but a fresh LocalStateStore can still be scoped to the
     // anonymous namespace. Defensively select the fixture account before

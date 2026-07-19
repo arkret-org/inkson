@@ -1609,6 +1609,10 @@ export async function mockArkretApi(
                     summary: "Shared demo Realm served by mocked server",
                     encryption_profile: "mls_rfc9420",
                   },
+                  members: [
+                    { actor_id: accountPrincipalId, membership: "join" },
+                    { actor_id: activeAssistantId, membership: "join" },
+                  ],
                   timeline: { events: demoProjectionEvents, limited: false },
                   state: { events: [] },
                   ephemeral: { events: [] },

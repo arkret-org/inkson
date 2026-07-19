@@ -1,6 +1,26 @@
 use super::*;
 
 #[test]
+fn unchanged_session_refresh_is_a_noop_for_reactive_and_persisted_state() {
+    let grant = session_grant(3600);
+    let config = ClientConfig::from_fields(
+        "https://example.test",
+        grant.principal_id.clone(),
+        grant.device_id.clone(),
+        grant.grant_jwt.clone(),
+    );
+
+    assert_eq!(
+        session_refresh_write_plan(Some(&grant), &grant.grant_jwt, &config, &grant, &config,),
+        SessionRefreshWritePlan {
+            grant: false,
+            credential: false,
+            config: false,
+        }
+    );
+}
+
+#[test]
 fn personal_handle_from_account_handle_keeps_full_handle_verbatim() {
     // `account.handle` from `account_me` is the FULL canonical handle. It must
     // be returned as-is — never have the server domain appended again, which

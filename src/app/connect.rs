@@ -60,6 +60,27 @@ async fn bootstrap_session_refresh(
     }
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) struct SessionRefreshWritePlan {
+    pub(super) grant: bool,
+    pub(super) credential: bool,
+    pub(super) config: bool,
+}
+
+pub(super) fn session_refresh_write_plan(
+    current_grant: Option<&PersistedSessionGrant>,
+    current_credential: &str,
+    current_config: &ClientConfig,
+    next_grant: &PersistedSessionGrant,
+    desired_config: &ClientConfig,
+) -> SessionRefreshWritePlan {
+    SessionRefreshWritePlan {
+        grant: current_grant != Some(next_grant),
+        credential: current_credential != next_grant.grant_jwt,
+        config: current_config != desired_config,
+    }
+}
+
 async fn client_core_events_describe(
     authed: &crate::transport::TransportClient,
     _state_store: SyncSignal<LocalStateStore>,
@@ -120,20 +141,45 @@ pub(super) async fn refresh_session_credential_for_active_context(
     match restored {
         Ok(session) => {
             let session_credential = session.grant.grant_jwt.clone();
-            state_store.write().set_session_grant(Some(session.grant));
-            if session_generation() != generation {
-                return crate::runtime::session::CurrentSessionRefresh::retry_later(
-                    "session changed while refresh was in flight",
-                );
-            }
-            token.set(session_credential.clone());
-            persist_config(
-                config_store,
+            let current_grant = {
+                let store = state_store.peek();
+                store.session_grant()
+            };
+            let desired_config = ClientConfig::from_fields(
                 base.clone(),
                 actor.clone(),
                 device.clone(),
                 session_credential.clone(),
             );
+            let write_plan = session_refresh_write_plan(
+                current_grant.as_ref(),
+                token.peek().as_str(),
+                &config_store.peek().load(),
+                &session.grant,
+                &desired_config,
+            );
+            if session_generation() != generation {
+                return crate::runtime::session::CurrentSessionRefresh::retry_later(
+                    "session changed while refresh was in flight",
+                );
+            }
+            if write_plan.grant {
+                state_store
+                    .write()
+                    .set_session_grant(Some(session.grant.clone()));
+            }
+            if write_plan.credential {
+                token.set(session_credential.clone());
+            }
+            if write_plan.config {
+                persist_config(
+                    config_store,
+                    base.clone(),
+                    actor.clone(),
+                    device.clone(),
+                    session_credential.clone(),
+                );
+            }
             crate::runtime::session::CurrentSessionRefresh::Credential(session_credential)
         }
         Err(error) if crate::api_error::is_terminal_session_grant_refresh_error(&error) => {

@@ -542,7 +542,7 @@ pub(super) fn ChatEffects(
                         .await
                     && account.did == account_did_for_load
                     && let Some(display_name) =
-                        account_handle_display_from_server(&account.handle, &base).or_else(|| {
+                        normalize_account_handle(&account.handle).or_else(|| {
                             clean_participant_display_name(
                                 account.display_name.as_deref().unwrap_or(""),
                                 Some(&account_did_for_load),

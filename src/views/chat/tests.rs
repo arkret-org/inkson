@@ -1,5 +1,20 @@
 use super::*;
 
+#[test]
+fn circle_scope_request_is_single_flight_and_semantically_deduplicated() {
+    let key = "https://example.test\u{1f}did:web:alice\u{1f}ak:realm:one";
+    assert!(!should_start_circle_scope_request("", "", false, key));
+    assert!(should_start_circle_scope_request("grant", "", false, key));
+    assert!(!should_start_circle_scope_request("grant", key, false, key));
+    assert!(!should_start_circle_scope_request("grant", "", true, key));
+    assert!(should_start_circle_scope_request(
+        "grant",
+        key,
+        false,
+        "https://example.test\u{1f}did:web:alice\u{1f}ak:realm:two",
+    ));
+}
+
 const CHAT_FIXTURE_DEVICE: &str = "ak:device:01964137-0000-7000-8000-00000000cafe";
 const CHAT_FIXTURE_SEED: [u8; 32] = [91; 32];
 
@@ -2293,7 +2308,7 @@ fn participant_display_name_prefers_local_remark() {
 }
 
 #[test]
-fn sender_display_label_prefers_full_handle_over_handle_localpart() {
+fn sender_display_label_does_not_invent_domain_for_localpart() {
     let participants = vec![SpaceParticipant {
         did: "did:web:local.host:users:alice".to_owned(),
         display_name: Some("alice".to_owned()),
@@ -2312,7 +2327,7 @@ fn sender_display_label_prefers_full_handle_over_handle_localpart() {
             "alice",
             &participants,
         ),
-        "alice:local.host"
+        "alice"
     );
 }
 
@@ -2365,23 +2380,17 @@ fn sender_display_label_prefers_projection_handle_label() {
 }
 
 #[test]
-fn account_handle_display_from_server_expands_account_localpart() {
+fn account_handle_requires_a_complete_verified_handle() {
+    assert_eq!(normalize_account_handle("alice"), None);
     assert_eq!(
-        account_handle_display_from_server("alice", "https://local.host").as_deref(),
-        Some("alice:local.host")
-    );
-    assert_eq!(
-        account_handle_display_from_server("alice:example.com", "https://local.host").as_deref(),
+        normalize_account_handle("alice:example.com").as_deref(),
         Some("alice:example.com")
     );
-    assert_eq!(
-        account_handle_display_from_server("  ", "https://local.host"),
-        None
-    );
+    assert_eq!(normalize_account_handle("  "), None);
 }
 
 #[test]
-fn extracts_participant_display_name_from_projection() {
+fn participant_roster_ignores_noncanonical_identity_fields() {
     let projection = json!({
         "members": [
             {
@@ -2391,19 +2400,21 @@ fn extracts_participant_display_name_from_projection() {
             }
         ]
     });
-
-    let participants = space_participants(Some(&projection), "did:web:alice.example");
-    let bob = participants
-        .iter()
-        .find(|participant| participant.did == "did:web:bob.example")
-        .unwrap();
-
-    assert_eq!(bob.display_name.as_deref(), Some("Bob from ops"));
+    let temp = std::env::temp_dir().join(format!("inkson-chat-roster-{}", uuid_v7()));
+    let store = LocalStateStore::with_path(temp);
+    let participants = space_participants(
+        Some(&projection),
+        &store,
+        "ak:realm:demo",
+        "did:web:alice.example",
+        None,
+    );
+    assert_eq!(participants.len(), 1);
+    assert!(participants[0].is_self);
 }
 
 #[test]
-fn extracts_participant_handle_label_from_projection() {
-    // R3.1: canonical wire field is `handle` (`<localpart>:<domain>`).
+fn participant_roster_rejects_naked_handle_field() {
     let projection = json!({
         "members": [
             {
@@ -2413,16 +2424,21 @@ fn extracts_participant_handle_label_from_projection() {
         ]
     });
 
-    let participants = space_participants(Some(&projection), "did:web:alice.example");
+    let temp = std::env::temp_dir().join(format!("inkson-chat-roster-{}", uuid_v7()));
+    let store = LocalStateStore::with_path(temp);
+    let participants = space_participants(
+        Some(&projection),
+        &store,
+        "ak:realm:demo",
+        "did:web:alice.example",
+        None,
+    );
     let bob = participants
         .iter()
         .find(|participant| participant.did == "did:web:example.com:users:bob")
         .unwrap();
 
-    assert_eq!(
-        mention_label_for_participant(bob).as_deref(),
-        Some("bob:example.com")
-    );
+    assert!(mention_label_for_participant(bob).is_none());
 }
 
 #[test]
@@ -2442,7 +2458,15 @@ fn extracts_participant_handle_label_from_inline_handle_claims() {
         ]
     });
 
-    let participants = space_participants(Some(&projection), "did:web:alice.example");
+    let temp = std::env::temp_dir().join(format!("inkson-chat-roster-{}", uuid_v7()));
+    let store = LocalStateStore::with_path(temp);
+    let participants = space_participants(
+        Some(&projection),
+        &store,
+        "ak:realm:demo",
+        "did:web:alice.example",
+        None,
+    );
     let bob = participants
         .iter()
         .find(|participant| participant.did == "did:web:bob.example")
@@ -2455,7 +2479,7 @@ fn extracts_participant_handle_label_from_inline_handle_claims() {
 }
 
 #[test]
-fn mention_label_for_participant_falls_back_to_materialized_handle_did() {
+fn mention_label_for_participant_never_derives_handle_from_did() {
     let participant = SpaceParticipant {
         did: "did:web:example.com:users:bob".to_owned(),
         display_name: None,
@@ -2467,10 +2491,7 @@ fn mention_label_for_participant_falls_back_to_materialized_handle_did() {
         agent_metadata: None,
     };
 
-    assert_eq!(
-        mention_label_for_participant(&participant).as_deref(),
-        Some("bob:example.com")
-    );
+    assert!(mention_label_for_participant(&participant).is_none());
 }
 
 #[test]
@@ -2764,7 +2785,7 @@ fn participant_roster_rows_groups_agents_under_visible_controller() {
         display_name: Some("Alice".to_owned()),
         handle_label: Some("alice:example.com".to_owned()),
         display_name_rank: 0,
-        role: SpaceParticipantRole::Owner,
+        role: SpaceParticipantRole::Member,
         is_self: true,
         is_agent: false,
         agent_metadata: None,
@@ -2813,7 +2834,7 @@ fn mention_candidate_for_own_agent_uses_me_alias() {
         display_name: Some("Alice".to_owned()),
         handle_label: Some("alice:example.com".to_owned()),
         display_name_rank: 0,
-        role: SpaceParticipantRole::Owner,
+        role: SpaceParticipantRole::Member,
         is_self: true,
         is_agent: false,
         agent_metadata: None,
@@ -2853,7 +2874,7 @@ fn mention_candidate_for_current_user_uses_structured_me_alias() {
         display_name: Some("Alice".to_owned()),
         handle_label: None,
         display_name_rank: 0,
-        role: SpaceParticipantRole::Owner,
+        role: SpaceParticipantRole::Member,
         is_self: true,
         is_agent: false,
         agent_metadata: None,
@@ -3133,29 +3154,23 @@ fn mention_candidate_uses_cached_member_handle() {
         None,
         None,
     );
-    let mut participants = vec![SpaceParticipant {
-        did: "did:web:bob.example".to_owned(),
-        display_name: Some("Bob Example".to_owned()),
-        handle_label: None,
-        display_name_rank: 0,
-        role: SpaceParticipantRole::Member,
-        is_self: false,
-        is_agent: false,
-        agent_metadata: None,
-    }];
-
-    apply_cached_participant_handle_labels(
-        &mut participants,
+    let projection = json!({"members": [{
+        "actor_id": "did:web:bob.example",
+        "subject_id": "did:web:bob.example"
+    }]});
+    let participants = space_participants(
+        Some(&projection),
         &store,
         "ak:realm:demo",
         "did:web:alice.example",
-        "alice:local.host",
-        "https://local.host",
+        Some("alice:local.host"),
     );
-
-    let candidate =
-        mention_candidate_for_participant(&participants[0], &participants, "did:web:alice.example")
-            .expect("member mention candidate");
+    let bob = participants
+        .iter()
+        .find(|participant| participant.did == "did:web:bob.example")
+        .expect("bob participant");
+    let candidate = mention_candidate_for_participant(bob, &participants, "did:web:alice.example")
+        .expect("member mention candidate");
     assert_eq!(candidate.did, "did:web:bob.example");
     assert_eq!(candidate.display_name, "bob:local.host");
     assert_eq!(candidate.insert_label(), "bob:local.host");

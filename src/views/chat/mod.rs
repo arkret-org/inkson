@@ -416,6 +416,15 @@ fn chat_visible_read_receipt_should_display(
     )
 }
 
+fn should_start_circle_scope_request(
+    credential: &str,
+    request_key_seen: &str,
+    request_in_flight: bool,
+    request_key: &str,
+) -> bool {
+    !credential.trim().is_empty() && !request_in_flight && request_key_seen != request_key
+}
+
 #[component]
 pub fn ChatPanel(
     plaintext_service_id: String,
@@ -520,14 +529,28 @@ pub fn ChatPanel(
         mut left_panel_open,
     } = controller;
     let mut eligible_circle_scopes = use_signal(Vec::<CircleSummary>::new);
+    let mut eligible_circle_scope_request_key_seen = use_signal(String::new);
+    let mut eligible_circle_scope_request_in_flight = use_signal(|| false);
     let mut new_channel_scope = use_signal(CircleScope::default);
     {
         let base = base_url.clone();
         let realm = selected_realm_id.clone();
+        let actor = account_did.clone();
         use_effect(move || {
             let credential = token();
             let base = base.clone();
             let realm = realm.clone();
+            let request_key = format!("{base}\u{1f}{actor}\u{1f}{realm}");
+            if !should_start_circle_scope_request(
+                &credential,
+                eligible_circle_scope_request_key_seen.peek().as_str(),
+                *eligible_circle_scope_request_in_flight.peek(),
+                &request_key,
+            ) {
+                return;
+            }
+            eligible_circle_scope_request_key_seen.set(request_key.clone());
+            eligible_circle_scope_request_in_flight.set(true);
             spawn(async move {
                 let outcome =
                     crate::transport::auth::with_authed_api(&base, credential, |api| async move {
@@ -561,11 +584,19 @@ pub fn ChatPanel(
                             .collect();
                         eligible_circle_scopes.set(summaries);
                     }
-                    Err(error) => tracing::warn!(
-                        error = %error.display(),
-                        "Circle scope picker load failed"
-                    ),
+                    Err(error) => {
+                        if eligible_circle_scope_request_key_seen.peek().as_str() == request_key {
+                            // Permit a later credential/context change to retry,
+                            // but do not immediately self-trigger this effect.
+                            eligible_circle_scope_request_key_seen.set(String::new());
+                        }
+                        tracing::warn!(
+                            error = %error.display(),
+                            "Circle scope picker load failed"
+                        );
+                    }
                 }
+                eligible_circle_scope_request_in_flight.set(false);
             });
         });
     }
@@ -743,18 +774,13 @@ pub fn ChatPanel(
         .get(&selected_realm_id)
         .cloned();
     let account_display_label = account_display_name();
-    let mut participants = space_participants(participant_projection.as_ref(), &account_did);
-    {
-        let store = state_store.read();
-        apply_cached_participant_handle_labels(
-            &mut participants,
-            &store,
-            &selected_realm_id,
-            &account_did,
-            &account_display_label,
-            &base_url,
-        );
-    }
+    let mut participants = space_participants(
+        participant_projection.as_ref(),
+        &state_store.read(),
+        &selected_realm_id,
+        &account_did,
+        Some(&account_display_label),
+    );
     let own_controller_handle = participants
         .iter()
         .find(|participant| participant.is_self && !participant.is_agent)

@@ -223,26 +223,12 @@ pub(crate) enum DiscussionSidePanel {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub(crate) enum SpaceParticipantRole {
-    Owner,
-    Admin,
     Member,
 }
 
 impl SpaceParticipantRole {
     pub(crate) fn label(self) -> &'static str {
-        match self {
-            Self::Owner => "Owner",
-            Self::Admin => "Admin",
-            Self::Member => "Member",
-        }
-    }
-
-    pub(crate) fn rank(self) -> u8 {
-        match self {
-            Self::Owner => 0,
-            Self::Admin => 1,
-            Self::Member => 2,
-        }
+        "Member"
     }
 }
 

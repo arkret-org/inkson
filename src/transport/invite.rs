@@ -440,71 +440,14 @@ impl crate::transport::TransportClient {
         })
     }
 
-    /// U3 — resolve the authoritative `recipient_service_id` for a contact DID
-    /// through the Directory.
-    ///
-    /// The recipient principal-server DID MUST come from a directory-attested
-    /// `resolve_handle` response (`member_delivery_binding.recipient_service_id`),
-    /// never from a client-side `did:web:<domain>` fabrication: the latter both
-    /// hard-codes the wrong default method (v1 core defaults to `did:webvh`) and
-    /// bypasses the verified-claim reduction required by
-    /// `identity-handles.md §80`.
-    ///
-    /// The handle materialised from the contact DID is used only as the resolve
-    /// *query key*; the returned recipient service is taken from the verified
-    /// binding. If the DID has no handle shape, or the directory does not return
-    /// a binding, this fails closed so the caller falls back to the locator path.
-    async fn contact_recipient_service_via_directory(
-        &self,
-        contact_did: &str,
-        realm_id: &str,
-        actor_id: &str,
-    ) -> anyhow::Result<arkret_sdk::Did> {
-        let handle = crate::views::helpers::handle_display_from_did(contact_did).ok_or_else(|| {
-            anyhow::anyhow!(
-                "cannot address contact `{contact_did}` by handle; use the invite link path instead"
-            )
-        })?;
-        let resolved = self
-            .resolve_handle_with_context(
-                &handle,
-                ResolveHandleContext {
-                    intent: Some("invite"),
-                    requester: Some(actor_id),
-                    audience: Some(realm_id),
-                    realm_id: Some(realm_id),
-                    ..ResolveHandleContext::default()
-                },
-            )
-            .await?;
-        // Bind the verified subject back to the contact DID we were asked to
-        // invite — never trust a resolve that names a different principal.
-        let subject = resolved.subject_did().ok_or_else(|| {
-            anyhow::anyhow!("directory resolve_handle response did not include subject DID")
-        })?;
-        if subject != contact_did {
-            anyhow::bail!(
-                "directory resolved handle `{handle}` to `{subject}`, not contact `{contact_did}`"
-            );
-        }
-        resolved_member_delivery_binding(&resolved)?
-            .map(|binding| binding.recipient_service_id)
-            .ok_or_else(|| {
-                anyhow::anyhow!(
-                    "directory result for `{contact_did}` did not include a recipient service; use the invite link path instead"
-                )
-            })
-    }
-
     /// U3 — pull an existing contact into a Realm using their DID directly,
     /// with `IntroductionEvidence::ConsentGrant` (no locator URL).
     ///
     /// `consent_grant_ref` is the event ref of the `invite`-scope consent the
     /// contact gave me (read from the contact row via
     /// [`crate::models::ContactListRow::invite_consent_ref`]). The delivery
-    /// target is resolved through the Directory
-    /// ([`Self::contact_recipient_service_via_directory`]); if it can't be
-    /// resolved this fails closed so the UI can fall back to the locator path.
+    /// target is the contact projection's attested `peer_service_id`; when it
+    /// is absent this fails closed so the UI can fall back to the locator path.
     ///
     /// Returns the submitted invite event id and invite id on success.
     pub async fn invite_contact_to_realm(
@@ -512,14 +455,24 @@ impl crate::transport::TransportClient {
         realm_id: &str,
         actor_id: &str,
         contact_did: &str,
+        recipient_service_id: Option<&str>,
         consent_grant_ref: &str,
     ) -> anyhow::Result<(String, String)> {
         let contact_did = contact_did.trim();
         arkret_sdk::Did::new(contact_did.to_owned())
             .map_err(|err| anyhow::anyhow!("invalid contact DID `{contact_did}`: {err}"))?;
-        let recipient_did = self
-            .contact_recipient_service_via_directory(contact_did, realm_id, actor_id)
-            .await?;
+        let recipient_service_id = recipient_service_id
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .ok_or_else(|| {
+                anyhow::anyhow!(
+                    "contact `{contact_did}` has no attested recipient service; use the invite link path instead"
+                )
+            })?;
+        let recipient_did =
+            arkret_sdk::Did::new(recipient_service_id.to_owned()).map_err(|err| {
+                anyhow::anyhow!("invalid contact recipient service `{recipient_service_id}`: {err}")
+            })?;
         let invite_delivery_target =
             arkret_sdk::InviteDeliveryTarget::principal_server(recipient_did);
         invite_delivery_target
