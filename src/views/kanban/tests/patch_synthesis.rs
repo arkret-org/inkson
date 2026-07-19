@@ -134,12 +134,15 @@ fn card_synthesis_track_entries_preserve_append_history() {
     let entries = card_synthesis_track_entries(&card, &raw_operations, &LocalStateStore::default());
     assert_eq!(entries.len(), 1);
     assert_eq!(entries[0].body, "second synthesis");
-    assert_eq!(entries[0].author_label, "bob:acme.example");
+    assert_eq!(entries[0].author_label, "did:web:acme.example:users:bob");
     assert_eq!(entries[0].timestamp_label, "2026-05-22 11:00");
     assert!(entries[0].edited);
     assert_eq!(entries[0].revisions.len(), 2);
     assert_eq!(entries[0].revisions[0].body, "first synthesis");
-    assert_eq!(entries[0].revisions[0].author_label, "alice:acme.example");
+    assert_eq!(
+        entries[0].revisions[0].author_label,
+        "did:web:acme.example:users:alice"
+    );
     assert_eq!(entries[0].revisions[1].body, "second synthesis");
 }
 
@@ -205,9 +208,9 @@ fn card_synthesis_track_entries_replay_full_set_events_without_reattributing_his
 
     assert_eq!(entries.len(), 2);
     assert_eq!(entries[0].body, "alice synthesis");
-    assert_eq!(entries[0].author_label, "alice:acme.example");
+    assert_eq!(entries[0].author_label, "did:web:acme.example:users:alice");
     assert_eq!(entries[1].body, "bob synthesis");
-    assert_eq!(entries[1].author_label, "bob:acme.example");
+    assert_eq!(entries[1].author_label, "did:web:acme.example:users:bob");
 }
 
 #[test]
@@ -268,9 +271,9 @@ fn local_event_sourced_ops_recover_authors_without_per_tab_backfill() {
 
     assert_eq!(entries.len(), 2);
     assert_eq!(entries[0].body, "alice synthesis");
-    assert_eq!(entries[0].author_label, "alice:acme.example");
+    assert_eq!(entries[0].author_label, "did:web:acme.example:users:alice");
     assert_eq!(entries[1].body, "bob synthesis");
-    assert_eq!(entries[1].author_label, "bob:acme.example");
+    assert_eq!(entries[1].author_label, "did:web:acme.example:users:bob");
 
     // Sanity: with no local ops at all, the multi-author projection fallback
     // cannot attribute either entry — exactly the "Unknown author" symptom the
@@ -326,7 +329,7 @@ fn engine_ingest_dedupes_resent_strand_update_by_operation_id() {
     let entries = card_synthesis_track_entries(&card, &raw_ops, &store);
     assert_eq!(entries.len(), 1, "no duplicate synthesis entry");
     assert_eq!(entries[0].body, "alice synthesis");
-    assert_eq!(entries[0].author_label, "alice:acme.example");
+    assert_eq!(entries[0].author_label, "did:web:acme.example:users:alice");
 }
 
 #[test]
@@ -345,7 +348,7 @@ fn projection_synthesis_revision_uses_card_author_only_when_single_author() {
     assert_eq!(entries.len(), 1);
     assert_eq!(entries[0].body, "bob synthesis");
     assert_eq!(entries[0].actor_id, "did:web:acme.example:users:bob");
-    assert_eq!(entries[0].author_label, "bob:acme.example");
+    assert_eq!(entries[0].author_label, "did:web:acme.example:users:bob");
     assert_eq!(entries[0].timestamp_label, "2026-05-22 11:00");
 }
 
