@@ -383,11 +383,57 @@ pub(crate) fn attach_broadcast_ephemeral_proof(
         jws: String::new(),
     };
     let binding_bytes = proof
-        .canonical_binding_bytes(&envelope.actor_id)
+        .canonical_ephemeral_binding_bytes(&envelope.actor_id)
         .map_err(|err| anyhow::anyhow!("{kind} binding encoding failed: {err}"))?;
     proof.jws = signer
         .detached_jws_over(&binding_bytes)
         .map_err(|err| anyhow::anyhow!("{kind} proof signing failed: {err}"))?;
     envelope.proof = proof;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::Arc;
+
+    use super::*;
+
+    #[test]
+    fn attached_typing_proof_uses_ephemeral_binding_context() {
+        let actor = "did:web:alice.example";
+        let device = "ak:device:01904100-0000-7000-8000-a11ce0000001";
+        let seed = [91u8; 32];
+        let signer = Arc::new(crate::event_signer::build_ed25519_signer(seed, actor));
+        let _guard = crate::event_signer::ActiveSignerTestGuard::replace(Some(signer));
+        let mut envelope = build_typing_envelope(
+            "ak:realm:0196419b-0000-7000-8000-000000000000",
+            actor,
+            device,
+            "ak:strand:01964200-0000-7000-8000-000000000001",
+            true,
+        )
+        .unwrap();
+
+        attach_broadcast_ephemeral_proof(&mut envelope).unwrap();
+
+        let signing_key = ed25519_dalek::SigningKey::from_bytes(&seed);
+        let did_key =
+            crate::identity::did_key::did_key_from_verifying_key(&signing_key.verifying_key());
+        let public_key =
+            crate::identity::device_directory::public_key_from_directory_value(&did_key).unwrap();
+        arkret_sdk::signatures::verify_eddsa_detached_jws_ephemeral_proof(&envelope, &public_key)
+            .expect("Inkson ephemeral proof should verify with the SDK ephemeral transcript");
+
+        let canonical = envelope.canonical_bytes_without_proof().unwrap();
+        assert!(
+            arkret_sdk::signatures::verify_eddsa_detached_jws_proof(
+                &envelope.proof,
+                &canonical,
+                &envelope.actor_id,
+                &public_key,
+            )
+            .is_err(),
+            "ephemeral proof must be domain-separated from durable Event proofs"
+        );
+    }
 }

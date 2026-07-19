@@ -2758,6 +2758,44 @@ fn mention_candidate_for_current_user_uses_structured_me_alias() {
 }
 
 #[test]
+fn resolved_owned_agent_chip_suppresses_duplicate_directory_lookup() {
+    let controller = "did:web:example.com:users:alice";
+    let mention =
+        arkret_sdk::Mention::new(arkret_sdk::Did::new("did:web:agents.example:summary").unwrap())
+            .with_agent_selector_metadata(
+                arkret_sdk::Did::new(controller).unwrap(),
+                arkret_sdk::Handle::parse("alice:example.com").unwrap(),
+                "summary",
+            )
+            .with_mention_text_original("@me/summary");
+    let mentions = vec![MentionNode::mention(mention)];
+    let owned = parse_agent_selector_mention_tokens("ask @me/summary")
+        .into_iter()
+        .next()
+        .unwrap();
+    let remote = parse_agent_selector_mention_tokens("ask @alice:example.com/summary")
+        .into_iter()
+        .next()
+        .unwrap();
+    let unresolved = parse_agent_selector_mention_tokens("ask @me/digest")
+        .into_iter()
+        .next()
+        .unwrap();
+
+    assert!(agent_selector_mention_is_already_resolved(
+        &mentions, &owned, controller
+    ));
+    assert!(agent_selector_mention_is_already_resolved(
+        &mentions, &remote, controller
+    ));
+    assert!(!agent_selector_mention_is_already_resolved(
+        &mentions,
+        &unresolved,
+        controller
+    ));
+}
+
+#[test]
 fn owned_agent_inventory_enriches_existing_realm_member_metadata() {
     let slugs = std::collections::BTreeMap::from([(
         "did:web:agents.example:summary".to_owned(),

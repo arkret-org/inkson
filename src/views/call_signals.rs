@@ -890,7 +890,7 @@ mod tests {
     /// Build a real signed `ak.call.signal` envelope the same way the sender
     /// (`ephemeral::attach_broadcast_ephemeral_proof`) does: a detached JWS
     /// over the SDK's authoritative proof binding object (which folds in the
-    /// `context = "ak.event-proof-v1"` domain tag), with `event_digest` =
+    /// `context = "ak.ephemeral-proof-v1"` domain tag), with `event_digest` =
     /// canonical hash of the envelope without `proof`.
     fn signed_call_signal_envelope(
         signer: &crate::event_signer::InksonEventSigner,
@@ -899,13 +899,13 @@ mod tests {
     ) -> Value {
         let mut envelope = json!({
             "kind": "ak.call.signal",
-            "realm_id": "ak:realm:r",
+            "realm_id": "ak:realm:0196419b-0000-7000-8000-000000000000",
             "actor_id": actor_id,
             "device_id": device_id,
             "sent_at": "2026-06-16T00:00:00Z",
             "expires_at": "2026-06-16T00:01:00Z",
             "payload": {
-                "call_id": "ak:call:verify-1",
+                "call_id": "ak:call:01964200-0000-7000-8000-000000000001",
                 "signal_type": "invite",
                 "seq": 1,
                 "data": { "media": { "audio": true, "video": true, "screen": false } }
@@ -913,7 +913,8 @@ mod tests {
         });
         let canonical_bytes = crate::canonical::canonical_json_bytes(&envelope).unwrap();
         let event_digest = crate::canonical::sha256_digest(&canonical_bytes);
-        // Binding transcript via the SDK's authoritative `canonical_binding_bytes`
+        // Binding transcript via the SDK's authoritative
+        // `canonical_ephemeral_binding_bytes`
         // (context tag folded in), matching the production ephemeral sender and the
         // receiver-side verifier — so this test can never drift from the wire binding.
         // Use a fresh `created_at` so the receiver-side ephemeral replay-window gate
@@ -923,14 +924,14 @@ mod tests {
         let mut proof = arkret_sdk::Proof {
             kind: arkret_sdk::proof_kind::DETACHED_JWS.to_owned(),
             alg: signer.algorithm().to_owned(),
-            verification_method: format!("{actor_id}#device"),
+            verification_method: format!("{actor_id}#{device_id}"),
             event_digest: arkret_sdk::Hash::new(event_digest).unwrap(),
             created_at,
             domain: None,
             audience: None,
             jws: String::new(),
         };
-        let binding_bytes = proof.canonical_binding_bytes(&did).unwrap();
+        let binding_bytes = proof.canonical_ephemeral_binding_bytes(&did).unwrap();
         proof.jws = signer.detached_jws_over(&binding_bytes).unwrap();
         envelope
             .as_object_mut()
@@ -948,13 +949,17 @@ mod tests {
     #[test]
     fn valid_call_proof_verifies_and_routes_to_ring() {
         let actor = "did:web:caller.example";
-        let device = "ak:device:caller-1";
+        let device = "ak:device:01904100-0000-7000-8000-ca11e1000001";
         let seed = 71u8;
         let signer = crate::event_signer::build_ed25519_signer([seed; 32], actor);
         let envelope = signed_call_signal_envelope(&signer, actor, device);
         let key = pubkey_material(seed);
 
         // Verifies under the correct key.
+        let typed: arkret_sdk::EphemeralEnvelope =
+            serde_json::from_value(envelope.clone()).expect("fixture is a typed envelope");
+        arkret_sdk::signatures::verify_eddsa_detached_jws_ephemeral_proof(&typed, &key)
+            .expect("fixture uses the ephemeral proof transcript");
         assert!(
             crate::identity::device_directory::verify_ephemeral_envelope_proof(&envelope, &key)
         );
@@ -971,7 +976,7 @@ mod tests {
     #[test]
     fn call_proof_fails_closed_under_wrong_key() {
         let actor = "did:web:caller.example";
-        let device = "ak:device:caller-1";
+        let device = "ak:device:01904100-0000-7000-8000-ca11e1000001";
         let signer = crate::event_signer::build_ed25519_signer([71u8; 32], actor);
         let envelope = signed_call_signal_envelope(&signer, actor, device);
         // A different device's key MUST NOT verify the proof.
@@ -986,7 +991,7 @@ mod tests {
     #[test]
     fn call_proof_fails_closed_under_tampered_signature() {
         let actor = "did:web:caller.example";
-        let device = "ak:device:caller-1";
+        let device = "ak:device:01904100-0000-7000-8000-ca11e1000001";
         let seed = 71u8;
         let signer = crate::event_signer::build_ed25519_signer([seed; 32], actor);
         let mut envelope = signed_call_signal_envelope(&signer, actor, device);
@@ -1011,7 +1016,7 @@ mod tests {
         // long after its `created_at` MUST be dropped by the ephemeral replay
         // window, even though the signature still verifies.
         let actor = "did:web:caller.example";
-        let device = "ak:device:caller-1";
+        let device = "ak:device:01904100-0000-7000-8000-ca11e1000001";
         let seed = 71u8;
         let signer = crate::event_signer::build_ed25519_signer([seed; 32], actor);
         let envelope = signed_call_signal_envelope(&signer, actor, device);
@@ -1034,7 +1039,7 @@ mod tests {
         // verification_method controller != envelope actor_id → reject, even if
         // the signature itself is valid for the embedded method.
         let actor = "did:web:caller.example";
-        let device = "ak:device:caller-1";
+        let device = "ak:device:01904100-0000-7000-8000-ca11e1000001";
         let seed = 71u8;
         let signer = crate::event_signer::build_ed25519_signer([seed; 32], actor);
         let mut envelope = signed_call_signal_envelope(&signer, actor, device);
