@@ -739,23 +739,22 @@ pub fn ChatPanel(
         .iter()
         .find(|participant| participant.is_self && !participant.is_agent)
         .and_then(mention_label_for_participant);
-    // Mark agents referenced by structured mentions, then enrich any current
-    // Realm member that is in the controller-owned agent inventory. The latter
-    // is what makes a never-before-mentioned own agent available immediately
-    // as an @me/<slug> picker row.
+    // Agent identity comes from the controller-owned inventory. Mention
+    // selector fields are persistent audit snapshots and may only enrich an
+    // already-authoritative agent; they never promote an arbitrary DID to an
+    // agent. This keeps the roster fail-closed when profile, selector-claim,
+    // and accountability evidence is unavailable.
     {
-        let mut agent_metadata = agent_metadata_from_mentions(&all_messages_snapshot);
-        upsert_agent_participants(&mut participants, &agent_metadata, &account_did);
-        for (agent_id, metadata) in owned_agent_metadata(
+        let mut agent_metadata = owned_agent_metadata(
             &owned_agent_slugs(),
             &account_did,
             own_controller_handle.as_deref(),
-        ) {
-            agent_metadata
-                .entry(agent_id)
-                .and_modify(|existing| merge_agent_metadata(existing, metadata.clone()))
-                .or_insert(metadata);
-        }
+        );
+        enrich_authoritative_agent_metadata(
+            &mut agent_metadata,
+            agent_metadata_from_mentions(&all_messages_snapshot),
+        );
+        upsert_agent_participants(&mut participants, &agent_metadata, &account_did);
         annotate_agent_participants_with_metadata(&mut participants, &agent_metadata);
     }
     let participants_for_messages = participants.clone();

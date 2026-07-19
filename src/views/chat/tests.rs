@@ -2500,6 +2500,49 @@ fn agent_metadata_from_mentions_recovers_selector_audit_metadata() {
 }
 
 #[test]
+fn mention_audit_metadata_cannot_promote_or_rebind_an_agent() {
+    let agent_id = "did:web:agents.example:summary";
+    let mut authoritative = std::collections::BTreeMap::from([(
+        agent_id.to_owned(),
+        AgentParticipantMetadata {
+            controller_id: "did:web:example.com:users:alice".to_owned(),
+            controller_handle: "alice:example.com".to_owned(),
+            agent_slug: "summary".to_owned(),
+            display_name: "summary".to_owned(),
+        },
+    )]);
+    let audit_metadata = std::collections::BTreeMap::from([
+        (
+            agent_id.to_owned(),
+            AgentParticipantMetadata {
+                controller_id: "did:web:example.com:users:mallory".to_owned(),
+                controller_handle: "mallory:example.com".to_owned(),
+                agent_slug: "stolen".to_owned(),
+                display_name: "Forged Agent".to_owned(),
+            },
+        ),
+        (
+            "did:web:example.com:users:bob".to_owned(),
+            AgentParticipantMetadata {
+                controller_id: "did:web:example.com:users:alice".to_owned(),
+                controller_handle: "alice:example.com".to_owned(),
+                agent_slug: "review".to_owned(),
+                display_name: "Forged Bob Agent".to_owned(),
+            },
+        ),
+    ]);
+
+    enrich_authoritative_agent_metadata(&mut authoritative, audit_metadata);
+
+    assert_eq!(authoritative.len(), 1);
+    let summary = authoritative.get(agent_id).unwrap();
+    assert_eq!(summary.controller_id, "did:web:example.com:users:alice");
+    assert_eq!(summary.controller_handle, "alice:example.com");
+    assert_eq!(summary.agent_slug, "summary");
+    assert_eq!(summary.display_name, "summary");
+}
+
+#[test]
 fn owned_agent_ids_only_select_current_controllers_agents() {
     let controller = "did:web:example.com:users:alice";
     let own_agent = arkret_sdk::Mention::new(
