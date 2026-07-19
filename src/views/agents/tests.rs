@@ -28,6 +28,33 @@ mod personal_agent_tests {
             true,
             "deactivated"
         ));
+        assert!(!super::super::admin::should_offer_pairing_renewal(
+            true, "active"
+        ));
+        assert!(!super::super::admin::should_offer_pairing_renewal(
+            true, "paused"
+        ));
+    }
+
+    #[test]
+    fn pairing_credentials_require_bootstrap_state_or_explicit_paused_replacement() {
+        use super::super::admin::should_show_pairing_card;
+
+        assert!(should_show_pairing_card(
+            "pending_runtime_key",
+            true,
+            false,
+            false
+        ));
+        assert!(should_show_pairing_card(
+            "pairing_expired",
+            true,
+            true,
+            false
+        ));
+        assert!(!should_show_pairing_card("active", true, false, true));
+        assert!(!should_show_pairing_card("paused", true, false, false));
+        assert!(should_show_pairing_card("paused", true, false, true));
     }
 
     #[test]
