@@ -75,7 +75,13 @@ use crate::transport::TransportClient;
 /// device-key trust. Returning `None` (unresolvable / disallowed method / no
 /// evidence) makes [`verify_tier2_chain`] fail-closed — exactly the §8.2 rule
 /// "missing → MUST treat as unverified".
-pub trait DidAnchor {
+#[cfg(not(target_arch = "wasm32"))]
+pub type DidAnchorFuture<'a> =
+    std::pin::Pin<Box<dyn std::future::Future<Output = bool> + Send + 'a>>;
+#[cfg(target_arch = "wasm32")]
+pub type DidAnchorFuture<'a> = std::pin::Pin<Box<dyn std::future::Future<Output = bool> + 'a>>;
+
+pub trait DidAnchor: Send + Sync {
     fn resolve_did_document(&self, actor: &Did) -> Option<DidDocument>;
 
     /// P3.2b: asynchronously fetch + ingest `actor`'s DID document so a
@@ -94,7 +100,7 @@ pub trait DidAnchor {
         &'a self,
         http: &'a reqwest::Client,
         actor: &'a Did,
-    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = bool> + 'a>> {
+    ) -> DidAnchorFuture<'a> {
         let _ = (http, actor);
         Box::pin(async { true })
     }

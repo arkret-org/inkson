@@ -383,7 +383,7 @@ pub(crate) fn attach_broadcast_ephemeral_proof(
         jws: String::new(),
     };
     let binding_bytes = proof
-        .canonical_binding_bytes(&envelope.actor_id)
+        .canonical_ephemeral_binding_bytes(&envelope.actor_id)
         .map_err(|err| anyhow::anyhow!("{kind} binding encoding failed: {err}"))?;
     proof.jws = signer
         .detached_jws_over(&binding_bytes)

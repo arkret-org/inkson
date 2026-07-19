@@ -1884,6 +1884,20 @@ pub(crate) type PresenceMaps = (
     std::collections::BTreeMap<String, String>,
 );
 
+pub(crate) fn presence_projection_refresh_key(
+    scope: &str,
+    cursor: &str,
+    events: &[Value],
+) -> String {
+    use std::hash::{Hash, Hasher};
+
+    let mut projection = std::collections::hash_map::DefaultHasher::new();
+    serde_json::to_vec(events)
+        .unwrap_or_default()
+        .hash(&mut projection);
+    format!("{scope}|{cursor}|{:016x}", projection.finish())
+}
+
 pub(crate) fn presence_maps_from_sync_events(
     events: &[Value],
     participants: &[String],

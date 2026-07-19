@@ -154,15 +154,15 @@ pub fn verify_principal(
 /// helpers, fail-closed on any fetch / size / content-type / chain failure.
 /// `did:key` actors self-resolve and need no fetch.
 ///
-/// The mutable resolvers + cache live behind [`RefCell`] so the `&self`
+/// The mutable resolvers + cache live behind [`std::sync::Mutex`] so the `&self`
 /// [`crate::identity::device_directory::DidAnchor`] trait can still back-fill resolved
-/// documents; callers reclaim the (possibly grown) cache via
-/// [`ResolverDidAnchor::into_cache`] to persist it back into their signal.
+/// documents across the native `Send` transport boundary; callers reclaim the (possibly grown)
+/// cache via [`ResolverDidAnchor::into_cache`] to persist it back into their signal.
 pub struct ResolverDidAnchor {
     profile: DeploymentProfile,
-    web: std::cell::RefCell<DidWebResolver>,
-    webvh: std::cell::RefCell<DidWebvhResolver>,
-    cache: std::cell::RefCell<DidResolutionCache>,
+    web: std::sync::Mutex<DidWebResolver>,
+    webvh: std::sync::Mutex<DidWebvhResolver>,
+    cache: std::sync::Mutex<DidResolutionCache>,
 }
 
 impl ResolverDidAnchor {
@@ -173,16 +173,18 @@ impl ResolverDidAnchor {
     pub fn from_profile(profile: DeploymentProfile, cache: DidResolutionCache) -> Self {
         Self {
             profile,
-            web: std::cell::RefCell::new(DidWebResolver::new()),
-            webvh: std::cell::RefCell::new(DidWebvhResolver::new()),
-            cache: std::cell::RefCell::new(cache),
+            web: std::sync::Mutex::new(DidWebResolver::new()),
+            webvh: std::sync::Mutex::new(DidWebvhResolver::new()),
+            cache: std::sync::Mutex::new(cache),
         }
     }
 
     /// Reclaim the (possibly back-filled) cache so the caller can write it
     /// back into its `Signal<DidResolutionCache>`.
     pub fn into_cache(self) -> DidResolutionCache {
-        self.cache.into_inner()
+        self.cache
+            .into_inner()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
     }
 
     /// Rebuild the composite resolver chain from the policy for this profile
@@ -192,8 +194,18 @@ impl ResolverDidAnchor {
     fn current_resolver(&self) -> CompositeDidResolver {
         let mut composite = CompositeDidResolver::new().with_policy(policy_for(self.profile));
         composite.push(DidKeyResolver::new());
-        composite.push(self.web.borrow().clone());
-        composite.push(self.webvh.borrow().clone());
+        composite.push(
+            self.web
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .clone(),
+        );
+        composite.push(
+            self.webvh
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .clone(),
+        );
         composite
     }
 
@@ -204,7 +216,8 @@ impl ResolverDidAnchor {
     #[cfg(test)]
     fn ingest_web_for_test(&self, actor: &Did, outcome: DidWebDocumentOutcome) -> bool {
         self.web
-            .borrow_mut()
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
             .insert_from_https_response(actor, outcome)
             .is_ok()
     }
@@ -227,7 +240,13 @@ impl ResolverDidAnchor {
                 // prior ensure already fetched it, or the cache was seeded),
                 // skip the network round-trip entirely. `resolve_did` on the
                 // offline resolver succeeds only when evidence is present.
-                if self.web.borrow().resolve_did(actor).is_ok() {
+                if self
+                    .web
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner)
+                    .resolve_did(actor)
+                    .is_ok()
+                {
                     return true;
                 }
                 let outcome = match fetch_did_web_document(http, actor).await {
@@ -235,20 +254,30 @@ impl ResolverDidAnchor {
                     None => return false,
                 };
                 self.web
-                    .borrow_mut()
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner)
                     .insert_from_https_response(actor, outcome)
                     .is_ok()
             }
             "webvh" => {
                 // P3.2c peek: skip the fetch when the webvh document + log are
                 // already ingested for this actor.
-                if self.webvh.borrow().resolve_did(actor).is_ok() {
+                if self
+                    .webvh
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner)
+                    .resolve_did(actor)
+                    .is_ok()
+                {
                     return true;
                 }
                 let Some((doc, log)) = fetch_did_webvh_document(http, actor).await else {
                     return false;
                 };
-                let mut webvh = self.webvh.borrow_mut();
+                let mut webvh = self
+                    .webvh
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner);
                 if webvh.insert_from_https_response(actor, doc).is_err() {
                     return false;
                 }
@@ -266,7 +295,10 @@ impl ResolverDidAnchor {
 impl crate::identity::device_directory::DidAnchor for ResolverDidAnchor {
     fn resolve_did_document(&self, actor: &Did) -> Option<DidDocument> {
         let resolver = self.current_resolver();
-        let mut cache = self.cache.borrow_mut();
+        let mut cache = self
+            .cache
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         resolve_with_cache(&resolver, &mut cache, actor, Utc::now()).ok()
     }
 
@@ -274,7 +306,7 @@ impl crate::identity::device_directory::DidAnchor for ResolverDidAnchor {
         &'a self,
         http: &'a reqwest::Client,
         actor: &'a Did,
-    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = bool> + 'a>> {
+    ) -> crate::identity::device_directory::DidAnchorFuture<'a> {
         Box::pin(self.ingest_actor_document(http, actor))
     }
 }

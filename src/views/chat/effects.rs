@@ -400,13 +400,22 @@ pub(super) fn ChatEffects(
             if cursor.trim().is_empty() || cursor == "-" {
                 return;
             }
-            let next_sync_key = format!("{presence_sync_key}|{cursor}");
+            // `presence_projection` is written through the reactive state-store
+            // handle. The account cursor can already have been published by a
+            // concurrent sync path, though, so cursor alone cannot invalidate a
+            // previously rendered offline fallback. Read the projection before
+            // the dedup guard and include its content in the refresh key.
+            let snapshot = state_store.read().load();
+            let next_sync_key = presence_projection_refresh_key(
+                &presence_sync_key,
+                &cursor,
+                &snapshot.presence_projection,
+            );
             if presence_sync_key_seen.peek().as_str() == next_sync_key {
                 return;
             }
             presence_sync_key_seen.set(next_sync_key);
 
-            let snapshot = state_store.read().load();
             let active_typing = typing_actor_snapshot_from_sync_realms(
                 &snapshot.realm_tree_projections,
                 &realm,

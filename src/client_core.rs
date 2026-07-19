@@ -3,11 +3,96 @@
 //! This module provides typed, target-aware construction points for the shared
 //! client runtime without pulling UI state into client-core.
 
+use std::collections::BTreeSet;
 use std::sync::{Arc, Mutex};
 
 use garth::{RealmEventsFrameSource, RealmEventsTransport};
 
 use crate::sync_parse::{AccountSubscribeReconnectAfter, AccountSubscribeSnapshotResult};
+
+fn account_presence_device_pairs(
+    batch: &arkret_sdk::AccountSubscribeBatch,
+) -> Vec<(String, String)> {
+    batch
+        .frames
+        .iter()
+        .filter_map(|frame| frame.presence.as_ref())
+        .flat_map(|presence| presence.events.iter())
+        .map(|event| {
+            (
+                event.actor_id.as_str().to_owned(),
+                event.device_id.as_str().to_owned(),
+            )
+        })
+        .collect::<BTreeSet<_>>()
+        .into_iter()
+        .collect()
+}
+
+async fn prefetch_account_presence_device_keys(
+    http: &arkret_sdk::http_client::Client,
+    batch: &arkret_sdk::AccountSubscribeBatch,
+) {
+    let pairs = account_presence_device_pairs(batch);
+    if pairs.is_empty() {
+        return;
+    }
+    let api = crate::transport::TransportClient::from_http(
+        http.clone(),
+        crate::transport::RequestContext::new(""),
+    );
+    let anchor = crate::identity::did_resolver::ResolverDidAnchor::from_profile(
+        crate::identity::did_resolver::DeploymentProfile::PersonalNode,
+        crate::identity::did_resolver::DidResolutionCache::new(64),
+    );
+    crate::identity::device_directory::prefetch_device_keys(&api, &anchor, &pairs).await;
+}
+
+/// Account transport adapter that primes the synchronous, fail-closed
+/// ephemeral verifier before the SDK folds a received batch. `keys/query` is
+/// asynchronous, so doing this after `SyncLoop::handle_response` is too late:
+/// unresolved presence has already been discarded at that boundary.
+#[derive(Clone)]
+pub(crate) struct InksonAccountTransport {
+    http: arkret_sdk::http_client::Client,
+}
+
+impl InksonAccountTransport {
+    pub(crate) fn new(http: arkret_sdk::http_client::Client) -> Self {
+        Self { http }
+    }
+
+    pub(crate) fn http(&self) -> &arkret_sdk::http_client::Client {
+        &self.http
+    }
+}
+
+impl arkret_sdk::AsyncSyncTransport for InksonAccountTransport {
+    fn sync_async<'a>(
+        &'a self,
+        request: arkret_sdk::SyncRequestBody,
+    ) -> arkret_sdk::BoxSyncFuture<'a, arkret_sdk::AccountSubscribeBatch> {
+        Box::pin(async move {
+            let batch = self.http.account_subscribe_batch(&request).await?;
+            prefetch_account_presence_device_keys(&self.http, &batch).await;
+            Ok(batch)
+        })
+    }
+}
+
+fn cached_ephemeral_device_key(
+    actor: &arkret_sdk::Did,
+    device: &arkret_sdk::DeviceId,
+) -> Option<arkret_sdk::signatures::PublicKeyMaterial> {
+    match crate::identity::device_directory::cached_device_signing_key(
+        actor.as_str(),
+        device.as_str(),
+    ) {
+        crate::identity::device_directory::CacheLookup::Hit(key) => Some(key),
+        crate::identity::device_directory::CacheLookup::NegativeHit
+        | crate::identity::device_directory::CacheLookup::Miss => None,
+    }
+}
 
 #[derive(Clone)]
 pub struct InksonLocalStateStoreAdapter {
@@ -218,7 +303,8 @@ impl InksonClientRuntime {
         #[cfg(target_arch = "wasm32")]
         let executor = garth::WasmExecutor;
         Self {
-            client: garth::ArkretClient::new(executor, adapter.clone(), adapter),
+            client: garth::ArkretClient::new(executor, adapter.clone(), adapter)
+                .with_ephemeral_device_key_resolver(Arc::new(cached_ephemeral_device_key)),
         }
     }
 
@@ -331,7 +417,13 @@ pub async fn account_subscribe_snapshot(
 ) -> anyhow::Result<crate::models::AccountSyncStep> {
     match account_subscribe_snapshot_outcome(http, after).await? {
         AccountSubscribeSnapshotResult::Batch(batch) => {
-            Ok(crate::models::AccountSyncStep::from_batch(batch)?)
+            prefetch_account_presence_device_keys(http, &batch).await;
+            Ok(
+                crate::models::AccountSyncStep::from_batch_with_ephemeral_device_key_resolver(
+                    batch,
+                    &cached_ephemeral_device_key,
+                )?,
+            )
         }
         AccountSubscribeSnapshotResult::ReconnectAfter {
             reconnect_after_ms,
@@ -457,6 +549,61 @@ mod tests {
     use garth::{
         CursorStore, EventCacheStore, RealmEventsFrameSource, RealmEventsTransport, SecureKeyStore,
     };
+
+    #[test]
+    fn account_presence_device_pairs_are_deduplicated_before_prefetch() {
+        let actor = arkret_sdk::Did::new("did:webvh:z6mkfixture:alice.example").unwrap();
+        let device_a =
+            arkret_sdk::DeviceId::new("ak:device:01904100-0000-7000-8000-000000000001").unwrap();
+        let device_b =
+            arkret_sdk::DeviceId::new("ak:device:01904100-0000-7000-8000-000000000002").unwrap();
+        let event: arkret_sdk::EphemeralEnvelope = serde_json::from_value(serde_json::json!({
+            "kind": "ak.presence",
+            "realm_id": "ak:realm:01904100-0000-7000-8000-000000000001",
+            "actor_id": actor.clone(),
+            "device_id": device_a.clone(),
+            "sent_at": "2026-07-19T09:04:03.000Z",
+            "expires_at": "2026-07-19T09:04:33.000Z",
+            "payload": {"state": "online"},
+            "proof": {
+                "kind": "detached_jws",
+                "alg": "EdDSA",
+                "verification_method": format!("{actor}#{device_a}"),
+                "event_digest": format!("sha256:{}", "0".repeat(64)),
+                "created_at": "2026-07-19T09:04:03.000Z",
+                "jws": "header..signature"
+            }
+        }))
+        .unwrap();
+        let mut second_device = event.clone();
+        second_device.device_id = device_b.clone();
+        let batch = arkret_sdk::AccountSubscribeBatch {
+            cursor: "ak:cursor:presence-pairs".to_owned(),
+            frames: vec![arkret_sdk::AccountSubscribeFrame {
+                kind: arkret_sdk::AccountSubscribeFrameKind::Delta,
+                cursor: Some("ak:cursor:presence-pairs".to_owned()),
+                realms: None,
+                to_device: None,
+                device_lists: None,
+                account_data: None,
+                presence: Some(arkret_sdk::EphemeralEventContainer {
+                    events: vec![event.clone(), second_device, event],
+                }),
+                notifications: None,
+                partial: None,
+                priority: None,
+                reconnect_after_ms: None,
+            }],
+        };
+
+        assert_eq!(
+            super::account_presence_device_pairs(&batch),
+            vec![
+                (actor.as_str().to_owned(), device_a.as_str().to_owned()),
+                (actor.as_str().to_owned(), device_b.as_str().to_owned()),
+            ]
+        );
+    }
 
     #[test]
     fn memory_client_core_exposes_host_session_and_subscription_engines() {

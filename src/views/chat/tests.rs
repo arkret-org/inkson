@@ -3140,6 +3140,30 @@ fn presence_maps_from_sync_events_prefers_account_subscribe_presence() {
 }
 
 #[test]
+fn presence_projection_refresh_key_changes_without_a_cursor_advance() {
+    let online = vec![json!({
+        "kind": "ak.presence",
+        "actor_id": "did:web:bob.example",
+        "state": "online",
+    })];
+    let offline = vec![json!({
+        "kind": "ak.presence",
+        "actor_id": "did:web:bob.example",
+        "state": "offline",
+    })];
+
+    let online_key = presence_projection_refresh_key("realm|participants", "cursor-7", &online);
+    assert_eq!(
+        online_key,
+        presence_projection_refresh_key("realm|participants", "cursor-7", &online)
+    );
+    assert_ne!(
+        online_key,
+        presence_projection_refresh_key("realm|participants", "cursor-7", &offline)
+    );
+}
+
+#[test]
 fn presence_maps_from_sync_events_aggregates_live_device_envelopes() {
     let now = chrono::Utc::now();
     let participants = vec![

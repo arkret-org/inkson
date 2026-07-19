@@ -1,8 +1,8 @@
 use serde_json::json;
 
 use crate::ephemeral::{
-    build_presence_envelope, build_receipt_read_envelope, build_typing_envelope,
-    validate_outgoing_registered_event_payload,
+    attach_broadcast_ephemeral_proof, build_presence_envelope, build_receipt_read_envelope,
+    build_typing_envelope, validate_outgoing_registered_event_payload,
 };
 use crate::event_builders::{
     build_device_message_envelope, build_member_state_transition_event,
@@ -190,6 +190,42 @@ fn presence_envelope_buckets_last_active_at_to_hour() {
         "2026-06-22T10:00:00Z/PT1H"
     );
     assert_eq!(envelope.payload["ttl_ms"], 30000);
+}
+
+#[test]
+fn presence_proof_round_trips_through_ephemeral_sdk_verifier() {
+    use std::sync::Arc;
+
+    use arkret_sdk::signatures::PublicKeyMaterial;
+    use ed25519_dalek::SigningKey;
+
+    use crate::event_signer::{ActiveSignerTestGuard, build_ed25519_device_signer};
+
+    let seed = [15u8; 32];
+    let actor_id = "did:web:alice.example";
+    let device_id = "ak:device:01904100-0000-7000-8000-a11ce0000001";
+    let signer = Arc::new(build_ed25519_device_signer(seed, actor_id, device_id));
+    let _guard = ActiveSignerTestGuard::replace(Some(signer));
+    let mut envelope = build_presence_envelope(
+        "ak:realm:0196419b-0000-7000-8000-000000000000",
+        actor_id,
+        device_id,
+        "online",
+        None,
+        None,
+    )
+    .unwrap();
+
+    attach_broadcast_ephemeral_proof(&mut envelope).unwrap();
+
+    let public_key = PublicKeyMaterial::Ed25519Raw {
+        bytes: SigningKey::from_bytes(&seed)
+            .verifying_key()
+            .to_bytes()
+            .to_vec(),
+    };
+    arkret_sdk::signatures::verify_eddsa_detached_jws_ephemeral_proof(&envelope, &public_key)
+        .expect("presence proof must use the ephemeral binding context");
 }
 
 #[test]

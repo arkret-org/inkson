@@ -274,11 +274,12 @@ struct AccountTransportProvider {
 }
 
 impl TransportProvider for AccountTransportProvider {
-    type Transport = arkret_sdk::http_client::Client;
+    type Transport = crate::client_core::InksonAccountTransport;
 
     async fn provide(&self) -> arkret_sdk::Result<Self::Transport> {
         crate::identity::session_refresh::provide_authenticated_sdk_client(&self.ctx.base_url)
             .await
+            .map(crate::client_core::InksonAccountTransport::new)
             .map_err(|error| arkret_sdk::Error::Protocol(error.to_string()))
     }
 
@@ -394,12 +395,13 @@ impl InksonAccountPostCommit {
     }
 }
 
-impl AccountPostCommitHook<arkret_sdk::http_client::Client> for InksonAccountPostCommit {
+impl AccountPostCommitHook<crate::client_core::InksonAccountTransport> for InksonAccountPostCommit {
     async fn post_commit(
         &self,
-        http: &arkret_sdk::http_client::Client,
+        transport: &crate::client_core::InksonAccountTransport,
         step: &AccountStreamStep,
     ) -> arkret_sdk::Result<AccountPostCommitOutcome> {
+        let http = transport.http();
         if !self.active() {
             return Ok(AccountPostCommitOutcome::Continue);
         }
