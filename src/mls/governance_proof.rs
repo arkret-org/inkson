@@ -1153,3 +1153,61 @@ where
     )
     .map_err(|error| arkret_sdk::Error::Protocol(format!("Seal signature invalid: {error}")))
 }
+
+/// Verify a managed Agent PCR frontier receipt before it is trusted as the
+/// predecessor for a controller-authored successor Seal.
+pub(crate) fn verify_managed_agent_pcr_seal_head(
+    seal: &Seal,
+    controller: &arkret_sdk::Did,
+) -> arkret_sdk::Result<()> {
+    seal.validate_structural()?;
+    seal.validate_id()?;
+    let canonical_bytes = seal.canonical_bytes_for_id()?;
+    let signature = match &seal.notary_signature {
+        NotarySig::Single(signature) => signature,
+        NotarySig::Multi(_) | NotarySig::Threshold(_) => {
+            return Err(arkret_sdk::Error::Protocol(
+                "managed Agent PCR Seal head requires one controller-device signature".to_owned(),
+            ));
+        }
+    };
+    if signature.alg != "EdDSA" {
+        return Err(arkret_sdk::Error::Protocol(
+            "managed Agent PCR Seal head signature must use EdDSA".to_owned(),
+        ));
+    }
+    let signer = verification_method_did(&signature.verification_method)?;
+    if &signer != controller {
+        return Err(arkret_sdk::Error::Protocol(format!(
+            "managed Agent PCR Seal head signer {signer} is not controller {controller}"
+        )));
+    }
+    let (actor, device) = managed_seal_device_proof_pair(seal, Some(controller))
+        .map_err(arkret_sdk::Error::Protocol)?
+        .ok_or_else(|| {
+            arkret_sdk::Error::Protocol(
+                "managed Agent PCR Seal head has no controller-device verification method"
+                    .to_owned(),
+            )
+        })?;
+    let key = match crate::identity::device_directory::cached_device_signing_key(&actor, &device) {
+        crate::identity::device_directory::CacheLookup::Hit(key) => key,
+        crate::identity::device_directory::CacheLookup::NegativeHit => {
+            return Err(arkret_sdk::Error::Protocol(format!(
+                "managed Agent PCR Seal head device key is revoked or unavailable for {actor}#{device}"
+            )));
+        }
+        crate::identity::device_directory::CacheLookup::Miss => {
+            return Err(arkret_sdk::Error::Protocol(format!(
+                "managed Agent PCR Seal head device key was not prefetched for {actor}#{device}"
+            )));
+        }
+    };
+    arkret_sdk::signatures::Ed25519DetachedJwsVerifier::new()
+        .verify_detached_jws(&signature.jws, &canonical_bytes, &key)
+        .map_err(|error| {
+            arkret_sdk::Error::Protocol(format!(
+                "managed Agent PCR Seal head controller-device signature invalid: {error}"
+            ))
+        })
+}

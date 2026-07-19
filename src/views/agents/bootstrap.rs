@@ -14,8 +14,6 @@ use serde_json::{Value, json};
 use crate::operation::{EventKind, OperationBuilder, uuid_v7};
 use crate::state::LocalStateStore;
 
-const PCR_BOOTSTRAP_WAIT_ATTEMPTS: usize = 120;
-const PCR_BOOTSTRAP_WAIT_INTERVAL: Duration = Duration::from_millis(250);
 const PCR_RECOVERY_PROJECTION_WAIT_ATTEMPTS: usize = 18;
 const ACTIVE_SERIES_SIGNED_FIELDS: &[&str] = &[
     "schema",
@@ -116,7 +114,7 @@ async fn current_controller_backup_trust_anchor(
     }
 }
 
-fn controller_signer_device_id(
+pub(crate) fn controller_signer_device_id(
     controller_id: &str,
     signer: &crate::event_signer::InksonEventSigner,
     signer_account_scope: Option<&str>,
@@ -674,24 +672,6 @@ fn build_active_mls_history_series_event(
     .build_sdk_event("inkson")
 }
 
-async fn wait_for_agent_pcr_frontier(
-    submitter: &crate::event_submit::EventSubmitter,
-    realm_id: &str,
-    previous_seal_id: Option<&str>,
-) -> anyhow::Result<arkret_sdk::RealmSealFrontierView> {
-    for _ in 0..PCR_BOOTSTRAP_WAIT_ATTEMPTS {
-        if let Ok(frontier) = submitter.events_frontier_realm_seal_view(realm_id).await
-            && previous_seal_id != Some(frontier.seal_id.as_str())
-            && frontier.control_event_set_root.as_str()
-                != "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-        {
-            return Ok(frontier);
-        }
-        crate::runtime_helpers::sleep_for(PCR_BOOTSTRAP_WAIT_INTERVAL).await;
-    }
-    anyhow::bail!("Agent PCR Seal did not cover MLS genesis before the bootstrap deadline")
-}
-
 fn agent_pcr_recovery_matches(
     state: &AgentPcrRecoveryState,
     expected_backup_id: &str,
@@ -899,22 +879,6 @@ fn has_managed_agent_pcr_create(events: &[arkret_sdk::Event]) -> bool {
     })
 }
 
-fn accepted_seal_from_governance_bundle(
-    bundle: &arkret_sdk::MaterializedMlsGovernanceProofBundle,
-) -> anyhow::Result<arkret_sdk::Seal> {
-    bundle
-        .seal_path
-        .iter()
-        .find(|seal| seal.id == bundle.accepted_seal_id)
-        .cloned()
-        .ok_or_else(|| {
-            anyhow::anyhow!(
-                "Agent PCR governance proof omits its accepted Seal {}",
-                bundle.accepted_seal_id
-            )
-        })
-}
-
 async fn submit_managed_agent_pcr_seal(
     http: &arkret_sdk::http_client::Client,
     signer: &crate::event_signer::InksonEventSigner,
@@ -938,6 +902,87 @@ async fn submit_managed_agent_pcr_seal(
         anyhow::bail!("Principal Server returned a mismatched managed Agent PCR Seal outcome");
     }
     Ok(seal)
+}
+
+/// Close all currently accepted managed Agent PCR Events into a Seal signed by
+/// the active controller device. The accepted head returned by frontier can
+/// lag the Event log and is the predecessor for the successor authored here.
+pub(crate) async fn ensure_managed_agent_pcr_seal_current(
+    submitter: &crate::event_submit::EventSubmitter,
+    http: &arkret_sdk::http_client::Client,
+    signer: &crate::event_signer::InksonEventSigner,
+    controller_id: &arkret_sdk::Did,
+    device_id: &str,
+    realm_id: &str,
+) -> anyhow::Result<(arkret_sdk::RealmSealFrontierView, arkret_sdk::Seal)> {
+    let current = submitter
+        .events_frontier_managed_agent_seal_head(realm_id, controller_id)
+        .await;
+    if current
+        .as_ref()
+        .is_err_and(managed_agent_seal_head_receipt_unavailable)
+    {
+        return Err(current.expect_err("checked managed PCR signed-head receipt error"));
+    }
+    let accepted_events = submitter.backfill(realm_id).await?.events;
+    let material = arkret_sdk::identity::materialize_managed_agent_pcr_control(&accepted_events)
+        .map_err(|error| anyhow::anyhow!("managed Agent PCR materialization failed: {error}"))?;
+
+    let submitted = match current {
+        Ok((view, head)) => {
+            if head.covered_event_digests == material.covered_event_digests {
+                if head.state_root != material.state_root {
+                    anyhow::bail!(
+                        "accepted managed Agent PCR Seal state differs from accepted Events"
+                    );
+                }
+                return Ok((view, head));
+            }
+            Some(
+                submit_managed_agent_pcr_seal(
+                    http,
+                    signer,
+                    controller_id,
+                    device_id,
+                    realm_id,
+                    &accepted_events,
+                    Some(&head),
+                )
+                .await?,
+            )
+        }
+        Err(error) if managed_agent_initial_seal_required(&error) => Some(
+            submit_managed_agent_pcr_seal(
+                http,
+                signer,
+                controller_id,
+                device_id,
+                realm_id,
+                &accepted_events,
+                None,
+            )
+            .await?,
+        ),
+        Err(error) => return Err(error),
+    };
+
+    let expected = submitted.expect("managed PCR Seal submission branch always returns a Seal");
+    let (view, head) = submitter
+        .events_frontier_managed_agent_seal_head(realm_id, controller_id)
+        .await?;
+    if head.id != expected.id
+        || head.state_root != expected.state_root
+        || head.covered_event_digests != material.covered_event_digests
+    {
+        anyhow::bail!("accepted managed Agent PCR Seal differs from the submitted successor");
+    }
+    Ok((view, head))
+}
+
+pub(crate) fn managed_agent_seal_head_receipt_unavailable(error: &anyhow::Error) -> bool {
+    error
+        .to_string()
+        .contains("events/frontier omitted the accepted managed Agent PCR Seal head")
 }
 
 /// Complete the client-owned half of `agent_provision`: create the Agent PCR,
@@ -1001,27 +1046,15 @@ pub(crate) async fn bootstrap_provisioned_agent(
         anyhow::bail!("Principal Server did not expose the accepted managed Agent PCR genesis");
     }
 
-    let initial_frontier = match submitter.events_frontier_realm_seal_view(realm_id).await {
-        Ok(frontier) => frontier,
-        Err(error) if managed_agent_initial_seal_required(&error) => {
-            let seal = submit_managed_agent_pcr_seal(
-                &http,
-                signer.as_ref(),
-                &controller_did,
-                &device_id,
-                realm_id,
-                &accepted_events,
-                None,
-            )
-            .await?;
-            let frontier = submitter.events_frontier_realm_seal_view(realm_id).await?;
-            if frontier.seal_id != seal.id || frontier.state_root != seal.state_root {
-                anyhow::bail!("accepted managed Agent PCR root Seal differs from its frontier");
-            }
-            frontier
-        }
-        Err(error) => return Err(error),
-    };
+    let (initial_frontier, _) = ensure_managed_agent_pcr_seal_current(
+        &submitter,
+        &http,
+        signer.as_ref(),
+        &controller_did,
+        &device_id,
+        realm_id,
+    )
+    .await?;
     state_store.write().set_realm_seal_view(
         realm_id.to_owned(),
         crate::state::LocalSealView {
@@ -1041,14 +1074,13 @@ pub(crate) async fn bootstrap_provisioned_agent(
         0,
     )
     .map_err(anyhow::Error::msg)?;
-    let proof_bundle = crate::mls::governance_proof::fetch_verify_and_cache_proof_bundle(
+    crate::mls::governance_proof::fetch_verify_and_cache_proof_bundle(
         api,
         state_store,
         &proof_request,
     )
     .await
     .map_err(anyhow::Error::msg)?;
-    let initial_seal = accepted_seal_from_governance_bundle(&proof_bundle)?;
 
     let secure_store = crate::secure_key_store::default_secure_key_store("inkson");
     let existing_genesis = submitter.find_mls_genesis_event_id(realm_id).await?;
@@ -1061,7 +1093,16 @@ pub(crate) async fn bootstrap_provisioned_agent(
                 "Agent PCR MLS genesis exists, but this controller device has no local private group state"
             );
         }
-        submitter.events_frontier_realm_seal_view(realm_id).await?
+        ensure_managed_agent_pcr_seal_current(
+            &submitter,
+            &http,
+            signer.as_ref(),
+            &controller_did,
+            &device_id,
+            realm_id,
+        )
+        .await?
+        .0
     } else {
         let summary = {
             let mut store = state_store.write();
@@ -1123,26 +1164,15 @@ pub(crate) async fn bootstrap_provisioned_agent(
             }
             Err(error) => return Err(error),
         }
-        accepted_events = submitter.backfill(realm_id).await?.events;
-        let successor = submit_managed_agent_pcr_seal(
+        let (frontier, _) = ensure_managed_agent_pcr_seal_current(
+            &submitter,
             &http,
             signer.as_ref(),
             &controller_did,
             &device_id,
             realm_id,
-            &accepted_events,
-            Some(&initial_seal),
         )
         .await?;
-        let frontier = wait_for_agent_pcr_frontier(
-            &submitter,
-            realm_id,
-            Some(initial_frontier.seal_id.as_str()),
-        )
-        .await?;
-        if frontier.seal_id != successor.id || frontier.state_root != successor.state_root {
-            anyhow::bail!("accepted managed Agent PCR successor Seal differs from its frontier");
-        }
         frontier
     };
     state_store.write().set_realm_seal_view(

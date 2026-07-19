@@ -326,6 +326,45 @@ export async function mockArkretApi(
     created_at: "2026-07-06T00:00:00Z",
     updated_at: "2026-07-06T00:05:00Z",
   });
+  // Keep consumed bootstrap material in this active Agent fixture. The
+  // settings UI must trust lifecycle state, not the mere presence of a stale
+  // handle, when deciding whether pairing credentials may be displayed.
+  const activeAssistantId = "did:web:agents.example:assistant";
+  const activeAssistantScope = {
+    actions: ["ak.event.read"],
+    resources: [{ kind: "operation", operation: "ak.self.events.query.scan" }],
+  };
+  personalAgentKeyStates.set(activeAssistantId, {
+    agent_id: activeAssistantId,
+    controller_id: accountPrincipalId,
+    principal_control_realm_id: "ak:realm:01964137-0000-7000-8000-000000000006",
+    controller_authorization_ref: `${activeAssistantId}#managed-controller`,
+    status: "active",
+    pcr_recovery: {
+      status: "ready",
+      backup_id: "ak:backup:01964137-0000-7000-8000-0000000000c1",
+      series_id: "ak:backup_series:01964137-0000-7000-8000-0000000000c2",
+      series_seq: 1,
+      managed_frontier_ref: {
+        frontier_digest:
+          "sha256:3333333333333333333333333333333333333333333333333333333333333333",
+        seal_ref:
+          "ak:seal:sha256:4444444444444444444444444444444444444444444444444444444444444444",
+        mls_epoch: 0,
+      },
+    },
+    requested_scope: activeAssistantScope,
+    requested_scope_digest: canonicalSha256({
+      agent_id: activeAssistantId,
+      controller_id: accountPrincipalId,
+      kind: "ak.agent.requested_scope_commitment.v1",
+      requested_scope: activeAssistantScope,
+    }),
+    pairing_request_id: "pair-consumed-active-1",
+    pairing_code: "246810",
+    pairing_expires_at: "2099-07-06T00:20:00Z",
+    authorized_event_ref: "ak:event:01964137-0000-7000-8000-00000000a600",
+  });
   personalAgents.set("did:web:agents.example:deactivated", {
     agent_id: "did:web:agents.example:deactivated",
     display_name: "Deactivated Agent",
@@ -2336,6 +2375,71 @@ export async function mockArkretApi(
       });
     }
 
+    const agentLifecycleMatch = url.pathname.match(
+      /^\/_arkret\/self\/agents\/([^/]+)\/(pause|resume)$/,
+    );
+    if (agentLifecycleMatch && route.request().method() === "POST") {
+      const agentId = decodeURIComponent(agentLifecycleMatch[1]);
+      const action = agentLifecycleMatch[2];
+      const agent = personalAgents.get(agentId);
+      const keyState = personalAgentKeyStates.get(agentId);
+      if (!agent || !keyState) {
+        return json(
+          route,
+          { ok: false, error: { code: "not_found", message: "agent not found" } },
+          404,
+        );
+      }
+      const body = ((await contractRequestBody(route)) ?? {}) as Record<
+        string,
+        unknown
+      >;
+      const event = body.lifecycle_event as Record<string, any> | undefined;
+      const expectedKind = `ak.self.agent.${action}`;
+      const expectedFrom = action === "pause" ? "active" : "paused";
+      const expectedTo = action === "pause" ? "paused" : "active";
+      const expectedReason = action === "pause" ? body.reason : undefined;
+      const effect = Array.isArray(event?.effects) ? event.effects[0] : undefined;
+      const payload = event?.payload;
+      const valid =
+        event?.kind === expectedKind &&
+        event?.realm_id === keyState.principal_control_realm_id &&
+        event?.actor_id === agentId &&
+        event?.executed_by === accountPrincipalId &&
+        event?.authorization_ref === keyState.controller_authorization_ref &&
+        Array.isArray(event?.proofs) &&
+        event.proofs.length > 0 &&
+        payload?.agent_id === agentId &&
+        payload?.controller_id === accountPrincipalId &&
+        payload?.transition === action &&
+        payload?.previous_status === expectedFrom &&
+        payload?.reason === expectedReason &&
+        Array.isArray(event?.effects) &&
+        event.effects.length === 1 &&
+        effect?.cell === `ak:cell:ak.component.agent.status.v1:${agentId}` &&
+        effect?.op?.kind === "transition" &&
+        effect?.op?.from === expectedFrom &&
+        effect?.op?.to === expectedTo &&
+        effect?.op?.reason === expectedReason;
+      if (!valid) {
+        return json(
+          route,
+          {
+            ok: false,
+            error: {
+              code: "invalid_param",
+              message: "lifecycle_event does not match the delegated Agent transition",
+            },
+          },
+          400,
+        );
+      }
+      agent.status = expectedTo;
+      agent.updated_at = "2026-07-19T08:00:00Z";
+      keyState.status = expectedTo;
+      return json(route, { ok: true, status: expectedTo });
+    }
+
     const agentRenewPairingMatch = url.pathname.match(
       /^\/_arkret\/self\/agents\/([^/]+)\/renew-pairing$/,
     );
@@ -2352,7 +2456,11 @@ export async function mockArkretApi(
           404,
         );
       }
-      if (agent.status !== "pending_runtime_key" && agent.status !== "pairing_expired") {
+      if (
+        agent.status !== "pending_runtime_key" &&
+        agent.status !== "pairing_expired" &&
+        agent.status !== "paused"
+      ) {
         return json(
           route,
           {
@@ -2367,16 +2475,18 @@ export async function mockArkretApi(
       }
       personalAgentCounter += 1;
       const renewedExpiresAt = "2099-07-06T00:20:00Z";
+      const pairingMode = agent.status === "paused" ? "replacement" : "bootstrap";
       const keyState = {
         ...(personalAgentKeyStates.get(agentId) ?? {}),
-        status: "pending_runtime_key",
+        status: agent.status,
+        pairing_mode: pairingMode,
         pairing_request_id: `pair-renew-${personalAgentCounter}`,
         pairing_code: "135791",
         pairing_expires_at: renewedExpiresAt,
       };
       personalAgents.set(agentId, {
         ...agent,
-        status: "pending_runtime_key",
+        status: agent.status,
         updated_at: "2026-07-06T00:30:00Z",
       });
       personalAgentKeyStates.set(agentId, keyState);
@@ -2386,7 +2496,7 @@ export async function mockArkretApi(
         controller_authorization_ref: keyState.controller_authorization_ref,
         requested_scope_digest: keyState.requested_scope_digest,
         pcr_recovery: keyState.pcr_recovery,
-        pairing_mode: "bootstrap",
+        pairing_mode: pairingMode,
         pairing_request_id: keyState.pairing_request_id,
         pairing_code: keyState.pairing_code,
         expires_at: keyState.pairing_expires_at,

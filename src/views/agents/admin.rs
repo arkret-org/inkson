@@ -41,11 +41,18 @@ fn normalize_agent_slug(value: &str) -> String {
 }
 
 pub(super) fn should_offer_pairing_renewal(pcr_recovery_ready: bool, status: &str) -> bool {
-    pcr_recovery_ready
-        && matches!(
-            status,
-            "pending_runtime_key" | "pairing_expired" | "active" | "paused"
-        )
+    pcr_recovery_ready && matches!(status, "pending_runtime_key" | "pairing_expired")
+}
+
+pub(super) fn should_show_pairing_card(
+    status: &str,
+    has_pairing_handle: bool,
+    pairing_is_expired: bool,
+    replacement_pairing_requested: bool,
+) -> bool {
+    (matches!(status, "pending_runtime_key" | "pairing_expired")
+        && (has_pairing_handle || pairing_is_expired))
+        || (status == "paused" && replacement_pairing_requested && has_pairing_handle)
 }
 
 fn agent_field(agent: &AgentView, key: &str) -> String {
@@ -272,6 +279,7 @@ mod directory_refresh_tests {
                 requested_scope: scope,
                 requested_scope_digest: scope_digest,
                 pairing_request_id: None,
+                pairing_mode: None,
                 pairing_code: None,
                 pairing_expires_at: None,
                 approval_request_id: None,
@@ -286,7 +294,7 @@ mod directory_refresh_tests {
     fn test_renew_outcome(mode: AgentPairingMode) -> AgentRenewPairingOutcome {
         let row = test_pairing_view(match mode {
             AgentPairingMode::Bootstrap => AgentStatus::PairingExpired,
-            AgentPairingMode::Replacement => AgentStatus::Active,
+            AgentPairingMode::Replacement => AgentStatus::Paused,
         });
         let key_state = row.key_state.unwrap();
         AgentRenewPairingOutcome {
@@ -341,8 +349,8 @@ mod directory_refresh_tests {
     }
 
     #[test]
-    fn replacement_renewal_preserves_active_lifecycle_and_existing_key() {
-        let mut rows = vec![test_pairing_view(AgentStatus::Active)];
+    fn replacement_renewal_preserves_paused_lifecycle_and_existing_key() {
+        let mut rows = vec![test_pairing_view(AgentStatus::Paused)];
         let outcome = test_renew_outcome(AgentPairingMode::Replacement);
         let now = chrono::DateTime::parse_from_rfc3339("2026-07-18T00:00:00Z")
             .unwrap()
@@ -350,10 +358,10 @@ mod directory_refresh_tests {
 
         apply_renewed_pairing(&mut rows, outcome.agent_id.as_str(), &outcome, now).unwrap();
 
-        assert_eq!(rows[0].status, AgentStatus::Active);
+        assert_eq!(rows[0].status, AgentStatus::Paused);
         assert_eq!(
             rows[0].key_state.as_ref().unwrap().status,
-            AgentStatus::Active
+            AgentStatus::Paused
         );
         assert_eq!(
             rows[0].key_state.as_ref().unwrap().pairing_code.as_deref(),
@@ -431,9 +439,7 @@ fn apply_renewed_pairing(
             row.agent.status = AgentStatus::PendingRuntimeKey;
             key_state.status = AgentStatus::PendingRuntimeKey;
         }
-        AgentPairingMode::Replacement
-            if matches!(row.status, AgentStatus::Active | AgentStatus::Paused) =>
-        {
+        AgentPairingMode::Replacement if row.status == AgentStatus::Paused => {
             // Replacement pairing is deliberately non-disruptive: the
             // accepted runtime key and lifecycle state remain authoritative
             // until the fresh one-time handle is consumed.
@@ -448,6 +454,7 @@ fn apply_renewed_pairing(
     }
     key_state.pcr_recovery = outcome.pcr_recovery.clone();
     key_state.pairing_request_id = Some(outcome.pairing_request_id.clone());
+    key_state.pairing_mode = Some(outcome.pairing_mode);
     key_state.pairing_code = outcome.pairing_code.clone();
     key_state.pairing_expires_at = Some(outcome.expires_at);
     Ok(())
@@ -591,6 +598,8 @@ fn spawn_set_agent_enabled(
     base: String,
     api_token: String,
     id: String,
+    controller_id: String,
+    key_state: Option<KeyState>,
     enabled: bool,
     mut agents: Signal<Vec<AgentView>>,
     mut last_op_status: Signal<String>,
@@ -599,46 +608,139 @@ fn spawn_set_agent_enabled(
         if id.is_empty() {
             return;
         }
-        let id_for_status = id.clone();
-        let result = if enabled {
-            let body = AgentResumeRequestBody {
-                sidecar_exposure_ack: None,
-            };
-            with_authed_sdk_client(&base, api_token, move |http| {
-                let id = id.clone();
-                let body = body.clone();
-                async move {
-                    http.agent_resume(&id, &body)
-                        .await
-                        .map_err(anyhow::Error::from)
-                }
-            })
-            .await
-        } else {
-            let body = AgentPauseRequestBody {
-                reason: Some("controller_paused".to_owned()),
-            };
-            with_authed_sdk_client(&base, api_token, move |http| {
-                let id = id.clone();
-                let body = body.clone();
-                async move {
-                    http.agent_pause(&id, &body)
-                        .await
-                        .map_err(anyhow::Error::from)
-                }
-            })
-            .await
+        let Some(key_state) = key_state else {
+            last_op_status.set(
+                "Agent key binding is unavailable; refresh the Agent details and retry.".to_owned(),
+            );
+            return;
         };
+        if key_state.agent_id.as_str() != id || key_state.controller_id.as_str() != controller_id {
+            last_op_status.set(
+                "Agent key binding does not match the selected Agent and controller; refresh and retry."
+                    .to_owned(),
+            );
+            return;
+        }
+        let id_for_status = id.clone();
+        let status_changed_at = crate::clock::now_utc_millis();
+        let placeholder_hlc = match arkret_sdk::Hlc::new("000000000000-0000-00000000") {
+            Ok(hlc) => hlc,
+            Err(error) => {
+                last_op_status.set(format!("Agent lifecycle authoring failed: {error}"));
+                return;
+            }
+        };
+        let draft = if enabled {
+            arkret_sdk::agent::build_agent_resume_event(
+                key_state.agent_id.clone(),
+                key_state.controller_id.clone(),
+                key_state.principal_control_realm_id.clone(),
+                key_state.controller_authorization_ref.clone(),
+                None,
+                1,
+                placeholder_hlc,
+                status_changed_at,
+            )
+        } else {
+            arkret_sdk::agent::build_agent_pause_event(
+                key_state.agent_id.clone(),
+                key_state.controller_id.clone(),
+                key_state.principal_control_realm_id.clone(),
+                key_state.controller_authorization_ref.clone(),
+                Some("controller_paused".to_owned()),
+                1,
+                placeholder_hlc,
+                status_changed_at,
+            )
+        };
+        let draft = match draft {
+            Ok(event) => event,
+            Err(error) => {
+                last_op_status.set(format!("Agent lifecycle authoring failed: {error}"));
+                return;
+            }
+        };
+        let result = with_event_submitter(&base, api_token, move |submitter| async move {
+            let controller_did = arkret_sdk::Did::new(controller_id.clone())?;
+            let signer = crate::event_signer::active_signer()
+                .ok_or_else(|| anyhow::anyhow!("active controller signer is unavailable"))?;
+            let signer_account_scope = crate::secure_key_store::active_device_seed_scope();
+            let device_id = super::bootstrap::controller_signer_device_id(
+                &controller_id,
+                signer.as_ref(),
+                signer_account_scope.as_deref(),
+            )?;
+            let seal_warning = match super::bootstrap::ensure_managed_agent_pcr_seal_current(
+                &submitter,
+                submitter.http(),
+                signer.as_ref(),
+                &controller_did,
+                &device_id,
+                key_state.principal_control_realm_id.as_str(),
+            )
+            .await
+            {
+                Ok(_) => None,
+                Err(error)
+                    if super::bootstrap::managed_agent_seal_head_receipt_unavailable(&error) =>
+                {
+                    // Compatibility with servers that predate the signed-head
+                    // receipt. The lifecycle endpoint remains authoritative,
+                    // but this deployment cannot proactively close the Seal.
+                    Some(error.to_string())
+                }
+                Err(error) => return Err(error),
+            };
+            let (lifecycle_event, _) = submitter.prepare_sdk_event_for_submit(&draft).await?;
+            let outcome = if enabled {
+                let body = AgentResumeRequestBody {
+                    sidecar_exposure_ack: None,
+                    lifecycle_event,
+                };
+                submitter
+                    .http()
+                    .agent_resume(&id, &body)
+                    .await
+                    .map_err(anyhow::Error::from)?
+            } else {
+                let body = AgentPauseRequestBody {
+                    reason: Some("controller_paused".to_owned()),
+                    lifecycle_event,
+                };
+                submitter
+                    .http()
+                    .agent_pause(&id, &body)
+                    .await
+                    .map_err(anyhow::Error::from)?
+            };
+            let post_seal_warning = super::bootstrap::ensure_managed_agent_pcr_seal_current(
+                &submitter,
+                submitter.http(),
+                signer.as_ref(),
+                &controller_did,
+                &device_id,
+                key_state.principal_control_realm_id.as_str(),
+            )
+            .await
+            .err()
+            .map(|error| error.to_string());
+            Ok((outcome, post_seal_warning.or(seal_warning)))
+        })
+        .await;
         match result {
-            Ok(outcome) => {
+            Ok((outcome, seal_warning)) => {
                 let status = agent_status_from_lifecycle(outcome.status);
                 let status_wire = agent_status_wire(status);
                 agents.with_mut(|rows| update_agent_status(rows, &id_for_status, status));
-                last_op_status.set(if enabled {
+                let mut message = if enabled {
                     format!("Resumed. Status: {status_wire}.")
                 } else {
                     format!("Paused. Status: {status_wire}.")
-                });
+                };
+                if let Some(warning) = seal_warning {
+                    message.push_str(&format!(" Seal refresh warning: {warning}"));
+                }
+                last_op_status.set(message);
             }
             Err(err) => last_op_status.set(format!(
                 "{} failed: {}",
@@ -789,6 +891,7 @@ pub fn PersonalAgentAdminPanel(token: Signal<String>, controller_id: String) -> 
     let selected_key_state = selected_agent
         .as_ref()
         .and_then(|agent| agent.key_state.as_ref());
+    let selected_key_state_owned = selected_key_state.cloned();
     let selected_pcr_recovery_ready = pairing_material_can_be_exposed(
         selected_key_state.map(|key_state| &key_state.pcr_recovery),
     );
@@ -821,18 +924,26 @@ pub fn PersonalAgentAdminPanel(token: Signal<String>, controller_id: String) -> 
     let selected_pairing_action_phase = pairing_action_phase();
     let selected_has_pairing_handle =
         !selected_pairing_request_id.is_empty() && !selected_pairing_code.is_empty();
-    // Runtime replacement re-pairing (`ak.self.agent.command.renew_pairing`
-    // on an active/paused agent): the existing key keeps working until the
-    // new pairing completes, then is superseded.
-    let selected_is_replaceable = matches!(selected_status.as_str(), "active" | "paused");
+    // The authenticated projection is authoritative across reloads. The
+    // service clears these fields after consumption/expiry, so local UI state
+    // must never be used as the replacement-in-progress discriminator.
+    let selected_can_replace_runtime = selected_status == "paused";
+    let selected_is_replacement_pairing = selected_can_replace_runtime
+        && !selected_pairing_is_expired
+        && selected_key_state.is_some_and(|key_state| {
+            key_state.pairing_mode == Some(AgentPairingMode::Replacement)
+                && key_state.pairing_request_id.is_some()
+                && key_state.pairing_expires_at.is_some()
+        });
     let selected_can_renew_pairing =
-        should_offer_pairing_renewal(selected_pcr_recovery_ready, &selected_status);
-    let selected_should_show_pairing_card = (matches!(
-        selected_status.as_str(),
-        "pending_runtime_key" | "pairing_expired"
-    ) && (selected_has_pairing_handle
-        || selected_pairing_is_expired))
-        || (selected_is_replaceable && selected_has_pairing_handle);
+        should_offer_pairing_renewal(selected_pcr_recovery_ready, &selected_status)
+            || (selected_is_replacement_pairing && selected_pcr_recovery_ready);
+    let selected_should_show_pairing_card = should_show_pairing_card(
+        &selected_status,
+        selected_has_pairing_handle,
+        selected_pairing_is_expired,
+        selected_is_replacement_pairing,
+    );
     let selected_created_at = selected_agent
         .as_ref()
         .map(|agent| agent_field(agent, "created_at"))
@@ -1444,6 +1555,8 @@ pub fn PersonalAgentAdminPanel(token: Signal<String>, controller_id: String) -> 
                                     "Setup incomplete"
                                 } else if selected_pairing_is_expired {
                                     "Expired"
+                                } else if selected_is_replacement_pairing {
+                                    "Awaiting replacement runtime"
                                 } else {
                                     "Awaiting runtime"
                                 };
@@ -1454,7 +1567,13 @@ pub fn PersonalAgentAdminPanel(token: Signal<String>, controller_id: String) -> 
                                         class: "agent-admin-section agent-admin-pairing-card",
                                         "data-testid": "agent-admin-pairing-card",
                                         div { class: "agent-admin-section-head",
-                                            strong { "Connect an agent runtime" }
+                                            strong {
+                                                if selected_is_replacement_pairing {
+                                                    "Connect the replacement runtime"
+                                                } else {
+                                                    "Connect an agent runtime"
+                                                }
+                                            }
                                             div { class: "agent-admin-pairing-head-actions",
                                                 span { class: "{pairing_badge}", "{pairing_label}" }
                                                 if selected_pcr_recovery_ready && !selected_pairing_is_expired {
@@ -1888,6 +2007,8 @@ pub fn PersonalAgentAdminPanel(token: Signal<String>, controller_id: String) -> 
                                         div { class: "muted",
                                             if selected_status == "active" {
                                                 "Active — turn off to pause"
+                                            } else if selected_is_replacement_pairing {
+                                                "Paused — replacement pairing in progress"
                                             } else {
                                                 "Paused — turn on to resume"
                                             }
@@ -1900,6 +2021,7 @@ pub fn PersonalAgentAdminPanel(token: Signal<String>, controller_id: String) -> 
                                         Switch {
                                             "data-testid": "agent-admin-enabled-switch",
                                             checked: selected_status == "active",
+                                            disabled: selected_is_replacement_pairing,
                                             on_checked_change: {
                                                 let base = base_url.clone();
                                                 move |enabled: bool| {
@@ -1907,6 +2029,8 @@ pub fn PersonalAgentAdminPanel(token: Signal<String>, controller_id: String) -> 
                                                         base.clone(),
                                                         token(),
                                                         selected_agent_id(),
+                                                        controller_id.clone(),
+                                                        selected_key_state_owned.clone(),
                                                         enabled,
                                                         agents,
                                                         last_op_status,
@@ -1918,16 +2042,22 @@ pub fn PersonalAgentAdminPanel(token: Signal<String>, controller_id: String) -> 
                                 }
                             }
                             div { class: "actions",
-                                    if selected_is_replaceable {
+                                    if selected_status == "active" {
+                                        div {
+                                            class: "muted",
+                                            "data-testid": "agent-admin-replace-runtime-guidance",
+                                            "Pause this agent before replacing its runtime. The old runtime key is revoked only after the replacement pairs successfully."
+                                        }
+                                    }
+                                    if selected_can_replace_runtime && !selected_is_replacement_pairing {
                                         Button {
                                             variant: ButtonVariant::Secondary,
                                             "data-testid": "agent-admin-replace-runtime-button",
                                             onclick: {
                                                 // `ak.self.agent.command.renew_pairing` on an
-                                                // active/paused agent: runtime replacement
-                                                // re-pairing. Status, keys and grants stay
-                                                // untouched until the new runtime pairs; the
-                                                // old key is then revoked
+                                                // explicitly paused agent: status, keys and
+                                                // grants stay untouched until the new runtime
+                                                // pairs; the old key is then revoked
                                                 // (reason=superseded_by_repairing).
                                                 let base = base_url.clone();
                                                 let replace_agent_id = selected_id_now.clone();
@@ -1963,25 +2093,24 @@ pub fn PersonalAgentAdminPanel(token: Signal<String>, controller_id: String) -> 
                                                                 return;
                                                             }
                                                         };
-                                                        // Patch pairing fields only; the agent
-                                                        // status is intentionally untouched
-                                                        // (replacement is not a state
-                                                        // transition).
-                                                        agents.with_mut(|rows| {
-                                                            for row in rows.iter_mut() {
-                                                                if agent_id(row) != replaced_agent_id.as_str() {
-                                                                    continue;
-                                                                }
-                                                                if let Some(key_state) = row.key_state.as_mut() {
-                                                                    key_state.pairing_request_id = Some(outcome.pairing_request_id.clone());
-                                                                    key_state.pairing_code = outcome.pairing_code.clone();
-                                                                    key_state.pairing_expires_at = Some(outcome.expires_at);
-                                                                }
-                                                            }
+                                                        let applied = agents.with_mut(|rows| {
+                                                            apply_renewed_pairing(
+                                                                rows,
+                                                                &replaced_agent_id,
+                                                                &outcome,
+                                                                crate::clock::now_utc(),
+                                                            )
                                                         });
-                                                        last_op_status.set(
-                                                            "Replacement pairing ready. The current runtime keeps working until the new one pairs; its key is then revoked.".to_owned(),
-                                                        );
+                                                        match applied {
+                                                            Ok(()) => {
+                                                                last_op_status.set(
+                                                                    "Replacement pairing ready. The agent stays paused; after the new runtime pairs, the old key is revoked. Resume the agent when the replacement is connected.".to_owned(),
+                                                                );
+                                                            }
+                                                            Err(reason) => last_op_status.set(format!(
+                                                                "A replacement pairing was created, but its credentials could not be displayed: {reason}"
+                                                            )),
+                                                        }
                                                     });
                                                 }
                                             },

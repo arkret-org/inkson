@@ -594,6 +594,17 @@ impl EventSubmitter {
         &self,
         realm_id: &str,
     ) -> anyhow::Result<arkret_sdk::RealmSealFrontierView> {
+        let (view, _) = self.events_frontier_realm_state(realm_id).await?;
+        Ok(view)
+    }
+
+    async fn events_frontier_realm_state(
+        &self,
+        realm_id: &str,
+    ) -> anyhow::Result<(
+        arkret_sdk::RealmSealFrontierView,
+        Vec<arkret_sdk::ManagedAgentPcrSealHeadReceipt>,
+    )> {
         let realm_id_query = query_component(realm_id);
         let state: arkret_sdk::EventsFrontierAccountClientState = self
             .http
@@ -614,7 +625,31 @@ impl EventSubmitter {
                 view.realm_id
             );
         }
-        Ok(view)
+        Ok((view, state.receipts))
+    }
+
+    /// Return the accepted controller-signed head needed to author the next
+    /// managed Agent PCR Seal. The head can intentionally lag accepted Events.
+    pub async fn events_frontier_managed_agent_seal_head(
+        &self,
+        realm_id: &str,
+        controller_id: &arkret_sdk::Did,
+    ) -> anyhow::Result<(arkret_sdk::RealmSealFrontierView, arkret_sdk::Seal)> {
+        let (view, receipts) = self.events_frontier_realm_state(realm_id).await?;
+        let receipt = receipts.first().ok_or_else(|| {
+            anyhow::anyhow!("events/frontier omitted the accepted managed Agent PCR Seal head")
+        })?;
+        let seal = receipt.seal.clone();
+        crate::mls::governance_proof::verify_managed_agent_pcr_seal_head(&seal, controller_id)
+            .map_err(|error| anyhow::anyhow!("invalid managed Agent PCR Seal head: {error}"))?;
+        if seal.realm_id != view.realm_id
+            || seal.id != view.seal_id
+            || seal.control_event_set_root != view.control_event_set_root
+            || seal.state_root != view.state_root
+        {
+            anyhow::bail!("managed Agent PCR Seal head differs from its frontier view");
+        }
+        Ok((view, seal))
     }
 
     /// `GET /_arkret/self/events/frontier?actor_id=` — actor frontier
