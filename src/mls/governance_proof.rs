@@ -14,9 +14,12 @@ impl DidResolver for StaticProofDidResolver {
         self.documents.contains_key(did.as_str())
     }
 
-    fn resolve_did(&self, did: &arkret_sdk::Did) -> arkret_sdk::Result<arkret_sdk::DidDocument> {
+    fn resolve_did(
+        &self,
+        did: &arkret_sdk::Did,
+    ) -> arkret_sdk::identity::Result<arkret_sdk::DidDocument> {
         self.documents.get(did.as_str()).cloned().ok_or_else(|| {
-            arkret_sdk::Error::Protocol(format!(
+            arkret_sdk::identity::IdentityError::Protocol(format!(
                 "no authority-resolved DID document for proof signer {did}"
             ))
         })

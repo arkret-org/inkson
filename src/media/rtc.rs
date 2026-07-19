@@ -828,7 +828,9 @@ impl MlsExporterSource for RealmMlsExporter {
         context: &[u8],
         length: usize,
     ) -> arkret_sdk::Result<zeroize::Zeroizing<Vec<u8>>> {
-        self.group.export_secret(label, context, length)
+        self.group
+            .export_secret(label, context, length)
+            .map_err(Into::into)
     }
 }
 
