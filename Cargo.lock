@@ -182,7 +182,6 @@ dependencies = [
  "hkdf 0.13.0",
  "hmac 0.13.0",
  "parking_lot",
- "regex",
  "reqwest 0.13.4",
  "serde",
  "serde_json",
@@ -274,22 +273,27 @@ dependencies = [
 name = "arkret-crypto"
 version = "0.3.0"
 dependencies = [
+ "argon2",
  "arkret-canonical",
  "arkret-models-crypto",
  "arkret-models-identity",
  "arkret-signatures",
  "arkret-wire",
  "bip39",
+ "chacha20poly1305",
  "chrono",
  "ed25519-dalek",
  "getrandom 0.4.3",
  "hkdf 0.13.0",
+ "hmac 0.13.0",
  "hpke",
  "rand_core 0.9.5",
+ "regex",
  "serde",
  "serde_json",
  "sha2 0.11.0",
  "thiserror 2.0.18",
+ "x25519-dalek",
  "zeroize",
 ]
 
@@ -342,6 +346,7 @@ name = "arkret-http-client"
 version = "0.3.0"
 dependencies = [
  "arkret-core",
+ "arkret-identity",
  "arkret-models-crypto",
  "arkret-signatures",
  "arkret-state",
@@ -4231,6 +4236,7 @@ dependencies = [
  "anyhow",
  "argon2",
  "arkret",
+ "arkret-crypto",
  "base64",
  "bip39",
  "chacha20poly1305",

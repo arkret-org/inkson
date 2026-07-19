@@ -827,10 +827,15 @@ impl MlsExporterSource for RealmMlsExporter {
         label: &str,
         context: &[u8],
         length: usize,
-    ) -> arkret_sdk::Result<zeroize::Zeroizing<Vec<u8>>> {
-        self.group
-            .export_secret(label, context, length)
-            .map_err(Into::into)
+    ) -> arkret_crypto::Result<zeroize::Zeroizing<Vec<u8>>> {
+        // Delegate to ArkretMlsGroup's own MlsExporterSource impl, which
+        // bridges the MLS behavior error into the crypto-boundary error.
+        <arkret_sdk::ArkretMlsGroup as MlsExporterSource>::export_secret(
+            &self.group,
+            label,
+            context,
+            length,
+        )
     }
 }
 

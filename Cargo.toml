@@ -110,6 +110,7 @@ mobile-ios = []
 # left disabled (default) so untrusted message bodies cannot inject
 # arbitrary tags via `dangerous_inner_html`.
 anyhow = {workspace = true}
+arkret-crypto = {workspace = true}
 hex = "0.4.3"
 argon2 = {workspace = true}
 base64 = {workspace = true}
@@ -340,6 +341,10 @@ chacha20poly1305 = {version = "0.10",default-features = false}
 chime = {version = "0.3.0",path = "../chime"}
 chrono = "0.4.45"
 arkret-sdk = {package = "arkret",version = "0.3.0",path = "../arkret-rust-sdk/crates/sdk"}
+# Needed only to name arkret_crypto::Result in the MlsExporterSource impl:
+# the SFrame exporter trait moved to arkret-crypto (SDK phase 2-d), so its
+# method signature returns arkret_crypto::Error at the crypto boundary.
+arkret-crypto = {version = "0.3.0",path = "../arkret-rust-sdk/crates/crypto",default-features = false}
 dioxus = {version = "0.7.9",default-features = false,features = ["minimal", "asset", "document", "mounted"]}
 dioxus-primitives = {version = "0.0.1",git = "https://github.com/DioxusLabs/components",default-features = false}
 dioxus-router = "0.7.9"
