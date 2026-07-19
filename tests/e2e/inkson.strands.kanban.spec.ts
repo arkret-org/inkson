@@ -84,6 +84,44 @@ test("kanban card detail embeds discussion without boundary copy", async ({ page
   await expect(detailPopup).toHaveCount(0);
 });
 
+test("owned agent sidecar labels private messages in discussion", async ({ page }) => {
+  await openKanban(page);
+  await page.getByTestId("kanban-card").first().click();
+  const detailPopup = page.getByTestId("card-detail-modal");
+  await detailPopup.getByTestId("card-detail-sidebar-tab-members").click();
+  const agentMention = detailPopup
+    .getByTestId("card-detail-agent-row")
+    .getByTestId("card-detail-member-mention-button");
+  await agentMention.click();
+  await detailPopup.getByTestId("chat-input").fill("@me/assistant hello");
+
+  await page.route("**/_arkret/self/agent-sidecar-threads:ensure", async (route) => {
+    await new Promise((resolve) => setTimeout(resolve, 250));
+    await route.fallback();
+  });
+  const ensureResponse = page.waitForResponse((response) =>
+    response.url().includes("/_arkret/self/agent-sidecar-threads:ensure"),
+  );
+  await detailPopup.getByTestId("send-chat-button").click();
+
+  await expect(detailPopup.getByTestId("chat-status")).toContainText(
+    "Opening private AI sidecar thread",
+  );
+  await expect(detailPopup.getByTestId("send-chat-button")).toBeDisabled();
+  await expect((await ensureResponse).ok()).toBeTruthy();
+  await expect(page).toHaveURL(/\/direct\/.*\/ak:strand:/);
+  await expect(page.getByTestId("sidecar-context-strip")).toBeVisible();
+  await expect(page.getByTestId("chat-input")).toHaveValue("@me/assistant hello");
+
+  await page.getByTestId("send-chat-button").click();
+  const privateMessage = page.getByTestId("chat-message").last();
+  await expect(privateMessage).toContainText("@me/assistant hello");
+  const privacyBadge = privateMessage.getByTestId("message-private-sidecar-badge");
+  await expect(privacyBadge).toBeVisible();
+  await expect(privacyBadge).toContainText("Private sidecar");
+  await expect(privacyBadge).toHaveAttribute("data-visibility", "private-sidecar");
+});
+
 test("kanban hides list creation until a board exists", async ({ page }) => {
   await page.route("**/_arkret/self/realms/*/spaces", async (route) => {
     return route.fulfill({

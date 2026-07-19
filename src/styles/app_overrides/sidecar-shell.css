@@ -59,6 +59,34 @@
   min-width: 0;
 }
 
+.message-privacy-badge--sidecar {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  min-height: 20px;
+  padding: 2px 7px;
+  border: 1px solid color-mix(in srgb, var(--warning) 56%, var(--border));
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--warning) 13%, var(--surface));
+  color: var(--warning-ink);
+  font-size: 10px;
+  font-weight: 800;
+  line-height: 1.2;
+  letter-spacing: 0.015em;
+  white-space: nowrap;
+}
+
+.message-privacy-badge--sidecar .ui-icon {
+  width: 12px;
+  height: 12px;
+  flex: 0 0 auto;
+}
+
+.discussion-message.is-private-sidecar .msg-body {
+  border-style: dashed;
+  border-color: color-mix(in srgb, var(--warning) 42%, var(--border));
+}
+
 @media (max-width: 760px) {
   .sidecar-context-strip {
     grid-template-columns: 1fr;

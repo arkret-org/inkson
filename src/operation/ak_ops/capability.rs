@@ -90,3 +90,36 @@ pub fn capability_grant_actions(
         "grant": grant,
     }))
 }
+
+/// Closed ordinary-Realm genesis grant from realm-and-space.md §2.5.
+///
+/// This is intentionally separate from the general grant builder: genesis
+/// authority exists only for this exact payload in the same ordered batch as
+/// `ak.realm.create`.
+pub fn realm_founding_grant(realm_id: &str, actor: &str, grant_id: &str) -> OperationBuilder {
+    let realm = trim_realm_id(realm_id);
+    OperationBuilder::new(
+        &realm,
+        actor,
+        arkret_sdk::events::kinds::EventKind::CapabilityGrant,
+    )
+    .target_ref(grant_id)
+    .body(json!({
+        "grant_id": grant_id,
+        "grant": {
+            "id": grant_id,
+            "schema": "ak.schema.capability.v1",
+            "realm_id": realm,
+            "issuer": actor,
+            "subject": actor,
+            "actions": arkret_sdk::realm::bootstrap::REALM_FOUNDING_GRANT_ACTIONS,
+            "resources": [{
+                "kind": "realm",
+                "realm_id": realm,
+                "match_scope": "realm_wide"
+            }],
+            "issued_at": crate::clock::now_rfc3339_secs(),
+            "proofs": []
+        }
+    }))
+}

@@ -49,6 +49,21 @@ pub(crate) fn strand_security_state_from_candidates(candidates: &[&Value]) -> Op
         .find_map(|candidate| crate::security_state::strand_projection_security_state(candidate))
 }
 
+pub(crate) fn strand_is_private_sidecar(candidates: &[&Value]) -> bool {
+    first_string_in_candidate_paths(
+        candidates,
+        &[
+            &["sidecar_profile"],
+            &["fields", "sidecar_profile"],
+            &["metadata", "fields", "sidecar_profile"],
+            &["object", "fields", "sidecar_profile"],
+            &["object", "metadata", "fields", "sidecar_profile"],
+            &["strand", "fields", "sidecar_profile"],
+            &["strand", "metadata", "fields", "sidecar_profile"],
+        ],
+    ) == Some(arkret_sdk::PROFILE_AGENT_SIDECAR_THREAD)
+}
+
 pub(crate) fn channel_from_strand_projection(
     realm_id: &str,
     strand: &Value,
@@ -112,6 +127,7 @@ pub(crate) fn channel_from_strand_projection(
     let has_synthesis = strand_create_has_synthesis_track(&[strand]);
     let security_encrypted = crate::security_state::strand_projection_security_state(strand);
     let scope_circle = strand_scope_circle_from_projection(strand);
+    let is_private_sidecar = strand_is_private_sidecar(&[strand]);
 
     Some(ChannelEntity {
         strand_id,
@@ -125,6 +141,7 @@ pub(crate) fn channel_from_strand_projection(
         topic,
         unread: 0,
         is_default,
+        is_private_sidecar,
         security_encrypted,
         scope_circle,
     })
@@ -206,6 +223,7 @@ pub(crate) fn default_discussion_channel(
         topic: Some("Default Strand discussion track".to_owned()),
         unread: 0,
         is_default: true,
+        is_private_sidecar: false,
         security_encrypted: realm_body.map(crate::security_state::realm_projection_is_encrypted),
         scope_circle: None,
     }
@@ -225,6 +243,7 @@ pub(crate) fn discussion_channel_for_strand(realm_id: &str, strand_id: &str) -> 
         topic: None,
         unread: 0,
         is_default: trimmed_strand_id == default_discussion_strand_id(realm_id),
+        is_private_sidecar: false,
         security_encrypted: None,
         scope_circle: None,
     }
@@ -308,6 +327,7 @@ pub(crate) fn channel_from_strand_event(realm_id: &str, event: &Value) -> Option
     let scope_circle = candidates
         .iter()
         .find_map(|candidate| strand_scope_circle_from_projection(candidate));
+    let is_private_sidecar = strand_is_private_sidecar(&candidates);
 
     Some(ChannelEntity {
         strand_id: strand_id.to_owned(),
@@ -321,6 +341,7 @@ pub(crate) fn channel_from_strand_event(realm_id: &str, event: &Value) -> Option
         topic,
         unread: 0,
         is_default: strand_id == default_discussion_strand_id(realm_id),
+        is_private_sidecar,
         security_encrypted,
         scope_circle,
     })

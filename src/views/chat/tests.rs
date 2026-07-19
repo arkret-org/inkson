@@ -1969,9 +1969,14 @@ fn timeline_projection_key_tracks_moderation_prompt_lifecycle() {
         state: "none".to_owned(),
         verdict: None,
     };
-    let empty_key = timeline_projection_key(&prompt.realm_id, 1, &[], &[]);
-    let initial_key =
-        timeline_projection_key(&prompt.realm_id, 1, &[], std::slice::from_ref(&prompt));
+    let empty_key = timeline_projection_key(&prompt.realm_id, 1, &[], &[], &Default::default());
+    let initial_key = timeline_projection_key(
+        &prompt.realm_id,
+        1,
+        &[],
+        std::slice::from_ref(&prompt),
+        &Default::default(),
+    );
     let mut submitted = prompt.clone();
     submitted.state = "submitted".to_owned();
     let submitted_key = timeline_projection_key(
@@ -1979,6 +1984,7 @@ fn timeline_projection_key_tracks_moderation_prompt_lifecycle() {
         1,
         &[],
         std::slice::from_ref(&submitted),
+        &Default::default(),
     );
 
     assert_ne!(empty_key, initial_key);
@@ -2684,6 +2690,42 @@ fn owned_agent_ids_only_select_current_controllers_agents() {
 }
 
 #[test]
+fn composer_owned_agent_ids_keep_verified_picker_agent_before_handle_loads() {
+    let controller = "did:web:example.com:users:alice";
+    let picker = vec![crate::messaging::mentions::MentionCandidate {
+        did: "did:web:agents.example:summary".to_owned(),
+        display_name: "Summary Assistant".to_owned(),
+        insert_label: "me/summary".to_owned(),
+        subtitle: "Your agent".to_owned(),
+        is_agent: true,
+        controller_subject_id: controller.to_owned(),
+        controller_handle_at_time: String::new(),
+        agent_slug_at_time: "summary".to_owned(),
+    }];
+
+    let ids =
+        owned_agent_ids_from_composer("ask @me/summary for an update", &[], &picker, controller);
+
+    assert_eq!(ids, vec!["did:web:agents.example:summary"]);
+    assert!(
+        owned_agent_ids_from_composer("ask for an update", &[], &picker, controller).is_empty()
+    );
+}
+
+#[test]
+fn owned_agent_mentions_do_not_reopen_sidecar_from_private_composer() {
+    assert!(should_route_owned_agent_to_sidecar(
+        false, false, true, true
+    ));
+    assert!(!should_route_owned_agent_to_sidecar(
+        true, false, true, true
+    ));
+    assert!(!should_route_owned_agent_to_sidecar(
+        false, true, true, true
+    ));
+}
+
+#[test]
 fn participation_visibility_uses_most_specific_effective_scope() {
     use arkret_sdk::models::{
         AgentParticipation, AgentParticipationEntry, AgentParticipationScope,
@@ -3222,6 +3264,33 @@ fn channel_from_strand_event_requires_real_discussion_track() {
     assert_eq!(channel.kind, "discussion");
     assert_eq!(channel.topic.as_deref(), Some("Operations support"));
     assert!(!channel.is_default);
+    assert!(!channel.is_private_sidecar);
+}
+
+#[test]
+fn channel_from_strand_event_marks_agent_sidecar_as_private() {
+    let event = json!({
+        "event_id": "ak:event:sidecar-strand",
+        "kind": "ak.strand.create",
+        "realm_id": "ak:realm:demo",
+        "object": {
+            "id": "ak:strand:sidecar",
+            "metadata": {
+                "title": "AI sidecar",
+                "fields": {
+                    "sidecar_profile": arkret_sdk::PROFILE_AGENT_SIDECAR_THREAD
+                }
+            },
+            "tracks": {
+                "discussion": {"enabled": true, "is_primary": true}
+            }
+        }
+    });
+
+    let channel = channel_from_strand_event("ak:realm:demo", &event).unwrap();
+
+    assert_eq!(channel.strand_id, "ak:strand:sidecar");
+    assert!(channel.is_private_sidecar);
 }
 
 #[test]
@@ -3504,7 +3573,10 @@ fn typing_actor_snapshot_reads_canonical_ephemeral_envelopes() {
     );
 
     assert_eq!(snapshot.actors, vec!["did:web:alice.example".to_owned()]);
-    assert_eq!(snapshot.next_expires_at_ms, Some(expires_at.timestamp_millis()));
+    assert_eq!(
+        snapshot.next_expires_at_ms,
+        Some(expires_at.timestamp_millis())
+    );
 }
 
 #[test]

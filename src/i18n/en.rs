@@ -817,6 +817,11 @@ pub fn english_translations() -> TranslationDict {
     // Message write-status revision counter (edit history).
     dict.set("chat.message.revised", "revised");
     dict.set("chat.message.write_status", "This message has been edited");
+    dict.set("chat.message.private_sidecar.label", "Private sidecar");
+    dict.set(
+        "chat.message.private_sidecar.tooltip",
+        "Only you and the eligible personal agents in this sidecar can see this message.",
+    );
     // Offline send outbox.
     dict.set(
         "chat.outbox.queued_offline",

@@ -879,6 +879,11 @@ pub fn chinese_translations() -> TranslationDict {
     // Message write-status revision counter (edit history).
     dict.set("chat.message.revised", "已修订");
     dict.set("chat.message.write_status", "这条消息已被编辑");
+    dict.set("chat.message.private_sidecar.label", "私密 Sidecar");
+    dict.set(
+        "chat.message.private_sidecar.tooltip",
+        "仅你和此 Sidecar 中符合条件的个人 Agent 可以看到这条消息。",
+    );
     // Offline send outbox.
     dict.set(
         "chat.outbox.queued_offline",

@@ -640,6 +640,15 @@ impl EventSubmitter {
             anyhow::anyhow!("events/frontier omitted the accepted managed Agent PCR Seal head")
         })?;
         let seal = receipt.seal.clone();
+        crate::mls::governance_proof::prefetch_managed_agent_pcr_seal_head_device_key(
+            &self.http,
+            &seal,
+            controller_id,
+        )
+        .await
+        .map_err(|error| {
+            anyhow::anyhow!("resolve managed Agent PCR Seal head device key: {error}")
+        })?;
         crate::mls::governance_proof::verify_managed_agent_pcr_seal_head(&seal, controller_id)
             .map_err(|error| anyhow::anyhow!("invalid managed Agent PCR Seal head: {error}"))?;
         if seal.realm_id != view.realm_id
@@ -1055,6 +1064,24 @@ impl EventSubmitter {
         &self,
         mut events: Vec<arkret_sdk::Event>,
     ) -> anyhow::Result<Vec<arkret_sdk::Event>> {
+        let first_is_realm_create = events.first().is_some_and(|event| {
+            event.kind.as_str() == arkret_sdk::events::EventKind::REALM_CREATE
+        });
+        let is_identity_anchor_unit = first_is_realm_create
+            && events.len() == 2
+            && events.get(1).is_some_and(|event| {
+                event.kind.as_str() == arkret_sdk::events::EventKind::DEVICE_AUTHORIZE
+            });
+        let is_ordinary_realm_bootstrap = if first_is_realm_create && !is_identity_anchor_unit {
+            arkret_sdk::realm::bootstrap::validate_realm_bootstrap_unit(&events)
+                .map_err(|error| anyhow::anyhow!(error.reason_code()))?;
+            true
+        } else {
+            false
+        };
+        for event in &mut events {
+            attach_capability_grant_payload_proof(event)?;
+        }
         let mut batch_frontiers = BTreeMap::<String, (u64, arkret_sdk::EventId)>::new();
         for event in &mut events {
             let actor_id = event.actor_id.to_string();
@@ -1073,7 +1100,9 @@ impl EventSubmitter {
             batch_frontiers.insert(actor_id, (event.actor_seq, event.event_id.clone()));
         }
         for event in &mut events {
-            self.stamp_cba_basis_for_sdk_event(event).await?;
+            if !is_ordinary_realm_bootstrap && !is_identity_anchor_unit {
+                self.stamp_cba_basis_for_sdk_event(event).await?;
+            }
         }
         let proof_context = self.event_proof_context().await?;
         for event in &mut events {
@@ -1164,6 +1193,52 @@ impl EventSubmitter {
     }
 }
 
+/// Finalize the inner capability artifact before the outer Event is signed.
+/// Capability grants have two distinct signatures: the issuer attestation over
+/// the grant body, and the Event proof over the complete envelope.
+pub(crate) fn attach_capability_grant_payload_proof(
+    event: &mut arkret_sdk::Event,
+) -> anyhow::Result<()> {
+    if event.kind.as_str() != arkret_sdk::events::EventKind::CAPABILITY_GRANT {
+        return Ok(());
+    }
+    let grant = event
+        .payload
+        .get_mut("grant")
+        .and_then(Value::as_object_mut)
+        .ok_or_else(|| anyhow::anyhow!("capability grant payload requires grant object"))?;
+    if grant
+        .get("proofs")
+        .and_then(Value::as_array)
+        .is_some_and(|proofs| !proofs.is_empty())
+    {
+        return Ok(());
+    }
+    grant.insert("proofs".to_owned(), Value::Array(Vec::new()));
+    let transcript = crate::canonical::canonical_json_bytes(grant)?;
+    let signer = crate::event_signer::active_signer().ok_or_else(|| {
+        anyhow::anyhow!("no active signer configured — cannot attest capability grant payload")
+    })?;
+    let proof = arkret_sdk::PayloadProof {
+        kind: arkret_sdk::proof_kind::DETACHED_JWS.to_owned(),
+        alg: signer.algorithm().to_owned(),
+        verification_method: signer.verification_method().to_owned(),
+        payload_digest: arkret_sdk::Hash::new(arkret_sdk::canonical::sha256_digest(&transcript))
+            .map_err(|error| anyhow::anyhow!("capability grant payload digest: {error}"))?,
+        created_at: crate::clock::now_utc(),
+        domain: None,
+        audience: None,
+        proof_purpose: Some(arkret_sdk::PayloadProofPurpose::IssuerAttestation),
+        jws: signer.detached_jws_over(&transcript)?,
+    };
+    grant.insert(
+        "proofs".to_owned(),
+        serde_json::to_value(vec![proof])
+            .map_err(|error| anyhow::anyhow!("capability grant proof encode: {error}"))?,
+    );
+    Ok(())
+}
+
 fn ensure_sdk_event_proofs_are_domain_bound(event: &arkret_sdk::Event) -> anyhow::Result<()> {
     for proof in &event.proofs {
         if proof
@@ -1246,16 +1321,7 @@ const DATA_PLANE_CELL_FAMILIES: &[&str] = &[
 ];
 
 fn cba_exempt_reducer_kind(kind: &arkret_sdk::events::kinds::EventKind) -> bool {
-    matches!(
-        kind,
-        arkret_sdk::events::kinds::EventKind::RealmCreate
-            | arkret_sdk::events::kinds::EventKind::MemberState
-            | arkret_sdk::events::kinds::EventKind::RealmDiscovery
-            | arkret_sdk::events::kinds::EventKind::RealmHistoryVisibility
-            | arkret_sdk::events::kinds::EventKind::RealmJoinRule
-            | arkret_sdk::events::kinds::EventKind::RealmPlaintextVisibleServices
-            | arkret_sdk::events::kinds::EventKind::RealmPolicyComponents
-    )
+    matches!(kind, arkret_sdk::events::kinds::EventKind::RealmCreate)
 }
 
 fn cba_effect_plane_for_event(event: &arkret_sdk::Event) -> anyhow::Result<CbaEffectPlane> {

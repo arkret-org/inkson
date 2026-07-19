@@ -248,6 +248,45 @@ fn explicit_realm_title(body: &Value) -> Option<String> {
     .or_else(|| nested_string_field(body, "realm_preview", &["title", "name"]))
     .or_else(|| nested_string_field(body, "preview", &["title", "name"]))
     .or_else(|| nested_string_field(body, "realm", &["title", "name"]))
+    .or_else(|| {
+        body.pointer("/state_at_window_start/realm_metadata")
+            .and_then(|metadata| string_field(metadata, &["title", "name"]))
+    })
+    .or_else(|| {
+        state_event_values(body)
+            .filter(|event| {
+                event.get("kind").and_then(Value::as_str)
+                    == Some(arkret_sdk::events::EventKind::REALM_CREATE)
+            })
+            .find_map(|event| {
+                event.get("payload").and_then(|payload| {
+                    string_field(payload, &["realm_title", "title"])
+                        .or_else(|| nested_string_field(payload, "object", &["title"]))
+                })
+            })
+    })
+}
+
+fn explicit_realm_summary(body: &Value) -> Option<String> {
+    nested_string_field(body, "summary", &["summary", "description"])
+        .or_else(|| string_field(body, &["realm_summary", "description"]))
+        .or_else(|| {
+            body.pointer("/state_at_window_start/realm_metadata")
+                .and_then(|metadata| string_field(metadata, &["summary", "description"]))
+        })
+        .or_else(|| {
+            state_event_values(body)
+                .filter(|event| {
+                    event.get("kind").and_then(Value::as_str)
+                        == Some(arkret_sdk::events::EventKind::REALM_CREATE)
+                })
+                .find_map(|event| {
+                    event.get("payload").and_then(|payload| {
+                        string_field(payload, &["realm_summary", "summary"])
+                            .or_else(|| nested_string_field(payload, "object", &["summary"]))
+                    })
+                })
+        })
 }
 
 pub(crate) fn projection_title(id: &str, body: &Value) -> String {
@@ -748,10 +787,7 @@ pub fn realm_tree_nodes_from_sync_realms(realms: &BTreeMap<String, Value>) -> Ve
         .map(|(id, body)| {
             let summary = body.get("summary").unwrap_or(&Value::Null);
             let title = projection_title(id, body);
-            let description = summary
-                .get("summary")
-                .and_then(Value::as_str)
-                .map(ToOwned::to_owned);
+            let description = explicit_realm_summary(body);
             let tags = summary
                 .get("tags")
                 .and_then(Value::as_array)
@@ -923,6 +959,49 @@ mod tests {
 
         assert_eq!(nodes.len(), 1);
         assert_eq!(nodes[0].title, "Launch Planning");
+    }
+
+    #[test]
+    fn sync_projection_reads_canonical_window_start_realm_metadata() {
+        let id = "ak:realm:01904100-0000-7000-8000-000000000005";
+        let nodes = realm_tree_nodes_from_sync_realms(&BTreeMap::from([(
+            id.to_owned(),
+            json!({
+                "summary": {"joined_member_count": 1},
+                "state_at_window_start": {
+                    "actor_profiles": {},
+                    "realm_metadata": {
+                        "title": "Architecture",
+                        "summary": "System design"
+                    },
+                    "e2ee_epoch": null
+                }
+            }),
+        )]));
+
+        assert_eq!(nodes[0].title, "Architecture");
+        assert_eq!(nodes[0].description.as_deref(), Some("System design"));
+    }
+
+    #[test]
+    fn sync_projection_recovers_title_from_canonical_realm_create_state_event() {
+        let id = "ak:realm:01904100-0000-7000-8000-000000000006";
+        let nodes = realm_tree_nodes_from_sync_realms(&BTreeMap::from([(
+            id.to_owned(),
+            json!({
+                "summary": {"joined_member_count": 1},
+                "state": {"events": [{
+                    "kind": "ak.realm.create",
+                    "payload": {"object": {
+                        "title": "Recovered title",
+                        "summary": "Recovered summary"
+                    }}
+                }]}
+            }),
+        )]));
+
+        assert_eq!(nodes[0].title, "Recovered title");
+        assert_eq!(nodes[0].description.as_deref(), Some("Recovered summary"));
     }
 
     #[test]

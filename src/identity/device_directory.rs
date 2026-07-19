@@ -486,6 +486,19 @@ pub async fn resolve_device_signing_key(
     actor: &str,
     device: &str,
 ) -> anyhow::Result<Option<PublicKeyMaterial>> {
+    resolve_device_signing_key_with_http(&api.sdk_http_client()?, anchor, actor, device).await
+}
+
+/// TransportClient-free variant of [`resolve_device_signing_key`] for
+/// authenticated SDK-client paths such as `EventSubmitter`. It preserves the
+/// exact same directory query, trust-chain verification, and cache semantics;
+/// only the client wrapper differs.
+pub async fn resolve_device_signing_key_with_http(
+    sdk_http: &arkret_sdk::http_client::Client,
+    anchor: &dyn DidAnchor,
+    actor: &str,
+    device: &str,
+) -> anyhow::Result<Option<PublicKeyMaterial>> {
     let actor_did = match Did::new(actor.to_owned()) {
         Ok(did) => did,
         // Malformed actor DID → fail-closed negative cache.
@@ -502,8 +515,7 @@ pub async fn resolve_device_signing_key(
         }
     };
 
-    let outcome =
-        crate::transport::keys::query_keys(&api.sdk_http_client()?, actor, device).await?;
+    let outcome = crate::transport::keys::query_keys(sdk_http, actor, device).await?;
 
     // P3.2b: DID anchoring (§8.3 step 1) needs the actor's DID document. For
     // `did:web` / `did:webvh` actors that document lives off-host, so fetch +

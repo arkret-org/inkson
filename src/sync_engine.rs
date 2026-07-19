@@ -384,11 +384,7 @@ fn realm_update_has_durable_projection(update: &arkret_sdk::RealmUpdate) -> bool
         || entry.bottoms.is_some()
 }
 
-fn merge_ephemeral_realm_projection(
-    store: &mut LocalStateStore,
-    realm_id: &str,
-    incoming: &Value,
-) {
+fn merge_ephemeral_realm_projection(store: &mut LocalStateStore, realm_id: &str, incoming: &Value) {
     let Some(ephemeral) = incoming.get("ephemeral").cloned() else {
         return;
     };
@@ -544,12 +540,8 @@ impl AccountPostCommitHook<crate::client_core::InksonAccountTransport> for Inkso
             // This remains an opportunistic durability pass, but it is now
             // driven only by durable Realm work. Ephemeral deltas must never
             // fan out MLS reads or writes.
-            run_idle_self_update_pass(
-                self.start_generation,
-                self.generation.clone(),
-                &self.ctx,
-            )
-            .await;
+            run_idle_self_update_pass(self.start_generation, self.generation.clone(), &self.ctx)
+                .await;
         }
         Ok(AccountPostCommitOutcome::Continue)
     }

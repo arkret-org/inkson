@@ -300,6 +300,7 @@ fn space_bootstrap_events_use_canonical_create_and_facet_kinds() {
         kinds,
         vec![
             "ak.realm.create",
+            "ak.capability.grant",
             "ak.realm.policy_components",
             "ak.realm.join_rule",
             "ak.realm.history_visibility",
@@ -357,54 +358,68 @@ fn space_bootstrap_events_use_canonical_create_and_facet_kinds() {
     // signer attaches the detached JWS proof at submit time.
     assert!(create.proofs.is_empty());
 
-    // Bootstrap order: create, encryption floor policy, join_rule,
+    let founding = &events[1];
+    assert_eq!(
+        founding.payload["grant"]["issuer"],
+        create.actor_id.as_str()
+    );
+    assert_eq!(
+        founding.payload["grant"]["subject"],
+        create.actor_id.as_str()
+    );
+    assert_eq!(
+        founding.payload["grant"]["resources"][0]["match_scope"],
+        "realm_wide"
+    );
+
+    // Bootstrap order: create, founding grant, encryption floor policy, join_rule,
     // history_visibility, history_sharing_policy, discovery,
     // plaintext_visible, member-invite.
     assert_eq!(
-        events[1].payload["value"]["content_encryption_floor"],
+        events[2].payload["value"]["content_encryption_floor"],
         RECOMMENDED_REALM_ENCRYPTION_FLOOR
     );
     assert_eq!(
-        events[1].payload["value"]["metadata_encryption_floor"],
+        events[2].payload["value"]["metadata_encryption_floor"],
         RECOMMENDED_REALM_ENCRYPTION_FLOOR
     );
-    assert_eq!(events[1].payload["value"]["policy_revision"], 1);
+    assert_eq!(events[2].payload["value"]["policy_revision"], 1);
     assert_eq!(
-        events[1].payload["value"]["content_scheme"],
+        events[2].payload["value"]["content_scheme"],
         "mls-exporter-aead-v1"
     );
-    assert_eq!(events[2].payload["value"], "invite");
-    assert_eq!(events[3].payload["value"], "shared");
+    assert_eq!(events[3].payload["value"], "invite");
+    assert_eq!(events[4].payload["value"], "shared");
     assert_eq!(
-        events[4].payload["value"]["default_key_share"],
+        events[5].payload["value"]["default_key_share"],
         "event_time_visibility"
     );
     assert_eq!(
-        events[4].payload["value"]["pre_join_history"],
+        events[5].payload["value"]["pre_join_history"],
         "allow_if_visibility_allows"
     );
     assert_eq!(
-        events[4].payload["value"]["allowed_key_sources"],
+        events[5].payload["value"]["allowed_key_sources"],
         json!(["verified_member_device"])
     );
     assert_eq!(
-        events[4].payload["value"]["allowed_receiver_states"],
+        events[5].payload["value"]["allowed_receiver_states"],
         json!(["active_member"])
     );
     assert_eq!(
-        events[4].payload["value"]["audit"],
+        events[5].payload["value"]["audit"],
         json!({
             "share_audit_event_required": false,
             "access_audit_required": false
         })
     );
-    assert_eq!(events[5].payload["value"], "listed");
+    assert_eq!(events[6].payload["value"], "listed");
     assert_eq!(
-        events[6].payload["services"][0]["service_id"],
+        events[7].payload["services"][0]["service_id"],
         "did:web:server.example"
     );
     assert_eq!(
-        events[6].payload["services"][0]["data_classes"],
+        events[7].payload["services"][0]["data_classes"],
         json!([
             "message_content",
             "full_text_index",
@@ -412,7 +427,7 @@ fn space_bootstrap_events_use_canonical_create_and_facet_kinds() {
             "inbox_preview",
         ])
     );
-    assert_eq!(events[7].payload["membership"], "invite");
+    assert_eq!(events[8].payload["membership"], "invite");
 }
 
 #[test]
@@ -500,7 +515,7 @@ fn realm_bootstrap_allows_joined_history_with_strict_mls_scheme() {
     )
     .expect("joined history is valid with the strict MLS content scheme");
 
-    assert_eq!(events[1].payload["value"]["content_scheme"], "mls-rfc9420");
+    assert_eq!(events[2].payload["value"]["content_scheme"], "mls-rfc9420");
 }
 
 #[test]
@@ -721,7 +736,11 @@ fn space_create_payload_matches_spec_schema() {
 /// fields, wrong patterns) at `cargo test` rather than user runtime.
 #[test]
 fn realm_bootstrap_payloads_match_spec_schema() {
-    let events = build_realm_bootstrap_events(
+    let _signer_guard =
+        crate::event_signer::ActiveSignerTestGuard::replace(Some(std::sync::Arc::new(
+            crate::event_signer::build_ed25519_signer([42_u8; 32], "did:web:alice.example"),
+        )));
+    let mut events = build_realm_bootstrap_events(
         "ak:realm:0196419b-0000-7000-8000-000000000001",
         "did:web:alice.example",
         "did:web:server.example",
@@ -744,7 +763,9 @@ fn realm_bootstrap_payloads_match_spec_schema() {
     .unwrap();
 
     let catalog = arkret_sdk::schema::event_payload_validator_catalog().unwrap();
-    for event in &events {
+    for event in &mut events {
+        crate::event_submit::attach_capability_grant_payload_proof(event)
+            .expect("wire preparation attaches the issuer grant proof");
         if catalog
             .missing_payload_validators_for(std::iter::once(event.kind.as_str()))
             .is_empty()

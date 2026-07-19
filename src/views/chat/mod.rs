@@ -94,6 +94,7 @@ fn timeline_projection_key(
     realm_live_epoch: u64,
     visible_messages: &[ChatMessage],
     visible_moderation_appeal_prompts: &[ModerationAppealPrompt],
+    private_sidecar_strand_ids: &std::collections::BTreeSet<String>,
 ) -> String {
     use std::hash::{Hash, Hasher};
 
@@ -121,6 +122,7 @@ fn timeline_projection_key(
         prompt.state.hash(&mut projection);
         prompt.verdict.hash(&mut projection);
     }
+    private_sidecar_strand_ids.hash(&mut projection);
     format!("{:016x}", projection.finish())
 }
 
@@ -226,6 +228,45 @@ fn owned_agent_ids_from_mentions(mentions: &[MentionNode], controller_id: &str) 
     agent_ids
 }
 
+fn owned_agent_ids_from_composer(
+    body: &str,
+    mentions: &[MentionNode],
+    picker: &[crate::messaging::mentions::MentionCandidate],
+    controller_id: &str,
+) -> Vec<String> {
+    let selector_slugs = parse_agent_selector_mention_tokens(body)
+        .into_iter()
+        .filter(|token| token.controller_handle == "me")
+        .map(|token| token.agent_slug)
+        .collect::<std::collections::BTreeSet<_>>();
+    let mut agent_ids = owned_agent_ids_from_mentions(mentions, controller_id);
+    agent_ids.extend(
+        picker
+            .iter()
+            .filter(|candidate| candidate.is_agent)
+            .filter(|candidate| candidate.controller_subject_id.trim() == controller_id.trim())
+            .filter(|candidate| selector_slugs.contains(candidate.agent_slug_at_time.trim()))
+            .filter_map(|candidate| {
+                let did = candidate.did.trim();
+                (!did.is_empty()).then(|| did.to_owned())
+            }),
+    );
+    agent_ids.sort_unstable();
+    agent_ids.dedup();
+    agent_ids
+}
+
+fn should_route_owned_agent_to_sidecar(
+    is_sidecar_composer: bool,
+    selected_channel_is_circle_scoped: bool,
+    has_owned_agent_ids: bool,
+    has_self_agent_selector: bool,
+) -> bool {
+    !is_sidecar_composer
+        && !selected_channel_is_circle_scoped
+        && (has_owned_agent_ids || has_self_agent_selector)
+}
+
 async fn ensure_owned_agent_sidecar(
     base_url: &str,
     api_token: String,
@@ -233,10 +274,11 @@ async fn ensure_owned_agent_sidecar(
     controller_id: &str,
     realm_id: &str,
     strand_id: &str,
-    mentions: &[MentionNode],
+    addressed_agent_ids: &[String],
 ) -> anyhow::Result<Option<arkret_sdk::AgentSidecarThreadEnsureOutcome>> {
-    let addressed_agent_ids = owned_agent_ids_from_mentions(mentions, controller_id)
-        .into_iter()
+    let addressed_agent_ids = addressed_agent_ids
+        .iter()
+        .cloned()
         .map(arkret_sdk::Did::new)
         .collect::<Result<Vec<_>, _>>()?;
     if addressed_agent_ids.is_empty() {
@@ -627,6 +669,14 @@ pub fn ChatPanel(
     });
     let selected_channel_value = selected_channel();
     let all_channels = channels();
+    let mut private_sidecar_strand_ids = all_channels
+        .iter()
+        .filter(|channel| channel.is_private_sidecar)
+        .map(|channel| channel.strand_id.clone())
+        .collect::<std::collections::BTreeSet<_>>();
+    if let Some(session) = sidecar_session.as_ref() {
+        private_sidecar_strand_ids.insert(session.private_strand_id.clone());
+    }
     let filter_value = track_filter();
     let visible_channels: Vec<ChannelEntity> = all_channels
         .iter()
@@ -752,6 +802,7 @@ pub fn ChatPanel(
         realm_live_epoch(),
         &visible_messages,
         &visible_moderation_appeal_prompts,
+        &private_sidecar_strand_ids,
     );
     // AKP-0007 P3B.2.4 — per-strand Circle-scope lookup used by the
     // message accent rail. We index by `strand_id` once instead of
@@ -1200,6 +1251,7 @@ pub fn ChatPanel(
                                                                 topic: channel_topic.clone(),
                                                                 unread: 0,
                                                                 is_default: false,
+                                                                is_private_sidecar: false,
                                                                 security_encrypted: None,
                                                                 scope_circle: selected_scope_circle.clone(),
                                                             });
@@ -1680,6 +1732,7 @@ pub fn ChatPanel(
                         visible_messages: visible_messages.clone(),
                         visible_moderation_appeal_prompts: visible_moderation_appeal_prompts.clone(),
                         strand_scope_lookup: strand_scope_lookup.clone(),
+                        private_sidecar_strand_ids: private_sidecar_strand_ids.clone(),
                         account_did: account_did.clone(),
                         account_display_label: account_display_label.clone(),
                         participants: participants_for_messages.clone(),

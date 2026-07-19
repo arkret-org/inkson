@@ -113,7 +113,9 @@ pub(super) fn RealmsSection(
     let current_policy_error = matches!(current_visibility_hint, Some(("error", _, _)));
     let basics_ready = !title_value.trim().is_empty();
     let boundary_ready = !current_policy_error && content_scheme_warning.is_none();
-    let create_blocker = if !has_session {
+    let create_blocker = if has_created_realm {
+        Some("Realm created. Continue from the Done step.")
+    } else if !has_session {
         Some("Sign in before creating a Realm.")
     } else if !secure_store_ready {
         Some("Device signing storage is still starting. Try again in a moment.")
@@ -132,7 +134,8 @@ pub(super) fn RealmsSection(
         && basics_ready
         && boundary_ready
         && secure_store_ready
-        && !realm_create_busy_value;
+        && !realm_create_busy_value
+        && !has_created_realm;
 
     rsx! {
         if pending_recovery_gate() {
@@ -888,6 +891,17 @@ pub(super) fn RealmsSection(
                                                             realm_id.clone(),
                                                             projection_body,
                                                         );
+                                                        // The canonical Realm transaction is
+                                                        // complete at this point. Transition the
+                                                        // wizard immediately; MLS initialization
+                                                        // and backup below are post-create setup
+                                                        // and must not leave a successfully created
+                                                        // Realm looking like a retryable Seed draft.
+                                                        realm_state.set(format!(
+                                                            "created {}; finishing encrypted Realm setup",
+                                                            realm_id
+                                                        ));
+                                                        create_step.set(NewRealmStep::Done);
 
                                                         let mut initial_mls_backup_id = None;
                                                         if crate::security_state::encryption_profile_is_encrypted(
@@ -1151,7 +1165,6 @@ pub(super) fn RealmsSection(
                                                         let message = steps.join(" · ");
                                                         realm_create_busy.set(false);
                                                         realm_state.set(message);
-                                                        create_step.set(NewRealmStep::Done);
                                                         if crate::security_state::encryption_profile_is_encrypted(
                                                             &encryption_profile,
                                                         ) && let Some(signal) = backup_trigger_signal {

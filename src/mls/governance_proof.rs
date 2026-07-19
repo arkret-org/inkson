@@ -505,6 +505,75 @@ fn managed_seal_device_proof_pair(
     delegated_device_verification_method_pair(&signature.verification_method, delegated_controller)
 }
 
+async fn ensure_managed_agent_pcr_seal_head_device_key_with<F, Fut>(
+    seal: &Seal,
+    controller: &arkret_sdk::Did,
+    resolve: F,
+) -> anyhow::Result<()>
+where
+    F: FnOnce(String, String) -> Fut,
+    Fut: std::future::Future<
+            Output = anyhow::Result<Option<arkret_sdk::signatures::PublicKeyMaterial>>,
+        >,
+{
+    let (actor, device) = managed_seal_device_proof_pair(seal, Some(controller))
+        .map_err(anyhow::Error::msg)?
+        .ok_or_else(|| {
+            anyhow::anyhow!(
+                "managed Agent PCR Seal head has no controller-device verification method"
+            )
+        })?;
+    match crate::identity::device_directory::cached_device_signing_key(&actor, &device) {
+        crate::identity::device_directory::CacheLookup::Hit(_) => Ok(()),
+        crate::identity::device_directory::CacheLookup::NegativeHit => anyhow::bail!(
+            "managed Agent PCR Seal head device key is revoked or unavailable for {actor}#{device}"
+        ),
+        crate::identity::device_directory::CacheLookup::Miss => {
+            let resolved = resolve(actor.clone(), device.clone()).await?;
+            if resolved.is_none() {
+                anyhow::bail!(
+                    "authoritative device key unavailable for managed Agent PCR Seal head signer {actor}#{device}"
+                );
+            }
+            if !matches!(
+                crate::identity::device_directory::cached_device_signing_key(&actor, &device),
+                crate::identity::device_directory::CacheLookup::Hit(_)
+            ) {
+                anyhow::bail!(
+                    "managed Agent PCR Seal head device key resolution did not populate the verification cache for {actor}#{device}"
+                );
+            }
+            Ok(())
+        }
+    }
+}
+
+/// Prime the authoritative controller-device key required to verify a managed
+/// Agent PCR frontier receipt. Frontier reads are valid outside the sync loop,
+/// so they must not depend on an unrelated sync pass having warmed the global
+/// device-directory cache first.
+pub(crate) async fn prefetch_managed_agent_pcr_seal_head_device_key(
+    http: &arkret_sdk::http_client::Client,
+    seal: &Seal,
+    controller: &arkret_sdk::Did,
+) -> anyhow::Result<()> {
+    let authority = crate::identity::did_resolver::ResolverDidAnchor::from_profile(
+        crate::identity::did_resolver::DeploymentProfile::PersonalNode,
+        crate::identity::did_resolver::DidResolutionCache::default(),
+    );
+    ensure_managed_agent_pcr_seal_head_device_key_with(
+        seal,
+        controller,
+        |actor, device| async move {
+            crate::identity::device_directory::resolve_device_signing_key_with_http(
+                http, &authority, &actor, &device,
+            )
+            .await
+        },
+    )
+    .await
+}
+
 fn delegated_device_verification_method_pair(
     verification_method: &str,
     delegated_controller: Option<&arkret_sdk::Did>,
@@ -868,6 +937,92 @@ mod tests {
             )
             .unwrap(),
             None
+        );
+    }
+
+    #[tokio::test]
+    async fn managed_seal_head_cold_cache_resolves_device_key_before_verification() {
+        use std::sync::Arc;
+        use std::sync::atomic::{AtomicUsize, Ordering};
+
+        use ed25519_dalek::SigningKey;
+
+        let controller =
+            arkret_sdk::Did::new("did:webvh:zfixture:cold-cache-controller.example".to_owned())
+                .unwrap();
+        let device = "ak:device:01904100-0000-7000-8000-0000000000c1";
+        let root = arkret_sdk::Hash::new(format!("sha256:{}", "11".repeat(32))).unwrap();
+        let seal = arkret_sdk::Seal {
+            id: arkret_sdk::SealId::new(format!("ak:seal:{root}")).unwrap(),
+            realm_id: arkret_sdk::RealmId::new(
+                "ak:realm:01904100-0000-7000-8000-0000000000c1".to_owned(),
+            )
+            .unwrap(),
+            predecessor_refs: Vec::new(),
+            delta: Vec::new(),
+            control_event_set_root: root.clone(),
+            state_root: root.clone(),
+            completeness_root: root.clone(),
+            notary_seq: 0,
+            data_view_root: None,
+            data_event_set_root: None,
+            availability_root: None,
+            coverage_scope: None,
+            covered_event_digests: Vec::new(),
+            previous_state_root: None,
+            previous_digest_algorithm: None,
+            notary_signature: arkret_sdk::NotarySig::Single(arkret_sdk::MoveSignature {
+                alg: "EdDSA".to_owned(),
+                verification_method: format!("{controller}#{device}"),
+                payload_digest: root,
+                created_at: chrono::Utc::now(),
+                jws: "AAAA..BBBB".to_owned(),
+            }),
+            sealed_at: chrono::Utc::now(),
+            hlc: arkret_sdk::Hlc::new("01980b44cc01-0000-aabbccdd").unwrap(),
+            kind: arkret_sdk::SealKind::Compaction,
+        };
+        crate::identity::device_directory::invalidate(controller.as_str(), device);
+        let key = arkret_sdk::signatures::PublicKeyMaterial::Ed25519Raw {
+            bytes: SigningKey::from_bytes(&[91; 32])
+                .verifying_key()
+                .to_bytes()
+                .to_vec(),
+        };
+        let calls = Arc::new(AtomicUsize::new(0));
+        let calls_for_resolver = Arc::clone(&calls);
+        let key_for_resolver = key.clone();
+        let expected_controller = controller.to_string();
+
+        ensure_managed_agent_pcr_seal_head_device_key_with(
+            &seal,
+            &controller,
+            move |resolved_actor, resolved_device| async move {
+                calls_for_resolver.fetch_add(1, Ordering::SeqCst);
+                assert_eq!(resolved_actor, expected_controller);
+                assert_eq!(resolved_device, device);
+                crate::identity::device_directory::seed_positive_for_test(
+                    &resolved_actor,
+                    &resolved_device,
+                    key_for_resolver.clone(),
+                );
+                Ok::<_, anyhow::Error>(Some(key_for_resolver))
+            },
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
+        assert!(matches!(
+            crate::identity::device_directory::cached_device_signing_key(
+                "did:webvh:zfixture:cold-cache-controller.example",
+                device,
+            ),
+            crate::identity::device_directory::CacheLookup::Hit(_)
+        ));
+        crate::identity::device_directory::invalidate(
+            "did:webvh:zfixture:cold-cache-controller.example",
+            device,
         );
     }
 

@@ -197,6 +197,13 @@ pub fn build_realm_bootstrap_events(
         alias,
         content_scheme,
     )?);
+    // realm-and-space.md §2.5: an ordinary Realm is one genesis transaction.
+    // The explicit, revocable founding grant MUST immediately follow create.
+    let founding_grant_id = format!("ak:grant:{}", crate::operation::uuid_v7());
+    events.push(
+        crate::operation::ak_ops::realm_founding_grant(realm_id, actor_id, &founding_grant_id)
+            .build_sdk_event("inkson")?,
+    );
     if let Some(policy_components) =
         recommended_realm_policy_components_for_profile(encryption_profile, content_scheme)
     {
@@ -246,6 +253,8 @@ pub fn build_realm_bootstrap_events(
             )?);
         }
     }
+    arkret_sdk::realm::bootstrap::validate_realm_bootstrap_unit(&events)
+        .map_err(|error| anyhow::anyhow!(error.reason_code()))?;
     Ok(events)
 }
 

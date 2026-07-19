@@ -6,6 +6,7 @@ pub(super) struct ChatTimelineContext {
     pub visible_messages: Vec<ChatMessage>,
     pub visible_moderation_appeal_prompts: Vec<ModerationAppealPrompt>,
     pub strand_scope_lookup: std::collections::BTreeMap<String, StrandScopeCircle>,
+    pub private_sidecar_strand_ids: std::collections::BTreeSet<String>,
     pub account_did: String,
     pub account_display_label: String,
     pub participants: Vec<SpaceParticipant>,
@@ -32,6 +33,7 @@ pub(super) fn ChatTimeline(controller: ChatController, context: ChatTimelineCont
         visible_messages,
         visible_moderation_appeal_prompts,
         strand_scope_lookup,
+        private_sidecar_strand_ids,
         account_did,
         account_display_label,
         participants: participants_for_messages,
@@ -132,6 +134,8 @@ pub(super) fn ChatTimeline(controller: ChatController, context: ChatTimelineCont
                                 || pinned_target_set.contains(&msg.id);
                             let message_is_saved_private =
                                 private_saved_target_set.contains(&message_target_ref);
+                            let message_is_private_sidecar =
+                                private_sidecar_strand_ids.contains(&msg.strand_id);
                             let message_is_queued_offline = msg
                                 .protocol_message_id
                                 .as_ref()
@@ -204,6 +208,9 @@ pub(super) fn ChatTimeline(controller: ChatController, context: ChatTimelineCont
                                 }
                                 if is_focus_message {
                                     base.push_str(" is-highlighted");
+                                }
+                                if message_is_private_sidecar {
+                                    base.push_str(" is-private-sidecar");
                                 }
                                 base.push_str(scope_class);
                                 base
@@ -478,6 +485,18 @@ pub(super) fn ChatTimeline(controller: ChatController, context: ChatTimelineCont
                                                     "data-testid": "message-act-on-behalf-via",
                                                     "data-executed-by": msg.executed_by.clone().unwrap_or_default(),
                                                     "via {agent_label}"
+                                                }
+                                            }
+                                            if message_is_private_sidecar {
+                                                span {
+                                                    class: "message-privacy-badge message-privacy-badge--sidecar",
+                                                    "data-testid": "message-private-sidecar-badge",
+                                                    "data-visibility": "private-sidecar",
+                                                    role: "img",
+                                                    title: crate::i18n::tr("chat.message.private_sidecar.tooltip"),
+                                                    "aria-label": crate::i18n::tr("chat.message.private_sidecar.tooltip"),
+                                                    UiIcon { name: "lock" }
+                                                    span { {crate::i18n::tr("chat.message.private_sidecar.label")} }
                                                 }
                                             }
                                         }
