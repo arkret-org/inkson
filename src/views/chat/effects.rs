@@ -682,10 +682,10 @@ pub(super) fn ChatEffects(
                 return;
             }
             local_timeline_sync_key_seen.set(sync_key);
-            let next_messages = {
+            let (next_messages, next_moderation_appeal_prompts) = {
                 let store = state_store.read();
                 let snapshot = store.load();
-                chat_messages_from_local_state_with_sidecar(
+                let messages = chat_messages_from_local_state_with_sidecar(
                     &snapshot,
                     Some(&store),
                     Some((
@@ -695,11 +695,26 @@ pub(super) fn ChatEffects(
                 )
                 .into_iter()
                 .filter(|message| message.realm_id == realm)
-                .collect::<Vec<_>>()
+                .collect::<Vec<_>>();
+                let moderation_events = snapshot
+                    .raw_operations
+                    .iter()
+                    .filter(|record| record.realm_id.as_deref() == Some(realm.as_str()))
+                    .map(|record| record.payload.clone())
+                    .collect::<Vec<_>>();
+                let prompts = moderation_appeal_prompts_from_events(
+                    &realm,
+                    &moderation_events,
+                    &account_did_for_local_timeline,
+                );
+                (messages, prompts)
             };
             if !next_messages.is_empty() {
                 event_sink.emit(ChatProjectionEvent::MergeMessages(next_messages));
             }
+            event_sink.emit(ChatProjectionEvent::ReplaceModerationPrompts(
+                next_moderation_appeal_prompts,
+            ));
         });
     }
 

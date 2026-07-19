@@ -20,6 +20,7 @@ pub use sync::projection_events_from_sync_realms;
 // view models; see `message_ops` / `kanban_ops`).
 pub(crate) mod kanban_ops;
 pub(crate) mod message_ops;
+pub(crate) mod moderation_ops;
 
 /// First non-empty trimmed string at `path` under `value` (shared by the
 /// projection extractors).

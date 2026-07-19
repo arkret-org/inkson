@@ -89,6 +89,41 @@ fn moderation_prompt_state(prompt: &ModerationAppealPrompt) -> AppealState {
     }
 }
 
+fn timeline_projection_key(
+    selected_realm_id: &str,
+    realm_live_epoch: u64,
+    visible_messages: &[ChatMessage],
+    visible_moderation_appeal_prompts: &[ModerationAppealPrompt],
+) -> String {
+    use std::hash::{Hash, Hasher};
+
+    let mut projection = std::collections::hash_map::DefaultHasher::new();
+    selected_realm_id.hash(&mut projection);
+    realm_live_epoch.hash(&mut projection);
+    for message in visible_messages {
+        message.id.hash(&mut projection);
+        message.protocol_message_id.hash(&mut projection);
+        message.strand_id.hash(&mut projection);
+        message.realm_id.hash(&mut projection);
+        message.body.hash(&mut projection);
+        message.timestamp.hash(&mut projection);
+        message.reply_to.hash(&mut projection);
+        message.reactions.hash(&mut projection);
+        message.edited.hash(&mut projection);
+        message.redacted.hash(&mut projection);
+        message.pending.hash(&mut projection);
+        message.failed.hash(&mut projection);
+    }
+    for prompt in visible_moderation_appeal_prompts {
+        prompt.realm_id.hash(&mut projection);
+        prompt.decision_ref.hash(&mut projection);
+        prompt.target_ref.hash(&mut projection);
+        prompt.state.hash(&mut projection);
+        prompt.verdict.hash(&mut projection);
+    }
+    format!("{:016x}", projection.finish())
+}
+
 async fn resolve_agent_selector_mentions(
     base_url: &str,
     api_token: String,
@@ -660,37 +695,22 @@ pub fn ChatPanel(
         })
         .cloned()
         .collect::<Vec<_>>();
-    // Dioxus may retain the child timeline across context-backed signal updates.  Key the
-    // projection boundary by the actual visible message state so reaction/revision/redaction
-    // folds cannot leave a memoized child rendering an older snapshot.
-    let timeline_projection_key = {
-        use std::hash::{Hash, Hasher};
-
-        let mut projection = std::collections::hash_map::DefaultHasher::new();
-        selected_realm_id.hash(&mut projection);
-        realm_live_epoch().hash(&mut projection);
-        for message in &visible_messages {
-            message.id.hash(&mut projection);
-            message.protocol_message_id.hash(&mut projection);
-            message.strand_id.hash(&mut projection);
-            message.realm_id.hash(&mut projection);
-            message.body.hash(&mut projection);
-            message.timestamp.hash(&mut projection);
-            message.reply_to.hash(&mut projection);
-            message.reactions.hash(&mut projection);
-            message.edited.hash(&mut projection);
-            message.redacted.hash(&mut projection);
-            message.pending.hash(&mut projection);
-            message.failed.hash(&mut projection);
-        }
-        format!("{:016x}", projection.finish())
-    };
     let visible_moderation_appeal_prompts = moderation_appeal_prompts()
         .into_iter()
         .filter(|prompt| {
             selected_realm_id.trim().is_empty() || prompt.realm_id == selected_realm_id
         })
         .collect::<Vec<_>>();
+    let visible_moderation_appeal_prompt_count = visible_moderation_appeal_prompts.len();
+    // Dioxus may retain the child timeline across context-backed signal updates. Key the
+    // projection boundary by every visible timeline row so message and moderation lifecycle
+    // folds cannot leave a memoized child rendering an older snapshot.
+    let timeline_projection_key = timeline_projection_key(
+        &selected_realm_id,
+        realm_live_epoch(),
+        &visible_messages,
+        &visible_moderation_appeal_prompts,
+    );
     // AKP-0007 P3B.2.4 — per-strand Circle-scope lookup used by the
     // message accent rail. We index by `strand_id` once instead of
     // searching the `channels` Vec for every rendered message.
@@ -830,9 +850,12 @@ pub fn ChatPanel(
         && visible_message_count == 0
         && !token().trim().is_empty()
         && !initial_sync_finished();
-
     rsx! {
-        div { class: "{shell_class}", "data-testid": "chat-panel", "data-chat-mode": if direct_mode { "direct" } else { "collaboration" },
+        div {
+            class: "{shell_class}",
+            "data-testid": "chat-panel",
+            "data-chat-mode": if direct_mode { "direct" } else { "collaboration" },
+            "data-moderation-appeal-count": "{visible_moderation_appeal_prompt_count}",
             ChatEffects {
                 controller,
                 account_did: account_did.clone(),

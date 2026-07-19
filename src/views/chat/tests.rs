@@ -1883,6 +1883,94 @@ fn moderation_appeal_prompts_fold_decision_and_current_appellant_state() {
 }
 
 #[test]
+fn moderation_appeal_prompts_read_control_plane_sync_state() {
+    let realm_id = "ak:realm:01904100-0000-7000-8000-000000000001";
+    let mut realms = std::collections::BTreeMap::new();
+    realms.insert(
+        realm_id.to_owned(),
+        json!({
+            "timeline": { "events": [] },
+            "state": {
+                "events": [{
+                    "event_id": "ak:event:01904100-0000-7000-8000-000000000101",
+                    "kind": "ak.moderation.decision",
+                    "realm_id": realm_id,
+                    "payload": {
+                        "target_ref": "ak:message:01904100-0000-7000-8000-000000000201",
+                        "decision": "quarantine"
+                    }
+                }]
+            }
+        }),
+    );
+
+    let prompts = moderation_appeal_prompts_from_sync_realms(&realms, "did:web:appellant.example");
+
+    assert_eq!(prompts.len(), 1);
+    assert_eq!(
+        prompts[0].decision_ref,
+        "ak:event:01904100-0000-7000-8000-000000000101"
+    );
+}
+
+#[test]
+fn moderation_appeal_prompts_survive_sdk_event_round_trip() {
+    let realm_id = "ak:realm:01904100-0000-7000-8000-000000000001";
+    let event: arkret_sdk::Event = serde_json::from_value(json!({
+        "event_id": "ak:event:01904100-0000-7000-8000-000000000101",
+        "kind": "ak.moderation.decision",
+        "realm_id": realm_id,
+        "actor_id": "did:web:moderator.example",
+        "actor_seq": 1,
+        "created_at": "2026-07-19T00:00:00.000Z",
+        "hlc": "019f73a34c00-0000-12345678",
+        "prev_refs": [],
+        "refs": [],
+        "requirements": { "schema": ["ak.schema.event_payload.v1"] },
+        "payload": {
+            "target_ref": "ak:message:01904100-0000-7000-8000-000000000201",
+            "decision": "quarantine",
+            "issuer": "did:web:moderator.example",
+            "reason_code": "abuse_review",
+            "request_canonical_digest": "sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
+        },
+        "proofs": []
+    }))
+    .unwrap();
+    let wire = serde_json::to_value(event).unwrap();
+
+    let prompts =
+        moderation_appeal_prompts_from_events(realm_id, &[wire], "did:web:appellant.example");
+
+    assert_eq!(prompts.len(), 1);
+}
+
+#[test]
+fn timeline_projection_key_tracks_moderation_prompt_lifecycle() {
+    let prompt = ModerationAppealPrompt {
+        realm_id: "ak:realm:01904100-0000-7000-8000-000000000001".to_owned(),
+        decision_ref: "ak:event:01904100-0000-7000-8000-000000000101".to_owned(),
+        target_ref: "ak:message:01904100-0000-7000-8000-000000000201".to_owned(),
+        state: "none".to_owned(),
+        verdict: None,
+    };
+    let empty_key = timeline_projection_key(&prompt.realm_id, 1, &[], &[]);
+    let initial_key =
+        timeline_projection_key(&prompt.realm_id, 1, &[], std::slice::from_ref(&prompt));
+    let mut submitted = prompt.clone();
+    submitted.state = "submitted".to_owned();
+    let submitted_key = timeline_projection_key(
+        &submitted.realm_id,
+        1,
+        &[],
+        std::slice::from_ref(&submitted),
+    );
+
+    assert_ne!(empty_key, initial_key);
+    assert_ne!(initial_key, submitted_key);
+}
+
+#[test]
 fn rebuild_restores_authors_own_encrypted_message_from_sidecar() {
     // X10.6 regression: an encrypted send persists a body-less
     // raw_operation stub (it MUST NOT store the plaintext in
