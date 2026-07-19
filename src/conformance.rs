@@ -3,6 +3,7 @@
 
 use std::sync::LazyLock;
 
+#[cfg(test)]
 use arkret_sdk::Discoverability;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -528,18 +529,6 @@ pub enum ValidationError {
     /// can't smuggle an unknown reducer kind into local state.
     #[error("event kind `{0}` is outside inkson's conformance profile")]
     UnknownEventKind(String),
-}
-
-/// Realm discovery state per arkret-spec section 9.2.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct RealmDiscovery {
-    pub discoverability: Discoverability,
-    pub directory_visibility: String,
-    #[serde(default)]
-    pub preview_fields: Vec<String>,
-    #[serde(default)]
-    pub allowed_discoverers: Vec<String>,
-    pub anti_enumeration: bool,
 }
 
 #[cfg(test)]

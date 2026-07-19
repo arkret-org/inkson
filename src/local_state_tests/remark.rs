@@ -102,12 +102,6 @@ fn contact_remark_set_tombstone_and_display_name() {
     assert_eq!(store.display_name_for_actor(did, "Alice"), "Alice from Ops");
     assert!(store.contact_remarks().contains_key(did));
 
-    store.set_contact_remark(
-        did,
-        crate::account_data::ContactRemark {
-            actor_id: did.to_owned(),
-            ..crate::account_data::ContactRemark::default()
-        },
-    );
+    store.set_contact_remark(did, crate::account_data::ContactRemark::new(did, ""));
     assert!(store.contact_remark(did).is_none());
 }

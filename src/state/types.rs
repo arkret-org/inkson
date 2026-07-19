@@ -30,14 +30,14 @@ pub struct DeviceMessageReceipt {
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
-pub struct RealmLifecycleState {
+pub struct RealmDestroyReceipt {
     #[serde(default)]
     pub destroyed: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub destroyed_operation_id: Option<String>,
 }
 
-impl RealmLifecycleState {
+impl RealmDestroyReceipt {
     pub(crate) fn destroyed(operation_id: impl Into<String>) -> Self {
         Self {
             destroyed: true,
@@ -667,7 +667,7 @@ pub struct ClientLocalState {
     pub client_core_seen_event_ids: VecDeque<String>,
     pub raw_operations: Vec<RawOperationRecord>,
     #[serde(default)]
-    pub realm_lifecycle_state: BTreeMap<String, RealmLifecycleState>,
+    pub realm_destroy_receipts: BTreeMap<String, RealmDestroyReceipt>,
     pub realm_tree_projections: BTreeMap<String, Value>,
     #[serde(default)]
     pub snapshot_sync: BTreeMap<String, SnapshotSyncStatus>,
@@ -1183,7 +1183,7 @@ impl Default for ClientLocalState {
             device_message_cursors: BTreeMap::new(),
             client_core_seen_event_ids: VecDeque::new(),
             raw_operations: Vec::new(),
-            realm_lifecycle_state: BTreeMap::new(),
+            realm_destroy_receipts: BTreeMap::new(),
             realm_tree_projections: BTreeMap::new(),
             snapshot_sync: BTreeMap::new(),
             saved_account_data: BTreeMap::new(),

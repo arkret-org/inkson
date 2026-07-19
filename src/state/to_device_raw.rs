@@ -419,9 +419,9 @@ impl LocalStateStore {
         if raw_operation_kind(&payload) == Some("ak.realm.destroy")
             && let Some(realm_id) = realm_id.as_deref().filter(|id| !id.trim().is_empty())
         {
-            self.cached.realm_lifecycle_state.insert(
+            self.cached.realm_destroy_receipts.insert(
                 realm_id.to_owned(),
-                RealmLifecycleState::destroyed(operation_id.clone()),
+                RealmDestroyReceipt::destroyed(operation_id.clone()),
             );
         }
         self.cached.raw_operations.push(RawOperationRecord {

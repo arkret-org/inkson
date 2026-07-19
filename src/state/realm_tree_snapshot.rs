@@ -6,7 +6,7 @@ impl LocalStateStore {
     /// chat UI MUST gray out the send box and surface the
     /// "permanently retired" banner once this returns true.
     ///
-    /// Backed by `realm_lifecycle_state`, which is updated as local raw
+    /// Backed by `realm_destroy_receipts`, which is updated as local raw
     /// operations are appended. This keeps the send-box guard at
     /// a constant-time lookup instead of scanning the raw operation log on
     /// every render.
@@ -15,7 +15,7 @@ impl LocalStateStore {
             return false;
         }
         self.load()
-            .realm_lifecycle_state
+            .realm_destroy_receipts
             .get(realm_id)
             .is_some_and(|state| state.destroyed)
     }
@@ -163,7 +163,7 @@ impl LocalStateStore {
 
     fn forget_realm_tree_projection_inner(&mut self, projection_id: &str) {
         self.cached.realm_tree_projections.remove(projection_id);
-        self.cached.realm_lifecycle_state.remove(projection_id);
+        self.cached.realm_destroy_receipts.remove(projection_id);
         self.cached.seal_views.remove(projection_id);
         self.cached.realm_remarks.remove(projection_id);
         self.cached.mls_snapshots.remove(projection_id);

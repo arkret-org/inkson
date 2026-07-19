@@ -47,53 +47,6 @@ pub fn discoverability_from_str(s: &str) -> Discoverability {
     }
 }
 
-/// Realm discovery configuration.
-#[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct RealmDiscovery {
-    /// Realm ID.
-    pub realm_id: String,
-    /// Discoverability level.
-    pub discoverability: Discoverability,
-    /// Directory visibility settings.
-    pub directory_visibility: DirectoryVisibility,
-    /// Preview settings for non-members.
-    pub preview: PreviewSettings,
-    /// Who can discover this Realm.
-    pub allowed_discoverers: Vec<String>,
-    /// Anti-enumeration protection.
-    pub anti_enumeration: bool,
-    /// When this config was last updated.
-    pub updated_at: Hlc,
-}
-
-/// Directory visibility settings.
-#[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct DirectoryVisibility {
-    /// Show in public directory.
-    pub show_in_directory: bool,
-    /// Show member count.
-    pub show_member_count: bool,
-    /// Show activity level.
-    pub show_activity: bool,
-    /// Custom directory tags.
-    pub tags: Vec<String>,
-}
-
-/// Preview settings for non-members.
-#[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct PreviewSettings {
-    /// Allow preview of recent messages.
-    pub allow_message_preview: bool,
-    /// Number of preview messages.
-    pub preview_message_count: u32,
-    /// Show member list preview.
-    pub show_member_preview: bool,
-    /// Number of preview members.
-    pub preview_member_count: u32,
-    /// Custom preview text.
-    pub preview_text: Option<String>,
-}
-
 /// Read marker for multi-device sync.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct DiscoveryReadMarker {
@@ -267,41 +220,6 @@ pub struct DirectoryGrant {
     pub resource_selectors: Vec<String>,
 }
 
-/// Discovery manager for coordinating discovery features.
-#[derive(Clone, Debug, Default)]
-pub struct DiscoveryManager {
-    /// Realm discovery configurations.
-    realm_configs: HashMap<String, RealmDiscovery>,
-    /// Marker merger.
-    marker_merger: MarkerMerger,
-}
-
-impl DiscoveryManager {
-    pub fn new() -> Self {
-        Self::default()
-    }
-
-    /// Set Realm discovery configuration.
-    pub fn set_realm_discovery(&mut self, config: RealmDiscovery) {
-        self.realm_configs.insert(config.realm_id.clone(), config);
-    }
-
-    /// Get Realm discovery configuration.
-    pub fn get_realm_discovery(&self, realm_id: &str) -> Option<&RealmDiscovery> {
-        self.realm_configs.get(realm_id)
-    }
-
-    /// Get the marker merger.
-    pub fn marker_merger(&self) -> &MarkerMerger {
-        &self.marker_merger
-    }
-
-    /// Get a mutable reference to the marker merger.
-    pub fn marker_merger_mut(&mut self) -> &mut MarkerMerger {
-        &mut self.marker_merger
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -446,35 +364,5 @@ mod tests {
         let filtered = filter.filter_results(results, |r| r.1);
         assert_eq!(filtered.len(), 1);
         assert_eq!(filtered[0].0, "Realm A");
-    }
-
-    #[test]
-    fn test_discovery_manager() {
-        let mut manager = DiscoveryManager::new();
-
-        manager.set_realm_discovery(RealmDiscovery {
-            realm_id: "ak:realm:test".to_owned(),
-            discoverability: Discoverability::Public,
-            directory_visibility: DirectoryVisibility {
-                show_in_directory: true,
-                show_member_count: true,
-                show_activity: true,
-                tags: vec!["test".to_owned()],
-            },
-            preview: PreviewSettings {
-                allow_message_preview: true,
-                preview_message_count: 5,
-                show_member_preview: true,
-                preview_member_count: 10,
-                preview_text: None,
-            },
-            allowed_discoverers: vec![],
-            anti_enumeration: false,
-            updated_at: Hlc::from_parts(5_000, 0, 1),
-        });
-
-        let config = manager.get_realm_discovery("ak:realm:test");
-        assert!(config.is_some());
-        assert_eq!(config.unwrap().discoverability, Discoverability::Public);
     }
 }

@@ -196,7 +196,7 @@ fn raw_operation_upsert_replaces_message_timeline_projection_by_message_id() {
 }
 
 #[test]
-fn realm_lifecycle_state_tracks_destroy_without_raw_operation_scan() {
+fn realm_destroy_receipt_tracks_destroy_without_raw_operation_scan() {
     let path = temp_state_path("realm-lifecycle");
     let mut store = LocalStateStore::with_path(path.clone());
     let realm_id = "ak:realm:destroyed";
@@ -209,7 +209,7 @@ fn realm_lifecycle_state_tracks_destroy_without_raw_operation_scan() {
     );
 
     assert!(store.realm_is_destroyed(realm_id));
-    let lifecycle = store.load().realm_lifecycle_state;
+    let lifecycle = store.load().realm_destroy_receipts;
     assert!(lifecycle[realm_id].destroyed);
     assert_eq!(
         lifecycle[realm_id].destroyed_operation_id.as_deref(),

@@ -2944,14 +2944,12 @@ pub fn SettingsPanel(
                                 }
                                 let now_rfc3339 = chrono::Utc::now()
                                     .to_rfc3339_opts(chrono::SecondsFormat::Secs, true);
-                                let remark = crate::account_data::ContactRemark {
-                                    version: 1,
-                                    actor_id: actor_id.clone(),
-                                    local_name: local_name.clone(),
-                                    saved_at: Some(now_rfc3339.clone()),
-                                    updated_at: Some(now_rfc3339),
-                                    ..crate::account_data::ContactRemark::default()
-                                };
+                                let mut remark = crate::account_data::ContactRemark::new(
+                                    actor_id.clone(),
+                                    local_name.clone(),
+                                );
+                                remark.saved_at = Some(now_rfc3339.clone());
+                                remark.updated_at = Some(now_rfc3339);
                                 state_store
                                     .write()
                                     .set_contact_remark(actor_id.clone(), remark.clone());

@@ -729,7 +729,7 @@ fn local_remarks_do_not_leak_into_event_push_search_log_or_directory_surfaces() 
         "body": "hello",
         "mentions": [{
             "kind": "mention",
-            "subject_id": contact_remark.actor_id,
+            "subject_id": contact_remark.subject.did,
             "mention_text_original": "@alice"
         }]
     }))

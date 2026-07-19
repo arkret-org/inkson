@@ -200,7 +200,7 @@ fn realm_remark_pinned_builder_preserves_private_fields() {
     let realm_id = "ak:realm:0196419b-0000-7000-8000-000000000000";
     let existing = RealmRemark {
         version: 1,
-        subject: RemarkSubject {
+        subject: RealmRemarkSubject {
             kind: "realm".to_owned(),
             id: realm_id.to_owned(),
         },
@@ -265,13 +265,18 @@ fn contact_remark_serialises_minimal_private_payload() {
     let remark = ContactRemark::new("did:web:alice.example", "Alice from Ops");
     let wire = serde_json::to_value(&remark).unwrap();
     assert_eq!(wire["version"], 1);
-    assert_eq!(wire["actor_id"], "did:web:alice.example");
+    assert_eq!(wire["subject"]["kind"], "actor");
+    assert_eq!(wire["subject"]["did"], "did:web:alice.example");
+    assert!(wire.get("actor_id").is_none());
     assert_eq!(wire["local_name"], "Alice from Ops");
     assert!(wire.get("note").is_none());
     assert_eq!(remark.display_name("Alice"), "Alice from Ops");
 
     let empty = ContactRemark {
-        actor_id: "did:web:alice.example".to_owned(),
+        subject: ContactRemarkSubject {
+            kind: "actor".to_owned(),
+            did: "did:web:alice.example".to_owned(),
+        },
         local_name: " ".to_owned(),
         ..ContactRemark::default()
     };
@@ -283,7 +288,10 @@ fn contact_remark_pinned_builder_preserves_private_fields() {
     let actor_id = "did:web:alice.example";
     let existing = ContactRemark {
         version: 1,
-        actor_id: actor_id.to_owned(),
+        subject: ContactRemarkSubject {
+            kind: "actor".to_owned(),
+            did: actor_id.to_owned(),
+        },
         local_name: "Alice from Ops".to_owned(),
         note: "met at launch".to_owned(),
         tags: vec!["ops".to_owned()],
@@ -487,8 +495,8 @@ fn build_blocklist_account_data_body_emits_domain_and_expiry_fields() {
     let body = build_blocklist_account_data_body(&list);
     let entry = &body["entries"][0];
     assert_eq!(entry["target"]["kind"], "domain");
-    // Domain kinds emit the value under `domain`, not `did`.
-    assert_eq!(entry["target"]["domain"], "spam.example");
+    // Non-DID target kinds use the canonical polymorphic `value` slot.
+    assert_eq!(entry["target"]["value"], "spam.example");
     assert!(entry["target"].get("did").is_none());
     assert_eq!(entry["mode"], "block");
     assert_eq!(entry["applies_to"], json!(["dm"]));
@@ -544,7 +552,7 @@ fn blocklist_entries_parse_canonical_account_data_body() {
                 "created_at": "2026-05-29T00:00:00Z"
             },
             {
-                "target": {"kind": "domain", "domain": "Example.com"},
+                "target": {"kind": "domain", "value": "Example.com"},
                 "mode": "block",
                 "applies_to": ["dm", "calls"],
                 "expires_at": "2026-07-01T00:00:00Z",

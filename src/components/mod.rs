@@ -72,8 +72,7 @@ pub mod sync_badge;
 /// P5 — three-mode theme switcher (light / dark / follow system) with
 /// persistence routed through the caller's local-state path.
 pub mod theme_switcher;
-/// P3B.6 — `NeedsVerificationBadge` (red, message-card) +
-/// `RealmClassBadge` (Principal / Collaboration, switcher).
+/// Verification and identity-cache status badges.
 pub mod verify_badges;
 pub mod visibility_pill;
 pub mod write_state;
@@ -123,8 +122,7 @@ pub use skeleton::{SkeletonCard, SkeletonLine, SkeletonList};
 pub use sync_badge::{SyncBadge, SyncBadgeState};
 pub use theme_switcher::{ThemeMode, ThemeSwitcher};
 pub use verify_badges::{
-    NeedsVerificationBadge, RealmClass, RealmClassBadge, TrustCacheBadge, TrustCacheState,
-    trust_cache_state,
+    NeedsVerificationBadge, TrustCacheBadge, TrustCacheState, trust_cache_state,
 };
 pub use visibility_pill::{
     Discoverability, HistoryVisibility, JoinRule, VisibilityPill, VisibilityPillRow,

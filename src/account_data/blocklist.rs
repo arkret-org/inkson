@@ -266,7 +266,7 @@ pub fn unblock_target_in(list: &mut Vec<BlocklistEntry>, kind: &str, value: &str
     list.len() != before
 }
 
-const BLOCKLIST_ACCOUNT_DATA_VERSION: u32 = 1;
+const BLOCKLIST_ACCOUNT_DATA_VERSION: u64 = 1;
 
 /// Surfaces a personal block can apply to (`client-preferences.md` §3.5
 /// `applies_to`). An entry with an empty `applies_to` expands to this full
@@ -293,165 +293,94 @@ pub fn build_blocklist_account_data_body(entries: &[BlocklistEntry]) -> Value {
     let entries = entries
         .iter()
         .filter(|entry| !entry.did.trim().is_empty())
-        .map(|entry| {
+        .filter_map(|entry| {
             let kind = if entry.kind.trim().is_empty() {
                 DEFAULT_BLOCKLIST_TARGET_KIND
             } else {
                 entry.kind.as_str()
             };
-            let id_field = if blocklist_kind_is_did(kind) {
-                "did"
+            let target = if blocklist_kind_is_did(kind) {
+                arkret_sdk::AccountBlocklistTarget {
+                    kind: kind.to_owned(),
+                    did: arkret_sdk::Did::new(entry.did.trim().to_owned()).ok(),
+                    object_ref: None,
+                    value: None,
+                }
             } else {
-                "domain"
+                arkret_sdk::AccountBlocklistTarget {
+                    kind: kind.to_owned(),
+                    did: None,
+                    object_ref: None,
+                    value: arkret_sdk::NonEmptyString::new(entry.did.trim().to_owned()).ok(),
+                }
             };
-            let mut target = serde_json::Map::new();
-            target.insert("kind".to_owned(), Value::String(kind.to_owned()));
-            target.insert(
-                id_field.to_owned(),
-                Value::String(entry.did.trim().to_owned()),
-            );
-            let applies_to: Vec<&str> = if entry.applies_to.is_empty() {
-                DEFAULT_BLOCKLIST_APPLIES_TO.to_vec()
+            if target.did.is_none() && target.value.is_none() {
+                return None;
+            }
+            let applies_to = if entry.applies_to.is_empty() {
+                DEFAULT_BLOCKLIST_APPLIES_TO
+                    .iter()
+                    .map(|value| (*value).to_owned())
+                    .collect()
             } else {
-                entry.applies_to.iter().map(String::as_str).collect()
+                entry.applies_to.clone()
             };
-            let mut object = serde_json::json!({
-                "target": Value::Object(target),
-                "mode": "block",
-                "applies_to": applies_to,
-                "created_at": entry
+            Some(arkret_sdk::AccountBlocklistPayloadEntry {
+                entry_id: entry.entry_id.as_ref().and_then(|value| {
+                    arkret_sdk::NonEmptyString::new(value.trim().to_owned()).ok()
+                }),
+                target,
+                mode: "block".to_owned(),
+                applies_to,
+                reason_code: entry.reason.as_ref().and_then(|value| {
+                    arkret_sdk::NonEmptyString::new(value.trim().to_owned()).ok()
+                }),
+                created_at: entry
                     .blocked_at
-                    .clone()
-                    .unwrap_or_else(|| chrono::Utc::now().to_rfc3339()),
-            });
-            if let Some(map) = object.as_object_mut() {
-                if let Some(entry_id) = entry
-                    .entry_id
                     .as_deref()
-                    .map(str::trim)
-                    .filter(|s| !s.is_empty())
-                {
-                    map.insert("entry_id".to_owned(), Value::String(entry_id.to_owned()));
-                }
-                if let Some(reason) = entry
-                    .reason
-                    .as_deref()
-                    .map(str::trim)
-                    .filter(|s| !s.is_empty())
-                {
-                    map.insert("reason_code".to_owned(), Value::String(reason.to_owned()));
-                }
-                // `expires_at` is always present so peers can distinguish a
-                // permanent block (explicit null) from an absent field.
-                match entry
+                    .and_then(|value| value.parse().ok())
+                    .unwrap_or_else(chrono::Utc::now),
+                expires_at: entry
                     .expires_at
                     .as_deref()
-                    .map(str::trim)
-                    .filter(|s| !s.is_empty())
-                {
-                    Some(expires) => {
-                        map.insert("expires_at".to_owned(), Value::String(expires.to_owned()));
-                    }
-                    None => {
-                        map.insert("expires_at".to_owned(), Value::Null);
-                    }
-                }
-            }
-            object
+                    .and_then(|value| value.parse().ok()),
+            })
         })
         .collect::<Vec<_>>();
-    serde_json::json!({
-        "version": BLOCKLIST_ACCOUNT_DATA_VERSION,
-        "entries": entries,
+    serde_json::to_value(arkret_sdk::AccountBlocklistPayload {
+        version: BLOCKLIST_ACCOUNT_DATA_VERSION,
+        entries,
     })
+    .expect("canonical blocklist payload serializes")
 }
 
 /// Parse the `ak.account.blocklist` account-data content body. Malformed
 /// actor entries are skipped instead of partially corrupting the local UI.
 pub fn blocklist_entries_from_account_data(value: &Value) -> Result<Vec<BlocklistEntry>, String> {
-    let entries = value
-        .get("entries")
-        .ok_or_else(|| "ak.account.blocklist.entries missing".to_owned())?;
-    let entries = entries
-        .as_array()
-        .ok_or_else(|| "ak.account.blocklist.entries must be an array".to_owned())?;
-    Ok(entries
-        .iter()
-        .filter_map(blocklist_entry_from_account_data_value)
-        .collect())
-}
-
-fn blocklist_entry_from_account_data_value(value: &Value) -> Option<BlocklistEntry> {
-    match value {
-        Value::Object(object) => {
-            let mode = object
-                .get("mode")
-                .and_then(Value::as_str)
-                .unwrap_or("block");
-            if matches!(mode, "allow" | "unblock" | "removed" | "deleted") {
-                return None;
-            }
-            if !matches!(mode, "block" | "mute" | "hide") {
-                return None;
-            }
-            let (target_kind, target_value) =
-                object.get("target").and_then(blocklist_target_kind_value)?;
-            let reason = object
-                .get("reason_code")
-                .and_then(Value::as_str)
-                .map(ToOwned::to_owned);
-            let blocked_at = object
-                .get("created_at")
-                .and_then(Value::as_str)
-                .map(ToOwned::to_owned);
-            let applies_to = object
-                .get("applies_to")
-                .and_then(Value::as_array)
-                .map(|arr| {
-                    arr.iter()
-                        .filter_map(Value::as_str)
-                        .map(ToOwned::to_owned)
-                        .collect::<Vec<_>>()
-                })
-                .unwrap_or_default();
-            let expires_at = object
-                .get("expires_at")
-                .and_then(Value::as_str)
-                .map(ToOwned::to_owned);
-            let entry_id = object
-                .get("entry_id")
-                .and_then(Value::as_str)
-                .map(ToOwned::to_owned);
+    let payload: arkret_sdk::AccountBlocklistPayload =
+        serde_json::from_value(value.clone()).map_err(|error| error.to_string())?;
+    Ok(payload
+        .entries
+        .into_iter()
+        .filter(|entry| matches!(entry.mode.as_str(), "block" | "mute" | "hide"))
+        .filter_map(|entry| {
+            let value = entry
+                .target
+                .did
+                .map(|did| did.to_string())
+                .or_else(|| entry.target.value.map(|value| value.to_string()))
+                .or(entry.target.object_ref)?;
             blocklist_entry_from_parts(
-                &target_kind,
-                &target_value,
-                reason,
-                blocked_at,
-                applies_to,
-                expires_at,
-                entry_id,
+                &entry.target.kind,
+                &value,
+                entry.reason_code.map(|value| value.to_string()),
+                Some(entry.created_at.to_rfc3339()),
+                entry.applies_to,
+                entry.expires_at.map(|value| value.to_rfc3339()),
+                entry.entry_id.map(|value| value.to_string()),
             )
-        }
-        _ => None,
-    }
-}
-
-/// Extract `(target.kind, value)` from a canonical wire `target`.
-fn blocklist_target_kind_value(value: &Value) -> Option<(String, String)> {
-    match value {
-        Value::Object(object) => {
-            let kind = object
-                .get("kind")
-                .and_then(Value::as_str)
-                .map(|k| k.trim().to_ascii_lowercase())?;
-            let value = object
-                .get("did")
-                .or_else(|| object.get("domain"))
-                .and_then(Value::as_str)?;
-            Some((kind, value.to_owned()))
-        }
-        _ => None,
-    }
+        })
+        .collect())
 }
 
 #[allow(clippy::too_many_arguments)]
