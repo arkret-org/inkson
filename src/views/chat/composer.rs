@@ -104,20 +104,26 @@ pub(super) fn ChatComposer(controller: ChatController, context: ChatComposerCont
             if mention_insert_request_seen.peek().as_str() == request.request_id {
                 return;
             }
-            let Some(participant) = request_participants
-                .iter()
-                .find(|participant| participant.did.trim() == request.target_id.trim())
-            else {
-                return;
-            };
-            let Some(candidate) = mention_candidate_for_explicit_target(
-                participant,
-                &request_participants,
-                &request_account_did,
-                &request_public_agent_dids,
+            let candidate = owned_agent_mention_candidate(
+                &request.target_id,
                 request.agent_slug.as_deref(),
+                &request_account_did,
                 request_controller_handle.as_deref(),
-            ) else {
+            )
+            .or_else(|| {
+                let participant = request_participants
+                    .iter()
+                    .find(|participant| participant.did.trim() == request.target_id.trim())?;
+                mention_candidate_for_explicit_target(
+                    participant,
+                    &request_participants,
+                    &request_account_did,
+                    &request_public_agent_dids,
+                    None,
+                    request_controller_handle.as_deref(),
+                )
+            });
+            let Some(candidate) = candidate else {
                 return;
             };
             mention_insert_request_seen.set(request.request_id);

@@ -451,24 +451,23 @@ fn AppBootstrap() -> Element {
     let mls_key_package_publish_key_seen = use_signal(|| Option::<String>::None);
     let mls_welcome_bootstrap_key_seen = use_signal(|| Option::<String>::None);
     // Admin-side counterpart of the Welcome bootstrap: serialize admission
-    // reconciliation so per-sync retries cannot overlap and double-admit.
+    // reconciliation so durable-change and backoff retries cannot overlap.
     let mls_admission_reconcile_in_flight = use_signal(|| false);
     let mls_admission_reconcile_pending = use_signal(|| false);
     // Throttle key for the admission pre-filter diagnostic: only emit a WARN
     // when the (realm, blocking-reason) pair changes, so a genuinely stuck
-    // admin gets ONE visible line per cause instead of one per sync tick.
+    // admin gets one visible line per cause.
     let mls_admission_diag_last = use_signal(String::new);
     // History sharing (encryption-and-audit.md): single-flight guard for the
     // to-device `ak.realm_key.share` ingest + `ak.realm_key.request` provider
-    // response pass, so per-sync retries cannot overlap.
+    // response pass, so inbox changes and explicit retries cannot overlap.
     let realm_key_sharing_in_flight = use_signal(|| false);
     // History sharing (receiver-initiated pull): dedup key of the last
     // `ak.realm_key.request` this device emitted, as
     // `"{realm}|{from}|{to}|{installed_signature}"`. The installed-secret
     // signature is folded in so that once a `ak.realm_key.share` lands and
     // installs a `history_secret`, the key changes and a still-open gap can be
-    // re-requested — but an unchanged state never re-emits the same request on
-    // every sync tick.
+    // re-requested — but an unchanged state never re-emits the same request.
     let realm_key_request_dedup = use_signal(|| Option::<String>::None);
     let realm_key_answer_backoff_until = use_signal(|| {
         crate::keyed_cooldown::KeyedCooldown::new(REALM_KEY_ANSWER_BACKOFF_MAX_ENTRIES)
@@ -1166,7 +1165,6 @@ fn AppBootstrap() -> Element {
                     device_id,
                     server_description,
                     sync_bootstrap_complete,
-                    sync_cursor,
                     realm_live_epoch,
                     mls_admission_reconcile_in_flight,
                     mls_admission_reconcile_pending,

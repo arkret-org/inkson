@@ -669,15 +669,19 @@ pub(super) fn ChatEffects(
         use_effect(move || {
             let cursor = sync_cursor();
             let cursor = cursor.trim();
+            let account_sync_ready = !(cursor.is_empty() || cursor == "-");
             let live_epoch = realm_live_epoch();
-            if (cursor.is_empty() || cursor == "-") && live_epoch == 0 {
+            if !account_sync_ready && live_epoch == 0 {
                 return;
             }
             let realm = selected_realm_for_local_timeline.trim().to_owned();
             if realm.is_empty() {
                 return;
             }
-            let sync_key = format!("{realm}|{cursor}|{live_epoch}");
+            // Timeline projection follows durable Realm revisions. Cursor
+            // token re-mints for typing/receipts/calls must not rescan every
+            // locally persisted message.
+            let sync_key = format!("{realm}|{}|{live_epoch}", account_sync_ready as u8);
             if local_timeline_sync_key_seen.peek().as_str() == sync_key {
                 return;
             }

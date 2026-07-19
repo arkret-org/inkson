@@ -406,23 +406,13 @@ pub(crate) fn mention_candidate_for_explicit_target(
     requested_agent_slug: Option<&str>,
     own_controller_handle: Option<&str>,
 ) -> Option<crate::messaging::mentions::MentionCandidate> {
-    if let Some(agent_slug) = requested_agent_slug
-        .map(str::trim)
-        .filter(|slug| !slug.is_empty())
-    {
-        let controller_handle = own_controller_handle
-            .map(str::trim)
-            .filter(|handle| !handle.is_empty())?;
-        return Some(crate::messaging::mentions::MentionCandidate {
-            did: participant.did.clone(),
-            display_name: agent_slug.to_owned(),
-            insert_label: format!("me/{agent_slug}"),
-            subtitle: "Your agent".to_owned(),
-            is_agent: true,
-            controller_subject_id: account_did.trim().to_owned(),
-            controller_handle_at_time: controller_handle.to_owned(),
-            agent_slug_at_time: agent_slug.to_owned(),
-        });
+    if requested_agent_slug.is_some() {
+        return owned_agent_mention_candidate(
+            &participant.did,
+            requested_agent_slug,
+            account_did,
+            own_controller_handle,
+        );
     }
     if !agent_candidate_is_visible(participant, public_agent_dids, account_did) {
         return None;
@@ -440,6 +430,36 @@ pub(crate) fn mention_candidate_for_explicit_target(
             controller_handle_at_time: String::new(),
             agent_slug_at_time: String::new(),
         })
+    })
+}
+
+pub(crate) fn owned_agent_mention_candidate(
+    agent_id: &str,
+    requested_agent_slug: Option<&str>,
+    account_did: &str,
+    own_controller_handle: Option<&str>,
+) -> Option<crate::messaging::mentions::MentionCandidate> {
+    let agent_slug = requested_agent_slug
+        .map(str::trim)
+        .filter(|slug| arkret_sdk::models::validate_agent_slug(slug).is_ok())?;
+    let agent_id = agent_id.trim();
+    let account_did = account_did.trim();
+    if agent_id.is_empty() || account_did.is_empty() {
+        return None;
+    }
+    Some(crate::messaging::mentions::MentionCandidate {
+        did: agent_id.to_owned(),
+        display_name: agent_slug.to_owned(),
+        insert_label: format!("me/{agent_slug}"),
+        subtitle: "Your agent".to_owned(),
+        is_agent: true,
+        controller_subject_id: account_did.to_owned(),
+        controller_handle_at_time: own_controller_handle
+            .map(str::trim)
+            .filter(|handle| !handle.is_empty())
+            .unwrap_or_default()
+            .to_owned(),
+        agent_slug_at_time: agent_slug.to_owned(),
     })
 }
 

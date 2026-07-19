@@ -27,7 +27,7 @@ fn CardMemberMentionRow(
     agent_slug: Option<String>,
     #[props(default)] in_strand: bool,
     #[props(default)] grouped: bool,
-    member_mention_request: Signal<Option<crate::views::chat::MentionInsertRequest>>,
+    onmention: EventHandler<crate::views::chat::MentionInsertRequest>,
     #[props(default)] children: Element,
 ) -> Element {
     let dot_class = if in_strand {
@@ -76,11 +76,9 @@ fn CardMemberMentionRow(
                 onclick: {
                     let mention_target = did.clone();
                     move |_| {
-                        member_mention_request.set(Some(
-                            crate::views::chat::MentionInsertRequest::new(
-                                mention_target.clone(),
-                                mention_agent_slug.clone(),
-                            ),
+                        onmention.call(crate::views::chat::MentionInsertRequest::new(
+                            mention_target.clone(),
+                            mention_agent_slug.clone(),
                         ));
                     }
                 },
@@ -124,7 +122,7 @@ pub(super) fn CardDetail(controller: KanbanController, context: CardDetailContex
     let state_store = crate::app::SessionContext::get().state_store;
     let navigator = use_navigator();
     let route = use_route::<Route>();
-    let member_mention_request =
+    let mut member_mention_request =
         use_signal(|| Option::<crate::views::chat::MentionInsertRequest>::None);
     let owned_agent_inventory = use_resource({
         let base = base_url.clone();
@@ -1388,6 +1386,19 @@ pub(super) fn CardDetail(controller: KanbanController, context: CardDetailContex
                                                 let owned_agent_inventory_snapshot =
                                                     owned_agent_inventory.read().clone();
                                                 let active_sidebar_tab = card_detail_sidebar_tab();
+                                                let on_member_mention = EventHandler::new({
+                                                    let strand_id = card.primary_strand_id.clone();
+                                                    move |request| {
+                                                        member_mention_request.set(Some(request));
+                                                        card_detail_discussion_mounted_for
+                                                            .set(Some(strand_id.clone()));
+                                                        card_detail_tab
+                                                            .set(CardDetailContentTab::Discussion);
+                                                        replace_card_detail_tab_query(
+                                                            CardDetailContentTab::Discussion,
+                                                        );
+                                                    }
+                                                });
                                                 let details_tab_class = if active_sidebar_tab == CardDetailSidebarTab::Details {
                                                     "card-detail-tab active"
                                                 } else {
@@ -2306,7 +2317,7 @@ pub(super) fn CardDetail(controller: KanbanController, context: CardDetailContex
                                                                                         agent_slug: None,
                                                                                         in_strand,
                                                                                         grouped: is_self && !agents.is_empty(),
-                                                                                        member_mention_request,
+                                                                                        onmention: on_member_mention,
                                                                                         if is_self && !agents.is_empty() {
                                                                                             div { class: "participant-agent-children",
                                                                                                 for (agent, slug) in &agents {
@@ -2316,7 +2327,7 @@ pub(super) fn CardDetail(controller: KanbanController, context: CardDetailContex
                                                                                                         label: (*slug).to_owned(),
                                                                                                         agent_slug: Some((*slug).to_owned()),
                                                                                                         in_strand: participant_set.contains(&agent.actor_id),
-                                                                                                        member_mention_request,
+                                                                                                        onmention: on_member_mention,
                                                                                                     }
                                                                                                 }
                                                                                             }
@@ -2333,7 +2344,7 @@ pub(super) fn CardDetail(controller: KanbanController, context: CardDetailContex
                                                                                     label: slug.to_owned(),
                                                                                     agent_slug: Some(slug.to_owned()),
                                                                                     in_strand: participant_set.contains(&agent.actor_id),
-                                                                                    member_mention_request,
+                                                                                    onmention: on_member_mention,
                                                                                 }
                                                                             }
                                                                         }

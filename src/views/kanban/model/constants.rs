@@ -25,17 +25,19 @@ pub(crate) fn kanban_mls_unlock_signature(has_snapshot: bool, mls_epoch_floor: u
 
 /// Refresh-key for the kanban live reconciler. `live_epoch` is the per-realm
 /// `events/subscribe` engine's monotonic counter ([`crate::realm_events_engine`]):
-/// it advances when that engine folds fresh realm events that the
-/// (cross-member-lossy) account `sync_cursor` never delivered, giving the panel
-/// a second, correct freshness axis besides the account cursor. `mls_unlock`
-/// ([`kanban_mls_unlock_signature`]) is a THIRD axis: the account `sync_cursor`
-/// and the events engine can both be stale exactly while the local MLS snapshot
+/// it advances whenever account or Realm sync folds fresh durable events.
+/// `account_sync_ready` licenses the initial reconcile but deliberately records
+/// only readiness, not the opaque cursor token: the server may re-mint the same
+/// frontier with a new token timestamp for an ephemeral-only delta, which is
+/// not a Kanban freshness change. `mls_unlock`
+/// ([`kanban_mls_unlock_signature`]) is a third axis: sync can be stale exactly
+/// while the local MLS snapshot
 /// is still being installed, so folding the snapshot/epoch signature in lets a
 /// late-arriving Welcome/snapshot re-trigger the backfill+reproject.
 pub(crate) fn kanban_projection_refresh_key(
     realm_id: &str,
     view_id: &str,
-    sync_cursor: &str,
+    account_sync_ready: bool,
     live_epoch: u64,
     mls_unlock: &str,
 ) -> String {
@@ -43,7 +45,7 @@ pub(crate) fn kanban_projection_refresh_key(
         "{}|{}|{}|{}|{}",
         realm_id.trim(),
         view_id.trim(),
-        sync_cursor.trim(),
+        account_sync_ready as u8,
         live_epoch,
         mls_unlock.trim(),
     )
@@ -53,23 +55,27 @@ pub(crate) fn next_kanban_projection_refresh_key(
     last_seen_key: &str,
     realm_id: &str,
     view_id: &str,
-    sync_cursor: &str,
+    account_sync_ready: bool,
     live_epoch: u64,
     mls_unlock: &str,
 ) -> Option<String> {
-    let key = kanban_projection_refresh_key(realm_id, view_id, sync_cursor, live_epoch, mls_unlock);
+    let key = kanban_projection_refresh_key(
+        realm_id,
+        view_id,
+        account_sync_ready,
+        live_epoch,
+        mls_unlock,
+    );
     if last_seen_key == key {
         return None;
     }
-    let cursor = sync_cursor.trim();
-    // Refresh when the account cursor is usable, OR the realm events engine has
+    // Refresh when account sync is ready, OR the realm events engine has
     // reported fresh content (`live_epoch > 0`), OR the MLS-unlock axis has
     // progressed (a snapshot/epoch just landed). Any of the three is a real
     // freshness signal; still require a realm / view selector so a bare boot
     // with none of them doesn't churn.
-    let has_usable_cursor = !(cursor.is_empty() || cursor == "-");
     let mls_active = !mls_unlock.trim().is_empty();
-    if (!has_usable_cursor && live_epoch == 0 && !mls_active)
+    if (!account_sync_ready && live_epoch == 0 && !mls_active)
         || (realm_id.trim().is_empty() && view_id.trim().is_empty())
     {
         return None;
@@ -136,31 +142,24 @@ mod tests {
     use super::*;
 
     #[test]
-    fn kanban_projection_refresh_waits_for_cursor_advance() {
-        let first_key = kanban_projection_refresh_key(" ak:realm:r1 ", "", " ak:cursor:1 ", 0, "");
+    fn kanban_projection_refresh_ignores_cursor_remints_after_sync_is_ready() {
+        let first_key = kanban_projection_refresh_key(" ak:realm:r1 ", "", true, 0, "");
 
         assert_eq!(
-            next_kanban_projection_refresh_key(&first_key, "ak:realm:r1", "", "ak:cursor:1", 0, ""),
-            None
-        );
-        assert_eq!(
-            next_kanban_projection_refresh_key(&first_key, "ak:realm:r1", "", "ak:cursor:2", 0, ""),
-            Some("ak:realm:r1||ak:cursor:2|0|".to_owned())
+            next_kanban_projection_refresh_key(&first_key, "ak:realm:r1", "", true, 0, ""),
+            None,
+            "a newly signed token for the same ready account frontier is not a durable change"
         );
     }
 
     #[test]
-    fn kanban_projection_refresh_ignores_empty_or_bootstrap_cursor() {
+    fn kanban_projection_refresh_waits_for_a_real_freshness_axis() {
         assert_eq!(
-            next_kanban_projection_refresh_key("", "ak:realm:r1", "", "", 0, ""),
+            next_kanban_projection_refresh_key("", "ak:realm:r1", "", false, 0, ""),
             None
         );
         assert_eq!(
-            next_kanban_projection_refresh_key("", "ak:realm:r1", "", "-", 0, ""),
-            None
-        );
-        assert_eq!(
-            next_kanban_projection_refresh_key("", "", "", "ak:cursor:1", 0, ""),
+            next_kanban_projection_refresh_key("", "", "", true, 0, ""),
             None
         );
     }
@@ -170,24 +169,38 @@ mod tests {
         // Account cursor is still the bootstrap sentinel (the cross-member
         // bug case), but the realm events engine bumped its epoch: the panel
         // must still refresh off that second freshness axis.
-        let key = next_kanban_projection_refresh_key("", "ak:realm:r1", "", "-", 1, "");
-        assert_eq!(key, Some("ak:realm:r1||-|1|".to_owned()));
+        let key = next_kanban_projection_refresh_key("", "ak:realm:r1", "", false, 1, "");
+        assert_eq!(key, Some("ak:realm:r1||0|1|".to_owned()));
 
         // Same epoch + same inputs → no churn.
         assert_eq!(
-            next_kanban_projection_refresh_key("ak:realm:r1||-|1|", "ak:realm:r1", "", "-", 1, ""),
+            next_kanban_projection_refresh_key(
+                "ak:realm:r1||0|1|",
+                "ak:realm:r1",
+                "",
+                false,
+                1,
+                ""
+            ),
             None
         );
 
         // A later epoch advances the key again.
         assert_eq!(
-            next_kanban_projection_refresh_key("ak:realm:r1||-|1|", "ak:realm:r1", "", "-", 2, ""),
-            Some("ak:realm:r1||-|2|".to_owned())
+            next_kanban_projection_refresh_key(
+                "ak:realm:r1||0|1|",
+                "ak:realm:r1",
+                "",
+                false,
+                2,
+                ""
+            ),
+            Some("ak:realm:r1||0|2|".to_owned())
         );
 
         // Still no realm/view selector → no refresh even with an epoch.
         assert_eq!(
-            next_kanban_projection_refresh_key("", "", "", "-", 5, ""),
+            next_kanban_projection_refresh_key("", "", "", false, 5, ""),
             None
         );
     }
@@ -213,25 +226,25 @@ mod tests {
         // the pre-join history can decrypt, instead of waiting for a manual
         // page refresh.
         let before = kanban_mls_unlock_signature(false, 0);
-        let boot_key = kanban_projection_refresh_key("ak:realm:r1", "", "-", 0, &before);
+        let boot_key = kanban_projection_refresh_key("ak:realm:r1", "", false, 0, &before);
         assert_eq!(
-            next_kanban_projection_refresh_key(&boot_key, "ak:realm:r1", "", "-", 0, &before),
+            next_kanban_projection_refresh_key(&boot_key, "ak:realm:r1", "", false, 0, &before),
             None,
             "no cursor, no live epoch, no snapshot → still idle"
         );
 
         let after = kanban_mls_unlock_signature(true, 1);
         let unlocked =
-            next_kanban_projection_refresh_key(&boot_key, "ak:realm:r1", "", "-", 0, &after);
-        assert_eq!(unlocked, Some("ak:realm:r1||-|0|snap:1|ep:1".to_owned()));
+            next_kanban_projection_refresh_key(&boot_key, "ak:realm:r1", "", false, 0, &after);
+        assert_eq!(unlocked, Some("ak:realm:r1||0|0|snap:1|ep:1".to_owned()));
 
         // Same snapshot signature again → no churn.
         assert_eq!(
             next_kanban_projection_refresh_key(
-                "ak:realm:r1||-|0|snap:1|ep:1",
+                "ak:realm:r1||0|0|snap:1|ep:1",
                 "ak:realm:r1",
                 "",
-                "-",
+                false,
                 0,
                 &after,
             ),

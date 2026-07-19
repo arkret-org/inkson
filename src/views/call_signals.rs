@@ -1,9 +1,7 @@
 //! App-level call-signaling hub — the receive side of `ak.call.signal`.
 //!
-//! soland delivers inbound call signaling inline on each realm's sync body:
-//! `body.ephemeral[]` carries a typed item
-//! `{ "type":"ak.call.signal", "realm_id":…, "call_signals":[ <envelope> ] }`
-//! where each envelope is the full signed
+//! soland delivers inbound call signaling inline on each Realm sync body as
+//! canonical `body.ephemeral.events[]` envelopes. Each item is the full signed
 //! `{kind, realm_id, actor_id, device_id, sent_at, expires_at,
 //!   payload:{call_id, signal_type, seq, data}, proof}` shape submitted by the
 //! sender side (`submit_call_signal_v1`).
@@ -167,8 +165,7 @@ pub struct DecodedCallSignal {
     pub envelope: Value,
 }
 
-/// Pull the `call_signals[]` envelopes out of one realm sync body's
-/// `ephemeral[]` array and decode each into a [`DecodedCallSignal`].
+/// Decode the canonical `EphemeralEnvelope[]` carried by one Realm sync entry.
 ///
 /// Receiver-side proof verification (spec §5 — the receiver MUST verify the
 /// envelope's `proof`) is intentionally not performed in this structural
@@ -176,34 +173,10 @@ pub struct DecodedCallSignal {
 /// used by sync apply; it verifies each decoded envelope fail-closed before any
 /// ring or inbox side effect.
 pub fn decode_realm_call_signals(realm_id: &str, body: &Value) -> Vec<DecodedCallSignal> {
-    let mut out = Vec::new();
-    let Some(ephemeral) = body.get("ephemeral").and_then(Value::as_array) else {
-        return out;
-    };
-    for item in ephemeral {
-        let is_call_signal = item
-            .get("type")
-            .and_then(Value::as_str)
-            .map(|t| t == "ak.call.signal")
-            .unwrap_or(false);
-        if !is_call_signal {
-            continue;
-        }
-        // Prefer the item's own realm_id; fall back to the sync key.
-        let item_realm = item
-            .get("realm_id")
-            .and_then(Value::as_str)
-            .unwrap_or(realm_id);
-        let Some(envelopes) = item.get("call_signals").and_then(Value::as_array) else {
-            continue;
-        };
-        for envelope in envelopes {
-            if let Some(decoded) = decode_call_signal_envelope(item_realm, envelope) {
-                out.push(decoded);
-            }
-        }
-    }
-    out
+    crate::models::realm_ephemeral_events(body)
+        .iter()
+        .filter_map(|envelope| decode_call_signal_envelope(realm_id, envelope))
+        .collect()
 }
 
 /// Decode a single signed `ak.call.signal` envelope. Returns `None` when the
@@ -681,13 +654,7 @@ mod tests {
 
     fn body_with(envelopes: Vec<Value>) -> Value {
         json!({
-            "ephemeral": [
-                {
-                    "type": "ak.call.signal",
-                    "realm_id": "ak:realm:r",
-                    "call_signals": envelopes,
-                }
-            ]
+            "ephemeral": { "events": envelopes }
         })
     }
 
@@ -714,17 +681,31 @@ mod tests {
     }
 
     #[test]
+    fn decodes_canonical_ephemeral_container() {
+        let envelope = envelope(
+            "did:web:bob",
+            "dev-b",
+            "ak:call:1",
+            "candidate",
+            2,
+            json!({"candidate": "candidate:1"}),
+        );
+        let body = json!({"ephemeral": {"events": [envelope]}});
+
+        let decoded = decode_realm_call_signals("ak:realm:r", &body);
+
+        assert_eq!(decoded.len(), 1);
+        assert_eq!(decoded[0].signal_type, "candidate");
+        assert_eq!(decoded[0].seq, 2);
+    }
+
+    #[test]
     fn decode_skips_non_call_ephemeral_and_bad_kind() {
         let body = json!({
-            "ephemeral": [
-                { "type": "ak.typing", "actor_id": "x" },
-                {
-                    "type": "ak.call.signal",
-                    "call_signals": [
-                        json!({ "kind": "ak.not.call", "actor_id": "y", "payload": {} }),
-                    ],
-                }
-            ]
+            "ephemeral": { "events": [
+                { "kind": "ak.typing", "actor_id": "x" },
+                { "kind": "ak.not.call", "actor_id": "y", "payload": {} }
+            ] }
         });
         assert!(decode_realm_call_signals("ak:realm:r", &body).is_empty());
     }

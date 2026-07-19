@@ -2516,20 +2516,28 @@ pub(crate) fn mls_admission_candidate_realms_for_actor(
 /// `submit_mls_admission_for_invitee` historically ran the instant an invite
 /// was sent, before the invitee had accepted and published an MLS KeyPackage:
 /// the claim failed, no `ak.mls.welcome` was produced, and the invitee was
-/// stuck "waiting for a Welcome". This pass runs on sync — for every Realm
-/// member who has actually joined (`membership=join`) but is not yet in this
+/// stuck "waiting for a Welcome". This pass runs after durable Realm changes
+/// and explicit deferred retries — for every Realm member who has actually
+/// joined (`membership=join`) but is not yet in this
 /// device's MLS group, it (re)attempts admission. Members already in the group
 /// are skipped (no commit spam); members who still have not published a
-/// KeyPackage just error and are retried on the next sync once they publish.
+/// KeyPackage are reported as deferred so the caller can apply bounded backoff.
 ///
-/// Returns the number of members newly admitted on this pass.
+/// The outcome separates completed and deferred work. That prevents an opaque
+/// account cursor from being abused as a retry clock.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) struct MlsAdmissionReconcileOutcome {
+    pub admitted: usize,
+    pub deferred: usize,
+}
+
 pub(crate) async fn reconcile_mls_admissions_for_realm(
     api: &crate::transport::TransportClient,
     state_store: SyncSignal<LocalStateStore>,
     realm_id: String,
     actor_id: String,
     device_id: String,
-) -> anyhow::Result<usize> {
+) -> anyhow::Result<MlsAdmissionReconcileOutcome> {
     // Only Realms this device can admit into: holding MLS state ⇒ able to build
     // the commit + Welcome. Without a snapshot we are not an admit-capable
     // member and have nothing to reconcile.
@@ -2557,7 +2565,7 @@ pub(crate) async fn reconcile_mls_admissions_for_realm(
                     has_snapshot = state_store.read().mls_snapshot_for(&realm_id).is_some(),
                     "admission aborted: cannot read local MLS group roster (snapshot/secret/decrypt) — no member can be admitted"
                 );
-                return Ok(0);
+                return Ok(MlsAdmissionReconcileOutcome::default());
             }
         }
     };
@@ -2575,7 +2583,7 @@ pub(crate) async fn reconcile_mls_admissions_for_realm(
             .collect()
     };
     if pending.is_empty() {
-        return Ok(0);
+        return Ok(MlsAdmissionReconcileOutcome::default());
     }
     tracing::warn!(
         target: "mls_admission",
@@ -2588,7 +2596,7 @@ pub(crate) async fn reconcile_mls_admissions_for_realm(
         group_members = group_member_dids.len(),
         "admission reconcile: attempting to admit joined members not yet in MLS group"
     );
-    let mut admitted = 0_usize;
+    let mut outcome = MlsAdmissionReconcileOutcome::default();
     for invitee_did in pending {
         match submit_mls_admission_for_invitee(
             api,
@@ -2601,7 +2609,7 @@ pub(crate) async fn reconcile_mls_admissions_for_realm(
         .await
         {
             Ok(Some(epoch)) => {
-                admitted += 1;
+                outcome.admitted += 1;
                 tracing::warn!(
                     target: "mls_admission",
                     realm = %short_protocol_id(&realm_id),
@@ -2619,22 +2627,24 @@ pub(crate) async fn reconcile_mls_admissions_for_realm(
                 );
             }
             // A non-fatal failure (most commonly: invitee has not published a
-            // KeyPackage yet) is retried on the next sync. Previously logged at
-            // DEBUG, which wasm tracing silences — the invisible swallow is why
-            // a permanently-stuck invitee produced no observable signal. Surface
-            // the actual error at WARN. (mls-admission-debug)
+            // KeyPackage yet) is reported to the explicit retry scheduler.
+            // Previously logged at DEBUG, which wasm tracing silences — the
+            // invisible swallow is why a permanently-stuck invitee produced no
+            // observable signal. Surface the actual error at WARN.
+            // (mls-admission-debug)
             Err(error) => {
+                outcome.deferred += 1;
                 tracing::warn!(
                     target: "mls_admission",
                     realm = %short_protocol_id(&realm_id),
                     invitee = %short_protocol_id(&invitee_did),
                     %error,
-                    "admission deferred: claim/commit/welcome step failed (will retry on next sync)"
+                    "admission deferred: claim/commit/welcome step failed (bounded retry scheduled)"
                 );
             }
         }
     }
-    Ok(admitted)
+    Ok(outcome)
 }
 
 pub(crate) async fn submit_mls_admission_for_invitees(

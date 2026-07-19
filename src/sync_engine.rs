@@ -368,6 +368,43 @@ fn should_bootstrap_invites(initial: bool) -> bool {
     initial
 }
 
+fn realm_update_has_durable_projection(update: &arkret_sdk::RealmUpdate) -> bool {
+    let entry = &update.entry;
+    entry.timeline.is_some()
+        || entry.state_at_window_start.is_some()
+        || entry.state.is_some()
+        || entry.state_after.is_some()
+        || entry.account_data.is_some()
+        || entry.summary.is_some()
+        || entry.members.is_some()
+        || entry.members_limited.is_some()
+        || entry.members_next_cursor.is_some()
+        || entry.unread_notifications.is_some()
+        || entry.event_states.is_some()
+        || entry.bottoms.is_some()
+}
+
+fn merge_ephemeral_realm_projection(
+    store: &mut LocalStateStore,
+    realm_id: &str,
+    incoming: &Value,
+) {
+    let Some(ephemeral) = incoming.get("ephemeral").cloned() else {
+        return;
+    };
+    let mut merged = store
+        .load()
+        .realm_tree_projections
+        .get(realm_id)
+        .cloned()
+        .unwrap_or_else(|| json!({}));
+    let Some(object) = merged.as_object_mut() else {
+        return;
+    };
+    object.insert("ephemeral".to_owned(), ephemeral);
+    store.save_realm_tree_projection(realm_id.to_owned(), merged);
+}
+
 fn to_device_backfill_cursor(updates: &arkret_sdk::SyncUpdates) -> Option<String> {
     // client-sync.md §10.0: account subscribe is the primary receive path.
     // The standalone queue endpoint is only a continuation path when the
@@ -485,19 +522,35 @@ impl AccountPostCommitHook<crate::client_core::InksonAccountTransport> for Inkso
             return Ok(self.classify_error(error));
         }
 
+        // Typing/presence/call-signal deltas also carry a Realm envelope, but
+        // they cannot create Circle MLS removal obligations. Scanning the
+        // Circle endpoint for those ephemeral-only frames amplified one
+        // typing signal into an extra GET on every account reconnect.
         let realm_ids = response
-            .realm_projections
-            .keys()
-            .cloned()
+            .updates
+            .realm_updates
+            .iter()
+            .filter(|update| realm_update_has_durable_projection(update))
+            .map(|update| update.realm_id.as_str().to_owned())
             .collect::<Vec<_>>();
-        run_circle_scope_rotate_pass(
-            self.start_generation,
-            self.generation.clone(),
-            &self.ctx,
-            &realm_ids,
-        )
-        .await;
-        run_idle_self_update_pass(self.start_generation, self.generation.clone(), &self.ctx).await;
+        if !realm_ids.is_empty() {
+            run_circle_scope_rotate_pass(
+                self.start_generation,
+                self.generation.clone(),
+                &self.ctx,
+                &realm_ids,
+            )
+            .await;
+            // This remains an opportunistic durability pass, but it is now
+            // driven only by durable Realm work. Ephemeral deltas must never
+            // fan out MLS reads or writes.
+            run_idle_self_update_pass(
+                self.start_generation,
+                self.generation.clone(),
+                &self.ctx,
+            )
+            .await;
+        }
         Ok(AccountPostCommitOutcome::Continue)
     }
 }
@@ -1271,19 +1324,28 @@ pub fn apply_response(
             }
             // Explicit `left_realms` deltas — meaningful primarily on
             // incremental sync, but cheap to apply on full sync too.
-            for (id, body) in &response.realm_projections {
-                store.save_realm_tree_projection(id.clone(), body.clone());
-                let view = LocalSealView::from_sync_body(body);
-                store.set_realm_seal_view(id.clone(), view);
-                store.ingest_move_event_states(id, body);
-                let projection_changes =
-                    ingest_kanban_state_events_from_projection(store, id, body)
-                        + ingest_discussion_state_events_from_projection(store, id, body)
-                        + ingest_message_events_from_projection(store, id, body)
-                        + ingest_moderation_events_from_projection(store, id, body);
-                if projection_changes > 0 {
-                    realm_projection_changed = true;
+            for update in &response.updates.realm_updates {
+                let id = update.realm_id.as_str();
+                let Some(body) = response.realm_projections.get(id) else {
+                    continue;
+                };
+                if !is_full_sync && !realm_update_has_durable_projection(update) {
+                    merge_ephemeral_realm_projection(store, id, body);
+                    continue;
                 }
+                // The live epoch represents the durable Realm projection as a
+                // whole, not only events understood by one product surface.
+                // Summary/member/state-only deltas must invalidate durable
+                // consumers just as timeline events do.
+                realm_projection_changed = true;
+                store.save_realm_tree_projection(id.to_owned(), body.clone());
+                let view = LocalSealView::from_sync_body(body);
+                store.set_realm_seal_view(id.to_owned(), view);
+                store.ingest_move_event_states(id, body);
+                let _ = ingest_kanban_state_events_from_projection(store, id, body)
+                    + ingest_discussion_state_events_from_projection(store, id, body)
+                    + ingest_message_events_from_projection(store, id, body)
+                    + ingest_moderation_events_from_projection(store, id, body);
                 ingest_membership_events_from_projection(store, id, body);
                 // Fold the discussion timeline into `raw_operations` too so the
                 // card-detail Discussion tab renders local-first instead of
@@ -2311,6 +2373,56 @@ mod tests {
     fn steady_state_sync_does_not_poll_invites() {
         assert!(should_bootstrap_invites(true));
         assert!(!should_bootstrap_invites(false));
+    }
+
+    #[test]
+    fn circle_scan_ignores_ephemeral_only_realm_updates() {
+        let realm_id = sdk_realm_id();
+        let ephemeral_only = arkret_sdk::RealmUpdate {
+            realm_id: realm_id.clone(),
+            entry: serde_json::from_value(json!({
+                "ephemeral": {"events": []}
+            }))
+            .expect("ephemeral-only Realm update"),
+        };
+        assert!(!realm_update_has_durable_projection(&ephemeral_only));
+
+        let durable = arkret_sdk::RealmUpdate {
+            realm_id,
+            entry: serde_json::from_value(json!({
+                "state": {"events": [serde_json::to_value(sdk_event(
+                    "ak.circle.member.remove",
+                    json!({"circle_id": "ak:circle:0196419b-0000-7000-8000-000000000001"})
+                )).unwrap()]}
+            }))
+            .expect("durable Realm update"),
+        };
+        assert!(realm_update_has_durable_projection(&durable));
+    }
+
+    #[test]
+    fn ephemeral_realm_delta_does_not_replace_durable_projection() {
+        let mut store = temp_store("ephemeral-realm-merge");
+        store.save_realm_tree_projection(
+            "ak:realm:demo",
+            json!({"summary": {"joined_member_count": 2}, "members": []}),
+        );
+
+        merge_ephemeral_realm_projection(
+            &mut store,
+            "ak:realm:demo",
+            &json!({"ephemeral": {"events": [{"kind": "ak.typing"}]}}),
+        );
+
+        let projection = store
+            .load()
+            .realm_tree_projections
+            .get("ak:realm:demo")
+            .cloned()
+            .expect("merged Realm projection");
+        assert_eq!(projection["summary"]["joined_member_count"], 2);
+        assert_eq!(projection["members"], json!([]));
+        assert_eq!(projection["ephemeral"]["events"][0]["kind"], "ak.typing");
     }
 
     #[test]

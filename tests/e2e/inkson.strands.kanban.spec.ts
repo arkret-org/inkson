@@ -33,9 +33,6 @@ test("kanban card detail embeds discussion without boundary copy", async ({ page
   expect(cancelButtonBox.height).toBeLessThanOrEqual(44);
   await detailPopup.getByTestId("card-detail-cancel-edit-button").click();
   await expect(detailPopup.getByTestId("card-description-panel")).toBeVisible();
-  await detailPopup.getByTestId("card-detail-tab-discussion").click();
-  await expect(page.getByTestId("chat-panel")).toBeVisible();
-  await expect(page.getByTestId("open-primary-discussion")).toHaveCount(0);
   await detailPopup.getByTestId("card-detail-sidebar-tab-members").click();
   const memberGroup = detailPopup.getByTestId("card-detail-member-group");
   const selfMention = memberGroup
@@ -57,6 +54,12 @@ test("kanban card detail embeds discussion without boundary copy", async ({ page
   expect(agentMentionBox.x).toBeGreaterThan(selfMentionBox.x);
 
   await agentMention.click();
+  await expect(detailPopup.getByTestId("card-detail-tab-discussion")).toHaveAttribute(
+    "aria-selected",
+    "true",
+  );
+  await expect(page.getByTestId("chat-panel")).toBeVisible();
+  await expect(page.getByTestId("open-primary-discussion")).toHaveCount(0);
   await expect(detailPopup.getByTestId("chat-input")).toHaveValue("@me/assistant ");
   await detailPopup.getByTestId("mention-chip").getByRole("button").click();
   await detailPopup.getByTestId("chat-input").fill("");

@@ -440,6 +440,15 @@ impl AccountSyncStep {
         })
     }
 }
+
+/// Canonical per-Realm ephemeral envelope slice.
+pub(crate) fn realm_ephemeral_events(body: &Value) -> &[Value] {
+    body.get("ephemeral")
+        .and_then(|container| container.get("events"))
+        .and_then(Value::as_array)
+        .map(Vec::as_slice)
+        .unwrap_or(&[])
+}
 // `resolve-realm` decodes into the canonical SDK wire types so the client stays
 // byte-compatible with soland's `DirectoryRealmResolutionOutcome` response. A
 // inkson-local duplicate previously drifted from the wire (a required

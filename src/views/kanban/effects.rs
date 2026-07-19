@@ -369,6 +369,10 @@ pub(super) fn KanbanEffects(
         move || {
             let initial_view = board_view_id.peek().clone();
             let initial_cursor = sync_cursor.peek().clone();
+            let initial_sync_ready = {
+                let cursor = initial_cursor.trim();
+                !(cursor.is_empty() || cursor == "-")
+            };
             let initial_epoch = *realm_live_epoch.peek();
             let initial_mls_unlock = {
                 let store = state_store.peek();
@@ -380,7 +384,7 @@ pub(super) fn KanbanEffects(
             kanban_projection_refresh_key(
                 &initial_realm_id,
                 &initial_view,
-                &initial_cursor,
+                initial_sync_ready,
                 initial_epoch,
                 &initial_mls_unlock,
             )
@@ -406,7 +410,15 @@ pub(super) fn KanbanEffects(
         if api_token.trim().is_empty() {
             return;
         }
-        let cursor = sync_cursor();
+        // Observe the cursor so the first successful account sync wakes this
+        // effect, but reduce it to a readiness transition before constructing
+        // the refresh key. Cursor tokens are checkpoints, not render
+        // revisions; re-minting the same frontier must not backfill events.
+        let account_sync_ready = {
+            let cursor = sync_cursor();
+            let cursor = cursor.trim();
+            !(cursor.is_empty() || cursor == "-")
+        };
         // Reading `realm_live_epoch` here subscribes this effect to the per-realm
         // events engine, so fresh cross-member events trigger a reproject even
         // when the account `sync_cursor` never advanced for them.
@@ -430,7 +442,7 @@ pub(super) fn KanbanEffects(
             live_refresh_key_seen.peek().as_str(),
             &lifecycle_realm_id,
             &view,
-            &cursor,
+            account_sync_ready,
             live_epoch,
             &mls_unlock,
         ) else {
@@ -523,6 +535,7 @@ pub(super) fn KanbanEffects(
         let restore_actor = account_did.clone();
         let restore_device = device_id.clone();
         let restore_sync_cursor = sync_cursor;
+        let restore_realm_live_epoch = realm_live_epoch;
         use_effect(move || {
             let Some(card) = selected_card() else {
                 return;
@@ -562,8 +575,19 @@ pub(super) fn KanbanEffects(
                 card.body_locked,
                 card.synthesis_locked
             );
-            let cursor = restore_sync_cursor();
-            let restore_key = format!("{restore_key}|cursor={cursor}");
+            // Wake when account bootstrap first becomes ready, but never use
+            // the opaque cursor token as a data revision. Durable Realm
+            // changes are represented by the explicit live epoch.
+            let account_sync_ready = {
+                let cursor = restore_sync_cursor();
+                let cursor = cursor.trim();
+                !(cursor.is_empty() || cursor == "-")
+            };
+            let live_epoch = restore_realm_live_epoch();
+            let restore_key = format!(
+                "{restore_key}|sync_ready={}|epoch={live_epoch}",
+                account_sync_ready as u8
+            );
             if mls_sidecar_restore_key_seen() == restore_key {
                 return;
             }

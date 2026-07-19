@@ -3014,6 +3014,24 @@ fn explicit_member_click_builds_user_and_owned_agent_mentions() {
     assert!(clicked_agent.is_agent);
     assert_eq!(clicked_agent.controller_subject_id, account_did);
     assert_eq!(clicked_agent.agent_slug_at_time, "summary");
+
+    let before_handle_load = owned_agent_mention_candidate(
+        &unannotated_owned_agent.did,
+        Some("summary"),
+        account_did,
+        None,
+    )
+    .expect("@me selector must not wait for the account handle");
+    assert_eq!(before_handle_load.insert_label(), "me/summary");
+    assert!(before_handle_load.controller_handle_at_time.is_empty());
+    assert!(
+        composer_mention_nodes(
+            "ask @me/summary",
+            std::slice::from_ref(&before_handle_load),
+            account_did,
+        )
+        .is_empty()
+    );
 }
 
 #[test]
@@ -3412,25 +3430,26 @@ fn typing_actor_snapshot_filters_expired_and_self_entries() {
     let realms = std::collections::BTreeMap::from([(
         "ak:realm:demo".to_owned(),
         json!({
-            "ephemeral": [{
-                "type": "ak.typing",
-                "realm_id": "ak:realm:demo",
-                "strand_id": "ak:strand:demo",
-                "actors": [
-                    {
-                        "actor": "did:web:alice.example",
-                        "expires_at": future.to_rfc3339_opts(chrono::SecondsFormat::Millis, true)
-                    },
-                    {
-                        "actor": "did:web:bob.example",
-                        "expires_at": expired.to_rfc3339_opts(chrono::SecondsFormat::Millis, true)
-                    },
-                    {
-                        "actor": "did:web:self.example",
-                        "expires_at": future.to_rfc3339_opts(chrono::SecondsFormat::Millis, true)
-                    }
-                ]
-            }]
+            "ephemeral": { "events": [
+                {
+                    "kind": "ak.typing",
+                    "actor_id": "did:web:alice.example",
+                    "expires_at": future.to_rfc3339_opts(chrono::SecondsFormat::Millis, true),
+                    "payload": { "typing": true, "strand_id": "ak:strand:demo" }
+                },
+                {
+                    "kind": "ak.typing",
+                    "actor_id": "did:web:bob.example",
+                    "expires_at": expired.to_rfc3339_opts(chrono::SecondsFormat::Millis, true),
+                    "payload": { "typing": true, "strand_id": "ak:strand:demo" }
+                },
+                {
+                    "kind": "ak.typing",
+                    "actor_id": "did:web:self.example",
+                    "expires_at": future.to_rfc3339_opts(chrono::SecondsFormat::Millis, true),
+                    "payload": { "typing": true, "strand_id": "ak:strand:demo" }
+                }
+            ] }
         }),
     )]);
 
@@ -3452,6 +3471,40 @@ fn typing_actor_snapshot_filters_expired_and_self_entries() {
         ),
         vec!["did:web:alice.example".to_owned()]
     );
+}
+
+#[test]
+fn typing_actor_snapshot_reads_canonical_ephemeral_envelopes() {
+    let expires_at = chrono::Utc::now() + chrono::Duration::seconds(60);
+    let realms = std::collections::BTreeMap::from([(
+        "ak:realm:demo".to_owned(),
+        json!({
+            "ephemeral": {"events": [
+                {
+                    "kind": "ak.typing",
+                    "actor_id": "did:web:alice.example",
+                    "expires_at": expires_at.to_rfc3339_opts(chrono::SecondsFormat::Millis, true),
+                    "payload": {"strand_id": "ak:strand:demo", "typing": true}
+                },
+                {
+                    "kind": "ak.typing",
+                    "actor_id": "did:web:bob.example",
+                    "expires_at": expires_at.to_rfc3339_opts(chrono::SecondsFormat::Millis, true),
+                    "payload": {"strand_id": "ak:strand:demo", "typing": false}
+                }
+            ]}
+        }),
+    )]);
+
+    let snapshot = typing_actor_snapshot_from_sync_realms(
+        &realms,
+        "ak:realm:demo",
+        "ak:strand:demo",
+        "did:web:self.example",
+    );
+
+    assert_eq!(snapshot.actors, vec!["did:web:alice.example".to_owned()]);
+    assert_eq!(snapshot.next_expires_at_ms, Some(expires_at.timestamp_millis()));
 }
 
 #[test]

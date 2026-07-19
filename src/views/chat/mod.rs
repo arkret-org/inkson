@@ -321,6 +321,17 @@ fn composer_mention_nodes(
         let Ok(subject_id) = arkret_sdk::Did::new(chip.did.clone()) else {
             continue;
         };
+        // `@me/<slug>` is allowed into the draft before the signed account
+        // primary handle finishes loading. Do not turn that incomplete chip
+        // into a generic actor mention; the send path resolves the selector
+        // once the authoritative controller handle is available.
+        if chip.is_agent
+            && (chip.controller_subject_id.trim().is_empty()
+                || chip.controller_handle_at_time.trim().is_empty()
+                || chip.agent_slug_at_time.trim().is_empty())
+        {
+            continue;
+        }
         let insert_label = chip.insert_label().to_owned();
         let parsed_handle = (!chip.is_agent)
             .then(|| crate::identity::handle::parse_user_handle(&insert_label))
@@ -827,12 +838,22 @@ pub fn ChatPanel(
                 .as_ref()
                 .map(|circle| circle.circle_id.clone())
         });
+    // Participation is a durable Realm projection. The account cursor is an
+    // opaque resume checkpoint and can be re-minted for typing/receipts/calls;
+    // reduce it to the one useful transition (bootstrap is ready) and use the
+    // Realm epoch for subsequent durable invalidation.
+    let account_sync_ready = {
+        let cursor = sync_cursor();
+        let cursor = cursor.trim();
+        !(cursor.is_empty() || cursor == "-")
+    };
     let agent_participation_sync_key = format!(
-        "{}|{}|{}|{}|{}",
+        "{}|{}|{}|{}|{}|{}",
         selected_realm_id,
         selected_channel_value,
         selected_scope_circle.as_deref().unwrap_or_default(),
-        sync_cursor(),
+        account_sync_ready as u8,
+        realm_live_epoch(),
         readable_participation_agent_ids.join(",")
     );
     let mut public_agent_dids = std::collections::BTreeSet::new();

@@ -13,7 +13,6 @@ pub(super) struct MlsRuntimeEffectState {
     pub device_id: Signal<String>,
     pub server_description: Signal<Option<ServiceDescribe>>,
     pub sync_bootstrap_complete: Signal<bool>,
-    pub sync_cursor: Signal<String>,
     pub realm_live_epoch: Signal<u64>,
     pub mls_admission_reconcile_in_flight: Signal<bool>,
     pub mls_admission_reconcile_pending: Signal<bool>,
@@ -47,7 +46,6 @@ pub(super) fn MlsRuntimeEffects(state: MlsRuntimeEffectState) -> Element {
         device_id,
         server_description,
         sync_bootstrap_complete,
-        sync_cursor,
         realm_live_epoch,
         mls_admission_reconcile_in_flight,
         mls_admission_reconcile_pending,
@@ -71,6 +69,9 @@ pub(super) fn MlsRuntimeEffects(state: MlsRuntimeEffectState) -> Element {
         base_url,
     } = SessionContext::get();
     let did_cache = use_context::<Signal<crate::identity::did_resolver::DidResolutionCache>>();
+    let mls_admission_retry_attempt = use_signal(|| 0_u32);
+    let realm_key_pull_retry_key = use_signal(|| Option::<String>::None);
+    let realm_key_pull_retry_attempt = use_signal(|| 0_u32);
 
     {
         let mut seen_publish_key = mls_key_package_publish_key_seen;
@@ -139,15 +140,15 @@ pub(super) fn MlsRuntimeEffects(state: MlsRuntimeEffectState) -> Element {
         // encrypted Realm this device administers, (re)admit anyone not yet in
         // the MLS group so their `ak.mls.welcome` is finally produced. Closes
         // the invite-time race where admission ran before the invitee had
-        // published a KeyPackage: re-runs each sync round (via `sync_cursor`)
-        // so a member who publishes their KeyPackage after joining is picked up.
-        // Also observes `realm_live_epoch`, because join/accept events may
-        // arrive through the per-Realm stream without advancing account sync.
+        // published a KeyPackage: re-runs when the durable Realm projection
+        // changes, so a member who publishes their KeyPackage after joining is
+        // picked up without tying an admission network pass to an opaque
+        // account cursor re-mint.
         let admit_state_store = state_store;
-        let admit_sync_cursor = sync_cursor;
         let admit_realm_live_epoch = realm_live_epoch;
         let mut admit_in_flight = mls_admission_reconcile_in_flight;
         let mut admit_pending = mls_admission_reconcile_pending;
+        let mut admit_retry_attempt = mls_admission_retry_attempt;
         let mut admit_last_error = last_error;
         let mut admit_diag_last = mls_admission_diag_last;
         let secure_store_ready_for_admit = secure_store_bootstrap_ready;
@@ -172,13 +173,15 @@ pub(super) fn MlsRuntimeEffects(state: MlsRuntimeEffectState) -> Element {
             if base.trim().is_empty() || session.trim().is_empty() || actor.trim().is_empty() {
                 return;
             }
-            // Re-fire on every sync round so a late-published KeyPackage is
-            // retried; cheap pre-filter avoids work when there is nothing to do.
-            let _ = admit_sync_cursor();
+            // Durable Realm changes are the admission freshness axis. The
+            // account cursor is a resume checkpoint and may also advance for
+            // typing/receipts/calls, none of which can create MLS candidates.
             let _ = admit_realm_live_epoch();
             let _ = admit_pending();
             let candidate_realms = {
-                let store = admit_state_store.read();
+                // Do not subscribe to every local-store write. The explicit
+                // durable epoch above is the only projection trigger.
+                let store = admit_state_store.peek();
                 crate::views::realm_admin::mls_admission_candidate_realms_for_actor(&store, &actor)
             };
             if candidate_realms.is_empty() {
@@ -188,7 +191,7 @@ pub(super) fn MlsRuntimeEffects(state: MlsRuntimeEffectState) -> Element {
                 // DEBUG here would be invisible — emit a throttled WARN naming
                 // the blocking cause. (mls-admission-debug)
                 let Some(diag) = ({
-                    let store = admit_state_store.read();
+                    let store = admit_state_store.peek();
                     let encrypted_local_realms = store
                         .load()
                         .realm_tree_projections
@@ -269,6 +272,7 @@ pub(super) fn MlsRuntimeEffects(state: MlsRuntimeEffectState) -> Element {
                 let outcome =
                     crate::transport::auth::with_authed_api(&base, session, |api| async move {
                         let mut admitted_total = 0_usize;
+                        let mut deferred_total = 0_usize;
                         let mut failures = Vec::<String>::new();
                         for (realm_id, _) in candidate_realms {
                             match crate::views::realm_admin::reconcile_mls_admissions_for_realm(
@@ -280,23 +284,26 @@ pub(super) fn MlsRuntimeEffects(state: MlsRuntimeEffectState) -> Element {
                             )
                             .await
                             {
-                                Ok(admitted) => admitted_total += admitted,
+                                Ok(reconcile) => {
+                                    admitted_total += reconcile.admitted;
+                                    deferred_total += reconcile.deferred;
+                                }
                                 Err(error) => failures
                                     .push(format!("{}: {error:?}", short_protocol_id(&realm_id))),
                             }
                         }
-                        Ok::<_, anyhow::Error>((admitted_total, failures))
+                        Ok::<_, anyhow::Error>((admitted_total, deferred_total, failures))
                     })
                     .await;
-                admit_in_flight.set(false);
-                if *admit_pending.peek() {
-                    admit_pending.set(false);
-                }
-                match outcome {
-                    Ok((admitted, failures)) if admitted > 0 => {
+                let deferred = outcome
+                    .as_ref()
+                    .map(|(_, deferred, _)| *deferred)
+                    .unwrap_or_default();
+                match &outcome {
+                    Ok((admitted, _, failures)) if *admitted > 0 => {
                         tracing::warn!(
                             target: "mls_admission",
-                            admitted,
+                            admitted = *admitted,
                             "admitted joined members into MLS group"
                         );
                         if !failures.is_empty() {
@@ -311,7 +318,7 @@ pub(super) fn MlsRuntimeEffects(state: MlsRuntimeEffectState) -> Element {
                             )));
                         }
                     }
-                    Ok((_, failures)) if !failures.is_empty() => {
+                    Ok((_, _, failures)) if !failures.is_empty() => {
                         tracing::warn!(
                             target: "mls_admission",
                             failures = %failures.join("; "),
@@ -332,6 +339,31 @@ pub(super) fn MlsRuntimeEffects(state: MlsRuntimeEffectState) -> Element {
                         admit_last_error.set(Some(format!("MLS admission reconcile: {error:?}")));
                     }
                 }
+
+                if deferred > 0 {
+                    // KeyPackage publication is not a Realm event, so waiting
+                    // for an unrelated account cursor change is neither
+                    // reliable nor bounded. Hold the single-flight guard
+                    // across an explicit exponential delay, then release one
+                    // coalesced retry: 2, 4, 8, 16, 32, 60 seconds.
+                    let attempt = *admit_retry_attempt.peek();
+                    let retry_after_secs = (2_u64 << attempt.min(5)).min(60);
+                    admit_retry_attempt.set(attempt.saturating_add(1).min(5));
+                    if !*admit_pending.peek() {
+                        admit_pending.set(true);
+                    }
+                    crate::runtime_helpers::sleep_for(std::time::Duration::from_secs(
+                        retry_after_secs,
+                    ))
+                    .await;
+                } else if *admit_retry_attempt.peek() != 0 {
+                    admit_retry_attempt.set(0);
+                }
+                admit_in_flight.set(false);
+                if *admit_pending.peek() {
+                    // This transition is the single subscribed retry edge.
+                    admit_pending.set(false);
+                }
             });
         });
     }
@@ -341,15 +373,17 @@ pub(super) fn MlsRuntimeEffects(state: MlsRuntimeEffectState) -> Element {
         // sealed `history_secret`s so pre-join content becomes decryptable
         // (tier-3), and (b) — as a provider — answering every inbound
         // `ak.realm_key.request` by sealing the retained history range back to
-        // the requester. Re-runs each sync round so a late share/request is
-        // picked up; a single-flight guard prevents overlap.
+        // the requester. The local to-device inbox is the data source; failed
+        // receiver pulls use an explicit bounded-rate retry. A single-flight
+        // guard prevents overlap.
         let share_route_uses_realm_context = route_uses_realm_context;
         let share_context_realm_id = context_realm_id.clone();
         let mut share_state_store = state_store;
-        let share_sync_cursor = sync_cursor;
         let mut share_in_flight = realm_key_sharing_in_flight;
         let mut share_request_dedup = realm_key_request_dedup;
         let mut share_answer_backoff = realm_key_answer_backoff_until;
+        let mut share_pull_retry_key = realm_key_pull_retry_key;
+        let mut share_pull_retry_attempt = realm_key_pull_retry_attempt;
         let secure_store_ready_for_share = secure_store_bootstrap_ready;
         let share_did_cache = did_cache;
         use_effect(move || {
@@ -380,9 +414,6 @@ pub(super) fn MlsRuntimeEffects(state: MlsRuntimeEffectState) -> Element {
             {
                 return;
             }
-            // Re-fire on every sync round so a freshly delivered share/request is
-            // consumed.
-            let _ = share_sync_cursor();
             // Cheap pre-filter: drain inbound realm-key envelopes globally by
             // their own Realm binding. Provider response is a to-device duty,
             // not a page-local action; the active Realm only matters for this
@@ -436,18 +467,24 @@ pub(super) fn MlsRuntimeEffects(state: MlsRuntimeEffectState) -> Element {
                 });
                 (shares_by_realm, requests, pull_request_key)
             };
-            let needs_pull = pull_request_key
-                .as_deref()
-                .is_some_and(|key| share_request_dedup().as_deref() != Some(key));
+            let blocked_pull_key = share_pull_retry_key();
+            let needs_pull = pull_request_key.as_deref().is_some_and(|key| {
+                share_request_dedup().as_deref() != Some(key)
+                    && blocked_pull_key.as_deref() != Some(key)
+            });
             if shares_by_realm.is_empty() && requests.is_empty() && !needs_pull {
                 return;
             }
-            if share_in_flight() {
+            // This is a guard, not a reactive freshness source. Subscribing to
+            // it would make set(false) immediately re-enter the network pass.
+            if *share_in_flight.peek() {
                 return;
             }
             share_in_flight.set(true);
             // (b) Answer inbound requests (network).
             spawn(async move {
+                let mut pull_completed = false;
+                let mut deferred_pull_key = None::<String>;
                 // (a) Install inbound shares locally. SEC-02: before verifying
                 // each share's `sender_device_signature` we MUST resolve the
                 // sender device's authoritative directory key, so the
@@ -640,18 +677,48 @@ pub(super) fn MlsRuntimeEffects(state: MlsRuntimeEffectState) -> Element {
                             if let Some(key) = pull_request_key.clone() {
                                 share_request_dedup.set(Some(key));
                             }
+                            pull_completed = true;
                         }
-                        Ok(None) => {}
+                        Ok(None) => {
+                            deferred_pull_key = pull_request_key.clone();
+                        }
                         Err(error) => {
+                            deferred_pull_key = pull_request_key.clone();
                             tracing::debug!(
                                 realm = %short_protocol_id(&realm_for_log),
                                 ?error,
-                                "history key request deferred (will retry on next sync)"
+                                "history key request deferred; explicit backoff scheduled"
                             );
                         }
                     }
                 }
                 share_in_flight.set(false);
+                if pull_completed {
+                    if *share_pull_retry_attempt.peek() != 0 {
+                        share_pull_retry_attempt.set(0);
+                    }
+                    if share_pull_retry_key.peek().is_some() {
+                        share_pull_retry_key.set(None);
+                    }
+                } else if let Some(retry_key) = deferred_pull_key {
+                    // A failed pull does not mutate sync state, so "next sync"
+                    // was not a scheduler. Block only this dedup key, release
+                    // the shared in-flight guard for inbound work, then wake a
+                    // bounded-rate retry explicitly: 2..60 seconds.
+                    let attempt = *share_pull_retry_attempt.peek();
+                    let retry_after_secs = (2_u64 << attempt.min(5)).min(60);
+                    share_pull_retry_attempt.set(attempt.saturating_add(1).min(5));
+                    if share_pull_retry_key.peek().as_deref() != Some(retry_key.as_str()) {
+                        share_pull_retry_key.set(Some(retry_key.clone()));
+                    }
+                    crate::runtime_helpers::sleep_for(std::time::Duration::from_secs(
+                        retry_after_secs,
+                    ))
+                    .await;
+                    if share_pull_retry_key.peek().as_deref() == Some(retry_key.as_str()) {
+                        share_pull_retry_key.set(None);
+                    }
+                }
             });
         });
     }

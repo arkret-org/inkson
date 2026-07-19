@@ -1762,42 +1762,39 @@ pub(crate) fn typing_actor_snapshot_from_sync_realms(
         if !sync_realm_ids_match(candidate_realm_id, realm_id) {
             continue;
         }
-        let Some(ephemeral) = body.get("ephemeral").and_then(Value::as_array) else {
-            continue;
-        };
-        for item in ephemeral {
-            let kind = value_string_at(item, &["type", "kind"]).unwrap_or_default();
+        for item in crate::models::realm_ephemeral_events(body) {
+            let kind = value_string_at(item, &["kind"]).unwrap_or_default();
             if kind != "ak.typing" {
                 continue;
             }
-            if value_string_at(item, &["strand_id"]).unwrap_or_default() != strand_id {
-                continue;
-            }
-            let Some(entries) = item.get("actors").and_then(Value::as_array) else {
+            let Some(payload) = item.get("payload") else {
                 continue;
             };
-            for entry in entries {
-                let Some(expires_at) = value_string_at(entry, &["expires_at"])
-                    .and_then(|value| chrono::DateTime::parse_from_rfc3339(value).ok())
-                    .map(|value| value.with_timezone(&chrono::Utc))
-                else {
-                    continue;
-                };
-                if expires_at <= now {
-                    continue;
-                }
-                let actor = value_string_at(entry, &["actor", "actor_id"])
-                    .unwrap_or_default()
-                    .trim();
-                if !actor.is_empty() && actor != account_did {
-                    actors.insert(actor.to_owned());
-                    let expires_at_ms = expires_at.timestamp_millis();
-                    next_expires_at_ms = Some(
-                        next_expires_at_ms
-                            .map(|current| current.min(expires_at_ms))
-                            .unwrap_or(expires_at_ms),
-                    );
-                }
+            if payload.get("typing").and_then(Value::as_bool) == Some(false)
+                || value_string_at(payload, &["strand_id"]).unwrap_or_default() != strand_id
+            {
+                continue;
+            }
+            let Some(expires_at) = value_string_at(item, &["expires_at"])
+                .and_then(|value| chrono::DateTime::parse_from_rfc3339(value).ok())
+                .map(|value| value.with_timezone(&chrono::Utc))
+            else {
+                continue;
+            };
+            if expires_at <= now {
+                continue;
+            }
+            let actor = value_string_at(item, &["actor_id"])
+                .unwrap_or_default()
+                .trim();
+            if !actor.is_empty() && actor != account_did {
+                actors.insert(actor.to_owned());
+                let expires_at_ms = expires_at.timestamp_millis();
+                next_expires_at_ms = Some(
+                    next_expires_at_ms
+                        .map(|current| current.min(expires_at_ms))
+                        .unwrap_or(expires_at_ms),
+                );
             }
         }
     }
