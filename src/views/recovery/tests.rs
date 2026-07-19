@@ -6,7 +6,7 @@ use super::backup_summary::{
     backup_class_counts, backup_inventory_status, parse_backup_list, parse_backup_summary,
     sorted_backups_latest_first,
 };
-use super::state::recovery_state_has_user_material;
+use super::state::{decode_recovery_public_key_multibase, recovery_state_has_user_material};
 use super::types::RecoveryState;
 
 #[test]
@@ -106,4 +106,23 @@ fn recovery_state_with_key_is_configured() {
     let mut keyed = RecoveryState::default();
     keyed.recovery_key_fingerprint = "sha256:abc".to_owned();
     assert!(recovery_state_has_user_material(&keyed));
+}
+
+#[test]
+fn recovery_public_multikey_decodes_normative_x25519_kat() {
+    let decoded =
+        decode_recovery_public_key_multibase("z6LSriWhVBzW9Vz2PvqbieSz7Aa2hPLzTKJuDwXTMKFeomeW")
+            .unwrap();
+    assert_eq!(
+        crate::canonical::hex_encode(&decoded),
+        "df788d7169420382ba1358ff083c77f48a8d98cf4b6f08efdc2555af8f41b06f"
+    );
+}
+
+#[test]
+fn recovery_public_multikey_rejects_an_ed25519_key() {
+    assert!(
+        decode_recovery_public_key_multibase("z6MkogKw38hXxUkpMWitoBubBGHZzeGrQJ4oHF36iegUbmpA")
+            .is_err()
+    );
 }

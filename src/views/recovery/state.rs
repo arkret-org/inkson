@@ -108,21 +108,46 @@ pub(crate) fn local_recovery_public_key(
     state_store: &LocalStateStore,
     account_key: &str,
 ) -> Option<Vec<u8>> {
+    local_recovery_public_key_result(state_store, account_key).ok()
+}
+
+pub(crate) fn local_recovery_public_key_result(
+    state_store: &LocalStateStore,
+    account_key: &str,
+) -> anyhow::Result<Vec<u8>> {
     if account_key.trim().is_empty() {
-        return None;
+        anyhow::bail!("active account key is empty");
     }
-    state_store
-        .load_private_data(account_key, RECOVERY_STATE_KEY)
-        .and_then(|raw| serde_json::from_str::<RecoveryState>(&raw).ok())
-        .map(|state| state.backup_hpke_public_key_multibase)
-        .map(|key| key.trim().to_owned())
-        .filter(|key| !key.is_empty())
-        .and_then(|key| arkret_sdk::decode_multibase_base58btc(&key).ok())
-        .and_then(|encoded| {
-            let (codec, header_len) = arkret_sdk::decode_multicodec_varint(&encoded)?;
-            (codec == 0xec && encoded.len().saturating_sub(header_len) == 32)
-                .then(|| encoded[header_len..].to_vec())
-        })
+    let raw = state_store.load_private_data(account_key, RECOVERY_STATE_KEY);
+    let raw = match raw {
+        Some(raw) => raw,
+        None if state_store
+            .private_data_keys()
+            .iter()
+            .any(|key| key == RECOVERY_STATE_KEY) =>
+        {
+            anyhow::bail!("local recovery metadata cannot be decoded for the active account")
+        }
+        None => anyhow::bail!("local recovery metadata is unavailable"),
+    };
+    let state: RecoveryState = serde_json::from_str(&raw)
+        .map_err(|error| anyhow::anyhow!("local recovery metadata is invalid: {error}"))?;
+    decode_recovery_public_key_multibase(&state.backup_hpke_public_key_multibase)
+}
+
+pub(super) fn decode_recovery_public_key_multibase(key: &str) -> anyhow::Result<Vec<u8>> {
+    let key = key.trim();
+    if key.is_empty() {
+        anyhow::bail!("local recovery metadata has no backup HPKE public key");
+    }
+    let encoded = arkret_sdk::decode_multibase_base58btc(key)
+        .map_err(|error| anyhow::anyhow!("local backup HPKE public key is invalid: {error}"))?;
+    let (codec, header_len) = arkret_sdk::decode_multicodec_varint(&encoded)
+        .ok_or_else(|| anyhow::anyhow!("local backup HPKE public key has no multicodec"))?;
+    if codec != 0xec || encoded.len().saturating_sub(header_len) != 32 {
+        anyhow::bail!("local backup HPKE public key is not an X25519 public multikey");
+    }
+    Ok(encoded[header_len..].to_vec())
 }
 
 pub(crate) fn fmt_relative(iso: &str) -> String {

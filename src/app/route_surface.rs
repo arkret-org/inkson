@@ -449,6 +449,7 @@ pub(super) fn RouteSurface(state: RouteSurfaceState) -> Element {
                     },
                     Route::Onboarding => rsx! {
                         crate::views::onboarding::OnboardingPanel {
+                            secure_store_ready: secure_store_bootstrap_ready(),
                             token,
                             account_did,
                             device_id,
