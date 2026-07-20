@@ -225,6 +225,88 @@ pub fn cached_sidecar_display_mode(
 #[derive(Clone, Copy)]
 pub struct HostedSidecarStateContext(pub Signal<Option<HostedSidecarState>>);
 
+#[component]
+pub fn HostedSidecarContextBar(base_url: String, api_token: String, device_id: String) -> Element {
+    let mut hosted_state = use_context::<HostedSidecarStateContext>().0;
+    let mut state_store = crate::app::SessionContext::get().state_store;
+    let Some(session) = hosted_state() else {
+        return rsx! {};
+    };
+    let security_label = if session.membership_ready() {
+        "E2EE"
+    } else {
+        "Reconciling access"
+    };
+    let merged_base = base_url.clone();
+    let merged_token = api_token.clone();
+    let merged_device = device_id.clone();
+    let sidecar_base = base_url;
+    let sidecar_token = api_token;
+    let sidecar_device = device_id;
+
+    rsx! {
+        div { class: "sidecar-context-strip", "data-testid": "sidecar-context-strip",
+            div { class: "sidecar-context-main",
+                strong { "Private Sidecar active" }
+                span { class: "muted", "Only you and your eligible AI Agents · E2EE" }
+            }
+            div { class: "sidecar-display-mode", role: "group", "aria-label": "Private Sidecar display mode",
+                button {
+                    r#type: "button",
+                    class: if session.display_mode == arkret_sdk::AgentSidecarDisplayMode::ContextMerged { "active" } else { "" },
+                    "data-testid": "sidecar-mode-context-merged",
+                    onclick: move |_| {
+                        if let Some(mut current) = hosted_state() {
+                            current.display_mode = arkret_sdk::AgentSidecarDisplayMode::ContextMerged;
+                            push_sidecar_display_mode(
+                                &mut state_store.write(),
+                                merged_base.clone(),
+                                merged_token.clone(),
+                                current.controller_id.clone(),
+                                merged_device.clone(),
+                                &current,
+                            );
+                            hosted_state.set(Some(current));
+                        }
+                    },
+                    "Original Strand + Sidecar"
+                }
+                button {
+                    r#type: "button",
+                    class: if session.display_mode == arkret_sdk::AgentSidecarDisplayMode::SidecarOnly { "active" } else { "" },
+                    "data-testid": "sidecar-mode-sidecar-only",
+                    onclick: move |_| {
+                        if let Some(mut current) = hosted_state() {
+                            current.display_mode = arkret_sdk::AgentSidecarDisplayMode::SidecarOnly;
+                            push_sidecar_display_mode(
+                                &mut state_store.write(),
+                                sidecar_base.clone(),
+                                sidecar_token.clone(),
+                                current.controller_id.clone(),
+                                sidecar_device.clone(),
+                                &current,
+                            );
+                            hosted_state.set(Some(current));
+                        }
+                    },
+                    "Sidecar only"
+                }
+                button {
+                    r#type: "button",
+                    "data-testid": "sidecar-exit",
+                    onclick: move |_| hosted_state.set(None),
+                    "Exit Private Sidecar"
+                }
+            }
+            div { class: "sidecar-addressed-now", "data-testid": "sidecar-addressed-now",
+                span { class: "muted", "Addressed now" }
+                strong { "{session.addressed_agent_label}" }
+                span { class: "badge", "{security_label}" }
+            }
+        }
+    }
+}
+
 /// Best-effort encrypted cross-device persistence for the hosted Strand-level
 /// display mode. The local signal is authoritative for the current frame; a
 /// failed network write is retried naturally by a later user change/account

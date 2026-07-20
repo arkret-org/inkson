@@ -718,6 +718,12 @@ pub(super) fn CardDetail(controller: KanbanController, context: CardDetailContex
                                                 }
                                             }
 
+                                            crate::sidecar::HostedSidecarContextBar {
+                                                base_url: base_url.clone(),
+                                                api_token: token(),
+                                                device_id: device_id.clone(),
+                                            }
+
                                             section { class: "card-detail-section card-detail-tabs-section",
                                                 div {
                                                     class: "card-detail-tabs",

@@ -789,12 +789,6 @@ pub fn ChatPanel(
             None
         }
     });
-    let sidecar_mode_base_context = base_url.clone();
-    let sidecar_mode_base_only = base_url.clone();
-    let sidecar_mode_controller_context = account_did.clone();
-    let sidecar_mode_controller_only = account_did.clone();
-    let sidecar_mode_device_context = device_id.clone();
-    let sidecar_mode_device_only = device_id.clone();
     // Fold the durable lifecycle log directly onto the controller's
     // optimistic rows. A sender's create can still be controller-only when a
     // remote reaction arrives, so projecting raw operations in isolation
@@ -1661,63 +1655,11 @@ pub fn ChatPanel(
                 }
 
                 if let Some(session) = sidecar_session.as_ref() {
-                    div { class: "sidecar-context-strip", "data-testid": "sidecar-context-strip",
-                        div { class: "sidecar-context-main",
-                            strong { "Private Sidecar active" }
-                            span { class: "muted", "Only you and your eligible AI Agents · E2EE" }
-                        }
-                        div { class: "sidecar-display-mode", role: "group", "aria-label": "Private Sidecar display mode",
-                            Button {
-                                variant: ButtonVariant::Secondary,
-                                class: if session.display_mode == arkret_sdk::AgentSidecarDisplayMode::ContextMerged { "active" } else { "" },
-                                "data-testid": "sidecar-mode-context-merged",
-                                onclick: move |_| {
-                                    if let Some(mut current) = sidecar_session_state() {
-                                        current.display_mode = arkret_sdk::AgentSidecarDisplayMode::ContextMerged;
-                                        crate::sidecar::push_sidecar_display_mode(
-                                            &mut state_store.write(),
-                                            sidecar_mode_base_context.clone(),
-                                            token(),
-                                            sidecar_mode_controller_context.clone(),
-                                            sidecar_mode_device_context.clone(),
-                                            &current,
-                                        );
-                                        sidecar_session_state.set(Some(current));
-                                    }
-                                },
-                                "Original Strand + Sidecar"
-                            }
-                            Button {
-                                variant: ButtonVariant::Secondary,
-                                class: if session.display_mode == arkret_sdk::AgentSidecarDisplayMode::SidecarOnly { "active" } else { "" },
-                                "data-testid": "sidecar-mode-sidecar-only",
-                                onclick: move |_| {
-                                    if let Some(mut current) = sidecar_session_state() {
-                                        current.display_mode = arkret_sdk::AgentSidecarDisplayMode::SidecarOnly;
-                                        crate::sidecar::push_sidecar_display_mode(
-                                            &mut state_store.write(),
-                                            sidecar_mode_base_only.clone(),
-                                            token(),
-                                            sidecar_mode_controller_only.clone(),
-                                            sidecar_mode_device_only.clone(),
-                                            &current,
-                                        );
-                                        sidecar_session_state.set(Some(current));
-                                    }
-                                },
-                                "Sidecar only"
-                            }
-                            Button {
-                                variant: ButtonVariant::Secondary,
-                                "data-testid": "sidecar-exit",
-                                onclick: move |_| sidecar_session_state.set(None),
-                                "Exit Private Sidecar"
-                            }
-                        }
-                        div { class: "sidecar-addressed-now", "data-testid": "sidecar-addressed-now",
-                            span { class: "muted", "Addressed now" }
-                            strong { "{session.addressed_agent_label}" }
-                            span { class: "badge", {sidecar_security_label.unwrap_or("Opening")} }
+                    if !embedded {
+                        crate::sidecar::HostedSidecarContextBar {
+                            base_url: base_url.clone(),
+                            api_token: token(),
+                            device_id: device_id.clone(),
                         }
                     }
                     if !session.migrated_draft.trim().is_empty() {

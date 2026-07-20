@@ -2726,6 +2726,12 @@ fn owned_agent_mentions_do_not_reopen_sidecar_from_private_composer() {
 }
 
 #[test]
+fn embedded_sidecar_activation_keeps_the_source_strand_shell() {
+    assert!(!composer::sidecar_activation_should_navigate(true));
+    assert!(composer::sidecar_activation_should_navigate(false));
+}
+
+#[test]
 fn participation_visibility_uses_most_specific_effective_scope() {
     use arkret_sdk::models::{
         AgentParticipation, AgentParticipationEntry, AgentParticipationScope,

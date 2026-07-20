@@ -21,10 +21,14 @@ pub(super) struct ChatComposerContext {
     pub frontier_state: Signal<String>,
 }
 
+pub(super) fn sidecar_activation_should_navigate(embedded: bool) -> bool {
+    !embedded
+}
+
 #[component]
 pub(super) fn ChatComposer(controller: ChatController, context: ChatComposerContext) -> Element {
     let ChatComposerContext {
-        embedded: _,
+        embedded,
         selected_channel_info,
         account_did,
         account_display_label,
@@ -1087,10 +1091,12 @@ pub(super) fn ChatComposer(controller: ChatController, context: ChatComposerCont
                                                     migrated_draft: body_for_resolution,
                                                     opened_at: chrono::Utc::now(),
                                                 }));
-                                                let _ = navigator.push(Route::DirectConversation {
-                                                    realm_id: realm,
-                                                    strand_id,
-                                                });
+                                                if sidecar_activation_should_navigate(embedded) {
+                                                    let _ = navigator.push(Route::DirectConversation {
+                                                        realm_id: realm,
+                                                        strand_id,
+                                                    });
+                                                }
                                             }
                                             Ok(None) => status_msg.set(
                                                 "Could not resolve an owned agent for the private sidecar."
@@ -1456,10 +1462,12 @@ pub(super) fn ChatComposer(controller: ChatController, context: ChatComposerCont
                                                     migrated_draft: body_for_resolution,
                                                     opened_at: chrono::Utc::now(),
                                                 }));
-                                                let _ = navigator.push(Route::DirectConversation {
-                                                    realm_id: realm_for_sidecar,
-                                                    strand_id: strand_for_sidecar,
-                                                });
+                                                if sidecar_activation_should_navigate(embedded) {
+                                                    let _ = navigator.push(Route::DirectConversation {
+                                                        realm_id: realm_for_sidecar,
+                                                        strand_id: strand_for_sidecar,
+                                                    });
+                                                }
                                             }
                                             Ok(None) => status_msg.set(
                                                 "Could not resolve an owned agent for the private sidecar."
