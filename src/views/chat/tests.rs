@@ -3196,6 +3196,72 @@ fn agent_candidate_visibility_keeps_owned_agents_and_hides_private_remote_agents
 }
 
 #[test]
+fn sidecar_presence_excludes_realm_humans_and_foreign_agents() {
+    let controller = SpaceParticipant {
+        did: "did:web:example.com:users:alice".to_owned(),
+        display_name: Some("Alice".to_owned()),
+        handle_label: Some("alice:example.com".to_owned()),
+        display_name_rank: 0,
+        role: SpaceParticipantRole::Member,
+        is_self: true,
+        is_agent: false,
+        agent_metadata: None,
+    };
+    let realm_human = SpaceParticipant {
+        did: "did:web:example.com:users:bob".to_owned(),
+        display_name: Some("Bob".to_owned()),
+        handle_label: Some("bob:example.com".to_owned()),
+        display_name_rank: 1,
+        role: SpaceParticipantRole::Member,
+        is_self: false,
+        is_agent: false,
+        agent_metadata: None,
+    };
+    let owned_agent = SpaceParticipant {
+        did: "did:web:agents.example:alice-summary".to_owned(),
+        display_name: Some("Alice Summary".to_owned()),
+        handle_label: None,
+        display_name_rank: 1,
+        role: SpaceParticipantRole::Member,
+        is_self: false,
+        is_agent: true,
+        agent_metadata: Some(AgentParticipantMetadata {
+            controller_id: controller.did.clone(),
+            controller_handle: "alice:example.com".to_owned(),
+            agent_slug: "summary".to_owned(),
+            display_name: "Alice Summary".to_owned(),
+        }),
+    };
+    let foreign_agent = SpaceParticipant {
+        did: "did:web:agents.example:bob-summary".to_owned(),
+        display_name: Some("Bob Summary".to_owned()),
+        handle_label: None,
+        display_name_rank: 1,
+        role: SpaceParticipantRole::Member,
+        is_self: false,
+        is_agent: true,
+        agent_metadata: Some(AgentParticipantMetadata {
+            controller_id: realm_human.did.clone(),
+            controller_handle: "bob:example.com".to_owned(),
+            agent_slug: "summary".to_owned(),
+            display_name: "Bob Summary".to_owned(),
+        }),
+    };
+
+    let visible = sidecar_presence_participants(
+        &[
+            controller.clone(),
+            realm_human,
+            owned_agent.clone(),
+            foreign_agent,
+        ],
+        &controller.did,
+    );
+
+    assert_eq!(visible, vec![controller, owned_agent]);
+}
+
+#[test]
 fn mention_candidate_without_handle_is_not_displayed_as_did() {
     let participant = SpaceParticipant {
         did: "did:web:bob.example".to_owned(),

@@ -2168,6 +2168,21 @@ pub(crate) fn apply_account_data_entries(
         let Some(data_type) = entry.payload.get("key").and_then(Value::as_str) else {
             continue;
         };
+        match crate::sidecar::ingest_sidecar_view_state_account_data(
+            store,
+            account_did,
+            data_type,
+            &entry.payload,
+        ) {
+            Ok(true) => continue,
+            Ok(false) => {}
+            Err(error) => {
+                tracing::warn!(
+                    "sync engine: ignoring malformed Sidecar view-state account_data: {error}"
+                );
+                continue;
+            }
+        }
         // ak.client.ui_state — theme + avatar pointer.
         if data_type == "ak.client.ui_state" {
             match crate::account_data::decrypt_account_data_entry(

@@ -291,8 +291,8 @@ fn AppBootstrap() -> Element {
         state_store,
         base_url,
     });
-    let mut sidecar_session = use_signal(|| None::<crate::sidecar::SidecarSession>);
-    use_context_provider(|| crate::sidecar::SidecarSessionContext(sidecar_session));
+    let mut sidecar_session = use_signal(|| None::<crate::sidecar::HostedSidecarState>);
+    use_context_provider(|| crate::sidecar::HostedSidecarStateContext(sidecar_session));
     // Construct the typed session coordinator once. Runtime and UI effects
     // share this owner instead of registering unrelated thread-local callbacks.
     let session_coordinator = use_hook(move || {
@@ -2171,7 +2171,7 @@ fn AppBootstrap() -> Element {
                                                                                         trace_id = %trace_id,
                                                                                         pending_reconciliation_count = pending_count,
                                                                                     );
-                                                                                    sidecar_session.set(Some(crate::sidecar::SidecarSession {
+                                                                                    sidecar_session.set(Some(crate::sidecar::HostedSidecarState {
                                                                                         trace_id,
                                                                                         controller_id: controller.to_string(),
                                                                                         addressed_agent_ids: vec![agent_id],

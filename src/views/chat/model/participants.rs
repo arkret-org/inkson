@@ -301,6 +301,23 @@ pub(crate) fn sidecar_owned_agent_participants(
         .collect()
 }
 
+pub(crate) fn sidecar_presence_participants(
+    participants: &[SpaceParticipant],
+    account_did: &str,
+) -> Vec<SpaceParticipant> {
+    participants
+        .iter()
+        .filter(|participant| {
+            participant.did.trim() == account_did.trim()
+                || (participant.is_agent
+                    && participant.agent_metadata.as_ref().is_some_and(|metadata| {
+                        metadata.controller_id.trim() == account_did.trim()
+                    }))
+        })
+        .cloned()
+        .collect()
+}
+
 pub(crate) fn participant_sender_label(participant: &SpaceParticipant) -> Option<String> {
     if participant.is_agent {
         return Some(agent_member_label(participant));

@@ -509,7 +509,7 @@ pub fn ChatPanel(
     /// Agent Sidecar ensure flow. Contact DMs continue to use direct mode
     /// without receiving Sidecar-specific membership semantics.
     #[props(default)]
-    sidecar_session: Option<crate::sidecar::SidecarSession>,
+    sidecar_session: Option<crate::sidecar::HostedSidecarState>,
     /// Optional deep-link target: when non-empty, the message with this id is
     /// scrolled into view and flashed on mount (design/route-view-ia.md §3.2).
     #[props(default)]
@@ -519,10 +519,29 @@ pub fn ChatPanel(
     // A4 — base_url / state_store from session context instead of props.
     let base_url = crate::app::SessionContext::base_url_string();
     let mut state_store = crate::app::SessionContext::get().state_store;
-    let mut sidecar_session_state = use_context::<crate::sidecar::SidecarSessionContext>().0;
+    let mut sidecar_session_state = use_context::<crate::sidecar::HostedSidecarStateContext>().0;
     let navigator = use_navigator();
     let controller = use_chat_controller(&selected_realm_id, &initial_strand_id, &account_did);
     let mut migrated_draft_applied_for = use_signal(String::new);
+    {
+        let actor = account_did.clone();
+        let state_store = state_store;
+        use_effect(move || {
+            let _account_cursor = sync_cursor();
+            let Some(mut session) = sidecar_session_state() else {
+                return;
+            };
+            let Some(remote_mode) =
+                crate::sidecar::cached_sidecar_display_mode(&state_store.read(), &actor, &session)
+            else {
+                return;
+            };
+            if session.display_mode != remote_mode {
+                session.display_mode = remote_mode;
+                sidecar_session_state.set(Some(session));
+            }
+        });
+    }
     {
         let session = sidecar_session.clone();
         let mut draft = controller.draft;
@@ -1009,7 +1028,13 @@ pub fn ChatPanel(
         participants_for_messages.clone()
     };
 
-    let mut participant_dids_for_presence = participants
+    let presence_participants = if sidecar_mode {
+        sidecar_presence_participants(&participants, &account_did)
+    } else {
+        participants.clone()
+    };
+
+    let mut participant_dids_for_presence = presence_participants
         .iter()
         .map(|participant| participant.did.clone())
         .filter(|did| !did.trim().is_empty())
@@ -1650,6 +1675,7 @@ pub fn ChatPanel(
                                     if let Some(mut current) = sidecar_session_state() {
                                         current.display_mode = arkret_sdk::AgentSidecarDisplayMode::ContextMerged;
                                         crate::sidecar::push_sidecar_display_mode(
+                                            &mut state_store.write(),
                                             sidecar_mode_base_context.clone(),
                                             token(),
                                             sidecar_mode_controller_context.clone(),
@@ -1669,6 +1695,7 @@ pub fn ChatPanel(
                                     if let Some(mut current) = sidecar_session_state() {
                                         current.display_mode = arkret_sdk::AgentSidecarDisplayMode::SidecarOnly;
                                         crate::sidecar::push_sidecar_display_mode(
+                                            &mut state_store.write(),
                                             sidecar_mode_base_only.clone(),
                                             token(),
                                             sidecar_mode_controller_only.clone(),
@@ -1992,7 +2019,7 @@ pub fn ChatPanel(
                         div {
                             class: "presence-list",
                             "data-testid": "presence-list",
-                            for participant in &participants {
+                            for participant in &presence_participants {
                                 {
                                     let did_attr = participant.did.clone();
                                     let live_labels = presence_labels();

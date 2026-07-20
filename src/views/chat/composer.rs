@@ -44,7 +44,7 @@ pub(super) fn ChatComposer(controller: ChatController, context: ChatComposerCont
     } = context;
     let base_url = crate::app::SessionContext::base_url_string();
     let navigator = use_navigator();
-    let mut sidecar_session = use_context::<crate::sidecar::SidecarSessionContext>().0;
+    let mut sidecar_session = use_context::<crate::sidecar::HostedSidecarStateContext>().0;
     let mut state_store = crate::app::SessionContext::get().state_store;
     let messages_snapshot = (controller.messages)();
     let messages_for_composer_lookup = &messages_snapshot;
@@ -1070,7 +1070,7 @@ pub(super) fn ChatComposer(controller: ChatController, context: ChatComposerCont
                                                     "Private AI sidecar opened; the message has not been sent."
                                                         .to_owned(),
                                                 );
-                                                sidecar_session.set(Some(crate::sidecar::SidecarSession {
+                                                sidecar_session.set(Some(crate::sidecar::HostedSidecarState {
                                                     trace_id,
                                                     controller_id: actor.clone(),
                                                     addressed_agent_ids,
@@ -1439,7 +1439,7 @@ pub(super) fn ChatComposer(controller: ChatController, context: ChatComposerCont
                                                     "Private AI sidecar opened; the message has not been sent."
                                                         .to_owned(),
                                                 );
-                                                sidecar_session.set(Some(crate::sidecar::SidecarSession {
+                                                sidecar_session.set(Some(crate::sidecar::HostedSidecarState {
                                                     trace_id,
                                                     controller_id: actor_for_sidecar.clone(),
                                                     addressed_agent_ids,

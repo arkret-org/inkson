@@ -9,6 +9,8 @@ use dioxus::prelude::*;
 use crate::models::AccountDataSetResult;
 use crate::routes::Route;
 
+const SIDECAR_VIEW_STATE_CACHE_PREFIX: &str = "sidecar.view_state.v1";
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct SidecarContextHint {
     pub realm_id: String,
@@ -86,7 +88,7 @@ pub fn select_sidecar_context_strand(
 }
 
 #[derive(Clone, Debug, PartialEq)]
-pub struct SidecarSession {
+pub struct HostedSidecarState {
     pub trace_id: String,
     pub controller_id: String,
     pub addressed_agent_ids: Vec<String>,
@@ -106,7 +108,7 @@ pub struct SidecarSession {
     pub opened_at: chrono::DateTime<chrono::Utc>,
 }
 
-impl SidecarSession {
+impl HostedSidecarState {
     pub fn matches_route(&self, realm_id: &str, strand_id: &str) -> bool {
         self.source_realm_id == realm_id && self.source_strand_id == strand_id
     }
@@ -148,19 +150,92 @@ impl SidecarSession {
     }
 }
 
+fn sidecar_view_state_cache_key(controller_id: &str, realm_id: &str, strand_id: &str) -> String {
+    format!("{SIDECAR_VIEW_STATE_CACHE_PREFIX}:{controller_id}:{realm_id}:{strand_id}")
+}
+
+fn cache_sidecar_view_state(
+    store: &mut crate::state::LocalStateStore,
+    account_did: &str,
+    view_state: &arkret_sdk::AgentSidecarViewState,
+) -> anyhow::Result<bool> {
+    let key = sidecar_view_state_cache_key(
+        view_state.controller_id.as_str(),
+        view_state.context_ref.realm_id.as_str(),
+        view_state.context_ref.strand_id.as_str(),
+    );
+    let should_replace = store
+        .load_private_data(account_did, &key)
+        .and_then(|raw| serde_json::from_str::<arkret_sdk::AgentSidecarViewState>(&raw).ok())
+        .is_none_or(|current| {
+            (
+                view_state.updated_hlc.to_string(),
+                view_state.origin_device_id.to_string(),
+            ) > (
+                current.updated_hlc.to_string(),
+                current.origin_device_id.to_string(),
+            )
+        });
+    if should_replace {
+        store.save_private_data(account_did, key, serde_json::to_string(view_state)?);
+    }
+    Ok(should_replace)
+}
+
+pub fn ingest_sidecar_view_state_account_data(
+    store: &mut crate::state::LocalStateStore,
+    account_did: &str,
+    data_type: &str,
+    entry: &impl serde::Serialize,
+) -> anyhow::Result<bool> {
+    if !data_type.starts_with("ak.agent.sidecar_view_state.v1:") {
+        return Ok(false);
+    }
+    let view_state: arkret_sdk::AgentSidecarViewState = serde_json::from_value(
+        crate::account_data::decrypt_account_data_entry(account_did, data_type, entry)?,
+    )?;
+    view_state.validate_account_data_type(data_type)?;
+    if view_state.controller_id.as_str() != account_did {
+        anyhow::bail!("Sidecar view-state controller does not match the account holder");
+    }
+    cache_sidecar_view_state(store, account_did, &view_state)?;
+    Ok(true)
+}
+
+pub fn cached_sidecar_display_mode(
+    store: &crate::state::LocalStateStore,
+    account_did: &str,
+    session: &HostedSidecarState,
+) -> Option<arkret_sdk::AgentSidecarDisplayMode> {
+    let key = sidecar_view_state_cache_key(
+        &session.controller_id,
+        &session.source_realm_id,
+        &session.source_strand_id,
+    );
+    let view_state = store
+        .load_private_data(account_did, &key)
+        .and_then(|raw| serde_json::from_str::<arkret_sdk::AgentSidecarViewState>(&raw).ok())?;
+    (view_state.controller_id.as_str() == session.controller_id
+        && view_state.sidecar_id == session.sidecar_id
+        && view_state.context_ref.realm_id.as_str() == session.source_realm_id
+        && view_state.context_ref.strand_id.as_str() == session.source_strand_id)
+        .then_some(view_state.display_mode)
+}
+
 #[derive(Clone, Copy)]
-pub struct SidecarSessionContext(pub Signal<Option<SidecarSession>>);
+pub struct HostedSidecarStateContext(pub Signal<Option<HostedSidecarState>>);
 
 /// Best-effort encrypted cross-device persistence for the hosted Strand-level
 /// display mode. The local signal is authoritative for the current frame; a
 /// failed network write is retried naturally by a later user change/account
 /// stream reconciliation and never mutates shared Strand state.
 pub fn push_sidecar_display_mode(
+    store: &mut crate::state::LocalStateStore,
     base_url: String,
     api_token: String,
     controller_id: String,
     device_id: String,
-    session: &SidecarSession,
+    session: &HostedSidecarState,
 ) {
     let context_ref = match (
         arkret_sdk::RealmId::new(session.source_realm_id.clone()),
@@ -203,6 +278,9 @@ pub fn push_sidecar_display_mode(
         origin_device_id: context_ref.3,
     };
     let data_type = view_state.account_data_type();
+    if let Err(error) = cache_sidecar_view_state(store, &controller_id, &view_state) {
+        tracing::warn!(%error, "Sidecar view-state local cache failed");
+    }
     let plaintext = match serde_json::to_value(&view_state) {
         Ok(value) => value,
         Err(error) => {
@@ -340,8 +418,10 @@ mod tests {
         );
     }
 
-    fn session(pending: Vec<arkret_sdk::PendingSidecarAccessReconciliationItem>) -> SidecarSession {
-        SidecarSession {
+    fn session(
+        pending: Vec<arkret_sdk::PendingSidecarAccessReconciliationItem>,
+    ) -> HostedSidecarState {
+        HostedSidecarState {
             trace_id: "019f0000-0000-7000-8000-000000000001".to_owned(),
             controller_id: "did:web:alice.example".to_owned(),
             addressed_agent_ids: vec!["did:web:agents.example:assistant".to_owned()],
@@ -397,5 +477,47 @@ mod tests {
         let session = session(Vec::new());
         assert!(session.matches_route(&session.source_realm_id, &session.source_strand_id));
         assert!(!session.matches_route(&session.source_realm_id, &session.private_strand_id));
+    }
+
+    #[test]
+    fn sidecar_view_state_cache_is_lww_and_context_scoped() {
+        let account = "did:web:alice.example";
+        let path = std::env::temp_dir().join(format!(
+            "inkson-sidecar-view-state-{}.json",
+            crate::operation::uuid_v7()
+        ));
+        let mut store = crate::state::LocalStateStore::with_path(path);
+        let session = session(Vec::new());
+        let view_state = |mode, hlc: &str, device: &str| arkret_sdk::AgentSidecarViewState {
+            schema: arkret_sdk::AgentSidecarViewStateSchema::V1,
+            controller_id: arkret_sdk::Did::new(account).unwrap(),
+            sidecar_id: session.sidecar_id.clone(),
+            context_ref: arkret_sdk::AgentSidecarStrandContextRef {
+                realm_id: arkret_sdk::RealmId::new(session.source_realm_id.clone()).unwrap(),
+                strand_id: arkret_sdk::StrandId::new(session.source_strand_id.clone()).unwrap(),
+            },
+            display_mode: mode,
+            pinned: None,
+            collapsed: None,
+            updated_hlc: arkret_sdk::Hlc::new(hlc).unwrap(),
+            origin_device_id: arkret_sdk::DeviceId::new(device).unwrap(),
+        };
+        let newer = view_state(
+            arkret_sdk::AgentSidecarDisplayMode::SidecarOnly,
+            "01970e589d21-0002-a13f9c2e",
+            "ak:device:01964137-0000-7000-8000-000000000001",
+        );
+        let older = view_state(
+            arkret_sdk::AgentSidecarDisplayMode::ContextMerged,
+            "01970e589d21-0001-a13f9c2e",
+            "ak:device:01964137-0000-7000-8000-000000000002",
+        );
+
+        assert!(cache_sidecar_view_state(&mut store, account, &newer).unwrap());
+        assert!(!cache_sidecar_view_state(&mut store, account, &older).unwrap());
+        assert_eq!(
+            cached_sidecar_display_mode(&store, account, &session),
+            Some(arkret_sdk::AgentSidecarDisplayMode::SidecarOnly)
+        );
     }
 }

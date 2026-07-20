@@ -1389,6 +1389,22 @@ pub(super) fn connect(base: String, actor: String, device: String, ctx: ConnectC
                                 else {
                                     continue;
                                 };
+                                match crate::sidecar::ingest_sidecar_view_state_account_data(
+                                    &mut store,
+                                    &account_did(),
+                                    data_type,
+                                    entry,
+                                ) {
+                                    Ok(true) => continue,
+                                    Ok(false) => {}
+                                    Err(error) => {
+                                        tracing::warn!(
+                                            %error,
+                                            "ignoring malformed Sidecar view-state account_data"
+                                        );
+                                        continue;
+                                    }
+                                }
                                 // A4a — hydrate `ak.client.ui_state` theme from
                                 // the remote payload. Cross-device wins:
                                 // when remote carries a valid theme that

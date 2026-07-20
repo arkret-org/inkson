@@ -45,7 +45,7 @@ pub(super) struct RouteSurfaceState {
 
 #[component]
 pub(super) fn RouteSurface(state: RouteSurfaceState) -> Element {
-    let sidecar_session = use_context::<crate::sidecar::SidecarSessionContext>().0;
+    let sidecar_session = use_context::<crate::sidecar::HostedSidecarStateContext>().0;
     let RouteSurfaceState {
         content_route,
         navigation,
