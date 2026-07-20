@@ -35,9 +35,16 @@ impl SidecarSession {
         self.pending_member_reconciliations.len()
     }
 
-    pub fn diagnostic_summary(&self, encryption_state: &str) -> String {
+    pub fn diagnostic_summary(
+        &self,
+        encryption_state: &str,
+        message_submit_state: &str,
+        notification_fanout_state: &str,
+        agent_receipt_state: &str,
+        last_updated: &str,
+    ) -> String {
         format!(
-            "Trace ID: {}\nEnsure: complete\nCircle membership: {}\nEncryption: {}\nMessage submit: not started\nNotification fanout: not started\nAgent receipt: not received",
+            "Trace ID: {}\nEnsure: complete\nCircle membership: {}\nEncryption: {}\nMessage submit: {}\nNotification fanout: {}\nAgent receipt: {}\nLast updated: {}",
             self.trace_id,
             if self.membership_ready() {
                 "complete".to_owned()
@@ -48,6 +55,10 @@ impl SidecarSession {
                 )
             },
             encryption_state,
+            message_submit_state,
+            notification_fanout_state,
+            agent_receipt_state,
+            last_updated,
         )
     }
 }
@@ -86,7 +97,13 @@ mod tests {
         assert_eq!(session.pending_reconciliation_count(), 1);
         assert!(
             session
-                .diagnostic_summary("Reconciling access")
+                .diagnostic_summary(
+                    "Reconciling access",
+                    "not started",
+                    "not started",
+                    "not reported",
+                    "12:00:00",
+                )
                 .contains("reconciling (1 pending)")
         );
     }
