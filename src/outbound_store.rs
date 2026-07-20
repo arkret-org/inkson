@@ -62,9 +62,7 @@ impl InksonOutboundStore {
 impl OutboundQueueStore for InksonOutboundStore {
     fn mutate_outbound<'a, R>(
         &'a self,
-        mutation: impl FnOnce(&mut arkret_sdk::sync_client::SendQueue) -> arkret_sdk::Result<R>
-        + garth::MaybeSend
-        + 'a,
+        mutation: impl FnOnce(&mut garth::SendQueue) -> arkret_sdk::Result<R> + garth::MaybeSend + 'a,
     ) -> BoxOutboundFuture<'a, R>
     where
         R: garth::MaybeSend + 'a,
@@ -89,9 +87,9 @@ impl OutboundQueueStore for InksonOutboundStore {
                             "decode browser outbound queue: {error}"
                         ))
                     })?,
-                    None => arkret_sdk::sync_client::SendQueueSnapshot::default(),
+                    None => garth::SendQueueSnapshot::default(),
                 };
-                let mut queue = arkret_sdk::sync_client::SendQueue::from_snapshot(snapshot)?;
+                let mut queue = garth::SendQueue::from_snapshot(snapshot)?;
                 let result = mutation(&mut queue)?;
                 let encoded = serde_json::to_string(&queue.snapshot()).map_err(|error| {
                     arkret_sdk::Error::Protocol(format!("encode browser outbound queue: {error}"))
@@ -131,7 +129,7 @@ mod tests {
             .enqueue(
                 Some("ak:event:01904100-0000-7000-8000-000000000001".to_owned()),
                 realm,
-                arkret_sdk::sync_client::SendQueueItemKind::Custom {
+                garth::SendQueueItemKind::Custom {
                     kind: "ak.test.event".to_owned(),
                 },
                 serde_json::json!({"event_id": "stable"}),

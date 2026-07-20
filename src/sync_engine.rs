@@ -41,14 +41,14 @@ use std::cell::RefCell;
 use std::collections::BTreeSet;
 use std::time::Duration;
 
-#[cfg(test)]
-use arkret_sdk::{DecodedInbound, InboundDecoder};
 use garth::{
     AccountCommitOutcome, AccountPostCommitHook, AccountPostCommitOutcome, AccountStepCommitter,
     AccountStepHandlers, AccountStreamStep, RunOptions, SyncLoopControl, TransportProvider,
 };
 #[cfg(test)]
 use garth::{ClientEvent, ClientProjector};
+#[cfg(test)]
+use garth::{DecodedInbound, InboundDecoder};
 use serde_json::{Value, json};
 
 use crate::api_error::{is_auth_expired_error, is_terminal_session_grant_error};

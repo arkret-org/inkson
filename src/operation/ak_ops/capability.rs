@@ -126,7 +126,7 @@ pub fn realm_founding_grant(realm_id: &str, actor: &str, grant_id: &str) -> Oper
             "realm_id": realm,
             "issuer": actor,
             "subject": actor,
-            "actions": arkret_sdk::realm::bootstrap::REALM_FOUNDING_GRANT_ACTIONS,
+            "actions": arkret_policy::realm_bootstrap::REALM_FOUNDING_GRANT_ACTIONS,
             "capability_action_registry_digest": registry_digest,
             "resources": [{
                 "kind": "realm",
