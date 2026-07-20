@@ -225,10 +225,10 @@ async fn hard_logout_at_authority(
     }
 }
 
-fn account_logout_error_is_terminal(error: &arkret_sdk::Error) -> bool {
+fn account_logout_error_is_terminal(error: &arkret_sdk::http_client::Error) -> bool {
     match error {
-        arkret_sdk::Error::Api { status: 404, .. } => true,
-        arkret_sdk::Error::Api { error, .. } => matches!(
+        arkret_sdk::http_client::Error::Api { status: 404, .. } => true,
+        arkret_sdk::http_client::Error::Api { error, .. } => matches!(
             error.code(),
             "grant_already_consumed"
                 | "session_logged_out"

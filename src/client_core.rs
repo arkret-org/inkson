@@ -350,7 +350,7 @@ impl RealmEventsFrameSource for InksonRealmEventsFrameSource {
         &'a mut self,
     ) -> garth::subscribe::realm::BoxRealmStreamFuture<'a, Option<arkret_sdk::EventsSubscribeFrame>>
     {
-        Box::pin(async move { self.inner.next_frame().await })
+        Box::pin(async move { self.inner.next_frame().await.map_err(arkret_sdk::Error::from) })
     }
 }
 
@@ -467,10 +467,10 @@ pub async fn account_subscribe_snapshot_outcome(
     };
     match http.account_subscribe_batch(&request).await {
         Ok(batch) => Ok(AccountSubscribeSnapshotResult::Batch(batch)),
-        Err(arkret_sdk::Error::AccountStreamInterrupt(interrupt)) => {
+        Err(arkret_sdk::http_client::Error::AccountStreamInterrupt(interrupt)) => {
             Ok(reconnect_result_from_interrupt(interrupt))
         }
-        Err(error) => Err(error.into()),
+        Err(error) => Err(arkret_sdk::Error::from(error).into()),
     }
 }
 
