@@ -5,10 +5,11 @@ import { fileURLToPath } from "node:url";
 import { mockArkretContract } from "./mockArkretContract";
 
 const DEMO_REALM = "ak:realm:0196419b-0000-7000-8000-000000000000";
+const DEMO_FRONTIER_EVENT = "ak:event:0196419b-0000-7000-8000-00000000e2e0";
 const SETUP_REALM = "ak:realm:01js0setupflow000000000000";
 const LOW_FLOOR_REALM = "ak:realm:01lowfloor0000000000000000";
-const CHILD_REALM = "ak:realm:01launchchild0000000000000";
-const GRANDCHILD_REALM = "ak:realm:01launchdeep00000000000000";
+const CHILD_REALM = "ak:realm:0196419b-0000-7000-8000-00000000c001";
+const GRANDCHILD_REALM = "ak:realm:0196419b-0000-7000-8000-00000000c002";
 const DIRECT_BOB_REALM = "ak:realm:01964137-0000-7000-8000-00000000d0b1";
 const DIRECT_BOB_STRAND = "ak:strand:01964137-0000-7000-8000-00000000d0b2";
 const DEMO_CIRCLE = "ak:circle:0196419b-0000-7000-8000-00000000c1c1";
@@ -873,6 +874,7 @@ export async function mockArkretApi(
         experimental_features: [],
         compat_surfaces: [],
         development_mode: true,
+        frontier: [DEMO_FRONTIER_EVENT],
       });
     }
 
@@ -1113,6 +1115,7 @@ export async function mockArkretApi(
         experimental_features: [],
         compat_surfaces: [],
         development_mode: true,
+        frontier: [DEMO_FRONTIER_EVENT],
       });
     }
 

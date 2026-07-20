@@ -2,7 +2,7 @@ import { expect, test } from "@playwright/test";
 import {
   registerStrandsBeforeEach,
   DEMO_REALM,
-  CHILD_REALM,
+  DEMO_BOARD_SPACE,
   refreshServer,
   openDiscussion,
   openKanban,
@@ -219,24 +219,17 @@ test("kanban card drag queues a strand move", async ({ page }) => {
   await expect(page.getByTestId("kanban-column").nth(1)).toContainText("Legal review for public beta");
 });
 
-test("kanban projections use home Realm for nested Spaces", async ({ page }) => {
+test("kanban board routes keep the board Space under its home Realm", async ({ page }) => {
   await refreshServer(page);
-  const projectionRealmIds: string[] = [];
-  page.on("request", (request) => {
-    const url = new URL(request.url());
-    const projectionMatch = url.pathname.match(
-      /^\/_arkret\/self\/realms\/([^/]+)\/(spaces|strands)$/,
-    );
-    if (projectionMatch) {
-      projectionRealmIds.push(projectionMatch[1]);
-    }
+
+  await page.goto(`/kanban/${DEMO_REALM}/board/${DEMO_BOARD_SPACE}`, {
+    waitUntil: "domcontentloaded",
   });
-
-  await page.goto(`/kanban/${CHILD_REALM}`, { waitUntil: "domcontentloaded" });
   await expect(page.getByTestId("kanban-panel")).toBeVisible();
-
-  await expect.poll(() => projectionRealmIds, { timeout: 20_000 }).toContain(DEMO_REALM);
-  expect(projectionRealmIds).not.toContain(CHILD_REALM);
+  await expect(page.getByTestId("selected-realm-id")).toHaveText(DEMO_REALM);
+  expect(new URL(page.url()).pathname).toBe(
+    `/kanban/${DEMO_REALM}/board/${DEMO_BOARD_SPACE}`,
+  );
 });
 
 test("card detail embeds discussion directly without discussion chrome", async ({ page }) => {

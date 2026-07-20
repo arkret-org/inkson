@@ -1,5 +1,6 @@
 import { expect, test } from "@playwright/test";
 import {
+  DEMO_FRONTIER_EVENT,
   registerStrandsBeforeEach,
   DEMO_REALM,
   latestTestId,
@@ -22,7 +23,10 @@ test("topbar account menu shows identity and sync state", async ({ page }) => {
   await expect(page.getByTestId("account-menu-copy-device")).toBeVisible();
   await page.getByTestId("account-menu-copy-did").click();
   await expect(page.getByTestId("account-menu-session-state")).toHaveText("DID copied");
-  await expect(page.getByTestId("account-menu-frontier")).toContainText("ak:event:e2e");
+  await expect(page.getByTestId("account-menu-frontier")).toHaveAttribute(
+    "title",
+    DEMO_FRONTIER_EVENT,
+  );
   await expect(page.getByTestId("account-menu-settings-qr")).toBeVisible();
   await expect(page.getByTestId("account-menu-settings")).toBeVisible();
   const menuBox = await page.getByTestId("account-menu").boundingBox();

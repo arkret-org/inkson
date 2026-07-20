@@ -839,18 +839,23 @@ fn AppBootstrap() -> Element {
     } else {
         active_projection_realm_id.as_str()
     };
-    let active_realm_security_encrypted = crate::security_state::security_projection_for_scope_id(
-        &realm_tree_projections,
-        active_security_scope_id,
-    )
-    .or_else(|| {
-        crate::security_state::security_projection_for_scope_id(
-            &realm_tree_projections,
-            &active_realm_id,
-        )
-    })
-    .map(crate::security_state::realm_projection_is_encrypted)
-    .unwrap_or(false);
+    // The Realm row and topbar must never disagree about the same Realm. Use
+    // the row's already-resolved Realm projection first; only fall back to a
+    // Space/Strand scope lookup while the Realm tree itself is still hydrating.
+    // Scope-first lookup allowed a partial board projection to turn an
+    // encrypted Realm into the topbar's `Unencrypted` false default.
+    let active_realm_security_encrypted = manage_realm_rows
+        .iter()
+        .find(|row| row.realm_id == active_realm_id)
+        .map(|row| row.encrypted)
+        .or_else(|| {
+            crate::security_state::security_projection_for_scope_id(
+                &realm_tree_projections,
+                active_security_scope_id,
+            )
+            .map(crate::security_state::realm_projection_is_encrypted)
+        })
+        .unwrap_or(false);
     let active_locale = locale();
     let active_direction = active_locale.direction();
     let direction_attr = active_direction.as_str();

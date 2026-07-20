@@ -1,5 +1,6 @@
 import { expect, test } from "@playwright/test";
 import {
+  DEMO_FRONTIER_EVENT,
   registerStrandsBeforeEach,
   latestTestId,
   refreshServer,
@@ -23,12 +24,15 @@ test("bootstrap login and sync shows the connected workspace", async ({ page }) 
     page.getByTestId("realm-tree-node-button").filter({ hasText: "Launch Realm" }).locator(".sidebar-nav-icon"),
   ).toHaveAttribute("title", "Unencrypted Realm");
   await page.getByTestId("account-menu-button").click();
-  await expect(page.getByTestId("account-menu-frontier")).toContainText("ak:event:e2e");
+  await expect(page.getByTestId("account-menu-frontier")).toHaveAttribute(
+    "title",
+    DEMO_FRONTIER_EVENT,
+  );
   await expect(page.getByTestId("account-menu-push")).toBeVisible();
-  await expect(page.getByTestId("account-menu-queue")).toContainText("1");
+  await expect(page.getByTestId("account-menu-queue")).toHaveText("0");
   await page.keyboard.press("Escape");
   await expect(page.getByTestId("dashboard-panel")).toBeVisible();
-  await expect(page.getByTestId("realm-tree-summary")).toContainText("Recent Realms & Spaces");
+  await expect(page.getByTestId("realm-tree-summary")).toContainText("Recent Realms");
   await expect(
     page.getByTestId("dashboard-realm-tree-card").filter({ hasText: "Arkret Demo Realm" }).locator(".pill.muted.xs"),
   ).toHaveText("Realm");
@@ -38,10 +42,24 @@ test("bootstrap login and sync shows the connected workspace", async ({ page }) 
 
   await page.getByTestId("realm-tree-node-button").first().click();
   await expect(page.getByTestId("kanban-panel")).toBeVisible();
-  await expect(page.getByTestId("realm-context-bar")).not.toContainText("Space views");
-  await expect(page.getByTestId("realm-context-bar")).not.toContainText("Discussion");
-  await expect(page.getByTestId("realm-context-bar").getByRole("link", { name: "Board" })).toBeVisible();
-  await expect(page.getByTestId("realm-context-bar")).not.toContainText("Time" + "line");
+  await expect(page.getByTestId("current-realm-surface")).toContainText("Board");
+  await expect(page.getByTestId("realm-context-menu-button")).toBeVisible();
+});
+
+test("selected Realm security badge matches its encrypted sidebar marker", async ({ page }) => {
+  await refreshServer(page);
+
+  const realmButton = page
+    .getByTestId("realm-tree-node-button")
+    .filter({ hasText: "Arkret Demo Realm" });
+  await expect(realmButton.locator(".sidebar-nav-icon")).toHaveAttribute(
+    "title",
+    "Encrypted Realm",
+  );
+  await realmButton.click();
+
+  await expect(page.getByTestId("kanban-panel")).toBeVisible();
+  await expect(page.getByTestId("realm-security-state")).toHaveText("Encrypted");
 });
 
 test("authenticated login route returns to the workspace", async ({ page }) => {

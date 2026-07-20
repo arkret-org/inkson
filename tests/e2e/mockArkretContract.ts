@@ -40,7 +40,10 @@ export function mockArkretContract(req) {
   if (method === "POST" && path === "/_arkret/self/events") {
     // Canonical EventsSubmitOutcome wire shape (soland head 37ce729):
     // {status, accepted[], cursor} — no top-level event_id/sync_token.
-    const acceptedId = body.event_id ?? firstEventId(body.events) ?? "ak:event:e2e";
+    const acceptedId =
+      body.event_id ??
+      firstEventId(body.events) ??
+      "ak:event:0196419b-0000-7000-8000-00000000e2e0";
     // soland's EventsSubmitOutcome skips empty/null fields (duplicate, rejected,
     // actor_frontier, realm_frontier) via serde skip_serializing_if, so a clean
     // accept serializes to exactly {status, accepted, cursor}. Match that shape.

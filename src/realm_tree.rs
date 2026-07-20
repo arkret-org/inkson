@@ -408,6 +408,13 @@ pub(crate) fn realm_projection_is_encrypted(body: &Value) -> bool {
         }
     }
 
+    // Sync projections carry the currently materialized MLS state here even
+    // when the Realm summary omits an explicit encryption profile. A present
+    // epoch is authoritative evidence that this Realm is E2EE-enabled.
+    if let Some(epoch) = body.pointer("/state_at_window_start/e2ee_epoch") {
+        return !epoch.is_null();
+    }
+
     for event in state_event_values(body).chain(
         body.get("state_after")
             .and_then(|state| state.get("events"))
@@ -1286,6 +1293,14 @@ mod tests {
         })));
         assert!(!realm_projection_is_encrypted(&json!({
             "summary": {"title": "Projection without encryption metadata"}
+        })));
+        assert!(realm_projection_is_encrypted(&json!({
+            "state_at_window_start": {
+                "e2ee_epoch": {"epoch": 0, "key_ref": "mock-key:realm"}
+            }
+        })));
+        assert!(!realm_projection_is_encrypted(&json!({
+            "state_at_window_start": {"e2ee_epoch": null}
         })));
     }
 

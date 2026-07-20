@@ -3,7 +3,7 @@ import { mockArkretApi } from "./mockArkretApi";
 
 export const DEMO_REALM = "ak:realm:0196419b-0000-7000-8000-000000000000";
 export const DEMO_BOARD_SPACE = "ak:space:0196419b-0000-7000-8000-00000000b0a0";
-export const CHILD_REALM = "ak:realm:01launchchild0000000000000";
+export const DEMO_FRONTIER_EVENT = "ak:event:0196419b-0000-7000-8000-00000000e2e0";
 const DEFAULT_SERVER_URL = "https://local.host";
 const DEFAULT_SERVER_AUDIENCE = "did:web:server.local";
 const DEFAULT_ACCOUNT_DID = "did:web:alice.example";

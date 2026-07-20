@@ -157,6 +157,10 @@ pub fn realm_projection_security_state(body: &Value) -> Option<bool> {
         }
     }
 
+    if let Some(epoch) = body.pointer("/state_at_window_start/e2ee_epoch") {
+        return Some(!epoch.is_null());
+    }
+
     for event in body
         .get("state")
         .and_then(Value::as_array)
@@ -228,6 +232,22 @@ mod tests {
         let plaintext = json!({"encryption_profile": "none"});
         assert_eq!(realm_projection_security_state(&plaintext), Some(false));
         assert!(!realm_projection_is_encrypted(&plaintext));
+
+        let synced_epoch = json!({
+            "state_at_window_start": {
+                "e2ee_epoch": {"epoch": 0, "key_ref": "mock-key:realm"}
+            }
+        });
+        assert_eq!(realm_projection_security_state(&synced_epoch), Some(true));
+        assert!(realm_projection_is_encrypted(&synced_epoch));
+
+        let synced_plaintext = json!({
+            "state_at_window_start": {"e2ee_epoch": null}
+        });
+        assert_eq!(
+            realm_projection_security_state(&synced_plaintext),
+            Some(false)
+        );
 
         assert_eq!(
             realm_projection_security_state(&json!({
