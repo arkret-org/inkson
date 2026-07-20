@@ -139,6 +139,59 @@ pub(super) fn auth_surface_for_route(
     }
 }
 
+/// Account projections may be rendered only when the in-memory snapshot owner
+/// still matches the current account. Pre-session onboarding is deliberately
+/// excluded: it runs in the anonymous pre-DID scope and must never paint the
+/// previous account's cached Realm tree.
+pub(super) fn account_projections_visible(
+    route: &Route,
+    has_session: bool,
+    current_account_did: &str,
+    projection_owner_did: &str,
+) -> bool {
+    let current = current_account_did.trim();
+    !current.is_empty()
+        && current == projection_owner_did.trim()
+        && (has_session || !matches!(route, Route::Onboarding))
+}
+
+#[cfg(test)]
+mod account_projection_tests {
+    use super::*;
+
+    #[test]
+    fn pre_session_onboarding_never_exposes_previous_account_projections() {
+        assert!(!account_projections_visible(
+            &Route::Onboarding,
+            false,
+            "did:webvh:znew:principal.example",
+            "did:webvh:zold:principal.example",
+        ));
+        assert!(!account_projections_visible(
+            &Route::Onboarding,
+            false,
+            "did:webvh:zold:principal.example",
+            "did:webvh:zold:principal.example",
+        ));
+    }
+
+    #[test]
+    fn account_projection_owner_must_match_even_with_a_live_session() {
+        assert!(!account_projections_visible(
+            &Route::Dashboard,
+            true,
+            "did:webvh:znew:principal.example",
+            "did:webvh:zold:principal.example",
+        ));
+        assert!(account_projections_visible(
+            &Route::Dashboard,
+            true,
+            "did:webvh:znew:principal.example",
+            "did:webvh:znew:principal.example",
+        ));
+    }
+}
+
 pub(super) fn should_redirect_to_dashboard_after_login(route: &Route) -> bool {
     matches!(route, Route::Login | Route::Register | Route::AuthCallback)
 }

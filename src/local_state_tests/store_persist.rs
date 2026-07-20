@@ -867,6 +867,14 @@ fn adopt_pending_login_preserves_returning_account_entry() {
     store.save_sync_cursor("sx:alice");
     // Sign out, then a fresh sign-in kicks off pending device material.
     store.begin_pending_login("ak:device:fresh-2", Some("jkt-fresh"));
+    assert!(
+        store.active_account_did().is_none(),
+        "pre-DID login must detach from the previously active account"
+    );
+    assert!(
+        store.load().sync_cursor.is_none(),
+        "anonymous pre-DID state must not expose Alice's projections"
+    );
     let is_new = store.adopt_pending_login("did:web:alice.example");
     assert!(!is_new, "a returning DID is not a new account");
     assert!(store.pending_login().is_none());
@@ -874,6 +882,53 @@ fn adopt_pending_login_preserves_returning_account_entry() {
     // secure-store seed/device_id tuple was already re-homed before this root
     // marker is adopted.
     assert_eq!(store.load().sync_cursor.as_deref(), Some("sx:alice"));
+}
+
+#[test]
+fn pending_login_moves_legacy_onboarding_fields_out_of_the_previous_account() {
+    let path = temp_state_path("pending-migrates-legacy-onboarding");
+    let mut store = LocalStateStore::with_path(path);
+    store.switch_active_account("did:web:old.example");
+    store.save_sync_cursor("sx:old");
+    let handoff = PendingAccountHandoff {
+        principal_server_url: "https://principal.example".to_owned(),
+        gate_account_base: "https://auth.example/_arkret/gate/account".to_owned(),
+        request_id: "ak:request:019f0000-0000-7000-8000-000000000099".to_owned(),
+        account_handle: "new:auth.example".to_owned(),
+        holder_jkt: "holder-jkt".to_owned(),
+        audience: "did:webvh:z6mkfixture:principal.example".to_owned(),
+        expires_at: chrono::Utc::now() + chrono::Duration::minutes(10),
+        lease_id: Some("lease-new".to_owned()),
+        lease_fence: Some(1),
+        lease_expires_at: Some(chrono::Utc::now() + chrono::Duration::minutes(15)),
+        retry_after_ms: None,
+        device_id: "ak:device:019f0000-0000-7000-8000-000000000099".to_owned(),
+        enrollment_authority_did: "did:key:z6MkrJVnaZkeFzdQyKjzgRHjhBfE6ZscXDFHq8T7TYNy9v1t"
+            .to_owned(),
+        trust_domain: "ak:trust-domain:test".to_owned(),
+    };
+    store
+        .set_pending_account_handoff(Some(handoff.clone()))
+        .unwrap();
+
+    store.begin_pending_login(&handoff.device_id, Some(&handoff.holder_jkt));
+
+    assert!(store.active_account_did().is_none());
+    assert_eq!(
+        store
+            .pending_account_handoff()
+            .as_ref()
+            .map(|pending| pending.request_id.as_str()),
+        Some(handoff.request_id.as_str())
+    );
+    assert!(store.load().sync_cursor.is_none());
+
+    store.switch_active_account("did:web:old.example");
+    assert_eq!(store.load().sync_cursor.as_deref(), Some("sx:old"));
+    assert!(
+        store.pending_account_handoff().is_none(),
+        "legacy onboarding data must be removed from the old DID entry"
+    );
 }
 
 #[test]

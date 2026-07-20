@@ -227,6 +227,7 @@ fn AppBootstrap() -> Element {
     );
     let initial_realm_tree_nodes =
         realm_tree_nodes_from_sync_realms(&initial_local_state.realm_tree_projections);
+    let initial_realm_tree_owner_did = initial_state_store.active_account_did().unwrap_or_default();
     let initial_sidebar_width = load_sidebar_width_preference(&initial_state_store);
     let initial_locale = initial_state_store
         .device_pref("locale")
@@ -339,6 +340,7 @@ fn AppBootstrap() -> Element {
     let initial_push_state =
         crate::push::push_status_label(initial_local_state.push_registration.as_ref());
     let initial_realm_tree_nodes_for_signal = initial_realm_tree_nodes.clone();
+    let initial_realm_tree_owner_did_for_signal = initial_realm_tree_owner_did.clone();
     let mut sync_cursor = use_signal(move || initial_sync_cursor);
     // Liveness counter for the per-realm `events/subscribe` engine
     // (`crate::realm_events_engine`). Bumped when that engine folds fresh realm
@@ -348,12 +350,29 @@ fn AppBootstrap() -> Element {
     let mut selected_realm_id = use_signal(move || initial_selected_realm_id);
     let mut new_space_context_node = use_signal(String::new);
     let mut realm_tree_nodes = use_signal(move || initial_realm_tree_nodes_for_signal);
+    let mut realm_tree_owner_did = use_signal(move || initial_realm_tree_owner_did_for_signal);
     let mut projection_events = use_signal(Vec::<ProjectionEvent>::new);
     let mut device_queue = use_signal(|| 0usize);
     let push_state = use_signal(move || initial_push_state);
     let frontier_state = use_signal(|| "Not loaded".to_owned());
     let crypto_state = use_signal(|| "No authenticated session".to_owned());
     let network_state = use_signal(|| "offline".to_owned());
+
+    // Realm-tree nodes are an in-memory account projection. Invalidate them as
+    // soon as the account signal changes; connect() will repopulate them from
+    // the new account. Keeping the owner separately also prevents the render
+    // between the DID change and this effect from exposing the old account.
+    use_effect(move || {
+        let current_account = account_did().trim().to_owned();
+        if realm_tree_owner_did.peek().as_str() != current_account {
+            realm_tree_nodes.set(Vec::new());
+            projection_events.set(Vec::new());
+            sync_cursor.set(String::new());
+            selected_realm_id.set(String::new());
+            device_queue.set(0);
+            realm_tree_owner_did.set(current_account);
+        }
+    });
     let mut last_error = use_signal(|| Option::<String>::None);
     let server_description = use_signal(|| Option::<ServiceDescribe>::None);
     let server_probe_status = use_signal(|| "server not probed".to_owned());
@@ -677,7 +696,16 @@ fn AppBootstrap() -> Element {
         }
     }
 
-    let loaded_realm_tree_nodes = realm_tree_nodes();
+    let loaded_realm_tree_nodes = if session_boot::account_projections_visible(
+        &route,
+        has_session,
+        &account_did(),
+        &realm_tree_owner_did(),
+    ) {
+        realm_tree_nodes()
+    } else {
+        Vec::new()
+    };
     // The principal control / self Realm (device ledger, key log, and the
     // holder's own private uploads — see key-management.md §4.1) is account
     // infrastructure, not a collaboration workspace, so it MUST NOT show up in

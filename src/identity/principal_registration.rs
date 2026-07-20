@@ -294,6 +294,44 @@ mod tests {
     use super::*;
 
     #[test]
+    fn fresh_recovery_custody_produces_a_distinct_principal_did() {
+        let handoff = PendingAccountHandoff {
+            principal_server_url: "https://principal.example".to_owned(),
+            gate_account_base: "https://auth.example/_arkret/gate/account".to_owned(),
+            request_id: "ak:request:019f0000-0000-7000-8000-000000000001".to_owned(),
+            account_handle: "alice:auth.example".to_owned(),
+            holder_jkt: "holder-jkt".to_owned(),
+            audience: "did:webvh:z6mkfixture:principal.example".to_owned(),
+            expires_at: Utc::now() + chrono::Duration::minutes(10),
+            lease_id: Some("lease-1".to_owned()),
+            lease_fence: Some(1),
+            lease_expires_at: Some(Utc::now() + chrono::Duration::minutes(15)),
+            retry_after_ms: None,
+            device_id: "ak:device:019f0000-0000-7000-8000-000000000001".to_owned(),
+            enrollment_authority_did: "did:key:z6MkrJVnaZkeFzdQyKjzgRHjhBfE6ZscXDFHq8T7TYNy9v1t"
+                .to_owned(),
+            trust_domain: "ak:trust-domain:test".to_owned(),
+        };
+        let first_key = crate::recovery_crypto::generate_recovery_key().unwrap();
+        let second_key = crate::recovery_crypto::generate_recovery_key().unwrap();
+
+        let first =
+            prepare_registration_checkpoint(&handoff, &handoff.device_id, &first_key).unwrap();
+        let second =
+            prepare_registration_checkpoint(&handoff, &handoff.device_id, &second_key).unwrap();
+
+        assert_ne!(
+            first.recovery_key_fingerprint,
+            second.recovery_key_fingerprint
+        );
+        assert_ne!(
+            first.root_public_key_multibase,
+            second.root_public_key_multibase
+        );
+        assert_ne!(first.did, second.did);
+    }
+
+    #[test]
     fn persisted_checkpoint_contains_no_recovery_secret_and_requires_the_same_key() {
         let recovery_key = crate::recovery_crypto::generate_recovery_key().unwrap();
         let handoff = PendingAccountHandoff {

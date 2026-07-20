@@ -242,6 +242,33 @@ impl LocalStateStore {
         if device_id.is_empty() {
             return;
         }
+        self.ensure_cached_loaded();
+
+        // A pre-DID login has no account owner yet. Detach it from the
+        // previously-active DID before the callback persists handoff or
+        // onboarding checkpoints; otherwise those records (and every read made
+        // by the onboarding shell) inherit the previous account's projection
+        // state until the new DID is finally resolved.
+        //
+        // Preserve an already-started onboarding checkpoint when upgrading an
+        // affected browser: older builds wrote it into the active account
+        // entry. Move only those two pre-DID fields into the anonymous entry and
+        // leave the outgoing account's realms/cursors/MLS state untouched.
+        let pending_account_handoff = self.cached.pending_account_handoff.take();
+        let pending_principal_registration = self.cached.pending_principal_registration.take();
+        let _ = self.flush();
+
+        *self.lock_mls_receive_overlay() = MlsReceiveOverlay::default();
+        let mut anonymous = self
+            .read_account_state(ANONYMOUS_ACCOUNT_NAMESPACE)
+            .unwrap_or_default();
+        // A newly-started login supersedes abandoned anonymous checkpoints.
+        // When this is a real resume, the fields were captured from `cached`
+        // above (because the anonymous scope was already active) and are written
+        // back unchanged.
+        anonymous.pending_account_handoff = pending_account_handoff;
+        anonymous.pending_principal_registration = pending_principal_registration;
+
         crate::secure_key_store::set_pending_login_device_id(Some(device_id));
         let pending = PendingLogin {
             device_id: device_id.to_owned(),
@@ -250,7 +277,15 @@ impl LocalStateStore {
                 .filter(|value| !value.is_empty())
                 .map(ToOwned::to_owned),
         };
-        self.mutate_root(|root| root.pending_login = Some(pending));
+        // Publish the anonymous owner before flushing its state so the generic
+        // persistence path cannot route this snapshot back into the old DID.
+        self.mutate_root(|root| {
+            root.active_did = None;
+            root.pending_login = Some(pending);
+        });
+        self.cached = anonymous;
+        self.loaded.store(true, Ordering::Relaxed);
+        let _ = self.flush();
     }
 
     /// The in-flight pre-DID login material, if any. Read through storage so a
