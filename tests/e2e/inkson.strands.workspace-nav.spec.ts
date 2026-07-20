@@ -106,22 +106,44 @@ test("owned agent ensure opens the dedicated private Sidecar shell", async ({ pa
   );
   await expect(shell.getByTestId("sidecar-context-strip")).toBeVisible();
   await expect(shell.getByTestId("sidecar-addressed-now")).toContainText(
-    "Alice Assistant",
+    "assistant",
   );
   await expect(shell.getByTestId("sidecar-security-state")).toContainText(
-    "Private but not E2EE",
+    "E2EE",
   );
-  await expect(shell.getByTestId("sidecar-plaintext-disclosure")).toBeVisible();
+  await expect(shell.getByTestId("sidecar-plaintext-disclosure")).toHaveCount(0);
+  await expect(shell.getByTestId("send-e2ee-move-button")).toHaveCount(0);
+  await expect(shell.getByTestId("send-chat-button")).toBeEnabled();
   await expect(shell.getByTestId("discussion-users-panel")).toHaveCount(0);
   await expect(shell.getByTestId("chat-call-voice-button")).toBeHidden();
+
+  const eventLoopDelay = await page.evaluate(async () => {
+    const startedAt = performance.now();
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    return performance.now() - startedAt;
+  });
+  expect(eventLoopDelay).toBeLessThan(1_000);
+  await expect(shell.getByTestId("chat-panel")).toHaveCount(1);
 
   await shell.getByRole("button", { name: "Access" }).click();
   await expect(shell.getByTestId("sidecar-access-panel")).toContainText(
     "Addressed now",
   );
   await expect(shell.getByTestId("sidecar-access-panel")).toContainText(
-    "other eligible personal agents",
+    "assistant",
   );
+  await expect(shell.getByTestId("sidecar-agent-row")).toHaveCount(1);
+
+  await shell.getByTestId("mention-trigger-button").click();
+  const sidecarMentionButtons = shell.locator(
+    '[data-testid="mention-picker"] button[data-testid="mention-suggestion"]',
+  );
+  await expect(sidecarMentionButtons).toHaveCount(1);
+  await expect(sidecarMentionButtons).toHaveAttribute(
+    "data-mention-did",
+    "did:web:agents.example:assistant",
+  );
+  await shell.getByTestId("mention-picker-close-button").click();
 
   await shell.getByTestId("discussion-settings-toggle").click();
   await expect(shell.getByTestId("sidecar-connection-details")).toContainText(

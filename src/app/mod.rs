@@ -2018,6 +2018,7 @@ fn AppBootstrap() -> Element {
                                                             .display_name
                                                             .clone()
                                                             .unwrap_or_else(|| agent.slug.clone());
+                                                        let agent_sidecar_label = agent.slug.clone();
                                                         let avatar_blob_ref = agent
                                                             .avatar_blob_ref
                                                             .as_ref()
@@ -2036,7 +2037,7 @@ fn AppBootstrap() -> Element {
                                                                 onclick: {
                                                                     let base = base_url();
                                                                     let agent_id = agent_id.clone();
-                                                                    let agent_label = agent_label.clone();
+                                                                    let agent_sidecar_label = agent_sidecar_label.clone();
                                                                     let controller_id = controller_id.clone();
                                                                     move |event: dioxus::events::MouseEvent| {
                                                                         event.prevent_default();
@@ -2044,7 +2045,7 @@ fn AppBootstrap() -> Element {
                                                                         let api_token = token();
                                                                         let base = base.clone();
                                                                         let agent_id = agent_id.clone();
-                                                                        let agent_label = agent_label.clone();
+                                                                        let agent_sidecar_label = agent_sidecar_label.clone();
                                                                         let controller_id = controller_id.clone();
                                                                         let trace_id = crate::operation::uuid_v7();
                                                                         tracing::info!(
@@ -2109,7 +2110,7 @@ fn AppBootstrap() -> Element {
                                                                                         trace_id,
                                                                                         controller_id: controller.to_string(),
                                                                                         addressed_agent_ids: vec![agent_id],
-                                                                                        addressed_agent_label: agent_label,
+                                                                                        addressed_agent_label: agent_sidecar_label,
                                                                                         source_realm_id: realm_id.clone(),
                                                                                         source_strand_id: default_strand_id_for_realm(&realm_id),
                                                                                         private_circle_id: response.private_circle_id.to_string(),

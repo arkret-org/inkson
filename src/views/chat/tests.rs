@@ -2848,6 +2848,14 @@ fn participant_roster_rows_groups_agents_under_visible_controller() {
         }),
     };
     let visible = std::collections::BTreeSet::from([agent.did.clone()]);
+    assert_eq!(
+        participant_roster_display_label(&crate::state::LocalStateStore::default(), &controller,),
+        "alice:example.com"
+    );
+    assert_eq!(
+        participant_roster_display_label(&crate::state::LocalStateStore::default(), &agent,),
+        "summary"
+    );
     let rows = participant_roster_rows(&[controller.clone(), agent.clone()], &visible);
     assert_eq!(rows.len(), 1);
     match &rows[0] {
@@ -3172,6 +3180,15 @@ fn agent_candidate_visibility_keeps_owned_agents_and_hides_private_remote_agents
         &std::collections::BTreeSet::from([remote_agent.did.clone()]),
         account_did
     ));
+    let sidecar_mentions = sidecar_owned_agent_participants(
+        &[
+            own_controller.clone(),
+            own_agent.clone(),
+            remote_agent.clone(),
+        ],
+        account_did,
+    );
+    assert_eq!(sidecar_mentions, vec![own_agent.clone()]);
     assert_eq!(
         readable_participation_agent_ids(&[own_agent.clone(), remote_agent], account_did),
         vec![own_agent.did]
@@ -3265,6 +3282,36 @@ fn channel_from_strand_event_requires_real_discussion_track() {
     assert_eq!(channel.topic.as_deref(), Some("Operations support"));
     assert!(!channel.is_default);
     assert!(!channel.is_private_sidecar);
+}
+
+#[test]
+fn sidecar_strand_title_reads_canonical_metadata_object() {
+    let strand_id = "ak:strand:01964137-0000-7000-8000-0000000000a2";
+    let projection = json!({
+        "strand_id": strand_id,
+        "metadata": {
+            "title": "AI sidecar",
+            "summary": "Controller-private AI sidecar thread"
+        },
+        "tracks": { "discussion": { "enabled": true } }
+    });
+    let projected = channel_from_strand_projection("ak:realm:demo", &projection, false)
+        .expect("discussion projection");
+    assert_eq!(projected.name, "AI sidecar");
+    assert_ne!(projected.name, strand_id);
+
+    let event = json!({
+        "kind": "ak.strand.create",
+        "payload": {
+            "object": {
+                "id": strand_id,
+                "metadata": { "title": "AI sidecar" },
+                "tracks": { "discussion": { "enabled": true } }
+            }
+        }
+    });
+    let projected = channel_from_strand_event("ak:realm:demo", &event).expect("discussion event");
+    assert_eq!(projected.name, "AI sidecar");
 }
 
 #[test]

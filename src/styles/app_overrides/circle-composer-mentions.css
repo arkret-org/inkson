@@ -532,6 +532,17 @@
   color: var(--text-2);
 }
 
+.discussion-detail-section .settings-row-readonly {
+  grid-template-columns: minmax(0, 1fr);
+  align-items: start;
+  gap: 2px;
+}
+
+.discussion-detail-section .settings-row-readonly > * {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
 .detail-row strong {
   color: var(--text);
 }

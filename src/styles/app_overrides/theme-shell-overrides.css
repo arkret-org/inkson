@@ -282,6 +282,7 @@
   align-items: center;
   gap: 8px;
   min-width: 0;
+  overflow: hidden;
 }
 
 .discussion-title-row h1,
@@ -294,6 +295,10 @@
 .discussion-title-row h1 {
   font-size: 20px;
   line-height: 1.2;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .discussion-title-row h2 {
@@ -302,16 +307,51 @@
 }
 
 .discussion-title-stack {
+  flex: 1 1 auto;
   min-width: 0;
+  overflow: hidden;
   display: grid;
   gap: 4px;
 }
 
 .discussion-head-actions {
+  flex: 0 0 auto;
   display: flex;
   flex-wrap: wrap;
   justify-content: flex-end;
   gap: 6px;
+}
+
+.board-card-title {
+  overflow: hidden;
+  overflow-wrap: normal;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.card-detail-title-block {
+  flex: 1 1 auto;
+  overflow: hidden;
+}
+
+.card-detail-title-row {
+  flex-wrap: nowrap;
+  overflow: hidden;
+}
+
+.card-detail-title-row h2 {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  overflow-wrap: normal;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.card-detail-title-meta {
+  flex: 0 1 auto;
+  flex-wrap: nowrap;
+  overflow: hidden;
 }
 
 .discussion-panel-head-actions {
@@ -576,4 +616,3 @@
   appearance: auto;
   accent-color: var(--accent, #1f6b4f);
 }
-

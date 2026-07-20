@@ -1842,7 +1842,7 @@ pub fn KanbanPanel(
                                     }
                                 },
                                 div { class: "event-head board-card-title-row",
-                                    span { class: "entity-title board-card-title", "{card.title}" }
+                                    span { class: "entity-title board-card-title", title: "{card.title}", "{card.title}" }
                                     if !displayed_card_state(card, &projected_strand_ids).is_settled() {
                                         span {
                                             class: "badge blue board-card-draft-badge",

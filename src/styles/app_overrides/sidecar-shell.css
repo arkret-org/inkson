@@ -57,6 +57,13 @@
 .sidecar-access-row > div {
   display: grid;
   min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.sidecar-access-row > .badge {
+  align-self: start;
+  flex: 0 0 auto;
+  white-space: nowrap;
 }
 
 .message-privacy-badge--sidecar {

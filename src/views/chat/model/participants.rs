@@ -111,8 +111,8 @@ pub(crate) fn participant_roster_rows(
 
     for agents in agents_by_controller.values_mut() {
         agents.sort_by(|left, right| {
-            agent_display_label(left)
-                .cmp(&agent_display_label(right))
+            agent_member_label(left)
+                .cmp(&agent_member_label(right))
                 .then(left.did.cmp(&right.did))
         });
     }
@@ -274,9 +274,36 @@ pub(crate) fn agent_display_label(participant: &SpaceParticipant) -> String {
         .unwrap_or_else(|| short_principal_label(&participant.did))
 }
 
+pub(crate) fn agent_member_label(participant: &SpaceParticipant) -> String {
+    participant
+        .agent_metadata
+        .as_ref()
+        .map(|metadata| metadata.agent_slug.trim())
+        .filter(|slug| !slug.is_empty())
+        .map(ToOwned::to_owned)
+        .unwrap_or_else(|| agent_display_label(participant))
+}
+
+pub(crate) fn sidecar_owned_agent_participants(
+    participants: &[SpaceParticipant],
+    account_did: &str,
+) -> Vec<SpaceParticipant> {
+    participants
+        .iter()
+        .filter(|participant| {
+            participant.is_agent
+                && participant
+                    .agent_metadata
+                    .as_ref()
+                    .is_some_and(|metadata| metadata.controller_id.trim() == account_did.trim())
+        })
+        .cloned()
+        .collect()
+}
+
 pub(crate) fn participant_sender_label(participant: &SpaceParticipant) -> Option<String> {
     if participant.is_agent {
-        return Some(agent_display_label(participant));
+        return Some(agent_member_label(participant));
     }
     participant_handle_label(participant).or_else(|| participant.display_name.clone())
 }
@@ -290,7 +317,7 @@ pub(crate) fn participant_roster_display_label(
     participant: &SpaceParticipant,
 ) -> String {
     if participant.is_agent {
-        return agent_display_label(participant);
+        return agent_member_label(participant);
     }
     participant_sender_label(participant).unwrap_or_else(|| {
         crate::views::helpers::display_name_for_did(state_store, &participant.did)

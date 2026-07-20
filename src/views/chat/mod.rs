@@ -326,8 +326,11 @@ fn sidecar_agent_label(agent_ids: &[String], participants: &[SpaceParticipant]) 
                 .find(|participant| participant.did == *agent_id)
                 .and_then(|participant| {
                     participant
-                        .display_name
-                        .clone()
+                        .agent_metadata
+                        .as_ref()
+                        .map(|metadata| metadata.agent_slug.trim())
+                        .filter(|slug| !slug.is_empty())
+                        .map(ToOwned::to_owned)
                         .or_else(|| participant.handle_label.clone())
                 })
                 .unwrap_or_else(|| {
@@ -482,6 +485,7 @@ fn should_start_circle_scope_request(
 pub fn ChatPanel(
     plaintext_service_id: String,
     account_did: String,
+    account_primary_handle: String,
     device_id: String,
     token: Signal<String>,
     selected_realm_id: String,
@@ -720,10 +724,18 @@ pub fn ChatPanel(
         .map(crate::security_state::realm_projection_is_encrypted)
         .unwrap_or(false)
     };
-    let selected_channel_security_encrypted = selected_channel_info
-        .as_ref()
-        .and_then(|channel| channel.security_encrypted)
-        .unwrap_or(selected_realm_security_encrypted);
+    // The reserved Sidecar ensure contract requires an MLS-backed Circle.
+    // The private Strand only carries its Circle id, so ordinary Realm
+    // inheritance would incorrectly downgrade a Sidecar opened from a
+    // plaintext principal-control Realm and expose the plaintext Send path.
+    let selected_channel_security_encrypted = if sidecar_mode {
+        true
+    } else {
+        selected_channel_info
+            .as_ref()
+            .and_then(|channel| channel.security_encrypted)
+            .unwrap_or(selected_realm_security_encrypted)
+    };
     let selected_realm_pending_mls_binding = state_store
         .read()
         .realm_has_pending_mls_binding(&selected_realm_id);
@@ -735,7 +747,7 @@ pub fn ChatPanel(
         } else if selected_channel_security_encrypted {
             "E2EE"
         } else {
-            "Private but not E2EE"
+            "Encryption unavailable"
         }
     });
     let sidecar_send_block_reason = sidecar_session.as_ref().and_then(|session| {
@@ -757,28 +769,43 @@ pub fn ChatPanel(
     // optimistic rows. A sender's create can still be controller-only when a
     // remote reaction arrives, so projecting raw operations in isolation
     // would discard that control event for lack of a target message.
-    let all_messages_snapshot = {
-        let store = state_store.read();
-        let snapshot = store.load();
-        let decrypt_identity = Some((account_did.as_str(), device_id.as_str()));
-        let mut folded = fold_local_state_into_chat_messages_with_sidecar(
-            messages(),
-            &snapshot,
-            Some(&store),
-            decrypt_identity,
-        );
-        // Account sync also carries the server-folded timeline (notably a
-        // revise event rewritten into a redacted create tombstone). Merge that
-        // authoritative lifecycle view after the append-only local controls so
-        // representation collisions cannot leave an older revision visible.
-        let server_folded = chat_messages_from_sync_realms_with_sidecar(
-            &snapshot.realm_tree_projections,
-            Some(&store),
-            decrypt_identity,
-        );
-        merge_chat_messages(&mut folded, server_folded);
-        folded
-    };
+    // Folding the complete durable operation log is intentionally memoized.
+    // Presence heartbeats, panel toggles, typing timers, and composer changes
+    // all re-render ChatPanel; repeating the full lifecycle fold on each of
+    // those unrelated edges can monopolize the WASM main thread once an
+    // account has a substantial history, making the entire browser appear
+    // hung even though network traffic stays quiet.
+    let all_messages_snapshot = use_memo({
+        let account_did = account_did.clone();
+        let device_id = device_id.clone();
+        move || {
+            // These are the durable invalidation edges. `peek` below avoids
+            // treating unrelated LocalStateStore writes (backup metadata,
+            // settings, presence preferences) as a timeline invalidation.
+            let _account_cursor = sync_cursor();
+            let _realm_epoch = realm_live_epoch();
+            let store = state_store.peek();
+            let snapshot = store.load();
+            let decrypt_identity = Some((account_did.as_str(), device_id.as_str()));
+            let mut folded = fold_local_state_into_chat_messages_with_sidecar(
+                messages(),
+                &snapshot,
+                Some(&store),
+                decrypt_identity,
+            );
+            // Account sync also carries the server-folded timeline (notably a
+            // revise event rewritten into a redacted create tombstone). Merge
+            // it after local controls so an older revision cannot win.
+            let server_folded = chat_messages_from_sync_realms_with_sidecar(
+                &snapshot.realm_tree_projections,
+                Some(&store),
+                decrypt_identity,
+            );
+            merge_chat_messages(&mut folded, server_folded);
+            folded
+        }
+    });
+    let all_messages_snapshot = all_messages_snapshot.read().clone();
     let visible_messages = all_messages_snapshot
         .iter()
         .filter(|msg| {
@@ -836,12 +863,17 @@ pub fn ChatPanel(
         .get(&selected_realm_id)
         .cloned();
     let account_display_label = account_display_name();
+    let account_roster_handle = if account_primary_handle.trim().is_empty() {
+        account_display_label.as_str()
+    } else {
+        account_primary_handle.as_str()
+    };
     let mut participants = space_participants(
         participant_projection.as_ref(),
         &state_store.read(),
         &selected_realm_id,
         &account_did,
-        Some(&account_display_label),
+        Some(account_roster_handle),
     );
     let own_controller_handle = participants
         .iter()
@@ -925,9 +957,27 @@ pub fn ChatPanel(
             .filter(|sender| known_agent_did_set.contains(sender))
             .map(ToOwned::to_owned),
     );
+    // A Sidecar's membership boundary is controller-private and the server
+    // ensure operation already admits every eligible owned Agent. Do not run
+    // those Agents through the public-participation filter used by ordinary
+    // Realm discussions; doing so hid the exact principals that make up this
+    // private Circle and left the panel showing only the controller.
+    if sidecar_mode {
+        public_agent_dids.extend(known_agent_ids.iter().cloned());
+    }
     participants.retain(|participant| {
         !participant.is_agent || public_agent_dids.contains(&participant.did)
     });
+    let sidecar_owned_agents = sidecar_owned_agent_participants(&participants, &account_did);
+    // Actor mentions in a Sidecar are intentionally narrower than the Realm
+    // roster: only controller-owned Agents may be selected. The controller is
+    // already the sender, and unrelated Realm members are outside the private
+    // Circle's collaboration boundary.
+    let composer_participants = if sidecar_mode {
+        sidecar_owned_agents.clone()
+    } else {
+        participants_for_messages.clone()
+    };
 
     let mut participant_dids_for_presence = participants
         .iter()
@@ -1553,10 +1603,6 @@ pub fn ChatPanel(
                             strong { {sidecar_security_label.unwrap_or("Not ready")} }
                             span { "{reason}" }
                         }
-                    } else if !selected_channel_security_encrypted {
-                        div { class: "event warning-banner", "data-testid": "sidecar-plaintext-disclosure", role: "status",
-                            "This Sidecar is isolated by membership, delivery, and query permissions. Messages are not end-to-end encrypted."
-                        }
                     }
                 }
 
@@ -1788,22 +1834,46 @@ pub fn ChatPanel(
                         div { class: "discussion-detail-section sidecar-access-section", "data-testid": "sidecar-access-panel",
                             div { class: "discussion-subhead", span { "Sidecar members" } }
                             div { class: "sidecar-access-row",
-                                div { strong { "You" } span { class: "muted", "Controller" } }
+                                div {
+                                    strong {
+                                        if account_primary_handle.trim().is_empty() {
+                                            "You"
+                                        } else {
+                                            "{account_primary_handle}"
+                                        }
+                                    }
+                                    span { class: "muted", "Controller" }
+                                }
                                 span { class: "badge success", "Active" }
                             }
-                            for (index, agent_id) in session.addressed_agent_ids.iter().enumerate() {
-                                div { class: "sidecar-access-row", key: "{agent_id}",
-                                    div {
-                                        strong {
-                                            if index == 0 { "{session.addressed_agent_label}" } else { "Personal agent" }
+                            for agent in &sidecar_owned_agents {
+                                {
+                                    let agent_id = agent.did.clone();
+                                    let slug = agent.agent_metadata.as_ref()
+                                        .map(|metadata| metadata.agent_slug.trim().to_owned())
+                                        .filter(|slug| !slug.is_empty())
+                                        .unwrap_or_else(|| short_principal_label(&agent_id));
+                                    let selector = agent_selector_label(agent);
+                                    let addressed_now = session.addressed_agent_ids.iter()
+                                        .any(|candidate| candidate == &agent_id);
+                                    rsx! {
+                                        div { class: "sidecar-access-row", key: "{agent_id}", "data-testid": "sidecar-agent-row",
+                                            div {
+                                                strong { "{slug}" }
+                                                if let Some(selector) = selector {
+                                                    span { class: "muted", "@{selector}" }
+                                                }
+                                                span { class: "muted mono", "{agent_id}" }
+                                            }
+                                            span { class: if addressed_now { "badge accent" } else { "badge" },
+                                                if addressed_now { "Addressed now" } else { "Eligible agent" }
+                                            }
                                         }
-                                        span { class: "muted mono", "{agent_id}" }
                                     }
-                                    span { class: "badge", "Addressed now" }
                                 }
                             }
                             div { class: "event info",
-                                "This is the currently addressed set. The Sidecar Circle can also include other eligible personal agents; Inkson does not present this list as a 1:1 membership boundary."
+                                "The Sidecar Circle includes your eligible personal Agents. The badge marks the Agent addressed by the current message."
                             }
                             div { class: "discussion-subhead", span { "Encryption" } }
                             div { class: "detail-row", span { "Profile" } strong { {sidecar_security_label.unwrap_or("Opening")} } }
@@ -2265,7 +2335,7 @@ pub fn ChatPanel(
                     selected_channel_info: selected_channel_info.clone(),
                     account_did: account_did.clone(),
                     account_display_label: account_display_label.clone(),
-                    participants: participants_for_messages.clone(),
+                    participants: composer_participants.clone(),
                     selected_realm_id: selected_realm_id.clone(),
                     device_id: device_id.clone(),
                     plaintext_service_id: plaintext_service_id.clone(),

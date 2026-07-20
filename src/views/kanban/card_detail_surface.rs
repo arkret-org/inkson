@@ -1347,6 +1347,7 @@ pub(super) fn CardDetail(controller: KanbanController, context: CardDetailContex
                                                         crate::views::chat::ChatPanel {
                                                             plaintext_service_id: plaintext_service_id.clone(),
                                                             account_did: account_did.clone(),
+                                                            account_primary_handle: account_primary_handle.clone(),
                                                             device_id: device_id.clone(),
                                                             token,
                                                             selected_realm_id: selected_realm_id.clone(),

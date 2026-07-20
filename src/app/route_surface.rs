@@ -189,6 +189,7 @@ pub(super) fn RouteSurface(state: RouteSurfaceState) -> Element {
                                 crate::views::chat::ChatPanel {
                                     plaintext_service_id: active_service_id.clone(),
                                     account_did: account_did(),
+                                    account_primary_handle: account_primary_handle(),
                                     device_id: device_id(),
                                     token,
                                     selected_realm_id: realm_id.clone(),
@@ -216,6 +217,7 @@ pub(super) fn RouteSurface(state: RouteSurfaceState) -> Element {
                                 crate::views::chat::ChatPanel {
                                     plaintext_service_id: active_service_id.clone(),
                                     account_did: account_did(),
+                                    account_primary_handle: account_primary_handle(),
                                     device_id: device_id(),
                                     token,
                                     selected_realm_id: active_realm_id.clone(),

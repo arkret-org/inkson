@@ -78,21 +78,30 @@ pub(crate) fn channel_from_strand_projection(
         .filter(|id| id.starts_with("ak:strand:"))
         .map(ToOwned::to_owned)
         .unwrap_or_else(|| default_discussion_strand_id(realm_id));
-    let name = first_string_in_candidate_paths(&[strand], &[&["title"], &["name"]])
-        .filter(|title| !title.trim().is_empty())
-        .map(ToOwned::to_owned)
-        .unwrap_or_else(|| {
-            if is_default {
-                "Discussion".to_owned()
-            } else {
-                strand_id.clone()
-            }
-        });
+    let name = first_string_in_candidate_paths(
+        &[strand],
+        &[
+            &["title"],
+            &["name"],
+            &["metadata", "title"],
+            &["metadata", "name"],
+        ],
+    )
+    .filter(|title| !title.trim().is_empty())
+    .map(ToOwned::to_owned)
+    .unwrap_or_else(|| {
+        if is_default {
+            "Discussion".to_owned()
+        } else {
+            strand_id.clone()
+        }
+    });
     let category = first_string_in_candidate_paths(
         &[strand],
         &[
             &["category"],
             &["fields", "category"],
+            &["metadata", "fields", "category"],
             &["summary", "category"],
         ],
     )
@@ -113,6 +122,9 @@ pub(crate) fn channel_from_strand_projection(
             &["description"],
             &["fields", "summary"],
             &["fields", "topic"],
+            &["metadata", "summary"],
+            &["metadata", "fields", "summary"],
+            &["metadata", "fields", "topic"],
         ],
     )
     .filter(|topic| !topic.trim().is_empty())
@@ -290,8 +302,12 @@ pub(crate) fn channel_from_strand_event(realm_id: &str, event: &Value) -> Option
             &["name"],
             &["object", "title"],
             &["object", "name"],
+            &["object", "metadata", "title"],
+            &["object", "metadata", "name"],
             &["strand", "title"],
             &["strand", "name"],
+            &["strand", "metadata", "title"],
+            &["strand", "metadata", "name"],
         ],
     )
     .unwrap_or(strand_id)
@@ -301,8 +317,11 @@ pub(crate) fn channel_from_strand_event(realm_id: &str, event: &Value) -> Option
         &[
             &["category"],
             &["fields", "category"],
+            &["metadata", "fields", "category"],
             &["object", "fields", "category"],
+            &["object", "metadata", "fields", "category"],
             &["strand", "fields", "category"],
+            &["strand", "metadata", "fields", "category"],
         ],
     )
     .unwrap_or("general")
@@ -316,9 +335,15 @@ pub(crate) fn channel_from_strand_event(realm_id: &str, event: &Value) -> Option
             &["object", "summary"],
             &["object", "topic"],
             &["object", "description"],
+            &["object", "metadata", "summary"],
+            &["object", "metadata", "fields", "summary"],
+            &["object", "metadata", "fields", "topic"],
             &["strand", "summary"],
             &["strand", "topic"],
             &["strand", "description"],
+            &["strand", "metadata", "summary"],
+            &["strand", "metadata", "fields", "summary"],
+            &["strand", "metadata", "fields", "topic"],
         ],
     )
     .map(ToOwned::to_owned);
