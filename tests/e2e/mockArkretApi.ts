@@ -9,15 +9,15 @@ const SETUP_REALM = "ak:realm:01js0setupflow000000000000";
 const LOW_FLOOR_REALM = "ak:realm:01lowfloor0000000000000000";
 const CHILD_REALM = "ak:realm:01launchchild0000000000000";
 const GRANDCHILD_REALM = "ak:realm:01launchdeep00000000000000";
-const DIRECT_BOB_REALM = "ak:realm:01directbob000000000000000";
-const DIRECT_BOB_STRAND = "ak:strand:01directbob0000000000000000";
+const DIRECT_BOB_REALM = "ak:realm:01964137-0000-7000-8000-00000000d0b1";
+const DIRECT_BOB_STRAND = "ak:strand:01964137-0000-7000-8000-00000000d0b2";
 const DEMO_CIRCLE = "ak:circle:0196419b-0000-7000-8000-00000000c1c1";
 const DEMO_BOARD_SPACE = "ak:space:0196419b-0000-7000-8000-00000000b0a0";
 const DEMO_SECOND_BOARD_SPACE = "ak:space:0196419b-0000-7000-8000-00000000b0b0";
-const DEMO_TODO_LIST = "ak:space:01list-todo000000000000000000";
-const DEMO_PROGRESS_LIST = "ak:space:01list-progress00000000000000";
-const DEMO_DONE_LIST = "ak:space:01list-done00000000000000000";
-const DEMO_SECOND_LIST = "ak:space:01list-secondary000000000000";
+const DEMO_TODO_LIST = "ak:space:0196419b-0000-7000-8000-00000000b0a1";
+const DEMO_PROGRESS_LIST = "ak:space:0196419b-0000-7000-8000-00000000b0a2";
+const DEMO_DONE_LIST = "ak:space:0196419b-0000-7000-8000-00000000b0a3";
+const DEMO_SECOND_LIST = "ak:space:0196419b-0000-7000-8000-00000000b0b1";
 const DEMO_STRAND_LEGAL_REVIEW =
   "ak:strand:0196419b-0000-7000-8000-000000000101";
 const DEMO_STRAND_ONBOARDING_COPY =
@@ -27,7 +27,9 @@ const DEMO_STRAND_SECURITY_SIGNOFF =
 const DEMO_STRAND_SECONDARY_CARD =
   "ak:strand:0196419b-0000-7000-8000-000000000104";
 const DEMO_BLOB_REF =
-  "ak:blob:sha256:01015dc8af66d01f557ea63f13538f1964848840a350c5311d1efc8ad138bb91";
+  "ak:blob:sha256:431ced6916a2a21a156e38701afe55bbd7f88969fbbfc56d7fe099d47f265460";
+const DEMO_AVATAR_PNG_BASE64 =
+  "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=";
 const ENROLLMENT_AUTHORITY_DID =
   "did:key:z6MknBuwKMPAzbhp6EwCnaxsEDk4G2KFeWRu273gYVuTY5jw";
 const ENROLLMENT_AUTHORITY_VM = `${ENROLLMENT_AUTHORITY_DID}#z6MknBuwKMPAzbhp6EwCnaxsEDk4G2KFeWRu273gYVuTY5jw`;
@@ -897,6 +899,8 @@ export async function mockArkretApi(
         realm_id: realmId,
         total: boardStrandProjections.length,
         strands: boardStrandProjections,
+        next_cursor: null,
+        has_more: false,
       });
     }
 
@@ -1552,27 +1556,49 @@ export async function mockArkretApi(
       const notificationEvents = includeDemoRealms
         ? [
             {
-              kind: "ak.notification",
-              notification_id: "notif-msg-1",
-              title: "New message",
-              body: "Alice sent a message in Demo Realm",
+              event_id: "ak:event:01964137-0000-7000-8000-00000000a101",
+              kind: "ak.account_data.set",
               realm_id: DEMO_REALM,
-              notification_kind: "message",
-              type: "message",
-              timestamp: "2026-04-28T12:01:00Z",
-              read: false,
+              actor_id: accountPrincipalId,
+              actor_seq: 101,
+              created_at: "2026-04-28T12:01:00.000Z",
+              hlc: "019641370001-0000-12345678",
+              prev_refs: [],
+              payload: {
+                schema: "ak.schema.notification.v1",
+                notification_id: "notif-msg-1",
+                title: "New message",
+                body: "Alice sent a message in Demo Realm",
+                realm_id: DEMO_REALM,
+                notification_kind: "message",
+                type: "message",
+                timestamp: "2026-04-28T12:01:00Z",
+                read: false,
+              },
+              proofs: [],
             },
             {
-              kind: "ak.notification",
-              notification_id: "notif-invite-1",
-              invite_id: "ak:invite:01904100-0000-7000-8000-000000000099",
-              title: "New invite",
-              body: "You were invited to review Demo Realm",
+              event_id: "ak:event:01964137-0000-7000-8000-00000000a102",
+              kind: "ak.account_data.set",
               realm_id: DEMO_REALM,
-              notification_kind: "invite",
-              type: "invite",
-              timestamp: "2026-04-28T12:02:00Z",
-              read: false,
+              actor_id: accountPrincipalId,
+              actor_seq: 102,
+              created_at: "2026-04-28T12:02:00.000Z",
+              hlc: "019641370002-0000-12345678",
+              prev_refs: [],
+              payload: {
+                schema: "ak.schema.notification.v1",
+                notification_id: "notif-invite-1",
+                invite_id: "ak:invite:01904100-0000-7000-8000-000000000099",
+                title: "New invite",
+                body: "You were invited to review Demo Realm",
+                realm_id: DEMO_REALM,
+                notification_kind: "invite",
+                type: "invite",
+                timestamp: "2026-04-28T12:02:00Z",
+                read: false,
+              },
+              proofs: [],
             },
           ]
         : [];
@@ -1584,11 +1610,18 @@ export async function mockArkretApi(
             createdRealms.map((realm) => [
               realm.id,
               {
-                summary: {
-                  title: realm.title,
-                  summary: realm.summary,
-                  encryption_profile: realm.encryption_profile,
+                state_at_window_start: {
+                  actor_profiles: {},
+                  realm_metadata: {
+                    title: realm.title,
+                    summary: realm.summary,
+                  },
+                  e2ee_epoch:
+                    realm.encryption_profile === "mls_rfc9420"
+                      ? { epoch: 0, key_ref: `mock-key:${realm.id}` }
+                      : null,
                 },
+                summary: { joined_member_count: 1 },
                 timeline: {
                   events: projectionEvents.filter(
                     (event) => eventRealmId(event) === realm.id,
@@ -1597,18 +1630,25 @@ export async function mockArkretApi(
                 },
                 state: { events: [] },
                 ephemeral: { events: [] },
-                unread: { notification_count: 0, highlight_count: 0 },
+                unread_notifications: {
+                  notification_count: 0,
+                  highlight_count: 0,
+                },
               },
             ]),
           ),
           ...(includeDemoRealms
             ? {
                 [DEMO_REALM]: {
-                  summary: {
-                    title: "Arkret Demo Realm",
-                    summary: "Shared demo Realm served by mocked server",
-                    encryption_profile: "mls_rfc9420",
+                  state_at_window_start: {
+                    actor_profiles: {},
+                    realm_metadata: {
+                      title: "Arkret Demo Realm",
+                      summary: "Shared demo Realm served by mocked server",
+                    },
+                    e2ee_epoch: { epoch: 0, key_ref: "mock-key:demo-realm" },
                   },
+                  summary: { joined_member_count: 2 },
                   members: [
                     { actor_id: accountPrincipalId, membership: "join" },
                     { actor_id: activeAssistantId, membership: "join" },
@@ -1616,61 +1656,80 @@ export async function mockArkretApi(
                   timeline: { events: demoProjectionEvents, limited: false },
                   state: { events: [] },
                   ephemeral: { events: [] },
-                  unread: { notification_count: 0, highlight_count: 0 },
+                  unread_notifications: {
+                    notification_count: 0,
+                    highlight_count: 0,
+                  },
                 },
                 [CHILD_REALM]: {
-                  summary: {
-                    title: "Launch Realm",
-                    summary: "Board and discussion scope",
+                  state_at_window_start: {
+                    actor_profiles: {},
+                    realm_metadata: {
+                      title: "Launch Realm",
+                      summary: "Board and discussion scope",
+                    },
+                    e2ee_epoch: null,
                   },
+                  summary: { joined_member_count: 1 },
                   timeline: { events: [], limited: false },
                   state: { events: [] },
                   ephemeral: { events: [] },
-                  unread: { notification_count: 0, highlight_count: 0 },
+                  unread_notifications: {
+                    notification_count: 0,
+                    highlight_count: 0,
+                  },
                 },
                 [GRANDCHILD_REALM]: {
-                  summary: {
-                    title: "Launch Deep Realm",
-                    summary: "Related scope fixture",
+                  state_at_window_start: {
+                    actor_profiles: {},
+                    realm_metadata: {
+                      title: "Launch Deep Realm",
+                      summary: "Related scope fixture",
+                    },
+                    e2ee_epoch: null,
                   },
+                  summary: { joined_member_count: 1 },
                   timeline: { events: [], limited: false },
                   state: { events: [] },
                   ephemeral: { events: [] },
-                  unread: { notification_count: 0, highlight_count: 0 },
+                  unread_notifications: {
+                    notification_count: 0,
+                    highlight_count: 0,
+                  },
                 },
               }
             : {}),
           ...(includeLowFloorRealm
             ? {
                 [LOW_FLOOR_REALM]: {
-                  summary: {
-                    title: "Low floor fixture Realm",
-                    summary:
-                      "Mocks the live first-account PCR floor advisory condition",
-                    encryption_profile: "none",
+                  state_at_window_start: {
+                    actor_profiles: {},
+                    realm_metadata: {
+                      title: "Low floor fixture Realm",
+                      summary:
+                        "Mocks the live first-account PCR floor advisory condition",
+                    },
+                    e2ee_epoch: null,
                   },
+                  summary: { joined_member_count: 1 },
                   timeline: { events: [], limited: false },
                   state: { events: [] },
                   ephemeral: { events: [] },
-                  unread: { notification_count: 0, highlight_count: 0 },
+                  unread_notifications: {
+                    notification_count: 0,
+                    highlight_count: 0,
+                  },
                 },
               }
             : {}),
         },
-        left_realms: [],
         to_device: {
-          messages: includeDemoRealms
-            ? [{ kind: "ak.mls.welcome", content: { ciphertext: "opaque" } }]
-            : [],
-          ack_token: "mock-to-device-ack",
+          messages: [],
         },
         account_data: { events: notificationEvents },
         device_lists: { changed: [], left: [] },
         presence: { events: [] },
-        notifications: {
-          events: notificationEvents,
-          unread_count: notificationEvents.length,
-        },
+        notifications: { items: [] },
       };
       return route.fulfill({
         status: 200,
@@ -2029,7 +2088,7 @@ export async function mockArkretApi(
                 agent_id: "did:web:agents.example:bob-helper",
                 controller_id: "did:web:bob.example",
                 display_name: "Bob Helper",
-                slug: "helper",
+                agent_slug: "helper",
                 avatar_blob_ref: DEMO_BLOB_REF,
                 direct_conversation: {
                   realm_id: "ak:realm:01964137-0000-7000-8000-0000000000b1",
@@ -2270,6 +2329,27 @@ export async function mockArkretApi(
       url.pathname === "/_arkret/self/agent-sidecar-threads:ensure" &&
       route.request().method() === "POST"
     ) {
+      const body = await route.request().postDataJSON();
+      const contextRef = body?.context_ref ?? {};
+      const contextExists = boardStrandProjections.some(
+        (strand) =>
+          strand.realm_id === contextRef.realm_id &&
+          strand.strand_id === contextRef.strand_id &&
+          strand.state === "active",
+      );
+      if (!contextExists) {
+        return json(
+          route,
+          {
+            ok: false,
+            error: {
+              code: "not_found",
+              message: "context_ref.strand_id not found",
+            },
+          },
+          404,
+        );
+      }
       return json(route, {
         ok: true,
         private_circle_id: "ak:circle:01964137-0000-7000-8000-0000000000a1",
@@ -2705,10 +2785,10 @@ export async function mockArkretApi(
     ) {
       return json(route, {
         blob_ref: DEMO_BLOB_REF,
-        size_bytes: 22,
-        media_type: "application/octet-stream",
+        size_bytes: 68,
+        media_type: "image/png",
         content_digest:
-          "sha256:01015dc8af66d01f557ea63f13538f1964848840a350c5311d1efc8ad138bb91",
+          "sha256:431ced6916a2a21a156e38701afe55bbd7f88969fbbfc56d7fe099d47f265460",
         upload_receipt: {
           service_id: "did:web:server.local",
           content_digest_verified: true,
@@ -2752,8 +2832,8 @@ export async function mockArkretApi(
     ) {
       return route.fulfill({
         status: 200,
-        contentType: "application/octet-stream",
-        body: "inkson encrypted bytes",
+        contentType: "image/png",
+        body: Buffer.from(DEMO_AVATAR_PNG_BASE64, "base64"),
       });
     }
 

@@ -442,6 +442,13 @@ fn AppBootstrap() -> Element {
     let own_agents_loaded = use_signal(|| false);
     let mut own_agents_expanded = use_signal(|| true);
     let mut expanded_contact_agents = use_signal(BTreeSet::<String>::new);
+    // One shared in-flight key keeps every direct-chat entry (human contacts,
+    // owned Agents, and a contact's Agents) single-flight and gives the row a
+    // visible/accessible "Opening" state while the server resolves or ensures
+    // the conversation. Without this, a real Sidecar ensure can take long
+    // enough that the click appears to do nothing and repeated clicks create
+    // duplicate requests.
+    let mut direct_chat_opening = use_signal(|| Option::<String>::None);
     let mut sidebar_row_menu_open = use_signal(|| Option::<String>::None);
     // UI pre-gate cache for the row menu's Add Member / Settings entries,
     // keyed by realm_id. Filled lazily when a row kebab opens (see
@@ -1988,6 +1995,13 @@ fn AppBootstrap() -> Element {
                                     primary_handle
                                 };
                                 let own_agent_count = own_agent_rows.read().len();
+                                let owned_agent_context_hint =
+                                    crate::sidecar::sidecar_context_hint(&route, &active_realm_id);
+                                let self_agents_button_label = if own_agents_expanded() {
+                                    "Hide your AI agents"
+                                } else {
+                                    "Show your AI agents"
+                                };
                                 rsx! {
                                     div {
                                         class: "contact-sidebar-group is-self",
@@ -1998,6 +2012,8 @@ fn AppBootstrap() -> Element {
                                             "data-testid": "contact-sidebar-self-row",
                                             "data-peer": "{self_did}",
                                             "aria-expanded": if own_agents_expanded() { "true" } else { "false" },
+                                            "aria-label": "{self_agents_button_label}",
+                                            title: "{self_agents_button_label}",
                                             onclick: move |_| own_agents_expanded.toggle(),
                                             span { class: "sidebar-nav-icon", UiIcon { name: "user" } }
                                             span { class: "grow truncate", "{self_label}" }
@@ -2025,6 +2041,17 @@ fn AppBootstrap() -> Element {
                                                             .map(ToString::to_string)
                                                             .unwrap_or_default();
                                                         let controller_id = self_did.clone();
+                                                        let context_hint = owned_agent_context_hint.clone();
+                                                        let opening_key = format!("owned-agent:{agent_id}");
+                                                        let opening_target = direct_chat_opening();
+                                                        let chat_open_blocked = opening_target.is_some();
+                                                        let is_opening = opening_target.as_deref()
+                                                            == Some(opening_key.as_str());
+                                                        let agent_button_label = if is_opening {
+                                                            format!("Opening chat with {agent_label}")
+                                                        } else {
+                                                            format!("Chat with {agent_label}")
+                                                        };
                                                         rsx! {
                                                             button {
                                                                 key: "{agent_id}",
@@ -2033,20 +2060,38 @@ fn AppBootstrap() -> Element {
                                                                 "data-testid": "contact-sidebar-agent-row",
                                                                 "data-agent": "{agent_id}",
                                                                 "data-controller": "{controller_id}",
-                                                                title: "Chat with {agent_label}",
+                                                                "data-opening": if is_opening { "true" } else { "false" },
+                                                                "aria-busy": if is_opening { "true" } else { "false" },
+                                                                "aria-label": "{agent_button_label}",
+                                                                title: "{agent_button_label}",
+                                                                disabled: chat_open_blocked,
                                                                 onclick: {
                                                                     let base = base_url();
                                                                     let agent_id = agent_id.clone();
                                                                     let agent_sidecar_label = agent_sidecar_label.clone();
                                                                     let controller_id = controller_id.clone();
+                                                                    let context_hint = context_hint.clone();
+                                                                    let opening_key = opening_key.clone();
                                                                     move |event: dioxus::events::MouseEvent| {
                                                                         event.prevent_default();
                                                                         event.stop_propagation();
+                                                                        if direct_chat_opening.read().is_some() {
+                                                                            return;
+                                                                        }
+                                                                        let Some(context_hint) = context_hint.clone() else {
+                                                                            crate::components::feedback::toast_info(
+                                                                                "feedback.direct_open_failed",
+                                                                                vec![],
+                                                                            );
+                                                                            return;
+                                                                        };
+                                                                        direct_chat_opening.set(Some(opening_key.clone()));
                                                                         let api_token = token();
                                                                         let base = base.clone();
                                                                         let agent_id = agent_id.clone();
                                                                         let agent_sidecar_label = agent_sidecar_label.clone();
                                                                         let controller_id = controller_id.clone();
+                                                                        let context_hint = context_hint.clone();
                                                                         let trace_id = crate::operation::uuid_v7();
                                                                         tracing::info!(
                                                                             target: "sidecar",
@@ -2079,14 +2124,24 @@ fn AppBootstrap() -> Element {
                                                                                     };
                                                                                     let agent = arkret_sdk::Did::new(agent_id_for_request)
                                                                                         .map_err(anyhow::Error::from)?;
-                                                                                    let self_realm = arkret_sdk::principal_control_realm_id(&controller);
+                                                                                    let projection = http
+                                                                                        .realm_strands(&context_hint.realm_id)
+                                                                                        .await
+                                                                                        .map_err(anyhow::Error::from)?;
+                                                                                    let context_strand_id = crate::sidecar::select_sidecar_context_strand(
+                                                                                        &projection,
+                                                                                        &context_hint,
+                                                                                    )
+                                                                                    .ok_or_else(|| anyhow::anyhow!(
+                                                                                        "No active Strand is available in the current Realm for the Agent chat context"
+                                                                                    ))?;
                                                                                     let request = arkret_sdk::AgentSidecarThreadEnsureRequestBody {
                                                                                         controller_id: controller.clone(),
                                                                                         addressed_agent_ids: vec![agent],
                                                                                         context_ref: arkret_sdk::AgentSidecarContextRef::strand(
-                                                                                            arkret_sdk::RealmId::new(self_realm.clone())
+                                                                                            arkret_sdk::RealmId::new(context_hint.realm_id.clone())
                                                                                                 .map_err(anyhow::Error::from)?,
-                                                                                            arkret_sdk::StrandId::new(default_strand_id_for_realm(&self_realm))
+                                                                                            arkret_sdk::StrandId::new(context_strand_id.clone())
                                                                                                 .map_err(anyhow::Error::from)?,
                                                                                         ),
                                                                                     };
@@ -2094,11 +2149,15 @@ fn AppBootstrap() -> Element {
                                                                                         .agent_sidecar_thread_ensure(&request)
                                                                                         .await
                                                                                         .map_err(anyhow::Error::from)?;
-                                                                                    Ok::<_, anyhow::Error>((controller, response))
+                                                                                    Ok::<_, anyhow::Error>((
+                                                                                        controller,
+                                                                                        context_hint.realm_id,
+                                                                                        context_strand_id,
+                                                                                        response,
+                                                                                    ))
                                                                                 },
                                                                             ).await {
-                                                                                Ok((controller, response)) => {
-                                                                                    let realm_id = arkret_sdk::principal_control_realm_id(&controller);
+                                                                                Ok((controller, realm_id, context_strand_id, response)) => {
                                                                                     let pending_count = response.pending_member_reconciliations.len();
                                                                                     tracing::info!(
                                                                                         target: "sidecar",
@@ -2112,7 +2171,7 @@ fn AppBootstrap() -> Element {
                                                                                         addressed_agent_ids: vec![agent_id],
                                                                                         addressed_agent_label: agent_sidecar_label,
                                                                                         source_realm_id: realm_id.clone(),
-                                                                                        source_strand_id: default_strand_id_for_realm(&realm_id),
+                                                                                        source_strand_id: context_strand_id,
                                                                                         private_circle_id: response.private_circle_id.to_string(),
                                                                                         private_strand_id: response.private_strand_id.to_string(),
                                                                                         private_relation_id: response.private_relation_id.to_string(),
@@ -2138,6 +2197,7 @@ fn AppBootstrap() -> Element {
                                                                                     );
                                                                                 }
                                                                             }
+                                                                            direct_chat_opening.set(None);
                                                                         });
                                                                     }
                                                                 },
@@ -2152,7 +2212,7 @@ fn AppBootstrap() -> Element {
                                                                     }
                                                                 }
                                                                 span { class: "grow truncate", "{agent_label}" }
-                                                                span { class: "pill muted xs", "AI agent" }
+                                                                span { class: "pill muted xs", if is_opening { "Opening..." } else { "AI agent" } }
                                                             }
                                                         }
                                                     }
@@ -2195,14 +2255,26 @@ fn AppBootstrap() -> Element {
                                     } else {
                                         "user"
                                     };
-                                    let row_title = if can_resolve {
-                                        crate::i18n::tr("direct.open")
-                                    } else {
-                                        crate::i18n::tr("direct.unavailable")
-                                    };
                                     let contact_remark =
                                         contact_remarks_for_sidebar.get(&peer).cloned();
                                     let display_name = display_name_for_did(&state_store.read(), &peer);
+                                    let opening_key = format!("contact:{peer}");
+                                    let opening_target = direct_chat_opening();
+                                    let chat_open_blocked = opening_target.is_some();
+                                    let is_opening = opening_target.as_deref()
+                                        == Some(opening_key.as_str());
+                                    let row_title = if is_opening {
+                                        format!("Opening chat with {display_name}")
+                                    } else if can_resolve {
+                                        format!("Chat with {display_name}")
+                                    } else {
+                                        crate::i18n::tr("direct.unavailable")
+                                    };
+                                    let state_badge_label = if is_opening {
+                                        "Opening...".to_owned()
+                                    } else {
+                                        state_label.clone()
+                                    };
                                                                         let has_contact_remark = contact_remark
                                         .as_ref()
                                         .is_some_and(|remark| !remark.local_name.trim().is_empty());
@@ -2242,14 +2314,22 @@ fn AppBootstrap() -> Element {
                                                 "data-testid": "direct-conversation-row",
                                                 "data-peer": "{peer}",
                                                 "data-state": "{state_label}",
+                                                "data-opening": if is_opening { "true" } else { "false" },
+                                                "aria-busy": if is_opening { "true" } else { "false" },
+                                                "aria-label": "{row_title}",
                                                 title: "{row_title}",
+                                                disabled: chat_open_blocked,
                                                 onclick: {
                                                     let peer = peer.clone();
                                                     let direct = direct.clone();
                                                     let base = base_url();
+                                                    let opening_key = opening_key.clone();
                                                     move |event: dioxus::events::MouseEvent| {
                                                         event.prevent_default();
                                                         event.stop_propagation();
+                                                        if direct_chat_opening.read().is_some() {
+                                                            return;
+                                                        }
                                                         if !can_resolve {
                                                             crate::components::feedback::toast_info("direct.unavailable", vec![]);
                                                             return;
@@ -2263,6 +2343,7 @@ fn AppBootstrap() -> Element {
                                                             });
                                                             return;
                                                         }
+                                                        direct_chat_opening.set(Some(opening_key.clone()));
                                                         let api_token = token();
                                                         let base = base.clone();
                                                         let peer_for_task = peer.clone();
@@ -2301,6 +2382,7 @@ fn AppBootstrap() -> Element {
                                                                     Some(err.display()),
                                                                 ),
                                                             }
+                                                            direct_chat_opening.set(None);
                                                         });
                                                     }
                                                 },
@@ -2322,7 +2404,7 @@ fn AppBootstrap() -> Element {
                                                         UiIcon { name: "pin" }
                                                     }
                                                 }
-                                                span { class: "pill muted xs", "{state_label}" }
+                                                span { class: "pill muted xs", "{state_badge_label}" }
                                                 if has_direct_scope {
                                                     span { class: "pill muted xs", title: "{scopes_label}", "DM" }
                                                 }
@@ -2457,6 +2539,16 @@ fn AppBootstrap() -> Element {
                                                         .map(ToString::to_string)
                                                         .unwrap_or_default();
                                                     let controller = peer.clone();
+                                                    let opening_key = format!("contact-agent:{agent_id}");
+                                                    let opening_target = direct_chat_opening();
+                                                    let chat_open_blocked = opening_target.is_some();
+                                                    let is_opening = opening_target.as_deref()
+                                                        == Some(opening_key.as_str());
+                                                    let agent_button_label = if is_opening {
+                                                        format!("Opening chat with {agent_label}")
+                                                    } else {
+                                                        format!("Chat with {agent_label}")
+                                                    };
                                                     rsx! {
                                                         button {
                                                             key: "{agent_id}",
@@ -2465,14 +2557,22 @@ fn AppBootstrap() -> Element {
                                                             "data-testid": "contact-sidebar-agent-row",
                                                             "data-agent": "{agent_id}",
                                                             "data-controller": "{controller}",
-                                                            title: "Chat with {agent_label}",
+                                                            "data-opening": if is_opening { "true" } else { "false" },
+                                                            "aria-busy": if is_opening { "true" } else { "false" },
+                                                            "aria-label": "{agent_button_label}",
+                                                            title: "{agent_button_label}",
+                                                            disabled: chat_open_blocked,
                                                             onclick: {
                                                                 let base = base_url();
                                                                 let agent_id = agent_id.clone();
                                                                 let agent_direct = agent_direct.clone();
+                                                                let opening_key = opening_key.clone();
                                                                 move |event: dioxus::events::MouseEvent| {
                                                                     event.prevent_default();
                                                                     event.stop_propagation();
+                                                                    if direct_chat_opening.read().is_some() {
+                                                                        return;
+                                                                    }
                                                                     if let Some(summary) = agent_direct.clone()
                                                                         && summary.state == "active"
                                                                     {
@@ -2482,6 +2582,7 @@ fn AppBootstrap() -> Element {
                                                                         });
                                                                         return;
                                                                     }
+                                                                    direct_chat_opening.set(Some(opening_key.clone()));
                                                                     let api_token = token();
                                                                     let base = base.clone();
                                                                     let agent_id = agent_id.clone();
@@ -2516,6 +2617,7 @@ fn AppBootstrap() -> Element {
                                                                                 "feedback.direct_open_failed", vec![], Some(err.display()),
                                                                             ),
                                                                         }
+                                                                        direct_chat_opening.set(None);
                                                                     });
                                                                 }
                                                             },
@@ -2530,7 +2632,7 @@ fn AppBootstrap() -> Element {
                                                                 }
                                                             }
                                                             span { class: "grow truncate", "{agent_label}" }
-                                                            span { class: "pill muted xs", "AI agent" }
+                                                            span { class: "pill muted xs", if is_opening { "Opening..." } else { "AI agent" } }
                                                         }
                                                     }
                                                 }

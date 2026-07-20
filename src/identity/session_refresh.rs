@@ -73,7 +73,12 @@ impl SessionGrantTransport for ReplaceableSessionTransport {
         request: arkret_sdk::SessionGrantRequestBody,
     ) -> BoxSessionFuture<'a, arkret_sdk::SessionGrantOutcome> {
         let client = self.current();
-        Box::pin(async move { client?.auth_issue_session_grant(&request).await })
+        Box::pin(async move {
+            client?
+                .auth_issue_session_grant(&request)
+                .await
+                .map_err(arkret_sdk::Error::from)
+        })
     }
 
     fn refresh_session_grant<'a>(
@@ -81,7 +86,12 @@ impl SessionGrantTransport for ReplaceableSessionTransport {
         request: arkret_sdk::SessionGrantRefreshRequestBody,
     ) -> BoxSessionFuture<'a, arkret_sdk::SessionGrantRefreshOutcome> {
         let client = self.current();
-        Box::pin(async move { client?.auth_refresh_session_grant(&request).await })
+        Box::pin(async move {
+            client?
+                .auth_refresh_session_grant(&request)
+                .await
+                .map_err(arkret_sdk::Error::from)
+        })
     }
 }
 
@@ -106,6 +116,7 @@ impl InksonAuthenticatedTransportFactory {
                     .sdk_dpop_auth_for_access_token(state.grant_jwt.clone()),
             ))
             .build()
+            .map_err(arkret_sdk::Error::from)
     }
 
     fn build_account_client(
@@ -119,6 +130,7 @@ impl InksonAuthenticatedTransportFactory {
                     .sdk_dpop_auth_for_access_token(state.grant_jwt.clone()),
             ))
             .build()
+            .map_err(arkret_sdk::Error::from)
     }
 
     fn persisted(&self, state: &SessionGrantState) -> anyhow::Result<PersistedSessionGrant> {

@@ -172,10 +172,10 @@ async fn fetch_proof_chunk_with_retry(
     unreachable!("bounded governance proof retry loop always returns")
 }
 
-fn governance_projection_pending(error: &arkret_sdk::Error) -> bool {
+fn governance_projection_pending(error: &arkret_sdk::http_client::Error) -> bool {
     matches!(
         error,
-        arkret_sdk::Error::Api { status: 409, error }
+        arkret_sdk::http_client::Error::Api { status: 409, error }
             if error.code() == "state_mismatch"
                 && error.message().to_ascii_lowercase().contains("bottom")
     )
