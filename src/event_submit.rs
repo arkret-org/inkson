@@ -181,31 +181,61 @@ impl OutboundSubmitter for EventOutboundSubmitter<'_> {
 }
 
 fn outbound_retry_delay(error: &anyhow::Error) -> Option<Duration> {
+    let rendered = format!("{error:#}");
     if crate::api_error::is_auth_expired_error(error)
-        || format!("{error:#}").contains("no active signer configured")
+        || rendered.contains("no active signer configured")
     {
+        return Some(Duration::from_secs(1));
+    }
+    // Browser fetch failures can cross the WASM/runtime-service boundary as a
+    // string-only anyhow context, losing the concrete http-client Error in the
+    // source chain. Its stable transport prefix still distinguishes a
+    // retryable network failure from protocol and admission rejections.
+    if rendered.contains("HTTP request failed:") {
         return Some(Duration::from_secs(1));
     }
     if let Some(retry_after_ms) = crate::api_error::rate_limited_retry_after(error) {
         return Some(Duration::from_millis(retry_after_ms.max(1_000)));
     }
     error.chain().find_map(|cause| {
-        let error = cause.downcast_ref::<arkret_sdk::Error>()?;
-        match error {
-            arkret_sdk::Error::Http(_) => Some(Duration::from_secs(1)),
-            arkret_sdk::Error::Api { status, .. }
-                if *status == 408 || *status == 429 || *status >= 500 =>
-            {
-                Some(Duration::from_secs(1))
-            }
-            _ => None,
+        if let Some(error) = cause.downcast_ref::<arkret_sdk::http_client::Error>() {
+            return match error {
+                arkret_sdk::http_client::Error::Http(_) => Some(Duration::from_secs(1)),
+                arkret_sdk::http_client::Error::Api { status, .. }
+                    if *status == 408 || *status == 429 || *status >= 500 =>
+                {
+                    Some(Duration::from_secs(1))
+                }
+                _ => None,
+            };
         }
+        cause
+            .downcast_ref::<arkret_sdk::Error>()
+            .and_then(|error| match error {
+                arkret_sdk::Error::Http(_) => Some(Duration::from_secs(1)),
+                arkret_sdk::Error::Api { status, .. }
+                    if *status == 408 || *status == 429 || *status >= 500 =>
+                {
+                    Some(Duration::from_secs(1))
+                }
+                _ => None,
+            })
     })
 }
 
 fn verified_recovery_gate_cache() -> &'static Mutex<std::collections::BTreeSet<String>> {
     static CACHE: SyncOnceLock<Mutex<std::collections::BTreeSet<String>>> = SyncOnceLock::new();
     CACHE.get_or_init(|| Mutex::new(std::collections::BTreeSet::new()))
+}
+
+pub(crate) fn remember_verified_recovery_gate(authority_principal: &str, device_id: &str) {
+    if authority_principal.trim().is_empty() || device_id.trim().is_empty() {
+        return;
+    }
+    let mut cache = verified_recovery_gate_cache()
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner);
+    cache.insert(format!("{authority_principal}\u{1f}{device_id}"));
 }
 
 fn recovery_gate_cache_key(event: &arkret_sdk::Event) -> Option<String> {
@@ -220,10 +250,10 @@ fn recovery_gate_cache_key(event: &arkret_sdk::Event) -> Option<String> {
 }
 
 pub(crate) fn reset_verified_recovery_gates() {
-    verified_recovery_gate_cache()
+    let mut cache = verified_recovery_gate_cache()
         .lock()
-        .unwrap_or_else(PoisonError::into_inner)
-        .clear();
+        .unwrap_or_else(PoisonError::into_inner);
+    cache.clear();
 }
 
 fn actor_frontier_refresh_error(actor_id: &str, error: anyhow::Error) -> anyhow::Error {
@@ -308,6 +338,17 @@ fn durable_mls_store_scope(actor_id: &str) -> String {
     format!("{actor_id}\u{1f}mls-durable-post-accept")
 }
 
+/// A browser runtime has multiple outbound triggers: the foreground writer
+/// and the account-sync drain. Garth engines opened on the same durable store
+/// do not share an in-memory lease, so without a runtime single-writer gate
+/// both triggers can prepare and sign the same Event against different actor
+/// frontiers. The server then correctly accepts one canonical envelope and
+/// rejects the other as `duplicate_conflict`.
+fn outbound_submit_lock() -> &'static tokio::sync::Mutex<()> {
+    static LOCK: std::sync::OnceLock<tokio::sync::Mutex<()>> = std::sync::OnceLock::new();
+    LOCK.get_or_init(|| tokio::sync::Mutex::new(()))
+}
+
 impl EventSubmitter {
     pub fn new(http: arkret_sdk::http_client::Client) -> Self {
         Self {
@@ -370,6 +411,7 @@ impl EventSubmitter {
     /// The account runner calls this after it has rebuilt an authenticated
     /// client, so process/browser restarts eventually drain pending work.
     pub(crate) async fn drain_outbound(&self, actor_id: &str) -> anyhow::Result<usize> {
+        let _single_writer = outbound_submit_lock().lock().await;
         let outbound =
             OutboundEngine::new(crate::outbound_store::InksonOutboundStore::open(actor_id)?);
         let results = OutboundAttemptResults::default();
@@ -414,6 +456,7 @@ impl EventSubmitter {
         actor_id: &str,
         state_store: crate::runtime::input::StateStoreHandle,
     ) -> anyhow::Result<usize> {
+        let _single_writer = outbound_submit_lock().lock().await;
         let outbound = OutboundEngine::new(crate::outbound_store::InksonOutboundStore::open(
             &durable_mls_store_scope(actor_id),
         )?);
@@ -505,15 +548,25 @@ impl EventSubmitter {
             }
             Err(error)
                 if outbound_retry_delay(&error).is_some()
-                    && cache_key.is_some_and(|cache_key| {
+                    && cache_key.as_ref().is_some_and(|cache_key| {
                         verified_recovery_gate_cache()
                             .lock()
                             .unwrap_or_else(PoisonError::into_inner)
-                            .contains(&cache_key)
+                            .contains(cache_key)
                     }) =>
             {
                 Ok(())
             }
+            Err(error) if outbound_retry_delay(&error).is_some() => Err(error.context(
+                format!(
+                    "retryable recovery-material verification failed without a verified cache entry (cache_key={}, entries={})",
+                    cache_key.is_some(),
+                    verified_recovery_gate_cache()
+                        .lock()
+                        .unwrap_or_else(PoisonError::into_inner)
+                        .len(),
+                ),
+            )),
             Err(error) => Err(error),
         }
     }
@@ -825,6 +878,7 @@ impl EventSubmitter {
         post_accept: Option<PostAcceptAction>,
         state_store: Option<crate::runtime::input::StateStoreHandle>,
     ) -> anyhow::Result<SubmitEventResult> {
+        let _single_writer = outbound_submit_lock().lock().await;
         self.ensure_recovery_material_ready(event).await?;
         let transaction_id = event.event_id.to_string();
         let durable_post_accept = post_accept.is_some();
@@ -843,7 +897,11 @@ impl EventSubmitter {
                         event,
                     )? {
                         Some(generation) => generation,
-                        None => return Err(error),
+                        None => {
+                            return Err(error.context(
+                                "retryable authoring-generation lookup failed without a verified cache entry",
+                            ));
+                        }
                     }
                 }
                 Err(error) => return Err(error),
@@ -1549,11 +1607,20 @@ mod tests {
     fn frontier_context_preserves_retryable_transport_error() {
         let error = actor_frontier_refresh_error(
             "did:web:alice.example",
-            arkret_sdk::Error::Http("browser offline".to_owned()).into(),
+            arkret_sdk::http_client::Error::Http("browser offline".to_owned()).into(),
         );
 
         assert_eq!(outbound_retry_delay(&error), Some(Duration::from_secs(1)));
         assert!(format!("{error:#}").contains("browser offline"));
+    }
+
+    #[test]
+    fn wasm_string_only_transport_error_remains_retryable() {
+        let error = anyhow::anyhow!(
+            "resolve authoring generation: HTTP request failed: error sending request"
+        );
+
+        assert_eq!(outbound_retry_delay(&error), Some(Duration::from_secs(1)));
     }
 
     #[test]

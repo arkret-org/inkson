@@ -186,6 +186,33 @@ async fn resolve_principal_authoring_generation(
     device_id: &str,
 ) -> anyhow::Result<PrincipalGenerationResolution> {
     let outcome = crate::transport::keys::query_keys(http, principal_id, device_id).await?;
+    resolve_principal_authoring_generation_from_keys(&outcome, principal_id, device_id)
+}
+
+/// Cache the current authoring generation from a keys projection that the
+/// authenticated connection bootstrap has already fetched. Returning `false`
+/// keeps the device-authorization gate closed when the projection quarantines
+/// the device, so offline submission can never fall back to an unverified
+/// generation after a full-page WASM reload.
+pub(crate) fn cache_principal_authoring_generation_from_keys(
+    outcome: &arkret_sdk::models::KeysQueryOutcome,
+    principal_id: &str,
+    device_id: &str,
+) -> anyhow::Result<bool> {
+    match resolve_principal_authoring_generation_from_keys(outcome, principal_id, device_id)? {
+        PrincipalGenerationResolution::Active(generation) => {
+            cache_verified_principal_generation(principal_id, device_id, &generation);
+            Ok(true)
+        }
+        PrincipalGenerationResolution::Quarantine(_) => Ok(false),
+    }
+}
+
+fn resolve_principal_authoring_generation_from_keys(
+    outcome: &arkret_sdk::models::KeysQueryOutcome,
+    principal_id: &str,
+    device_id: &str,
+) -> anyhow::Result<PrincipalGenerationResolution> {
     let principal = arkret_sdk::Did::new(principal_id.to_owned())?;
     let device = arkret_sdk::DeviceId::new(device_id.to_owned())?;
     let record = outcome

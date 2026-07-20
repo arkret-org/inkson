@@ -1120,6 +1120,7 @@ fn AppBootstrap() -> Element {
                 last_error,
                 token,
                 account_did,
+                device_id,
                 sync_generation,
                 session_boot_state,
                 on_onboarding_route: matches!(&content_route, Route::Onboarding),

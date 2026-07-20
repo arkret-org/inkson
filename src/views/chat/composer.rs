@@ -1270,6 +1270,11 @@ pub(super) fn ChatComposer(controller: ChatController, context: ChatComposerCont
                                             status_msg.set("Message sent".to_owned());
                                         }
                                         Err(error) => {
+                                            tracing::warn!(
+                                                event_id = %local_id,
+                                                error = %format!("{error:#}"),
+                                                "chat send did not reach an accepted result"
+                                            );
                                             if crate::event_submit::is_durably_queued_error(&error) {
                                                 status_msg.set(crate::i18n::tr(
                                                     "chat.outbox.queued_offline",

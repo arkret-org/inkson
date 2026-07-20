@@ -10,6 +10,7 @@ pub(super) fn AccountRecoveryEffects(
     mut last_error: Signal<Option<String>>,
     token: Signal<String>,
     account_did: Signal<String>,
+    device_id: Signal<String>,
     sync_generation: Signal<u64>,
     session_boot_state: Signal<SessionBootState>,
     on_onboarding_route: bool,
@@ -33,6 +34,7 @@ pub(super) fn AccountRecoveryEffects(
         let base = base_url();
         let credential = token();
         let actor = account_did();
+        let device = device_id();
         let generation = sync_generation();
         if !matches!(session_boot_state(), SessionBootState::Authenticated)
             || base.trim().is_empty()
@@ -53,6 +55,13 @@ pub(super) fn AccountRecoveryEffects(
             let store = state_store.read();
             crate::views::recovery::local_recovery_key_fingerprint(&store, &actor)
         };
+        if local_fingerprint.is_some() {
+            // Recovery metadata is persisted only after the server has accepted
+            // the policy and DID-recovery backup. Rehydrate the in-memory
+            // offline-submit gate after full-page navigation/WASM restart;
+            // replay still revalidates recovery state at the server boundary.
+            crate::event_submit::remember_verified_recovery_gate(&actor, &device);
+        }
         let session_coordinator = session_coordinator.clone();
         spawn(async move {
             match crate::transport::auth::with_authed_api(&base, credential, |api| async move {

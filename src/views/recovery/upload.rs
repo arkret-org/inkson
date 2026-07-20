@@ -101,6 +101,10 @@ pub(crate) fn upload_recovery_key_account_backup(
                 // The caller already confirmed cold custody before invoking
                 // this function. Only public local metadata and the server fact
                 // that ciphertext exists are persisted after acceptance.
+                crate::event_submit::remember_verified_recovery_gate(
+                    &actor_for_sidecar,
+                    &device_for_sidecar,
+                );
                 if let Ok(mut store) = state_store.try_write() {
                     let configured_backup_id = account_backup_id
                         .as_deref()

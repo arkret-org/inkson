@@ -142,13 +142,25 @@ pub(crate) fn controller_signer_device_id(
 }
 
 fn managed_agent_initial_seal_required(error: &anyhow::Error) -> bool {
-    match error.downcast_ref::<arkret_sdk::Error>() {
-        Some(arkret_sdk::Error::Api { status: 404, .. }) => true,
-        Some(arkret_sdk::Error::Api { status: 503, error }) => {
-            error.code() == "frontier_unavailable"
+    error.chain().any(|cause| {
+        if let Some(error) = cause.downcast_ref::<arkret_sdk::http_client::Error>() {
+            return match error {
+                arkret_sdk::http_client::Error::Api { status: 404, .. } => true,
+                arkret_sdk::http_client::Error::Api { status: 503, error } => {
+                    error.code() == "frontier_unavailable"
+                }
+                _ => false,
+            };
         }
-        _ => false,
-    }
+        matches!(
+            cause.downcast_ref::<arkret_sdk::Error>(),
+            Some(arkret_sdk::Error::Api { status: 404, .. })
+        ) || matches!(
+            cause.downcast_ref::<arkret_sdk::Error>(),
+            Some(arkret_sdk::Error::Api { status: 503, error })
+                if error.code() == "frontier_unavailable"
+        )
+    })
 }
 
 fn next_mls_history_pointer(
@@ -1363,7 +1375,7 @@ mod tests {
     const TEST_DEVICE_ID: &str = "ak:device:01964137-0000-7000-8000-000000000001";
 
     fn api_error(status: u16, code: &str) -> anyhow::Error {
-        anyhow::Error::new(arkret_sdk::Error::Api {
+        anyhow::Error::new(arkret_sdk::http_client::Error::Api {
             status,
             error: Box::new(arkret_sdk::models::ErrorEnvelope::new(code, "test error")),
         })

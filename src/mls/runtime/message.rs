@@ -7,6 +7,35 @@ use super::{
 };
 use crate::secure_key_store::SecureKeyStore;
 
+fn warn_mls_decrypt_once(
+    realm_id: &str,
+    digest: &str,
+    payload_epoch: u64,
+    snapshot_epoch: Option<u64>,
+    reason: &str,
+) {
+    use std::collections::BTreeSet;
+    use std::sync::{Mutex, OnceLock, PoisonError};
+
+    static WARNED: OnceLock<Mutex<BTreeSet<String>>> = OnceLock::new();
+    let key = format!("{realm_id}\u{1f}{digest}\u{1f}{reason}");
+    if WARNED
+        .get_or_init(|| Mutex::new(BTreeSet::new()))
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner)
+        .insert(key)
+    {
+        tracing::warn!(
+            %realm_id,
+            %digest,
+            payload_epoch,
+            snapshot_epoch,
+            %reason,
+            "MLS application payload remains decryption-pending"
+        );
+    }
+}
+
 /// Outcome of [`apply_welcome_messages_with_device_snapshot`].
 ///
 /// Lets callers distinguish "no welcomes present" (`applied == 0 && failed ==
@@ -97,17 +126,51 @@ pub fn decrypt_application_payload(
     // granted history via the group-free standalone path below. When no snapshot
     // is present we skip straight to tier-3 history decrypt.
     let Some(snapshot) = state_store.mls_snapshot_for(realm_id) else {
-        return try_history_decrypt_standalone(state_store, realm_id, payload);
+        let plaintext = try_history_decrypt_standalone(state_store, realm_id, payload);
+        if plaintext.is_none() {
+            warn_mls_decrypt_once(
+                realm_id,
+                digest,
+                payload.epoch,
+                None,
+                "no local MLS snapshot or granted history secret",
+            );
+        }
+        return plaintext;
     };
-    let secret = load_device_snapshot_secret(secure_store, actor_id, device_id).ok()?;
+    let secret = match load_device_snapshot_secret(secure_store, actor_id, device_id) {
+        Ok(secret) => secret,
+        Err(error) => {
+            warn_mls_decrypt_once(
+                realm_id,
+                digest,
+                payload.epoch,
+                Some(snapshot.epoch),
+                &format!("device snapshot secret unavailable: {error}"),
+            );
+            return None;
+        }
+    };
     // COR-04: read/decrypt path — floor 0 is intentional. The live receive ratchet
     // and the tier-3 history fallback legitimately read PRE-join / older epochs, so
     // an epoch-floor reject here would break decryption of granted history. No
     // ratchet advance / persist happens on this path.
-    let mut group = crate::mls::persistence::restore_envelope(&snapshot, &secret, 0).ok()?;
+    let mut group = match crate::mls::persistence::restore_envelope(&snapshot, &secret, 0) {
+        Ok(group) => group,
+        Err(error) => {
+            warn_mls_decrypt_once(
+                realm_id,
+                digest,
+                payload.epoch,
+                Some(snapshot.epoch),
+                &format!("restore local MLS snapshot: {error}"),
+            );
+            return None;
+        }
+    };
     let plaintext = match group.decrypt_payload(payload) {
         Ok(plaintext) => plaintext,
-        Err(_) => {
+        Err(live_error) => {
             // §2.10 exporter-aead content at our CURRENT epoch: the live ratchet
             // cannot open it (it is not an MLS PrivateMessage), but every member
             // at epoch N can derive `history_secret[N]` directly from the group.
@@ -136,7 +199,19 @@ pub fn decrypt_application_payload(
             // payload's epoch and decrypt it as `mls-exporter-aead-v1` content.
             // This is group-free, so it works whether or not the snapshot could
             // ratchet to the payload's epoch.
-            return try_history_decrypt_standalone(state_store, realm_id, payload);
+            let plaintext = try_history_decrypt_standalone(state_store, realm_id, payload);
+            if plaintext.is_none() {
+                warn_mls_decrypt_once(
+                    realm_id,
+                    digest,
+                    payload.epoch,
+                    Some(snapshot.epoch),
+                    &format!(
+                        "live MLS decrypt failed ({live_error}); no granted history secret opened the payload"
+                    ),
+                );
+            }
+            return plaintext;
         }
     };
     // §5.6 MUST: persist the advanced receive chain. A failure to export /

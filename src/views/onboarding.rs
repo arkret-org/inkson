@@ -678,6 +678,7 @@ async fn finish_principal_setup(
         })
         .await
         .map_err(|error| anyhow::anyhow!(error.display()))?;
+    crate::event_submit::remember_verified_recovery_gate(actor, device);
     crate::views::recovery::save_generated_recovery_key_metadata(
         &mut state_store,
         actor,

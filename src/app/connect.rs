@@ -564,15 +564,21 @@ async fn current_event_signer_matches_directory(
     let outcome =
         crate::transport::keys::query_keys(&principal_api.sdk_http_client()?, actor, device)
             .await?;
-    let actor = arkret_sdk::Did::new(actor.to_owned())?;
-    let device = arkret_sdk::DeviceId::new(device.to_owned())?;
+    let actor_id = arkret_sdk::Did::new(actor.to_owned())?;
+    let device_id = arkret_sdk::DeviceId::new(device.to_owned())?;
     let expected_key = format!("did:key:{public_key}");
-    Ok(outcome
+    let signer_matches = outcome
         .device_keys
-        .get(&actor)
-        .and_then(|devices| devices.get(&device))
+        .get(&actor_id)
+        .and_then(|devices| devices.get(&device_id))
         .and_then(|record| record.device_signing_key.as_deref())
-        == Some(expected_key.as_str()))
+        == Some(expected_key.as_str());
+    if !signer_matches {
+        return Ok(false);
+    }
+    crate::identity::authoring_generation::cache_principal_authoring_generation_from_keys(
+        &outcome, actor, device,
+    )
 }
 
 pub(super) fn connect(base: String, actor: String, device: String, ctx: ConnectContext) {
