@@ -6,7 +6,7 @@
 //! (`submit_signed_*`, ephemeral, frontier, backfill) never fetch it.
 
 use std::collections::BTreeMap;
-use std::sync::Mutex;
+use std::sync::{Mutex, OnceLock as SyncOnceLock, PoisonError};
 use std::time::Duration;
 
 #[cfg(test)]
@@ -201,6 +201,29 @@ fn outbound_retry_delay(error: &anyhow::Error) -> Option<Duration> {
             _ => None,
         }
     })
+}
+
+fn verified_recovery_gate_cache() -> &'static Mutex<std::collections::BTreeSet<String>> {
+    static CACHE: SyncOnceLock<Mutex<std::collections::BTreeSet<String>>> = SyncOnceLock::new();
+    CACHE.get_or_init(|| Mutex::new(std::collections::BTreeSet::new()))
+}
+
+fn recovery_gate_cache_key(event: &arkret_sdk::Event) -> Option<String> {
+    let authority_principal = event
+        .executed_by
+        .as_ref()
+        .unwrap_or(&event.actor_id)
+        .as_str();
+    let signer = crate::event_signer::active_signer()?;
+    let device_id = signer.device_id()?;
+    Some(format!("{authority_principal}\u{1f}{device_id}"))
+}
+
+pub(crate) fn reset_verified_recovery_gates() {
+    verified_recovery_gate_cache()
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner)
+        .clear();
 }
 
 fn actor_frontier_refresh_error(actor_id: &str, error: anyhow::Error) -> anyhow::Error {
@@ -437,30 +460,61 @@ impl EventSubmitter {
             .map_err(|error| anyhow::anyhow!("server describe: {error}"))
     }
 
-    async fn ensure_recovery_material_ready(&self) -> anyhow::Result<()> {
-        let policy: arkret_sdk::RecoveryPolicyActiveOutcome = self
-            .http
-            .get("/_arkret/root/identity/recovery-policy")
-            .await
-            .map_err(anyhow::Error::from)?;
-        let backups = self
-            .http
-            .list_key_backups(&arkret_sdk::KeyBackupsListQuery {
-                series_id: None,
-                backup_class: Some(arkret_sdk::BackupClass::DidRecovery),
-                cursor: None,
-                limit: None,
-            })
-            .await
-            .map_err(anyhow::Error::from)?;
-        match crate::recovery_strand::first_backup_gate_status_from_payloads(
-            &serde_json::to_value(policy)?,
-            &serde_json::to_value(backups)?,
-        ) {
-            crate::recovery_strand::FirstBackupGateStatus::Satisfied { .. } => Ok(()),
-            crate::recovery_strand::FirstBackupGateStatus::Blocked(reason) => anyhow::bail!(
-                "recovery_material_pending blocks post-bootstrap persistent write: {reason:?}"
-            ),
+    async fn ensure_recovery_material_ready(
+        &self,
+        event: &arkret_sdk::Event,
+    ) -> anyhow::Result<()> {
+        let cache_key = recovery_gate_cache_key(event);
+        let verification = async {
+            let policy: arkret_sdk::RecoveryPolicyActiveOutcome = self
+                .http
+                .get("/_arkret/root/identity/recovery-policy")
+                .await
+                .map_err(anyhow::Error::from)?;
+            let backups = self
+                .http
+                .list_key_backups(&arkret_sdk::KeyBackupsListQuery {
+                    series_id: None,
+                    backup_class: Some(arkret_sdk::BackupClass::DidRecovery),
+                    cursor: None,
+                    limit: None,
+                })
+                .await
+                .map_err(anyhow::Error::from)?;
+            match crate::recovery_strand::first_backup_gate_status_from_payloads(
+                &serde_json::to_value(policy)?,
+                &serde_json::to_value(backups)?,
+            ) {
+                crate::recovery_strand::FirstBackupGateStatus::Satisfied { .. } => Ok(()),
+                crate::recovery_strand::FirstBackupGateStatus::Blocked(reason) => anyhow::bail!(
+                    "recovery_material_pending blocks post-bootstrap persistent write: {reason:?}"
+                ),
+            }
+        }
+        .await;
+
+        match verification {
+            Ok(()) => {
+                if let Some(cache_key) = cache_key {
+                    verified_recovery_gate_cache()
+                        .lock()
+                        .unwrap_or_else(PoisonError::into_inner)
+                        .insert(cache_key);
+                }
+                Ok(())
+            }
+            Err(error)
+                if outbound_retry_delay(&error).is_some()
+                    && cache_key.is_some_and(|cache_key| {
+                        verified_recovery_gate_cache()
+                            .lock()
+                            .unwrap_or_else(PoisonError::into_inner)
+                            .contains(&cache_key)
+                    }) =>
+            {
+                Ok(())
+            }
+            Err(error) => Err(error),
         }
     }
 
@@ -738,7 +792,7 @@ impl EventSubmitter {
         &self,
         signed: &arkret_sdk::Event,
     ) -> anyhow::Result<SubmitEventResult> {
-        self.ensure_recovery_material_ready().await?;
+        self.ensure_recovery_material_ready(signed).await?;
         self.post_signed_sdk_event(signed, uuid_v7()).await
     }
 
@@ -771,17 +825,29 @@ impl EventSubmitter {
         post_accept: Option<PostAcceptAction>,
         state_store: Option<crate::runtime::input::StateStoreHandle>,
     ) -> anyhow::Result<SubmitEventResult> {
-        self.ensure_recovery_material_ready().await?;
+        self.ensure_recovery_material_ready(event).await?;
         let transaction_id = event.event_id.to_string();
         let durable_post_accept = post_accept.is_some();
         let outbound = OutboundEngine::new(crate::outbound_store::InksonOutboundStore::open(
             &outbound_store_scope(event, durable_post_accept),
         )?);
         let authoring_generation =
-            crate::identity::authoring_generation::resolve_event_authoring_generation(
+            match crate::identity::authoring_generation::resolve_event_authoring_generation(
                 &self.http, event,
             )
-            .await?;
+            .await
+            {
+                Ok(generation) => generation,
+                Err(error) if outbound_retry_delay(&error).is_some() => {
+                    match crate::identity::authoring_generation::cached_event_authoring_generation(
+                        event,
+                    )? {
+                        Some(generation) => generation,
+                        None => return Err(error),
+                    }
+                }
+                Err(error) => return Err(error),
+            };
         outbound
             .enqueue(
                 Some(transaction_id.clone()),
@@ -805,7 +871,16 @@ impl EventSubmitter {
         };
         let hook = InksonPostAcceptHook { state_store };
         loop {
-            let fence = self.resolve_queue_generation_fence(&outbound).await?;
+            let fence = match self.resolve_queue_generation_fence(&outbound).await {
+                Ok(fence) => fence,
+                Err(error) if outbound_retry_delay(&error).is_some() => {
+                    return Err(DurablyQueuedError {
+                        event_id: event.event_id.to_string(),
+                    }
+                    .into());
+                }
+                Err(error) => return Err(error),
+            };
             match outbound
                 .submit_next_with_fence_and_hook(&submitter, &fence, &hook, chrono::Utc::now())
                 .await?
@@ -1018,7 +1093,10 @@ impl EventSubmitter {
         sdk_events: &[arkret_sdk::Event],
         idempotency_key: Option<&str>,
     ) -> anyhow::Result<arkret_sdk::EventsSubmitOutcome> {
-        self.ensure_recovery_material_ready().await?;
+        let first_event = sdk_events
+            .first()
+            .ok_or_else(|| anyhow::anyhow!("events.submit batch must not be empty"))?;
+        self.ensure_recovery_material_ready(first_event).await?;
         // YOU-01-016: the former `capabilities.batch_submit` probe (a
         // non-spec soland capability field) was removed. The batch request
         // body is one of the three spec-defined `ak.self.events.command.submit`
@@ -1055,6 +1133,18 @@ impl EventSubmitter {
         events: Vec<arkret_sdk::Event>,
         idempotency_key: Option<&str>,
     ) -> anyhow::Result<arkret_sdk::EventsSubmitOutcome> {
+        if events
+            .first()
+            .is_some_and(|event| event.kind.as_str() == arkret_sdk::events::EventKind::REALM_CREATE)
+            && events.get(1).is_some_and(|event| {
+                event.kind.as_str() == arkret_sdk::events::EventKind::CAPABILITY_GRANT
+            })
+        {
+            crate::identity::authoring_generation::resolve_event_authoring_generation(
+                &self.http, &events[0],
+            )
+            .await?;
+        }
         let events = self.prepare_sdk_events_batch(events).await?;
         self.submit_signed_sdk_events_batch(&events, idempotency_key)
             .await

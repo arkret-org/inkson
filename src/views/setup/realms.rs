@@ -898,7 +898,7 @@ pub(super) fn RealmsSection(
                                                         // and must not leave a successfully created
                                                         // Realm looking like a retryable Seed draft.
                                                         realm_state.set(format!(
-                                                            "created {}; finishing encrypted Realm setup",
+                                                            "Realm {} accepted; finishing encrypted Realm setup",
                                                             realm_id
                                                         ));
                                                         create_step.set(NewRealmStep::Done);
@@ -1237,10 +1237,18 @@ pub(super) fn RealmsSection(
                                 }
                             }
                             div { class: "actions setup-nav-actions",
-                                Link {
-                                    class: "primary",
-                                    to: Route::Realm { realm_id: created_realm_id_value.clone() },
-                                    "Open Realm"
+                                if realm_create_busy_value {
+                                    Button {
+                                        variant: ButtonVariant::Primary,
+                                        disabled: true,
+                                        "Finishing setup..."
+                                    }
+                                } else {
+                                    Link {
+                                        class: "primary",
+                                        to: Route::Realm { realm_id: created_realm_id_value.clone() },
+                                        "Open Realm"
+                                    }
                                 }
                             }
                         } else {

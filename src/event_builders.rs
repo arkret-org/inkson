@@ -490,6 +490,32 @@ pub fn build_managed_agent_pcr_create_event(
     Ok(event)
 }
 
+pub fn build_managed_agent_pcr_bootstrap_events(
+    realm_id: &str,
+    agent_id: &str,
+    controller_id: &str,
+    controller_authorization_ref: &str,
+    trust_domain: &str,
+) -> anyhow::Result<Vec<arkret_sdk::Event>> {
+    let create = build_managed_agent_pcr_create_event(
+        realm_id,
+        agent_id,
+        controller_id,
+        controller_authorization_ref,
+        trust_domain,
+    )?;
+    let grant_id = format!("ak:grant:{}", crate::operation::uuid_v7());
+    let mut founding_grant =
+        crate::operation::ak_ops::realm_founding_grant(realm_id, agent_id, &grant_id)
+            .build_sdk_event("inkson")?;
+    founding_grant.executed_by = Some(arkret_sdk::Did::new(controller_id.to_owned())?);
+    founding_grant.authorization_ref = Some(controller_authorization_ref.to_owned());
+    let events = vec![create, founding_grant];
+    arkret_sdk::realm::bootstrap::validate_realm_bootstrap_unit(&events)
+        .map_err(|error| anyhow::anyhow!(error.reason_code()))?;
+    Ok(events)
+}
+
 pub fn encryption_profile_uses_recommended_floor(profile: &str) -> bool {
     profile
         .trim()
@@ -1336,6 +1362,29 @@ mod notary_derivation_tests {
             Some(&Value::String(event.realm_id.to_string()))
         );
         assert_eq!(event.effects[0].op.issuer_seq, Some(event.actor_seq));
+    }
+
+    #[test]
+    fn managed_agent_pcr_bootstrap_includes_exact_founding_grant() {
+        let events = build_managed_agent_pcr_bootstrap_events(
+            "ak:realm:01964137-0000-7000-8000-000000000099",
+            "did:web:agent.example",
+            "did:web:alice.example",
+            "did:web:agent.example#managed-controller",
+            "ak:trust_domain:did.web.example",
+        )
+        .unwrap();
+
+        assert_eq!(events.len(), 2);
+        assert_eq!(events[1].kind.as_str(), "ak.capability.grant");
+        assert_eq!(
+            events[1].executed_by.as_ref().map(arkret_sdk::Did::as_str),
+            Some("did:web:alice.example")
+        );
+        assert_eq!(
+            events[1].authorization_ref.as_deref(),
+            Some("did:web:agent.example#managed-controller")
+        );
     }
 
     #[test]

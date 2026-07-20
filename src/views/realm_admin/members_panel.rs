@@ -9,7 +9,7 @@ use super::capabilities::RealmMemberCapabilities;
 use crate::components::SelfAttributionBadge;
 use crate::operation::ak_ops;
 use crate::state::{LocalStateStore, MoveSubmissionState, RawOperationRecord};
-use crate::transport::auth::authed_api_with_sync;
+use crate::transport::auth::{authed_api_with_sync, with_authed_api};
 use crate::ui::button::{Button, ButtonSize, ButtonVariant};
 use crate::ui::checkbox::Checkbox;
 use crate::ui::input::Input;
@@ -3039,46 +3039,50 @@ pub fn RealmMembersPanel(
             let actor = actor.clone();
             let realm = realm.clone();
             spawn(async move {
-                match authed_api_with_sync(&base, api_token, None) {
-                    Ok(api) => {
-                        let invite = async {
-                            crate::transport::realm_read::authz_check(
-                                &api.sdk_http_client()?,
-                                &actor,
-                                "ak.invite.create",
-                                &realm,
-                            )
-                            .await
-                        }
-                        .await;
-                        let cancel_invite = async {
-                            crate::transport::realm_read::authz_check(
-                                &api.sdk_http_client()?,
-                                &actor,
-                                "ak.invite.cancel",
-                                &realm,
-                            )
-                            .await
-                        }
-                        .await;
-                        // Member removal has no standalone capability action in
-                        // v1; it is governed by Realm management authority. Probe
-                        // the registered `ak.realm.admin` action (management,
-                        // high-risk) instead of the unregistered placeholder
-                        // `ak.member.remove`, which is not in
-                        // capability-action-registry.json and would be treated as
-                        // an unknown high-risk action (fail-closed) by a
-                        // spec-conformant server.
-                        let remove = async {
-                            crate::transport::realm_read::authz_check(
-                                &api.sdk_http_client()?,
-                                &actor,
-                                "ak.realm.admin",
-                                &realm,
-                            )
-                            .await
-                        }
-                        .await;
+                match with_authed_api(&base, api_token, |api| async move {
+                    let invite = async {
+                        crate::transport::realm_read::authz_check(
+                            &api.sdk_http_client()?,
+                            &actor,
+                            "ak.invite.create",
+                            &realm,
+                        )
+                        .await
+                    }
+                    .await;
+                    let cancel_invite = async {
+                        crate::transport::realm_read::authz_check(
+                            &api.sdk_http_client()?,
+                            &actor,
+                            "ak.invite.cancel",
+                            &realm,
+                        )
+                        .await
+                    }
+                    .await;
+                    // Member removal has no standalone capability action in
+                    // v1; it is governed by Realm management authority. Probe
+                    // the registered `ak.realm.admin` action (management,
+                    // high-risk) instead of the unregistered placeholder
+                    // `ak.member.remove`, which is not in
+                    // capability-action-registry.json and would be treated as
+                    // an unknown high-risk action (fail-closed) by a
+                    // spec-conformant server.
+                    let remove = async {
+                        crate::transport::realm_read::authz_check(
+                            &api.sdk_http_client()?,
+                            &actor,
+                            "ak.realm.admin",
+                            &realm,
+                        )
+                        .await
+                    }
+                    .await;
+                    Ok::<_, anyhow::Error>((invite, cancel_invite, remove))
+                })
+                .await
+                {
+                    Ok((invite, cancel_invite, remove)) => {
                         let can_invite = invite
                             .as_ref()
                             .map(crate::transport::realm_read::authz_allowed)
@@ -3109,7 +3113,10 @@ pub fn RealmMembersPanel(
                             loaded: true,
                             ..RealmMemberCapabilities::default()
                         });
-                        status_msg.set(format!("member action permission check failed: {error}"));
+                        status_msg.set(format!(
+                            "member action permission check failed: {}",
+                            error.display()
+                        ));
                     }
                 }
             });

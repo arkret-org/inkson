@@ -291,6 +291,8 @@ fn session_grant_runtime() -> SessionGrantRuntimeHandle {
 
 pub fn reset_session_grant_runtime() {
     session_grant_runtime().reset();
+    crate::event_submit::reset_verified_recovery_gates();
+    crate::identity::authoring_generation::reset_verified_authoring_generations();
 }
 
 /// Outcome the refresh harness returns to the caller.

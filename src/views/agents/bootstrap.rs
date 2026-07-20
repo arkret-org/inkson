@@ -1032,14 +1032,16 @@ pub(crate) async fn bootstrap_provisioned_agent(
     let mut accepted_events = submitter.backfill(realm_id).await?.events;
     if !has_managed_agent_pcr_create(&accepted_events) {
         let describe = submitter.events_describe().await?;
-        let create = crate::event_builders::build_managed_agent_pcr_create_event(
+        let bootstrap = crate::event_builders::build_managed_agent_pcr_bootstrap_events(
             realm_id,
             agent_id,
             &controller_id,
             controller_authorization_ref,
             describe.trust_domain.as_str(),
         )?;
-        submitter.submit_sdk_event(&create).await?;
+        submitter
+            .submit_sdk_events_batch(realm_id, bootstrap, None)
+            .await?;
         accepted_events = submitter.backfill(realm_id).await?.events;
     }
     if !has_managed_agent_pcr_create(&accepted_events) {

@@ -336,6 +336,7 @@ version = "0.3.0"
 dependencies = [
  "arkret-canonical",
  "arkret-identifiers",
+ "arkret-wire",
  "chrono",
  "getrandom 0.4.3",
  "serde",
@@ -348,6 +349,7 @@ version = "0.3.0"
 dependencies = [
  "arkret-core",
  "arkret-identity",
+ "arkret-models-collaboration",
  "arkret-models-crypto",
  "arkret-signatures",
  "arkret-state",
@@ -523,6 +525,8 @@ dependencies = [
 name = "arkret-schema"
 version = "0.3.0"
 dependencies = [
+ "arkret-canonical",
+ "arkret-identifiers",
  "arkret-wire",
  "chrono",
  "regex",
@@ -537,7 +541,11 @@ name = "arkret-server"
 version = "0.3.0"
 dependencies = [
  "arkret-canonical",
- "arkret-core",
+ "arkret-event-draft",
+ "arkret-models-collaboration",
+ "arkret-models-crypto",
+ "arkret-models-discovery",
+ "arkret-models-identity",
  "arkret-models-integration",
  "arkret-signatures",
  "arkret-state",
@@ -577,6 +585,7 @@ dependencies = [
  "arkret-canonical",
  "arkret-identifiers",
  "arkret-models-collaboration",
+ "arkret-models-crypto",
  "arkret-wire",
  "chrono",
  "hex",
@@ -592,10 +601,12 @@ dependencies = [
  "arkret-canonical",
  "arkret-identifiers",
  "chrono",
+ "getrandom 0.4.3",
  "hex",
  "serde",
  "serde_json",
  "thiserror 2.0.18",
+ "url",
 ]
 
 [[package]]

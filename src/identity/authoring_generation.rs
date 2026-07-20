@@ -8,6 +8,7 @@
 //! Agent write.
 
 use std::collections::BTreeMap;
+use std::sync::{Mutex, OnceLock, PoisonError};
 
 use garth::{OutboundGenerationFence, OutboundGenerationFenceDecision};
 use serde::{Deserialize, Serialize};
@@ -53,6 +54,74 @@ impl AuthoringGeneration {
     }
 }
 
+fn verified_generation_cache() -> &'static Mutex<BTreeMap<String, AuthoringGeneration>> {
+    static CACHE: OnceLock<Mutex<BTreeMap<String, AuthoringGeneration>>> = OnceLock::new();
+    CACHE.get_or_init(|| Mutex::new(BTreeMap::new()))
+}
+
+fn principal_generation_cache_key(principal_id: &str, device_id: &str) -> String {
+    format!("{principal_id}\u{1f}{device_id}")
+}
+
+fn cache_verified_principal_generation(
+    principal_id: &str,
+    device_id: &str,
+    generation: &AuthoringGeneration,
+) {
+    verified_generation_cache()
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner)
+        .insert(
+            principal_generation_cache_key(principal_id, device_id),
+            generation.clone(),
+        );
+}
+
+pub(crate) fn reset_verified_authoring_generations() {
+    verified_generation_cache()
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner)
+        .clear();
+}
+
+pub(crate) fn cached_event_authoring_generation(
+    event: &arkret_sdk::Event,
+) -> anyhow::Result<Option<AuthoringGeneration>> {
+    let authority_principal = event
+        .executed_by
+        .as_ref()
+        .unwrap_or(&event.actor_id)
+        .as_str();
+    let signer = crate::event_signer::active_signer().ok_or_else(|| {
+        anyhow::anyhow!("no active signer configured for generation-fenced write")
+    })?;
+    let device_id = signer.device_id().ok_or_else(|| {
+        anyhow::anyhow!("active signer has no device_id for generation-fenced write")
+    })?;
+    let Some(controller_generation) = verified_generation_cache()
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner)
+        .get(&principal_generation_cache_key(
+            authority_principal,
+            device_id,
+        ))
+        .cloned()
+    else {
+        return Ok(None);
+    };
+
+    if event.executed_by.is_some() && authority_principal != event.actor_id.as_str() {
+        return AuthoringGeneration::managed_agent(
+            authority_principal,
+            &controller_generation,
+            event.authorization_ref.as_deref().unwrap_or_default(),
+        )
+        .map(Some)
+        .map_err(anyhow::Error::from);
+    }
+    Ok(Some(controller_generation))
+}
+
 pub(crate) async fn resolve_event_authoring_generation(
     http: &arkret_sdk::http_client::Client,
     event: &arkret_sdk::Event,
@@ -90,6 +159,7 @@ pub(crate) async fn resolve_current_event_authoring_generation(
                 return Ok(CurrentEventAuthoringGeneration::Quarantine(reason));
             }
         };
+    cache_verified_principal_generation(authority_principal, device_id, &controller_generation);
 
     if event.executed_by.is_some() && authority_principal != event.actor_id.as_str() {
         return AuthoringGeneration::managed_agent(
