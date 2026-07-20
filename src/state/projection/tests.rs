@@ -95,7 +95,7 @@ fn client_core_message_decode_golden_matches_inkson_ingest() {
         }),
     );
     let events = vec![create, reaction];
-    let decoder = arkret_sdk::InboundDecoder::new();
+    let decoder = garth::InboundDecoder::new();
 
     let decoded: Vec<_> = events
         .iter()
@@ -104,22 +104,22 @@ fn client_core_message_decode_golden_matches_inkson_ingest() {
         .collect();
     assert!(matches!(
         &decoded[0],
-        arkret_sdk::DecodedInbound::Message(message)
+        garth::DecodedInbound::Message(message)
             if matches!(
                 message.as_ref(),
-                arkret_sdk::DecodedMessage {
-                    payload: arkret_sdk::MessageEventPayload::Create(_),
+                garth::DecodedMessage {
+                    payload: garth::MessageEventPayload::Create(_),
                     ..
                 }
             )
     ));
     assert!(matches!(
         &decoded[1],
-        arkret_sdk::DecodedInbound::Message(message)
+        garth::DecodedInbound::Message(message)
             if matches!(
                 message.as_ref(),
-                arkret_sdk::DecodedMessage {
-                    payload: arkret_sdk::MessageEventPayload::ReactionAdd(_),
+                garth::DecodedMessage {
+                    payload: garth::MessageEventPayload::ReactionAdd(_),
                     ..
                 }
             )

@@ -67,11 +67,11 @@ impl InksonAccountTransport {
     }
 }
 
-impl arkret_sdk::AsyncSyncTransport for InksonAccountTransport {
+impl garth::AsyncSyncTransport for InksonAccountTransport {
     fn sync_async<'a>(
         &'a self,
         request: arkret_sdk::SyncRequestBody,
-    ) -> arkret_sdk::BoxSyncFuture<'a, arkret_sdk::AccountSubscribeBatch> {
+    ) -> garth::BoxSyncFuture<'a, arkret_sdk::AccountSubscribeBatch> {
         Box::pin(async move {
             let batch = self.http.account_subscribe_batch(&request).await?;
             prefetch_account_presence_device_keys(&self.http, &batch).await;

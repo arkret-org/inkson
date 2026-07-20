@@ -250,11 +250,11 @@ mod tests {
                 "content": {"kind": "ak.content.text", "body": "typed"}
             }),
         );
-        let decoded = arkret_sdk::InboundDecoder::new()
+        let decoded = garth::InboundDecoder::new()
             .try_decode_event(event)
             .unwrap();
         let client_event = match decoded {
-            arkret_sdk::DecodedInbound::Message(message) => garth::ClientEvent::Message(*message),
+            garth::DecodedInbound::Message(message) => garth::ClientEvent::Message(*message),
             other => panic!("expected message, got {other:?}"),
         };
 

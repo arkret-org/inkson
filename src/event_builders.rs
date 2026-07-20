@@ -253,7 +253,7 @@ pub fn build_realm_bootstrap_events(
             )?);
         }
     }
-    arkret_sdk::realm::bootstrap::validate_realm_bootstrap_unit(&events)
+    arkret_policy::realm_bootstrap::validate_realm_bootstrap_unit(&events)
         .map_err(|error| anyhow::anyhow!(error.reason_code()))?;
     Ok(events)
 }
@@ -511,7 +511,7 @@ pub fn build_managed_agent_pcr_bootstrap_events(
     founding_grant.executed_by = Some(arkret_sdk::Did::new(controller_id.to_owned())?);
     founding_grant.authorization_ref = Some(controller_authorization_ref.to_owned());
     let events = vec![create, founding_grant];
-    arkret_sdk::realm::bootstrap::validate_realm_bootstrap_unit(&events)
+    arkret_policy::realm_bootstrap::validate_realm_bootstrap_unit(&events)
         .map_err(|error| anyhow::anyhow!(error.reason_code()))?;
     Ok(events)
 }

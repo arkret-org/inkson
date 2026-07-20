@@ -405,17 +405,17 @@ pub struct AccountSyncStep {
 impl AccountSyncStep {
     pub fn from_batch(batch: arkret_sdk::AccountSubscribeBatch) -> arkret_sdk::Result<Self> {
         let cursor = batch.cursor.clone();
-        let mut processor = arkret_sdk::SyncResponseProcessor::new();
+        let mut processor = garth::SyncResponseProcessor::new();
         let updates = processor.process(batch)?;
         Self::from_updates(cursor, updates)
     }
 
     pub fn from_batch_with_ephemeral_device_key_resolver(
         batch: arkret_sdk::AccountSubscribeBatch,
-        resolver: &dyn arkret_sdk::EphemeralDeviceKeyResolver,
+        resolver: &dyn garth::EphemeralDeviceKeyResolver,
     ) -> arkret_sdk::Result<Self> {
         let cursor = batch.cursor.clone();
-        let mut processor = arkret_sdk::SyncResponseProcessor::new();
+        let mut processor = garth::SyncResponseProcessor::new();
         let updates = processor.process_with_ephemeral_key_resolver(batch, resolver)?;
         Self::from_updates(cursor, updates)
     }

@@ -111,6 +111,7 @@ mobile-ios = []
 # arbitrary tags via `dangerous_inner_html`.
 anyhow = {workspace = true}
 arkret-crypto = {workspace = true}
+arkret-policy = {version = "0.3.0",path = "../arkret-rust-sdk/crates/policy",default-features = false}
 hex = "0.4.3"
 argon2 = {workspace = true}
 base64 = {workspace = true}
@@ -177,7 +178,7 @@ chrono = {workspace = true}
 # NOTE: arkret-sdk `default = []` (types-only) since the F-06 default-feature
 # narrowing; this client must opt into every runtime feature it uses
 # explicitly (mls/device-runtime/... previously arrived via the old default).
-arkret-sdk = {workspace = true,features = ["client", "mls", "full-surface", "applet-runtime", "device-runtime", "sync-runtime", "timeline-runtime", "signer", "keystore-macos", "keystore-linux", "keystore-windows"]}
+arkret-sdk = {workspace = true,features = ["client", "mls", "full-surface", "applet-runtime", "device-runtime", "signer", "keystore-macos", "keystore-linux", "keystore-windows"]}
 garth = {path = "../garth",default-features = false,features = ["native"]}
 dioxus = {workspace = true,features = ["desktop", "web"]}
 notify-rust = {workspace = true}
@@ -189,7 +190,7 @@ tracing-subscriber = {workspace = true,features = ["env-filter", "fmt"]}
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 # C36.1 (2026-05-10): wasm32 needs the same surface as native because the app
 # code references `KeyVerification*` (device-runtime), `EventsSubscribeFrame`
-# (sync-runtime), `KeyRefObject` (mls), etc. The previous
+# (`SyncLoop` is now owned by Garth), `KeyRefObject` (mls), etc. The previous
 # `default-features = false` stripped these and produced E0432/E0425.
 # The C36.0 parallel agent is closing the wasm32 SDK so `full-surface` builds
 # cleanly under `--target wasm32-unknown-unknown`.
@@ -212,7 +213,7 @@ tracing-subscriber = {workspace = true,features = ["env-filter", "fmt"]}
 # `sleep_for` uses for HTTP retry backoff in the wasm build.
 # See the non-wasm note above: opt into every runtime feature explicitly since
 # arkret-sdk `default = []`.
-arkret-sdk = {workspace = true,features = ["client", "mls", "full-surface", "applet-runtime", "device-runtime", "sync-runtime", "timeline-runtime", "signer"]}
+arkret-sdk = {workspace = true,features = ["client", "mls", "full-surface", "applet-runtime", "device-runtime", "signer"]}
 garth = {path = "../garth",default-features = false,features = ["wasm"]}
 dioxus = {workspace = true,features = ["web"]}
 gloo-timers = {workspace = true,features = ["futures"]}

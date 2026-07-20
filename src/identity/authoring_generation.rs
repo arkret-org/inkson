@@ -323,7 +323,7 @@ impl ResolvedQueueGenerationFence {
 impl OutboundGenerationFence for ResolvedQueueGenerationFence {
     fn evaluate(
         &self,
-        item: &arkret_sdk::sync_client::SendQueueItem,
+        item: &garth::SendQueueItem,
     ) -> arkret_sdk::Result<OutboundGenerationFenceDecision> {
         let queued: super::super::event_submit::QueuedSdkEvent =
             serde_json::from_value(item.content.clone()).map_err(|error| {

@@ -90,7 +90,7 @@ struct InksonPostAcceptHook {
 impl OutboundPostAcceptHook for InksonPostAcceptHook {
     fn post_accept<'a>(
         &'a self,
-        item: &'a arkret_sdk::sync_client::SendQueueItem,
+        item: &'a garth::SendQueueItem,
         _event_id: &'a arkret_sdk::EventId,
         _duplicate: bool,
     ) -> BoxOutboundFuture<'a, ()> {
@@ -139,7 +139,7 @@ struct EventOutboundSubmitter<'a> {
 impl OutboundSubmitter for EventOutboundSubmitter<'_> {
     fn submit<'a>(
         &'a self,
-        item: arkret_sdk::sync_client::SendQueueItem,
+        item: garth::SendQueueItem,
     ) -> BoxOutboundFuture<'a, OutboundSubmitOutcome> {
         Box::pin(async move {
             let event = decode_queued_sdk_event(item.content)?.event;
@@ -263,9 +263,9 @@ fn actor_frontier_refresh_error(actor_id: &str, error: anyhow::Error) -> anyhow:
 }
 
 fn pending_chat_message_ids_from_snapshot(
-    snapshot: &arkret_sdk::sync_client::SendQueueSnapshot,
+    snapshot: &garth::SendQueueSnapshot,
 ) -> std::collections::BTreeSet<String> {
-    use arkret_sdk::sync_client::SendQueueStatus;
+    use garth::SendQueueStatus;
 
     snapshot
         .items
@@ -279,7 +279,7 @@ fn pending_chat_message_ids_from_snapshot(
         .filter(|item| {
             matches!(
                 &item.kind,
-                arkret_sdk::sync_client::SendQueueItemKind::Custom { kind }
+                garth::SendQueueItemKind::Custom { kind }
                     if kind == "ak.message.create"
             )
         })
@@ -308,7 +308,7 @@ pub(crate) async fn pending_chat_outbound_message_ids(
     Ok(pending_chat_message_ids_from_snapshot(&snapshot))
 }
 
-fn completed_outbound_result(item: &arkret_sdk::sync_client::SendQueueItem) -> SubmitEventResult {
+fn completed_outbound_result(item: &garth::SendQueueItem) -> SubmitEventResult {
     SubmitEventResult {
         event_id: item
             .remote_event_id
@@ -369,7 +369,7 @@ impl EventSubmitter {
         &self,
         outbound: &OutboundEngine<crate::outbound_store::InksonOutboundStore>,
     ) -> anyhow::Result<crate::identity::authoring_generation::ResolvedQueueGenerationFence> {
-        use arkret_sdk::sync_client::SendQueueStatus;
+        use garth::SendQueueStatus;
 
         use crate::identity::authoring_generation::CurrentEventAuthoringGeneration;
 
@@ -910,7 +910,7 @@ impl EventSubmitter {
             .enqueue(
                 Some(transaction_id.clone()),
                 event.realm_id.clone(),
-                arkret_sdk::sync_client::SendQueueItemKind::Custom {
+                garth::SendQueueItemKind::Custom {
                     kind: event.kind.to_string(),
                 },
                 serde_json::to_value(QueuedSdkEvent {
@@ -1221,7 +1221,7 @@ impl EventSubmitter {
                 event.kind.as_str() == arkret_sdk::events::EventKind::DEVICE_AUTHORIZE
             });
         let is_ordinary_realm_bootstrap = if first_is_realm_create && !is_identity_anchor_unit {
-            arkret_sdk::realm::bootstrap::validate_realm_bootstrap_unit(&events)
+            arkret_policy::realm_bootstrap::validate_realm_bootstrap_unit(&events)
                 .map_err(|error| anyhow::anyhow!(error.reason_code()))?;
             true
         } else {
@@ -1629,7 +1629,7 @@ mod tests {
             arkret_sdk::RealmId::new("ak:realm:01904100-0000-7000-8000-000000000001".to_owned())
                 .unwrap();
         let actor = "did:web:alice.example";
-        let mut queue = arkret_sdk::sync_client::SendQueue::new();
+        let mut queue = garth::SendQueue::new();
         let pending = sdk_event_with_kind(
             "ak:event:01904100-0000-7000-8000-000000000001",
             realm.as_str(),
@@ -1645,7 +1645,7 @@ mod tests {
             .enqueue(
                 Some(pending.event_id.to_string()),
                 realm.clone(),
-                arkret_sdk::sync_client::SendQueueItemKind::Custom {
+                garth::SendQueueItemKind::Custom {
                     kind: "ak.message.create".to_owned(),
                 },
                 serde_json::to_value(QueuedSdkEvent {
@@ -1669,7 +1669,7 @@ mod tests {
             .enqueue(
                 Some(sent_transaction.clone()),
                 realm.clone(),
-                arkret_sdk::sync_client::SendQueueItemKind::Custom {
+                garth::SendQueueItemKind::Custom {
                     kind: "ak.message.create".to_owned(),
                 },
                 serde_json::to_value(QueuedSdkEvent {
@@ -1790,12 +1790,12 @@ mod tests {
         })
         .unwrap();
         let realm = arkret_sdk::RealmId::new(realm_id).unwrap();
-        let mut queue = arkret_sdk::sync_client::SendQueue::new();
+        let mut queue = garth::SendQueue::new();
         let item = queue
             .enqueue(
                 Some("txn-mls-hook".to_owned()),
                 realm,
-                arkret_sdk::sync_client::SendQueueItemKind::Custom {
+                garth::SendQueueItemKind::Custom {
                     kind: "ak.mls.commit".to_owned(),
                 },
                 content,

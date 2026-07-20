@@ -300,14 +300,14 @@ pub fn build_blocklist_account_data_body(entries: &[BlocklistEntry]) -> Value {
                 entry.kind.as_str()
             };
             let target = if blocklist_kind_is_did(kind) {
-                arkret_sdk::AccountBlocklistTarget {
+                garth::AccountBlocklistTarget {
                     kind: kind.to_owned(),
                     did: arkret_sdk::Did::new(entry.did.trim().to_owned()).ok(),
                     object_ref: None,
                     value: None,
                 }
             } else {
-                arkret_sdk::AccountBlocklistTarget {
+                garth::AccountBlocklistTarget {
                     kind: kind.to_owned(),
                     did: None,
                     object_ref: None,
@@ -325,7 +325,7 @@ pub fn build_blocklist_account_data_body(entries: &[BlocklistEntry]) -> Value {
             } else {
                 entry.applies_to.clone()
             };
-            Some(arkret_sdk::AccountBlocklistPayloadEntry {
+            Some(garth::AccountBlocklistPayloadEntry {
                 entry_id: entry.entry_id.as_ref().and_then(|value| {
                     arkret_sdk::NonEmptyString::new(value.trim().to_owned()).ok()
                 }),
@@ -347,7 +347,7 @@ pub fn build_blocklist_account_data_body(entries: &[BlocklistEntry]) -> Value {
             })
         })
         .collect::<Vec<_>>();
-    serde_json::to_value(arkret_sdk::AccountBlocklistPayload {
+    serde_json::to_value(garth::AccountBlocklistPayload {
         version: BLOCKLIST_ACCOUNT_DATA_VERSION,
         entries,
     })
@@ -357,7 +357,7 @@ pub fn build_blocklist_account_data_body(entries: &[BlocklistEntry]) -> Value {
 /// Parse the `ak.account.blocklist` account-data content body. Malformed
 /// actor entries are skipped instead of partially corrupting the local UI.
 pub fn blocklist_entries_from_account_data(value: &Value) -> Result<Vec<BlocklistEntry>, String> {
-    let payload: arkret_sdk::AccountBlocklistPayload =
+    let payload: garth::AccountBlocklistPayload =
         serde_json::from_value(value.clone()).map_err(|error| error.to_string())?;
     Ok(payload
         .entries
