@@ -197,33 +197,40 @@ impl InksonLocalStateStoreAdapter {
 }
 
 impl garth::CursorStore for InksonLocalStateStoreAdapter {
-    async fn load(
-        &self,
-        scope: garth::CursorScope,
-    ) -> arkret_sdk::Result<Option<garth::OpaqueCursor>> {
-        self.inner.load_cursor(&scope)
+    async fn load(&self, scope: garth::CursorScope) -> garth::Result<Option<garth::OpaqueCursor>> {
+        self.inner
+            .load_cursor(&scope)
+            .map_err(|error| garth::Error::Protocol(error.to_string()))
     }
 
     async fn save(
         &self,
         scope: garth::CursorScope,
         cursor: garth::OpaqueCursor,
-    ) -> arkret_sdk::Result<()> {
-        self.inner.save_cursor(&scope, cursor)
+    ) -> garth::Result<()> {
+        self.inner
+            .save_cursor(&scope, cursor)
+            .map_err(|error| garth::Error::Protocol(error.to_string()))
     }
 
-    async fn clear(&self, scope: garth::CursorScope) -> arkret_sdk::Result<()> {
-        self.inner.clear_cursor(&scope)
+    async fn clear(&self, scope: garth::CursorScope) -> garth::Result<()> {
+        self.inner
+            .clear_cursor(&scope)
+            .map_err(|error| garth::Error::Protocol(error.to_string()))
     }
 }
 
 impl garth::EventCacheStore for InksonLocalStateStoreAdapter {
-    async fn seen(&self, event_id: arkret_sdk::EventId) -> arkret_sdk::Result<bool> {
-        self.inner.event_seen(&event_id)
+    async fn seen(&self, event_id: arkret_sdk::EventId) -> garth::Result<bool> {
+        self.inner
+            .event_seen(&event_id)
+            .map_err(|error| garth::Error::Protocol(error.to_string()))
     }
 
-    async fn remember(&self, event_id: arkret_sdk::EventId) -> arkret_sdk::Result<()> {
-        self.inner.remember_event(&event_id)
+    async fn remember(&self, event_id: arkret_sdk::EventId) -> garth::Result<()> {
+        self.inner
+            .remember_event(&event_id)
+            .map_err(|error| garth::Error::Protocol(error.to_string()))
     }
 }
 
@@ -350,12 +357,7 @@ impl RealmEventsFrameSource for InksonRealmEventsFrameSource {
         &'a mut self,
     ) -> garth::subscribe::realm::BoxRealmStreamFuture<'a, Option<arkret_sdk::EventsSubscribeFrame>>
     {
-        Box::pin(async move {
-            self.inner
-                .next_frame()
-                .await
-                .map_err(arkret_sdk::Error::from)
-        })
+        Box::pin(async move { self.inner.next_frame().await.map_err(Into::into) })
     }
 }
 
@@ -807,7 +809,7 @@ mod tests {
 
         use garth::{BoxRealmStreamFuture, ClientEvent, ClientProjector, RealmEventsDriver};
 
-        struct Frames(VecDeque<arkret_sdk::Result<arkret_sdk::EventsSubscribeFrame>>);
+        struct Frames(VecDeque<garth::Result<arkret_sdk::EventsSubscribeFrame>>);
 
         impl RealmEventsFrameSource for Frames {
             fn next_frame<'a>(
@@ -839,10 +841,10 @@ mod tests {
         }
 
         impl ClientProjector for Projector {
-            async fn project(&self, _batch: Vec<ClientEvent>) -> arkret_sdk::Result<()> {
+            async fn project(&self, _batch: Vec<ClientEvent>) -> garth::Result<()> {
                 *self.calls.lock().unwrap() += 1;
                 if self.fail {
-                    Err(arkret_sdk::Error::Protocol(
+                    Err(garth::Error::Protocol(
                         "injected Inkson projection failure".to_owned(),
                     ))
                 } else {

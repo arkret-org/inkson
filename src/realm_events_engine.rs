@@ -87,7 +87,7 @@ struct RealmIngestProjector {
 }
 
 impl ClientProjector for RealmIngestProjector {
-    async fn project(&self, batch: Vec<ClientEvent>) -> arkret_sdk::Result<()> {
+    async fn project(&self, batch: Vec<ClientEvent>) -> garth::Result<()> {
         if !batch.is_empty() {
             let changed = self.state_store.write(|store| {
                 crate::sync_engine::ingest_kanban_events(store, &self.realm_id, &batch)
@@ -196,21 +196,21 @@ struct RealmTransportProvider {
 impl TransportProvider for RealmTransportProvider {
     type Transport = crate::client_core::InksonRealmEventsTransport;
 
-    async fn provide(&self) -> arkret_sdk::Result<Self::Transport> {
+    async fn provide(&self) -> garth::Result<Self::Transport> {
         let base = self.ctx.base_url.get();
         let http = crate::identity::session_refresh::provide_authenticated_sdk_client(&base)
             .await
-            .map_err(|error| arkret_sdk::Error::Protocol(error.to_string()))?;
+            .map_err(|error| garth::Error::Protocol(error.to_string()))?;
         Ok(crate::client_core::InksonRealmEventsTransport::new(http))
     }
 
-    async fn recover_unauthorized(&self) -> arkret_sdk::Result<bool> {
+    async fn recover_unauthorized(&self) -> garth::Result<bool> {
         crate::identity::session_refresh::refresh_authenticated_session_after_unauthorized(
             &self.ctx.base_url.get(),
         )
         .await
         .map(|_| true)
-        .map_err(|error| arkret_sdk::Error::Http(error.to_string()))
+        .map_err(|error| garth::Error::Http(error.to_string()))
     }
 
     fn is_active(&self) -> bool {

@@ -545,7 +545,7 @@ mod tests {
             &mut self,
             _realm_id: &arkret_sdk::RealmId,
             events: &[arkret_sdk::Event],
-        ) -> arkret_sdk::Result<()> {
+        ) -> garth::Result<()> {
             let values: Vec<_> = events
                 .iter()
                 .map(|event| serde_json::to_value(event).unwrap())

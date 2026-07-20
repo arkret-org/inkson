@@ -36,7 +36,8 @@ impl InksonOutboundStore {
             let inner = match stores.get(&path) {
                 Some(store) => store.clone(),
                 None => {
-                    let store = garth::FileStore::open(&path)?;
+                    let store = garth::FileStore::open(&path)
+                        .map_err(|error| arkret_sdk::Error::Protocol(error.to_string()))?;
                     stores.insert(path, store.clone());
                     store
                 }
@@ -54,7 +55,8 @@ impl InksonOutboundStore {
     #[cfg(all(test, not(target_arch = "wasm32")))]
     fn open_at(path: impl Into<std::path::PathBuf>) -> arkret_sdk::Result<Self> {
         Ok(Self {
-            inner: garth::FileStore::open(path)?,
+            inner: garth::FileStore::open(path)
+                .map_err(|error| arkret_sdk::Error::Protocol(error.to_string()))?,
         })
     }
 }
@@ -62,7 +64,7 @@ impl InksonOutboundStore {
 impl OutboundQueueStore for InksonOutboundStore {
     fn mutate_outbound<'a, R>(
         &'a self,
-        mutation: impl FnOnce(&mut garth::SendQueue) -> arkret_sdk::Result<R> + garth::MaybeSend + 'a,
+        mutation: impl FnOnce(&mut garth::SendQueue) -> garth::Result<R> + garth::MaybeSend + 'a,
     ) -> BoxOutboundFuture<'a, R>
     where
         R: garth::MaybeSend + 'a,
@@ -75,31 +77,27 @@ impl OutboundQueueStore for InksonOutboundStore {
         {
             Box::pin(async move {
                 let storage = crate::state::browser_storage().ok_or_else(|| {
-                    arkret_sdk::Error::Protocol(
+                    garth::Error::Protocol(
                         "browser storage unavailable for durable outbound queue".to_owned(),
                     )
                 })?;
                 let snapshot = match storage.get_item(&self.storage_key).map_err(|error| {
-                    arkret_sdk::Error::Protocol(format!("read browser outbound queue: {error:?}"))
+                    garth::Error::Protocol(format!("read browser outbound queue: {error:?}"))
                 })? {
                     Some(raw) => serde_json::from_str(&raw).map_err(|error| {
-                        arkret_sdk::Error::Protocol(format!(
-                            "decode browser outbound queue: {error}"
-                        ))
+                        garth::Error::Protocol(format!("decode browser outbound queue: {error}"))
                     })?,
                     None => garth::SendQueueSnapshot::default(),
                 };
                 let mut queue = garth::SendQueue::from_snapshot(snapshot)?;
                 let result = mutation(&mut queue)?;
                 let encoded = serde_json::to_string(&queue.snapshot()).map_err(|error| {
-                    arkret_sdk::Error::Protocol(format!("encode browser outbound queue: {error}"))
+                    garth::Error::Protocol(format!("encode browser outbound queue: {error}"))
                 })?;
                 storage
                     .set_item(&self.storage_key, &encoded)
                     .map_err(|error| {
-                        arkret_sdk::Error::Protocol(format!(
-                            "persist browser outbound queue: {error:?}"
-                        ))
+                        garth::Error::Protocol(format!("persist browser outbound queue: {error:?}"))
                     })?;
                 Ok(result)
             })

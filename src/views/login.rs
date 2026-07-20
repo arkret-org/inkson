@@ -871,7 +871,11 @@ async fn finish_oidc_callback(
             authorization_code,
             code_verifier: scaffold.code_verifier.clone(),
         },
-        |bytes| dpop_handle.sign_protocol_bytes(bytes),
+        |bytes| {
+            dpop_handle
+                .sign_protocol_bytes(bytes)
+                .map_err(|error| garth::Error::Protocol(error.to_string()))
+        },
     )
     .map_err(|error| format!("Account handoff request failed: {error}"))?;
     let handoff = http
@@ -946,7 +950,11 @@ async fn finish_oidc_callback(
         &handoff.account_handoff_grant,
         principal_audience,
         Utc::now() + chrono::Duration::minutes(5),
-        |bytes| dpop_handle.sign_protocol_bytes(bytes),
+        |bytes| {
+            dpop_handle
+                .sign_protocol_bytes(bytes)
+                .map_err(|error| garth::Error::Protocol(error.to_string()))
+        },
     )
     .map_err(|error| format!("Pre-registration session request failed: {error}"))?;
     let handoff_http = ClientBuilder::new(

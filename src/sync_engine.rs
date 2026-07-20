@@ -191,7 +191,7 @@ impl ClientProjector for AccountClientEventProjector {
     fn project(
         &self,
         batch: Vec<ClientEvent>,
-    ) -> impl std::future::Future<Output = arkret_sdk::Result<()>> + '_ {
+    ) -> impl std::future::Future<Output = garth::Result<()>> + '_ {
         async move {
             for event in batch {
                 self.record(event);
@@ -276,22 +276,22 @@ struct AccountTransportProvider {
 impl TransportProvider for AccountTransportProvider {
     type Transport = crate::client_core::InksonAccountTransport;
 
-    async fn provide(&self) -> arkret_sdk::Result<Self::Transport> {
+    async fn provide(&self) -> garth::Result<Self::Transport> {
         let session_generation = self.ctx.session.generation();
         let transport =
             crate::identity::session_refresh::provide_authenticated_sdk_client(&self.ctx.base_url)
                 .await
                 .map(crate::client_core::InksonAccountTransport::new)
-                .map_err(|error| arkret_sdk::Error::Protocol(error.to_string()))?;
+                .map_err(|error| garth::Error::Protocol(error.to_string()))?;
         if self.ctx.session.generation() != session_generation || !self.is_active() {
-            return Err(arkret_sdk::Error::Protocol(
+            return Err(garth::Error::Protocol(
                 "session changed while preparing account transport".to_owned(),
             ));
         }
         Ok(transport)
     }
 
-    async fn recover_unauthorized(&self) -> arkret_sdk::Result<bool> {
+    async fn recover_unauthorized(&self) -> garth::Result<bool> {
         match crate::identity::session_refresh::refresh_authenticated_session_after_unauthorized(
             &self.ctx.base_url,
         )
@@ -302,7 +302,7 @@ impl TransportProvider for AccountTransportProvider {
                 self.ctx.session.invalidate(error.to_string());
                 Ok(false)
             }
-            Err(error) => Err(arkret_sdk::Error::Http(error.to_string())),
+            Err(error) => Err(garth::Error::Http(error.to_string())),
         }
     }
 
@@ -319,9 +319,9 @@ struct InksonAccountCommitter {
 }
 
 impl AccountStepCommitter for InksonAccountCommitter {
-    async fn commit(&self, step: &AccountStreamStep) -> arkret_sdk::Result<AccountCommitOutcome> {
+    async fn commit(&self, step: &AccountStreamStep) -> garth::Result<AccountCommitOutcome> {
         let cursor = step.cursor.clone().ok_or_else(|| {
-            arkret_sdk::Error::Protocol("account stream update has no validated cursor".to_owned())
+            garth::Error::Protocol("account stream update has no validated cursor".to_owned())
         })?;
         if !step.initial && account_updates_are_empty(&step.updates) {
             // A bounded long-poll timeout carries only
@@ -332,16 +332,17 @@ impl AccountStepCommitter for InksonAccountCommitter {
                 .state_store
                 .write(|store| store.save_sync_cursor(cursor));
             if let Some(error) = self.ctx.state_store.read(LocalStateStore::persist_error) {
-                return Err(arkret_sdk::Error::Protocol(format!(
+                return Err(garth::Error::Protocol(format!(
                     "persist idle account stream cursor: {error}"
                 )));
             }
             return Ok(AccountCommitOutcome::Committed);
         }
-        let response = AccountSyncStep::from_updates(cursor, step.updates.clone())?;
+        let response = AccountSyncStep::from_updates(cursor, step.updates.clone())
+            .map_err(|error| garth::Error::Protocol(error.to_string()))?;
         apply_response(&response, step.initial, &self.ctx, None);
         if let Some(error) = self.ctx.state_store.read(LocalStateStore::persist_error) {
-            return Err(arkret_sdk::Error::Protocol(format!(
+            return Err(garth::Error::Protocol(format!(
                 "persist account stream step: {error}"
             )));
         }
@@ -447,7 +448,7 @@ impl AccountPostCommitHook<crate::client_core::InksonAccountTransport> for Inkso
         &self,
         transport: &crate::client_core::InksonAccountTransport,
         step: &AccountStreamStep,
-    ) -> arkret_sdk::Result<AccountPostCommitOutcome> {
+    ) -> garth::Result<AccountPostCommitOutcome> {
         let http = transport.http();
         if !self.active() {
             return Ok(AccountPostCommitOutcome::Continue);
@@ -456,9 +457,10 @@ impl AccountPostCommitHook<crate::client_core::InksonAccountTransport> for Inkso
             return Ok(AccountPostCommitOutcome::Continue);
         }
         let cursor = step.cursor.clone().ok_or_else(|| {
-            arkret_sdk::Error::Protocol("account post-commit step has no cursor".to_owned())
+            garth::Error::Protocol("account post-commit step has no cursor".to_owned())
         })?;
-        let response = AccountSyncStep::from_updates(cursor, step.updates.clone())?;
+        let response = AccountSyncStep::from_updates(cursor, step.updates.clone())
+            .map_err(|error| garth::Error::Protocol(error.to_string()))?;
         let api = TransportClient::from_http(
             http.clone(),
             crate::transport::RequestContext::new(self.ctx.token.get()),

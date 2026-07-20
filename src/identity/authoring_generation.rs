@@ -324,15 +324,15 @@ impl OutboundGenerationFence for ResolvedQueueGenerationFence {
     fn evaluate(
         &self,
         item: &garth::SendQueueItem,
-    ) -> arkret_sdk::Result<OutboundGenerationFenceDecision> {
+    ) -> garth::Result<OutboundGenerationFenceDecision> {
         let queued: super::super::event_submit::QueuedSdkEvent =
             serde_json::from_value(item.content.clone()).map_err(|error| {
-                arkret_sdk::Error::Protocol(format!(
+                garth::Error::Protocol(format!(
                     "decode generation-fenced Inkson SDK event: {error}"
                 ))
             })?;
         let decision = self.decisions.get(&item.transaction_id).ok_or_else(|| {
-            arkret_sdk::Error::Protocol(format!(
+            garth::Error::Protocol(format!(
                 "generation fence omitted transaction {}",
                 item.transaction_id
             ))

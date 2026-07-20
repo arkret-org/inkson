@@ -56,14 +56,12 @@ impl ReplaceableSessionTransport {
         *self.client.lock().unwrap_or_else(PoisonError::into_inner) = Some(client);
     }
 
-    fn current(&self) -> arkret_sdk::Result<arkret_sdk::http_client::Client> {
+    fn current(&self) -> garth::Result<arkret_sdk::http_client::Client> {
         self.client
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
             .clone()
-            .ok_or_else(|| {
-                arkret_sdk::Error::Protocol("session transport is not configured".into())
-            })
+            .ok_or_else(|| garth::Error::Protocol("session transport is not configured".into()))
     }
 }
 
@@ -77,7 +75,7 @@ impl SessionGrantTransport for ReplaceableSessionTransport {
             client?
                 .auth_issue_session_grant(&request)
                 .await
-                .map_err(arkret_sdk::Error::from)
+                .map_err(Into::into)
         })
     }
 
@@ -90,7 +88,7 @@ impl SessionGrantTransport for ReplaceableSessionTransport {
             client?
                 .auth_refresh_session_grant(&request)
                 .await
-                .map_err(arkret_sdk::Error::from)
+                .map_err(Into::into)
         })
     }
 }
@@ -108,7 +106,7 @@ impl InksonAuthenticatedTransportFactory {
     fn build_principal_client(
         &self,
         state: &SessionGrantState,
-    ) -> arkret_sdk::Result<arkret_sdk::http_client::Client> {
+    ) -> garth::Result<arkret_sdk::http_client::Client> {
         ClientBuilder::new(self.principal_sdk_base_url.clone())
             .allow_insecure_localhost()
             .auth(Auth::Dpop(
@@ -116,13 +114,13 @@ impl InksonAuthenticatedTransportFactory {
                     .sdk_dpop_auth_for_access_token(state.grant_jwt.clone()),
             ))
             .build()
-            .map_err(arkret_sdk::Error::from)
+            .map_err(Into::into)
     }
 
     fn build_account_client(
         &self,
         state: &SessionGrantState,
-    ) -> arkret_sdk::Result<arkret_sdk::http_client::Client> {
+    ) -> garth::Result<arkret_sdk::http_client::Client> {
         ClientBuilder::new(self.account_sdk_base_url.clone())
             .allow_insecure_localhost()
             .auth(Auth::Dpop(
@@ -130,7 +128,7 @@ impl InksonAuthenticatedTransportFactory {
                     .sdk_dpop_auth_for_access_token(state.grant_jwt.clone()),
             ))
             .build()
-            .map_err(arkret_sdk::Error::from)
+            .map_err(Into::into)
     }
 
     fn persisted(&self, state: &SessionGrantState) -> anyhow::Result<PersistedSessionGrant> {
@@ -141,7 +139,7 @@ impl InksonAuthenticatedTransportFactory {
 impl AuthenticatedTransportFactory for InksonAuthenticatedTransportFactory {
     type Transport = arkret_sdk::http_client::Client;
 
-    fn build(&self, state: &SessionGrantState) -> arkret_sdk::Result<Self::Transport> {
+    fn build(&self, state: &SessionGrantState) -> garth::Result<Self::Transport> {
         self.build_principal_client(state)
     }
 
@@ -149,14 +147,14 @@ impl AuthenticatedTransportFactory for InksonAuthenticatedTransportFactory {
         &self,
         state: &SessionGrantState,
         _fallback: &SessionRefreshOptions,
-    ) -> arkret_sdk::Result<SessionRefreshOptions> {
+    ) -> garth::Result<SessionRefreshOptions> {
         self.refresh_transport
             .replace(self.build_account_client(state)?);
         let persisted = self
             .persisted(state)
-            .map_err(|error| arkret_sdk::Error::Protocol(error.to_string()))?;
+            .map_err(|error| garth::Error::Protocol(error.to_string()))?;
         let proof = mint_session_grant_refresh_proof(&persisted)
-            .map_err(|error| arkret_sdk::Error::Protocol(error.to_string()))?;
+            .map_err(|error| garth::Error::Protocol(error.to_string()))?;
         Ok(SessionRefreshOptions {
             audience: Some(state.audience.clone()),
             device_id: state.device_id.clone(),
@@ -174,27 +172,27 @@ struct PersistedSessionGrantStore {
 }
 
 impl SessionGrantStore for PersistedSessionGrantStore {
-    fn load(&self) -> arkret_sdk::Result<Option<SessionGrantState>> {
+    fn load(&self) -> garth::Result<Option<SessionGrantState>> {
         crate::state::load_session_grant_from_secure_store(self.secure_store.as_ref())
-            .map_err(|error| arkret_sdk::Error::Protocol(error.to_string()))?
+            .map_err(|error| garth::Error::Protocol(error.to_string()))?
             .map(|grant| {
                 session_grant_state_from_persisted(&grant, &self.device_handle, Utc::now())
             })
             .transpose()
-            .map_err(|error| arkret_sdk::Error::Protocol(error.to_string()))
+            .map_err(|error| garth::Error::Protocol(error.to_string()))
     }
 
     fn save<'a>(
         &'a self,
         state: &'a SessionGrantState,
-    ) -> impl std::future::Future<Output = arkret_sdk::Result<()>> + garth::MaybeSend + 'a {
+    ) -> impl std::future::Future<Output = garth::Result<()>> + garth::MaybeSend + 'a {
         let encoded = persisted_session_grant_from_state(
             state,
             &self.principal_server_url,
             &self.device_handle,
         )
         .and_then(|grant| serde_json::to_vec(&grant).map_err(Into::into))
-        .map_err(|error: anyhow::Error| arkret_sdk::Error::Protocol(error.to_string()));
+        .map_err(|error: anyhow::Error| garth::Error::Protocol(error.to_string()));
         async move {
             let encoded = encoded?;
             self.secure_store
@@ -209,16 +207,16 @@ impl SessionGrantStore for PersistedSessionGrantStore {
                     },
                 )
                 .await
-                .map_err(|error| arkret_sdk::Error::Protocol(error.to_string()))
+                .map_err(|error| garth::Error::Protocol(error.to_string()))
         }
     }
 
-    fn clear(&self) -> arkret_sdk::Result<()> {
+    fn clear(&self) -> garth::Result<()> {
         self.secure_store
             .delete_secret(&crate::secure_key_store::account_scoped_device_key(
                 LocalStateStore::SECURE_SESSION_GRANT_KEY,
             ))
-            .map_err(|error| arkret_sdk::Error::Protocol(error.to_string()))
+            .map_err(|error| garth::Error::Protocol(error.to_string()))
     }
 }
 

@@ -169,7 +169,7 @@ mod native {
             {
                 self.pending.push(ClientEncryptedMessage {
                     message_id: message_id.clone(),
-                    payload: payload.clone(),
+                    payload: payload.as_ref().clone(),
                 });
             }
             Ok(decrypted)

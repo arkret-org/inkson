@@ -95,12 +95,13 @@ impl OutboundPostAcceptHook for InksonPostAcceptHook {
         _duplicate: bool,
     ) -> BoxOutboundFuture<'a, ()> {
         Box::pin(async move {
-            let queued = decode_queued_sdk_event(item.content.clone())?;
+            let queued = decode_queued_sdk_event(item.content.clone())
+                .map_err(|error| garth::Error::Protocol(error.to_string()))?;
             let Some(action) = queued.post_accept else {
                 return Ok(());
             };
             let store = self.state_store.as_ref().ok_or_else(|| {
-                arkret_sdk::Error::Protocol(
+                garth::Error::Protocol(
                     "queued post-accept action has no host state-store adapter".to_owned(),
                 )
             })?;
@@ -108,14 +109,14 @@ impl OutboundPostAcceptHook for InksonPostAcceptHook {
                 PostAcceptAction::MlsSnapshot { realm_id, snapshot } => store.write(|store| {
                     store.save_mls_snapshot(realm_id, snapshot);
                     store.begin_durable_flush().map_err(|error| {
-                        arkret_sdk::Error::Protocol(format!(
+                        garth::Error::Protocol(format!(
                             "begin durable MLS post-accept snapshot persist: {error}"
                         ))
                     })
                 })?,
             };
             barrier.wait().await.map_err(|error| {
-                arkret_sdk::Error::Protocol(format!("persist MLS post-accept snapshot: {error}"))
+                garth::Error::Protocol(format!("persist MLS post-accept snapshot: {error}"))
             })
         })
     }
@@ -142,12 +143,14 @@ impl OutboundSubmitter for EventOutboundSubmitter<'_> {
         item: garth::SendQueueItem,
     ) -> BoxOutboundFuture<'a, OutboundSubmitOutcome> {
         Box::pin(async move {
-            let event = decode_queued_sdk_event(item.content)?.event;
+            let event = decode_queued_sdk_event(item.content)
+                .map_err(|error| garth::Error::Protocol(error.to_string()))?
+                .event;
             match self.owner.submit_sdk_event_direct(&event).await {
                 Ok(result) => {
                     let event_id =
                         arkret_sdk::EventId::new(result.event_id.clone()).map_err(|error| {
-                            arkret_sdk::Error::Protocol(format!(
+                            garth::Error::Protocol(format!(
                                 "server returned invalid accepted event id: {error}"
                             ))
                         })?;

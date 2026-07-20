@@ -406,7 +406,9 @@ impl AccountSyncStep {
     pub fn from_batch(batch: arkret_sdk::AccountSubscribeBatch) -> arkret_sdk::Result<Self> {
         let cursor = batch.cursor.clone();
         let mut processor = garth::SyncResponseProcessor::new();
-        let updates = processor.process(batch)?;
+        let updates = processor
+            .process(batch)
+            .map_err(|error| arkret_sdk::Error::Protocol(error.to_string()))?;
         Self::from_updates(cursor, updates)
     }
 
@@ -416,7 +418,9 @@ impl AccountSyncStep {
     ) -> arkret_sdk::Result<Self> {
         let cursor = batch.cursor.clone();
         let mut processor = garth::SyncResponseProcessor::new();
-        let updates = processor.process_with_ephemeral_key_resolver(batch, resolver)?;
+        let updates = processor
+            .process_with_ephemeral_key_resolver(batch, resolver)
+            .map_err(|error| arkret_sdk::Error::Protocol(error.to_string()))?;
         Self::from_updates(cursor, updates)
     }
 

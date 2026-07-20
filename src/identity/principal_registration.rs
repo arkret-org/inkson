@@ -179,7 +179,10 @@ pub async fn complete_account_handoff_binding(
         &account_handoff_grant,
         arkret_sdk::Did::new(handoff.audience.clone())?,
         Utc::now() + chrono::Duration::minutes(5),
-        |bytes| dpop.sign_protocol_bytes(bytes),
+        |bytes| {
+            dpop.sign_protocol_bytes(bytes)
+                .map_err(|error| garth::Error::Protocol(error.to_string()))
+        },
     )?;
     let session_engine = garth::SessionEngine::new(account_client);
     session_engine
