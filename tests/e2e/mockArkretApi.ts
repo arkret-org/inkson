@@ -305,8 +305,8 @@ export async function mockArkretApi(
   });
   const sidecarCircleView = () => ({
     ...circleView("ak:circle:0196419b-0000-7000-8000-00000000c1c2"),
-    profile_ref: "ak.profile.agent_sidecar_thread.v1",
-    title: "Alice AI Sidecar",
+    profile_ref: "ak.profile.internal_scope.v1",
+    title: "Internal scope",
     display: {
       short_name: "AI-ALICE",
       color_token: "slate",
@@ -2326,7 +2326,7 @@ export async function mockArkretApi(
     }
 
     if (
-      url.pathname === "/_arkret/self/agent-sidecar-threads:ensure" &&
+      url.pathname === "/_arkret/self/agent-sidecars:ensure" &&
       route.request().method() === "POST"
     ) {
       const body = await route.request().postDataJSON();
@@ -2352,10 +2352,46 @@ export async function mockArkretApi(
       }
       return json(route, {
         ok: true,
-        private_circle_id: "ak:circle:01964137-0000-7000-8000-0000000000a1",
+        sidecar_id: "ak:sidecar:01964137-0000-7000-8000-0000000000a0",
         private_strand_id: "ak:strand:01964137-0000-7000-8000-0000000000a2",
         private_relation_id: "ak:relation:01964137-0000-7000-8000-0000000000a3",
-        pending_member_reconciliations: sidecarPendingMemberReconciliations,
+        access_readiness:
+          sidecarPendingMemberReconciliations.length === 0
+            ? "ready"
+            : "access_reconciliation_pending",
+        pending_access_reconciliations: sidecarPendingMemberReconciliations.map(
+          (item) => ({ stage: "backing_scope_membership", ...item }),
+        ),
+      });
+    }
+
+    if (
+      url.pathname.startsWith("/_arkret/self/agent-sidecars/") &&
+      route.request().method() === "GET"
+    ) {
+      return json(route, {
+        sidecar: {
+          id: "ak:sidecar:01964137-0000-7000-8000-0000000000a0",
+          schema: "ak.schema.agent_sidecar.v1",
+          realm_id: DEMO_REALM,
+          controller_id: accountPrincipalId,
+          backing_circle_id: "ak:circle:01964137-0000-7000-8000-0000000000a1",
+          encryption_profile: "mls_rfc9420",
+          state: "active",
+          created_at: "2026-07-20T00:00:00Z",
+        },
+        desired_agent_ids: ["did:web:agents.example:assistant"],
+        effective_agent_ids:
+          sidecarPendingMemberReconciliations.length === 0
+            ? ["did:web:agents.example:assistant"]
+            : [],
+        access_readiness:
+          sidecarPendingMemberReconciliations.length === 0
+            ? "ready"
+            : "access_reconciliation_pending",
+        pending_access_reconciliations: sidecarPendingMemberReconciliations.map(
+          (item) => ({ stage: "backing_scope_membership", ...item }),
+        ),
       });
     }
 

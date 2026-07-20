@@ -18,7 +18,7 @@ The agent surface lives under **Settings → Agents**.
 | **Ghost** actor | An applet-bound bot. Tagged `actor_kind="ghost"` (amber badge). |
 | **Service** actor | A first-party service principal (blue badge). |
 | **Personal Agent** | A user-owned automation actor (green badge). |
-| **Sidecar thread** | A 1:1 channel between a controller device and its native agent. Enforced by `SidecarThreadGuard`. |
+| **Private Sidecar** | A controller-private, Realm-scoped AI object hosted inside the current Strand. Eligible owned Agents derive its access; its backing MLS scope is not a user-visible Circle. |
 | **Capability proof** | A signed grant that lets the agent invoke specific operations. 14 capability actions land in v1. |
 
 <!-- TODO(screenshot): agents-panel-overview.png -->
@@ -28,12 +28,12 @@ The agent surface lives under **Settings → Agents**.
 ## 2. Provision a personal agent
 
 The richer path. Use `PersonalAgentAdminPanel` for a real personal agent
-with sidecar threading.
+with a Private Sidecar.
 
 1. Click **+ Provision personal agent**.
 2. Walk through the provision wizard:
    - **Identity** — agent DID + handle.
-   - **Controller** — confirm this device is the 1:1 controller.
+   - **Controller** — confirm the owning controller account.
    - **Sidecar** — `sidecar_home_policy` defaults to
      `context_realm_preferred`.
    - **Capabilities** — pick from the 14-action set.
@@ -51,7 +51,7 @@ Each agent row exposes:
 - **Pause / Resume** — temporarily revoke without deleting the agent.
 - **Rotate key** — issue a fresh signing key while preserving the DID.
 - **Attach / Detach grant** — bind / unbind individual capability proofs.
-- **Sidecar ensure** — re-provision the 1:1 channel if it drifts.
+- **Sidecar ensure** — reconcile the Realm-private Sidecar and its eligible Agent access.
 - **Deactivate** — permanent revocation. Type `DEACTIVATE` to confirm.
 
 <!-- TODO(screenshot): personal-agent-admin-actions.png -->
@@ -97,7 +97,7 @@ trace execution back to its controller grant.
 
 After deactivation:
 
-- The sidecar thread is closed and rejected by `SidecarThreadGuard`.
+- The Agent is removed from derived Sidecar access; new addressing is blocked while MLS removal and epoch rotation reconcile.
 
 ---
 

@@ -16,12 +16,15 @@
 
 .sidecar-context-strip {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-columns: minmax(15rem, 1fr) auto;
   gap: 0.55rem 1rem;
   align-items: center;
   padding: 0.7rem 1rem;
   border-bottom: 1px solid var(--border);
   background: color-mix(in srgb, var(--accent) 7%, var(--background));
+  position: sticky;
+  top: 0;
+  z-index: 6;
 }
 
 .sidecar-context-main,
@@ -34,6 +37,18 @@
 
 .sidecar-addressed-now {
   grid-column: 1 / -1;
+}
+
+.sidecar-display-mode {
+  display: inline-flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 0.35rem;
+}
+
+.sidecar-display-mode .active {
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 16%, var(--surface));
 }
 
 .sidecar-draft-notice,
@@ -101,5 +116,9 @@
 
   .sidecar-addressed-now {
     grid-column: auto;
+  }
+
+  .sidecar-display-mode {
+    justify-content: flex-start;
   }
 }

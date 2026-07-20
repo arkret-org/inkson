@@ -97,7 +97,7 @@ test("workspace sidebar separates contact-based direct chats", async ({ page }) 
   await expect(shell.getByTestId("contacts-manage-page")).toContainText("bob:example.com");
 });
 
-test("owned agent ensure opens the dedicated private Sidecar shell", async ({ page }) => {
+test("owned agent ensure activates Sidecar inside the source Strand shell", async ({ page }) => {
   await gotoAndDismissRecovery(page, `/kanban/${DEMO_REALM}/board/${DEMO_BOARD_SPACE}`);
   const shell = latestTestId(page, "client-shell");
   await shell.getByTestId("realm-sidebar-tab-direct").click();
@@ -107,7 +107,7 @@ test("owned agent ensure opens the dedicated private Sidecar shell", async ({ pa
   const ensureGate = new Promise<void>((resolve) => {
     releaseEnsure = resolve;
   });
-  await page.route("**/_arkret/self/agent-sidecar-threads:ensure", async (route) => {
+  await page.route("**/_arkret/self/agent-sidecars:ensure", async (route) => {
     ensureRequestBody = await route.request().postDataJSON();
     await ensureGate;
     await route.fallback();
@@ -122,7 +122,7 @@ test("owned agent ensure opens the dedicated private Sidecar shell", async ({ pa
   );
   const ensureResponse = page.waitForResponse(
     (response) =>
-      response.url().includes("/_arkret/self/agent-sidecar-threads:ensure"),
+      response.url().includes("/_arkret/self/agent-sidecars:ensure"),
     { timeout: 20_000 },
   );
   const contextResponse = page.waitForResponse(
@@ -147,9 +147,12 @@ test("owned agent ensure opens the dedicated private Sidecar shell", async ({ pa
   });
 
   await expect(page).toHaveURL(
-    /\/direct\/.*\/ak:strand:01964137-0000-7000-8000-0000000000a2$/,
+    /\/direct\/.*\/ak:strand:0196419b-0000-7000-8000-000000000101$/,
   );
   await expect(shell.getByTestId("sidecar-context-strip")).toBeVisible();
+  await expect(shell.getByTestId("sidecar-mode-context-merged")).toHaveClass(/active/);
+  await shell.getByTestId("sidecar-mode-sidecar-only").click();
+  await expect(shell.getByTestId("sidecar-mode-sidecar-only")).toHaveClass(/active/);
   await expect(shell.getByTestId("sidecar-addressed-now")).toContainText(
     "assistant",
   );
@@ -202,7 +205,7 @@ test("pending sidecar reconciliation blocks send without claiming readiness", as
   await shell.getByTestId("realm-sidebar-tab-direct").click();
   const ensureResponse = page.waitForResponse(
     (response) =>
-      response.url().endsWith("/_arkret/self/agent-sidecar-threads:ensure"),
+      response.url().endsWith("/_arkret/self/agent-sidecars:ensure"),
     { timeout: 20_000 },
   );
   await shell
@@ -215,7 +218,7 @@ test("pending sidecar reconciliation blocks send without claiming readiness", as
     "Reconciling access",
   );
   await expect(shell.getByTestId("sidecar-readiness-gate")).toContainText(
-    "1 member",
+    "1 principal",
   );
   await expect(shell.getByTestId("send-chat-button")).toBeDisabled();
 });

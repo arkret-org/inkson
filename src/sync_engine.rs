@@ -278,12 +278,11 @@ impl TransportProvider for AccountTransportProvider {
 
     async fn provide(&self) -> arkret_sdk::Result<Self::Transport> {
         let session_generation = self.ctx.session.generation();
-        let transport = crate::identity::session_refresh::provide_authenticated_sdk_client(
-            &self.ctx.base_url,
-        )
-            .await
-            .map(crate::client_core::InksonAccountTransport::new)
-            .map_err(|error| arkret_sdk::Error::Protocol(error.to_string()))?;
+        let transport =
+            crate::identity::session_refresh::provide_authenticated_sdk_client(&self.ctx.base_url)
+                .await
+                .map(crate::client_core::InksonAccountTransport::new)
+                .map_err(|error| arkret_sdk::Error::Protocol(error.to_string()))?;
         if self.ctx.session.generation() != session_generation || !self.is_active() {
             return Err(arkret_sdk::Error::Protocol(
                 "session changed while preparing account transport".to_owned(),

@@ -1,5 +1,5 @@
-//! Reusable agent UI components: actor-kind badge, sidecar thread guard,
-//! sidecar exposure disclosure, the action-approve dialog, and the
+//! Reusable agent UI components: actor-kind badge, Sidecar exposure
+//! disclosure, the action-approve dialog, and the
 //! controller-owned draft-approval panel.
 
 use dioxus::prelude::*;
@@ -32,60 +32,9 @@ pub fn ActorKindBadge(actor_kind: Option<String>) -> Element {
     }
 }
 
-/// Sidecar Thread guard: a sidecar thread is a `controller × native
-/// agent` 1:1 channel. AKP-0008 §4.5 and AKP-0009 §3 invariant 10
-/// require the renderer to refuse to expose it as a group chat. The
-/// component renders the inner children only when the participant
-/// list contains exactly the controller DID and one native agent
-/// DID; otherwise it shows a placeholder.
-#[component]
-pub fn SidecarThreadGuard(
-    controller_id: String,
-    agent_id: String,
-    participants: Vec<String>,
-    children: Element,
-) -> Element {
-    let normalized: Vec<String> = participants
-        .iter()
-        .map(|p| p.trim().to_owned())
-        .filter(|p| !p.is_empty())
-        .collect();
-    let mut expected = vec![controller_id.clone(), agent_id.clone()];
-    expected.sort();
-    let mut found = normalized.clone();
-    found.sort();
-    let ok = normalized.len() == 2 && expected == found;
-    rsx! {
-        if ok {
-            div {
-                class: "event",
-                "data-testid": "sidecar-thread-guard-ok",
-                "data-controller-id": "{controller_id}",
-                "data-agent-did": "{agent_id}",
-                {children}
-            }
-        } else {
-            div {
-                class: "event",
-                "data-testid": "sidecar-thread-guard-placeholder",
-                div { class: "event-head",
-                    span { "Sidecar thread" }
-                    span { class: "badge amber", "1:1 invariant violated" }
-                }
-                div { class: "muted",
-                    "AKP-0008 §4.5 / AKP-0009 §3 invariant 10 — sidecar threads are controller × native-agent 1:1 channels and MUST NOT render as a group chat. Refusing to render this thread until the participant set normalizes."
-                }
-                div { class: "muted",
-                    "Expected controller: {controller_id}; agent: {agent_id}. Observed {normalized.len()} participant(s)."
-                }
-            }
-        }
-    }
-}
-
 /// AKP-0009 §3 invariant 10 / AKP-0008 §4.5 — sidecar exposure
 /// disclosure panel. Before resume, the controller MUST acknowledge any
-/// sidecar Circles that became newly visible while the agent was paused.
+/// Sidecars that became newly visible while the agent was paused.
 /// The acknowledged object_refs feed `resume_sidecar_refs`, which the
 /// resume button folds into a real `agent_sidecar_exposure_ack`.
 ///
@@ -106,7 +55,7 @@ pub fn SidecarExposureDisclosure(
                 span { class: "badge", "AKP-0009 §3 inv. 10" }
             }
             div { class: "muted",
-                "Controller: {controller_id}. Before resuming a paused agent, acknowledge any sidecar Circles that became newly visible while it was paused. Acknowledged refs are sent as the resume sidecar_exposure_ack."
+                "Controller: {controller_id}. Before resuming a paused agent, acknowledge any Sidecars that became newly visible while it was paused. Acknowledged refs are sent as the resume sidecar_exposure_ack."
             }
             div { class: "muted", "data-testid": "sidecar-exposure-data-source",
                 "Data source: soland sidecar exposure projection (ak.agent.sidecar_projection.v1) pending — enter the disclosed sidecar object_refs below until the projection auto-populates this list."
@@ -114,7 +63,7 @@ pub fn SidecarExposureDisclosure(
             div { class: "workflow-form",
                 Input {
                     "data-testid": "sidecar-exposure-ref-input",
-                    placeholder: "sidecar object_ref (ak:circle:... or ak:strand:...)",
+                    placeholder: "Sidecar object_ref (ak:sidecar:...)",
                     value: "{ref_input}",
                     oninput: move |event: FormEvent| ref_input.set(event.value()),
                 }

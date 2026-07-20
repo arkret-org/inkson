@@ -414,7 +414,7 @@ mod tests {
             (404, "session_grant_not_found"),
             (403, "authorized_grant_revoked"),
         ] {
-            let error = arkret_sdk::Error::Api {
+            let error = arkret_sdk::http_client::Error::Api {
                 status,
                 error: Box::new(arkret_sdk::ErrorEnvelope::new(code, "terminal")),
             };
@@ -432,7 +432,7 @@ mod tests {
             (401, "auth_expired"),
             (403, "capability_denied"),
         ] {
-            let error = arkret_sdk::Error::Api {
+            let error = arkret_sdk::http_client::Error::Api {
                 status,
                 error: Box::new(arkret_sdk::ErrorEnvelope::new(code, "retryable")),
             };
@@ -442,7 +442,7 @@ mod tests {
             );
         }
         assert!(!account_logout_error_is_terminal(
-            &arkret_sdk::Error::Protocol("network boundary".to_owned())
+            &arkret_sdk::http_client::Error::Protocol("network boundary".to_owned())
         ));
     }
 }

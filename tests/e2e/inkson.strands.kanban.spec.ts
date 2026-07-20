@@ -95,17 +95,17 @@ test("owned agent sidecar labels private messages in discussion", async ({ page 
   await agentMention.click();
   await detailPopup.getByTestId("chat-input").fill("@me/assistant hello");
 
-  await page.route("**/_arkret/self/agent-sidecar-threads:ensure", async (route) => {
+  await page.route("**/_arkret/self/agent-sidecars:ensure", async (route) => {
     await new Promise((resolve) => setTimeout(resolve, 250));
     await route.fallback();
   });
   const ensureResponse = page.waitForResponse((response) =>
-    response.url().includes("/_arkret/self/agent-sidecar-threads:ensure"),
+    response.url().includes("/_arkret/self/agent-sidecars:ensure"),
   );
   await detailPopup.getByTestId("send-chat-button").click();
 
   await expect(detailPopup.getByTestId("chat-status")).toContainText(
-    "Opening private AI sidecar thread",
+    "Activating Private Sidecar",
   );
   await expect(detailPopup.getByTestId("send-chat-button")).toBeDisabled();
   await expect((await ensureResponse).ok()).toBeTruthy();

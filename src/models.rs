@@ -1214,5 +1214,5 @@ pub use arkret_sdk::models::{MediaIceConfigOutcome, MediaIceConfigRequestBody};
 // agent surface now uses the SDK's authoritative types
 // (`arkret_sdk::AgentProvisionOutcome` / `AgentList` / `AgentView` /
 // `AgentGrantAttachOutcome` /
-// `AgentSidecarThreadEnsureOutcome` / ...) directly in `views::agents`
+// Sidecar SDK DTOs directly in `views::agents`
 // (via `with_authed_sdk_client`).

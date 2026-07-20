@@ -1028,14 +1028,14 @@ mod tests {
 
     #[test]
     fn only_bottom_projection_conflicts_are_retryable() {
-        let pending = arkret_sdk::Error::Api {
+        let pending = arkret_sdk::http_client::Error::Api {
             status: 409,
             error: Box::new(arkret_sdk::ErrorEnvelope::new(
                 "state_mismatch",
                 "member cell is still Bottom",
             )),
         };
-        let policy_denial = arkret_sdk::Error::Api {
+        let policy_denial = arkret_sdk::http_client::Error::Api {
             status: 409,
             error: Box::new(arkret_sdk::ErrorEnvelope::new(
                 "state_mismatch",
@@ -1046,7 +1046,7 @@ mod tests {
         assert!(governance_projection_pending(&pending));
         assert!(!governance_projection_pending(&policy_denial));
         assert!(!governance_projection_pending(
-            &arkret_sdk::Error::Protocol("member cell is still Bottom".to_owned(),)
+            &arkret_sdk::http_client::Error::Protocol("member cell is still Bottom".to_owned(),)
         ));
     }
 

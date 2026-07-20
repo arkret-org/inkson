@@ -350,7 +350,12 @@ impl RealmEventsFrameSource for InksonRealmEventsFrameSource {
         &'a mut self,
     ) -> garth::subscribe::realm::BoxRealmStreamFuture<'a, Option<arkret_sdk::EventsSubscribeFrame>>
     {
-        Box::pin(async move { self.inner.next_frame().await.map_err(arkret_sdk::Error::from) })
+        Box::pin(async move {
+            self.inner
+                .next_frame()
+                .await
+                .map_err(arkret_sdk::Error::from)
+        })
     }
 }
 

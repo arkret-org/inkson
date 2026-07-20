@@ -13,7 +13,6 @@ mod tests;
 pub use admin::PersonalAgentAdminPanel;
 pub use components::{
     ActionApproveDialog, ActorKindBadge, DraftApprovalPanel, SidecarExposureDisclosure,
-    SidecarThreadGuard,
 };
 pub(crate) use model::mentionable_owned_agent_slugs;
 pub use model::{

@@ -275,7 +275,7 @@ async fn ensure_owned_agent_sidecar(
     realm_id: &str,
     strand_id: &str,
     addressed_agent_ids: &[String],
-) -> anyhow::Result<Option<arkret_sdk::AgentSidecarThreadEnsureOutcome>> {
+) -> anyhow::Result<Option<(arkret_sdk::AgentSidecarEnsureOutcome, arkret_sdk::CircleId)>> {
     let addressed_agent_ids = addressed_agent_ids
         .iter()
         .cloned()
@@ -284,7 +284,7 @@ async fn ensure_owned_agent_sidecar(
     if addressed_agent_ids.is_empty() {
         return Ok(None);
     }
-    let request = arkret_sdk::AgentSidecarThreadEnsureRequestBody {
+    let request = arkret_sdk::AgentSidecarEnsureRequestBody {
         controller_id: arkret_sdk::Did::new(controller_id.to_owned())?,
         addressed_agent_ids,
         context_ref: arkret_sdk::AgentSidecarContextRef::strand(
@@ -302,9 +302,15 @@ async fn ensure_owned_agent_sidecar(
     );
     let outcome =
         crate::transport::auth::with_authed_sdk_client(base_url, api_token, |http| async move {
-            http.agent_sidecar_thread_ensure(&request)
+            let outcome = http
+                .agent_sidecar_ensure(&request)
                 .await
-                .map_err(anyhow::Error::from)
+                .map_err(anyhow::Error::from)?;
+            let view = http
+                .agent_sidecar_get(&outcome.sidecar_id)
+                .await
+                .map_err(anyhow::Error::from)?;
+            Ok::<_, anyhow::Error>((outcome, view.sidecar.backing_circle_id))
         })
         .await
         .map_err(|error| anyhow::anyhow!(error.display()))?;
@@ -312,7 +318,7 @@ async fn ensure_owned_agent_sidecar(
         target: "sidecar",
         event = "sidecar.ensure.completed",
         trace_id,
-        pending_reconciliation_count = outcome.pending_member_reconciliations.len(),
+        pending_reconciliation_count = outcome.0.pending_access_reconciliations.len(),
     );
     Ok(Some(outcome))
 }
@@ -513,6 +519,7 @@ pub fn ChatPanel(
     // A4 — base_url / state_store from session context instead of props.
     let base_url = crate::app::SessionContext::base_url_string();
     let mut state_store = crate::app::SessionContext::get().state_store;
+    let mut sidecar_session_state = use_context::<crate::sidecar::SidecarSessionContext>().0;
     let navigator = use_navigator();
     let controller = use_chat_controller(&selected_realm_id, &initial_strand_id, &account_did);
     let mut migrated_draft_applied_for = use_signal(String::new);
@@ -692,33 +699,12 @@ pub fn ChatPanel(
         .cloned()
         .collect();
     let visible_channels_empty = visible_channels.is_empty();
-    let mut selected_channel_info = visible_channels
+    let selected_channel_info = visible_channels
         .iter()
         .find(|channel| channel.strand_id == selected_channel_value)
         .cloned()
         .or_else(|| visible_channels.first().cloned());
-    // The dedicated Sidecar route already carries the authoritative Circle id
-    // returned by the ensure aggregate. Account projection can arrive one
-    // render later than navigation, so hydrate that known scope immediately
-    // instead of temporarily presenting the private Strand as Realm-scoped.
-    // This also keeps the message accent/scope diagnostics truthful while the
-    // ordinary channel projection catches up.
-    if let (Some(session), Some(channel)) =
-        (sidecar_session.as_ref(), selected_channel_info.as_mut())
-        && channel.strand_id == session.private_strand_id
-    {
-        channel.is_private_sidecar = true;
-        if channel.scope_circle.is_none() {
-            channel.scope_circle = Some(StrandScopeCircle {
-                circle_id: session.private_circle_id.clone(),
-                title: "Private Sidecar".to_owned(),
-                member_count: session.addressed_agent_ids.len().saturating_add(1) as u32,
-            });
-        }
-    }
-    let selected_channel_name = if let Some(session) = sidecar_session.as_ref() {
-        session.addressed_agent_label.clone()
-    } else if embedded {
+    let selected_channel_name = if embedded {
         "Discussion".to_owned()
     } else {
         selected_channel_info
@@ -743,8 +729,8 @@ pub fn ChatPanel(
         .map(crate::security_state::realm_projection_is_encrypted)
         .unwrap_or(false)
     };
-    // The reserved Sidecar ensure contract requires an MLS-backed Circle.
-    // The private Strand only carries its Circle id, so ordinary Realm
+    // The first-class Sidecar contract requires an independent MLS backing scope.
+    // The private Strand only carries its internal scope id, so ordinary Realm
     // inheritance would incorrectly downgrade a Sidecar opened from a
     // plaintext principal-control Realm and expose the plaintext Send path.
     let selected_channel_security_encrypted = if sidecar_mode {
@@ -772,7 +758,7 @@ pub fn ChatPanel(
     let sidecar_send_block_reason = sidecar_session.as_ref().and_then(|session| {
         if !session.membership_ready() {
             Some(format!(
-                "Access is still reconciling for {} member(s). Sending is disabled until the Sidecar membership projection is ready.",
+                "Private access is still reconciling for {} principal(s). Sending is disabled until backing scope and MLS access are ready.",
                 session.pending_reconciliation_count()
             ))
         } else if selected_channel_security_encrypted && selected_realm_pending_mls_binding {
@@ -784,6 +770,12 @@ pub fn ChatPanel(
             None
         }
     });
+    let sidecar_mode_base_context = base_url.clone();
+    let sidecar_mode_base_only = base_url.clone();
+    let sidecar_mode_controller_context = account_did.clone();
+    let sidecar_mode_controller_only = account_did.clone();
+    let sidecar_mode_device_context = device_id.clone();
+    let sidecar_mode_device_only = device_id.clone();
     // Fold the durable lifecycle log directly onto the controller's
     // optimistic rows. A sender's create can still be controller-only when a
     // remote reaction arrives, so projecting raw operations in isolation
@@ -828,7 +820,16 @@ pub fn ChatPanel(
     let visible_messages = all_messages_snapshot
         .iter()
         .filter(|msg| {
-            msg.strand_id == selected_channel_value
+            let strand_matches = sidecar_session.as_ref().map_or_else(
+                || msg.strand_id == selected_channel_value,
+                |session| {
+                    msg.strand_id == session.private_strand_id
+                        || (session.display_mode
+                            == arkret_sdk::AgentSidecarDisplayMode::ContextMerged
+                            && msg.strand_id == session.source_strand_id)
+                },
+            );
+            strand_matches
                 && (selected_realm_id.trim().is_empty() || msg.realm_id == selected_realm_id)
         })
         .cloned()
@@ -867,7 +868,7 @@ pub fn ChatPanel(
         strand_scope_lookup
             .entry(session.private_strand_id.clone())
             .or_insert_with(|| StrandScopeCircle {
-                circle_id: session.private_circle_id.clone(),
+                circle_id: session.backing_scope_circle_id.to_string(),
                 title: "Private Sidecar".to_owned(),
                 member_count: session.addressed_agent_ids.len().saturating_add(1) as u32,
             });
@@ -1637,15 +1638,54 @@ pub fn ChatPanel(
                 if let Some(session) = sidecar_session.as_ref() {
                     div { class: "sidecar-context-strip", "data-testid": "sidecar-context-strip",
                         div { class: "sidecar-context-main",
-                            span { class: "muted", "Context" }
-                            strong { "Realm discussion" }
-                            span { class: "mono muted", "{session.source_strand_id}" }
+                            strong { "Private Sidecar active" }
+                            span { class: "muted", "Only you and your eligible AI Agents · E2EE" }
                         }
-                        a {
-                            class: "button secondary",
-                            href: "/chat/{session.source_realm_id}",
-                            "data-testid": "sidecar-open-context",
-                            "Open context"
+                        div { class: "sidecar-display-mode", role: "group", "aria-label": "Private Sidecar display mode",
+                            Button {
+                                variant: ButtonVariant::Secondary,
+                                class: if session.display_mode == arkret_sdk::AgentSidecarDisplayMode::ContextMerged { "active" } else { "" },
+                                "data-testid": "sidecar-mode-context-merged",
+                                onclick: move |_| {
+                                    if let Some(mut current) = sidecar_session_state() {
+                                        current.display_mode = arkret_sdk::AgentSidecarDisplayMode::ContextMerged;
+                                        crate::sidecar::push_sidecar_display_mode(
+                                            sidecar_mode_base_context.clone(),
+                                            token(),
+                                            sidecar_mode_controller_context.clone(),
+                                            sidecar_mode_device_context.clone(),
+                                            &current,
+                                        );
+                                        sidecar_session_state.set(Some(current));
+                                    }
+                                },
+                                "Original Strand + Sidecar"
+                            }
+                            Button {
+                                variant: ButtonVariant::Secondary,
+                                class: if session.display_mode == arkret_sdk::AgentSidecarDisplayMode::SidecarOnly { "active" } else { "" },
+                                "data-testid": "sidecar-mode-sidecar-only",
+                                onclick: move |_| {
+                                    if let Some(mut current) = sidecar_session_state() {
+                                        current.display_mode = arkret_sdk::AgentSidecarDisplayMode::SidecarOnly;
+                                        crate::sidecar::push_sidecar_display_mode(
+                                            sidecar_mode_base_only.clone(),
+                                            token(),
+                                            sidecar_mode_controller_only.clone(),
+                                            sidecar_mode_device_only.clone(),
+                                            &current,
+                                        );
+                                        sidecar_session_state.set(Some(current));
+                                    }
+                                },
+                                "Sidecar only"
+                            }
+                            Button {
+                                variant: ButtonVariant::Secondary,
+                                "data-testid": "sidecar-exit",
+                                onclick: move |_| sidecar_session_state.set(None),
+                                "Exit Private Sidecar"
+                            }
                         }
                         div { class: "sidecar-addressed-now", "data-testid": "sidecar-addressed-now",
                             span { class: "muted", "Addressed now" }
@@ -1934,7 +1974,7 @@ pub fn ChatPanel(
                                 }
                             }
                             div { class: "event info",
-                                "The Sidecar Circle includes your eligible personal Agents. The badge marks the Agent addressed by the current message."
+                                "Sidecar access is derived from your eligible personal Agents. The badge marks the Agent addressed by the current message."
                             }
                             div { class: "discussion-subhead", span { "Encryption" } }
                             div { class: "detail-row", span { "Profile" } strong { {sidecar_security_label.unwrap_or("Opening")} } }
@@ -2152,7 +2192,7 @@ pub fn ChatPanel(
                         div { class: "discussion-detail-section sidecar-diagnostics-section", "data-testid": "sidecar-connection-details",
                             div { class: "detail-row", span { "Trace ID" } strong { class: "mono", "{session.trace_id}" } }
                             div { class: "detail-row", span { "Ensure" } strong { "Complete" } }
-                            div { class: "detail-row", span { "Circle membership" } strong {
+                            div { class: "detail-row", span { "Private access" } strong {
                                 if session.membership_ready() { "Complete" } else { "Reconciling" }
                             } }
                             div { class: "detail-row", span { "Encryption" } strong { {sidecar_security_label.unwrap_or("Opening")} } }

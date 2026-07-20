@@ -16,7 +16,7 @@ pub mod invite_policy;
 pub mod mls_recovery;
 pub mod storage;
 
-mod account_data;
+pub(crate) mod account_data;
 mod invite_locator;
 mod profile_helpers;
 mod sections;

@@ -31,7 +31,7 @@ pub(super) fn format_settings_handle_list(handles: &[String], fallback: &str) ->
     }
 }
 
-pub(super) fn encrypted_account_data_value(
+pub(crate) fn encrypted_account_data_value(
     data_type: &str,
     plaintext: &serde_json::Value,
 ) -> anyhow::Result<serde_json::Value> {

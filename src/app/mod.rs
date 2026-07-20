@@ -2135,7 +2135,7 @@ fn AppBootstrap() -> Element {
                                                                                     .ok_or_else(|| anyhow::anyhow!(
                                                                                         "No active Strand is available in the current Realm for the Agent chat context"
                                                                                     ))?;
-                                                                                    let request = arkret_sdk::AgentSidecarThreadEnsureRequestBody {
+                                                                                    let request = arkret_sdk::AgentSidecarEnsureRequestBody {
                                                                                         controller_id: controller.clone(),
                                                                                         addressed_agent_ids: vec![agent],
                                                                                         context_ref: arkret_sdk::AgentSidecarContextRef::strand(
@@ -2146,7 +2146,11 @@ fn AppBootstrap() -> Element {
                                                                                         ),
                                                                                     };
                                                                                     let response = http
-                                                                                        .agent_sidecar_thread_ensure(&request)
+                                                                                        .agent_sidecar_ensure(&request)
+                                                                                        .await
+                                                                                        .map_err(anyhow::Error::from)?;
+                                                                                    let sidecar_view = http
+                                                                                        .agent_sidecar_get(&response.sidecar_id)
                                                                                         .await
                                                                                         .map_err(anyhow::Error::from)?;
                                                                                     Ok::<_, anyhow::Error>((
@@ -2154,11 +2158,12 @@ fn AppBootstrap() -> Element {
                                                                                         context_hint.realm_id,
                                                                                         context_strand_id,
                                                                                         response,
+                                                                                        sidecar_view.sidecar.backing_circle_id,
                                                                                     ))
                                                                                 },
                                                                             ).await {
-                                                                                Ok((controller, realm_id, context_strand_id, response)) => {
-                                                                                    let pending_count = response.pending_member_reconciliations.len();
+                                                                                Ok((controller, realm_id, context_strand_id, response, backing_scope_circle_id)) => {
+                                                                                    let pending_count = response.pending_access_reconciliations.len();
                                                                                     tracing::info!(
                                                                                         target: "sidecar",
                                                                                         event = "sidecar.ensure.completed",
@@ -2171,17 +2176,20 @@ fn AppBootstrap() -> Element {
                                                                                         addressed_agent_ids: vec![agent_id],
                                                                                         addressed_agent_label: agent_sidecar_label,
                                                                                         source_realm_id: realm_id.clone(),
-                                                                                        source_strand_id: context_strand_id,
-                                                                                        private_circle_id: response.private_circle_id.to_string(),
+                                                                                        source_strand_id: context_strand_id.clone(),
+                                                                                        sidecar_id: response.sidecar_id.clone(),
+                                                                                        backing_scope_circle_id,
                                                                                         private_strand_id: response.private_strand_id.to_string(),
                                                                                         private_relation_id: response.private_relation_id.to_string(),
-                                                                                        pending_member_reconciliations: response.pending_member_reconciliations.clone(),
+                                                                                        access_readiness: response.access_readiness,
+                                                                                        pending_access_reconciliations: response.pending_access_reconciliations.clone(),
+                                                                                        display_mode: arkret_sdk::AgentSidecarDisplayMode::ContextMerged,
                                                                                         migrated_draft: String::new(),
                                                                                         opened_at: chrono::Utc::now(),
                                                                                     }));
                                                                                     let _ = navigator.push(Route::DirectConversation {
                                                                                         realm_id,
-                                                                                        strand_id: response.private_strand_id.to_string(),
+                                                                                        strand_id: context_strand_id,
                                                                                     });
                                                                                 }
                                                                                 Err(err) => {

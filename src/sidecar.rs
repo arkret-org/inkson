@@ -1,11 +1,12 @@
-//! Ephemeral navigation state for an Agent Sidecar handoff.
+//! Ephemeral hosted-view state for an Agent Sidecar.
 //!
 //! This state deliberately stays in memory. It carries UI context from the
-//! ensure action into `/direct/...` without inventing a wire type or persisting
-//! message plaintext outside the existing composer lifecycle.
+//! ensure action into the source Strand shell without inventing a wire type or
+//! persisting message plaintext outside the existing composer lifecycle.
 
 use dioxus::prelude::*;
 
+use crate::models::AccountDataSetResult;
 use crate::routes::Route;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -92,25 +93,31 @@ pub struct SidecarSession {
     pub addressed_agent_label: String,
     pub source_realm_id: String,
     pub source_strand_id: String,
-    pub private_circle_id: String,
+    pub sidecar_id: arkret_sdk::SidecarId,
+    /// Internal effective-scope binding used by the encrypted write path. It
+    /// is never rendered, routed to, or used as Sidecar identity.
+    pub backing_scope_circle_id: arkret_sdk::CircleId,
     pub private_strand_id: String,
     pub private_relation_id: String,
-    pub pending_member_reconciliations: Vec<arkret_sdk::PendingMemberReconciliationItem>,
+    pub access_readiness: arkret_sdk::AgentSidecarAccessReadiness,
+    pub pending_access_reconciliations: Vec<arkret_sdk::PendingSidecarAccessReconciliationItem>,
+    pub display_mode: arkret_sdk::AgentSidecarDisplayMode,
     pub migrated_draft: String,
     pub opened_at: chrono::DateTime<chrono::Utc>,
 }
 
 impl SidecarSession {
     pub fn matches_route(&self, realm_id: &str, strand_id: &str) -> bool {
-        self.source_realm_id == realm_id && self.private_strand_id == strand_id
+        self.source_realm_id == realm_id && self.source_strand_id == strand_id
     }
 
     pub fn membership_ready(&self) -> bool {
-        self.pending_member_reconciliations.is_empty()
+        self.access_readiness == arkret_sdk::AgentSidecarAccessReadiness::Ready
+            && self.pending_access_reconciliations.is_empty()
     }
 
     pub fn pending_reconciliation_count(&self) -> usize {
-        self.pending_member_reconciliations.len()
+        self.pending_access_reconciliations.len()
     }
 
     pub fn diagnostic_summary(
@@ -122,7 +129,7 @@ impl SidecarSession {
         last_updated: &str,
     ) -> String {
         format!(
-            "Trace ID: {}\nEnsure: complete\nCircle membership: {}\nEncryption: {}\nMessage submit: {}\nNotification fanout: {}\nAgent receipt: {}\nLast updated: {}",
+            "Trace ID: {}\nEnsure: complete\nPrivate access: {}\nEncryption: {}\nMessage submit: {}\nNotification fanout: {}\nAgent receipt: {}\nLast updated: {}",
             self.trace_id,
             if self.membership_ready() {
                 "complete".to_owned()
@@ -143,6 +150,95 @@ impl SidecarSession {
 
 #[derive(Clone, Copy)]
 pub struct SidecarSessionContext(pub Signal<Option<SidecarSession>>);
+
+/// Best-effort encrypted cross-device persistence for the hosted Strand-level
+/// display mode. The local signal is authoritative for the current frame; a
+/// failed network write is retried naturally by a later user change/account
+/// stream reconciliation and never mutates shared Strand state.
+pub fn push_sidecar_display_mode(
+    base_url: String,
+    api_token: String,
+    controller_id: String,
+    device_id: String,
+    session: &SidecarSession,
+) {
+    let context_ref = match (
+        arkret_sdk::RealmId::new(session.source_realm_id.clone()),
+        arkret_sdk::StrandId::new(session.source_strand_id.clone()),
+        arkret_sdk::Did::new(controller_id.clone()),
+        arkret_sdk::DeviceId::new(device_id.clone()),
+    ) {
+        (Ok(realm_id), Ok(strand_id), Ok(controller_id), Ok(origin_device_id)) => {
+            (realm_id, strand_id, controller_id, origin_device_id)
+        }
+        _ => {
+            tracing::warn!("Sidecar view-state contains an invalid typed identifier");
+            return;
+        }
+    };
+    let control_realm_id = arkret_sdk::principal_control_realm_id(&context_ref.2);
+    let updated_hlc = match crate::signing_stamp::issue_protocol_hlc(
+        context_ref.2.as_str(),
+        context_ref.3.as_str(),
+        &control_realm_id,
+    ) {
+        Ok(hlc) => hlc,
+        Err(error) => {
+            tracing::warn!(%error, "Sidecar view-state HLC allocation failed");
+            return;
+        }
+    };
+    let view_state = arkret_sdk::AgentSidecarViewState {
+        schema: arkret_sdk::AgentSidecarViewStateSchema::V1,
+        controller_id: context_ref.2,
+        sidecar_id: session.sidecar_id.clone(),
+        context_ref: arkret_sdk::AgentSidecarStrandContextRef {
+            realm_id: context_ref.0,
+            strand_id: context_ref.1,
+        },
+        display_mode: session.display_mode,
+        pinned: None,
+        collapsed: None,
+        updated_hlc,
+        origin_device_id: context_ref.3,
+    };
+    let data_type = view_state.account_data_type();
+    let plaintext = match serde_json::to_value(&view_state) {
+        Ok(value) => value,
+        Err(error) => {
+            tracing::warn!(%error, "Sidecar view-state serialization failed");
+            return;
+        }
+    };
+    let body = match crate::views::settings::account_data::encrypted_account_data_value(
+        &data_type, &plaintext,
+    ) {
+        Ok(body) => body,
+        Err(error) => {
+            tracing::warn!(%error, "Sidecar view-state encryption failed");
+            return;
+        }
+    };
+    spawn(async move {
+        match crate::transport::auth::with_event_submitter(
+            &base_url,
+            api_token,
+            |submitter| async move {
+                crate::transport::account::set_account_data(&submitter, &data_type, body).await
+            },
+        )
+        .await
+        {
+            Ok(AccountDataSetResult::Stored { .. }) => {}
+            Ok(AccountDataSetResult::Unsupported { status }) => {
+                tracing::warn!(%status, "Sidecar view-state account data is unsupported");
+            }
+            Err(error) => {
+                tracing::warn!(error = %error.display(), "Sidecar view-state sync failed")
+            }
+        }
+    });
+}
 
 #[cfg(test)]
 mod tests {
@@ -244,7 +340,7 @@ mod tests {
         );
     }
 
-    fn session(pending: Vec<arkret_sdk::PendingMemberReconciliationItem>) -> SidecarSession {
+    fn session(pending: Vec<arkret_sdk::PendingSidecarAccessReconciliationItem>) -> SidecarSession {
         SidecarSession {
             trace_id: "019f0000-0000-7000-8000-000000000001".to_owned(),
             controller_id: "did:web:alice.example".to_owned(),
@@ -252,10 +348,23 @@ mod tests {
             addressed_agent_label: "Assistant".to_owned(),
             source_realm_id: "ak:realm:019f0000-0000-7000-8000-000000000002".to_owned(),
             source_strand_id: "ak:strand:019f0000-0000-7000-8000-000000000003".to_owned(),
-            private_circle_id: "ak:circle:019f0000-0000-7000-8000-000000000004".to_owned(),
+            sidecar_id: arkret_sdk::SidecarId::new(
+                "ak:sidecar:019f0000-0000-7000-8000-000000000004".to_owned(),
+            )
+            .unwrap(),
+            backing_scope_circle_id: arkret_sdk::CircleId::new(
+                "ak:circle:019f0000-0000-7000-8000-000000000007".to_owned(),
+            )
+            .unwrap(),
             private_strand_id: "ak:strand:019f0000-0000-7000-8000-000000000005".to_owned(),
             private_relation_id: "ak:relation:019f0000-0000-7000-8000-000000000006".to_owned(),
-            pending_member_reconciliations: pending,
+            access_readiness: if pending.is_empty() {
+                arkret_sdk::AgentSidecarAccessReadiness::Ready
+            } else {
+                arkret_sdk::AgentSidecarAccessReadiness::AccessReconciliationPending
+            },
+            pending_access_reconciliations: pending,
+            display_mode: arkret_sdk::AgentSidecarDisplayMode::ContextMerged,
             migrated_draft: String::new(),
             opened_at: chrono::Utc::now(),
         }
@@ -263,8 +372,9 @@ mod tests {
 
     #[test]
     fn pending_reconciliation_is_not_ready() {
-        let session = session(vec![arkret_sdk::PendingMemberReconciliationItem {
+        let session = session(vec![arkret_sdk::PendingSidecarAccessReconciliationItem {
             agent_id: arkret_sdk::Did::new("did:web:agents.example:assistant").unwrap(),
+            stage: arkret_sdk::PendingSidecarAccessReconciliationStage::BackingScopeMembership,
             reason: arkret_sdk::NonEmptyString::new("membership_projection_pending").unwrap(),
         }]);
         assert!(!session.membership_ready());
@@ -283,9 +393,9 @@ mod tests {
     }
 
     #[test]
-    fn route_match_requires_realm_and_private_strand() {
+    fn route_match_requires_realm_and_source_strand() {
         let session = session(Vec::new());
-        assert!(session.matches_route(&session.source_realm_id, &session.private_strand_id));
-        assert!(!session.matches_route(&session.source_realm_id, &session.source_strand_id));
+        assert!(session.matches_route(&session.source_realm_id, &session.source_strand_id));
+        assert!(!session.matches_route(&session.source_realm_id, &session.private_strand_id));
     }
 }

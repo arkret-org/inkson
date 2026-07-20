@@ -19,7 +19,7 @@ pub(crate) struct ChannelEntity {
     pub(crate) is_default: bool,
     /// This Strand is the controller-private Agent Sidecar surface. Kept on
     /// the channel projection so every rendered message can carry an explicit
-    /// privacy badge even outside the dedicated Sidecar shell.
+    /// privacy badge in the hosted source-Strand shell.
     pub(crate) is_private_sidecar: bool,
     /// Explicit Strand security state from Strand metadata. `None` inherits
     /// the current Realm / Space security posture.

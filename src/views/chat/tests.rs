@@ -3291,7 +3291,7 @@ fn sidecar_strand_title_reads_canonical_metadata_object() {
         "strand_id": strand_id,
         "metadata": {
             "title": "AI sidecar",
-            "summary": "Controller-private AI sidecar thread"
+            "summary": "Controller-private AI workspace"
         },
         "tracks": { "discussion": { "enabled": true } }
     });
@@ -3315,7 +3315,7 @@ fn sidecar_strand_title_reads_canonical_metadata_object() {
 }
 
 #[test]
-fn channel_from_strand_event_marks_agent_sidecar_as_private() {
+fn channel_from_strand_event_never_infers_private_sidecar_identity() {
     let event = json!({
         "event_id": "ak:event:sidecar-strand",
         "kind": "ak.strand.create",
@@ -3324,9 +3324,7 @@ fn channel_from_strand_event_marks_agent_sidecar_as_private() {
             "id": "ak:strand:sidecar",
             "metadata": {
                 "title": "AI sidecar",
-                "fields": {
-                    "sidecar_profile": arkret_sdk::PROFILE_AGENT_SIDECAR_THREAD
-                }
+                "fields": { "client_private_hint": true }
             },
             "tracks": {
                 "discussion": {"enabled": true, "is_primary": true}
@@ -3337,7 +3335,7 @@ fn channel_from_strand_event_marks_agent_sidecar_as_private() {
     let channel = channel_from_strand_event("ak:realm:demo", &event).unwrap();
 
     assert_eq!(channel.strand_id, "ak:strand:sidecar");
-    assert!(channel.is_private_sidecar);
+    assert!(!channel.is_private_sidecar);
 }
 
 #[test]

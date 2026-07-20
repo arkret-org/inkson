@@ -301,11 +301,8 @@ mod tests {
     use super::*;
 
     #[test]
-    fn ordinary_circle_filter_fails_closed_for_sidecar_and_unknown_profiles() {
+    fn ordinary_circle_filter_fails_closed_for_profile_specific_circles() {
         assert!(is_ordinary_circle_profile(None));
-        assert!(!is_ordinary_circle_profile(Some(
-            arkret_sdk::PROFILE_AGENT_SIDECAR_THREAD
-        )));
         assert!(!is_ordinary_circle_profile(Some(
             "ak.profile.future_private_circle.v1"
         )));
